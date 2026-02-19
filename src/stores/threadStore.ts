@@ -32,6 +32,7 @@ interface ThreadState {
   removeThread: (threadId: string) => Promise<void>;
   setActiveThread: (threadId: string | null) => void;
   setThreadReasoningEffortLocal: (threadId: string, reasoningEffort: string | null) => void;
+  setThreadLastModelLocal: (threadId: string, modelId: string | null) => void;
 }
 
 const DEFAULT_ENGINE = "codex";
@@ -63,6 +64,23 @@ function applyThreadReasoningEffort(
     metadata.reasoningEffort = reasoningEffort;
   } else {
     delete metadata.reasoningEffort;
+  }
+
+  return {
+    ...thread,
+    engineMetadata: Object.keys(metadata).length ? metadata : undefined,
+  };
+}
+
+function applyThreadLastModel(
+  thread: Thread,
+  modelId: string | null
+): Thread {
+  const metadata = { ...(thread.engineMetadata ?? {}) };
+  if (modelId) {
+    metadata.lastModelId = modelId;
+  } else {
+    delete metadata.lastModelId;
   }
 
   return {
@@ -144,8 +162,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       const scoped = all.filter(
         (thread) =>
           thread.repoId === repoId &&
-          thread.engineId === effectiveEngine &&
-          thread.modelId === effectiveModel
+          thread.engineId === effectiveEngine
       );
 
       const activeId = get().activeThreadId;
@@ -258,6 +275,25 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       const updateThread = (thread: Thread) =>
         thread.id === threadId
           ? applyThreadReasoningEffort(thread, reasoningEffort)
+          : thread;
+
+      const threadsByWorkspace = Object.entries(state.threadsByWorkspace).reduce<
+        Record<string, Thread[]>
+      >((acc, [workspaceId, threads]) => {
+        acc[workspaceId] = threads.map(updateThread);
+        return acc;
+      }, {});
+
+      return {
+        threadsByWorkspace,
+        threads: state.threads.map(updateThread),
+      };
+    }),
+  setThreadLastModelLocal: (threadId, modelId) =>
+    set((state) => {
+      const updateThread = (thread: Thread) =>
+        thread.id === threadId
+          ? applyThreadLastModel(thread, modelId)
           : thread;
 
       const threadsByWorkspace = Object.entries(state.threadsByWorkspace).reduce<

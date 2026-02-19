@@ -174,20 +174,22 @@ impl EngineManager {
     pub async fn ensure_engine_thread(
         &self,
         thread: &ThreadDto,
+        model_id: Option<&str>,
         scope: ThreadScope,
         sandbox: SandboxPolicy,
     ) -> anyhow::Result<String> {
         let resume_id = thread.engine_thread_id.as_deref();
+        let effective_model_id = model_id.unwrap_or(thread.model_id.as_str());
 
         let result = match thread.engine_id.as_str() {
             "codex" => self
                 .codex
-                .start_thread(scope, resume_id, &thread.model_id, sandbox)
+                .start_thread(scope, resume_id, effective_model_id, sandbox)
                 .await
                 .context("failed to start codex thread")?,
             "claude" => self
                 .claude
-                .start_thread(scope, resume_id, &thread.model_id, sandbox)
+                .start_thread(scope, resume_id, effective_model_id, sandbox)
                 .await
                 .context("failed to start claude thread")?,
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),

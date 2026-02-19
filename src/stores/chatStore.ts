@@ -18,7 +18,13 @@ interface ChatState {
   error?: string;
   unlisten?: () => void;
   setActiveThread: (threadId: string | null) => Promise<void>;
-  send: (message: string, threadIdOverride?: string) => Promise<void>;
+  send: (
+    message: string,
+    options?: {
+      threadIdOverride?: string;
+      modelId?: string | null;
+    },
+  ) => Promise<void>;
   cancel: () => Promise<void>;
   respondApproval: (approvalId: string, response: ApprovalResponse) => Promise<void>;
 }
@@ -296,14 +302,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ threadId, messages: [], error: String(error) });
     }
   },
-  send: async (message, threadIdOverride) => {
+  send: async (message, options) => {
     const state = get();
     if (state.streaming) {
       set({ error: "A turn is already in progress for this thread." });
       return;
     }
 
-    const threadId = threadIdOverride ?? state.threadId;
+    const threadId = options?.threadIdOverride ?? state.threadId;
     if (!threadId) {
       set({ error: "No active thread selected" });
       return;
@@ -328,7 +334,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     try {
-      await ipc.sendMessage(threadId, message);
+      await ipc.sendMessage(threadId, message, options?.modelId ?? null);
     } catch (error) {
       set({ status: "error", streaming: false, error: String(error) });
     }

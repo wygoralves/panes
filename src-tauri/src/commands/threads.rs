@@ -70,10 +70,21 @@ pub async fn set_thread_reasoning_effort(
     state: State<'_, AppState>,
     thread_id: String,
     reasoning_effort: Option<String>,
+    model_id: Option<String>,
 ) -> Result<(), String> {
     let thread = db::threads::get_thread(&state.db, &thread_id)
         .map_err(err_to_string)?
         .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+    let normalized_model_id = model_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let effective_model_id = match normalized_model_id {
+        Some(model_id) => {
+            validate_model_for_thread_engine(state.inner(), &thread, model_id).await?
+        }
+        None => thread.model_id.clone(),
+    };
 
     let normalized_effort = reasoning_effort
         .as_deref()
@@ -82,7 +93,15 @@ pub async fn set_thread_reasoning_effort(
         .map(str::to_lowercase);
 
     let validated_effort = if let Some(value) = normalized_effort.as_deref() {
-        Some(validate_reasoning_effort(state.inner(), &thread, value).await?)
+        Some(
+            validate_reasoning_effort(
+                state.inner(),
+                &thread.engine_id,
+                effective_model_id.as_str(),
+                value,
+            )
+            .await?,
+        )
     } else {
         None
     };
@@ -161,7 +180,8 @@ pub async fn delete_thread(state: State<'_, AppState>, thread_id: String) -> Res
 
 async fn validate_reasoning_effort(
     state: &AppState,
-    thread: &ThreadDto,
+    engine_id: &str,
+    model_id: &str,
     requested_effort: &str,
 ) -> Result<String, String> {
     const KNOWN_REASONING_EFFORTS: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh"];
@@ -173,12 +193,8 @@ async fn validate_reasoning_effort(
     }
 
     if let Ok(engines) = state.engines.list_engines().await {
-        if let Some(engine) = engines.iter().find(|engine| engine.id == thread.engine_id) {
-            if let Some(model) = engine
-                .models
-                .iter()
-                .find(|model| model.id == thread.model_id)
-            {
+        if let Some(engine) = engines.iter().find(|engine| engine.id == engine_id) {
+            if let Some(model) = engine.models.iter().find(|model| model.id == model_id) {
                 if let Some(option) = model
                     .supported_reasoning_efforts
                     .iter()
@@ -203,6 +219,41 @@ async fn validate_reasoning_effort(
     }
 
     Ok(requested_effort.to_string())
+}
+
+async fn validate_model_for_thread_engine(
+    state: &AppState,
+    thread: &ThreadDto,
+    requested_model_id: &str,
+) -> Result<String, String> {
+    if requested_model_id == thread.model_id {
+        return Ok(thread.model_id.clone());
+    }
+
+    if let Ok(engines) = state.engines.list_engines().await {
+        if let Some(engine) = engines.iter().find(|engine| engine.id == thread.engine_id) {
+            if engine
+                .models
+                .iter()
+                .any(|model| model.id == requested_model_id)
+            {
+                return Ok(requested_model_id.to_string());
+            }
+
+            let available = engine
+                .models
+                .iter()
+                .map(|model| model.id.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "model `{requested_model_id}` is not supported by engine `{}`. available models: {available}",
+                thread.engine_id
+            ));
+        }
+    }
+
+    Ok(requested_model_id.to_string())
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {

@@ -100,6 +100,7 @@ pub async fn send_message(
     state: State<'_, AppState>,
     thread_id: String,
     message: String,
+    model_id: Option<String>,
 ) -> Result<String, String> {
     if state.turns.get(&thread_id).await.is_some() {
         return Err(
@@ -111,6 +112,12 @@ pub async fn send_message(
     let mut thread = db::threads::get_thread(&state.db, &thread_id)
         .map_err(err_to_string)?
         .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+    let requested_model_id = model_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let effective_model_id =
+        resolve_turn_model_id(state.inner(), &thread, requested_model_id).await?;
 
     let workspace = db::workspaces::list_workspaces(&state.db)
         .map_err(err_to_string)?
@@ -153,6 +160,25 @@ pub async fn send_message(
         .unwrap_or_else(|| aggregate_workspace_trust_level(&repos));
     let reasoning_effort = thread_reasoning_effort(thread.engine_metadata.as_ref());
 
+    if requested_model_id.is_some() {
+        let mut metadata = thread
+            .engine_metadata
+            .clone()
+            .unwrap_or_else(|| serde_json::json!({}));
+        if !metadata.is_object() {
+            metadata = serde_json::json!({});
+        }
+        if let Some(object) = metadata.as_object_mut() {
+            object.insert(
+                "lastModelId".to_string(),
+                Value::String(effective_model_id.clone()),
+            );
+        }
+        db::threads::update_engine_metadata(&state.db, &thread.id, &metadata)
+            .map_err(err_to_string)?;
+        thread.engine_metadata = Some(metadata);
+    }
+
     db::messages::insert_user_message(&state.db, &thread.id, &message).map_err(err_to_string)?;
     let assistant_message =
         db::messages::insert_assistant_placeholder(&state.db, &thread.id).map_err(err_to_string)?;
@@ -182,7 +208,7 @@ pub async fn send_message(
 
     let engine_thread_id = state
         .engines
-        .ensure_engine_thread(&thread, scope, sandbox)
+        .ensure_engine_thread(&thread, Some(effective_model_id.as_str()), scope, sandbox)
         .await
         .map_err(err_to_string)?;
 
@@ -825,6 +851,45 @@ fn thread_reasoning_effort(metadata: Option<&Value>) -> Option<String> {
         .and_then(|value| value.get("reasoningEffort"))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
+}
+
+async fn resolve_turn_model_id(
+    state: &AppState,
+    thread: &ThreadDto,
+    requested_model_id: Option<&str>,
+) -> Result<String, String> {
+    let Some(requested_model_id) = requested_model_id else {
+        return Ok(thread.model_id.clone());
+    };
+
+    if requested_model_id == thread.model_id {
+        return Ok(thread.model_id.clone());
+    }
+
+    if let Ok(engines) = state.engines.list_engines().await {
+        if let Some(engine) = engines.iter().find(|engine| engine.id == thread.engine_id) {
+            if engine
+                .models
+                .iter()
+                .any(|model| model.id == requested_model_id)
+            {
+                return Ok(requested_model_id.to_string());
+            }
+
+            let available = engine
+                .models
+                .iter()
+                .map(|model| model.id.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "model `{requested_model_id}` is not supported by engine `{}`. available models: {available}",
+                thread.engine_id
+            ));
+        }
+    }
+
+    Ok(requested_model_id.to_string())
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {

@@ -210,6 +210,7 @@ export function ChatPanel() {
     activeThreadId,
     setActiveThread: setActiveThreadInStore,
     setThreadReasoningEffortLocal,
+    setThreadLastModelLocal,
     renameThread,
   } = useThreadStore();
   const gitStatus = useGitStore((s) => s.status);
@@ -458,21 +459,35 @@ export function ChatPanel() {
     }
     const threadEngine =
       engines.find((engine) => engine.id === activeThread.engineId) ?? null;
+    const lastModelId =
+      typeof activeThread.engineMetadata?.lastModelId === "string"
+        ? activeThread.engineMetadata.lastModelId
+        : null;
+    const preferredModelId = lastModelId ?? activeThread.modelId;
+    const preferredModelExists =
+      threadEngine?.models.some((model) => model.id === preferredModelId) ?? false;
     const threadModelExists =
       threadEngine?.models.some((model) => model.id === activeThread.modelId) ?? false;
-    if (threadModelExists) {
+    if (preferredModelExists) {
+      setSelectedModelId(preferredModelId);
+    } else if (threadModelExists) {
       setSelectedModelId(activeThread.modelId);
     }
-  }, [activeThread?.id, activeThread?.engineId, activeThread?.modelId, engines, selectedEngineId]);
+  }, [
+    activeThread?.id,
+    activeThread?.engineId,
+    activeThread?.modelId,
+    activeThread?.engineMetadata,
+    engines,
+    selectedEngineId,
+  ]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
       if (threadId !== null) {
+        setActiveThreadInStore(null);
         void bindChatThread(null);
       }
-      return;
-    }
-    if (!selectedModelId) {
       return;
     }
 
@@ -482,33 +497,14 @@ export function ChatPanel() {
       activeThread.workspaceId === activeWorkspaceId &&
       activeThread.repoId === activeRepoScopeId;
 
-    if (activeThreadInCurrentScope && threadId !== activeThread.id) {
-      void bindChatThread(activeThread.id);
-      return;
-    }
-
-    const activeThreadMatchesSelection =
-      activeThreadInCurrentScope &&
-      activeThread.engineId === selectedEngineId &&
-      activeThread.modelId === selectedModelId;
-
-    const matchedThread =
-      (activeThreadMatchesSelection ? activeThread : null) ??
-      threads.find(
-        (thread) =>
-          thread.workspaceId === activeWorkspaceId &&
-          thread.repoId === activeRepoScopeId &&
-          thread.engineId === selectedEngineId &&
-          thread.modelId === selectedModelId,
-      ) ??
-      null;
-
-    const targetThreadId = matchedThread?.id ?? null;
+    const targetThreadId = activeThreadInCurrentScope ? activeThread.id : null;
     if (targetThreadId === threadId) {
       return;
     }
 
-    setActiveThreadInStore(targetThreadId);
+    if (!activeThreadInCurrentScope) {
+      setActiveThreadInStore(null);
+    }
     void bindChatThread(targetThreadId);
   }, [
     activeWorkspaceId,
@@ -518,9 +514,6 @@ export function ChatPanel() {
     activeThread?.repoId,
     activeThread?.engineId,
     activeThread?.modelId,
-    threads,
-    selectedEngineId,
-    selectedModelId,
     threadId,
     bindChatThread,
     setActiveThreadInStore,
@@ -592,11 +585,15 @@ export function ChatPanel() {
     setInput("");
 
     if (selectedEngineId === "codex" && selectedEffort) {
-      await ipc.setThreadReasoningEffort(targetThreadId, selectedEffort);
+      await ipc.setThreadReasoningEffort(targetThreadId, selectedEffort, selectedModelId);
       setThreadReasoningEffortLocal(targetThreadId, selectedEffort);
     }
+    setThreadLastModelLocal(targetThreadId, selectedModelId);
 
-    await send(text, targetThreadId);
+    await send(text, {
+      threadIdOverride: targetThreadId,
+      modelId: selectedModelId,
+    });
 
     if (confirmedWorkspaceOptIn) {
       await refreshThreads(activeWorkspaceId);
@@ -615,7 +612,7 @@ export function ChatPanel() {
     }
 
     setThreadReasoningEffortLocal(targetThreadId, nextEffort);
-    await ipc.setThreadReasoningEffort(targetThreadId, nextEffort);
+    await ipc.setThreadReasoningEffort(targetThreadId, nextEffort, selectedModelId);
   }
 
   async function onRepoTrustLevelChange(nextTrustLevel: TrustLevel) {

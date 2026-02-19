@@ -43,13 +43,17 @@ export const ipc = {
     }),
   confirmWorkspaceThread: (threadId: string, writableRoots: string[]) =>
     invoke<void>("confirm_workspace_thread", { threadId, writableRoots }),
-  setThreadReasoningEffort: (threadId: string, reasoningEffort: string | null) =>
-    invoke<void>("set_thread_reasoning_effort", { threadId, reasoningEffort }),
+  setThreadReasoningEffort: (
+    threadId: string,
+    reasoningEffort: string | null,
+    modelId?: string | null,
+  ) =>
+    invoke<void>("set_thread_reasoning_effort", { threadId, reasoningEffort, modelId: modelId ?? null }),
   deleteThread: (threadId: string) => invoke<void>("delete_thread", { threadId }),
   listEngines: () => invoke<EngineInfo[]>("list_engines"),
   engineHealth: (engineId: string) => invoke<EngineHealth>("engine_health", { engineId }),
-  sendMessage: (threadId: string, message: string) =>
-    invoke<string>("send_message", { threadId, message }),
+  sendMessage: (threadId: string, message: string, modelId?: string | null) =>
+    invoke<string>("send_message", { threadId, message, modelId: modelId ?? null }),
   cancelTurn: (threadId: string) => invoke<void>("cancel_turn", { threadId }),
   respondApproval: (threadId: string, approvalId: string, response: ApprovalResponse) =>
     invoke<void>("respond_to_approval", { threadId, approvalId, response }),
