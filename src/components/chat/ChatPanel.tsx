@@ -643,7 +643,17 @@ export function ChatPanel() {
                       {message.content || (message.blocks ?? []).filter((b) => b.type === "text").map((b) => b.content).join("\n")}
                     </div>
                   ) : (
-                    <div style={{ width: "100%", maxWidth: "100%" }}>
+                    <div
+                      style={{
+                        width: "100%",
+                        maxWidth: "100%",
+                        padding: "8px 4px",
+                        borderRadius: "var(--radius-md)",
+                        background: "var(--bg-3)",
+                        border: "1px solid var(--border)",
+                        overflow: "hidden",
+                      }}
+                    >
                       <MessageBlocks
                         blocks={message.blocks}
                         status={message.status}

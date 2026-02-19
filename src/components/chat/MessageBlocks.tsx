@@ -146,7 +146,7 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
         /* ── Text ── */
         if (block.type === "text") {
           return (
-            <div key={index} className="prose" style={{ fontSize: 13 }}>
+            <div key={index} className="prose" style={{ fontSize: 13, padding: "4px 14px" }}>
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeHighlight]}
@@ -164,9 +164,8 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
             <div
               key={index}
               style={{
-                borderRadius: "var(--radius-md)",
+                borderRadius: "var(--radius-sm)",
                 overflow: "hidden",
-                border: "1px solid var(--border)",
                 background: "var(--code-bg)",
               }}
             >
@@ -211,9 +210,8 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
             <div
               key={index}
               style={{
-                borderRadius: "var(--radius-md)",
+                borderRadius: "var(--radius-sm)",
                 overflow: "hidden",
-                border: "1px solid var(--border)",
                 background: "var(--code-bg)",
               }}
             >
@@ -276,21 +274,14 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
             <div
               key={index}
               style={{
-                borderRadius: "var(--radius-md)",
-                border: `1px solid ${
-                  isError
-                    ? "rgba(248, 113, 113, 0.25)"
-                    : isRunning
-                      ? "rgba(251, 191, 36, 0.2)"
-                      : "var(--border)"
-                }`,
+                borderRadius: "var(--radius-sm)",
                 background: isError
                   ? "rgba(248, 113, 113, 0.04)"
                   : isRunning
                     ? "rgba(251, 191, 36, 0.03)"
                     : "var(--bg-2)",
                 overflow: "hidden",
-                transition: "border-color var(--duration-normal) var(--ease-out)",
+                transition: "background var(--duration-normal) var(--ease-out)",
               }}
             >
               <div
@@ -390,8 +381,7 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
             <div
               key={index}
               style={{
-                borderRadius: "var(--radius-md)",
-                border: "1px solid rgba(251, 191, 36, 0.2)",
+                borderRadius: "var(--radius-sm)",
                 background: "rgba(251, 191, 36, 0.04)",
                 overflow: "hidden",
               }}
@@ -530,9 +520,8 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
               key={index}
               style={{
                 padding: "8px 12px",
-                borderRadius: "var(--radius-md)",
+                borderRadius: "var(--radius-sm)",
                 background: "var(--bg-2)",
-                border: "1px solid var(--border)",
                 fontSize: 12.5,
                 color: "var(--text-2)",
                 display: "flex",
@@ -560,9 +549,8 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
               key={index}
               style={{
                 padding: "10px 14px",
-                borderRadius: "var(--radius-md)",
+                borderRadius: "var(--radius-sm)",
                 background: "rgba(248, 113, 113, 0.06)",
-                border: "1px solid rgba(248, 113, 113, 0.2)",
                 color: "var(--danger)",
                 fontSize: 13,
                 display: "flex",
