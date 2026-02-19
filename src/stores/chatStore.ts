@@ -212,13 +212,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return;
         }
 
-        set((state) => ({
-          messages:
-            state.threadId === threadId
-              ? applyStreamEvent(state.messages, event, state.threadId)
-              : state.messages,
-          streaming: event.type !== "TurnCompleted"
-        }));
+        set((state) => {
+          if (state.threadId !== threadId) {
+            return state;
+          }
+
+          return {
+            ...state,
+            messages: applyStreamEvent(state.messages, event, state.threadId),
+            streaming: event.type !== "TurnCompleted"
+          };
+        });
       });
 
       if (bindSeq !== activeThreadBindSeq) {
