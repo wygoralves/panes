@@ -212,8 +212,78 @@ pub struct GitStatusDto {
 #[serde(rename_all = "camelCase")]
 pub struct GitFileStatusDto {
     pub path: String,
-    pub status: String,
-    pub staged: bool,
+    pub index_status: Option<String>,
+    pub worktree_status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitBranchScopeDto {
+    Local,
+    Remote,
+}
+
+impl GitBranchScopeDto {
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "remote" => Self::Remote,
+            _ => Self::Local,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranchDto {
+    pub name: String,
+    pub full_name: String,
+    pub is_current: bool,
+    pub is_remote: bool,
+    pub upstream: Option<String>,
+    pub ahead: usize,
+    pub behind: usize,
+    pub last_commit_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranchPageDto {
+    pub entries: Vec<GitBranchDto>,
+    pub offset: usize,
+    pub limit: usize,
+    pub total: usize,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitDto {
+    pub hash: String,
+    pub short_hash: String,
+    pub author_name: String,
+    pub author_email: String,
+    pub subject: String,
+    pub body: String,
+    pub authored_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitPageDto {
+    pub entries: Vec<GitCommitDto>,
+    pub offset: usize,
+    pub limit: usize,
+    pub total: usize,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStashDto {
+    pub index: usize,
+    pub name: String,
+    pub branch_hint: Option<String>,
+    pub created_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

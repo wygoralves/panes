@@ -4,7 +4,10 @@ use tauri::State;
 
 use crate::{
     git::repo,
-    models::{FileTreeEntryDto, FileTreePageDto, GitStatusDto},
+    models::{
+        FileTreeEntryDto, FileTreePageDto, GitBranchPageDto, GitBranchScopeDto, GitCommitPageDto,
+        GitStashDto, GitStatusDto,
+    },
     state::AppState,
 };
 
@@ -67,6 +70,135 @@ pub async fn commit(
     tokio::task::spawn_blocking(move || repo::commit(&repo_path, &message).map_err(err_to_string))
         .await
         .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn list_git_branches(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    scope: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<GitBranchPageDto, String> {
+    let offset = offset.unwrap_or(0);
+    let limit = limit.unwrap_or(200);
+    let scope = GitBranchScopeDto::from_str(&scope);
+
+    tokio::task::spawn_blocking(move || {
+        repo::list_git_branches(&repo_path, scope, offset, limit).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn checkout_git_branch(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    branch_name: String,
+    is_remote: bool,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        repo::checkout_git_branch(&repo_path, &branch_name, is_remote).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn create_git_branch(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    branch_name: String,
+    from_ref: Option<String>,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        repo::create_git_branch(&repo_path, &branch_name, from_ref.as_deref())
+            .map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn rename_git_branch(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    old_name: String,
+    new_name: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        repo::rename_git_branch(&repo_path, &old_name, &new_name).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_git_branch(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    branch_name: String,
+    force: bool,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        repo::delete_git_branch(&repo_path, &branch_name, force).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn list_git_commits(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<GitCommitPageDto, String> {
+    let offset = offset.unwrap_or(0);
+    let limit = limit.unwrap_or(100);
+
+    tokio::task::spawn_blocking(move || {
+        repo::list_git_commits(&repo_path, offset, limit).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn list_git_stashes(
+    _state: State<'_, AppState>,
+    repo_path: String,
+) -> Result<Vec<GitStashDto>, String> {
+    tokio::task::spawn_blocking(move || repo::list_git_stashes(&repo_path).map_err(err_to_string))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn apply_git_stash(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    stash_index: usize,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        repo::apply_git_stash(&repo_path, stash_index).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn pop_git_stash(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    stash_index: usize,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        repo::pop_git_stash(&repo_path, stash_index).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

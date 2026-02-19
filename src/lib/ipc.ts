@@ -2,6 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   ApprovalResponse,
+  GitBranchPage,
+  GitBranchScope,
+  GitCommitPage,
+  GitStash,
   EngineHealth,
   EngineInfo,
   FileTreeEntry,
@@ -87,6 +91,33 @@ export const ipc = {
   unstageFiles: (repoPath: string, files: string[]) =>
     invoke<void>("unstage_files", { repoPath, files }),
   commit: (repoPath: string, message: string) => invoke<string>("commit", { repoPath, message }),
+  listGitBranches: (repoPath: string, scope: GitBranchScope, offset?: number, limit?: number) =>
+    invoke<GitBranchPage>("list_git_branches", {
+      repoPath,
+      scope,
+      offset: offset ?? null,
+      limit: limit ?? null,
+    }),
+  checkoutGitBranch: (repoPath: string, branchName: string, isRemote: boolean) =>
+    invoke<void>("checkout_git_branch", { repoPath, branchName, isRemote }),
+  createGitBranch: (repoPath: string, branchName: string, fromRef?: string | null) =>
+    invoke<void>("create_git_branch", { repoPath, branchName, fromRef: fromRef ?? null }),
+  renameGitBranch: (repoPath: string, oldName: string, newName: string) =>
+    invoke<void>("rename_git_branch", { repoPath, oldName, newName }),
+  deleteGitBranch: (repoPath: string, branchName: string, force: boolean) =>
+    invoke<void>("delete_git_branch", { repoPath, branchName, force }),
+  listGitCommits: (repoPath: string, offset?: number, limit?: number) =>
+    invoke<GitCommitPage>("list_git_commits", {
+      repoPath,
+      offset: offset ?? null,
+      limit: limit ?? null,
+    }),
+  listGitStashes: (repoPath: string) =>
+    invoke<GitStash[]>("list_git_stashes", { repoPath }),
+  applyGitStash: (repoPath: string, stashIndex: number) =>
+    invoke<void>("apply_git_stash", { repoPath, stashIndex }),
+  popGitStash: (repoPath: string, stashIndex: number) =>
+    invoke<void>("pop_git_stash", { repoPath, stashIndex }),
   watchGitRepo: (repoPath: string) => invoke<void>("watch_git_repo", { repoPath })
 };
 

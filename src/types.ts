@@ -202,8 +202,8 @@ export interface SearchResult {
 
 export interface GitFileStatus {
   path: string;
-  status: string;
-  staged: boolean;
+  indexStatus?: string;
+  worktreeStatus?: string;
 }
 
 export interface GitStatus {
@@ -211,6 +211,52 @@ export interface GitStatus {
   files: GitFileStatus[];
   ahead: number;
   behind: number;
+}
+
+export type GitBranchScope = "local" | "remote";
+
+export interface GitBranch {
+  name: string;
+  fullName: string;
+  isCurrent: boolean;
+  isRemote: boolean;
+  upstream?: string;
+  ahead: number;
+  behind: number;
+  lastCommitAt?: string;
+}
+
+export interface GitBranchPage {
+  entries: GitBranch[];
+  offset: number;
+  limit: number;
+  total: number;
+  hasMore: boolean;
+}
+
+export interface GitCommit {
+  hash: string;
+  shortHash: string;
+  authorName: string;
+  authorEmail: string;
+  subject: string;
+  body: string;
+  authoredAt: string;
+}
+
+export interface GitCommitPage {
+  entries: GitCommit[];
+  offset: number;
+  limit: number;
+  total: number;
+  hasMore: boolean;
+}
+
+export interface GitStash {
+  index: number;
+  name: string;
+  branchHint?: string;
+  createdAt?: string;
 }
 
 export interface FileTreeEntry {
