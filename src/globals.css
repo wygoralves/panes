@@ -2,25 +2,25 @@
 
 /* ── Design Tokens ── */
 :root {
-  /* Backgrounds — deep noir with blue undertone */
-  --bg-0: #08090c;
-  --bg-1: #0c0d13;
-  --bg-2: #111318;
-  --bg-3: #181a22;
-  --bg-4: #1f2130;
-  --bg-5: #282a3a;
+  /* Backgrounds — pitch black */
+  --bg-0: #000000;
+  --bg-1: #000000;
+  --bg-2: #0a0a0a;
+  --bg-3: #111111;
+  --bg-4: #1a1a1a;
+  --bg-5: #222222;
 
   /* Text */
-  --text-1: #eeeef0;
-  --text-2: #8b8d9a;
-  --text-3: #4e505e;
+  --text-1: #e8e8e8;
+  --text-2: #888888;
+  --text-3: #555555;
 
   /* Accent — Electric Teal */
   --accent: #0ef0c3;
-  --accent-dim: rgba(14, 240, 195, 0.12);
-  --accent-glow: 0 0 20px rgba(14, 240, 195, 0.25);
-  --accent-2: #a78bfa;     /* lavender secondary */
-  --accent-2-dim: rgba(167, 139, 250, 0.12);
+  --accent-dim: rgba(14, 240, 195, 0.10);
+  --accent-glow: 0 0 12px rgba(14, 240, 195, 0.15);
+  --accent-2: #a78bfa;
+  --accent-2-dim: rgba(167, 139, 250, 0.10);
 
   /* Semantic */
   --success: #34d399;
@@ -29,17 +29,17 @@
   --info: #60a5fa;
 
   /* Borders */
-  --border: rgba(255, 255, 255, 0.06);
-  --border-active: rgba(255, 255, 255, 0.12);
-  --border-accent: rgba(14, 240, 195, 0.25);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-active: rgba(255, 255, 255, 0.14);
+  --border-accent: rgba(14, 240, 195, 0.20);
 
   /* Glass */
-  --glass-bg: rgba(12, 13, 19, 0.65);
-  --glass-border: rgba(255, 255, 255, 0.07);
-  --glass-blur: 24px;
+  --glass-bg: rgba(0, 0, 0, 0.75);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-blur: 20px;
 
   /* Code */
-  --code-bg: #0a0b10;
+  --code-bg: #050505;
 
   /* Radii */
   --radius-sm: 6px;
@@ -79,17 +79,7 @@ button, input, textarea, select {
   background: none;
 }
 
-/* ── Ambient Background ── */
-#root::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background:
-    radial-gradient(ellipse 600px 400px at 10% 15%, rgba(14, 240, 195, 0.04) 0%, transparent 70%),
-    radial-gradient(ellipse 500px 500px at 85% 80%, rgba(167, 139, 250, 0.03) 0%, transparent 70%);
-  pointer-events: none;
-  z-index: 0;
-}
+/* ── Ambient Background (disabled for pitch black) ── */
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar {
@@ -116,7 +106,7 @@ button, input, textarea, select {
 }
 
 .glass-subtle {
-  background: rgba(17, 19, 24, 0.55);
+  background: rgba(10, 10, 10, 0.65);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border);
@@ -336,8 +326,112 @@ button, input, textarea, select {
   -webkit-app-region: no-drag;
 }
 
+/* ── Custom Dropdown ── */
+.dropdown-root {
+  position: relative;
+  display: inline-flex;
+}
+
+.dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  background: var(--bg-3);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.dropdown-trigger:hover {
+  background: var(--bg-4);
+  border-color: var(--border-active);
+  color: var(--text-1);
+}
+
+.dropdown-trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.dropdown-trigger-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown-chevron {
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.dropdown-chevron-open {
+  transform: rotate(180deg);
+}
+
+.dropdown-menu {
+  z-index: 9999;
+  min-width: 160px;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  background: var(--bg-3);
+  border: 1px solid var(--border-active);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  animation: dropdown-in var(--duration-fast) var(--ease-out) both;
+}
+
+@keyframes dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-1);
+}
+
+.dropdown-item-selected {
+  color: var(--text-1);
+}
+
+.dropdown-item-label {
+  flex: 1;
+}
+
+.dropdown-item-check {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
 /* ── Selection ── */
 ::selection {
-  background: rgba(14, 240, 195, 0.25);
+  background: rgba(14, 240, 195, 0.20);
   color: var(--text-1);
 }

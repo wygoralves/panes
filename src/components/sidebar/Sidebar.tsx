@@ -8,6 +8,8 @@ import {
   ChevronDown,
   ChevronRight,
   Trash2,
+  Settings,
+  Filter,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -33,6 +35,8 @@ interface ProjectGroup {
   threads: Thread[];
 }
 
+const MAX_VISIBLE_THREADS = 8;
+
 export function Sidebar() {
   const {
     workspaces,
@@ -55,8 +59,8 @@ export function Sidebar() {
     }));
   }, [workspaces, threads]);
 
-  // Track collapsed state per workspace — default open for active workspace
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [showAll, setShowAll] = useState<Record<string, boolean>>({});
   const toggleCollapse = (wsId: string) =>
     setCollapsed((prev) => ({ ...prev, [wsId]: !prev[wsId] }));
 
@@ -67,7 +71,6 @@ export function Sidebar() {
   }
 
   async function onSelectThread(thread: Thread) {
-    // Switch to the project's workspace if needed
     if (thread.workspaceId !== activeWorkspaceId) {
       await setActiveWorkspace(thread.workspaceId);
     }
@@ -77,7 +80,6 @@ export function Sidebar() {
   }
 
   async function onSelectProject(wsId: string) {
-    // Expand the folder and switch workspace
     setCollapsed((prev) => ({ ...prev, [wsId]: false }));
     await setActiveWorkspace(wsId);
   }
@@ -148,46 +150,83 @@ export function Sidebar() {
       <div
         className="drag-region"
         style={{
-          padding: "16px 16px 12px",
+          padding: "14px 14px 10px",
           borderBottom: "1px solid var(--border)",
         }}
       >
-        <div className="no-drag" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div className="no-drag" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {/* New thread button */}
           <button
             type="button"
-            onClick={() => void onOpenFolder()}
+            onClick={() => {
+              const activeProject = projects.find((p) => p.workspace.id === activeWorkspaceId);
+              if (activeProject) {
+                void onCreateProjectThread(activeProject.workspace);
+              }
+            }}
             style={{
               width: "100%",
-              padding: "9px 12px",
+              padding: "8px 12px",
               display: "flex",
               alignItems: "center",
               gap: 8,
               borderRadius: "var(--radius-sm)",
-              background: "var(--accent-dim)",
-              border: "1px solid var(--border-accent)",
-              color: "var(--accent)",
+              background: "var(--bg-3)",
+              border: "1px solid var(--border)",
+              color: "var(--text-1)",
               fontSize: 13,
               fontWeight: 500,
               cursor: "pointer",
               transition: "all var(--duration-fast) var(--ease-out)",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.boxShadow = "var(--accent-glow)";
-              e.currentTarget.style.background = "rgba(14, 240, 195, 0.18)";
+              e.currentTarget.style.background = "var(--bg-4)";
+              e.currentTarget.style.borderColor = "var(--border-active)";
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.boxShadow = "none";
-              e.currentTarget.style.background = "var(--accent-dim)";
+              e.currentTarget.style.background = "var(--bg-3)";
+              e.currentTarget.style.borderColor = "var(--border)";
             }}
           >
-            <FolderOpen size={15} strokeWidth={2.3} />
+            <Plus size={14} strokeWidth={2.2} />
+            New thread
+          </button>
+
+          {/* Open project button */}
+          <button
+            type="button"
+            onClick={() => void onOpenFolder()}
+            style={{
+              width: "100%",
+              padding: "7px 12px",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              borderRadius: "var(--radius-sm)",
+              background: "transparent",
+              border: "1px solid var(--border)",
+              color: "var(--text-2)",
+              fontSize: 12,
+              fontWeight: 400,
+              cursor: "pointer",
+              transition: "all var(--duration-fast) var(--ease-out)",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--bg-3)";
+              e.currentTarget.style.color = "var(--text-1)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.color = "var(--text-2)";
+            }}
+          >
+            <FolderOpen size={13} strokeWidth={2} />
             Open Project
           </button>
         </div>
       </div>
 
-
-      {/* ── Projects Section ── */}
+      {/* ── Threads Section ── */}
       <div
         style={{
           flex: 1,
@@ -203,7 +242,8 @@ export function Sidebar() {
             padding: "10px 6px 6px",
           }}
         >
-          <span className="section-label">Projects</span>
+          <span className="section-label">Threads</span>
+          <Filter size={12} style={{ color: "var(--text-3)", opacity: 0.6 }} />
         </div>
 
         {projects.length === 0 ? (
@@ -229,6 +269,11 @@ export function Sidebar() {
               project.workspace.name ||
               project.workspace.rootPath.split("/").pop() ||
               "Project";
+            const isShowingAll = showAll[project.workspace.id] ?? false;
+            const visibleThreads = isShowingAll
+              ? project.threads
+              : project.threads.slice(0, MAX_VISIBLE_THREADS);
+            const hasMore = project.threads.length > MAX_VISIBLE_THREADS;
 
             return (
               <div key={project.workspace.id} style={{ marginBottom: 2 }}>
@@ -297,7 +342,6 @@ export function Sidebar() {
                     {projectName}
                   </span>
 
-                  {/* Thread count badge */}
                   {project.threads.length > 0 && (
                     <span
                       style={{
@@ -338,7 +382,7 @@ export function Sidebar() {
                   </span>
                 </button>
 
-                {/* ── Chats inside this project ── */}
+                {/* ── Threads inside this project ── */}
                 {!isCollapsed && (
                   <div
                     style={{
@@ -362,133 +406,140 @@ export function Sidebar() {
                         No threads
                       </p>
                     ) : (
-                      project.threads.map((thread, i) => {
-                        const isActive = thread.id === activeThreadId;
-                        return (
-                          <button
-                            key={thread.id}
-                            type="button"
-                            onClick={() => void onSelectThread(thread)}
-                            className="animate-slide-in-left"
-                            style={{
-                              animationDelay: `${i * 25}ms`,
-                              width: "100%",
-                              padding: "6px 8px 6px 22px",
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 7,
-                              borderRadius: "var(--radius-sm)",
-                              fontSize: 12.5,
-                              textAlign: "left",
-                              cursor: "pointer",
-                              transition: "all var(--duration-fast) var(--ease-out)",
-                              background: isActive
-                                ? "rgba(14, 240, 195, 0.08)"
-                                : "transparent",
-                              borderLeft: isActive
-                                ? "2px solid var(--accent)"
-                                : "2px solid transparent",
-                              color: isActive ? "var(--text-1)" : "var(--text-2)",
-                            }}
-                            onMouseEnter={(e) => {
-                              if (!isActive)
-                                e.currentTarget.style.background =
-                                  "rgba(255,255,255,0.03)";
-                            }}
-                            onMouseLeave={(e) => {
-                              if (!isActive)
-                                e.currentTarget.style.background = "transparent";
-                            }}
-                          >
-                            <MessageSquare
-                              size={13}
+                      <>
+                        {visibleThreads.map((thread, i) => {
+                          const isActive = thread.id === activeThreadId;
+                          return (
+                            <button
+                              key={thread.id}
+                              type="button"
+                              onClick={() => void onSelectThread(thread)}
+                              className="animate-slide-in-left"
                               style={{
-                                flexShrink: 0,
-                                opacity: isActive ? 0.9 : 0.35,
-                                color: isActive ? "var(--accent)" : undefined,
-                              }}
-                            />
-                            <span
-                              style={{
-                                flex: 1,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                fontWeight: isActive ? 500 : 400,
-                              }}
-                            >
-                              {thread.title || "Untitled thread"}
-                            </span>
-
-                            <span
-                              role="button"
-                              title="Delete thread"
-                              onMouseDown={(event) => event.stopPropagation()}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                void onDeleteThread(thread);
-                              }}
-                              style={{
+                                animationDelay: `${i * 25}ms`,
+                                width: "100%",
+                                padding: "6px 8px 6px 22px",
                                 display: "flex",
                                 alignItems: "center",
-                                justifyContent: "center",
-                                width: 18,
-                                height: 18,
-                                borderRadius: 6,
-                                color: "var(--text-3)",
-                                opacity: 0.65,
+                                gap: 7,
+                                borderRadius: "var(--radius-sm)",
+                                fontSize: 12.5,
+                                textAlign: "left",
+                                cursor: "pointer",
+                                transition: "all var(--duration-fast) var(--ease-out)",
+                                background: isActive
+                                  ? "rgba(255, 255, 255, 0.06)"
+                                  : "transparent",
+                                borderLeft: isActive
+                                  ? "2px solid var(--text-1)"
+                                  : "2px solid transparent",
+                                color: isActive ? "var(--text-1)" : "var(--text-2)",
+                              }}
+                              onMouseEnter={(e) => {
+                                if (!isActive)
+                                  e.currentTarget.style.background =
+                                    "rgba(255,255,255,0.03)";
+                              }}
+                              onMouseLeave={(e) => {
+                                if (!isActive)
+                                  e.currentTarget.style.background = "transparent";
                               }}
                             >
-                              <Trash2 size={11} />
-                            </span>
+                              <MessageSquare
+                                size={13}
+                                style={{
+                                  flexShrink: 0,
+                                  opacity: isActive ? 0.8 : 0.35,
+                                }}
+                              />
+                              <span
+                                style={{
+                                  flex: 1,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                  fontWeight: isActive ? 500 : 400,
+                                }}
+                              >
+                                {thread.title || "Untitled thread"}
+                              </span>
 
-                            {/* Relative time */}
-                            <span
-                              style={{
-                                flexShrink: 0,
-                                fontSize: 11,
-                                color: "var(--text-3)",
-                                fontVariantNumeric: "tabular-nums",
-                              }}
-                            >
-                              {thread.lastActivityAt
-                                ? relativeTime(thread.lastActivityAt)
-                                : ""}
-                            </span>
+                              <span
+                                style={{
+                                  flexShrink: 0,
+                                  fontSize: 11,
+                                  color: "var(--text-3)",
+                                  fontVariantNumeric: "tabular-nums",
+                                }}
+                              >
+                                {thread.lastActivityAt
+                                  ? relativeTime(thread.lastActivityAt)
+                                  : ""}
+                              </span>
+
+                              <span
+                                role="button"
+                                title="Delete thread"
+                                onMouseDown={(event) => event.stopPropagation()}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void onDeleteThread(thread);
+                                }}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  width: 18,
+                                  height: 18,
+                                  borderRadius: 6,
+                                  color: "var(--text-3)",
+                                  opacity: 0,
+                                  transition: "opacity var(--duration-fast)",
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.opacity = "0.8";
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.opacity = "0";
+                                }}
+                              >
+                                <Trash2 size={11} />
+                              </span>
+                            </button>
+                          );
+                        })}
+
+                        {/* Show more */}
+                        {hasMore && !isShowingAll && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setShowAll((prev) => ({
+                                ...prev,
+                                [project.workspace.id]: true,
+                              }))
+                            }
+                            style={{
+                              padding: "4px 8px 4px 30px",
+                              fontSize: 11.5,
+                              color: "var(--text-3)",
+                              background: "transparent",
+                              cursor: "pointer",
+                              textAlign: "left",
+                              transition: "color var(--duration-fast)",
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.color = "var(--text-2)";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.color = "var(--text-3)";
+                            }}
+                          >
+                            Show more
                           </button>
-                        );
-                      })
+                        )}
+                      </>
                     )}
-
-                    <button
-                      type="button"
-                      onClick={() => void onCreateProjectThread(project.workspace)}
-                      style={{
-                        width: "100%",
-                        padding: "5px 8px 5px 22px",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 7,
-                        borderRadius: "var(--radius-sm)",
-                        fontSize: 12,
-                        color: "var(--accent)",
-                        background: "transparent",
-                        border: "1px dashed rgba(14, 240, 195, 0.35)",
-                        cursor: "pointer",
-                        transition: "all var(--duration-fast) var(--ease-out)",
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = "rgba(14, 240, 195, 0.08)";
-                        e.currentTarget.style.borderColor = "rgba(14, 240, 195, 0.55)";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = "transparent";
-                        e.currentTarget.style.borderColor = "rgba(14, 240, 195, 0.35)";
-                      }}
-                    >
-                      <Plus size={12} style={{ flexShrink: 0 }} />
-                      <span>New Thread</span>
-                    </button>
 
                     {/* Repos under this workspace that have no thread yet */}
                     {repos
@@ -547,6 +598,39 @@ export function Sidebar() {
         )}
       </div>
 
+      {/* ── Settings ── */}
+      <div
+        style={{
+          padding: "8px 14px",
+          borderTop: "1px solid var(--border)",
+        }}
+      >
+        <button
+          type="button"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "6px 4px",
+            fontSize: 13,
+            color: "var(--text-2)",
+            background: "transparent",
+            cursor: "pointer",
+            width: "100%",
+            borderRadius: "var(--radius-sm)",
+            transition: "color var(--duration-fast)",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = "var(--text-1)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = "var(--text-2)";
+          }}
+        >
+          <Settings size={14} style={{ opacity: 0.6 }} />
+          Settings
+        </button>
+      </div>
 
       {error && (
         <div

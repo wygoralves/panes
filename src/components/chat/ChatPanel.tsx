@@ -2,11 +2,14 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Send,
   Square,
-  Paperclip,
+  Plus,
   GitBranch,
   MoreHorizontal,
   Loader2,
   Shield,
+  Play,
+  Monitor,
+  Mic,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useEngineStore } from "../../stores/engineStore";
@@ -15,6 +18,7 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore } from "../../stores/gitStore";
 import { ipc } from "../../lib/ipc";
 import { MessageBlocks } from "./MessageBlocks";
+import { Dropdown } from "../shared/Dropdown";
 import type { ApprovalBlock, ApprovalResponse, TrustLevel } from "../../types";
 
 interface ToolInputOption {
@@ -105,6 +109,7 @@ export function ChatPanel() {
     repos,
     activeRepoId,
     activeWorkspaceId,
+    workspaces,
     setRepoTrustLevel,
     setAllReposTrustLevel
   } = useWorkspaceStore();
@@ -119,6 +124,11 @@ export function ChatPanel() {
   const viewportRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const effortSyncKeyRef = useRef<string | null>(null);
+
+  const activeWorkspace = useMemo(
+    () => workspaces.find((w) => w.id === activeWorkspaceId) ?? null,
+    [workspaces, activeWorkspaceId],
+  );
 
   const activeRepo = useMemo(
     () => repos.find((r) => r.id === activeRepoId) ?? null,
@@ -397,6 +407,12 @@ export function ChatPanel() {
     await setAllReposTrustLevel(nextTrustLevel);
   }
 
+  const workspaceName = activeWorkspace?.name || activeWorkspace?.rootPath.split("/").pop() || "";
+
+  // Compute total diff stats for header display
+  const gitFiles = gitStatus?.files ?? [];
+  const totalAdded = gitFiles.length;
+
   return (
     <div
       style={{
@@ -406,23 +422,24 @@ export function ChatPanel() {
         background: "var(--bg-1)",
       }}
     >
-      {/* ── Top Action Bar ── */}
+      {/* ── Top Header Bar ── */}
       <div
         className="drag-region"
         style={{
-          padding: "10px 16px",
+          padding: "8px 16px",
           display: "flex",
           alignItems: "center",
-          gap: 10,
+          gap: 8,
           borderBottom: "1px solid var(--border)",
-          minHeight: 46,
+          minHeight: 44,
         }}
       >
+        {/* Thread title + workspace label */}
         <div className="no-drag" style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           <span
             style={{
               fontSize: 13,
-              fontWeight: 600,
+              fontWeight: 500,
               color: "var(--text-1)",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -431,161 +448,118 @@ export function ChatPanel() {
           >
             {activeThread?.title || "Agent Workspace"}
           </span>
+          {workspaceName && (
+            <span
+              style={{
+                fontSize: 11,
+                color: "var(--text-3)",
+                padding: "2px 8px",
+                borderRadius: 99,
+                background: "var(--bg-3)",
+                border: "1px solid var(--border)",
+                flexShrink: 0,
+              }}
+            >
+              {workspaceName}
+            </span>
+          )}
           <button
             type="button"
-            className="btn-ghost"
+            className="btn-ghost no-drag"
             style={{ padding: 4, borderRadius: "var(--radius-sm)", cursor: "pointer" }}
           >
             <MoreHorizontal size={14} />
           </button>
         </div>
 
-        <div className="no-drag" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <select
-            value={selectedEngineId}
-            onChange={(event) => {
-              setSelectedEngineId(event.target.value);
-              setSelectedModelId(null);
-            }}
-            style={{
-              padding: "4px 8px",
-              borderRadius: 99,
-              fontSize: 11,
-              fontWeight: 500,
-              background: "var(--accent-dim)",
-              color: "var(--accent)",
-              border: "1px solid var(--border-accent)",
-              cursor: "pointer",
-            }}
-          >
-            {(engines.length > 0 ? engines : [{ id: "codex", name: "Codex", models: [] }]).map((engine) => (
-              <option key={engine.id} value={engine.id} style={{ color: "black" }}>
-                {engine.name}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={selectedModelId ?? ""}
-            onChange={(event) => setSelectedModelId(event.target.value || null)}
-            disabled={availableModels.length === 0}
-            style={{
-              padding: "4px 8px",
-              borderRadius: 99,
-              fontSize: 11,
-              background: "rgba(255,255,255,0.04)",
-              color: "var(--text-2)",
-              border: "1px solid var(--border)",
-              cursor: "pointer",
-            }}
-          >
-            {availableModels.map((model) => (
-              <option key={model.id} value={model.id} style={{ color: "black" }}>
-                {model.displayName}
-                {model.isDefault ? " (default)" : ""}
-                {model.hidden ? " (legacy)" : ""}
-              </option>
-            ))}
-          </select>
-
-          {selectedEngineId === "codex" && supportedEfforts.length > 0 && (
-            <select
-              value={selectedEffort}
-              onChange={(event) => void onReasoningEffortChange(event.target.value)}
+        {/* Right-side action buttons */}
+        <div className="no-drag" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {streaming && (
+            <button
+              type="button"
+              onClick={() => void cancel()}
               style={{
-                padding: "4px 8px",
-                borderRadius: 99,
+                padding: "4px 10px",
+                borderRadius: "var(--radius-sm)",
+                background: "rgba(248, 113, 113, 0.10)",
+                color: "var(--danger)",
+                border: "1px solid rgba(248, 113, 113, 0.2)",
                 fontSize: 11,
-                background: "rgba(255,255,255,0.04)",
-                color: "var(--text-2)",
-                border: "1px solid var(--border)",
+                fontWeight: 500,
                 cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
               }}
-              title="Thinking budget"
             >
-              {supportedEfforts.map((option) => (
-                <option key={option.reasoningEffort} value={option.reasoningEffort} style={{ color: "black" }}>
-                  thinking: {option.reasoningEffort}
-                </option>
-              ))}
-            </select>
+              <Square size={10} fill="currentColor" />
+              Stop
+            </button>
           )}
 
+          {/* Trust level indicator */}
           {activeRepo && (
-            <select
+            <Dropdown
               value={activeRepo.trustLevel}
-              onChange={(event) =>
-                void onRepoTrustLevelChange(event.target.value as TrustLevel)
+              onChange={(v) => void onRepoTrustLevelChange(v as TrustLevel)}
+              title="Execution policy"
+              options={[
+                { value: "trusted", label: "trusted" },
+                { value: "standard", label: "ask-on-request" },
+                { value: "restricted", label: "restricted" },
+              ]}
+              triggerStyle={
+                activeRepo.trustLevel === "trusted"
+                  ? {
+                      background: "rgba(52, 211, 153, 0.12)",
+                      color: "var(--success)",
+                      border: "1px solid rgba(52, 211, 153, 0.25)",
+                    }
+                  : undefined
               }
-              style={{
-                padding: "4px 8px",
-                borderRadius: 99,
-                fontSize: 11,
-                background:
-                  activeRepo.trustLevel === "trusted"
-                    ? "rgba(52, 211, 153, 0.16)"
-                    : "rgba(255,255,255,0.04)",
-                color:
-                  activeRepo.trustLevel === "trusted"
-                    ? "var(--success)"
-                    : "var(--text-2)",
-                border:
-                  activeRepo.trustLevel === "trusted"
-                    ? "1px solid rgba(52, 211, 153, 0.35)"
-                    : "1px solid var(--border)",
-                cursor: "pointer",
-              }}
-              title="Execution policy for this repository"
-            >
-              <option value="trusted" style={{ color: "black" }}>
-                exec: trusted
-              </option>
-              <option value="standard" style={{ color: "black" }}>
-                exec: ask-on-request
-              </option>
-              <option value="restricted" style={{ color: "black" }}>
-                exec: restricted
-              </option>
-            </select>
+            />
           )}
           {!activeRepo && repos.length > 0 && (
-            <select
+            <Dropdown
               value={workspaceTrustLevel}
-              onChange={(event) =>
-                void onWorkspaceTrustLevelChange(event.target.value as TrustLevel)
+              onChange={(v) => void onWorkspaceTrustLevelChange(v as TrustLevel)}
+              title="Workspace execution policy"
+              options={[
+                { value: "trusted", label: "trusted" },
+                { value: "standard", label: "ask-on-request" },
+                { value: "restricted", label: "restricted" },
+              ]}
+              triggerStyle={
+                workspaceTrustLevel === "trusted"
+                  ? {
+                      background: "rgba(52, 211, 153, 0.12)",
+                      color: "var(--success)",
+                      border: "1px solid rgba(52, 211, 153, 0.25)",
+                    }
+                  : undefined
               }
-              style={{
-                padding: "4px 8px",
-                borderRadius: 99,
-                fontSize: 11,
-                background:
-                  workspaceTrustLevel === "trusted"
-                    ? "rgba(52, 211, 153, 0.16)"
-                    : "rgba(255,255,255,0.04)",
-                color:
-                  workspaceTrustLevel === "trusted"
-                    ? "var(--success)"
-                    : "var(--text-2)",
-                border:
-                  workspaceTrustLevel === "trusted"
-                    ? "1px solid rgba(52, 211, 153, 0.35)"
-                    : "1px solid var(--border)",
-                cursor: "pointer",
-              }}
-              title="Execution policy for workspace chat (applies to all repositories in this workspace)."
-            >
-              <option value="trusted" style={{ color: "black" }}>
-                exec(workspace): trusted
-              </option>
-              <option value="standard" style={{ color: "black" }}>
-                exec(workspace): ask-on-request
-              </option>
-              <option value="restricted" style={{ color: "black" }}>
-                exec(workspace): restricted
-              </option>
-            </select>
+            />
           )}
 
+          {/* Git stats badge */}
+          {totalAdded > 0 && (
+            <span
+              style={{
+                fontSize: 11,
+                color: "var(--text-3)",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                padding: "3px 8px",
+                borderRadius: 99,
+                background: "var(--bg-3)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              <span style={{ color: "var(--success)" }}>+{totalAdded}</span>
+              files
+            </span>
+          )}
         </div>
       </div>
 
@@ -617,14 +591,14 @@ export function ChatPanel() {
                 width: 56,
                 height: 56,
                 borderRadius: "var(--radius-lg)",
-                background: "var(--accent-dim)",
-                border: "1px solid var(--border-accent)",
+                background: "var(--bg-3)",
+                border: "1px solid var(--border)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
               }}
             >
-              <Send size={22} style={{ color: "var(--accent)", opacity: 0.7 }} />
+              <Send size={22} style={{ color: "var(--text-2)", opacity: 0.5 }} />
             </div>
             <div>
               <p style={{ margin: "0 0 4px", fontSize: 14, fontWeight: 500, color: "var(--text-2)" }}>
@@ -652,14 +626,13 @@ export function ChatPanel() {
                   }}
                 >
                   {isUser ? (
-                    /* ── User Message Bubble ── */
                     <div
                       style={{
                         maxWidth: "75%",
                         padding: "10px 14px",
                         borderRadius: "var(--radius-md)",
-                        background: "var(--bg-4)",
-                        border: "1px solid var(--border-active)",
+                        background: "var(--bg-3)",
+                        border: "1px solid var(--border)",
                         fontSize: 13,
                         lineHeight: 1.6,
                         whiteSpace: "pre-wrap",
@@ -669,7 +642,6 @@ export function ChatPanel() {
                       {message.content || (message.blocks ?? []).filter((b) => b.type === "text").map((b) => b.content).join("\n")}
                     </div>
                   ) : (
-                    /* ── Assistant Message ── */
                     <div style={{ width: "100%", maxWidth: "100%" }}>
                       <MessageBlocks
                         blocks={message.blocks}
@@ -684,7 +656,6 @@ export function ChatPanel() {
               );
             })}
 
-            {/* Streaming indicator */}
             {streaming && (
               <div
                 className="animate-fade-in"
@@ -692,7 +663,7 @@ export function ChatPanel() {
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
-                  color: "var(--accent)",
+                  color: "var(--text-2)",
                   fontSize: 12,
                   padding: "4px 0",
                 }}
@@ -708,7 +679,7 @@ export function ChatPanel() {
       {/* ── Input Area ── */}
       <div
         style={{
-          padding: "12px 16px 14px",
+          padding: "10px 16px 12px",
           borderTop: "1px solid var(--border)",
         }}
       >
@@ -720,12 +691,13 @@ export function ChatPanel() {
             gap: 8,
           }}
         >
+          {/* Pending approvals */}
           {pendingApprovals.length > 0 && (
             <div
               style={{
                 borderRadius: "var(--radius-lg)",
-                border: "1px solid rgba(251, 191, 36, 0.22)",
-                background: "rgba(251, 191, 36, 0.05)",
+                border: "1px solid rgba(251, 191, 36, 0.18)",
+                background: "rgba(251, 191, 36, 0.04)",
                 padding: "10px 12px",
               }}
             >
@@ -821,7 +793,7 @@ export function ChatPanel() {
                         gap: 10,
                         padding: "8px 10px",
                         borderRadius: "var(--radius-md)",
-                        background: "rgba(0,0,0,0.18)",
+                        background: "rgba(0,0,0,0.25)",
                         border: "1px solid rgba(255,255,255,0.06)",
                       }}
                     >
@@ -990,10 +962,11 @@ export function ChatPanel() {
 
           {/* Input container */}
           <div
-            className="glass-subtle"
             style={{
               borderRadius: "var(--radius-lg)",
               overflow: "hidden",
+              background: "var(--bg-2)",
+              border: "1px solid var(--border)",
               transition: "border-color var(--duration-fast) var(--ease-out)",
             }}
           >
@@ -1011,7 +984,7 @@ export function ChatPanel() {
                   void onSubmit(e);
                 }
               }}
-              placeholder="Ask the agent to inspect, edit, or run tasks..."
+              placeholder="Ask for follow-up changes"
               disabled={!activeWorkspaceId}
               style={{
                 width: "100%",
@@ -1025,13 +998,13 @@ export function ChatPanel() {
               }}
             />
 
-            {/* Input toolbar */}
+            {/* Input toolbar with selectors */}
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
                 padding: "6px 10px",
-                gap: 4,
+                gap: 6,
               }}
             >
               <button
@@ -1043,19 +1016,60 @@ export function ChatPanel() {
                   cursor: "pointer",
                 }}
               >
-                <Paperclip size={14} />
+                <Plus size={14} />
               </button>
+
+              {/* Engine + Model selector */}
+              <Dropdown
+                value={selectedModelId ?? ""}
+                onChange={(v) => setSelectedModelId(v || null)}
+                disabled={availableModels.length === 0}
+                title="Select model"
+                options={availableModels.map((model) => ({
+                  value: model.id,
+                  label: `${selectedEngine?.name ? `${selectedEngine.name} ` : ""}${model.displayName}${model.isDefault ? " (default)" : ""}`,
+                }))}
+              />
+
+              {/* Reasoning effort */}
+              {selectedEngineId === "codex" && supportedEfforts.length > 0 && (
+                <Dropdown
+                  value={selectedEffort}
+                  onChange={(v) => void onReasoningEffortChange(v)}
+                  title="Thinking budget"
+                  options={supportedEfforts.map((option) => ({
+                    value: option.reasoningEffort,
+                    label:
+                      option.reasoningEffort.charAt(0).toUpperCase() +
+                      option.reasoningEffort.slice(1),
+                  }))}
+                />
+              )}
 
               <div style={{ flex: 1 }} />
 
+              {/* Mic button (placeholder) */}
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{
+                  padding: 5,
+                  borderRadius: "var(--radius-sm)",
+                  cursor: "pointer",
+                }}
+              >
+                <Mic size={14} />
+              </button>
+
+              {/* Send button */}
               {streaming ? (
                 <button
                   type="button"
                   onClick={() => void cancel()}
                   style={{
-                    padding: "5px 12px",
+                    padding: "5px 10px",
                     borderRadius: "var(--radius-sm)",
-                    background: "rgba(248, 113, 113, 0.12)",
+                    background: "rgba(248, 113, 113, 0.10)",
                     color: "var(--danger)",
                     border: "1px solid rgba(248, 113, 113, 0.2)",
                     fontSize: 12,
@@ -1064,7 +1078,6 @@ export function ChatPanel() {
                     display: "flex",
                     alignItems: "center",
                     gap: 5,
-                    transition: "all var(--duration-fast) var(--ease-out)",
                   }}
                 >
                   <Square size={11} fill="currentColor" />
@@ -1075,26 +1088,25 @@ export function ChatPanel() {
                   type="submit"
                   disabled={!activeWorkspaceId || !input.trim()}
                   style={{
-                    padding: "5px 10px",
-                    borderRadius: "var(--radius-sm)",
+                    width: 30,
+                    height: 30,
+                    borderRadius: "50%",
                     background:
                       activeWorkspaceId && input.trim()
-                        ? "var(--accent)"
-                        : "rgba(255,255,255,0.06)",
+                        ? "var(--text-1)"
+                        : "var(--bg-4)",
                     color:
                       activeWorkspaceId && input.trim()
-                        ? "var(--bg-1)"
+                        ? "var(--bg-0)"
                         : "var(--text-3)",
                     cursor: activeWorkspaceId && input.trim() ? "pointer" : "default",
                     display: "flex",
                     alignItems: "center",
-                    gap: 5,
-                    fontSize: 12,
-                    fontWeight: 600,
+                    justifyContent: "center",
                     transition: "all var(--duration-fast) var(--ease-out)",
                   }}
                 >
-                  <Send size={12} />
+                  <Send size={13} />
                 </button>
               )}
             </div>
@@ -1105,28 +1117,43 @@ export function ChatPanel() {
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 8,
+              gap: 12,
               padding: "0 4px",
               fontSize: 11,
               color: "var(--text-3)",
             }}
           >
+            {/* Local indicator */}
             <span
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 4,
-                padding: "2px 8px",
-                borderRadius: 99,
-                background: "rgba(255,255,255,0.03)",
-                border: "1px solid var(--border)",
+                gap: 5,
               }}
             >
-              {activeThread?.engineId ?? "codex"}
+              <Monitor size={11} />
+              Local
+            </span>
+
+            {/* Permissions */}
+            <span
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+              }}
+            >
+              <Shield size={11} />
+              {activeRepo?.trustLevel === "trusted"
+                ? "Trusted"
+                : activeRepo?.trustLevel === "restricted"
+                  ? "Restricted"
+                  : "Default permissions"}
             </span>
 
             <div style={{ flex: 1 }} />
 
+            {/* Branch */}
             {gitStatus?.branch && (
               <span
                 style={{
@@ -1148,7 +1175,7 @@ export function ChatPanel() {
               marginTop: 8,
               padding: "8px 12px",
               borderRadius: "var(--radius-sm)",
-              background: "rgba(248, 113, 113, 0.08)",
+              background: "rgba(248, 113, 113, 0.06)",
               border: "1px solid rgba(248, 113, 113, 0.15)",
               color: "var(--danger)",
               fontSize: 12,
