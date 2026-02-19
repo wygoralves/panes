@@ -131,7 +131,11 @@ pub fn list_git_branches(
         GitBranchScopeDto::Remote => "refs/remotes",
     };
 
-    let format = "%(refname:short)%x1f%(refname)%x1f%(upstream:short)%x1f%(upstream:track)%x1f%(committerdate:iso-strict)%x1e";
+    let format = format!(
+        "%(refname:short){f}%(refname){f}%(upstream:short){f}%(upstream:track){f}%(committerdate:iso-strict){r}",
+        f = GIT_FIELD_SEPARATOR,
+        r = GIT_RECORD_SEPARATOR
+    );
     let format_arg = format!("--format={format}");
     let output = run_git(
         repo_path,
@@ -298,7 +302,11 @@ pub fn list_git_commits(
 
     let skip_arg = format!("--skip={offset}");
     let count_arg = format!("--max-count={limit}");
-    let format_arg = "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%s%x1f%b%x1f%cI%x1e";
+    let format_arg = format!(
+        "--pretty=format:%H{f}%h{f}%an{f}%ae{f}%s{f}%b{f}%cI{r}",
+        f = GIT_FIELD_SEPARATOR,
+        r = GIT_RECORD_SEPARATOR
+    );
 
     let output = run_git(
         repo_path,
@@ -308,7 +316,7 @@ pub fn list_git_commits(
             "--date=iso-strict",
             skip_arg.as_str(),
             count_arg.as_str(),
-            format_arg,
+            format_arg.as_str(),
         ],
     )
     .context("failed to list git commits")?;
@@ -348,7 +356,11 @@ pub fn list_git_commits(
 }
 
 pub fn list_git_stashes(repo_path: &str) -> anyhow::Result<Vec<GitStashDto>> {
-    let format = "%gd%x1f%gs%x1f%cI%x1e";
+    let format = format!(
+        "%gd{f}%gs{f}%cI{r}",
+        f = GIT_FIELD_SEPARATOR,
+        r = GIT_RECORD_SEPARATOR
+    );
     let format_arg = format!("--format={format}");
     let output = run_git(
         repo_path,
