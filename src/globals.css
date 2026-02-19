@@ -5,15 +5,15 @@
   /* Backgrounds — pitch black */
   --bg-0: #000000;
   --bg-1: #000000;
-  --bg-2: #0a0a0a;
-  --bg-3: #111111;
-  --bg-4: #1a1a1a;
-  --bg-5: #222222;
+  --bg-2: #0c0c0c;
+  --bg-3: #161616;
+  --bg-4: #212121;
+  --bg-5: #2a2a2a;
 
   /* Text */
-  --text-1: #e8e8e8;
-  --text-2: #888888;
-  --text-3: #555555;
+  --text-1: #f0f0f0;
+  --text-2: #999999;
+  --text-3: #636363;
 
   /* Accent — Electric Teal */
   --accent: #0ef0c3;
@@ -29,8 +29,8 @@
   --info: #60a5fa;
 
   /* Borders */
-  --border: rgba(255, 255, 255, 0.08);
-  --border-active: rgba(255, 255, 255, 0.14);
+  --border: rgba(255, 255, 255, 0.12);
+  --border-active: rgba(255, 255, 255, 0.20);
   --border-accent: rgba(14, 240, 195, 0.20);
 
   /* Glass */
