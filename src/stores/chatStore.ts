@@ -17,7 +17,7 @@ interface ChatState {
   error?: string;
   unlisten?: () => void;
   setActiveThread: (threadId: string | null) => Promise<void>;
-  send: (message: string) => Promise<void>;
+  send: (message: string, threadIdOverride?: string) => Promise<void>;
   cancel: () => Promise<void>;
   respondApproval: (approvalId: string, response: Record<string, unknown>) => Promise<void>;
 }
@@ -87,7 +87,14 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
   }
 
   if (event.type === "ThinkingDelta") {
-    assistant.blocks = [...blocks, { type: "thinking", content: String(event.content ?? "") }];
+    const delta = String(event.content ?? "");
+    const last = blocks[blocks.length - 1];
+    if (last?.type === "thinking") {
+      last.content += delta;
+      assistant.blocks = [...blocks.slice(0, -1), last];
+    } else {
+      assistant.blocks = [...blocks, { type: "thinking", content: delta }];
+    }
   }
 
   if (event.type === "ActionStarted") {
@@ -184,10 +191,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   status: "idle",
   streaming: false,
   setActiveThread: async (threadId) => {
+    const currentThreadId = get().threadId;
+    const currentUnlisten = get().unlisten;
+    if (threadId && threadId === currentThreadId && currentUnlisten) {
+      return;
+    }
+
     activeThreadBindSeq += 1;
     const bindSeq = activeThreadBindSeq;
 
-    const current = get().unlisten;
+    const current = currentUnlisten;
     if (current) {
       current();
     }
@@ -238,8 +251,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ threadId, messages: [], error: String(error) });
     }
   },
-  send: async (message) => {
-    const threadId = get().threadId;
+  send: async (message, threadIdOverride) => {
+    const state = get();
+    if (state.streaming) {
+      set({ error: "A turn is already in progress for this thread." });
+      return;
+    }
+
+    const threadId = threadIdOverride ?? state.threadId;
     if (!threadId) {
       set({ error: "No active thread selected" });
       return;

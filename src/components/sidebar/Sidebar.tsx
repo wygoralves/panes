@@ -7,6 +7,7 @@ import {
   MessageSquare,
   ChevronDown,
   ChevronRight,
+  Trash2,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -41,9 +42,10 @@ export function Sidebar() {
     setActiveWorkspace,
     setActiveRepo,
     openWorkspace,
+    removeWorkspace,
     error,
   } = useWorkspaceStore();
-  const { threads, activeThreadId, setActiveThread } = useThreadStore();
+  const { threads, activeThreadId, setActiveThread, removeThread } = useThreadStore();
   const bindChatThread = useChatStore((s) => s.setActiveThread);
 
   const projects = useMemo<ProjectGroup[]>(() => {
@@ -78,6 +80,39 @@ export function Sidebar() {
     // Expand the folder and switch workspace
     setCollapsed((prev) => ({ ...prev, [wsId]: false }));
     await setActiveWorkspace(wsId);
+  }
+
+  async function onDeleteWorkspace(project: Workspace) {
+    const confirmed = window.confirm(
+      `Remove workspace "${project.name}" and all related repos/threads/messages? This cannot be undone.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const wasActive = project.id === activeWorkspaceId;
+    await removeWorkspace(project.id);
+
+    if (wasActive) {
+      setActiveThread(null);
+      await bindChatThread(null);
+    }
+  }
+
+  async function onDeleteThread(thread: Thread) {
+    const threadLabel = thread.title?.trim() || "Untitled thread";
+    const confirmed = window.confirm(`Delete thread "${threadLabel}"? This cannot be undone.`);
+    if (!confirmed) {
+      return;
+    }
+
+    const wasActive = thread.id === activeThreadId;
+    await removeThread(thread.id);
+
+    if (wasActive) {
+      setActiveThread(null);
+      await bindChatThread(null);
+    }
   }
 
   return (
@@ -258,6 +293,29 @@ export function Sidebar() {
                       {project.threads.length}
                     </span>
                   )}
+
+                  <span
+                    role="button"
+                    title="Remove workspace"
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void onDeleteWorkspace(project.workspace);
+                    }}
+                    style={{
+                      marginLeft: 4,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 18,
+                      height: 18,
+                      borderRadius: 6,
+                      color: "var(--text-3)",
+                      opacity: 0.65,
+                    }}
+                  >
+                    <Trash2 size={11} />
+                  </span>
                 </button>
 
                 {/* ── Chats inside this project ── */}
@@ -340,6 +398,28 @@ export function Sidebar() {
                               }}
                             >
                               {thread.title || "Untitled thread"}
+                            </span>
+
+                            <span
+                              role="button"
+                              title="Delete thread"
+                              onMouseDown={(event) => event.stopPropagation()}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void onDeleteThread(thread);
+                              }}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                width: 18,
+                                height: 18,
+                                borderRadius: 6,
+                                color: "var(--text-3)",
+                                opacity: 0.65,
+                              }}
+                            >
+                              <Trash2 size={11} />
                             </span>
 
                             {/* Relative time */}

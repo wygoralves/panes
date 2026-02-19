@@ -33,6 +33,7 @@ export interface Thread {
   engineId: "codex" | "claude";
   modelId: string;
   engineThreadId: string | null;
+  engineMetadata?: Record<string, unknown>;
   title: string;
   status: ThreadStatus;
   messageCount: number;
@@ -133,7 +134,23 @@ export type ContentBlock =
 export interface EngineInfo {
   id: string;
   name: string;
-  models: string[];
+  models: EngineModel[];
+}
+
+export interface EngineModel {
+  id: string;
+  displayName: string;
+  description: string;
+  hidden: boolean;
+  isDefault: boolean;
+  upgrade?: string;
+  defaultReasoningEffort: string;
+  supportedReasoningEfforts: ReasoningEffortOption[];
+}
+
+export interface ReasoningEffortOption {
+  reasoningEffort: string;
+  description: string;
 }
 
 export interface EngineHealth {
@@ -141,6 +158,12 @@ export interface EngineHealth {
   available: boolean;
   version?: string;
   details?: string;
+}
+
+export interface SearchResult {
+  threadId: string;
+  messageId: string;
+  snippet: string;
 }
 
 export interface GitFileStatus {

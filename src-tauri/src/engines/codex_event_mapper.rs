@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 use uuid::Uuid;
@@ -10,6 +10,7 @@ pub struct TurnEventMapper {
     engine_action_to_internal: HashMap<String, String>,
     pending_actions_without_engine_id: Vec<String>,
     latest_token_usage: Option<TokenUsage>,
+    streamed_agent_message_items: HashSet<String>,
 }
 
 pub struct ApprovalRequest {
@@ -59,6 +60,9 @@ impl TurnEventMapper {
                 }]
             }
             "item/agentmessage/delta" => {
+                if let Some(item_id) = extract_any_string(params, &["itemId", "item_id", "id"]) {
+                    self.streamed_agent_message_items.insert(item_id);
+                }
                 let content =
                     extract_any_string(params, &["delta", "text", "content"]).unwrap_or_default();
                 if content.is_empty() {
@@ -179,7 +183,7 @@ impl TurnEventMapper {
             _ => return None,
         };
 
-        let approval_id = extract_any_string(params, &["itemId", "approvalId", "id"])
+        let approval_id = extract_any_string(params, &["approvalId", "itemId", "id"])
             .unwrap_or_else(|| request_id.to_string());
 
         let mut details = params.clone();
@@ -266,14 +270,7 @@ impl TurnEventMapper {
                     details: item.clone(),
                 }]
             }
-            "agentMessage" => {
-                let text = extract_any_string(item, &["text"]).unwrap_or_default();
-                if text.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![EngineEvent::TextDelta { content: text }]
-                }
-            }
+            "agentMessage" => Vec::new(),
             "plan" => {
                 let text = extract_any_string(item, &["text"]).unwrap_or_default();
                 if text.is_empty() {
@@ -340,6 +337,11 @@ impl TurnEventMapper {
                 }]
             }
             "agentMessage" => {
+                if let Some(item_id) = extract_any_string(item, &["id"]) {
+                    if self.streamed_agent_message_items.remove(&item_id) {
+                        return Vec::new();
+                    }
+                }
                 let text = extract_any_string(item, &["text"]).unwrap_or_default();
                 if text.is_empty() {
                     Vec::new()
@@ -417,6 +419,7 @@ impl TurnEventMapper {
         }
     }
 }
+
 
 fn extract_token_usage(value: &Value) -> Option<TokenUsage> {
     let mut candidates: Vec<&Value> = vec![value];

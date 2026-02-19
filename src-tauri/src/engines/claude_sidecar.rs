@@ -3,7 +3,10 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::{Engine, EngineEvent, EngineThread, ModelInfo, SandboxPolicy, ThreadScope, TokenUsage};
+use super::{
+    Engine, EngineEvent, EngineThread, ModelInfo, ReasoningEffortOption, SandboxPolicy,
+    ThreadScope, TokenUsage,
+};
 
 #[derive(Default)]
 pub struct ClaudeSidecarEngine;
@@ -21,7 +24,26 @@ impl Engine for ClaudeSidecarEngine {
     fn models(&self) -> Vec<ModelInfo> {
         vec![ModelInfo {
             id: "claude-sonnet-4".to_string(),
-            name: "Claude Sonnet 4".to_string(),
+            display_name: "Claude Sonnet 4".to_string(),
+            description: "Claude sidecar model scaffold".to_string(),
+            hidden: false,
+            is_default: true,
+            upgrade: None,
+            default_reasoning_effort: "medium".to_string(),
+            supported_reasoning_efforts: vec![
+                ReasoningEffortOption {
+                    reasoning_effort: "low".to_string(),
+                    description: "Low reasoning effort".to_string(),
+                },
+                ReasoningEffortOption {
+                    reasoning_effort: "medium".to_string(),
+                    description: "Balanced reasoning effort".to_string(),
+                },
+                ReasoningEffortOption {
+                    reasoning_effort: "high".to_string(),
+                    description: "High reasoning effort".to_string(),
+                },
+            ],
         }]
     }
 

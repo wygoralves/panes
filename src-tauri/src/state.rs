@@ -23,11 +23,14 @@ pub struct TurnManager {
 }
 
 impl TurnManager {
-    pub async fn register(&self, thread_id: &str, token: CancellationToken) {
-        self.active
-            .write()
-            .await
-            .insert(thread_id.to_string(), token);
+    pub async fn try_register(&self, thread_id: &str, token: CancellationToken) -> bool {
+        let mut active = self.active.write().await;
+        if active.contains_key(thread_id) {
+            return false;
+        }
+
+        active.insert(thread_id.to_string(), token);
+        true
     }
 
     pub async fn get(&self, thread_id: &str) -> Option<CancellationToken> {

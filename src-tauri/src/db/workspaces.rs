@@ -77,6 +77,22 @@ pub fn ensure_default_workspace(db: &Database) -> anyhow::Result<WorkspaceDto> {
     upsert_workspace(db, &cwd, 3)
 }
 
+pub fn delete_workspace(db: &Database, workspace_id: &str) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    let affected = conn
+        .execute(
+            "DELETE FROM workspaces WHERE id = ?1",
+            params![workspace_id],
+        )
+        .context("failed to delete workspace")?;
+
+    if affected == 0 {
+        anyhow::bail!("workspace not found: {workspace_id}");
+    }
+
+    Ok(())
+}
+
 fn get_workspace_by_root(
     conn: &rusqlite::Connection,
     root_path: &str,

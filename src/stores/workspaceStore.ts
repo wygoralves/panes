@@ -11,6 +11,7 @@ interface WorkspaceState {
   error?: string;
   loadWorkspaces: () => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
+  removeWorkspace: (workspaceId: string) => Promise<void>;
   loadRepos: (workspaceId: string) => Promise<void>;
   setActiveWorkspace: (workspaceId: string) => Promise<void>;
   setActiveRepo: (repoId: string | null) => void;
@@ -43,6 +44,31 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const workspaces = [workspace, ...current];
       set({ workspaces, activeWorkspaceId: workspace.id, loading: false });
       await get().loadRepos(workspace.id);
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+    }
+  },
+  removeWorkspace: async (workspaceId) => {
+    set({ loading: true, error: undefined });
+    try {
+      await ipc.deleteWorkspace(workspaceId);
+      const remaining = get().workspaces.filter((workspace) => workspace.id !== workspaceId);
+      const nextActive =
+        get().activeWorkspaceId === workspaceId
+          ? remaining[0]?.id ?? null
+          : get().activeWorkspaceId;
+
+      set({
+        workspaces: remaining,
+        activeWorkspaceId: nextActive,
+        loading: false,
+      });
+
+      if (nextActive) {
+        await get().loadRepos(nextActive);
+      } else {
+        set({ repos: [], activeRepoId: null });
+      }
     } catch (error) {
       set({ loading: false, error: String(error) });
     }

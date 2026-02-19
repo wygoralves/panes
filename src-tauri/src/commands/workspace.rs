@@ -28,12 +28,6 @@ pub async fn open_workspace(
         );
     }
 
-    let _ = db::threads::ensure_workspace_thread(
-        &state.db,
-        &workspace.id,
-        &state.config.general.default_engine,
-        &state.config.general.default_model,
-    );
     Ok(workspace)
 }
 
@@ -57,6 +51,14 @@ pub async fn set_repo_trust_level(
     trust_level: TrustLevelDto,
 ) -> Result<(), String> {
     db::repos::set_repo_trust_level(&state.db, &repo_id, trust_level).map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn delete_workspace(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<(), String> {
+    db::workspaces::delete_workspace(&state.db, &workspace_id).map_err(err_to_string)
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {

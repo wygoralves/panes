@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     engines::{claude_sidecar::ClaudeSidecarEngine, codex::CodexEngine},
-    models::{EngineHealthDto, EngineInfoDto, ThreadDto},
+    models::{EngineHealthDto, EngineInfoDto, EngineModelDto, ReasoningEffortOptionDto, ThreadDto},
 };
 
 pub mod api_direct;
@@ -35,12 +35,26 @@ pub enum ThreadScope {
 pub struct SandboxPolicy {
     pub writable_roots: Vec<String>,
     pub allow_network: bool,
+    pub approval_policy: Option<String>,
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ModelInfo {
     pub id: String,
-    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    pub hidden: bool,
+    pub is_default: bool,
+    pub upgrade: Option<String>,
+    pub default_reasoning_effort: String,
+    pub supported_reasoning_efforts: Vec<ReasoningEffortOption>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReasoningEffortOption {
+    pub reasoning_effort: String,
+    pub description: String,
 }
 
 #[derive(Debug, Clone)]
@@ -99,16 +113,19 @@ impl EngineManager {
     }
 
     pub async fn list_engines(&self) -> anyhow::Result<Vec<EngineInfoDto>> {
+        let codex_models = self.codex.list_models_runtime().await;
+        let claude_models = self.claude.models();
+
         Ok(vec![
             EngineInfoDto {
                 id: self.codex.id().to_string(),
                 name: self.codex.name().to_string(),
-                models: self.codex.models().into_iter().map(|m| m.id).collect(),
+                models: codex_models.into_iter().map(map_model_info).collect(),
             },
             EngineInfoDto {
                 id: self.claude.id().to_string(),
                 name: self.claude.name().to_string(),
-                models: self.claude.models().into_iter().map(|m| m.id).collect(),
+                models: claude_models.into_iter().map(map_model_info).collect(),
             },
         ])
     }
@@ -214,5 +231,25 @@ impl EngineManager {
             "claude" => self.claude.interrupt(engine_thread_id).await,
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         }
+    }
+}
+
+fn map_model_info(model: ModelInfo) -> EngineModelDto {
+    EngineModelDto {
+        id: model.id,
+        display_name: model.display_name,
+        description: model.description,
+        hidden: model.hidden,
+        is_default: model.is_default,
+        upgrade: model.upgrade,
+        default_reasoning_effort: model.default_reasoning_effort,
+        supported_reasoning_efforts: model
+            .supported_reasoning_efforts
+            .into_iter()
+            .map(|option| ReasoningEffortOptionDto {
+                reasoning_effort: option.reasoning_effort,
+                description: option.description,
+            })
+            .collect(),
     }
 }

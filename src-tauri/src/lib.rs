@@ -21,15 +21,8 @@ pub fn run() {
     let db = Database::init().expect("failed to initialize database");
     let app_config = AppConfig::load_or_create().expect("failed to load config");
 
-    let workspace =
+    let _ =
         db::workspaces::ensure_default_workspace(&db).expect("failed to ensure default workspace");
-    db::threads::ensure_workspace_thread(
-        &db,
-        &workspace.id,
-        &app_config.general.default_engine,
-        &app_config.general.default_model,
-    )
-    .expect("failed to ensure workspace thread");
 
     let app_state = AppState {
         db,
@@ -55,6 +48,7 @@ pub fn run() {
             commands::workspace::list_workspaces,
             commands::workspace::get_repos,
             commands::workspace::set_repo_trust_level,
+            commands::workspace::delete_workspace,
             commands::git::get_git_status,
             commands::git::get_file_diff,
             commands::git::stage_files,
@@ -66,6 +60,9 @@ pub fn run() {
             commands::engines::engine_health,
             commands::threads::list_threads,
             commands::threads::create_thread,
+            commands::threads::confirm_workspace_thread,
+            commands::threads::set_thread_reasoning_effort,
+            commands::threads::delete_thread,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

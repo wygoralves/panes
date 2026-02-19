@@ -9,7 +9,9 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     db,
     engines::{EngineEvent, OutputStream, SandboxPolicy, ThreadScope},
-    models::{MessageDto, MessageStatusDto, SearchResultDto, ThreadStatusDto},
+    models::{
+        MessageDto, MessageStatusDto, RepoDto, SearchResultDto, ThreadStatusDto, TrustLevelDto,
+    },
     state::AppState,
 };
 
@@ -89,6 +91,13 @@ pub async fn send_message(
     thread_id: String,
     message: String,
 ) -> Result<String, String> {
+    if state.turns.get(&thread_id).await.is_some() {
+        return Err(
+            "A turn is already running for this thread. Cancel it before sending another message."
+                .to_string(),
+        );
+    }
+
     let mut thread = db::threads::get_thread(&state.db, &thread_id)
         .map_err(err_to_string)?
         .ok_or_else(|| format!("thread not found: {thread_id}"))?;
@@ -99,24 +108,17 @@ pub async fn send_message(
         .find(|item| item.id == thread.workspace_id)
         .ok_or_else(|| format!("workspace not found for thread {}", thread.id))?;
 
-    db::messages::insert_user_message(&state.db, &thread.id, &message).map_err(err_to_string)?;
-    let assistant_message =
-        db::messages::insert_assistant_placeholder(&state.db, &thread.id).map_err(err_to_string)?;
-    db::threads::update_thread_status(&state.db, &thread.id, ThreadStatusDto::Streaming)
-        .map_err(err_to_string)?;
-
     let repos = db::repos::get_repos(&state.db, &thread.workspace_id).map_err(err_to_string)?;
+    let selected_repo = if let Some(repo_id) = &thread.repo_id {
+        db::repos::find_repo_by_id(&state.db, repo_id).map_err(err_to_string)?
+    } else {
+        None
+    };
+
     let workspace_root = workspace.root_path.clone();
-    let scope = if let Some(repo_id) = &thread.repo_id {
-        if let Some(repo) = db::repos::find_repo_by_id(&state.db, repo_id).map_err(err_to_string)? {
-            ThreadScope::Repo {
-                repo_path: repo.path.clone(),
-            }
-        } else {
-            ThreadScope::Workspace {
-                root_path: workspace_root.clone(),
-                writable_roots: repos.iter().map(|repo| repo.path.clone()).collect(),
-            }
+    let scope = if let Some(repo) = selected_repo.as_ref() {
+        ThreadScope::Repo {
+            repo_path: repo.path.clone(),
         }
     } else {
         ThreadScope::Workspace {
@@ -124,6 +126,28 @@ pub async fn send_message(
             writable_roots: repos.iter().map(|repo| repo.path.clone()).collect(),
         }
     };
+
+    if let ThreadScope::Workspace { writable_roots, .. } = &scope {
+        if writable_roots.len() > 1
+            && !workspace_write_opt_in_enabled(thread.engine_metadata.as_ref())
+        {
+            return Err(
+                "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
+            );
+        }
+    }
+
+    let trust_level = selected_repo
+        .as_ref()
+        .map(|repo| repo.trust_level.clone())
+        .unwrap_or_else(|| aggregate_workspace_trust_level(&repos));
+    let reasoning_effort = thread_reasoning_effort(thread.engine_metadata.as_ref());
+
+    db::messages::insert_user_message(&state.db, &thread.id, &message).map_err(err_to_string)?;
+    let assistant_message =
+        db::messages::insert_assistant_placeholder(&state.db, &thread.id).map_err(err_to_string)?;
+    db::threads::update_thread_status(&state.db, &thread.id, ThreadStatusDto::Streaming)
+        .map_err(err_to_string)?;
 
     let writable_roots = match &scope {
         ThreadScope::Repo { repo_path } => vec![repo_path.clone()],
@@ -142,6 +166,8 @@ pub async fn send_message(
     let sandbox = SandboxPolicy {
         writable_roots,
         allow_network: false,
+        approval_policy: Some(approval_policy_for_trust_level(&trust_level).to_string()),
+        reasoning_effort,
     };
 
     let engine_thread_id = state
@@ -157,7 +183,16 @@ pub async fn send_message(
     }
 
     let cancellation = CancellationToken::new();
-    state.turns.register(&thread.id, cancellation.clone()).await;
+    if !state
+        .turns
+        .try_register(&thread.id, cancellation.clone())
+        .await
+    {
+        return Err(
+            "A turn is already running for this thread. Cancel it before sending another message."
+                .to_string(),
+        );
+    }
 
     let state_cloned = state.inner().clone();
     let app_handle = app.clone();
@@ -609,6 +644,47 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     let mut output = value.chars().take(max_chars).collect::<String>();
     output.push_str("\n... [truncated]");
     output
+}
+
+fn workspace_write_opt_in_enabled(metadata: Option<&Value>) -> bool {
+    metadata
+        .and_then(|value| value.get("workspaceWriteOptIn"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn aggregate_workspace_trust_level(repos: &[RepoDto]) -> TrustLevelDto {
+    if repos
+        .iter()
+        .any(|repo| matches!(repo.trust_level, TrustLevelDto::Restricted))
+    {
+        return TrustLevelDto::Restricted;
+    }
+
+    if !repos.is_empty()
+        && repos
+            .iter()
+            .all(|repo| matches!(repo.trust_level, TrustLevelDto::Trusted))
+    {
+        return TrustLevelDto::Trusted;
+    }
+
+    TrustLevelDto::Standard
+}
+
+fn approval_policy_for_trust_level(trust_level: &TrustLevelDto) -> &'static str {
+    match trust_level {
+        TrustLevelDto::Trusted => "on-failure",
+        TrustLevelDto::Standard => "on-request",
+        TrustLevelDto::Restricted => "untrusted",
+    }
+}
+
+fn thread_reasoning_effort(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("reasoningEffort"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {

@@ -6,15 +6,22 @@ import {
   GitBranch,
   MoreHorizontal,
   Loader2,
+  Shield,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
+import { useEngineStore } from "../../stores/engineStore";
 import { useThreadStore } from "../../stores/threadStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore } from "../../stores/gitStore";
+import { ipc } from "../../lib/ipc";
 import { MessageBlocks } from "./MessageBlocks";
+import type { ApprovalBlock } from "../../types";
 
 export function ChatPanel() {
   const [input, setInput] = useState("");
+  const [selectedEngineId, setSelectedEngineId] = useState("codex");
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [selectedEffort, setSelectedEffort] = useState("medium");
   const {
     messages,
     send,
@@ -25,11 +32,19 @@ export function ChatPanel() {
     setActiveThread: bindChatThread,
     threadId,
   } = useChatStore();
+  const engines = useEngineStore((s) => s.engines);
   const { repos, activeRepoId, activeWorkspaceId } = useWorkspaceStore();
-  const { ensureThreadForScope, threads, activeThreadId } = useThreadStore();
+  const {
+    ensureThreadForScope,
+    refreshThreads,
+    threads,
+    activeThreadId,
+    setActiveThread: setActiveThreadInStore,
+  } = useThreadStore();
   const gitStatus = useGitStore((s) => s.status);
   const viewportRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const effortSyncKeyRef = useRef<string | null>(null);
 
   const activeRepo = useMemo(
     () => repos.find((r) => r.id === activeRepoId) ?? null,
@@ -41,22 +56,155 @@ export function ChatPanel() {
     [threads, activeThreadId],
   );
 
+  const selectedEngine = useMemo(
+    () => engines.find((engine) => engine.id === selectedEngineId) ?? engines[0] ?? null,
+    [engines, selectedEngineId],
+  );
+
+  const availableModels = useMemo(() => selectedEngine?.models ?? [], [selectedEngine]);
+
+  const selectedModel = useMemo(
+    () => availableModels.find((model) => model.id === selectedModelId) ?? availableModels[0] ?? null,
+    [availableModels, selectedModelId],
+  );
+
+  const supportedEfforts = useMemo(
+    () => selectedModel?.supportedReasoningEfforts ?? [],
+    [selectedModel],
+  );
+  const activeThreadReasoningEffort =
+    typeof activeThread?.engineMetadata?.reasoningEffort === "string"
+      ? activeThread.engineMetadata.reasoningEffort
+      : undefined;
+
+  const pendingApprovals = useMemo<ApprovalBlock[]>(() => {
+    const approvals: ApprovalBlock[] = [];
+    const seen = new Set<string>();
+
+    for (const message of messages) {
+      if (message.role !== "assistant") continue;
+      for (const block of message.blocks ?? []) {
+        if (block.type !== "approval") continue;
+        if (block.status !== "pending") continue;
+        if (seen.has(block.approvalId)) continue;
+        seen.add(block.approvalId);
+        approvals.push(block);
+      }
+    }
+
+    return approvals;
+  }, [messages]);
+
   useEffect(() => {
-    if (!activeWorkspaceId) {
-      void bindChatThread(null);
+    if (!engines.length) {
       return;
     }
-    void (async () => {
-      const thread = await ensureThreadForScope({
-        workspaceId: activeWorkspaceId,
-        repoId: activeRepo?.id ?? null,
-        engineId: "codex",
-        modelId: "gpt-5-codex",
-        title: activeRepo ? `${activeRepo.name} Chat` : "General",
-      });
-      await bindChatThread(thread);
-    })();
-  }, [activeWorkspaceId, activeRepo?.id, activeRepo?.name, ensureThreadForScope, bindChatThread]);
+    if (!engines.some((engine) => engine.id === selectedEngineId)) {
+      setSelectedEngineId(engines[0].id);
+    }
+  }, [engines, selectedEngineId]);
+
+  useEffect(() => {
+    if (!selectedModel) {
+      setSelectedModelId(null);
+      return;
+    }
+    if (selectedModelId !== selectedModel.id) {
+      setSelectedModelId(selectedModel.id);
+    }
+  }, [selectedModel, selectedModelId]);
+
+  useEffect(() => {
+    if (!selectedModel) {
+      return;
+    }
+
+    const syncKey = `${activeThread?.id ?? "none"}:${selectedModel.id}`;
+    if (effortSyncKeyRef.current === syncKey) {
+      return;
+    }
+    effortSyncKeyRef.current = syncKey;
+
+    const effortFromThreadSupported = activeThreadReasoningEffort
+      ? supportedEfforts.some((option) => option.reasoningEffort === activeThreadReasoningEffort)
+      : false;
+    const modelDefaultSupported = supportedEfforts.some(
+      (option) => option.reasoningEffort === selectedModel.defaultReasoningEffort,
+    );
+    const fallbackEffort =
+      supportedEfforts[0]?.reasoningEffort ?? selectedModel.defaultReasoningEffort;
+
+    const nextEffort = effortFromThreadSupported
+      ? activeThreadReasoningEffort!
+      : modelDefaultSupported
+        ? selectedModel.defaultReasoningEffort
+        : fallbackEffort;
+
+    if (nextEffort && selectedEffort !== nextEffort) {
+      setSelectedEffort(nextEffort);
+    }
+  }, [
+    activeThread?.id,
+    activeThreadReasoningEffort,
+    selectedModel?.id,
+    selectedModel?.defaultReasoningEffort,
+    selectedEffort,
+    supportedEfforts,
+  ]);
+
+  useEffect(() => {
+    if (!activeThread) {
+      return;
+    }
+    if (activeThread.engineId !== selectedEngineId) {
+      setSelectedEngineId(activeThread.engineId);
+    }
+    const threadEngine =
+      engines.find((engine) => engine.id === activeThread.engineId) ?? null;
+    const threadModelExists =
+      threadEngine?.models.some((model) => model.id === activeThread.modelId) ?? false;
+    if (threadModelExists) {
+      setSelectedModelId(activeThread.modelId);
+    }
+  }, [activeThread?.id, activeThread?.engineId, activeThread?.modelId, engines, selectedEngineId]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      if (threadId !== null) {
+        void bindChatThread(null);
+      }
+      return;
+    }
+    if (!selectedModelId) {
+      return;
+    }
+
+    const matchedThread =
+      threads.find(
+        (thread) =>
+          thread.workspaceId === activeWorkspaceId &&
+          thread.repoId === (activeRepo?.id ?? null) &&
+          thread.engineId === selectedEngineId &&
+          thread.modelId === selectedModelId,
+      ) ?? null;
+
+    const targetThreadId = matchedThread?.id ?? null;
+    if (targetThreadId === threadId) {
+      return;
+    }
+
+    setActiveThreadInStore(targetThreadId);
+    void bindChatThread(targetThreadId);
+  }, [
+    activeWorkspaceId,
+    activeRepo?.id,
+    threads,
+    selectedEngineId,
+    selectedModelId,
+    threadId,
+    bindChatThread,
+    setActiveThreadInStore,
+  ]);
 
   useEffect(() => {
     const vp = viewportRef.current;
@@ -80,10 +228,75 @@ export function ChatPanel() {
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!input.trim() || !threadId) return;
+    if (!input.trim() || !activeWorkspaceId || !selectedModelId || streaming) return;
+
+    let targetThreadId = threadId;
+    if (!targetThreadId) {
+      const createdThreadId = await ensureThreadForScope({
+        workspaceId: activeWorkspaceId,
+        repoId: activeRepo?.id ?? null,
+        engineId: selectedEngineId,
+        modelId: selectedModelId,
+        title: activeRepo ? `${activeRepo.name} Chat` : "Workspace Chat",
+      });
+      if (!createdThreadId) {
+        return;
+      }
+      targetThreadId = createdThreadId;
+      await bindChatThread(createdThreadId);
+    }
+
+    const currentThread =
+      threads.find((thread) => thread.id === targetThreadId) ??
+      useThreadStore.getState().threads.find((thread) => thread.id === targetThreadId) ??
+      activeThread;
+
+    let confirmedWorkspaceOptIn = false;
+    if (currentThread && currentThread.repoId === null && repos.length > 1) {
+      const optIn = Boolean(currentThread.engineMetadata?.workspaceWriteOptIn);
+      if (!optIn) {
+        const repoNames = repos.map((repo) => repo.name).join(", ");
+        const confirmed = window.confirm(
+          `This workspace thread can write to multiple repositories (${repoNames}). Continue?`
+        );
+        if (!confirmed) {
+          return;
+        }
+
+        await ipc.confirmWorkspaceThread(currentThread.id, repos.map((repo) => repo.path));
+        confirmedWorkspaceOptIn = true;
+      }
+    }
+
     const text = input.trim();
     setInput("");
-    await send(text);
+
+    if (selectedEngineId === "codex" && selectedEffort) {
+      await ipc.setThreadReasoningEffort(targetThreadId, selectedEffort);
+    }
+
+    await send(text, targetThreadId);
+
+    if (confirmedWorkspaceOptIn) {
+      await refreshThreads(activeWorkspaceId);
+    }
+  }
+
+  async function onReasoningEffortChange(nextEffort: string) {
+    setSelectedEffort(nextEffort);
+    if (selectedEngineId !== "codex") {
+      return;
+    }
+
+    const targetThreadId = threadId ?? activeThread?.id ?? null;
+    if (!targetThreadId) {
+      return;
+    }
+
+    await ipc.setThreadReasoningEffort(targetThreadId, nextEffort);
+    if (activeWorkspaceId) {
+      await refreshThreads(activeWorkspaceId);
+    }
   }
 
   return (
@@ -130,33 +343,75 @@ export function ChatPanel() {
         </div>
 
         <div className="no-drag" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {/* Engine badge */}
-          <span
+          <select
+            value={selectedEngineId}
+            onChange={(event) => {
+              setSelectedEngineId(event.target.value);
+              setSelectedModelId(null);
+            }}
             style={{
-              padding: "3px 8px",
+              padding: "4px 8px",
               borderRadius: 99,
               fontSize: 11,
               fontWeight: 500,
               background: "var(--accent-dim)",
               color: "var(--accent)",
               border: "1px solid var(--border-accent)",
+              cursor: "pointer",
             }}
           >
-            {activeThread?.engineId ?? "codex"}
-          </span>
+            {(engines.length > 0 ? engines : [{ id: "codex", name: "Codex", models: [] }]).map((engine) => (
+              <option key={engine.id} value={engine.id} style={{ color: "black" }}>
+                {engine.name}
+              </option>
+            ))}
+          </select>
 
-          <span
+          <select
+            value={selectedModelId ?? ""}
+            onChange={(event) => setSelectedModelId(event.target.value || null)}
+            disabled={availableModels.length === 0}
             style={{
-              padding: "3px 8px",
+              padding: "4px 8px",
               borderRadius: 99,
               fontSize: 11,
               background: "rgba(255,255,255,0.04)",
               color: "var(--text-2)",
               border: "1px solid var(--border)",
+              cursor: "pointer",
             }}
           >
-            {activeThread?.modelId ?? "gpt-5-codex"}
-          </span>
+            {availableModels.map((model) => (
+              <option key={model.id} value={model.id} style={{ color: "black" }}>
+                {model.displayName}
+                {model.isDefault ? " (default)" : ""}
+                {model.hidden ? " (legacy)" : ""}
+              </option>
+            ))}
+          </select>
+
+          {selectedEngineId === "codex" && supportedEfforts.length > 0 && (
+            <select
+              value={selectedEffort}
+              onChange={(event) => void onReasoningEffortChange(event.target.value)}
+              style={{
+                padding: "4px 8px",
+                borderRadius: 99,
+                fontSize: 11,
+                background: "rgba(255,255,255,0.04)",
+                color: "var(--text-2)",
+                border: "1px solid var(--border)",
+                cursor: "pointer",
+              }}
+              title="Thinking budget"
+            >
+              {supportedEfforts.map((option) => (
+                <option key={option.reasoningEffort} value={option.reasoningEffort} style={{ color: "black" }}>
+                  thinking: {option.reasoningEffort}
+                </option>
+              ))}
+            </select>
+          )}
 
         </div>
       </div>
@@ -250,7 +505,7 @@ export function ChatPanel() {
                           void respondApproval(approvalId, {
                             decision,
                             engine: activeThread?.engineId ?? "codex",
-                            model: activeThread?.modelId ?? "gpt-5-codex",
+                            model: activeThread?.modelId ?? "gpt-5.3-codex",
                           })
                         }
                       />
@@ -296,6 +551,143 @@ export function ChatPanel() {
             gap: 8,
           }}
         >
+          {pendingApprovals.length > 0 && (
+            <div
+              style={{
+                borderRadius: "var(--radius-lg)",
+                border: "1px solid rgba(251, 191, 36, 0.22)",
+                background: "rgba(251, 191, 36, 0.05)",
+                padding: "10px 12px",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginBottom: 8,
+                }}
+              >
+                <Shield size={14} style={{ color: "var(--warning)" }} />
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text-1)" }}>
+                  Approval required
+                </div>
+                <div style={{ flex: 1 }} />
+                <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+                  The engine is waiting for your decision.
+                </div>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {pendingApprovals.slice(-3).map((approval) => {
+                  const command =
+                    typeof approval.details?.command === "string"
+                      ? approval.details.command
+                      : undefined;
+                  const reason =
+                    typeof approval.details?.reason === "string"
+                      ? approval.details.reason
+                      : undefined;
+
+                  return (
+                    <div
+                      key={approval.approvalId}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "8px 10px",
+                        borderRadius: "var(--radius-md)",
+                        background: "rgba(0,0,0,0.18)",
+                        border: "1px solid rgba(255,255,255,0.06)",
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontSize: 12.5,
+                            fontWeight: 600,
+                            color: "var(--text-1)",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                          title={approval.summary}
+                        >
+                          {approval.summary}
+                        </div>
+                        {(command || reason) && (
+                          <div
+                            style={{
+                              marginTop: 2,
+                              fontSize: 11,
+                              color: "var(--text-2)",
+                              fontFamily: '"JetBrains Mono", monospace',
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                            title={command ?? reason}
+                          >
+                            {command ?? reason}
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          onClick={() => void respondApproval(approval.approvalId, { decision: "accept" })}
+                          style={{
+                            padding: "5px 10px",
+                            fontSize: 12,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Allow
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          onClick={() =>
+                            void respondApproval(approval.approvalId, { decision: "accept_for_session" })
+                          }
+                          style={{
+                            padding: "5px 10px",
+                            fontSize: 12,
+                            cursor: "pointer",
+                            borderRadius: "var(--radius-sm)",
+                            border: "1px solid rgba(255,255,255,0.08)",
+                            background: "rgba(0,0,0,0.1)",
+                          }}
+                        >
+                          Allow session
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          onClick={() => void respondApproval(approval.approvalId, { decision: "decline" })}
+                          style={{
+                            padding: "5px 10px",
+                            fontSize: 12,
+                            cursor: "pointer",
+                            color: "var(--danger)",
+                            borderRadius: "var(--radius-sm)",
+                            border: "1px solid rgba(248, 113, 113, 0.22)",
+                            background: "rgba(248, 113, 113, 0.06)",
+                          }}
+                        >
+                          Deny
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Input container */}
           <div
             className="glass-subtle"
@@ -313,11 +705,14 @@ export function ChatPanel() {
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                   e.preventDefault();
+                  if (streaming) {
+                    return;
+                  }
                   void onSubmit(e);
                 }
               }}
               placeholder="Ask the agent to inspect, edit, or run tasks..."
-              disabled={!threadId}
+              disabled={!activeWorkspaceId}
               style={{
                 width: "100%",
                 padding: "12px 14px",
@@ -378,19 +773,19 @@ export function ChatPanel() {
               ) : (
                 <button
                   type="submit"
-                  disabled={!threadId || !input.trim()}
+                  disabled={!activeWorkspaceId || !input.trim()}
                   style={{
                     padding: "5px 10px",
                     borderRadius: "var(--radius-sm)",
                     background:
-                      threadId && input.trim()
+                      activeWorkspaceId && input.trim()
                         ? "var(--accent)"
                         : "rgba(255,255,255,0.06)",
                     color:
-                      threadId && input.trim()
+                      activeWorkspaceId && input.trim()
                         ? "var(--bg-1)"
                         : "var(--text-3)",
-                    cursor: threadId && input.trim() ? "pointer" : "default",
+                    cursor: activeWorkspaceId && input.trim() ? "pointer" : "default",
                     display: "flex",
                     alignItems: "center",
                     gap: 5,

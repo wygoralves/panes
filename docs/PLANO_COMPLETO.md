@@ -10,6 +10,47 @@ Levar a base atual (v0 scaffold) até um **v1 funcional de produção inicial** 
 4. Segurança por sandbox e trust-level aplicada de ponta a ponta.
 5. CI, build, release e documentação operacional.
 
+## 1.1 Status Atualizado (2026-02-19)
+
+### Concluído
+
+1. Codex App Server em execução real via processo persistente JSONL:
+   `initialize/initialized`, `thread/start`, `thread/resume`, `turn/start`, `turn/interrupt`,
+   mapeamento unificado de eventos e resposta de approvals.
+2. Persistência auditável funcional:
+   mensagens, actions, approvals, logs opcionais por turn, placeholders de streaming e FTS5.
+3. Painel Git operacional com status, diff, stage, unstage e commit.
+4. Watchers Git conectados backend → frontend com evento `git-repo-changed`
+   e refresh automático no painel.
+5. Correções de robustez:
+   - requests desconhecidas do Codex não recebem ACK silencioso;
+   - `item/tool/requestUserInput` não é tratado como approval simples;
+   - corrida assíncrona de troca de thread no frontend corrigida.
+6. UX base do chat estabilizada com layout em 3 colunas e fallback de erro global.
+7. Model picker real para Codex conectado ao `model/list`:
+   lista dinâmica de modelos suportados (incluindo legacy/hidden), picker de thinking budget por
+   `supportedReasoningEfforts` e persistência de `reasoningEffort` por thread.
+8. Validação de thinking budget no backend por modelo:
+   `set_thread_reasoning_effort` rejeita valores fora do conjunto suportado do modelo ativo.
+
+### Em andamento
+
+1. Aplicação de políticas de segurança por trust-level no runtime:
+   `trusted -> on-failure`, `standard -> on-request`, `restricted -> untrusted`.
+2. Política explícita de workspace multi-repo:
+   confirmação obrigatória para thread de workspace com múltiplos `writableRoots`.
+3. UX de produtividade:
+   atalhos globais e busca de mensagens com navegação rápida para thread.
+
+### Pendente
+
+1. Claude sidecar real com SDK e fluxo completo de approvals/cancelamento.
+2. Virtualização de mensagens para threads longas.
+3. Setup wizard de engines e onboarding completo.
+4. Suíte de testes (unit/integration/e2e) cobrindo fluxos críticos.
+5. CI/release para macOS (app/dmg) e Linux (.deb/AppImage) com pipeline de publicação.
+6. Suporte completo a `requestUserInput` estruturado no frontend.
+
 ## 2. Estado Atual (baseline)
 
 ## 2.1 Já implementado
@@ -25,13 +66,13 @@ Levar a base atual (v0 scaffold) até um **v1 funcional de produção inicial** 
 
 ## 2.2 Gap principal
 
-1. `CodexEngine` ainda em modo scaffold, sem sessão persistente JSONL real.
-2. Aprovações reais de engine ainda não estão mapeadas ponta a ponta.
-3. Sidecar Claude sem callbacks reais de aprovação/execução.
-4. Watchers Git não conectados ao ciclo de atualização da UI.
-5. Fluxo de threads ainda simplificado (foco em thread demo).
-6. Testes automatizados e critérios de qualidade ainda incompletos.
-7. Pipeline de release (dmg/deb/appimage) não finalizada.
+1. Suporte completo a `item/tool/requestUserInput` ainda pendente no frontend.
+2. Políticas de `trustLevel` e opt-in multi-repo estão em rollout e precisam fechamento de UX.
+3. Sidecar Claude ainda está em scaffold, sem execução real via SDK.
+4. Fluxo de threads ainda simplificado para alguns cenários avançados (multi-engine/multi-model).
+5. Testes automatizados e critérios de qualidade ainda incompletos.
+6. Pipeline de release (dmg/deb/appimage) ainda não finalizada.
+7. Virtualização de mensagens e tuning de performance para threads longas ainda pendentes.
 
 ## 3. Plano Macro (fases)
 

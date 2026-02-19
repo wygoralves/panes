@@ -364,18 +364,24 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
               style={{
                 padding: "8px 12px",
                 borderRadius: "var(--radius-md)",
-                background: "rgba(167, 139, 250, 0.04)",
-                border: "1px solid rgba(167, 139, 250, 0.1)",
+                background: "var(--bg-2)",
+                border: "1px solid var(--border)",
                 fontSize: 12.5,
                 color: "var(--text-2)",
-                fontStyle: "italic",
                 display: "flex",
                 alignItems: "flex-start",
                 gap: 8,
               }}
             >
-              <Brain size={14} style={{ flexShrink: 0, marginTop: 2, color: "var(--accent-2)", opacity: 0.6 }} />
-              {block.content}
+              <Brain size={14} style={{ flexShrink: 0, marginTop: 2, color: "var(--info)", opacity: 0.8 }} />
+              <div className="prose" style={{ fontSize: 12.5, color: "var(--text-2)", minWidth: 0 }}>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeHighlight]}
+                >
+                  {String(block.content ?? "")}
+                </ReactMarkdown>
+              </div>
             </div>
           );
         }

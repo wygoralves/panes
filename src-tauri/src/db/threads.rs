@@ -64,6 +64,10 @@ pub fn list_threads_for_workspace(
             COALESCE(title, ''), status, message_count, total_tokens, created_at, last_activity_at
      FROM threads
      WHERE workspace_id = ?1
+       AND EXISTS (
+         SELECT 1 FROM messages
+         WHERE messages.thread_id = threads.id
+       )
      ORDER BY last_activity_at DESC",
   )?;
 
@@ -143,6 +147,33 @@ pub fn set_engine_thread_id(
         params![engine_thread_id, thread_id],
     )
     .context("failed to set engine thread id")?;
+    Ok(())
+}
+
+pub fn delete_thread(db: &Database, thread_id: &str) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    let affected = conn
+        .execute("DELETE FROM threads WHERE id = ?1", params![thread_id])
+        .context("failed to delete thread")?;
+
+    if affected == 0 {
+        anyhow::bail!("thread not found: {thread_id}");
+    }
+
+    Ok(())
+}
+
+pub fn update_engine_metadata(
+    db: &Database,
+    thread_id: &str,
+    metadata: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    conn.execute(
+        "UPDATE threads SET engine_metadata_json = ?1 WHERE id = ?2",
+        params![metadata.to_string(), thread_id],
+    )
+    .context("failed to update engine metadata")?;
     Ok(())
 }
 

@@ -6,6 +6,7 @@ import type {
   GitStatus,
   Message,
   Repo,
+  SearchResult,
   StreamEvent,
   Thread,
   Workspace
@@ -14,6 +15,7 @@ import type {
 export const ipc = {
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
   openWorkspace: (path: string) => invoke<Workspace>("open_workspace", { path }),
+  deleteWorkspace: (workspaceId: string) => invoke<void>("delete_workspace", { workspaceId }),
   getRepos: (workspaceId: string) => invoke<Repo[]>("get_repos", { workspaceId }),
   listThreads: (workspaceId: string) => invoke<Thread[]>("list_threads", { workspaceId }),
   createThread: (
@@ -30,6 +32,11 @@ export const ipc = {
       modelId,
       title
     }),
+  confirmWorkspaceThread: (threadId: string, writableRoots: string[]) =>
+    invoke<void>("confirm_workspace_thread", { threadId, writableRoots }),
+  setThreadReasoningEffort: (threadId: string, reasoningEffort: string | null) =>
+    invoke<void>("set_thread_reasoning_effort", { threadId, reasoningEffort }),
+  deleteThread: (threadId: string) => invoke<void>("delete_thread", { threadId }),
   listEngines: () => invoke<EngineInfo[]>("list_engines"),
   engineHealth: (engineId: string) => invoke<EngineHealth>("engine_health", { engineId }),
   sendMessage: (threadId: string, message: string) =>
@@ -40,7 +47,7 @@ export const ipc = {
   getThreadMessages: (threadId: string) =>
     invoke<Message[]>("get_thread_messages", { threadId }),
   searchMessages: (workspaceId: string, query: string) =>
-    invoke<Array<{ threadId: string; messageId: string; snippet: string }>>("search_messages", {
+    invoke<SearchResult[]>("search_messages", {
       workspaceId,
       query
     }),

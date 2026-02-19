@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::Context;
 use async_trait::async_trait;
+use serde::Deserialize;
 use tokio::{
     process::Command,
     sync::{broadcast, mpsc, Mutex},
@@ -14,8 +15,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     codex_event_mapper::TurnEventMapper, codex_protocol::IncomingMessage,
-    codex_transport::CodexTransport, Engine, EngineEvent, EngineThread, ModelInfo, SandboxPolicy,
-    ThreadScope,
+    codex_transport::CodexTransport, Engine, EngineEvent, EngineThread, ModelInfo,
+    ReasoningEffortOption, SandboxPolicy, ThreadScope,
 };
 
 const INITIALIZE_METHODS: &[&str] = &["initialize"];
@@ -23,9 +24,11 @@ const THREAD_START_METHODS: &[&str] = &["thread/start"];
 const THREAD_RESUME_METHODS: &[&str] = &["thread/resume"];
 const TURN_START_METHODS: &[&str] = &["turn/start"];
 const TURN_INTERRUPT_METHODS: &[&str] = &["turn/interrupt"];
+const MODEL_LIST_METHODS: &[&str] = &["model/list", "models/list"];
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const TURN_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+const TURN_COMPLETION_FALLBACK_TIMEOUT: Duration = Duration::from_secs(900);
 
 #[derive(Default)]
 pub struct CodexEngine {
@@ -43,6 +46,7 @@ struct ThreadRuntime {
     cwd: String,
     approval_policy: String,
     sandbox_policy: serde_json::Value,
+    reasoning_effort: Option<String>,
 }
 
 #[derive(Default)]
@@ -67,12 +71,51 @@ impl Engine for CodexEngine {
     fn models(&self) -> Vec<ModelInfo> {
         vec![
             ModelInfo {
-                id: "gpt-5-codex".to_string(),
-                name: "GPT-5 Codex".to_string(),
+                id: "gpt-5.3-codex".to_string(),
+                display_name: "gpt-5.3-codex".to_string(),
+                description: "Latest frontier agentic coding model.".to_string(),
+                hidden: false,
+                is_default: true,
+                upgrade: None,
+                default_reasoning_effort: "medium".to_string(),
+                supported_reasoning_efforts: vec![
+                    ReasoningEffortOption {
+                        reasoning_effort: "low".to_string(),
+                        description: "Fast responses with lighter reasoning".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "medium".to_string(),
+                        description: "Balanced speed and reasoning depth".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "high".to_string(),
+                        description: "Greater reasoning depth for complex problems".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "xhigh".to_string(),
+                        description: "Extra high reasoning depth for complex problems".to_string(),
+                    },
+                ],
             },
             ModelInfo {
-                id: "gpt-5-codex-mini".to_string(),
-                name: "GPT-5 Codex Mini".to_string(),
+                id: "gpt-5.1-codex-mini".to_string(),
+                display_name: "gpt-5.1-codex-mini".to_string(),
+                description: "Optimized for codex. Cheaper, faster, but less capable.".to_string(),
+                hidden: false,
+                is_default: false,
+                upgrade: Some("gpt-5.3-codex".to_string()),
+                default_reasoning_effort: "medium".to_string(),
+                supported_reasoning_efforts: vec![
+                    ReasoningEffortOption {
+                        reasoning_effort: "medium".to_string(),
+                        description: "Dynamically adjusts reasoning based on the task".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "high".to_string(),
+                        description: "Maximizes reasoning depth for complex or ambiguous problems"
+                            .to_string(),
+                    },
+                ],
             },
         ]
     }
@@ -127,7 +170,10 @@ impl Engine for CodexEngine {
         self.ensure_initialized(&transport).await?;
 
         let cwd = scope_cwd(&scope);
-        let approval_policy = "on-request";
+        let approval_policy = sandbox
+            .approval_policy
+            .clone()
+            .unwrap_or_else(|| "on-request".to_string());
         let sandbox_mode = sandbox_mode_from_policy(&sandbox);
         let sandbox_policy = sandbox_policy_to_json(&sandbox);
 
@@ -136,7 +182,7 @@ impl Engine for CodexEngine {
               "threadId": existing_thread_id,
               "model": model,
               "cwd": cwd.clone(),
-              "approvalPolicy": approval_policy,
+              "approvalPolicy": approval_policy.clone(),
               "sandbox": sandbox_mode,
               "persistExtendedHistory": false,
             });
@@ -157,8 +203,9 @@ impl Engine for CodexEngine {
                         &engine_thread_id,
                         ThreadRuntime {
                             cwd: cwd.clone(),
-                            approval_policy: approval_policy.to_string(),
+                            approval_policy: approval_policy.clone(),
                             sandbox_policy: sandbox_policy.clone(),
+                            reasoning_effort: sandbox.reasoning_effort.clone(),
                         },
                     )
                     .await;
@@ -174,7 +221,7 @@ impl Engine for CodexEngine {
         let start_params = serde_json::json!({
           "model": model,
           "cwd": cwd.clone(),
-          "approvalPolicy": approval_policy,
+          "approvalPolicy": approval_policy.clone(),
           "sandbox": sandbox_mode,
           "experimentalRawEvents": false,
           "persistExtendedHistory": false,
@@ -196,8 +243,9 @@ impl Engine for CodexEngine {
             &engine_thread_id,
             ThreadRuntime {
                 cwd,
-                approval_policy: approval_policy.to_string(),
+                approval_policy,
                 sandbox_policy,
+                reasoning_effort: sandbox.reasoning_effort.clone(),
             },
         )
         .await;
@@ -237,6 +285,9 @@ impl Engine for CodexEngine {
                     serde_json::Value::String(runtime.approval_policy),
                 );
                 params.insert("sandboxPolicy".to_string(), runtime.sandbox_policy);
+                if let Some(effort) = runtime.reasoning_effort {
+                    params.insert("effort".to_string(), serde_json::Value::String(effort));
+                }
             }
         }
 
@@ -254,15 +305,10 @@ impl Engine for CodexEngine {
         let mut turn_task = turn_task;
         let mut turn_request_done = false;
         let mut completion_seen = false;
-        let mut post_completion_grace_deadline: Option<Instant> = None;
+        let mut expected_turn_id: Option<String> = None;
+        let mut completion_fallback_deadline: Option<Instant> = None;
 
         while !completion_seen || !turn_request_done {
-            if let Some(deadline) = post_completion_grace_deadline {
-                if Instant::now() >= deadline {
-                    break;
-                }
-            }
-
             tokio::select! {
               _ = cancellation.cancelled() => {
                 self.interrupt(&thread_id).await.ok();
@@ -273,20 +319,22 @@ impl Engine for CodexEngine {
                 let result = response.context("turn/start task join failed")??;
 
                 if let Some(turn_id) = extract_turn_id(&result) {
+                  if expected_turn_id.is_none() {
+                    expected_turn_id = Some(turn_id.clone());
+                  }
                   self.set_active_turn(&thread_id, &turn_id).await;
                 }
 
                 for event in mapper.map_turn_result(&result) {
                   if matches!(event, EngineEvent::TurnCompleted { .. }) {
                     completion_seen = true;
-                    post_completion_grace_deadline = Some(Instant::now() + Duration::from_millis(600));
                     self.clear_active_turn(&thread_id).await;
                   }
                   event_tx.send(event).await.ok();
                 }
 
-                if !completion_seen && post_completion_grace_deadline.is_none() {
-                  post_completion_grace_deadline = Some(Instant::now() + Duration::from_secs(2));
+                if !completion_seen {
+                  completion_fallback_deadline = Some(Instant::now() + TURN_COMPLETION_FALLBACK_TIMEOUT);
                 }
               }
               incoming = subscription.recv() => {
@@ -295,10 +343,16 @@ impl Engine for CodexEngine {
                     if !belongs_to_thread(&params, &thread_id) {
                       continue;
                     }
+                    if !belongs_to_turn(&params, expected_turn_id.as_deref()) {
+                      continue;
+                    }
 
                     let normalized_method = normalize_method(&method);
                     if normalized_method == "turn/started" {
                       if let Some(turn_id) = extract_turn_id(&params) {
+                        if expected_turn_id.is_none() {
+                          expected_turn_id = Some(turn_id.clone());
+                        }
                         self.set_active_turn(&thread_id, &turn_id).await;
                       }
                     } else if normalized_method == "turn/completed" {
@@ -308,17 +362,29 @@ impl Engine for CodexEngine {
                     for event in mapper.map_notification(&method, &params) {
                       if matches!(event, EngineEvent::TurnCompleted { .. }) {
                         completion_seen = true;
-                        post_completion_grace_deadline = Some(Instant::now() + Duration::from_millis(600));
                         self.clear_active_turn(&thread_id).await;
                       }
                       event_tx.send(event).await.ok();
                     }
                   }
                   Ok(IncomingMessage::Request { id, method, params }) => {
+                    log::debug!(
+                      "codex server request: method={method}, id={id}, params_keys={:?}",
+                      params.as_object().map(|o| o.keys().collect::<Vec<_>>())
+                    );
                     if !belongs_to_thread(&params, &thread_id) {
+                      log::warn!("codex server request dropped by belongs_to_thread: method={method}");
+                      continue;
+                    }
+                    if !belongs_to_turn(&params, expected_turn_id.as_deref()) {
+                      log::warn!("codex server request dropped by belongs_to_turn: method={method}");
                       continue;
                     }
                     if let Some(approval) = mapper.map_server_request(&id, &method, &params) {
+                      log::info!(
+                        "codex approval request mapped: approval_id={}, method={method}",
+                        approval.approval_id
+                      );
                       self
                         .register_approval_request(
                           &approval.approval_id,
@@ -329,6 +395,9 @@ impl Engine for CodexEngine {
                       event_tx.send(approval.event).await.ok();
                     } else {
                       let normalized_method = normalize_method(&method);
+                      log::warn!(
+                        "codex server request not mapped: method={method}, normalized={normalized_method}"
+                      );
                       let (message, recoverable) = if normalized_method == "item/tool/requestuserinput" {
                         (
                           "Codex requested user input (`item/tool/requestUserInput`), but this app version does not support structured answers yet.".to_string(),
@@ -374,7 +443,16 @@ impl Engine for CodexEngine {
                   }
                 }
               }
-              _ = tokio::time::sleep(Duration::from_millis(100)), if turn_request_done => {}
+              _ = tokio::time::sleep(Duration::from_millis(200)), if turn_request_done && !completion_seen => {
+                if let Some(deadline) = completion_fallback_deadline {
+                  if Instant::now() >= deadline {
+                    log::warn!(
+                      "codex turn completion timeout reached for thread {thread_id}; synthesizing completion"
+                    );
+                    break;
+                  }
+                }
+              }
             }
         }
 
@@ -460,6 +538,60 @@ impl Engine for CodexEngine {
 }
 
 impl CodexEngine {
+    pub async fn list_models_runtime(&self) -> Vec<ModelInfo> {
+        match self.fetch_models_from_server().await {
+            Ok(models) if !models.is_empty() => models,
+            Ok(_) => self.models(),
+            Err(error) => {
+                log::warn!("failed to load codex models via model/list, using fallback: {error}");
+                self.models()
+            }
+        }
+    }
+
+    async fn fetch_models_from_server(&self) -> anyhow::Result<Vec<ModelInfo>> {
+        if !self.is_available().await {
+            return Ok(self.models());
+        }
+
+        let transport = self.ensure_transport().await?;
+        self.ensure_initialized(&transport).await?;
+
+        let mut cursor: Option<String> = None;
+        let mut output = Vec::new();
+
+        loop {
+            let params = serde_json::json!({
+              "includeHidden": true,
+              "limit": 200,
+              "cursor": cursor,
+            });
+
+            let response = request_with_fallback(
+                transport.as_ref(),
+                MODEL_LIST_METHODS,
+                params,
+                DEFAULT_TIMEOUT,
+            )
+            .await?;
+
+            let parsed: CodexModelListResponse =
+                serde_json::from_value(response).context("invalid model/list response payload")?;
+
+            for model in parsed.data {
+                output.push(map_codex_model(model));
+            }
+
+            if let Some(next_cursor) = parsed.next_cursor {
+                cursor = Some(next_cursor);
+            } else {
+                break;
+            }
+        }
+
+        Ok(output)
+    }
+
     async fn ensure_transport(&self) -> anyhow::Result<Arc<CodexTransport>> {
         let current = {
             let state = self.state.lock().await;
@@ -571,6 +703,70 @@ impl CodexEngine {
     async fn thread_runtime(&self, engine_thread_id: &str) -> Option<ThreadRuntime> {
         let state = self.state.lock().await;
         state.thread_runtimes.get(engine_thread_id).cloned()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexModelListResponse {
+    data: Vec<CodexModel>,
+    #[serde(default)]
+    next_cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexModel {
+    id: String,
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    hidden: Option<bool>,
+    #[serde(default)]
+    is_default: Option<bool>,
+    #[serde(default)]
+    upgrade: Option<String>,
+    #[serde(default)]
+    default_reasoning_effort: Option<String>,
+    #[serde(default)]
+    supported_reasoning_efforts: Vec<CodexReasoningEffortOption>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexReasoningEffortOption {
+    reasoning_effort: String,
+    description: String,
+}
+
+fn map_codex_model(value: CodexModel) -> ModelInfo {
+    ModelInfo {
+        id: value.id.clone(),
+        display_name: value.display_name.unwrap_or_else(|| value.id.clone()),
+        description: value.description.unwrap_or_default(),
+        hidden: value.hidden.unwrap_or(false),
+        is_default: value.is_default.unwrap_or(false),
+        upgrade: value.upgrade,
+        default_reasoning_effort: value
+            .default_reasoning_effort
+            .unwrap_or_else(|| "medium".to_string()),
+        supported_reasoning_efforts: if value.supported_reasoning_efforts.is_empty() {
+            vec![ReasoningEffortOption {
+                reasoning_effort: "medium".to_string(),
+                description: "Balanced reasoning effort".to_string(),
+            }]
+        } else {
+            value
+                .supported_reasoning_efforts
+                .into_iter()
+                .map(|option| ReasoningEffortOption {
+                    reasoning_effort: option.reasoning_effort,
+                    description: option.description,
+                })
+                .collect()
+        },
     }
 }
 
@@ -707,7 +903,34 @@ fn belongs_to_thread(params: &serde_json::Value, thread_id: &str) -> bool {
         }
     }
 
-    false
+    // No thread ID field found in params — pass through.
+    // Server requests (e.g. approval requests) often omit threadId.
+    // The turn ID check provides additional filtering when needed.
+    log::debug!(
+        "belongs_to_thread: no thread ID field found in params, passing through (expected={thread_id})"
+    );
+    true
+}
+
+fn belongs_to_turn(params: &serde_json::Value, expected_turn_id: Option<&str>) -> bool {
+    let Some(expected_turn_id) = expected_turn_id else {
+        return true;
+    };
+
+    let candidates = ["turnId", "turn_id"];
+    if let Some(found) = extract_any_string(params, &candidates) {
+        return found == expected_turn_id;
+    }
+
+    for key in ["turn", "item", "session", "context", "meta", "metadata"] {
+        if let Some(nested) = params.get(key) {
+            if let Some(found) = extract_any_string(nested, &candidates) {
+                return found == expected_turn_id;
+            }
+        }
+    }
+
+    true
 }
 
 fn normalize_approval_response(
@@ -720,34 +943,49 @@ fn normalize_approval_response(
     let normalized_method = normalize_method(method);
     let mut response = response;
 
-    let should_normalize_decision = matches!(
-        normalized_method.as_str(),
-        "item/commandexecution/requestapproval"
-            | "item/filechange/requestapproval"
-            | "execcommandapproval"
-            | "applypatchapproval"
-    );
+    if let Some(object) = response.as_object_mut() {
+        if let Some(decision) = object.get("decision").and_then(serde_json::Value::as_str) {
+            let normalized_decision = match normalized_method.as_str() {
+                "item/commandexecution/requestapproval" | "item/filechange/requestapproval" => {
+                    normalize_modern_approval_decision(decision)
+                }
+                "execcommandapproval" | "applypatchapproval" => {
+                    normalize_legacy_approval_decision(decision)
+                }
+                _ => decision.to_string(),
+            };
 
-    if should_normalize_decision {
-        if let Some(object) = response.as_object_mut() {
-            if let Some(decision) = object.get("decision").and_then(serde_json::Value::as_str) {
-                object.insert(
-                    "decision".to_string(),
-                    serde_json::Value::String(normalize_approval_decision(decision)),
-                );
-            }
+            object.insert(
+                "decision".to_string(),
+                serde_json::Value::String(normalized_decision),
+            );
         }
     }
 
     response
 }
 
-fn normalize_approval_decision(value: &str) -> String {
+fn normalize_modern_approval_decision(value: &str) -> String {
     match value {
+        "approved" | "allow" => "accept".to_string(),
         "accept_for_session" => "acceptForSession".to_string(),
-        "allow" => "accept".to_string(),
         "allow_session" => "acceptForSession".to_string(),
+        "approved_for_session" => "acceptForSession".to_string(),
         "deny" => "decline".to_string(),
+        "denied" => "decline".to_string(),
+        "abort" => "cancel".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn normalize_legacy_approval_decision(value: &str) -> String {
+    match value {
+        "accept" | "allow" => "approved".to_string(),
+        "accept_for_session" => "approved_for_session".to_string(),
+        "acceptForSession" => "approved_for_session".to_string(),
+        "allow_session" => "approved_for_session".to_string(),
+        "decline" | "deny" => "denied".to_string(),
+        "cancel" => "abort".to_string(),
         other => other.to_string(),
     }
 }

@@ -35,7 +35,7 @@ impl Default for AppConfig {
             general: GeneralConfig {
                 theme: "dark".to_string(),
                 default_engine: "codex".to_string(),
-                default_model: "gpt-5-codex".to_string(),
+                default_model: "gpt-5.3-codex".to_string(),
             },
             ui: UiConfig {
                 sidebar_width: 260,

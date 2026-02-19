@@ -163,7 +163,27 @@ pub struct SearchResultDto {
 pub struct EngineInfoDto {
     pub id: String,
     pub name: String,
-    pub models: Vec<String>,
+    pub models: Vec<EngineModelDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineModelDto {
+    pub id: String,
+    pub display_name: String,
+    pub description: String,
+    pub hidden: bool,
+    pub is_default: bool,
+    pub upgrade: Option<String>,
+    pub default_reasoning_effort: String,
+    pub supported_reasoning_efforts: Vec<ReasoningEffortOptionDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReasoningEffortOptionDto {
+    pub reasoning_effort: String,
+    pub description: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -12,19 +12,40 @@ interface EnsureThreadInput {
 
 interface ThreadState {
   threads: Thread[];
+  threadsByWorkspace: Record<string, Thread[]>;
   activeThreadId: string | null;
   loading: boolean;
   error?: string;
   ensureThreadForScope: (input: EnsureThreadInput) => Promise<string | null>;
   refreshThreads: (workspaceId: string) => Promise<void>;
+  refreshAllThreads: (workspaceIds: string[]) => Promise<void>;
+  removeThread: (threadId: string) => Promise<void>;
   setActiveThread: (threadId: string | null) => void;
 }
 
 const DEFAULT_ENGINE = "codex";
-const DEFAULT_MODEL = "gpt-5-codex";
+const DEFAULT_MODEL = "gpt-5.3-codex";
+
+function mergeWorkspaceThreads(
+  current: Record<string, Thread[]>,
+  workspaceId: string,
+  threads: Thread[],
+): Record<string, Thread[]> {
+  return {
+    ...current,
+    [workspaceId]: threads,
+  };
+}
+
+function flattenThreadsByWorkspace(threadsByWorkspace: Record<string, Thread[]>): Thread[] {
+  return Object.values(threadsByWorkspace)
+    .flat()
+    .sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime());
+}
 
 export const useThreadStore = create<ThreadState>((set, get) => ({
   threads: [],
+  threadsByWorkspace: {},
   activeThreadId: null,
   loading: false,
   ensureThreadForScope: async ({ workspaceId, repoId, engineId, modelId, title }) => {
@@ -54,8 +75,11 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
         );
       }
 
-      const threads = [selected, ...all.filter((thread) => thread.id !== selected.id)];
+      const workspaceThreads = [selected, ...all.filter((thread) => thread.id !== selected.id)];
+      const threadsByWorkspace = mergeWorkspaceThreads(get().threadsByWorkspace, workspaceId, workspaceThreads);
+      const threads = flattenThreadsByWorkspace(threadsByWorkspace);
       set({
+        threadsByWorkspace,
         threads,
         activeThreadId: selected.id,
         loading: false
@@ -69,12 +93,75 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   refreshThreads: async (workspaceId) => {
     set({ loading: true, error: undefined });
     try {
-      const threads = await ipc.listThreads(workspaceId);
+      const workspaceThreads = await ipc.listThreads(workspaceId);
+      const threadsByWorkspace = mergeWorkspaceThreads(get().threadsByWorkspace, workspaceId, workspaceThreads);
+      const threads = flattenThreadsByWorkspace(threadsByWorkspace);
       const active = get().activeThreadId;
       set({
+        threadsByWorkspace,
+        threads,
+        activeThreadId:
+          active && threads.some((item) => item.id === active)
+            ? active
+            : workspaceThreads[0]?.id ?? null,
+        loading: false
+      });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+    }
+  },
+  refreshAllThreads: async (workspaceIds) => {
+    if (!workspaceIds.length) {
+      set({ threads: [], threadsByWorkspace: {}, activeThreadId: null, loading: false, error: undefined });
+      return;
+    }
+
+    set({ loading: true, error: undefined });
+    try {
+      const results = await Promise.all(
+        workspaceIds.map(async (workspaceId) => ({
+          workspaceId,
+          threads: await ipc.listThreads(workspaceId),
+        })),
+      );
+
+      const threadsByWorkspace = results.reduce<Record<string, Thread[]>>((acc, item) => {
+        acc[item.workspaceId] = item.threads;
+        return acc;
+      }, {});
+      const threads = flattenThreadsByWorkspace(threadsByWorkspace);
+      const active = get().activeThreadId;
+
+      set({
+        threadsByWorkspace,
         threads,
         activeThreadId: active && threads.some((item) => item.id === active) ? active : threads[0]?.id ?? null,
-        loading: false
+        loading: false,
+      });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+    }
+  },
+  removeThread: async (threadId) => {
+    set({ loading: true, error: undefined });
+    try {
+      await ipc.deleteThread(threadId);
+      const nextThreadsByWorkspace = Object.entries(get().threadsByWorkspace).reduce<Record<string, Thread[]>>(
+        (acc, [workspaceId, threads]) => {
+          const remaining = threads.filter((thread) => thread.id !== threadId);
+          acc[workspaceId] = remaining;
+          return acc;
+        },
+        {},
+      );
+      const threads = flattenThreadsByWorkspace(nextThreadsByWorkspace);
+      const active = get().activeThreadId;
+
+      set({
+        threadsByWorkspace: nextThreadsByWorkspace,
+        threads,
+        activeThreadId: active === threadId ? null : active,
+        loading: false,
       });
     } catch (error) {
       set({ loading: false, error: String(error) });
