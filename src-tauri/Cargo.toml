@@ -1,0 +1,47 @@
+[package]
+name = "agent-workspace"
+version = "0.1.0"
+edition = "2021"
+authors = ["Agent Workspace contributors"]
+license = "MIT"
+
+[lib]
+name = "agent_workspace_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-notification = "2"
+
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+tokio-stream = "0.1"
+futures = "0.3"
+async-trait = "0.1"
+
+reqwest = { version = "0.12", features = ["json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+rusqlite = { version = "0.31", features = ["bundled"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
+thiserror = "1"
+log = "0.4"
+env_logger = "0.11"
+which = "6"
+
+git2 = "0.19"
+notify = "6"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node:*)",
+      "Bash(pnpm:*)",
+      "Bash(rustc:*)",
+      "Bash(cargo:*)",
+      "Bash(corepack enable:*)",
+      "Bash(corepack prepare:*)",
+      "Bash(curl:*)",
+      "Bash(sh -)",
+      "Bash(sh -s -- -y)",
+      "Bash(export PNPM_HOME=\"/Users/wygorbarbosa/Library/pnpm\":*)",
+      "Bash(export PATH=\"$PNPM_HOME:$PATH\")",
+      "Bash(source:*)",
+      "Bash(. \"$HOME/.cargo/env\")"
+    ]
+  }
+}

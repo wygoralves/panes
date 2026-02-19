@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+:root {
+  --bg-main: #10141d;
+  --bg-panel: #171c26;
+  --bg-soft: #202838;
+  --text-main: #eef2ff;
+  --text-soft: #aeb8d0;
+  --accent: #2ec4b6;
+  --danger: #ef476f;
+  --border: #2b3446;
+  --code-bg: #0d1119;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: radial-gradient(circle at 10% 10%, #1f293b 0%, var(--bg-main) 45%, #0b0f16 100%);
+  color: var(--text-main);
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.app-shell {
+  width: 100%;
+  height: 100%;
+}
+
+.panel {
+  height: 100%;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  background: color-mix(in oklab, var(--bg-panel) 85%, black);
+}
+
+.panel:last-child {
+  border-right: none;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-soft);
+}
+
+.surface {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.action-running {
+  border-color: #ffd166;
+}
+
+.action-error {
+  border-color: var(--danger);
+}

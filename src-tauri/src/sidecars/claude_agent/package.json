@@ -1,0 +1,14 @@
+{
+  "name": "@agent-workspace/claude-agent-sidecar",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node --watch src/main.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}
