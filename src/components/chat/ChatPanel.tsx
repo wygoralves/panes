@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Send,
   Square,
@@ -6,7 +6,6 @@ import {
   GitBranch,
   Loader2,
   Shield,
-  Play,
   Monitor,
   Mic,
 } from "lucide-react";
@@ -17,9 +16,48 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore } from "../../stores/gitStore";
 import { ipc } from "../../lib/ipc";
 import { MessageBlocks } from "./MessageBlocks";
+import { isRequestUserInputApproval } from "./toolInputApproval";
 import { Dropdown } from "../shared/Dropdown";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
-import type { ApprovalBlock, ApprovalResponse, ContentBlock, TrustLevel } from "../../types";
+import type { ApprovalBlock, ContentBlock, Message, TrustLevel } from "../../types";
+
+const MESSAGE_VIRTUALIZATION_THRESHOLD = 80;
+const MESSAGE_ESTIMATED_ROW_HEIGHT = 220;
+const MESSAGE_ROW_GAP = 16;
+const MESSAGE_OVERSCAN_PX = 700;
+
+interface MeasuredMessageRowProps {
+  messageId: string;
+  onHeightChange: (messageId: string, height: number) => void;
+  children: ReactNode;
+}
+
+function MeasuredMessageRow({ messageId, onHeightChange, children }: MeasuredMessageRowProps) {
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const element = rowRef.current;
+    if (!element) {
+      return;
+    }
+
+    const publishHeight = () => {
+      onHeightChange(messageId, element.getBoundingClientRect().height);
+    };
+
+    publishHeight();
+
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => publishHeight());
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [messageId, onHeightChange]);
+
+  return <div ref={rowRef}>{children}</div>;
+}
 
 const MODEL_TOKEN_LABELS: Record<string, string> = {
   gpt: "GPT",
@@ -93,74 +131,6 @@ function formatEngineModelLabel(
     : modelLabel || engineName || "Assistant";
   const effortLabel = formatReasoningEffortLabel(reasoningEffort);
   return effortLabel ? `${baseLabel} ${effortLabel}` : baseLabel;
-}
-
-interface ToolInputOption {
-  label: string;
-}
-
-interface ToolInputQuestion {
-  id: string;
-  question: string;
-  options: ToolInputOption[];
-}
-
-function readToolInputQuestions(details: Record<string, unknown>): ToolInputQuestion[] {
-  const rawQuestions = details.questions;
-  if (!Array.isArray(rawQuestions)) {
-    return [];
-  }
-
-  const questions: ToolInputQuestion[] = [];
-  for (const raw of rawQuestions) {
-    if (typeof raw !== "object" || raw === null) {
-      continue;
-    }
-
-    const questionObj = raw as Record<string, unknown>;
-    const id = typeof questionObj.id === "string" ? questionObj.id : "";
-    const question = typeof questionObj.question === "string" ? questionObj.question : "";
-    if (!id || !question) {
-      continue;
-    }
-
-    const options = Array.isArray(questionObj.options)
-      ? questionObj.options
-          .filter((option): option is ToolInputOption => {
-            if (typeof option !== "object" || option === null) {
-              return false;
-            }
-            const optionObj = option as Record<string, unknown>;
-            return typeof optionObj.label === "string";
-          })
-          .map((option) => ({ label: option.label }))
-      : [];
-    if (!options.length) {
-      continue;
-    }
-
-    questions.push({ id, question, options });
-  }
-
-  return questions;
-}
-
-function buildToolInputResponse(
-  questions: ToolInputQuestion[],
-  selectedQuestionId: string,
-  selectedLabel: string
-): ApprovalResponse {
-  const answers: Record<string, { answers: string[] }> = {};
-
-  for (const question of questions) {
-    const chosen =
-      question.id === selectedQuestionId
-        ? selectedLabel
-        : question.options[0]?.label ?? "";
-    answers[question.id] = { answers: [chosen] };
-  }
-
-  return { answers };
 }
 
 function hasVisibleContent(blocks?: ContentBlock[]): boolean {
@@ -247,6 +217,10 @@ export function ChatPanel() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const effortSyncKeyRef = useRef<string | null>(null);
+  const messageHeightsRef = useRef<Map<string, number>>(new Map());
+  const [listLayoutVersion, setListLayoutVersion] = useState(0);
+  const [viewportScrollTop, setViewportScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
 
   const activeWorkspace = useMemo(
     () => workspaces.find((w) => w.id === activeWorkspaceId) ?? null,
@@ -333,6 +307,75 @@ export function ChatPanel() {
     }
 
     return approvals;
+  }, [messages]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    let rafId = 0;
+    const updateScroll = () => {
+      setViewportScrollTop(viewport.scrollTop);
+    };
+    const updateHeight = () => {
+      setViewportHeight(viewport.clientHeight);
+    };
+
+    updateScroll();
+    updateHeight();
+
+    const onScroll = () => {
+      if (rafId !== 0) {
+        return;
+      }
+      rafId = window.requestAnimationFrame(() => {
+        rafId = 0;
+        updateScroll();
+      });
+    };
+
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => updateHeight());
+      resizeObserver.observe(viewport);
+    } else {
+      window.addEventListener("resize", updateHeight);
+    }
+
+    return () => {
+      viewport.removeEventListener("scroll", onScroll);
+      if (rafId !== 0) {
+        window.cancelAnimationFrame(rafId);
+      }
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      } else {
+        window.removeEventListener("resize", updateHeight);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    messageHeightsRef.current.clear();
+    setListLayoutVersion((version) => version + 1);
+  }, [activeThread?.id]);
+
+  useEffect(() => {
+    const existingIds = new Set(messages.map((message) => message.id));
+    let changed = false;
+    for (const messageId of messageHeightsRef.current.keys()) {
+      if (!existingIds.has(messageId)) {
+        messageHeightsRef.current.delete(messageId);
+        changed = true;
+      }
+    }
+    if (changed) {
+      setListLayoutVersion((version) => version + 1);
+    }
   }, [messages]);
 
   useEffect(() => {
@@ -619,6 +662,227 @@ export function ChatPanel() {
     setEditingThreadTitle(false);
   }
 
+  const onMessageRowHeightChange = useCallback(
+    (messageId: string, height: number) => {
+      const normalizedHeight = Math.max(56, Math.ceil(height));
+      const previousHeight = messageHeightsRef.current.get(messageId);
+      if (
+        previousHeight !== undefined &&
+        Math.abs(previousHeight - normalizedHeight) < 2
+      ) {
+        return;
+      }
+
+      messageHeightsRef.current.set(messageId, normalizedHeight);
+      setListLayoutVersion((version) => version + 1);
+    },
+    [],
+  );
+
+  const virtualizationEnabled =
+    messages.length >= MESSAGE_VIRTUALIZATION_THRESHOLD;
+
+  const virtualWindow = useMemo(() => {
+    if (!virtualizationEnabled || messages.length === 0) {
+      return null;
+    }
+
+    const rowCount = messages.length;
+    const offsets = new Array<number>(rowCount + 1);
+    offsets[0] = 0;
+
+    for (let index = 0; index < rowCount; index += 1) {
+      const messageId = messages[index].id;
+      const measuredHeight = messageHeightsRef.current.get(messageId);
+      const rowHeight = measuredHeight ?? MESSAGE_ESTIMATED_ROW_HEIGHT;
+      offsets[index + 1] =
+        offsets[index] + rowHeight + (index < rowCount - 1 ? MESSAGE_ROW_GAP : 0);
+    }
+
+    const visibleStart = Math.max(0, viewportScrollTop - MESSAGE_OVERSCAN_PX);
+    const visibleEnd =
+      viewportScrollTop + viewportHeight + MESSAGE_OVERSCAN_PX;
+
+    // Binary search: find first row whose bottom edge (offsets[i+1]) >= visibleStart
+    let lo = 0;
+    let hi = rowCount;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (offsets[mid + 1] < visibleStart) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    const startIndex = lo;
+
+    // Binary search: find first row whose top edge (offsets[i]) > visibleEnd
+    lo = startIndex;
+    hi = rowCount;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (offsets[mid] <= visibleEnd) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    let endIndexExclusive = lo;
+
+    if (endIndexExclusive <= startIndex) {
+      endIndexExclusive = Math.min(rowCount, startIndex + 1);
+    }
+
+    return {
+      startIndex,
+      endIndexExclusive,
+      topSpacerHeight: offsets[startIndex],
+      bottomSpacerHeight: offsets[rowCount] - offsets[endIndexExclusive],
+    };
+  }, [
+    messages,
+    virtualizationEnabled,
+    viewportHeight,
+    viewportScrollTop,
+    listLayoutVersion,
+  ]);
+
+  function renderMessageItem(message: Message, index: number) {
+    const isUser = message.role === "user";
+    const messageTimestamp = formatMessageTimestamp(message.createdAt);
+
+    return (
+      <div
+        key={message.id}
+        className="animate-slide-up"
+        style={{
+          animationDelay: `${Math.min(index * 20, 200)}ms`,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: isUser ? "flex-end" : "flex-start",
+          maxWidth: "100%",
+        }}
+      >
+        {isUser ? (
+          <>
+            <div
+              style={{
+                maxWidth: "75%",
+                padding: "10px 14px",
+                borderRadius: "var(--radius-md)",
+                background: "var(--bg-3)",
+                border: "1px solid var(--border)",
+                fontSize: 13,
+                lineHeight: 1.6,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {message.content ||
+                (message.blocks ?? [])
+                  .filter((b) => b.type === "text")
+                  .map((b) => b.content)
+                  .join("\n")}
+            </div>
+            {messageTimestamp && (
+              <span
+                style={{
+                  fontSize: 10,
+                  color: "var(--text-3)",
+                  paddingRight: 4,
+                  marginTop: 4,
+                }}
+              >
+                {messageTimestamp}
+              </span>
+            )}
+          </>
+        ) : hasVisibleContent(message.blocks) ? (
+          <>
+            <div
+              style={{
+                width: "100%",
+                maxWidth: "100%",
+                padding: "8px 4px",
+                borderRadius: "var(--radius-md)",
+                background: "var(--bg-2)",
+                border: "1px solid var(--border)",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  padding: "2px 14px 6px",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: "var(--text-3)",
+                  letterSpacing: "0.02em",
+                }}
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  {selectedEngineId === "codex" && (
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 12,
+                        height: 12,
+                      }}
+                    >
+                      <OpenAiIcon size={11} />
+                    </span>
+                  )}
+                  <span>{assistantLabel}</span>
+                </span>
+              </div>
+              <MessageBlocks
+                blocks={message.blocks}
+                status={message.status}
+                onApproval={(approvalId, response) =>
+                  void respondApproval(approvalId, response)
+                }
+              />
+            </div>
+            {messageTimestamp && (
+              <span
+                style={{
+                  fontSize: 10,
+                  color: "var(--text-3)",
+                  marginTop: 4,
+                  paddingLeft: 4,
+                }}
+              >
+                {messageTimestamp}
+              </span>
+            )}
+          </>
+        ) : null}
+      </div>
+    );
+  }
+
+  const streamingIndicator = streaming ? (
+    <div
+      className="animate-fade-in"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        color: "var(--text-2)",
+        fontSize: 12,
+        padding: "4px 0",
+      }}
+    >
+      <Loader2
+        size={13}
+        className="animate-pulse-soft"
+        style={{ animation: "pulse-soft 1s ease-in-out infinite" }}
+      />
+      <span style={{ opacity: 0.8 }}>Thinking...</span>
+    </div>
+  ) : null;
+
   const workspaceName = activeWorkspace?.name || activeWorkspace?.rootPath.split("/").pop() || "";
 
   // Compute total diff stats for header display
@@ -859,134 +1123,39 @@ export function ChatPanel() {
               </p>
             </div>
           </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {messages.map((message, i) => {
-              const isUser = message.role === "user";
-              const messageTimestamp = formatMessageTimestamp(message.createdAt);
-              return (
-                <div
-                  key={message.id}
-                  className="animate-slide-up"
-                  style={{
-                    animationDelay: `${Math.min(i * 20, 200)}ms`,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: isUser ? "flex-end" : "flex-start",
-                    maxWidth: "100%",
-                  }}
-                >
-                  {isUser ? (
-                    <>
-                      <div
-                        style={{
-                          maxWidth: "75%",
-                          padding: "10px 14px",
-                          borderRadius: "var(--radius-md)",
-                          background: "var(--bg-3)",
-                          border: "1px solid var(--border)",
-                          fontSize: 13,
-                          lineHeight: 1.6,
-                          whiteSpace: "pre-wrap",
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        {message.content || (message.blocks ?? []).filter((b) => b.type === "text").map((b) => b.content).join("\n")}
-                      </div>
-                      {messageTimestamp && (
-                        <span
-                          style={{
-                            fontSize: 10,
-                            color: "var(--text-3)",
-                            paddingRight: 4,
-                            marginTop: 4,
-                          }}
-                        >
-                          {messageTimestamp}
-                        </span>
-                      )}
-                    </>
-                  ) : hasVisibleContent(message.blocks) ? (
-                    <>
-                      <div
-                        style={{
-                          width: "100%",
-                          maxWidth: "100%",
-                          padding: "8px 4px",
-                          borderRadius: "var(--radius-md)",
-                          background: "var(--bg-2)",
-                          border: "1px solid var(--border)",
-                          overflow: "hidden",
-                        }}
-                      >
-                        <div
-                          style={{
-                            padding: "2px 14px 6px",
-                            fontSize: 11,
-                            fontWeight: 600,
-                            color: "var(--text-3)",
-                            letterSpacing: "0.02em",
-                          }}
-                        >
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                            {selectedEngineId === "codex" && (
-                              <span
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  width: 12,
-                                  height: 12,
-                                }}
-                              >
-                                <OpenAiIcon size={11} />
-                              </span>
-                            )}
-                            <span>{assistantLabel}</span>
-                          </span>
-                        </div>
-                        <MessageBlocks
-                          blocks={message.blocks}
-                          status={message.status}
-                          onApproval={(approvalId, response) =>
-                            void respondApproval(approvalId, response)
-                          }
-                        />
-                      </div>
-                      {messageTimestamp && (
-                        <span
-                          style={{
-                            fontSize: 10,
-                            color: "var(--text-3)",
-                            marginTop: 4,
-                            paddingLeft: 4,
-                          }}
-                        >
-                          {messageTimestamp}
-                        </span>
-                      )}
-                    </>
-                  ) : null}
-                </div>
-              );
-            })}
-
-            {streaming && (
-              <div
-                className="animate-fade-in"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  color: "var(--text-2)",
-                  fontSize: 12,
-                  padding: "4px 0",
-                }}
-              >
-                <Loader2 size={13} className="animate-pulse-soft" style={{ animation: "pulse-soft 1s ease-in-out infinite" }} />
-                <span style={{ opacity: 0.8 }}>Thinking...</span>
-              </div>
+        ) : virtualizationEnabled && virtualWindow ? (
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {virtualWindow.topSpacerHeight > 0 && (
+              <div style={{ height: virtualWindow.topSpacerHeight }} />
             )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: MESSAGE_ROW_GAP }}>
+              {messages
+                .slice(virtualWindow.startIndex, virtualWindow.endIndexExclusive)
+                .map((message, relativeIndex) => {
+                  const absoluteIndex = virtualWindow.startIndex + relativeIndex;
+                  return (
+                    <MeasuredMessageRow
+                      key={message.id}
+                      messageId={message.id}
+                      onHeightChange={onMessageRowHeightChange}
+                    >
+                      {renderMessageItem(message, absoluteIndex)}
+                    </MeasuredMessageRow>
+                  );
+                })}
+            </div>
+
+            {virtualWindow.bottomSpacerHeight > 0 && (
+              <div style={{ height: virtualWindow.bottomSpacerHeight }} />
+            )}
+
+            {streamingIndicator}
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: MESSAGE_ROW_GAP }}>
+            {messages.map((message, index) => renderMessageItem(message, index))}
+            {streamingIndicator}
           </div>
         )}
       </div>
@@ -1075,14 +1244,7 @@ export function ChatPanel() {
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {pendingApprovals.slice(-3).map((approval) => {
                   const details = approval.details ?? {};
-                  const serverMethod =
-                    typeof details._serverMethod === "string"
-                      ? details._serverMethod
-                      : "";
-                  const toolInputQuestions =
-                    serverMethod === "item/tool/requestUserInput"
-                      ? readToolInputQuestions(details)
-                      : [];
+                  const isToolInputRequest = isRequestUserInputApproval(details);
                   const proposedExecpolicyAmendment = Array.isArray(
                     details.proposedExecpolicyAmendment
                   )
@@ -1145,31 +1307,17 @@ export function ChatPanel() {
                       </div>
 
                       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                        {toolInputQuestions.length > 0 ? (
-                          toolInputQuestions[0].options.map((option) => (
-                            <button
-                              key={option.label}
-                              type="button"
-                              className="btn-ghost"
-                              onClick={() =>
-                                void respondApproval(
-                                  approval.approvalId,
-                                  buildToolInputResponse(
-                                    toolInputQuestions,
-                                    toolInputQuestions[0].id,
-                                    option.label
-                                  )
-                                )
-                              }
-                              style={{
-                                padding: "5px 10px",
-                                fontSize: 12,
-                                cursor: "pointer",
-                              }}
-                            >
-                              {option.label}
-                            </button>
-                          ))
+                        {isToolInputRequest ? (
+                          <span
+                            style={{
+                              fontSize: 11.5,
+                              color: "var(--text-3)",
+                              maxWidth: 220,
+                              textAlign: "right",
+                            }}
+                          >
+                            Respond in the approval card below.
+                          </span>
                         ) : (
                           <>
                             <button
