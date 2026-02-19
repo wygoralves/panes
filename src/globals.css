@@ -365,6 +365,15 @@ button, input, textarea, select {
   white-space: nowrap;
 }
 
+.dropdown-trigger-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
 .dropdown-chevron {
   flex-shrink: 0;
   opacity: 0.5;
@@ -425,9 +434,29 @@ button, input, textarea, select {
   flex: 1;
 }
 
+.dropdown-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
 .dropdown-item-check {
   flex-shrink: 0;
   color: var(--accent);
+}
+
+.dropdown-item-active {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-1);
+}
+
+.dropdown-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border);
 }
 
 /* ── Selection ── */

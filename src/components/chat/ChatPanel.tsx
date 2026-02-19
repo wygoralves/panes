@@ -22,6 +22,80 @@ import { Dropdown } from "../shared/Dropdown";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import type { ApprovalBlock, ApprovalResponse, ContentBlock, TrustLevel } from "../../types";
 
+const MODEL_TOKEN_LABELS: Record<string, string> = {
+  gpt: "GPT",
+  codex: "Codex",
+  mini: "Mini",
+  nano: "Nano",
+};
+
+const REASONING_EFFORT_LABELS: Record<string, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "XHigh",
+};
+
+function OpenAiIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width={size}
+      height={size}
+      aria-hidden="true"
+      focusable="false"
+      fill="currentColor"
+    >
+      <path d="M14.949 6.547a3.94 3.94 0 0 0-.348-3.273 4.11 4.11 0 0 0-4.4-1.934A4.1 4.1 0 0 0 8.423.2 4.15 4.15 0 0 0 6.305.086a4.1 4.1 0 0 0-1.891.948 4.04 4.04 0 0 0-1.158 1.753 4.1 4.1 0 0 0-1.563.679A4 4 0 0 0 .554 4.72a3.99 3.99 0 0 0 .502 4.731 3.94 3.94 0 0 0 .346 3.274 4.11 4.11 0 0 0 4.402 1.933c.382.425.852.764 1.377.995.526.231 1.095.35 1.67.346 1.78.002 3.358-1.132 3.901-2.804a4.1 4.1 0 0 0 1.563-.68 4 4 0 0 0 1.14-1.253 3.99 3.99 0 0 0-.506-4.716m-6.097 8.406a3.05 3.05 0 0 1-1.945-.694l.096-.054 3.23-1.838a.53.53 0 0 0 .265-.455v-4.49l1.366.778q.02.011.025.035v3.722c-.003 1.653-1.361 2.992-3.037 2.996m-6.53-2.75a2.95 2.95 0 0 1-.36-2.01l.095.057L5.29 12.09a.53.53 0 0 0 .527 0l3.949-2.246v1.555a.05.05 0 0 1-.022.041L6.473 13.3c-1.454.826-3.311.335-4.15-1.098m-.85-6.94A3.02 3.02 0 0 1 3.07 3.949v3.785a.51.51 0 0 0 .262.451l3.93 2.237-1.366.779a.05.05 0 0 1-.048 0L2.585 9.342a2.98 2.98 0 0 1-1.113-4.094zm11.216 2.571L8.747 5.576l1.362-.776a.05.05 0 0 1 .048 0l3.265 1.86a3 3 0 0 1 1.173 1.207 2.96 2.96 0 0 1-.27 3.2 3.05 3.05 0 0 1-1.36.997V8.279a.52.52 0 0 0-.276-.445m1.36-2.015-.097-.057-3.226-1.855a.53.53 0 0 0-.53 0L6.249 6.153V4.598a.04.04 0 0 1 .019-.04L9.533 2.7a3.07 3.07 0 0 1 3.257.139c.474.325.843.778 1.066 1.303.223.526.289 1.103.191 1.664zM5.503 8.575 4.139 7.8a.05.05 0 0 1-.026-.037V4.049c0-.57.166-1.127.476-1.607s.752-.864 1.275-1.105a3.08 3.08 0 0 1 3.234.41l-.096.054-3.23 1.838a.53.53 0 0 0-.265.455zm.742-1.577 1.758-1 1.762 1v2l-1.755 1-1.762-1z" />
+    </svg>
+  );
+}
+
+function formatModelName(modelName: string): string {
+  return modelName
+    .split("-")
+    .filter(Boolean)
+    .map((segment) => {
+      const lowerSegment = segment.toLowerCase();
+      const knownLabel = MODEL_TOKEN_LABELS[lowerSegment];
+      if (knownLabel) {
+        return knownLabel;
+      }
+      if (/^\d+(\.\d+)*$/.test(segment)) {
+        return segment;
+      }
+      if (/^[a-z]?\d+(\.\d+)*$/i.test(segment)) {
+        return segment.toUpperCase();
+      }
+      return segment.charAt(0).toUpperCase() + segment.slice(1);
+    })
+    .join("-");
+}
+
+function formatReasoningEffortLabel(effort?: string): string {
+  if (!effort) {
+    return "";
+  }
+  const knownLabel = REASONING_EFFORT_LABELS[effort.toLowerCase()];
+  if (knownLabel) {
+    return knownLabel;
+  }
+  return effort.charAt(0).toUpperCase() + effort.slice(1);
+}
+
+function formatEngineModelLabel(
+  engineName?: string,
+  modelDisplayName?: string,
+  reasoningEffort?: string,
+): string {
+  const modelLabel = modelDisplayName ? formatModelName(modelDisplayName) : "";
+  const baseLabel = engineName && modelLabel
+    ? `${engineName} - ${modelLabel}`
+    : modelLabel || engineName || "Assistant";
+  const effortLabel = formatReasoningEffortLabel(reasoningEffort);
+  return effortLabel ? `${baseLabel} ${effortLabel}` : baseLabel;
+}
+
 interface ToolInputOption {
   label: string;
 }
@@ -98,6 +172,42 @@ function hasVisibleContent(blocks?: ContentBlock[]): boolean {
   });
 }
 
+function parseMessageDate(raw?: string): Date | null {
+  if (!raw) {
+    return null;
+  }
+
+  const sqliteUtcPattern = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+  const normalized = sqliteUtcPattern.test(raw) ? `${raw.replace(" ", "T")}Z` : raw;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date;
+}
+
+function formatMessageTimestamp(raw?: string): string {
+  const date = parseMessageDate(raw);
+  if (!date) {
+    return "";
+  }
+
+  const now = new Date();
+  const sameDay = now.toDateString() === date.toDateString();
+
+  if (sameDay) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  return date.toLocaleString([], {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function ChatPanel() {
   const [input, setInput] = useState("");
   const [selectedEngineId, setSelectedEngineId] = useState("codex");
@@ -157,6 +267,16 @@ export function ChatPanel() {
 
   const availableModels = useMemo(() => selectedEngine?.models ?? [], [selectedEngine]);
 
+  const activeModels = useMemo(
+    () => availableModels.filter((m) => !m.hidden),
+    [availableModels],
+  );
+
+  const legacyModels = useMemo(
+    () => availableModels.filter((m) => m.hidden),
+    [availableModels],
+  );
+
   const selectedModel = useMemo(
     () => availableModels.find((model) => model.id === selectedModelId) ?? availableModels[0] ?? null,
     [availableModels, selectedModelId],
@@ -171,14 +291,15 @@ export function ChatPanel() {
       ? activeThread.engineMetadata.reasoningEffort
       : undefined;
   const assistantLabel = useMemo(() => {
-    const parts: string[] = [];
-    if (selectedEngine?.name) parts.push(selectedEngine.name);
-    if (selectedModel?.displayName) parts.push(selectedModel.displayName);
-    if (activeThreadReasoningEffort) {
-      parts.push(activeThreadReasoningEffort.charAt(0).toUpperCase() + activeThreadReasoningEffort.slice(1));
-    }
-    return parts.join(" ") || "Assistant";
-  }, [selectedEngine?.name, selectedModel?.displayName, activeThreadReasoningEffort]);
+    const effortLabel = selectedEngineId === "codex"
+      ? activeThreadReasoningEffort
+      : undefined;
+    return formatEngineModelLabel(selectedEngine?.name, selectedModel?.displayName, effortLabel);
+  }, [selectedEngine?.name, selectedModel?.displayName, activeThreadReasoningEffort, selectedEngineId]);
+
+  const modelPickerLabel = useMemo(() => {
+    return formatEngineModelLabel(selectedEngine?.name, selectedModel?.displayName);
+  }, [selectedEngine?.name, selectedModel?.displayName]);
 
   const workspaceTrustLevel: TrustLevel = useMemo(() => {
     if (!repos.length) {
@@ -657,6 +778,7 @@ export function ChatPanel() {
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {messages.map((message, i) => {
               const isUser = message.role === "user";
+              const messageTimestamp = formatMessageTimestamp(message.createdAt);
               return (
                 <div
                   key={message.id}
@@ -670,52 +792,95 @@ export function ChatPanel() {
                   }}
                 >
                   {isUser ? (
-                    <div
-                      style={{
-                        maxWidth: "75%",
-                        padding: "10px 14px",
-                        borderRadius: "var(--radius-md)",
-                        background: "var(--bg-3)",
-                        border: "1px solid var(--border)",
-                        fontSize: 13,
-                        lineHeight: 1.6,
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                      }}
-                    >
-                      {message.content || (message.blocks ?? []).filter((b) => b.type === "text").map((b) => b.content).join("\n")}
-                    </div>
-                  ) : hasVisibleContent(message.blocks) ? (
-                    <div
-                      style={{
-                        width: "100%",
-                        maxWidth: "100%",
-                        padding: "8px 4px",
-                        borderRadius: "var(--radius-md)",
-                        background: "var(--bg-2)",
-                        border: "1px solid var(--border)",
-                        overflow: "hidden",
-                      }}
-                    >
+                    <>
                       <div
                         style={{
-                          padding: "2px 14px 6px",
-                          fontSize: 11,
-                          fontWeight: 600,
-                          color: "var(--text-3)",
-                          letterSpacing: "0.02em",
+                          maxWidth: "75%",
+                          padding: "10px 14px",
+                          borderRadius: "var(--radius-md)",
+                          background: "var(--bg-3)",
+                          border: "1px solid var(--border)",
+                          fontSize: 13,
+                          lineHeight: 1.6,
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-word",
                         }}
                       >
-                        {assistantLabel}
+                        {message.content || (message.blocks ?? []).filter((b) => b.type === "text").map((b) => b.content).join("\n")}
                       </div>
-                      <MessageBlocks
-                        blocks={message.blocks}
-                        status={message.status}
-                        onApproval={(approvalId, response) =>
-                          void respondApproval(approvalId, response)
-                        }
-                      />
-                    </div>
+                      {messageTimestamp && (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color: "var(--text-3)",
+                            paddingRight: 4,
+                            marginTop: 4,
+                          }}
+                        >
+                          {messageTimestamp}
+                        </span>
+                      )}
+                    </>
+                  ) : hasVisibleContent(message.blocks) ? (
+                    <>
+                      <div
+                        style={{
+                          width: "100%",
+                          maxWidth: "100%",
+                          padding: "8px 4px",
+                          borderRadius: "var(--radius-md)",
+                          background: "var(--bg-2)",
+                          border: "1px solid var(--border)",
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{
+                            padding: "2px 14px 6px",
+                            fontSize: 11,
+                            fontWeight: 600,
+                            color: "var(--text-3)",
+                            letterSpacing: "0.02em",
+                          }}
+                        >
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            {selectedEngineId === "codex" && (
+                              <span
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  width: 12,
+                                  height: 12,
+                                }}
+                              >
+                                <OpenAiIcon size={11} />
+                              </span>
+                            )}
+                            <span>{assistantLabel}</span>
+                          </span>
+                        </div>
+                        <MessageBlocks
+                          blocks={message.blocks}
+                          status={message.status}
+                          onApproval={(approvalId, response) =>
+                            void respondApproval(approvalId, response)
+                          }
+                        />
+                      </div>
+                      {messageTimestamp && (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color: "var(--text-3)",
+                            marginTop: 4,
+                            paddingLeft: 4,
+                          }}
+                        >
+                          {messageTimestamp}
+                        </span>
+                      )}
+                    </>
                   ) : null}
                 </div>
               );
@@ -1090,10 +1255,21 @@ export function ChatPanel() {
                 onChange={(v) => setSelectedModelId(v || null)}
                 disabled={availableModels.length === 0}
                 title="Select model"
-                options={availableModels.map((model) => ({
+                selectedLabel={modelPickerLabel}
+                selectedIcon={selectedEngineId === "codex" ? <OpenAiIcon size={12} /> : undefined}
+                options={activeModels.map((model) => ({
                   value: model.id,
-                  label: `${selectedEngine?.name ? `${selectedEngine.name} ` : ""}${model.displayName}${model.isDefault ? " (default)" : ""}`,
+                  label: formatEngineModelLabel(selectedEngine?.name, model.displayName),
+                  icon: selectedEngineId === "codex" ? <OpenAiIcon size={12} /> : undefined,
                 }))}
+                groups={legacyModels.length > 0 ? [{
+                  label: "Legacy Models",
+                  options: legacyModels.map((model) => ({
+                    value: model.id,
+                    label: formatEngineModelLabel(selectedEngine?.name, model.displayName),
+                    icon: selectedEngineId === "codex" ? <OpenAiIcon size={12} /> : undefined,
+                  })),
+                }] : undefined}
               />
 
               {/* Reasoning effort */}
@@ -1104,9 +1280,7 @@ export function ChatPanel() {
                   title="Thinking budget"
                   options={supportedEfforts.map((option) => ({
                     value: option.reasoningEffort,
-                    label:
-                      option.reasoningEffort.charAt(0).toUpperCase() +
-                      option.reasoningEffort.slice(1),
+                    label: formatReasoningEffortLabel(option.reasoningEffort),
                   }))}
                 />
               )}
