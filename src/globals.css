@@ -96,6 +96,9 @@ button, input, textarea, select {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.15);
 }
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
 
 /* ── Glassmorphism ── */
 .glass {
@@ -685,38 +688,96 @@ button, input, textarea, select {
 /* Diff viewer */
 .git-diff-viewer {
   border-bottom: 1px solid var(--border);
-  overflow: auto;
   background: var(--code-bg);
+  display: flex;
+  flex-direction: column;
+  min-height: 80px;
+  position: relative;
+}
+.git-diff-scroll {
+  flex: 1;
+  overflow: auto;
+}
+.git-diff-scroll pre {
+  width: fit-content;
+  min-width: 100%;
+}
+.git-diff-resize-handle {
+  height: 3px;
+  cursor: ns-resize;
+  background: transparent;
+  transition: background var(--duration-fast) var(--ease-out);
+  flex-shrink: 0;
+  position: relative;
+}
+.git-diff-resize-handle::after {
+  content: "";
+  position: absolute;
+  inset: -2px 0;
+}
+.git-diff-resize-handle:hover,
+.git-diff-resize-handle-active {
+  background: var(--accent);
+  box-shadow: var(--accent-glow);
 }
 .git-diff-line {
   display: flex;
   font-family: "JetBrains Mono", monospace;
   font-size: 11px;
-  line-height: 1.6;
+  line-height: 1.7;
+  min-height: 19px;
+}
+.git-diff-gutter {
+  width: 18px;
+  text-align: center;
+  user-select: none;
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1.7;
+  color: var(--text-3);
+  opacity: 0.4;
 }
 .git-diff-line-num {
-  width: 40px;
+  width: 36px;
   text-align: right;
-  padding-right: 10px;
+  padding-right: 8px;
   color: var(--text-3);
   user-select: none;
   flex-shrink: 0;
-  opacity: 0.5;
+  opacity: 0.35;
 }
 .git-diff-line-content {
   flex: 1;
   padding-right: 12px;
-  white-space: pre-wrap;
+  white-space: pre;
   color: var(--text-2);
 }
 .git-diff-add {
   background: rgba(46, 160, 67, 0.08);
 }
-.git-diff-add .git-diff-line-content { color: #aff5b4; }
+.git-diff-add .git-diff-gutter { color: var(--success); opacity: 0.7; }
+.git-diff-add .git-diff-line-num { color: var(--success); opacity: 0.4; }
+.git-diff-add .git-diff-line-content { color: #b5f5c8; }
 .git-diff-del {
   background: rgba(248, 81, 73, 0.08);
 }
-.git-diff-del .git-diff-line-content { color: #ffdcd7; }
+.git-diff-del .git-diff-gutter { color: var(--danger); opacity: 0.7; }
+.git-diff-del .git-diff-line-num { color: var(--danger); opacity: 0.4; }
+.git-diff-del .git-diff-line-content { color: #ffd7d5; }
+.git-diff-hunk {
+  background: rgba(96, 165, 250, 0.04);
+  border-top: 1px solid rgba(96, 165, 250, 0.1);
+  min-height: 0;
+  height: 24px;
+}
+.git-diff-hunk .git-diff-line-content {
+  color: var(--info);
+  opacity: 0.5;
+  font-size: 10px;
+  font-style: italic;
+}
+.git-diff-hunk .git-diff-gutter,
+.git-diff-hunk .git-diff-line-num { opacity: 0; }
 
 /* Commit area */
 .git-commit-area {

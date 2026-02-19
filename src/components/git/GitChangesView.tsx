@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -131,6 +131,123 @@ function getStatusClass(status?: string): string {
   return "git-status-untracked";
 }
 
+interface ParsedLine {
+  type: "add" | "del" | "context" | "hunk";
+  content: string;
+  gutter: string;
+  lineNum: string;
+}
+
+function parseDiff(raw: string): ParsedLine[] {
+  const lines = raw.split("\n");
+  const result: ParsedLine[] = [];
+  let newLine = 0;
+
+  for (const line of lines) {
+    // Skip noise: diff --git, index, --- a/, +++ b/, etc.
+    if (
+      line.startsWith("diff --git") ||
+      line.startsWith("index ") ||
+      line.startsWith("---") ||
+      line.startsWith("+++") ||
+      line.startsWith("new file") ||
+      line.startsWith("deleted file") ||
+      line.startsWith("similarity") ||
+      line.startsWith("rename") ||
+      line.startsWith("old mode") ||
+      line.startsWith("new mode")
+    ) {
+      continue;
+    }
+    if (line.startsWith("@@")) {
+      const match = line.match(/\+(\d+)/);
+      newLine = match ? parseInt(match[1], 10) : 0;
+      // Show just the function/context hint if present
+      const hunkLabel = line.replace(/^@@[^@]*@@\s?/, "").trim();
+      result.push({ type: "hunk", content: hunkLabel, gutter: "", lineNum: "" });
+    } else if (line.startsWith("+")) {
+      result.push({ type: "add", content: line.slice(1), gutter: "+", lineNum: String(newLine) });
+      newLine++;
+    } else if (line.startsWith("-")) {
+      result.push({ type: "del", content: line.slice(1), gutter: "-", lineNum: "" });
+    } else {
+      result.push({ type: "context", content: line.startsWith(" ") ? line.slice(1) : line, gutter: "", lineNum: String(newLine || "") });
+      if (newLine) newLine++;
+    }
+  }
+  return result;
+}
+
+const LINE_CLASS: Record<string, string> = {
+  add: "git-diff-add",
+  del: "git-diff-del",
+  hunk: "git-diff-hunk",
+  context: "",
+};
+
+const MIN_DIFF_HEIGHT = 80;
+const DEFAULT_DIFF_HEIGHT = 220;
+const MAX_DIFF_RATIO = 0.55;
+
+function DiffPanel({ diff }: { diff: string }) {
+  const [height, setHeight] = useState(DEFAULT_DIFF_HEIGHT);
+  const dragging = useRef(false);
+  const startY = useRef(0);
+  const startH = useRef(0);
+
+  const parsed = useMemo(() => parseDiff(diff), [diff]);
+
+  const onResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      dragging.current = true;
+      startY.current = e.clientY;
+      startH.current = height;
+
+      const onMove = (ev: MouseEvent) => {
+        if (!dragging.current) return;
+        const maxH = window.innerHeight * MAX_DIFF_RATIO;
+        const next = Math.min(maxH, Math.max(MIN_DIFF_HEIGHT, startH.current + (ev.clientY - startY.current)));
+        setHeight(next);
+      };
+
+      const onUp = () => {
+        dragging.current = false;
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+
+      document.body.style.cursor = "ns-resize";
+      document.body.style.userSelect = "none";
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    },
+    [height],
+  );
+
+  return (
+    <div className="git-diff-viewer" style={{ height }}>
+      <div className="git-diff-scroll">
+        <pre style={{ margin: 0, padding: "4px 0" }}>
+          {parsed.map((line, idx) => (
+            <span key={idx} className={`git-diff-line ${LINE_CLASS[line.type]}`}>
+              <span className="git-diff-gutter">{line.gutter}</span>
+              <span className="git-diff-line-num">{line.lineNum}</span>
+              <span className="git-diff-line-content">{line.content}</span>
+            </span>
+          ))}
+        </pre>
+      </div>
+      <div
+        className={`git-diff-resize-handle${dragging.current ? " git-diff-resize-handle-active" : ""}`}
+        onMouseDown={onResizeStart}
+      />
+    </div>
+  );
+}
+
 export function GitChangesView({ repo, showDiff, onError }: Props) {
   const {
     status,
@@ -259,7 +376,11 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
         style={{ paddingLeft: 22 + row.depth * 14 }}
         onClick={() => {
           onError(undefined);
-          void selectFile(repo.path, row.file.path, staged);
+          if (isSelected) {
+            useGitStore.setState({ selectedFile: undefined, selectedFileStaged: undefined, diff: undefined });
+          } else {
+            void selectFile(repo.path, row.file.path, staged);
+          }
         }}
       >
         <span className="git-file-name" title={row.path}>
@@ -366,27 +487,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
   return (
     <>
       {selectedFile && diff && showDiff && (
-        <div className="git-diff-viewer" style={{ maxHeight: 260 }}>
-          <pre style={{ margin: 0, padding: "8px 0" }}>
-            {diff.split("\n").map((line, idx) => {
-              const isAdd =
-                line.startsWith("+") && !line.startsWith("+++");
-              const isDel =
-                line.startsWith("-") && !line.startsWith("---");
-              const lineClass = isAdd
-                ? " git-diff-add"
-                : isDel
-                  ? " git-diff-del"
-                  : "";
-              return (
-                <span key={idx} className={`git-diff-line${lineClass}`}>
-                  <span className="git-diff-line-num">{idx + 1}</span>
-                  <span className="git-diff-line-content">{line}</span>
-                </span>
-              );
-            })}
-          </pre>
-        </div>
+        <DiffPanel diff={diff} />
       )}
 
       <div style={{ flex: 1, overflow: "auto" }}>
