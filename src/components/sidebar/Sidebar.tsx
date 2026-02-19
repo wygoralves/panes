@@ -242,7 +242,7 @@ export function Sidebar() {
             padding: "10px 6px 6px",
           }}
         >
-          <span className="section-label">Threads</span>
+          <span className="section-label">Projects</span>
           <Filter size={12} style={{ color: "var(--text-3)", opacity: 0.6 }} />
         </div>
 
