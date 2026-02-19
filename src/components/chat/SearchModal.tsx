@@ -3,6 +3,7 @@ import { Search, Loader2, MessageSquare, X } from "lucide-react";
 import { ipc } from "../../lib/ipc";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
+import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import type { SearchResult } from "../../types";
 
@@ -22,6 +23,7 @@ export function SearchModal({ open, onClose }: Props) {
 
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setActiveRepo = useWorkspaceStore((s) => s.setActiveRepo);
+  const setMessageFocusTarget = useUiStore((s) => s.setMessageFocusTarget);
   const threads = useThreadStore((s) => s.threads);
   const refreshThreads = useThreadStore((s) => s.refreshThreads);
   const setActiveThread = useThreadStore((s) => s.setActiveThread);
@@ -112,6 +114,10 @@ export function SearchModal({ open, onClose }: Props) {
       return;
     }
 
+    setMessageFocusTarget({
+      threadId: targetThread.id,
+      messageId: result.messageId,
+    });
     setActiveRepo(targetThread.repoId ?? null);
     setActiveThread(targetThread.id);
     await bindChatThread(targetThread.id);

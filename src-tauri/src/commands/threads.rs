@@ -178,6 +178,24 @@ pub async fn delete_thread(state: State<'_, AppState>, thread_id: String) -> Res
     Ok(())
 }
 
+#[tauri::command]
+pub async fn archive_thread(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
+    state.turns.cancel(&thread_id).await;
+
+    if let Some(thread) = db::threads::get_thread(&state.db, &thread_id).map_err(err_to_string)? {
+        if let Err(error) = state.engines.interrupt(&thread).await {
+            log::warn!("failed to interrupt thread before archive: {error}");
+        }
+    } else {
+        state.turns.finish(&thread_id).await;
+        return Err(format!("thread not found: {thread_id}"));
+    }
+
+    db::threads::archive_thread(&state.db, &thread_id).map_err(err_to_string)?;
+    state.turns.finish(&thread_id).await;
+    Ok(())
+}
+
 async fn validate_reasoning_effort(
     state: &AppState,
     engine_id: &str,

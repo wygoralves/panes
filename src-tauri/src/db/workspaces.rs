@@ -30,8 +30,12 @@ pub fn upsert_workspace(
 
     if let Some(id) = existing {
         conn.execute(
-            "UPDATE workspaces SET last_opened_at = datetime('now') WHERE id = ?1",
-            params![id],
+            "UPDATE workspaces
+       SET last_opened_at = datetime('now'),
+           scan_depth = ?2,
+           archived_at = NULL
+       WHERE id = ?1",
+            params![id, scan_depth],
         )
         .context("failed to update workspace last_opened_at")?;
     } else {
@@ -52,6 +56,7 @@ pub fn list_workspaces(db: &Database) -> anyhow::Result<Vec<WorkspaceDto>> {
     let mut stmt = conn.prepare(
         "SELECT id, name, root_path, scan_depth, created_at, last_opened_at
      FROM workspaces
+     WHERE archived_at IS NULL
      ORDER BY last_opened_at DESC",
     )?;
 
@@ -88,6 +93,25 @@ pub fn delete_workspace(db: &Database, workspace_id: &str) -> anyhow::Result<()>
 
     if affected == 0 {
         anyhow::bail!("workspace not found: {workspace_id}");
+    }
+
+    Ok(())
+}
+
+pub fn archive_workspace(db: &Database, workspace_id: &str) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    let affected = conn
+        .execute(
+            "UPDATE workspaces
+       SET archived_at = datetime('now')
+       WHERE id = ?1
+         AND archived_at IS NULL",
+            params![workspace_id],
+        )
+        .context("failed to archive workspace")?;
+
+    if affected == 0 {
+        anyhow::bail!("workspace not found or already archived: {workspace_id}");
     }
 
     Ok(())

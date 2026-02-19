@@ -6,6 +6,12 @@ use crate::models::{ThreadDto, ThreadStatusDto};
 
 use super::Database;
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RuntimeRecoveryReport {
+    pub messages_marked_interrupted: usize,
+    pub thread_status_updates: usize,
+}
+
 pub fn create_thread(
     db: &Database,
     workspace_id: &str,
@@ -64,6 +70,7 @@ pub fn list_threads_for_workspace(
             COALESCE(title, ''), status, message_count, total_tokens, created_at, last_activity_at
      FROM threads
      WHERE workspace_id = ?1
+       AND archived_at IS NULL
        AND EXISTS (
          SELECT 1 FROM messages
          WHERE messages.thread_id = threads.id
@@ -95,6 +102,7 @@ pub fn find_latest_thread_for_scope(
        FROM threads
        WHERE workspace_id = ?1
          AND repo_id = ?2
+         AND archived_at IS NULL
          AND (?3 IS NULL OR engine_id = ?3)
          AND (?4 IS NULL OR model_id = ?4)
        ORDER BY last_activity_at DESC
@@ -108,6 +116,7 @@ pub fn find_latest_thread_for_scope(
        FROM threads
        WHERE workspace_id = ?1
          AND repo_id IS NULL
+         AND archived_at IS NULL
          AND (?2 IS NULL OR engine_id = ?2)
          AND (?3 IS NULL OR model_id = ?3)
        ORDER BY last_activity_at DESC
@@ -163,6 +172,25 @@ pub fn delete_thread(db: &Database, thread_id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn archive_thread(db: &Database, thread_id: &str) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    let affected = conn
+        .execute(
+            "UPDATE threads
+       SET archived_at = datetime('now')
+       WHERE id = ?1
+         AND archived_at IS NULL",
+            params![thread_id],
+        )
+        .context("failed to archive thread")?;
+
+    if affected == 0 {
+        anyhow::bail!("thread not found or already archived: {thread_id}");
+    }
+
+    Ok(())
+}
+
 pub fn update_engine_metadata(
     db: &Database,
     thread_id: &str,
@@ -204,6 +232,107 @@ pub fn update_thread_title(db: &Database, thread_id: &str, title: &str) -> anyho
     )
     .context("failed to update thread title")?;
     Ok(())
+}
+
+pub fn reconcile_runtime_state(db: &Database) -> anyhow::Result<RuntimeRecoveryReport> {
+    let mut conn = db.connect()?;
+    let tx = conn
+        .transaction()
+        .context("failed to start runtime recovery transaction")?;
+
+    let messages_marked_interrupted = tx
+        .execute(
+            "UPDATE messages
+       SET status = 'interrupted'
+       WHERE role = 'assistant'
+         AND status = 'streaming'",
+            [],
+        )
+        .context("failed to normalize stale streaming assistant messages")?;
+
+    let thread_ids = {
+        let mut stmt = tx
+            .prepare("SELECT id FROM threads")
+            .context("failed to load threads for runtime recovery")?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .context("failed to iterate threads for runtime recovery")?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.context("failed to decode thread id during runtime recovery")?);
+        }
+        out
+    };
+
+    let mut thread_status_updates = 0usize;
+    for thread_id in thread_ids {
+        let next_status = derive_thread_status_for_recovery(&tx, &thread_id)?;
+        let changed = tx
+            .execute(
+                "UPDATE threads
+           SET status = ?1
+           WHERE id = ?2
+             AND status != ?1",
+                params![next_status.as_str(), thread_id],
+            )
+            .context("failed to apply runtime recovery thread status")?;
+        thread_status_updates += changed;
+    }
+
+    tx.commit()
+        .context("failed to commit runtime recovery transaction")?;
+
+    Ok(RuntimeRecoveryReport {
+        messages_marked_interrupted,
+        thread_status_updates,
+    })
+}
+
+fn derive_thread_status_for_recovery(
+    conn: &rusqlite::Connection,
+    thread_id: &str,
+) -> anyhow::Result<ThreadStatusDto> {
+    let has_pending_approval = conn
+        .query_row(
+            "SELECT 1
+       FROM approvals
+       WHERE thread_id = ?1
+         AND status = 'pending'
+       LIMIT 1",
+            params![thread_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .context("failed to inspect pending approvals during runtime recovery")?
+        .is_some();
+
+    if has_pending_approval {
+        return Ok(ThreadStatusDto::AwaitingApproval);
+    }
+
+    let last_assistant_status = conn
+        .query_row(
+            "SELECT status
+       FROM messages
+       WHERE thread_id = ?1
+         AND role = 'assistant'
+       ORDER BY created_at DESC, rowid DESC
+       LIMIT 1",
+            params![thread_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .context("failed to inspect latest assistant message during runtime recovery")?;
+
+    let status = match last_assistant_status.as_deref() {
+        Some("error") => ThreadStatusDto::Error,
+        Some("completed") => ThreadStatusDto::Completed,
+        Some("streaming") | Some("interrupted") => ThreadStatusDto::Idle,
+        _ => ThreadStatusDto::Idle,
+    };
+
+    Ok(status)
 }
 
 fn map_thread_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadDto> {

@@ -7,7 +7,7 @@ import {
   MessageSquare,
   ChevronDown,
   ChevronRight,
-  Trash2,
+  Archive,
   Settings,
   Filter,
 } from "lucide-react";
@@ -38,6 +38,37 @@ interface ProjectGroup {
 }
 
 const MAX_VISIBLE_THREADS = 8;
+const DEFAULT_SCAN_DEPTH = 3;
+const MIN_SCAN_DEPTH = 0;
+const MAX_SCAN_DEPTH = 12;
+const SCAN_DEPTH_STORAGE_KEY = "panes.workspace.scanDepth";
+
+function readDefaultScanDepth(): number {
+  const stored = window.localStorage.getItem(SCAN_DEPTH_STORAGE_KEY);
+  if (!stored) {
+    return DEFAULT_SCAN_DEPTH;
+  }
+
+  const parsed = Number.parseInt(stored, 10);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_SCAN_DEPTH;
+  }
+
+  if (parsed < MIN_SCAN_DEPTH || parsed > MAX_SCAN_DEPTH) {
+    return DEFAULT_SCAN_DEPTH;
+  }
+
+  return parsed;
+}
+
+function parseScanDepth(input: string): number | null {
+  const parsed = Number.parseInt(input.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed < MIN_SCAN_DEPTH || parsed > MAX_SCAN_DEPTH) {
+    return null;
+  }
+
+  return parsed;
+}
 
 export function Sidebar() {
   const {
@@ -64,13 +95,43 @@ export function Sidebar() {
 
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [showAll, setShowAll] = useState<Record<string, boolean>>({});
+  const [advancedScanOpen, setAdvancedScanOpen] = useState(false);
+  const [advancedScanDraft, setAdvancedScanDraft] = useState(() =>
+    String(readDefaultScanDepth()),
+  );
+  const [advancedScanError, setAdvancedScanError] = useState<string | null>(null);
   const toggleCollapse = (wsId: string) =>
     setCollapsed((prev) => ({ ...prev, [wsId]: !prev[wsId] }));
 
   async function onOpenFolder() {
     const selected = await open({ directory: true, multiple: false });
     if (!selected || Array.isArray(selected)) return;
-    await openWorkspace(selected);
+    await openWorkspace(selected, readDefaultScanDepth());
+  }
+
+  function toggleAdvancedScanConfig() {
+    setAdvancedScanOpen((current) => {
+      const next = !current;
+      if (next) {
+        setAdvancedScanDraft(String(readDefaultScanDepth()));
+        setAdvancedScanError(null);
+      }
+      return next;
+    });
+  }
+
+  function saveAdvancedScanConfig() {
+    const parsedDepth = parseScanDepth(advancedScanDraft);
+    if (parsedDepth === null) {
+      setAdvancedScanError(
+        `Use an integer between ${MIN_SCAN_DEPTH} and ${MAX_SCAN_DEPTH}.`,
+      );
+      return;
+    }
+
+    setAdvancedScanError(null);
+    window.localStorage.setItem(SCAN_DEPTH_STORAGE_KEY, String(parsedDepth));
+    setAdvancedScanOpen(false);
   }
 
   async function onSelectThread(thread: Thread) {
@@ -109,7 +170,7 @@ export function Sidebar() {
 
   async function onDeleteWorkspace(project: Workspace) {
     const confirmed = window.confirm(
-      `Remove workspace "${project.name}" and all related repos/threads/messages? This cannot be undone.`,
+      `Archive workspace "${project.name}" and hide its repos/threads/messages from the sidebar? You can reopen this folder later to restore it.`,
     );
     if (!confirmed) {
       return;
@@ -126,7 +187,9 @@ export function Sidebar() {
 
   async function onDeleteThread(thread: Thread) {
     const threadLabel = thread.title?.trim() || "Untitled thread";
-    const confirmed = window.confirm(`Delete thread "${threadLabel}"? This cannot be undone.`);
+    const confirmed = window.confirm(
+      `Archive thread "${threadLabel}"? It will be hidden from this project list.`,
+    );
     if (!confirmed) {
       return;
     }
@@ -364,7 +427,7 @@ export function Sidebar() {
 
                   <span
                     role="button"
-                    title="Remove workspace"
+                    title="Archive workspace"
                     onMouseDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -382,7 +445,7 @@ export function Sidebar() {
                       opacity: 0.65,
                     }}
                   >
-                    <Trash2 size={11} />
+                    <Archive size={11} />
                   </span>
                 </button>
 
@@ -483,7 +546,7 @@ export function Sidebar() {
 
                               <span
                                 role="button"
-                                title="Delete thread"
+                                title="Archive thread"
                                 onMouseDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
                                   event.stopPropagation();
@@ -507,7 +570,7 @@ export function Sidebar() {
                                   e.currentTarget.style.opacity = "0";
                                 }}
                               >
-                                <Trash2 size={11} />
+                                <Archive size={11} />
                               </span>
                             </button>
                           );
@@ -558,6 +621,8 @@ export function Sidebar() {
         style={{
           padding: "8px 14px",
           borderTop: "1px solid var(--border)",
+          display: "grid",
+          gap: 6,
         }}
       >
         <button
@@ -586,6 +651,111 @@ export function Sidebar() {
           <Settings size={14} style={{ opacity: 0.6 }} />
           Engine setup
         </button>
+
+        <button
+          type="button"
+          onClick={toggleAdvancedScanConfig}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            padding: "6px 4px",
+            fontSize: 12,
+            color: "var(--text-3)",
+            background: "transparent",
+            cursor: "pointer",
+            width: "100%",
+            borderRadius: "var(--radius-sm)",
+            transition: "color var(--duration-fast)",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = "var(--text-2)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = "var(--text-3)";
+          }}
+        >
+          <span>Advanced: scan depth</span>
+          <span style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 11 }}>
+            {readDefaultScanDepth()}
+          </span>
+        </button>
+
+        {advancedScanOpen && (
+          <div
+            style={{
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid var(--border)",
+              background: "var(--bg-2)",
+              padding: "8px",
+              display: "grid",
+              gap: 6,
+            }}
+          >
+            <p style={{ margin: 0, fontSize: 11, color: "var(--text-3)" }}>
+              Default depth used when opening new projects ({MIN_SCAN_DEPTH}-{MAX_SCAN_DEPTH}).
+            </p>
+            <input
+              type="number"
+              min={MIN_SCAN_DEPTH}
+              max={MAX_SCAN_DEPTH}
+              step={1}
+              value={advancedScanDraft}
+              onChange={(event) => {
+                setAdvancedScanDraft(event.target.value);
+                if (advancedScanError) {
+                  setAdvancedScanError(null);
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  saveAdvancedScanConfig();
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  setAdvancedScanOpen(false);
+                  setAdvancedScanError(null);
+                }
+              }}
+              style={{
+                width: "100%",
+                padding: "6px 8px",
+                borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--border)",
+                background: "var(--bg-1)",
+                color: "var(--text-1)",
+                fontSize: 12,
+              }}
+            />
+            {advancedScanError && (
+              <p style={{ margin: 0, fontSize: 11, color: "var(--danger)" }}>
+                {advancedScanError}
+              </p>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => {
+                  setAdvancedScanOpen(false);
+                  setAdvancedScanError(null);
+                }}
+                style={{ padding: "5px 9px", fontSize: 11.5, cursor: "pointer" }}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={saveAdvancedScanConfig}
+                style={{ padding: "5px 10px", fontSize: 11.5, cursor: "pointer" }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {error && (

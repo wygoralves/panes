@@ -41,9 +41,16 @@ impl Database {
         let conn = self.connect()?;
         conn.execute_batch(include_str!("migrations/001_initial.sql"))
             .context("failed to apply migrations")?;
+        ensure_archived_columns(&conn)?;
         ensure_messages_audit_columns(&conn)?;
         Ok(())
     }
+}
+
+fn ensure_archived_columns(conn: &Connection) -> anyhow::Result<()> {
+    ensure_column(conn, "workspaces", "archived_at", "TEXT")?;
+    ensure_column(conn, "threads", "archived_at", "TEXT")?;
+    Ok(())
 }
 
 fn ensure_messages_audit_columns(conn: &Connection) -> anyhow::Result<()> {
@@ -76,6 +83,42 @@ fn ensure_messages_audit_columns(conn: &Connection) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn ensure_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    sql_type: &str,
+) -> anyhow::Result<()> {
+    if table_has_column(conn, table, column)? {
+        return Ok(());
+    }
+
+    conn.execute(
+        &format!("ALTER TABLE {table} ADD COLUMN {column} {sql_type}"),
+        [],
+    )
+    .with_context(|| format!("failed to add {table}.{column} column"))?;
+
+    Ok(())
+}
+
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> anyhow::Result<bool> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .with_context(|| format!("failed to inspect {table} table schema"))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .with_context(|| format!("failed to read {table} table columns"))?;
+
+    for row in rows {
+        if row.with_context(|| format!("failed to decode {table} table column"))? == column {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 fn dirs_home() -> PathBuf {

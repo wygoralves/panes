@@ -19,6 +19,20 @@ pub fn run() {
     env_logger::init();
 
     let db = Database::init().expect("failed to initialize database");
+    match db::threads::reconcile_runtime_state(&db) {
+        Ok(report) => {
+            if report.messages_marked_interrupted > 0 || report.thread_status_updates > 0 {
+                log::info!(
+                    "runtime recovery applied: interrupted_messages={}, thread_status_updates={}",
+                    report.messages_marked_interrupted,
+                    report.thread_status_updates
+                );
+            }
+        }
+        Err(error) => {
+            log::warn!("runtime recovery failed, continuing startup: {error}");
+        }
+    }
     let app_config = AppConfig::load_or_create().expect("failed to load config");
 
     let _ =
@@ -48,6 +62,7 @@ pub fn run() {
             commands::workspace::list_workspaces,
             commands::workspace::get_repos,
             commands::workspace::set_repo_trust_level,
+            commands::workspace::archive_workspace,
             commands::workspace::delete_workspace,
             commands::git::get_git_status,
             commands::git::get_file_diff,
@@ -63,6 +78,7 @@ pub fn run() {
             commands::threads::rename_thread,
             commands::threads::confirm_workspace_thread,
             commands::threads::set_thread_reasoning_effort,
+            commands::threads::archive_thread,
             commands::threads::delete_thread,
         ])
         .run(tauri::generate_context!())

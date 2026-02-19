@@ -16,7 +16,12 @@ import type {
 
 export const ipc = {
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
-  openWorkspace: (path: string) => invoke<Workspace>("open_workspace", { path }),
+  openWorkspace: (path: string, scanDepth?: number) =>
+    invoke<Workspace>("open_workspace", {
+      path,
+      scanDepth: scanDepth ?? null,
+    }),
+  archiveWorkspace: (workspaceId: string) => invoke<void>("archive_workspace", { workspaceId }),
   deleteWorkspace: (workspaceId: string) => invoke<void>("delete_workspace", { workspaceId }),
   getRepos: (workspaceId: string) => invoke<Repo[]>("get_repos", { workspaceId }),
   setRepoTrustLevel: (repoId: string, trustLevel: TrustLevel) =>
@@ -49,6 +54,7 @@ export const ipc = {
     modelId?: string | null,
   ) =>
     invoke<void>("set_thread_reasoning_effort", { threadId, reasoningEffort, modelId: modelId ?? null }),
+  archiveThread: (threadId: string) => invoke<void>("archive_thread", { threadId }),
   deleteThread: (threadId: string) => invoke<void>("delete_thread", { threadId }),
   listEngines: () => invoke<EngineInfo[]>("list_engines"),
   engineHealth: (engineId: string) => invoke<EngineHealth>("engine_health", { engineId }),

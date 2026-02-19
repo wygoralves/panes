@@ -12,6 +12,7 @@ import {
 import { useChatStore } from "../../stores/chatStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useThreadStore } from "../../stores/threadStore";
+import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore } from "../../stores/gitStore";
 import { ipc } from "../../lib/ipc";
@@ -177,6 +178,21 @@ function formatMessageTimestamp(raw?: string): string {
   });
 }
 
+function estimateMessageOffset(
+  messages: Message[],
+  index: number,
+  measuredHeights: Map<string, number>,
+): number {
+  let offset = 0;
+  for (let current = 0; current < index; current += 1) {
+    const currentMessageId = messages[current].id;
+    const rowHeight =
+      measuredHeights.get(currentMessageId) ?? MESSAGE_ESTIMATED_ROW_HEIGHT;
+    offset += rowHeight + MESSAGE_ROW_GAP;
+  }
+  return offset;
+}
+
 export function ChatPanel() {
   const [input, setInput] = useState("");
   const [selectedEngineId, setSelectedEngineId] = useState("codex");
@@ -184,6 +200,9 @@ export function ChatPanel() {
   const [selectedEffort, setSelectedEffort] = useState("medium");
   const [editingThreadTitle, setEditingThreadTitle] = useState(false);
   const [threadTitleDraft, setThreadTitleDraft] = useState("");
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(
+    null,
+  );
   const {
     messages,
     send,
@@ -194,6 +213,8 @@ export function ChatPanel() {
     setActiveThread: bindChatThread,
     threadId,
   } = useChatStore();
+  const messageFocusTarget = useUiStore((s) => s.messageFocusTarget);
+  const clearMessageFocusTarget = useUiStore((s) => s.clearMessageFocusTarget);
   const engines = useEngineStore((s) => s.engines);
   const {
     repos,
@@ -218,6 +239,8 @@ export function ChatPanel() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const effortSyncKeyRef = useRef<string | null>(null);
+  const highlightTimeoutRef = useRef<number | null>(null);
+  const initialScrollThreadRef = useRef<string | null>(null);
   const messageHeightsRef = useRef<Map<string, number>>(new Map());
   const [listLayoutVersion, setListLayoutVersion] = useState(0);
   const [viewportScrollTop, setViewportScrollTop] = useState(0);
@@ -519,14 +542,130 @@ export function ChatPanel() {
     setActiveThreadInStore,
   ]);
 
-  useEffect(() => {
-    const vp = viewportRef.current;
-    if (!vp) return;
-    const nearBottom = vp.scrollTop + vp.clientHeight >= vp.scrollHeight - 120;
-    if (nearBottom) {
-      vp.scrollTo({ top: vp.scrollHeight, behavior: "smooth" });
+  const scrollViewportToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
     }
-  }, [messages]);
+
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+  }, []);
+
+  useEffect(() => {
+    if (!threadId) {
+      initialScrollThreadRef.current = null;
+      return;
+    }
+
+    if (messages.length === 0) {
+      return;
+    }
+
+    if (initialScrollThreadRef.current === threadId) {
+      return;
+    }
+
+    if (messageFocusTarget?.threadId === threadId) {
+      return;
+    }
+
+    initialScrollThreadRef.current = threadId;
+
+    let raf2 = 0;
+    const raf1 = window.requestAnimationFrame(() => {
+      scrollViewportToBottom("auto");
+      raf2 = window.requestAnimationFrame(() => {
+        scrollViewportToBottom("auto");
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(raf1);
+      if (raf2 !== 0) {
+        window.cancelAnimationFrame(raf2);
+      }
+    };
+  }, [threadId, messages.length, messageFocusTarget?.threadId, scrollViewportToBottom]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const nearBottom =
+      viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 120;
+    if (nearBottom) {
+      scrollViewportToBottom("smooth");
+    }
+  }, [messages, scrollViewportToBottom]);
+
+  useEffect(() => {
+    if (!messageFocusTarget) {
+      return;
+    }
+    if (messageFocusTarget.threadId !== threadId) {
+      return;
+    }
+
+    const targetIndex = messages.findIndex(
+      (message) => message.id === messageFocusTarget.messageId,
+    );
+    if (targetIndex < 0) {
+      return;
+    }
+
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const targetMessageId = messages[targetIndex].id;
+    const targetHeight =
+      messageHeightsRef.current.get(targetMessageId) ??
+      MESSAGE_ESTIMATED_ROW_HEIGHT;
+    const targetTopOffset = estimateMessageOffset(
+      messages,
+      targetIndex,
+      messageHeightsRef.current,
+    );
+    const centeredTop = Math.max(
+      0,
+      targetTopOffset - Math.max((viewport.clientHeight - targetHeight) / 2, 0),
+    );
+
+    viewport.scrollTo({ top: centeredTop, behavior: "smooth" });
+    window.setTimeout(() => {
+      const targetElement = viewport.querySelector<HTMLElement>(
+        `[data-message-id="${targetMessageId}"]`,
+      );
+      if (targetElement) {
+        targetElement.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+    }, 120);
+    setHighlightedMessageId(targetMessageId);
+
+    if (highlightTimeoutRef.current !== null) {
+      window.clearTimeout(highlightTimeoutRef.current);
+    }
+    highlightTimeoutRef.current = window.setTimeout(() => {
+      setHighlightedMessageId((current) =>
+        current === targetMessageId ? null : current,
+      );
+      highlightTimeoutRef.current = null;
+    }, 2400);
+
+    clearMessageFocusTarget();
+  }, [clearMessageFocusTarget, messageFocusTarget, messages, threadId]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current !== null) {
+        window.clearTimeout(highlightTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    setHighlightedMessageId(null);
+  }, [activeThread?.id]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -747,10 +886,12 @@ export function ChatPanel() {
   function renderMessageItem(message: Message, index: number) {
     const isUser = message.role === "user";
     const messageTimestamp = formatMessageTimestamp(message.createdAt);
+    const isHighlighted = message.id === highlightedMessageId;
 
     return (
       <div
         key={message.id}
+        data-message-id={message.id}
         className="animate-slide-up"
         style={{
           animationDelay: `${Math.min(index * 20, 200)}ms`,
@@ -758,6 +899,13 @@ export function ChatPanel() {
           flexDirection: "column",
           alignItems: isUser ? "flex-end" : "flex-start",
           maxWidth: "100%",
+          borderRadius: "var(--radius-md)",
+          outline: isHighlighted ? "2px solid rgba(14, 240, 195, 0.35)" : "none",
+          boxShadow: isHighlighted
+            ? "0 10px 28px rgba(14, 240, 195, 0.12)"
+            : "none",
+          transition:
+            "outline-color var(--duration-normal) var(--ease-out), box-shadow var(--duration-normal) var(--ease-out)",
         }}
       >
         {isUser ? (

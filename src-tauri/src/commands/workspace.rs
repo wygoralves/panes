@@ -7,12 +7,19 @@ use crate::{
     state::AppState,
 };
 
+const DEFAULT_SCAN_DEPTH: i64 = 3;
+const MIN_SCAN_DEPTH: i64 = 0;
+const MAX_SCAN_DEPTH: i64 = 12;
+
 #[tauri::command]
 pub async fn open_workspace(
     state: State<'_, AppState>,
     path: String,
+    scan_depth: Option<i64>,
 ) -> Result<WorkspaceDto, String> {
-    let workspace = db::workspaces::upsert_workspace(&state.db, &path, 3).map_err(err_to_string)?;
+    let scan_depth = normalize_scan_depth(scan_depth);
+    let workspace =
+        db::workspaces::upsert_workspace(&state.db, &path, scan_depth).map_err(err_to_string)?;
 
     let repos =
         multi_repo::scan_git_repositories(&workspace.root_path, workspace.scan_depth as usize)
@@ -61,6 +68,20 @@ pub async fn delete_workspace(
     db::workspaces::delete_workspace(&state.db, &workspace_id).map_err(err_to_string)
 }
 
+#[tauri::command]
+pub async fn archive_workspace(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<(), String> {
+    db::workspaces::archive_workspace(&state.db, &workspace_id).map_err(err_to_string)
+}
+
 fn err_to_string(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+fn normalize_scan_depth(value: Option<i64>) -> i64 {
+    value
+        .unwrap_or(DEFAULT_SCAN_DEPTH)
+        .clamp(MIN_SCAN_DEPTH, MAX_SCAN_DEPTH)
 }

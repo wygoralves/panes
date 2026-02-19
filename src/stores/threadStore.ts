@@ -247,7 +247,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   removeThread: async (threadId) => {
     set({ loading: true, error: undefined });
     try {
-      await ipc.deleteThread(threadId);
+      await ipc.archiveThread(threadId);
       const nextThreadsByWorkspace = Object.entries(get().threadsByWorkspace).reduce<Record<string, Thread[]>>(
         (acc, [workspaceId, threads]) => {
           const remaining = threads.filter((thread) => thread.id !== threadId);
