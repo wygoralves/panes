@@ -15,6 +15,15 @@ pub async fn list_threads(
 }
 
 #[tauri::command]
+pub async fn list_archived_threads(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<Vec<ThreadDto>, String> {
+    db::threads::list_archived_threads_for_workspace(&state.db, &workspace_id)
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
 pub async fn create_thread(
     state: State<'_, AppState>,
     workspace_id: String,
@@ -194,6 +203,14 @@ pub async fn archive_thread(state: State<'_, AppState>, thread_id: String) -> Re
     db::threads::archive_thread(&state.db, &thread_id).map_err(err_to_string)?;
     state.turns.finish(&thread_id).await;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn restore_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<ThreadDto, String> {
+    db::threads::restore_thread(&state.db, &thread_id).map_err(err_to_string)
 }
 
 async fn validate_reasoning_effort(

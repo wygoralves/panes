@@ -1,4 +1,4 @@
-# Agent Workspace
+# Panes (Agent Workspace)
 
 Open-source desktop orchestrator for coding agents with native multi-repo awareness.
 
@@ -27,14 +27,24 @@ pnpm tauri:dev
 
 ## Current status
 
-Phase 1 scaffold + core runtime has been implemented:
+Pre-MVP with core runtime fully operational:
 
-- Workspace/repo/thread/message persistence
-- Unified engine event model
-- Codex engine process integration scaffold
-- Chat streaming IPC channel
-- Git panel IPC and status/diff/stage/commit commands
-- Frontend three-column shell with typed blocks
+- Codex engine running in real streaming mode (JSONL), with approvals and interrupt
+- Workspace/repo/thread/message persistence in SQLite (with FTS5 search)
+- Thread flow by scope + engine + model, including archive/restore lifecycle
+- Chat streaming with typed content blocks and explicit autoscroll lock
+- Approval UI with structured input and advanced custom JSON mode
+- Git panel with status/diff/stage/unstage/commit + filesystem watcher
+- Large-repo protections in file tree scans (timeout/entry cap) and paginated file tree API
+
+Recent delivery update (2026-02-19):
+
+- Improved thread selection/creation for advanced multi-engine and multi-model flows
+- Explicit autoscroll lock UX with "jump to latest" when user scrolls up
+- Advanced approval mode with custom JSON payload validation
+- Codex transport reconnect/restart with bounded backoff
+- Incremental DB compatibility columns/indexes at runtime
+- Backend/frontend support for paginated git file tree
 
 ## Delivery plan
 

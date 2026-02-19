@@ -32,6 +32,9 @@ const MODEL_LIST_METHODS: &[&str] = &["model/list", "models/list"];
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const TURN_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
 const TURN_COMPLETION_FALLBACK_TIMEOUT: Duration = Duration::from_secs(900);
+const TRANSPORT_RESTART_MAX_ATTEMPTS: usize = 3;
+const TRANSPORT_RESTART_BASE_BACKOFF: Duration = Duration::from_millis(250);
+const TRANSPORT_RESTART_MAX_BACKOFF: Duration = Duration::from_secs(2);
 
 #[derive(Default)]
 pub struct CodexEngine {
@@ -143,8 +146,8 @@ impl Engine for CodexEngine {
     }
 
     async fn start(&mut self) -> Result<(), anyhow::Error> {
-        let transport = self.ensure_transport().await?;
-        self.ensure_initialized(&transport).await
+        self.ensure_ready_transport().await?;
+        Ok(())
     }
 
     async fn stop(&mut self) -> Result<(), anyhow::Error> {
@@ -171,8 +174,7 @@ impl Engine for CodexEngine {
         model: &str,
         sandbox: SandboxPolicy,
     ) -> Result<EngineThread, anyhow::Error> {
-        let transport = self.ensure_transport().await?;
-        self.ensure_initialized(&transport).await?;
+        let transport = self.ensure_ready_transport().await?;
 
         let cwd = scope_cwd(&scope);
         let approval_policy = sandbox
@@ -275,8 +277,7 @@ impl Engine for CodexEngine {
         event_tx: mpsc::Sender<EngineEvent>,
         cancellation: CancellationToken,
     ) -> Result<(), anyhow::Error> {
-        let transport = self.ensure_transport().await?;
-        self.ensure_initialized(&transport).await?;
+        let transport = self.ensure_ready_transport().await?;
 
         let mut mapper = TurnEventMapper::default();
         let mut subscription = transport.subscribe();
@@ -500,8 +501,7 @@ impl Engine for CodexEngine {
         approval_id: &str,
         response: serde_json::Value,
     ) -> Result<(), anyhow::Error> {
-        let transport = self.ensure_transport().await?;
-        self.ensure_initialized(&transport).await?;
+        let transport = self.ensure_ready_transport().await?;
 
         let pending = self.take_approval_request(approval_id).await;
         let raw_request_id = pending
@@ -585,10 +585,7 @@ impl CodexEngine {
     }
 
     pub async fn read_thread_preview(&self, engine_thread_id: &str) -> Option<String> {
-        let transport = self.ensure_transport().await.ok()?;
-        if self.ensure_initialized(&transport).await.is_err() {
-            return None;
-        }
+        let transport = self.ensure_ready_transport().await.ok()?;
 
         let params = serde_json::json!({
           "threadId": engine_thread_id,
@@ -612,8 +609,7 @@ impl CodexEngine {
         engine_thread_id: &str,
         name: &str,
     ) -> Result<(), anyhow::Error> {
-        let transport = self.ensure_transport().await?;
-        self.ensure_initialized(&transport).await?;
+        let transport = self.ensure_ready_transport().await?;
 
         let params = serde_json::json!({
           "threadId": engine_thread_id,
@@ -637,8 +633,7 @@ impl CodexEngine {
             return Ok(self.models());
         }
 
-        let transport = self.ensure_transport().await?;
-        self.ensure_initialized(&transport).await?;
+        let transport = self.ensure_ready_transport().await?;
 
         let mut cursor: Option<String> = None;
         let mut output = Vec::new();
@@ -686,22 +681,93 @@ impl CodexEngine {
                 return Ok(transport);
             }
 
-            transport.shutdown().await.ok();
+            self.invalidate_transport("codex transport is not alive")
+                .await;
+        }
+
+        let transport = self.spawn_transport_with_backoff().await?;
+        let mut state = self.state.lock().await;
+        state.transport = Some(transport.clone());
+        state.initialized = false;
+        Ok(transport)
+    }
+
+    async fn ensure_ready_transport(&self) -> anyhow::Result<Arc<CodexTransport>> {
+        let mut backoff = TRANSPORT_RESTART_BASE_BACKOFF;
+        let mut last_error: Option<anyhow::Error> = None;
+
+        for attempt in 0..TRANSPORT_RESTART_MAX_ATTEMPTS {
+            let transport = self.ensure_transport().await?;
+            match self.ensure_initialized(&transport).await {
+                Ok(()) => return Ok(transport),
+                Err(error) => {
+                    let message = format!(
+                        "codex initialize failed (attempt {}/{})",
+                        attempt + 1,
+                        TRANSPORT_RESTART_MAX_ATTEMPTS
+                    );
+                    log::warn!("{message}: {error}");
+                    last_error = Some(error);
+                    self.invalidate_transport(&message).await;
+
+                    if attempt + 1 < TRANSPORT_RESTART_MAX_ATTEMPTS {
+                        tokio::time::sleep(backoff).await;
+                        backoff =
+                            std::cmp::min(backoff.saturating_mul(2), TRANSPORT_RESTART_MAX_BACKOFF);
+                    }
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            anyhow::anyhow!("unable to initialize codex transport after retries")
+        }))
+    }
+
+    async fn spawn_transport_with_backoff(&self) -> anyhow::Result<Arc<CodexTransport>> {
+        let mut backoff = TRANSPORT_RESTART_BASE_BACKOFF;
+        let mut last_error: Option<anyhow::Error> = None;
+
+        for attempt in 0..TRANSPORT_RESTART_MAX_ATTEMPTS {
+            match CodexTransport::spawn().await {
+                Ok(transport) => return Ok(Arc::new(transport)),
+                Err(error) => {
+                    log::warn!(
+                        "failed to spawn codex transport (attempt {}/{}): {error}",
+                        attempt + 1,
+                        TRANSPORT_RESTART_MAX_ATTEMPTS
+                    );
+                    last_error = Some(error);
+                    if attempt + 1 < TRANSPORT_RESTART_MAX_ATTEMPTS {
+                        tokio::time::sleep(backoff).await;
+                        backoff =
+                            std::cmp::min(backoff.saturating_mul(2), TRANSPORT_RESTART_MAX_BACKOFF);
+                    }
+                }
+            }
+        }
+
+        Err(last_error
+            .unwrap_or_else(|| anyhow::anyhow!("unable to spawn codex transport after retries")))
+    }
+
+    async fn invalidate_transport(&self, reason: &str) {
+        let transport = {
             let mut state = self.state.lock().await;
-            state.transport = None;
+            let transport = state.transport.take();
             state.initialized = false;
             state.approval_requests.clear();
             state.active_turn_ids.clear();
             state.thread_runtimes.clear();
             state.sandbox_probe_completed = false;
             state.force_external_sandbox = false;
-        }
+            transport
+        };
 
-        let transport = Arc::new(CodexTransport::spawn().await?);
-        let mut state = self.state.lock().await;
-        state.transport = Some(transport.clone());
-        state.initialized = false;
-        Ok(transport)
+        if let Some(transport) = transport {
+            log::warn!("resetting codex transport: {reason}");
+            transport.shutdown().await.ok();
+        }
     }
 
     async fn ensure_initialized(&self, transport: &CodexTransport) -> anyhow::Result<()> {

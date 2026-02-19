@@ -134,6 +134,17 @@ function formatEngineModelLabel(
   return effortLabel ? `${baseLabel} ${effortLabel}` : baseLabel;
 }
 
+function readThreadLastModelId(thread: {
+  engineMetadata?: Record<string, unknown>;
+}): string | null {
+  const raw = thread.engineMetadata?.lastModelId;
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const normalized = raw.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
 function hasVisibleContent(blocks?: ContentBlock[]): boolean {
   if (!blocks || blocks.length === 0) return false;
   return blocks.some((b) => {
@@ -245,6 +256,7 @@ export function ChatPanel() {
   const [listLayoutVersion, setListLayoutVersion] = useState(0);
   const [viewportScrollTop, setViewportScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
+  const [autoScrollLocked, setAutoScrollLocked] = useState(false);
 
   const activeWorkspace = useMemo(
     () => workspaces.find((w) => w.id === activeWorkspaceId) ?? null,
@@ -342,6 +354,9 @@ export function ChatPanel() {
     let rafId = 0;
     const updateScroll = () => {
       setViewportScrollTop(viewport.scrollTop);
+      const nearBottom =
+        viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 120;
+      setAutoScrollLocked(!nearBottom);
     };
     const updateHeight = () => {
       setViewportHeight(viewport.clientHeight);
@@ -554,6 +569,7 @@ export function ChatPanel() {
   useEffect(() => {
     if (!threadId) {
       initialScrollThreadRef.current = null;
+      setAutoScrollLocked(false);
       return;
     }
 
@@ -590,12 +606,10 @@ export function ChatPanel() {
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
-    const nearBottom =
-      viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 120;
-    if (nearBottom) {
+    if (!autoScrollLocked) {
       scrollViewportToBottom("smooth");
     }
-  }, [messages, scrollViewportToBottom]);
+  }, [messages, autoScrollLocked, scrollViewportToBottom]);
 
   useEffect(() => {
     if (!messageFocusTarget) {
@@ -682,11 +696,31 @@ export function ChatPanel() {
     event.preventDefault();
     if (!input.trim() || !activeWorkspaceId || !selectedModelId || streaming) return;
 
-    let targetThreadId = threadId;
+    const activeScopeRepoId = activeRepo?.id ?? null;
+    const activeThreadInScope = activeThread
+      ? activeThread.workspaceId === activeWorkspaceId &&
+        activeThread.repoId === activeScopeRepoId
+      : false;
+    const activeThreadModelMatch = activeThread
+      ? activeThread.modelId === selectedModelId ||
+        readThreadLastModelId(activeThread) === selectedModelId
+      : false;
+    const activeThreadEngineMatch = activeThread
+      ? activeThread.engineId === selectedEngineId
+      : false;
+
+    let targetThreadId =
+      threadId &&
+      activeThreadInScope &&
+      activeThreadEngineMatch &&
+      activeThreadModelMatch
+        ? threadId
+        : null;
+
     if (!targetThreadId) {
       const createdThreadId = await ensureThreadForScope({
         workspaceId: activeWorkspaceId,
-        repoId: activeRepo?.id ?? null,
+        repoId: activeScopeRepoId,
         engineId: selectedEngineId,
         modelId: selectedModelId,
         title: activeRepo ? `${activeRepo.name} Chat` : "Workspace Chat",
@@ -1226,6 +1260,7 @@ export function ChatPanel() {
       <div
         ref={viewportRef}
         style={{
+          position: "relative",
           flex: 1,
           overflow: "auto",
           padding: "20px 24px",
@@ -1302,6 +1337,36 @@ export function ChatPanel() {
             {messages.map((message, index) => renderMessageItem(message, index))}
             {streamingIndicator}
           </div>
+        )}
+
+        {autoScrollLocked && messages.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              setAutoScrollLocked(false);
+              scrollViewportToBottom("smooth");
+            }}
+            style={{
+              position: "sticky",
+              left: "100%",
+              bottom: 10,
+              marginLeft: "auto",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "6px 10px",
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid var(--border)",
+              background: "var(--bg-2)",
+              color: "var(--text-2)",
+              fontSize: 11.5,
+              cursor: "pointer",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
+              zIndex: 2,
+            }}
+          >
+            Jump to latest
+          </button>
         )}
       </div>
 

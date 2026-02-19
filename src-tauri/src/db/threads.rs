@@ -86,6 +86,32 @@ pub fn list_threads_for_workspace(
     Ok(out)
 }
 
+pub fn list_archived_threads_for_workspace(
+    db: &Database,
+    workspace_id: &str,
+) -> anyhow::Result<Vec<ThreadDto>> {
+    let conn = db.connect()?;
+    let mut stmt = conn.prepare(
+    "SELECT id, workspace_id, repo_id, engine_id, model_id, engine_thread_id, engine_metadata_json,
+            COALESCE(title, ''), status, message_count, total_tokens, created_at, last_activity_at
+     FROM threads
+     WHERE workspace_id = ?1
+       AND archived_at IS NOT NULL
+       AND EXISTS (
+         SELECT 1 FROM messages
+         WHERE messages.thread_id = threads.id
+       )
+     ORDER BY archived_at DESC",
+  )?;
+
+    let rows = stmt.query_map(params![workspace_id], map_thread_row)?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
 pub fn find_latest_thread_for_scope(
     db: &Database,
     workspace_id: &str,
@@ -189,6 +215,26 @@ pub fn archive_thread(db: &Database, thread_id: &str) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+pub fn restore_thread(db: &Database, thread_id: &str) -> anyhow::Result<ThreadDto> {
+    let conn = db.connect()?;
+    let affected = conn
+        .execute(
+            "UPDATE threads
+       SET archived_at = NULL
+       WHERE id = ?1
+         AND archived_at IS NOT NULL",
+            params![thread_id],
+        )
+        .context("failed to restore thread")?;
+
+    if affected == 0 {
+        anyhow::bail!("thread not found or not archived: {thread_id}");
+    }
+
+    get_thread(db, thread_id)?
+        .ok_or_else(|| anyhow::anyhow!("thread not found after restore: {thread_id}"))
 }
 
 pub fn update_engine_metadata(

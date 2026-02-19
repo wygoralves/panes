@@ -70,6 +70,25 @@ pub fn list_workspaces(db: &Database) -> anyhow::Result<Vec<WorkspaceDto>> {
     Ok(out)
 }
 
+pub fn list_archived_workspaces(db: &Database) -> anyhow::Result<Vec<WorkspaceDto>> {
+    let conn = db.connect()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, name, root_path, scan_depth, created_at, last_opened_at
+     FROM workspaces
+     WHERE archived_at IS NOT NULL
+     ORDER BY archived_at DESC",
+    )?;
+
+    let rows = stmt.query_map([], map_workspace_row)?;
+    let mut out = Vec::new();
+
+    for item in rows {
+        out.push(item?);
+    }
+
+    Ok(out)
+}
+
 pub fn ensure_default_workspace(db: &Database) -> anyhow::Result<WorkspaceDto> {
     if let Some(first) = list_workspaces(db)?.into_iter().next() {
         return Ok(first);
@@ -117,6 +136,26 @@ pub fn archive_workspace(db: &Database, workspace_id: &str) -> anyhow::Result<()
     Ok(())
 }
 
+pub fn restore_workspace(db: &Database, workspace_id: &str) -> anyhow::Result<WorkspaceDto> {
+    let conn = db.connect()?;
+    let affected = conn
+        .execute(
+            "UPDATE workspaces
+       SET archived_at = NULL,
+           last_opened_at = datetime('now')
+       WHERE id = ?1
+         AND archived_at IS NOT NULL",
+            params![workspace_id],
+        )
+        .context("failed to restore workspace")?;
+
+    if affected == 0 {
+        anyhow::bail!("workspace not found or not archived: {workspace_id}");
+    }
+
+    get_workspace_by_id(&conn, workspace_id)
+}
+
 fn get_workspace_by_root(
     conn: &rusqlite::Connection,
     root_path: &str,
@@ -129,6 +168,20 @@ fn get_workspace_by_root(
         map_workspace_row,
     )
     .context("failed to load workspace by root")
+}
+
+fn get_workspace_by_id(
+    conn: &rusqlite::Connection,
+    workspace_id: &str,
+) -> anyhow::Result<WorkspaceDto> {
+    conn.query_row(
+        "SELECT id, name, root_path, scan_depth, created_at, last_opened_at
+     FROM workspaces
+     WHERE id = ?1",
+        params![workspace_id],
+        map_workspace_row,
+    )
+    .context("failed to load workspace by id")
 }
 
 fn workspace_name_from_path(path: &str) -> String {

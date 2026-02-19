@@ -201,7 +201,7 @@ Messages on the frontend are rendered as arrays of typed `ContentBlock`:
 - `thinking` — reasoning trace (collapsible)
 - `action` — tool/command execution with streaming output
 - `diff` — code diff visualization
-- `approval` — accept/decline/trust-session buttons
+- `approval` — quick actions, structured tool input, and advanced custom JSON payload mode
 - `error` — error display
 
 ### Trust Levels
@@ -292,6 +292,7 @@ cargo clippy                 # Lint Rust code
 SQLite at `~/.agent-workspace/workspaces.db`. Current migration: `001_initial.sql`.
 
 **Tables:** `workspaces`, `repos`, `threads`, `messages`, `actions`, `approvals`, `engine_event_logs`, `messages_fts` (FTS5 virtual table).
+Important additive columns used at runtime: `threads.engine_capabilities_json`, `messages.stream_seq`, `actions.truncated`.
 
 Key relationships:
 - `repos.workspace_id` → `workspaces.id` (CASCADE DELETE)
@@ -307,8 +308,12 @@ Everything is pre-MVP. Core architecture is established but expect significant c
 **Working:**
 - Full Codex engine integration (JSONL protocol, approval flows, model picker, reasoning effort)
 - Workspace/repo/thread/message persistence with SQLite
+- Thread selection and creation by scope + engine + model
 - Streaming chat with structured content blocks
+- Chat autoscroll lock with explicit "jump to latest" behavior
 - Git panel: status, diff, stage/unstage, commit, filesystem watcher
+- Git file tree protections for large repos (scan limits/timeout) plus paginated API (`get_file_tree_page`)
+- Codex transport reconnect/restart with bounded backoff
 - Three-column resizable layout
 - Global message search (FTS5)
 - Trust levels + workspace write opt-in
@@ -325,7 +330,6 @@ Everything is pre-MVP. Core architecture is established but expect significant c
 - Release builds / distribution
 - Message virtualization for long threads
 - Engine onboarding / setup wizard
-- Process crash recovery / reconnect
 - Terminal integration
 
 ## IPC Command Reference
@@ -333,23 +337,31 @@ Everything is pre-MVP. Core architecture is established but expect significant c
 All commands are invoked from the frontend via `lib/ipc.ts` → `@tauri-apps/api invoke()`.
 
 ### Workspace
-- `open_workspace(rootPath)` — open folder, scan for repos, persist
+- `open_workspace(path, scanDepth?)` — open folder, optionally control nested repo scan depth
 - `list_workspaces()` — list all workspaces
+- `list_archived_workspaces()` — list archived workspaces
+- `get_repos(workspaceId)` — list repos in workspace
+- `archive_workspace(workspaceId)` — archive workspace (soft delete behavior)
+- `restore_workspace(workspaceId)` — restore archived workspace
 - `delete_workspace(workspaceId)` — delete workspace + cascade
-- `list_repos(workspaceId)` — list repos in workspace
 - `set_repo_trust_level(repoId, trustLevel)` — change trust level
 
 ### Threads
-- `list_threads(workspaceId)` — list threads (only those with messages)
-- `create_thread(workspaceId, repoId?, engineId, modelId)` — create new thread
-- `confirm_thread_workspace(threadId)` — opt-in to workspace-wide writes
+- `list_threads(workspaceId)` — list active threads
+- `list_archived_threads(workspaceId)` — list archived threads
+- `create_thread(workspaceId, repoId?, engineId, modelId, title)` — create new thread
+- `rename_thread(threadId, title)` — rename thread
+- `confirm_workspace_thread(threadId, writableRoots)` — opt-in to workspace-wide writes
+- `set_thread_reasoning_effort(threadId, reasoningEffort, modelId?)` — set reasoning level
+- `archive_thread(threadId)` — archive thread (soft delete behavior)
+- `restore_thread(threadId)` — restore archived thread
 - `delete_thread(threadId)` — delete thread + cascade
-- `set_reasoning_effort(threadId, effort)` — set reasoning level
 
 ### Chat
-- `send_message(threadId, content)` — send user message, start agent turn
+- `send_message(threadId, message, modelId?)` — send user message, start agent turn
 - `cancel_turn(threadId)` — interrupt current turn
-- `respond_to_approval(threadId, approvalId, decision)` — answer approval request
+- `respond_to_approval(threadId, approvalId, response)` — answer approval (quick action or custom payload)
+- `get_thread_messages(threadId)` — load full thread messages
 - `search_messages(workspaceId, query)` — FTS search across messages
 
 ### Git
@@ -359,6 +371,7 @@ All commands are invoked from the frontend via `lib/ipc.ts` → `@tauri-apps/api
 - `unstage_files(repoPath, files)` — git reset
 - `commit(repoPath, message)` — git commit
 - `get_file_tree(repoPath)` — recursive file listing
+- `get_file_tree_page(repoPath, offset?, limit?)` — paginated file listing (default limit: 2000)
 - `watch_git_repo(repoPath)` — start filesystem watcher
 
 ### Engines

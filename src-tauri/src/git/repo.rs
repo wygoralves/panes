@@ -1,11 +1,20 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context;
 use git2::{Repository, Status, StatusOptions};
 
-use crate::models::{FileTreeEntryDto, GitFileStatusDto, GitStatusDto};
+use crate::models::{FileTreeEntryDto, FileTreePageDto, GitFileStatusDto, GitStatusDto};
 
 use super::cli_fallback::run_git;
+
+const FILE_TREE_DEFAULT_PAGE_SIZE: usize = 2000;
+const FILE_TREE_MAX_PAGE_SIZE: usize = 5000;
+const FILE_TREE_MAX_SCAN_ENTRIES: usize = 50_000;
+const FILE_TREE_SCAN_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub fn get_git_status(repo_path: &str) -> anyhow::Result<GitStatusDto> {
     let repo = Repository::open(repo_path).context("failed to open repository")?;
@@ -107,19 +116,84 @@ pub fn commit(repo_path: &str, message: &str) -> anyhow::Result<String> {
 }
 
 pub fn get_file_tree(repo_path: &str) -> anyhow::Result<Vec<FileTreeEntryDto>> {
+    Ok(scan_file_tree(repo_path)?.entries)
+}
+
+pub fn get_file_tree_page(
+    repo_path: &str,
+    offset: usize,
+    limit: usize,
+) -> anyhow::Result<FileTreePageDto> {
+    let limit = limit.clamp(1, FILE_TREE_MAX_PAGE_SIZE);
+    let scan = scan_file_tree(repo_path)?;
+    let total = scan.entries.len();
+    let offset = offset.min(total);
+    let end = offset.saturating_add(limit).min(total);
+    let entries = scan.entries[offset..end].to_vec();
+
+    Ok(FileTreePageDto {
+        entries,
+        offset,
+        limit,
+        total,
+        has_more: end < total,
+        scan_truncated: scan.truncated,
+    })
+}
+
+struct FileTreeScanResult {
+    entries: Vec<FileTreeEntryDto>,
+    truncated: bool,
+}
+
+struct FileTreeScanContext {
+    entries: Vec<FileTreeEntryDto>,
+    scanned_count: usize,
+    truncated: bool,
+    deadline: Instant,
+}
+
+fn scan_file_tree(repo_path: &str) -> anyhow::Result<FileTreeScanResult> {
     let root = PathBuf::from(repo_path);
-    let mut out = Vec::new();
-    visit_dir(&root, &root, &mut out)?;
-    out.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(out)
+    let mut context = FileTreeScanContext {
+        entries: Vec::with_capacity(FILE_TREE_DEFAULT_PAGE_SIZE),
+        scanned_count: 0,
+        truncated: false,
+        deadline: Instant::now() + FILE_TREE_SCAN_TIMEOUT,
+    };
+    visit_dir(&root, &root, &mut context)?;
+    context.entries.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(FileTreeScanResult {
+        entries: context.entries,
+        truncated: context.truncated,
+    })
 }
 
 fn visit_dir(
     root: &PathBuf,
     current: &PathBuf,
-    out: &mut Vec<FileTreeEntryDto>,
+    context: &mut FileTreeScanContext,
 ) -> anyhow::Result<()> {
+    if Instant::now() >= context.deadline {
+        context.truncated = true;
+        return Ok(());
+    }
+
     for entry in fs::read_dir(current).context("failed reading dir for file tree")? {
+        if context.truncated {
+            break;
+        }
+
+        if context.scanned_count >= FILE_TREE_MAX_SCAN_ENTRIES {
+            context.truncated = true;
+            break;
+        }
+
+        if Instant::now() >= context.deadline {
+            context.truncated = true;
+            break;
+        }
+
         let entry = match entry {
             Ok(value) => value,
             Err(_) => continue,
@@ -135,14 +209,16 @@ fn visit_dir(
             .map(|item| item.to_string_lossy().to_string())
             .unwrap_or_else(|_| path.to_string_lossy().to_string());
 
+        context.scanned_count += 1;
+
         if path.is_dir() {
-            out.push(FileTreeEntryDto {
+            context.entries.push(FileTreeEntryDto {
                 path: relative.clone(),
                 is_dir: true,
             });
-            visit_dir(root, &path, out)?;
+            visit_dir(root, &path, context)?;
         } else {
-            out.push(FileTreeEntryDto {
+            context.entries.push(FileTreeEntryDto {
                 path: relative,
                 is_dir: false,
             });

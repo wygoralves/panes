@@ -4,14 +4,17 @@ import { ipc } from "../lib/ipc";
 
 interface WorkspaceState {
   workspaces: Workspace[];
+  archivedWorkspaces: Workspace[];
   activeWorkspaceId: string | null;
   repos: Repo[];
   activeRepoId: string | null;
   loading: boolean;
   error?: string;
   loadWorkspaces: () => Promise<void>;
+  refreshArchivedWorkspaces: () => Promise<void>;
   openWorkspace: (path: string, scanDepth?: number) => Promise<void>;
   removeWorkspace: (workspaceId: string) => Promise<void>;
+  restoreWorkspace: (workspaceId: string) => Promise<void>;
   loadRepos: (workspaceId: string) => Promise<void>;
   setActiveWorkspace: (workspaceId: string) => Promise<void>;
   setActiveRepo: (repoId: string | null) => void;
@@ -21,6 +24,7 @@ interface WorkspaceState {
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],
+  archivedWorkspaces: [],
   activeWorkspaceId: null,
   repos: [],
   activeRepoId: null,
@@ -34,8 +38,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       if (activeWorkspaceId) {
         await get().loadRepos(activeWorkspaceId);
       }
+      await get().refreshArchivedWorkspaces();
     } catch (error) {
       set({ loading: false, error: String(error) });
+    }
+  },
+  refreshArchivedWorkspaces: async () => {
+    try {
+      const archivedWorkspaces = await ipc.listArchivedWorkspaces();
+      set({ archivedWorkspaces });
+    } catch (error) {
+      set({ error: String(error) });
     }
   },
   openWorkspace: async (path, scanDepth) => {
@@ -44,7 +57,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const workspace = await ipc.openWorkspace(path, scanDepth);
       const current = get().workspaces.filter((item) => item.id !== workspace.id);
       const workspaces = [workspace, ...current];
-      set({ workspaces, activeWorkspaceId: workspace.id, loading: false });
+      set((state) => ({
+        workspaces,
+        archivedWorkspaces: state.archivedWorkspaces.filter((item) => item.id !== workspace.id),
+        activeWorkspaceId: workspace.id,
+        loading: false,
+      }));
       await get().loadRepos(workspace.id);
     } catch (error) {
       set({ loading: false, error: String(error) });
@@ -54,22 +72,56 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ loading: true, error: undefined });
     try {
       await ipc.archiveWorkspace(workspaceId);
+      const removed = get().workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
       const remaining = get().workspaces.filter((workspace) => workspace.id !== workspaceId);
       const nextActive =
         get().activeWorkspaceId === workspaceId
           ? remaining[0]?.id ?? null
           : get().activeWorkspaceId;
 
-      set({
+      set((state) => ({
         workspaces: remaining,
+        archivedWorkspaces: removed
+          ? [
+              removed,
+              ...state.archivedWorkspaces.filter((workspace) => workspace.id !== workspaceId),
+            ]
+          : state.archivedWorkspaces,
         activeWorkspaceId: nextActive,
         loading: false,
-      });
+      }));
 
       if (nextActive) {
         await get().loadRepos(nextActive);
       } else {
         set({ repos: [], activeRepoId: null });
+      }
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+    }
+  },
+  restoreWorkspace: async (workspaceId) => {
+    set({ loading: true, error: undefined });
+    try {
+      const restored = await ipc.restoreWorkspace(workspaceId);
+      set((state) => {
+        const workspaces = [
+          restored,
+          ...state.workspaces.filter((workspace) => workspace.id !== workspaceId),
+        ];
+        const nextActiveWorkspaceId = state.activeWorkspaceId ?? restored.id;
+        return {
+          workspaces,
+          archivedWorkspaces: state.archivedWorkspaces.filter(
+            (workspace) => workspace.id !== workspaceId,
+          ),
+          activeWorkspaceId: nextActiveWorkspaceId,
+          loading: false,
+        };
+      });
+
+      if (!get().activeWorkspaceId || get().activeWorkspaceId === restored.id) {
+        await get().loadRepos(restored.id);
       }
     } catch (error) {
       set({ loading: false, error: String(error) });

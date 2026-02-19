@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS threads (
   model_id TEXT NOT NULL,
   engine_thread_id TEXT,
   engine_metadata_json TEXT,
+  engine_capabilities_json TEXT,
   title TEXT,
   status TEXT NOT NULL DEFAULT 'idle',
   archived_at TEXT,
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS messages (
   turn_engine_id TEXT,
   turn_model_id TEXT,
   schema_version INTEGER NOT NULL DEFAULT 1,
+  stream_seq INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'completed',
   token_input INTEGER DEFAULT 0,
   token_output INTEGER DEFAULT 0,
@@ -60,6 +62,7 @@ CREATE TABLE IF NOT EXISTS actions (
   summary TEXT NOT NULL,
   details_json TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'running',
+  truncated INTEGER NOT NULL DEFAULT 0,
   result_json TEXT,
   duration_ms INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -90,8 +93,11 @@ CREATE INDEX IF NOT EXISTS idx_repos_workspace ON repos(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_threads_workspace ON threads(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_threads_repo ON threads(repo_id);
 CREATE INDEX IF NOT EXISTS idx_threads_activity ON threads(workspace_id, last_activity_at DESC);
+CREATE INDEX IF NOT EXISTS idx_threads_workspace_status_activity ON threads(workspace_id, status, last_activity_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_messages_thread_status_created ON messages(thread_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_actions_thread ON actions(thread_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_actions_thread_status_created ON actions(thread_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_approvals_thread ON approvals(thread_id, created_at ASC);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(

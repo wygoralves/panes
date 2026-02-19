@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   Plus,
@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   Archive,
+  RotateCcw,
   Settings,
   Filter,
 } from "lucide-react";
@@ -73,6 +74,7 @@ function parseScanDepth(input: string): number | null {
 export function Sidebar() {
   const {
     workspaces,
+    archivedWorkspaces,
     repos,
     activeRepoId,
     activeWorkspaceId,
@@ -80,9 +82,20 @@ export function Sidebar() {
     setActiveRepo,
     openWorkspace,
     removeWorkspace,
+    restoreWorkspace,
+    refreshArchivedWorkspaces,
     error,
   } = useWorkspaceStore();
-  const { threads, activeThreadId, setActiveThread, removeThread, createThread } = useThreadStore();
+  const {
+    threads,
+    archivedThreadsByWorkspace,
+    activeThreadId,
+    setActiveThread,
+    removeThread,
+    restoreThread,
+    createThread,
+    refreshArchivedThreads,
+  } = useThreadStore();
   const openEngineSetup = useUiStore((state) => state.openEngineSetup);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
 
@@ -95,13 +108,32 @@ export function Sidebar() {
 
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [showAll, setShowAll] = useState<Record<string, boolean>>({});
+  const [archivedOpen, setArchivedOpen] = useState(false);
   const [advancedScanOpen, setAdvancedScanOpen] = useState(false);
   const [advancedScanDraft, setAdvancedScanDraft] = useState(() =>
     String(readDefaultScanDepth()),
   );
   const [advancedScanError, setAdvancedScanError] = useState<string | null>(null);
+  const archivedThreads = useMemo(
+    () =>
+      activeWorkspaceId
+        ? archivedThreadsByWorkspace[activeWorkspaceId] ?? []
+        : [],
+    [archivedThreadsByWorkspace, activeWorkspaceId],
+  );
   const toggleCollapse = (wsId: string) =>
     setCollapsed((prev) => ({ ...prev, [wsId]: !prev[wsId] }));
+
+  useEffect(() => {
+    void refreshArchivedWorkspaces();
+  }, [refreshArchivedWorkspaces]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      return;
+    }
+    void refreshArchivedThreads(activeWorkspaceId);
+  }, [activeWorkspaceId, refreshArchivedThreads]);
 
   async function onOpenFolder() {
     const selected = await open({ directory: true, multiple: false });
@@ -201,6 +233,18 @@ export function Sidebar() {
       setActiveThread(null);
       await bindChatThread(null);
     }
+  }
+
+  async function onRestoreWorkspace(workspace: Workspace) {
+    await restoreWorkspace(workspace.id);
+  }
+
+  async function onRestoreThread(thread: Thread) {
+    await restoreThread(thread.id);
+  }
+
+  function toggleArchivedSection() {
+    setArchivedOpen((current) => !current);
   }
 
   return (
@@ -614,6 +658,172 @@ export function Sidebar() {
             );
           })
         )}
+
+        <div style={{ marginTop: 12, padding: "8px 6px 2px" }}>
+          <button
+            type="button"
+            onClick={toggleArchivedSection}
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "6px 4px",
+              borderRadius: "var(--radius-sm)",
+              background: "transparent",
+              color: "var(--text-3)",
+              cursor: "pointer",
+              fontSize: 12,
+            }}
+            onMouseEnter={(event) => {
+              event.currentTarget.style.color = "var(--text-2)";
+              event.currentTarget.style.background = "rgba(255,255,255,0.03)";
+            }}
+            onMouseLeave={(event) => {
+              event.currentTarget.style.color = "var(--text-3)";
+              event.currentTarget.style.background = "transparent";
+            }}
+          >
+            {archivedOpen ? (
+              <ChevronDown size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
+            ) : (
+              <ChevronRight size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
+            )}
+            <Archive size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
+            <span style={{ flex: 1, textAlign: "left" }}>Archived</span>
+            <span
+              style={{
+                fontSize: 10,
+                padding: "1px 6px",
+                borderRadius: 99,
+                background: "rgba(255,255,255,0.06)",
+                color: "var(--text-3)",
+              }}
+            >
+              {archivedWorkspaces.length + archivedThreads.length}
+            </span>
+          </button>
+
+          {archivedOpen && (
+            <div
+              style={{
+                marginTop: 6,
+                paddingLeft: 6,
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+              }}
+            >
+              {archivedWorkspaces.map((workspace) => (
+                <div
+                  key={workspace.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "5px 6px",
+                    borderRadius: "var(--radius-sm)",
+                    background: "rgba(255,255,255,0.02)",
+                  }}
+                >
+                  <FolderGit2 size={12} style={{ flexShrink: 0, color: "var(--text-3)" }} />
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      fontSize: 11.5,
+                      color: "var(--text-2)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                    title={workspace.name || workspace.rootPath}
+                  >
+                    {workspace.name || workspace.rootPath.split("/").pop() || "Workspace"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void onRestoreWorkspace(workspace)}
+                    title="Restore workspace"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 20,
+                      height: 20,
+                      borderRadius: 6,
+                      color: "var(--text-3)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <RotateCcw size={11} />
+                  </button>
+                </div>
+              ))}
+
+              {archivedThreads.map((thread) => (
+                <div
+                  key={thread.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "5px 6px",
+                    borderRadius: "var(--radius-sm)",
+                    background: "rgba(255,255,255,0.02)",
+                  }}
+                >
+                  <MessageSquare size={12} style={{ flexShrink: 0, color: "var(--text-3)" }} />
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      fontSize: 11.5,
+                      color: "var(--text-2)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                    title={thread.title || "Untitled thread"}
+                  >
+                    {thread.title || "Untitled thread"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void onRestoreThread(thread)}
+                    title="Restore thread"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 20,
+                      height: 20,
+                      borderRadius: 6,
+                      color: "var(--text-3)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <RotateCcw size={11} />
+                  </button>
+                </div>
+              ))}
+
+              {archivedWorkspaces.length === 0 && archivedThreads.length === 0 && (
+                <p
+                  style={{
+                    margin: 0,
+                    padding: "4px 2px",
+                    fontSize: 11,
+                    color: "var(--text-3)",
+                    fontStyle: "italic",
+                  }}
+                >
+                  Nothing archived.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Settings ── */}

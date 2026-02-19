@@ -142,7 +142,8 @@ export type ApprovalResponse =
   | AcceptWithExecpolicyAmendmentDecision
   | {
       answers: Record<string, ToolInputAnswer>;
-    };
+    }
+  | Record<string, unknown>;
 
 export interface ThinkingBlock {
   type: "thinking";
@@ -210,6 +211,20 @@ export interface GitStatus {
   files: GitFileStatus[];
   ahead: number;
   behind: number;
+}
+
+export interface FileTreeEntry {
+  path: string;
+  isDir: boolean;
+}
+
+export interface FileTreePage {
+  entries: FileTreeEntry[];
+  offset: number;
+  limit: number;
+  total: number;
+  hasMore: boolean;
+  scanTruncated: boolean;
 }
 
 export type TurnCompletionStatus = "completed" | "interrupted" | "failed";

@@ -42,6 +42,7 @@ impl Database {
         conn.execute_batch(include_str!("migrations/001_initial.sql"))
             .context("failed to apply migrations")?;
         ensure_archived_columns(&conn)?;
+        ensure_runtime_columns(&conn)?;
         ensure_messages_audit_columns(&conn)?;
         Ok(())
     }
@@ -50,6 +51,13 @@ impl Database {
 fn ensure_archived_columns(conn: &Connection) -> anyhow::Result<()> {
     ensure_column(conn, "workspaces", "archived_at", "TEXT")?;
     ensure_column(conn, "threads", "archived_at", "TEXT")?;
+    Ok(())
+}
+
+fn ensure_runtime_columns(conn: &Connection) -> anyhow::Result<()> {
+    ensure_column(conn, "threads", "engine_capabilities_json", "TEXT")?;
+    ensure_column(conn, "messages", "stream_seq", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(conn, "actions", "truncated", "INTEGER NOT NULL DEFAULT 0")?;
     Ok(())
 }
 

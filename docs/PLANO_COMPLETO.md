@@ -32,6 +32,19 @@ Levar a base atual (v0 scaffold) até um **v1 funcional de produção inicial** 
    `supportedReasoningEfforts` e persistência de `reasoningEffort` por thread.
 8. Validação de thinking budget no backend por modelo:
    `set_thread_reasoning_effort` rejeita valores fora do conjunto suportado do modelo ativo.
+9. Fluxo avançado de threads por escopo + engine + modelo:
+   seleção/reuso só ocorre quando houver correspondência explícita desses campos.
+10. UX de chat com lock explícito de autoscroll:
+    ao subir no histórico, o autoscroll é bloqueado e a UI exibe ação de retorno ao final.
+11. Renderização de approvals com modo avançado de payload JSON customizado:
+    validação de JSON no frontend antes do envio da resposta.
+12. Robustez do Codex com reconexão/restart por backoff limitado:
+    transporte inválido é reciclado e inicializado novamente com tentativas progressivas.
+13. Evolução incremental de schema SQLite:
+    colunas `threads.engine_capabilities_json`, `messages.stream_seq`,
+    `actions.truncated` e índices por status/thread/created_at com compatibilidade runtime.
+14. Proteção para repositórios grandes no file tree:
+    limite de varredura, timeout e paginação via `get_file_tree_page`.
 
 ### Em andamento
 
@@ -69,7 +82,8 @@ Levar a base atual (v0 scaffold) até um **v1 funcional de produção inicial** 
 1. Suporte completo a `item/tool/requestUserInput` ainda pendente no frontend.
 2. Políticas de `trustLevel` e opt-in multi-repo estão em rollout e precisam fechamento de UX.
 3. Sidecar Claude ainda está em scaffold, sem execução real via SDK.
-4. Fluxo de threads ainda simplificado para alguns cenários avançados (multi-engine/multi-model).
+4. Fluxo de threads avançado (multi-engine/multi-model) foi parcialmente fechado; ainda faltam
+   refinamentos de UX em casos limite.
 5. Testes automatizados e critérios de qualidade ainda incompletos.
 6. Pipeline de release (dmg/deb/appimage) ainda não finalizada.
 7. Virtualização de mensagens e tuning de performance para threads longas ainda pendentes.
@@ -176,11 +190,11 @@ Critérios de aceite:
 
 ## 4.1 `src-tauri/src/engines/`
 
-1. Criar `codex_protocol.rs` com tipos request/response/notifies tolerantes.
-2. Criar `codex_transport.rs` para stdin/stdout JSONL com task dedicada.
-3. Implementar mapa de pending requests por `id` e approvals pendentes por `approval_id`.
-4. Implementar reconexão/restart com backoff limitado.
-5. Evoluir `claude_sidecar.rs` para processo sidecar real e contract tests.
+1. Criar `codex_protocol.rs` com tipos request/response/notifies tolerantes. (concluído)
+2. Criar `codex_transport.rs` para stdin/stdout JSONL com task dedicada. (concluído)
+3. Implementar mapa de pending requests por `id` e approvals pendentes por `approval_id`. (concluído)
+4. Implementar reconexão/restart com backoff limitado. (concluído)
+5. Evoluir `claude_sidecar.rs` para processo sidecar real e contract tests. (pendente)
 
 ## 4.2 `src-tauri/src/commands/chat.rs`
 
@@ -192,23 +206,23 @@ Critérios de aceite:
 ## 4.3 `src-tauri/src/db/`
 
 1. Adicionar migrations incrementais para:
-   `threads(engine_capabilities_json)`, `messages(stream_seq)`, `actions(truncated)`.
-2. Criar testes de migration e de repositórios SQLite.
-3. Adicionar índices de busca por status/thread/created_at quando necessário.
+   `threads(engine_capabilities_json)`, `messages(stream_seq)`, `actions(truncated)`. (concluído)
+2. Criar testes de migration e de repositórios SQLite. (pendente)
+3. Adicionar índices de busca por status/thread/created_at quando necessário. (concluído)
 
 ## 4.4 `src-tauri/src/git/`
 
-1. Conectar `watcher.rs` ao estado global e `emit` por repo.
-2. Garantir fallback CLI em operações limítrofes do `git2` com tratamento padronizado.
-3. Adicionar proteção para repos grandes (timeouts e paginação de tree).
+1. Conectar `watcher.rs` ao estado global e `emit` por repo. (concluído)
+2. Garantir fallback CLI em operações limítrofes do `git2` com tratamento padronizado. (em andamento)
+3. Adicionar proteção para repos grandes (timeouts e paginação de tree). (concluído)
 
 ## 4.5 `src/`
 
-1. Store de threads separada com criação/seleção/filtro por repo.
-2. Renderização de approvals com modo avançado JSON custom.
-3. Comportamento de autoscroll com lock explícito quando usuário sobe.
-4. Busca global com preview/snippets e navegação para mensagem.
-5. Tela de onboarding de engines e setup guiado.
+1. Store de threads separada com criação/seleção/filtro por repo. (concluído)
+2. Renderização de approvals com modo avançado JSON custom. (concluído)
+3. Comportamento de autoscroll com lock explícito quando usuário sobe. (concluído)
+4. Busca global com preview/snippets e navegação para mensagem. (em andamento)
+5. Tela de onboarding de engines e setup guiado. (pendente)
 
 ## 4.6 Sidecar Claude (`src-tauri/src/sidecars/claude_agent/`)
 

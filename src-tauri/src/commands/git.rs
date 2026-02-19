@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::{
     git::repo,
-    models::{FileTreeEntryDto, GitStatusDto},
+    models::{FileTreeEntryDto, FileTreePageDto, GitStatusDto},
     state::AppState,
 };
 
@@ -77,6 +77,22 @@ pub async fn get_file_tree(
     tokio::task::spawn_blocking(move || repo::get_file_tree(&repo_path).map_err(err_to_string))
         .await
         .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_file_tree_page(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<FileTreePageDto, String> {
+    let offset = offset.unwrap_or(0);
+    let limit = limit.unwrap_or(2000);
+    tokio::task::spawn_blocking(move || {
+        repo::get_file_tree_page(&repo_path, offset, limit).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[derive(Debug, Clone, Serialize)]

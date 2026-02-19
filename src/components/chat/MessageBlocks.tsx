@@ -1,3 +1,4 @@
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -13,7 +14,12 @@ import {
   XCircle,
   Brain,
 } from "lucide-react";
-import type { ApprovalResponse, ContentBlock, MessageStatus } from "../../types";
+import type {
+  ApprovalBlock,
+  ApprovalResponse,
+  ContentBlock,
+  MessageStatus,
+} from "../../types";
 import { ToolInputQuestionnaire } from "./ToolInputQuestionnaire";
 import {
   isRequestUserInputApproval,
@@ -68,6 +74,268 @@ function ActionStatusBadge({ status }: { status: string }) {
       <Circle size={12} />
       Pending
     </span>
+  );
+}
+
+function ApprovalCard({
+  block,
+  onApproval,
+}: {
+  block: ApprovalBlock;
+  onApproval: (approvalId: string, response: ApprovalResponse) => void;
+}) {
+  const isPending = block.status === "pending";
+  const details = block.details ?? {};
+  const isToolInputRequest = isRequestUserInputApproval(details);
+  const toolInputQuestions = isToolInputRequest ? parseToolInputQuestions(details) : [];
+  const showStructuredToolInput =
+    isPending && isToolInputRequest && toolInputQuestions.length > 0;
+  const proposedExecpolicyAmendment = Array.isArray(details.proposedExecpolicyAmendment)
+    ? details.proposedExecpolicyAmendment.filter(
+        (entry): entry is string => typeof entry === "string"
+      )
+    : [];
+
+  const [showAdvancedJson, setShowAdvancedJson] = useState(false);
+  const [advancedJsonPayload, setAdvancedJsonPayload] = useState(() =>
+    JSON.stringify({ decision: "accept" }, null, 2),
+  );
+  const [advancedJsonError, setAdvancedJsonError] = useState<string | null>(null);
+
+  let decisionLabel = "Answered";
+  if (block.decision === "decline") {
+    decisionLabel = "Denied";
+  } else if (block.decision === "cancel") {
+    decisionLabel = "Canceled";
+  } else if (block.decision === "accept" || block.decision === "accept_for_session") {
+    decisionLabel = "Approved";
+  }
+
+  let decisionBackground = "rgba(148,163,184,0.12)";
+  let decisionColor = "var(--text-2)";
+  if (block.decision === "decline" || block.decision === "cancel") {
+    decisionBackground = "rgba(248,113,113,0.12)";
+    decisionColor = "var(--danger)";
+  } else if (block.decision === "accept" || block.decision === "accept_for_session") {
+    decisionBackground = "rgba(52,211,153,0.12)";
+    decisionColor = "var(--success)";
+  }
+
+  function submitAdvancedJsonPayload() {
+    let parsedPayload: unknown;
+    try {
+      parsedPayload = JSON.parse(advancedJsonPayload);
+    } catch (error) {
+      setAdvancedJsonError(`Invalid JSON: ${String(error)}`);
+      return;
+    }
+
+    if (
+      typeof parsedPayload !== "object" ||
+      parsedPayload === null ||
+      Array.isArray(parsedPayload)
+    ) {
+      setAdvancedJsonError("Payload must be a JSON object.");
+      return;
+    }
+
+    setAdvancedJsonError(null);
+    onApproval(block.approvalId, parsedPayload as ApprovalResponse);
+    setShowAdvancedJson(false);
+  }
+
+  return (
+    <div
+      style={{
+        borderRadius: "var(--radius-sm)",
+        border: "1px solid rgba(251, 191, 36, 0.15)",
+        background: "rgba(251, 191, 36, 0.04)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "10px 14px",
+        }}
+      >
+        <Shield
+          size={16}
+          style={{ color: "var(--warning)", flexShrink: 0 }}
+        />
+        <div style={{ flex: 1 }}>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>
+            {block.summary}
+          </p>
+          {isToolInputRequest && toolInputQuestions.length > 0 && (
+            <p style={{ margin: "3px 0 0", fontSize: 12, color: "var(--text-2)" }}>
+              {toolInputQuestions.length} question
+              {toolInputQuestions.length > 1 ? "s" : ""} pending input.
+            </p>
+          )}
+          {!isToolInputRequest && details && Object.keys(details).length > 0 && (
+            <p style={{ margin: "3px 0 0", fontSize: 12, color: "var(--text-2)" }}>
+              {JSON.stringify(details)}
+            </p>
+          )}
+        </div>
+
+        {isPending && !showStructuredToolInput && (
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => onApproval(block.approvalId, { decision: "accept" })}
+              style={{ padding: "5px 12px", fontSize: 12, cursor: "pointer" }}
+            >
+              Apply
+            </button>
+            {proposedExecpolicyAmendment.length > 0 && (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() =>
+                  onApproval(block.approvalId, {
+                    acceptWithExecpolicyAmendment: {
+                      execpolicy_amendment: proposedExecpolicyAmendment,
+                    },
+                  })
+                }
+                style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
+              >
+                Allow + policy
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() =>
+                onApproval(block.approvalId, { decision: "accept_for_session" })
+              }
+              style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
+            >
+              Always
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => onApproval(block.approvalId, { decision: "decline" })}
+              style={{
+                padding: "5px 10px",
+                fontSize: 12,
+                color: "var(--danger)",
+                cursor: "pointer",
+              }}
+            >
+              Deny
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => onApproval(block.approvalId, { decision: "cancel" })}
+              style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {!isPending && block.decision && (
+          <span
+            style={{
+              fontSize: 11,
+              padding: "3px 8px",
+              borderRadius: 99,
+              background: decisionBackground,
+              color: decisionColor,
+              fontWeight: 500,
+            }}
+          >
+            {decisionLabel}
+          </span>
+        )}
+      </div>
+
+      {showStructuredToolInput && (
+        <div style={{ padding: "0 14px 12px" }}>
+          <ToolInputQuestionnaire
+            details={details}
+            onSubmit={(response) => onApproval(block.approvalId, response)}
+          />
+        </div>
+      )}
+
+      {isPending && (
+        <div style={{ padding: "0 14px 12px", display: "grid", gap: 8 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => {
+                setShowAdvancedJson((current) => !current);
+                setAdvancedJsonError(null);
+              }}
+              style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
+            >
+              {showAdvancedJson ? "Hide custom JSON" : "Custom JSON payload"}
+            </button>
+          </div>
+
+          {showAdvancedJson && (
+            <div
+              style={{
+                borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--border)",
+                background: "var(--code-bg)",
+                padding: "8px",
+                display: "grid",
+                gap: 8,
+              }}
+            >
+              <textarea
+                value={advancedJsonPayload}
+                onChange={(event) => {
+                  setAdvancedJsonPayload(event.target.value);
+                  if (advancedJsonError) {
+                    setAdvancedJsonError(null);
+                  }
+                }}
+                rows={6}
+                style={{
+                  width: "100%",
+                  borderRadius: "var(--radius-sm)",
+                  border: "1px solid var(--border)",
+                  background: "rgba(0,0,0,0.18)",
+                  color: "var(--text-1)",
+                  fontSize: 11.5,
+                  lineHeight: 1.5,
+                  padding: "8px 10px",
+                  fontFamily: '"JetBrains Mono", monospace',
+                  resize: "vertical",
+                }}
+              />
+              {advancedJsonError && (
+                <p style={{ margin: 0, fontSize: 11, color: "var(--danger)" }}>
+                  {advancedJsonError}
+                </p>
+              )}
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={submitAdvancedJsonPayload}
+                  style={{ padding: "5px 12px", fontSize: 12, cursor: "pointer" }}
+                >
+                  Send custom payload
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -284,164 +552,7 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
 
         /* ── Approval ── */
         if (block.type === "approval") {
-          const isPending = block.status === "pending";
-          const details = block.details ?? {};
-          const isToolInputRequest = isRequestUserInputApproval(details);
-          const toolInputQuestions = isToolInputRequest
-            ? parseToolInputQuestions(details)
-            : [];
-          const showStructuredToolInput =
-            isPending && isToolInputRequest && toolInputQuestions.length > 0;
-          const proposedExecpolicyAmendment = Array.isArray(details.proposedExecpolicyAmendment)
-            ? details.proposedExecpolicyAmendment.filter(
-                (entry): entry is string => typeof entry === "string"
-              )
-            : [];
-
-          let decisionLabel = "Answered";
-          if (block.decision === "decline") {
-            decisionLabel = "Denied";
-          } else if (block.decision === "cancel") {
-            decisionLabel = "Canceled";
-          } else if (block.decision === "accept" || block.decision === "accept_for_session") {
-            decisionLabel = "Approved";
-          }
-
-          let decisionBackground = "rgba(148,163,184,0.12)";
-          let decisionColor = "var(--text-2)";
-          if (block.decision === "decline" || block.decision === "cancel") {
-            decisionBackground = "rgba(248,113,113,0.12)";
-            decisionColor = "var(--danger)";
-          } else if (block.decision === "accept" || block.decision === "accept_for_session") {
-            decisionBackground = "rgba(52,211,153,0.12)";
-            decisionColor = "var(--success)";
-          }
-
-          return (
-            <div
-              key={index}
-              style={{
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid rgba(251, 191, 36, 0.15)",
-                background: "rgba(251, 191, 36, 0.04)",
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "10px 14px",
-                }}
-              >
-                <Shield
-                  size={16}
-                  style={{ color: "var(--warning)", flexShrink: 0 }}
-                />
-                <div style={{ flex: 1 }}>
-                  <p style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>
-                    {block.summary}
-                  </p>
-                  {isToolInputRequest && toolInputQuestions.length > 0 && (
-                    <p style={{ margin: "3px 0 0", fontSize: 12, color: "var(--text-2)" }}>
-                      {toolInputQuestions.length} question
-                      {toolInputQuestions.length > 1 ? "s" : ""} pending input.
-                    </p>
-                  )}
-                  {!isToolInputRequest && details && Object.keys(details).length > 0 && (
-                    <p style={{ margin: "3px 0 0", fontSize: 12, color: "var(--text-2)" }}>
-                      {JSON.stringify(details)}
-                    </p>
-                  )}
-                </div>
-
-                {isPending && !showStructuredToolInput && (
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      onClick={() => onApproval(block.approvalId, { decision: "accept" })}
-                      style={{ padding: "5px 12px", fontSize: 12, cursor: "pointer" }}
-                    >
-                      Apply
-                    </button>
-                    {proposedExecpolicyAmendment.length > 0 && (
-                      <button
-                        type="button"
-                        className="btn-ghost"
-                        onClick={() =>
-                          onApproval(block.approvalId, {
-                            acceptWithExecpolicyAmendment: {
-                              execpolicy_amendment: proposedExecpolicyAmendment,
-                            },
-                          })
-                        }
-                        style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
-                      >
-                        Allow + policy
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      onClick={() =>
-                        onApproval(block.approvalId, { decision: "accept_for_session" })
-                      }
-                      style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
-                    >
-                      Always
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      onClick={() => onApproval(block.approvalId, { decision: "decline" })}
-                      style={{
-                        padding: "5px 10px",
-                        fontSize: 12,
-                        color: "var(--danger)",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Deny
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      onClick={() => onApproval(block.approvalId, { decision: "cancel" })}
-                      style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
-
-                {!isPending && block.decision && (
-                  <span
-                    style={{
-                      fontSize: 11,
-                      padding: "3px 8px",
-                      borderRadius: 99,
-                      background: decisionBackground,
-                      color: decisionColor,
-                      fontWeight: 500,
-                    }}
-                  >
-                    {decisionLabel}
-                  </span>
-                )}
-              </div>
-
-              {showStructuredToolInput && (
-                <div style={{ padding: "0 14px 12px" }}>
-                  <ToolInputQuestionnaire
-                    details={details}
-                    onSubmit={(response) => onApproval(block.approvalId, response)}
-                  />
-                </div>
-              )}
-            </div>
-          );
+          return <ApprovalCard key={index} block={block} onApproval={onApproval} />;
         }
 
         /* ── Thinking ── */

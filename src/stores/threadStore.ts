@@ -21,6 +21,7 @@ interface CreateThreadInput {
 interface ThreadState {
   threads: Thread[];
   threadsByWorkspace: Record<string, Thread[]>;
+  archivedThreadsByWorkspace: Record<string, Thread[]>;
   activeThreadId: string | null;
   loading: boolean;
   error?: string;
@@ -28,8 +29,10 @@ interface ThreadState {
   renameThread: (threadId: string, title: string) => Promise<void>;
   ensureThreadForScope: (input: EnsureThreadInput) => Promise<string | null>;
   refreshThreads: (workspaceId: string) => Promise<void>;
+  refreshArchivedThreads: (workspaceId: string) => Promise<void>;
   refreshAllThreads: (workspaceIds: string[]) => Promise<void>;
   removeThread: (threadId: string) => Promise<void>;
+  restoreThread: (threadId: string) => Promise<void>;
   setActiveThread: (threadId: string | null) => void;
   setThreadReasoningEffortLocal: (threadId: string, reasoningEffort: string | null) => void;
   setThreadLastModelLocal: (threadId: string, modelId: string | null) => void;
@@ -89,9 +92,23 @@ function applyThreadLastModel(
   };
 }
 
+function readThreadLastModelId(thread: Thread): string | null {
+  const raw = thread.engineMetadata?.lastModelId;
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const normalized = raw.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function threadMatchesRequestedModel(thread: Thread, modelId: string): boolean {
+  return thread.modelId === modelId || readThreadLastModelId(thread) === modelId;
+}
+
 export const useThreadStore = create<ThreadState>((set, get) => ({
   threads: [],
   threadsByWorkspace: {},
+  archivedThreadsByWorkspace: {},
   activeThreadId: null,
   loading: false,
   createThread: async ({ workspaceId, repoId, engineId, modelId, title }) => {
@@ -164,9 +181,16 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           thread.repoId === repoId &&
           thread.engineId === effectiveEngine
       );
+      const scopedForModel = scoped
+        .filter((thread) => threadMatchesRequestedModel(thread, effectiveModel))
+        .sort(
+          (a, b) =>
+            new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime(),
+        );
 
       const activeId = get().activeThreadId;
-      let selected = scoped.find((thread) => thread.id === activeId) ?? scoped[0];
+      let selected =
+        scopedForModel.find((thread) => thread.id === activeId) ?? scopedForModel[0];
       if (!selected) {
         selected = await ipc.createThread(
           workspaceId,
@@ -212,9 +236,29 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       set({ loading: false, error: String(error) });
     }
   },
+  refreshArchivedThreads: async (workspaceId) => {
+    try {
+      const archivedThreads = await ipc.listArchivedThreads(workspaceId);
+      set((state) => ({
+        archivedThreadsByWorkspace: {
+          ...state.archivedThreadsByWorkspace,
+          [workspaceId]: archivedThreads,
+        },
+      }));
+    } catch (error) {
+      set({ error: String(error) });
+    }
+  },
   refreshAllThreads: async (workspaceIds) => {
     if (!workspaceIds.length) {
-      set({ threads: [], threadsByWorkspace: {}, activeThreadId: null, loading: false, error: undefined });
+      set({
+        threads: [],
+        threadsByWorkspace: {},
+        archivedThreadsByWorkspace: {},
+        activeThreadId: null,
+        loading: false,
+        error: undefined,
+      });
       return;
     }
 
@@ -248,22 +292,73 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     set({ loading: true, error: undefined });
     try {
       await ipc.archiveThread(threadId);
-      const nextThreadsByWorkspace = Object.entries(get().threadsByWorkspace).reduce<Record<string, Thread[]>>(
-        (acc, [workspaceId, threads]) => {
-          const remaining = threads.filter((thread) => thread.id !== threadId);
-          acc[workspaceId] = remaining;
-          return acc;
-        },
-        {},
-      );
+      let archivedThread: Thread | null = null;
+      let archivedWorkspaceId: string | null = null;
+      const nextThreadsByWorkspace = Object.entries(get().threadsByWorkspace).reduce<
+        Record<string, Thread[]>
+      >((acc, [workspaceId, threads]) => {
+        const target = threads.find((thread) => thread.id === threadId);
+        if (target) {
+          archivedThread = target;
+          archivedWorkspaceId = workspaceId;
+        }
+        const remaining = threads.filter((thread) => thread.id !== threadId);
+        acc[workspaceId] = remaining;
+        return acc;
+      }, {});
       const threads = flattenThreadsByWorkspace(nextThreadsByWorkspace);
       const active = get().activeThreadId;
 
-      set({
-        threadsByWorkspace: nextThreadsByWorkspace,
-        threads,
-        activeThreadId: active === threadId ? null : active,
-        loading: false,
+      set((state) => {
+        const archivedThreadsByWorkspace = { ...state.archivedThreadsByWorkspace };
+        if (archivedThread && archivedWorkspaceId) {
+          const currentArchived = archivedThreadsByWorkspace[archivedWorkspaceId] ?? [];
+          archivedThreadsByWorkspace[archivedWorkspaceId] = [
+            archivedThread,
+            ...currentArchived.filter((thread) => thread.id !== threadId),
+          ];
+        }
+
+        return {
+          threadsByWorkspace: nextThreadsByWorkspace,
+          archivedThreadsByWorkspace,
+          threads,
+          activeThreadId: active === threadId ? null : active,
+          loading: false,
+        };
+      });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+    }
+  },
+  restoreThread: async (threadId) => {
+    set({ loading: true, error: undefined });
+    try {
+      const restored = await ipc.restoreThread(threadId);
+      set((state) => {
+        const workspaceId = restored.workspaceId;
+        const workspaceThreads = state.threadsByWorkspace[workspaceId] ?? [];
+        const nextWorkspaceThreads = [
+          restored,
+          ...workspaceThreads.filter((thread) => thread.id !== threadId),
+        ];
+        const threadsByWorkspace = mergeWorkspaceThreads(
+          state.threadsByWorkspace,
+          workspaceId,
+          nextWorkspaceThreads,
+        );
+        const archivedThreads = state.archivedThreadsByWorkspace[workspaceId] ?? [];
+        const archivedThreadsByWorkspace = {
+          ...state.archivedThreadsByWorkspace,
+          [workspaceId]: archivedThreads.filter((thread) => thread.id !== threadId),
+        };
+
+        return {
+          threadsByWorkspace,
+          archivedThreadsByWorkspace,
+          threads: flattenThreadsByWorkspace(threadsByWorkspace),
+          loading: false,
+        };
       });
     } catch (error) {
       set({ loading: false, error: String(error) });

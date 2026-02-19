@@ -222,3 +222,14 @@ pub struct FileTreeEntryDto {
     pub path: String,
     pub is_dir: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileTreePageDto {
+    pub entries: Vec<FileTreeEntryDto>,
+    pub offset: usize,
+    pub limit: usize,
+    pub total: usize,
+    pub has_more: bool,
+    pub scan_truncated: bool,
+}

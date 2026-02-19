@@ -44,6 +44,13 @@ pub async fn list_workspaces(state: State<'_, AppState>) -> Result<Vec<Workspace
 }
 
 #[tauri::command]
+pub async fn list_archived_workspaces(
+    state: State<'_, AppState>,
+) -> Result<Vec<WorkspaceDto>, String> {
+    db::workspaces::list_archived_workspaces(&state.db).map_err(err_to_string)
+}
+
+#[tauri::command]
 pub async fn get_repos(
     state: State<'_, AppState>,
     workspace_id: String,
@@ -74,6 +81,14 @@ pub async fn archive_workspace(
     workspace_id: String,
 ) -> Result<(), String> {
     db::workspaces::archive_workspace(&state.db, &workspace_id).map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn restore_workspace(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<WorkspaceDto, String> {
+    db::workspaces::restore_workspace(&state.db, &workspace_id).map_err(err_to_string)
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {
