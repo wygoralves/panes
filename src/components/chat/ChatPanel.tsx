@@ -424,9 +424,10 @@ export function ChatPanel() {
     >
       {/* ── Top Header Bar ── */}
       <div
-        className="drag-region"
+        data-tauri-drag-region
         style={{
           padding: "8px 16px",
+          paddingTop: 38,
           display: "flex",
           alignItems: "center",
           gap: 8,
@@ -435,7 +436,7 @@ export function ChatPanel() {
         }}
       >
         {/* Thread title + workspace label */}
-        <div className="no-drag" style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           <span
             style={{
               fontSize: 13,
@@ -465,7 +466,7 @@ export function ChatPanel() {
           )}
           <button
             type="button"
-            className="btn-ghost no-drag"
+            className="btn-ghost"
             style={{ padding: 4, borderRadius: "var(--radius-sm)", cursor: "pointer" }}
           >
             <MoreHorizontal size={14} />
@@ -473,7 +474,7 @@ export function ChatPanel() {
         </div>
 
         {/* Right-side action buttons */}
-        <div className="no-drag" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {streaming && (
             <button
               type="button"

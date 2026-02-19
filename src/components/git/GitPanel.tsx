@@ -149,8 +149,10 @@ export function GitPanel() {
     >
       {/* ── Header ── */}
       <div
+        data-tauri-drag-region
         style={{
           padding: "10px 14px",
+          paddingTop: 38,
           borderBottom: "1px solid var(--border)",
           display: "flex",
           alignItems: "center",

@@ -148,13 +148,13 @@ export function Sidebar() {
     >
       {/* ── Header ── */}
       <div
-        className="drag-region"
+        data-tauri-drag-region
         style={{
-          padding: "14px 14px 10px",
+          padding: "42px 14px 10px",
           borderBottom: "1px solid var(--border)",
         }}
       >
-        <div className="no-drag" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {/* New thread button */}
           <button
             type="button"
