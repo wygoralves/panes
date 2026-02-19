@@ -541,55 +541,6 @@ export function Sidebar() {
                       </>
                     )}
 
-                    {/* Repos under this workspace that have no thread yet */}
-                    {repos
-                      .filter(
-                        (r) =>
-                          r.workspaceId === project.workspace.id &&
-                          !project.threads.some((t) => t.repoId === r.id),
-                      )
-                      .map((repo) => (
-                        <button
-                          key={repo.id}
-                          type="button"
-                          onClick={() => {
-                            if (project.workspace.id !== activeWorkspaceId) {
-                              void setActiveWorkspace(project.workspace.id);
-                            }
-                            setActiveRepo(repo.id);
-                          }}
-                          style={{
-                            width: "100%",
-                            padding: "5px 8px 5px 22px",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 7,
-                            borderRadius: "var(--radius-sm)",
-                            fontSize: 12,
-                            color:
-                              repo.id === activeRepoId
-                                ? "var(--text-2)"
-                                : "var(--text-3)",
-                            background: "transparent",
-                            cursor: "pointer",
-                            transition:
-                              "all var(--duration-fast) var(--ease-out)",
-                          }}
-                          onMouseEnter={(e) =>
-                            (e.currentTarget.style.background =
-                              "rgba(255,255,255,0.03)")
-                          }
-                          onMouseLeave={(e) =>
-                            (e.currentTarget.style.background = "transparent")
-                          }
-                        >
-                          <FolderOpen
-                            size={12}
-                            style={{ flexShrink: 0, opacity: 0.35 }}
-                          />
-                          <span style={{ opacity: 0.6 }}>{repo.name}</span>
-                        </button>
-                      ))}
                   </div>
                 )}
               </div>
