@@ -105,13 +105,16 @@ src/                              # Frontend
     ├── layout/
     │   └── ThreeColumnLayout.tsx  # Resizable three-column shell
     ├── sidebar/
-    │   └── Sidebar.tsx            # Workspace list + thread list
+    │   └── Sidebar.tsx            # Project list + thread list per project
     ├── chat/
     │   ├── ChatPanel.tsx          # Message list + input + header
     │   ├── MessageBlocks.tsx      # Renders typed ContentBlock[] (text, thinking, action, diff, approval, error)
     │   └── SearchModal.tsx        # Global message search (Cmd+Shift+F)
     ├── git/
     │   └── GitPanel.tsx           # Branch info, file list, diff viewer, stage/commit
+    ├── shared/
+    │   ├── Dropdown.tsx           # Custom dropdown (portal-based, replaces native <select>)
+    │   └── AppErrorBoundary.tsx   # Top-level React error boundary
     └── onboarding/
         └── EngineHealthBanner.tsx # Shows engine availability status
 
@@ -272,6 +275,8 @@ cargo clippy                 # Lint Rust code
 - Streaming events arrive on `stream-event-{thread_id}` Tauri event channels.
 - `chatStore.applyStreamEvent()` accumulates events into the live message in-place (no re-fetch).
 - Components render typed `ContentBlock[]` — never raw engine payloads.
+- Window drag: use `data-tauri-drag-region` attribute on header elements (not CSS `-webkit-app-region`).
+- Custom dropdowns: use `shared/Dropdown.tsx` instead of native `<select>` elements.
 - Keyboard shortcuts: `Cmd+B` (sidebar), `Cmd+Shift+B` (git panel), `Cmd+Shift+F` (search).
 
 ### General
