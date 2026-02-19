@@ -10,10 +10,13 @@ use crate::{
     db,
     engines::{EngineEvent, OutputStream, SandboxPolicy, ThreadScope, TurnCompletionStatus},
     models::{
-        MessageDto, MessageStatusDto, RepoDto, SearchResultDto, ThreadStatusDto, TrustLevelDto,
+        MessageDto, MessageStatusDto, RepoDto, SearchResultDto, ThreadDto, ThreadStatusDto,
+        TrustLevelDto,
     },
     state::AppState,
 };
+
+const MAX_THREAD_TITLE_CHARS: usize = 72;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -82,6 +85,13 @@ struct EventProgress {
     message_status: Option<MessageStatusDto>,
     thread_status: Option<ThreadStatusDto>,
     token_usage: Option<(u64, u64)>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadUpdatedEvent {
+    thread_id: String,
+    workspace_id: String,
 }
 
 #[tauri::command]
@@ -471,7 +481,98 @@ async fn run_turn(
         let _ = db::threads::bump_message_counters(&state.db, &thread.id, token_usage);
     }
 
+    if maybe_update_thread_title(&state, &thread, &engine_thread_id, &message)
+        .await
+        .is_some()
+    {
+        let _ = app.emit(
+            "thread-updated",
+            ThreadUpdatedEvent {
+                thread_id: thread.id.clone(),
+                workspace_id: thread.workspace_id.clone(),
+            },
+        );
+    }
+
     state.turns.finish(&thread.id).await;
+}
+
+async fn maybe_update_thread_title(
+    state: &AppState,
+    thread: &ThreadDto,
+    engine_thread_id: &str,
+    user_message: &str,
+) -> Option<String> {
+    if !should_autotitle_thread(thread) {
+        return None;
+    }
+
+    let candidate = state
+        .engines
+        .read_thread_preview(thread, engine_thread_id)
+        .await
+        .as_deref()
+        .and_then(normalize_thread_title)
+        .or_else(|| normalize_thread_title(user_message))?;
+
+    if candidate == thread.title {
+        return None;
+    }
+
+    if let Err(error) = db::threads::update_thread_title(&state.db, &thread.id, &candidate) {
+        log::warn!("failed to update thread title: {error}");
+        return None;
+    }
+
+    if let Err(error) = state
+        .engines
+        .set_thread_name(thread, engine_thread_id, &candidate)
+        .await
+    {
+        log::debug!("failed to sync thread name with engine: {error}");
+    }
+
+    Some(candidate)
+}
+
+fn should_autotitle_thread(thread: &ThreadDto) -> bool {
+    thread.message_count == 0 && !thread_manual_title_locked(thread.engine_metadata.as_ref())
+}
+
+fn thread_manual_title_locked(metadata: Option<&Value>) -> bool {
+    metadata
+        .and_then(|value| value.get("manualTitle"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn normalize_thread_title(raw: &str) -> Option<String> {
+    let compact = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut title = compact.trim_matches(|c| c == '"' || c == '\'').to_string();
+    if title.is_empty() {
+        return None;
+    }
+
+    if title.chars().count() > MAX_THREAD_TITLE_CHARS {
+        title = truncate_title(title, MAX_THREAD_TITLE_CHARS);
+    }
+
+    Some(title)
+}
+
+fn truncate_title(value: String, max_chars: usize) -> String {
+    let count = value.chars().count();
+    if count <= max_chars {
+        return value;
+    }
+
+    if max_chars <= 3 {
+        return value.chars().take(max_chars).collect::<String>();
+    }
+
+    let mut output = value.chars().take(max_chars - 3).collect::<String>();
+    output.push_str("...");
+    output
 }
 
 fn apply_event_to_blocks(
@@ -713,7 +814,7 @@ fn aggregate_workspace_trust_level(repos: &[RepoDto]) -> TrustLevelDto {
 
 fn approval_policy_for_trust_level(trust_level: &TrustLevelDto) -> &'static str {
     match trust_level {
-        TrustLevelDto::Trusted => "never",
+        TrustLevelDto::Trusted => "on-failure",
         TrustLevelDto::Standard => "on-request",
         TrustLevelDto::Restricted => "untrusted",
     }

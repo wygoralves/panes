@@ -240,6 +240,30 @@ impl EngineManager {
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         }
     }
+
+    pub async fn read_thread_preview(
+        &self,
+        thread: &ThreadDto,
+        engine_thread_id: &str,
+    ) -> Option<String> {
+        match thread.engine_id.as_str() {
+            "codex" => self.codex.read_thread_preview(engine_thread_id).await,
+            _ => None,
+        }
+    }
+
+    pub async fn set_thread_name(
+        &self,
+        thread: &ThreadDto,
+        engine_thread_id: &str,
+        name: &str,
+    ) -> anyhow::Result<()> {
+        match thread.engine_id.as_str() {
+            "codex" => self.codex.set_thread_name(engine_thread_id, name).await,
+            "claude" => Ok(()),
+            _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
+        }
+    }
 }
 
 fn map_model_info(model: ModelInfo) -> EngineModelDto {

@@ -25,6 +25,7 @@ interface ThreadState {
   loading: boolean;
   error?: string;
   createThread: (input: CreateThreadInput) => Promise<string | null>;
+  renameThread: (threadId: string, title: string) => Promise<void>;
   ensureThreadForScope: (input: EnsureThreadInput) => Promise<string | null>;
   refreshThreads: (workspaceId: string) => Promise<void>;
   refreshAllThreads: (workspaceIds: string[]) => Promise<void>;
@@ -106,6 +107,30 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     } catch (error) {
       set({ loading: false, error: String(error) });
       return null;
+    }
+  },
+  renameThread: async (threadId, title) => {
+    set({ loading: true, error: undefined });
+    try {
+      const updated = await ipc.renameThread(threadId, title);
+      set((state) => {
+        const updateThread = (thread: Thread) => (thread.id === updated.id ? updated : thread);
+        const threadsByWorkspace = Object.entries(state.threadsByWorkspace).reduce<
+          Record<string, Thread[]>
+        >((acc, [workspaceId, threads]) => {
+          acc[workspaceId] = threads.map(updateThread);
+          return acc;
+        }, {});
+        const threads = flattenThreadsByWorkspace(threadsByWorkspace);
+
+        return {
+          threadsByWorkspace,
+          threads,
+          loading: false,
+        };
+      });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
     }
   },
   ensureThreadForScope: async ({ workspaceId, repoId, engineId, modelId, title }) => {

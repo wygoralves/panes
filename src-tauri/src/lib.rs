@@ -60,6 +60,7 @@ pub fn run() {
             commands::engines::engine_health,
             commands::threads::list_threads,
             commands::threads::create_thread,
+            commands::threads::rename_thread,
             commands::threads::confirm_workspace_thread,
             commands::threads::set_thread_reasoning_effort,
             commands::threads::delete_thread,

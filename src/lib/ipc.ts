@@ -36,6 +36,11 @@ export const ipc = {
       modelId,
       title
     }),
+  renameThread: (threadId: string, title: string) =>
+    invoke<Thread>("rename_thread", {
+      threadId,
+      title,
+    }),
   confirmWorkspaceThread: (threadId: string, writableRoots: string[]) =>
     invoke<void>("confirm_workspace_thread", { threadId, writableRoots }),
   setThreadReasoningEffort: (threadId: string, reasoningEffort: string | null) =>
@@ -80,4 +85,15 @@ export async function listenGitRepoChanged(
   onEvent: (event: GitRepoChangedEvent) => void
 ): Promise<UnlistenFn> {
   return listen<GitRepoChangedEvent>("git-repo-changed", ({ payload }) => onEvent(payload));
+}
+
+export interface ThreadUpdatedEvent {
+  threadId: string;
+  workspaceId: string;
+}
+
+export async function listenThreadUpdated(
+  onEvent: (event: ThreadUpdatedEvent) => void
+): Promise<UnlistenFn> {
+  return listen<ThreadUpdatedEvent>("thread-updated", ({ payload }) => onEvent(payload));
 }

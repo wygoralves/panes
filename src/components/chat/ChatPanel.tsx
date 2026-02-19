@@ -4,7 +4,6 @@ import {
   Square,
   Plus,
   GitBranch,
-  MoreHorizontal,
   Loader2,
   Shield,
   Play,
@@ -213,6 +212,8 @@ export function ChatPanel() {
   const [selectedEngineId, setSelectedEngineId] = useState("codex");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [selectedEffort, setSelectedEffort] = useState("medium");
+  const [editingThreadTitle, setEditingThreadTitle] = useState(false);
+  const [threadTitleDraft, setThreadTitleDraft] = useState("");
   const {
     messages,
     send,
@@ -239,10 +240,12 @@ export function ChatPanel() {
     activeThreadId,
     setActiveThread: setActiveThreadInStore,
     setThreadReasoningEffortLocal,
+    renameThread,
   } = useThreadStore();
   const gitStatus = useGitStore((s) => s.status);
   const viewportRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
   const effortSyncKeyRef = useRef<string | null>(null);
 
   const activeWorkspace = useMemo(
@@ -331,6 +334,20 @@ export function ChatPanel() {
 
     return approvals;
   }, [messages]);
+
+  useEffect(() => {
+    if (!editingThreadTitle) {
+      setThreadTitleDraft(activeThread?.title ?? "");
+    }
+  }, [activeThread?.id, activeThread?.title, editingThreadTitle]);
+
+  useEffect(() => {
+    if (!editingThreadTitle) {
+      return;
+    }
+    titleInputRef.current?.focus();
+    titleInputRef.current?.select();
+  }, [editingThreadTitle]);
 
   useEffect(() => {
     if (!engines.length) {
@@ -570,6 +587,38 @@ export function ChatPanel() {
     await setAllReposTrustLevel(nextTrustLevel);
   }
 
+  function startThreadTitleEdit() {
+    if (!activeThread) {
+      return;
+    }
+    setThreadTitleDraft(activeThread.title ?? "");
+    setEditingThreadTitle(true);
+  }
+
+  function cancelThreadTitleEdit() {
+    setThreadTitleDraft(activeThread?.title ?? "");
+    setEditingThreadTitle(false);
+  }
+
+  async function saveThreadTitleEdit() {
+    if (!activeThread) {
+      setEditingThreadTitle(false);
+      return;
+    }
+
+    const normalized = threadTitleDraft.trim();
+    if (!normalized) {
+      cancelThreadTitleEdit();
+      return;
+    }
+
+    if (normalized !== (activeThread.title ?? "")) {
+      await renameThread(activeThread.id, normalized);
+    }
+
+    setEditingThreadTitle(false);
+  }
+
   const workspaceName = activeWorkspace?.name || activeWorkspace?.rootPath.split("/").pop() || "";
 
   // Compute total diff stats for header display
@@ -601,18 +650,61 @@ export function ChatPanel() {
       >
         {/* Thread title + workspace label */}
         <div className="no-drag" style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          <span
-            style={{
-              fontSize: 13,
-              fontWeight: 500,
-              color: "var(--text-1)",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {activeThread?.title || "Agent Workspace"}
-          </span>
+          {editingThreadTitle && activeThread ? (
+            <input
+              ref={titleInputRef}
+              value={threadTitleDraft}
+              onChange={(event) => setThreadTitleDraft(event.target.value)}
+              onBlur={cancelThreadTitleEdit}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void saveThreadTitleEdit();
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  cancelThreadTitleEdit();
+                }
+              }}
+              style={{
+                minWidth: 120,
+                maxWidth: 360,
+                width: "100%",
+                fontSize: 13,
+                fontWeight: 500,
+                color: "var(--text-1)",
+                background: "var(--bg-3)",
+                border: "1px solid var(--border-active)",
+                borderRadius: "var(--radius-sm)",
+                padding: "4px 8px",
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={startThreadTitleEdit}
+              disabled={!activeThread}
+              title={activeThread ? "Click to rename thread" : ""}
+              style={{
+                border: "none",
+                background: "transparent",
+                padding: 0,
+                margin: 0,
+                fontSize: 13,
+                fontWeight: 500,
+                color: "var(--text-1)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                cursor: activeThread ? "text" : "default",
+                textAlign: "left",
+                maxWidth: 360,
+              }}
+            >
+              {activeThread?.title || "Agent Workspace"}
+            </button>
+          )}
           {workspaceName && (
             <span
               style={{
@@ -628,13 +720,6 @@ export function ChatPanel() {
               {workspaceName}
             </span>
           )}
-          <button
-            type="button"
-            className="btn-ghost"
-            style={{ padding: 4, borderRadius: "var(--radius-sm)", cursor: "pointer" }}
-          >
-            <MoreHorizontal size={14} />
-          </button>
         </div>
 
         {/* Right-side action buttons */}

@@ -196,6 +196,16 @@ pub fn bump_message_counters(
     Ok(())
 }
 
+pub fn update_thread_title(db: &Database, thread_id: &str, title: &str) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    conn.execute(
+        "UPDATE threads SET title = ?1 WHERE id = ?2",
+        params![title, thread_id],
+    )
+    .context("failed to update thread title")?;
+    Ok(())
+}
+
 fn map_thread_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadDto> {
     let metadata_raw: Option<String> = row.get(6)?;
     let metadata = metadata_raw.and_then(|raw| serde_json::from_str(&raw).ok());

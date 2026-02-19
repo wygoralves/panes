@@ -22,6 +22,8 @@ use super::{
 const INITIALIZE_METHODS: &[&str] = &["initialize"];
 const THREAD_START_METHODS: &[&str] = &["thread/start"];
 const THREAD_RESUME_METHODS: &[&str] = &["thread/resume"];
+const THREAD_READ_METHODS: &[&str] = &["thread/read"];
+const THREAD_SET_NAME_METHODS: &[&str] = &["thread/name/set"];
 const TURN_START_METHODS: &[&str] = &["turn/start"];
 const TURN_INTERRUPT_METHODS: &[&str] = &["turn/interrupt"];
 const COMMAND_EXEC_METHODS: &[&str] = &["command/exec"];
@@ -582,6 +584,54 @@ impl CodexEngine {
         }
     }
 
+    pub async fn read_thread_preview(&self, engine_thread_id: &str) -> Option<String> {
+        let transport = self.ensure_transport().await.ok()?;
+        if self.ensure_initialized(&transport).await.is_err() {
+            return None;
+        }
+
+        let params = serde_json::json!({
+          "threadId": engine_thread_id,
+          "includeTurns": false,
+        });
+
+        let result = request_with_fallback(
+            transport.as_ref(),
+            THREAD_READ_METHODS,
+            params,
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .ok()?;
+
+        extract_thread_preview(&result)
+    }
+
+    pub async fn set_thread_name(
+        &self,
+        engine_thread_id: &str,
+        name: &str,
+    ) -> Result<(), anyhow::Error> {
+        let transport = self.ensure_transport().await?;
+        self.ensure_initialized(&transport).await?;
+
+        let params = serde_json::json!({
+          "threadId": engine_thread_id,
+          "name": name,
+        });
+
+        request_with_fallback(
+            transport.as_ref(),
+            THREAD_SET_NAME_METHODS,
+            params,
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to set codex thread name")?;
+
+        Ok(())
+    }
+
     async fn fetch_models_from_server(&self) -> anyhow::Result<Vec<ModelInfo>> {
         if !self.is_available().await {
             return Ok(self.models());
@@ -1064,6 +1114,22 @@ fn extract_turn_id(value: &serde_json::Value) -> Option<String> {
     if let Some(turn) = value.get("turn") {
         if let Some(id) = extract_any_string(turn, &["id", "turnId", "turn_id"]) {
             return Some(id);
+        }
+    }
+
+    None
+}
+
+fn extract_thread_preview(value: &serde_json::Value) -> Option<String> {
+    if let Some(preview) = extract_any_string(value, &["preview"]) {
+        return Some(preview);
+    }
+
+    for key in ["thread", "data", "result"] {
+        if let Some(nested) = value.get(key) {
+            if let Some(preview) = extract_thread_preview(nested) {
+                return Some(preview);
+            }
         }
     }
 

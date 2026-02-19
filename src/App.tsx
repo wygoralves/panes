@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
 import { SearchModal } from "./components/chat/SearchModal";
 import { EngineHealthBanner } from "./components/onboarding/EngineHealthBanner";
+import { listenThreadUpdated } from "./lib/ipc";
 import { useWorkspaceStore } from "./stores/workspaceStore";
 import { useEngineStore } from "./stores/engineStore";
 import { useUiStore } from "./stores/uiStore";
@@ -12,6 +13,7 @@ export function App() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const loadEngines = useEngineStore((s) => s.load);
   const refreshAllThreads = useThreadStore((s) => s.refreshAllThreads);
+  const refreshThreads = useThreadStore((s) => s.refreshThreads);
   const searchOpen = useUiStore((s) => s.searchOpen);
   const setSearchOpen = useUiStore((s) => s.setSearchOpen);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
@@ -25,6 +27,21 @@ export function App() {
   useEffect(() => {
     void refreshAllThreads(workspaces.map((workspace) => workspace.id));
   }, [workspaces, refreshAllThreads]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listenThreadUpdated(({ workspaceId }) => {
+      void refreshThreads(workspaceId);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [refreshThreads]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {

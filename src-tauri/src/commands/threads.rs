@@ -4,6 +4,8 @@ use tauri::State;
 
 use crate::{db, models::ThreadDto, state::AppState};
 
+const MAX_THREAD_TITLE_CHARS: usize = 120;
+
 #[tauri::command]
 pub async fn list_threads(
     state: State<'_, AppState>,
@@ -105,6 +107,41 @@ pub async fn set_thread_reasoning_effort(
 }
 
 #[tauri::command]
+pub async fn rename_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+    title: String,
+) -> Result<ThreadDto, String> {
+    let thread = db::threads::get_thread(&state.db, &thread_id)
+        .map_err(err_to_string)?
+        .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    let normalized_title = normalize_thread_title(&title)?;
+
+    db::threads::update_thread_title(&state.db, &thread_id, &normalized_title)
+        .map_err(err_to_string)?;
+
+    let mut metadata = thread.engine_metadata.unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        metadata = json!({});
+    }
+
+    if let Some(object) = metadata.as_object_mut() {
+        object.insert("manualTitle".to_string(), json!(true));
+        object.insert(
+            "manualTitleUpdatedAt".to_string(),
+            json!(Utc::now().to_rfc3339()),
+        );
+    }
+
+    db::threads::update_engine_metadata(&state.db, &thread_id, &metadata).map_err(err_to_string)?;
+
+    db::threads::get_thread(&state.db, &thread_id)
+        .map_err(err_to_string)?
+        .ok_or_else(|| format!("thread not found after rename: {thread_id}"))
+}
+
+#[tauri::command]
 pub async fn delete_thread(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
     state.turns.cancel(&thread_id).await;
 
@@ -170,4 +207,23 @@ async fn validate_reasoning_effort(
 
 fn err_to_string(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+fn normalize_thread_title(raw: &str) -> Result<String, String> {
+    let compact = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = compact.trim();
+    if trimmed.is_empty() {
+        return Err("thread title cannot be empty".to_string());
+    }
+
+    let title = if trimmed.chars().count() > MAX_THREAD_TITLE_CHARS {
+        trimmed
+            .chars()
+            .take(MAX_THREAD_TITLE_CHARS)
+            .collect::<String>()
+    } else {
+        trimmed.to_string()
+    };
+
+    Ok(title)
 }
