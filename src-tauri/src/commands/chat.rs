@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     db,
-    engines::{EngineEvent, OutputStream, SandboxPolicy, ThreadScope},
+    engines::{EngineEvent, OutputStream, SandboxPolicy, ThreadScope, TurnCompletionStatus},
     models::{
         MessageDto, MessageStatusDto, RepoDto, SearchResultDto, ThreadStatusDto, TrustLevelDto,
     },
@@ -260,6 +260,16 @@ pub async fn respond_to_approval(
         .and_then(|value| value.as_str())
         .unwrap_or("custom");
     db::actions::answer_approval(&state.db, &approval_id, decision).map_err(err_to_string)?;
+    if let Some(message_id) =
+        db::actions::find_approval_message_id(&state.db, &approval_id).map_err(err_to_string)?
+    {
+        let _ = db::messages::mark_approval_block_answered(
+            &state.db,
+            &message_id,
+            &approval_id,
+            decision,
+        );
+    }
 
     db::threads::update_thread_status(&state.db, &thread_id, ThreadStatusDto::Streaming)
         .map_err(err_to_string)?;
@@ -477,9 +487,24 @@ fn apply_event_to_blocks(
         EngineEvent::TurnStarted => {
             progress.thread_status = Some(ThreadStatusDto::Streaming);
         }
-        EngineEvent::TurnCompleted { token_usage } => {
-            progress.message_status = Some(MessageStatusDto::Completed);
-            progress.thread_status = Some(ThreadStatusDto::Completed);
+        EngineEvent::TurnCompleted {
+            token_usage,
+            status,
+        } => {
+            match status {
+                TurnCompletionStatus::Completed => {
+                    progress.message_status = Some(MessageStatusDto::Completed);
+                    progress.thread_status = Some(ThreadStatusDto::Completed);
+                }
+                TurnCompletionStatus::Interrupted => {
+                    progress.message_status = Some(MessageStatusDto::Interrupted);
+                    progress.thread_status = Some(ThreadStatusDto::Idle);
+                }
+                TurnCompletionStatus::Failed => {
+                    progress.message_status = Some(MessageStatusDto::Error);
+                    progress.thread_status = Some(ThreadStatusDto::Error);
+                }
+            }
             progress.token_usage = token_usage
                 .as_ref()
                 .map(|usage| (usage.input, usage.output));
@@ -488,9 +513,7 @@ fn apply_event_to_blocks(
             append_text_delta(blocks, content);
         }
         EngineEvent::ThinkingDelta { content } => {
-            blocks.push(ContentBlock::Thinking {
-                content: content.to_string(),
-            });
+            append_thinking_delta(blocks, content);
         }
         EngineEvent::ActionStarted {
             action_id,
@@ -577,12 +600,17 @@ fn apply_event_to_blocks(
             upsert_approval_block(blocks, approval_index, approval_id, block);
             progress.thread_status = Some(ThreadStatusDto::AwaitingApproval);
         }
-        EngineEvent::Error { message, .. } => {
+        EngineEvent::Error {
+            message,
+            recoverable,
+        } => {
             blocks.push(ContentBlock::Error {
                 message: message.to_string(),
             });
-            progress.message_status = Some(MessageStatusDto::Error);
-            progress.thread_status = Some(ThreadStatusDto::Error);
+            if !recoverable {
+                progress.message_status = Some(MessageStatusDto::Error);
+                progress.thread_status = Some(ThreadStatusDto::Error);
+            }
         }
     }
 
@@ -596,6 +624,17 @@ fn append_text_delta(blocks: &mut Vec<ContentBlock>, content: &str) {
     }
 
     blocks.push(ContentBlock::Text {
+        content: content.to_string(),
+    });
+}
+
+fn append_thinking_delta(blocks: &mut Vec<ContentBlock>, content: &str) {
+    if let Some(ContentBlock::Thinking { content: current }) = blocks.last_mut() {
+        current.push_str(content);
+        return;
+    }
+
+    blocks.push(ContentBlock::Thinking {
         content: content.to_string(),
     });
 }
@@ -674,7 +713,7 @@ fn aggregate_workspace_trust_level(repos: &[RepoDto]) -> TrustLevelDto {
 
 fn approval_policy_for_trust_level(trust_level: &TrustLevelDto) -> &'static str {
     match trust_level {
-        TrustLevelDto::Trusted => "on-failure",
+        TrustLevelDto::Trusted => "never",
         TrustLevelDto::Standard => "on-request",
         TrustLevelDto::Restricted => "untrusted",
     }

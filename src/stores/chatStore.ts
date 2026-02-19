@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { ipc, listenThreadEvents } from "../lib/ipc";
 import type {
+  ApprovalResponse,
   ActionBlock,
   ApprovalBlock,
   ContentBlock,
@@ -19,7 +20,7 @@ interface ChatState {
   setActiveThread: (threadId: string | null) => Promise<void>;
   send: (message: string, threadIdOverride?: string) => Promise<void>;
   cancel: () => Promise<void>;
-  respondApproval: (approvalId: string, response: Record<string, unknown>) => Promise<void>;
+  respondApproval: (approvalId: string, response: ApprovalResponse) => Promise<void>;
 }
 
 let activeThreadBindSeq = 0;
@@ -68,6 +69,41 @@ function upsertBlock(blocks: ContentBlock[], block: ContentBlock): ContentBlock[
   }
 
   return [...blocks, block];
+}
+
+function normalizeBlocks(blocks?: ContentBlock[]): ContentBlock[] | undefined {
+  if (!Array.isArray(blocks)) {
+    return blocks;
+  }
+
+  const normalized: ContentBlock[] = [];
+  for (const block of blocks) {
+    const last = normalized[normalized.length - 1];
+    if (block.type === "text" && last?.type === "text") {
+      normalized[normalized.length - 1] = {
+        ...last,
+        content: `${last.content}${block.content ?? ""}`
+      };
+      continue;
+    }
+    if (block.type === "thinking" && last?.type === "thinking") {
+      normalized[normalized.length - 1] = {
+        ...last,
+        content: `${last.content}${block.content ?? ""}`
+      };
+      continue;
+    }
+    normalized.push(block);
+  }
+
+  return normalized;
+}
+
+function normalizeMessages(messages: Message[]): Message[] {
+  return messages.map((message) => ({
+    ...message,
+    blocks: normalizeBlocks(message.blocks)
+  }));
 }
 
 function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: string): Message[] {
@@ -174,11 +210,20 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
 
   if (event.type === "Error") {
     assistant.blocks = [...blocks, { type: "error", message: String(event.message ?? "Unknown error") }];
-    assistant.status = "error";
+    if (!event.recoverable) {
+      assistant.status = "error";
+    }
   }
 
   if (event.type === "TurnCompleted") {
-    assistant.status = "completed";
+    const status = String(event.status ?? "completed");
+    if (status === "failed") {
+      assistant.status = "error";
+    } else if (status === "interrupted") {
+      assistant.status = "interrupted";
+    } else {
+      assistant.status = "completed";
+    }
   }
 
   next = [...next.slice(0, -1), { ...assistant }];
@@ -215,7 +260,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     try {
-      const messages = await ipc.getThreadMessages(threadId);
+      const messages = normalizeMessages(await ipc.getThreadMessages(threadId));
       if (bindSeq !== activeThreadBindSeq) {
         return;
       }
@@ -319,7 +364,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return {
             ...block,
             status: "answered",
-            decision: String(response.decision ?? "custom") as ApprovalBlock["decision"]
+            decision:
+              "decision" in response && typeof response.decision === "string"
+                ? (String(response.decision) as ApprovalBlock["decision"])
+                : "custom"
           };
         })
       }))

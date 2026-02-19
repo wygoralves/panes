@@ -13,19 +13,84 @@ import {
   XCircle,
   Brain,
 } from "lucide-react";
-import type { ContentBlock, MessageStatus } from "../../types";
+import type { ApprovalResponse, ContentBlock, MessageStatus } from "../../types";
 
 interface Props {
   blocks?: ContentBlock[];
   status?: MessageStatus;
-  onApproval: (
-    approvalId: string,
-    decision: "accept" | "accept_for_session" | "decline",
-  ) => void;
+  onApproval: (approvalId: string, response: ApprovalResponse) => void;
 }
 
 function isBlockLike(value: unknown): value is { type: string } {
   return typeof value === "object" && value !== null && "type" in value;
+}
+
+interface ToolInputOption {
+  label: string;
+}
+
+interface ToolInputQuestion {
+  id: string;
+  question: string;
+  options: ToolInputOption[];
+}
+
+function readToolInputQuestions(details: Record<string, unknown>): ToolInputQuestion[] {
+  const rawQuestions = details.questions;
+  if (!Array.isArray(rawQuestions)) {
+    return [];
+  }
+
+  const questions: ToolInputQuestion[] = [];
+  for (const raw of rawQuestions) {
+    if (typeof raw !== "object" || raw === null) {
+      continue;
+    }
+
+    const questionObj = raw as Record<string, unknown>;
+    const id = typeof questionObj.id === "string" ? questionObj.id : "";
+    const question = typeof questionObj.question === "string" ? questionObj.question : "";
+    if (!id || !question) {
+      continue;
+    }
+
+    const options = Array.isArray(questionObj.options)
+      ? questionObj.options
+          .filter((option): option is ToolInputOption => {
+            if (typeof option !== "object" || option === null) {
+              return false;
+            }
+            const optionObj = option as Record<string, unknown>;
+            return typeof optionObj.label === "string";
+          })
+          .map((option) => ({ label: option.label }))
+      : [];
+    if (!options.length) {
+      continue;
+    }
+
+    questions.push({ id, question, options });
+  }
+
+  return questions;
+}
+
+function buildToolInputResponse(
+  questions: ToolInputQuestion[],
+  selectedQuestionId: string,
+  selectedLabel: string
+): ApprovalResponse {
+  const answers: Record<string, { answers: string[] }> = {};
+
+  for (const question of questions) {
+    const chosen =
+      question.id === selectedQuestionId
+        ? selectedLabel
+        : question.options[0]?.label ?? "";
+    answers[question.id] = { answers: [chosen] };
+  }
+
+  return { answers };
 }
 
 const actionIcons: Record<string, typeof Terminal> = {
@@ -262,6 +327,26 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
                   {outputChunks.map((c) => String(c.content ?? "")).join("")}
                 </pre>
               )}
+
+              {block.result?.error && (
+                <pre
+                  style={{
+                    margin: 0,
+                    padding: "8px 12px",
+                    borderTop: "1px solid rgba(248, 113, 113, 0.2)",
+                    background: "rgba(248, 113, 113, 0.06)",
+                    fontSize: 11.5,
+                    lineHeight: 1.5,
+                    fontFamily: '"JetBrains Mono", monospace',
+                    whiteSpace: "pre-wrap",
+                    overflow: "auto",
+                    maxHeight: 120,
+                    color: "var(--danger)",
+                  }}
+                >
+                  {String(block.result.error)}
+                </pre>
+              )}
             </div>
           );
         }
@@ -269,6 +354,38 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
         /* ── Approval ── */
         if (block.type === "approval") {
           const isPending = block.status === "pending";
+          const details = block.details ?? {};
+          const serverMethod =
+            typeof details._serverMethod === "string" ? details._serverMethod : "";
+          const toolInputQuestions =
+            serverMethod === "item/tool/requestUserInput"
+              ? readToolInputQuestions(details)
+              : [];
+          const proposedExecpolicyAmendment = Array.isArray(details.proposedExecpolicyAmendment)
+            ? details.proposedExecpolicyAmendment.filter(
+                (entry): entry is string => typeof entry === "string"
+              )
+            : [];
+
+          let decisionLabel = "Answered";
+          if (block.decision === "decline") {
+            decisionLabel = "Denied";
+          } else if (block.decision === "cancel") {
+            decisionLabel = "Canceled";
+          } else if (block.decision === "accept" || block.decision === "accept_for_session") {
+            decisionLabel = "Approved";
+          }
+
+          let decisionBackground = "rgba(148,163,184,0.12)";
+          let decisionColor = "var(--text-2)";
+          if (block.decision === "decline" || block.decision === "cancel") {
+            decisionBackground = "rgba(248,113,113,0.12)";
+            decisionColor = "var(--danger)";
+          } else if (block.decision === "accept" || block.decision === "accept_for_session") {
+            decisionBackground = "rgba(52,211,153,0.12)";
+            decisionColor = "var(--success)";
+          }
+
           return (
             <div
               key={index}
@@ -295,39 +412,95 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
                   <p style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>
                     {block.summary}
                   </p>
-                  {block.details && Object.keys(block.details).length > 0 && (
+                  {details && Object.keys(details).length > 0 && (
                     <p style={{ margin: "3px 0 0", fontSize: 12, color: "var(--text-2)" }}>
-                      {JSON.stringify(block.details)}
+                      {JSON.stringify(details)}
                     </p>
                   )}
                 </div>
 
                 {isPending && (
                   <div style={{ display: "flex", gap: 6 }}>
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      onClick={() => onApproval(block.approvalId, "accept")}
-                      style={{ padding: "5px 12px", fontSize: 12, cursor: "pointer" }}
-                    >
-                      Apply
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      onClick={() => onApproval(block.approvalId, "accept_for_session")}
-                      style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
-                    >
-                      Always
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      onClick={() => onApproval(block.approvalId, "decline")}
-                      style={{ padding: "5px 10px", fontSize: 12, color: "var(--danger)", cursor: "pointer" }}
-                    >
-                      Deny
-                    </button>
+                    {toolInputQuestions.length > 0
+                      ? toolInputQuestions[0].options.map((option) => (
+                          <button
+                            key={option.label}
+                            type="button"
+                            className="btn-ghost"
+                            onClick={() =>
+                              onApproval(
+                                block.approvalId,
+                                buildToolInputResponse(
+                                  toolInputQuestions,
+                                  toolInputQuestions[0].id,
+                                  option.label
+                                )
+                              )
+                            }
+                            style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
+                          >
+                            {option.label}
+                          </button>
+                        ))
+                      : (
+                        <>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            onClick={() => onApproval(block.approvalId, { decision: "accept" })}
+                            style={{ padding: "5px 12px", fontSize: 12, cursor: "pointer" }}
+                          >
+                            Apply
+                          </button>
+                          {proposedExecpolicyAmendment.length > 0 && (
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              onClick={() =>
+                                onApproval(block.approvalId, {
+                                  acceptWithExecpolicyAmendment: {
+                                    execpolicy_amendment: proposedExecpolicyAmendment,
+                                  },
+                                })
+                              }
+                              style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
+                            >
+                              Allow + policy
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            onClick={() =>
+                              onApproval(block.approvalId, { decision: "accept_for_session" })
+                            }
+                            style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
+                          >
+                            Always
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            onClick={() => onApproval(block.approvalId, { decision: "decline" })}
+                            style={{
+                              padding: "5px 10px",
+                              fontSize: 12,
+                              color: "var(--danger)",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Deny
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            onClick={() => onApproval(block.approvalId, { decision: "cancel" })}
+                            style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      )}
                   </div>
                 )}
 
@@ -337,18 +510,12 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
                       fontSize: 11,
                       padding: "3px 8px",
                       borderRadius: 99,
-                      background:
-                        block.decision === "decline"
-                          ? "rgba(248,113,113,0.12)"
-                          : "rgba(52,211,153,0.12)",
-                      color:
-                        block.decision === "decline"
-                          ? "var(--danger)"
-                          : "var(--success)",
+                      background: decisionBackground,
+                      color: decisionColor,
                       fontWeight: 500,
                     }}
                   >
-                    {block.decision === "decline" ? "Denied" : "Approved"}
+                    {decisionLabel}
                   </span>
                 )}
               </div>

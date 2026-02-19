@@ -3,7 +3,10 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::{ActionResult, ActionType, DiffScope, EngineEvent, OutputStream, TokenUsage};
+use super::{
+    ActionResult, ActionType, DiffScope, EngineEvent, OutputStream, TokenUsage,
+    TurnCompletionStatus,
+};
 
 #[derive(Default)]
 pub struct TurnEventMapper {
@@ -15,7 +18,6 @@ pub struct TurnEventMapper {
 
 pub struct ApprovalRequest {
     pub approval_id: String,
-    pub server_request_id: String,
     pub server_method: String,
     pub event: EngineEvent,
 }
@@ -30,14 +32,9 @@ impl TurnEventMapper {
                 let mut events = Vec::new();
                 let token_usage =
                     extract_token_usage(params).or_else(|| self.latest_token_usage.clone());
+                let status = extract_turn_completion_status(params);
 
-                let turn_status = params
-                    .get("turn")
-                    .and_then(|turn| turn.get("status"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("completed");
-
-                if turn_status.eq_ignore_ascii_case("failed") {
+                if status == TurnCompletionStatus::Failed {
                     let message = extract_nested_string(params, &["turn", "error", "message"])
                         .or_else(|| extract_nested_string(params, &["error", "message"]))
                         .unwrap_or_else(|| "Codex turn failed".to_string());
@@ -48,7 +45,10 @@ impl TurnEventMapper {
                     });
                 }
 
-                events.push(EngineEvent::TurnCompleted { token_usage });
+                events.push(EngineEvent::TurnCompleted {
+                    token_usage,
+                    status,
+                });
                 self.latest_token_usage = None;
                 events
             }
@@ -58,6 +58,14 @@ impl TurnEventMapper {
                     diff,
                     scope: DiffScope::Turn,
                 }]
+            }
+            "turn/plan/updated" => {
+                let content = render_plan_update(params);
+                if content.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![EngineEvent::ThinkingDelta { content }]
+                }
             }
             "item/agentmessage/delta" => {
                 if let Some(item_id) = extract_any_string(params, &["itemId", "item_id", "id"]) {
@@ -102,9 +110,13 @@ impl TurnEventMapper {
                 let message = extract_nested_string(params, &["error", "message"])
                     .or_else(|| extract_any_string(params, &["message"]))
                     .unwrap_or_else(|| "Codex reported an error".to_string());
+                let recoverable = params
+                    .get("willRetry")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 vec![EngineEvent::Error {
                     message,
-                    recoverable: false,
+                    recoverable,
                 }]
             }
             _ => Vec::new(),
@@ -130,7 +142,8 @@ impl TurnEventMapper {
                     if normalized_status == "inprogress" {
                         out.push(EngineEvent::TurnStarted);
                     } else {
-                        if normalized_status == "failed" {
+                        let completion_status = parse_turn_completion_status(status);
+                        if completion_status == TurnCompletionStatus::Failed {
                             let message = extract_nested_string(turn, &["error", "message"])
                                 .or_else(|| extract_nested_string(result, &["error", "message"]))
                                 .unwrap_or_else(|| "Codex turn failed".to_string());
@@ -141,7 +154,10 @@ impl TurnEventMapper {
                         }
                         let token_usage =
                             extract_token_usage(result).or_else(|| self.latest_token_usage.clone());
-                        out.push(EngineEvent::TurnCompleted { token_usage });
+                        out.push(EngineEvent::TurnCompleted {
+                            token_usage,
+                            status: completion_status,
+                        });
                         self.latest_token_usage = None;
                     }
                 }
@@ -180,6 +196,11 @@ impl TurnEventMapper {
                 extract_any_string(params, &["reason"])
                     .unwrap_or_else(|| "Approval required to apply patch".to_string()),
             ),
+            "item/tool/requestuserinput" => (
+                ActionType::Other,
+                extract_first_question_text(params)
+                    .unwrap_or_else(|| "Codex requested user input".to_string()),
+            ),
             _ => return None,
         };
 
@@ -196,7 +217,6 @@ impl TurnEventMapper {
 
         Some(ApprovalRequest {
             approval_id: approval_id.clone(),
-            server_request_id: request_id.to_string(),
             server_method: normalized,
             event: EngineEvent::ApprovalRequested {
                 approval_id,
@@ -315,8 +335,26 @@ impl TurnEventMapper {
                 let success = normalized_status == "completed";
 
                 let output = extract_any_string(item, &["aggregatedOutput", "output", "text"]);
-                let error = extract_nested_string(item, &["error", "message"])
-                    .or_else(|| extract_any_string(item, &["error"]));
+                let mut error = extract_item_error(item);
+                if !success && error.is_none() {
+                    error = Some(match normalized_status.as_str() {
+                        "declined" => "Action was declined by user approval policy".to_string(),
+                        "interrupted" => "Action was interrupted".to_string(),
+                        other => format!("Action failed with status `{other}`"),
+                    });
+                }
+                if !success {
+                    if let Some(raw_error) = item.get("error") {
+                        log::warn!(
+                            "codex {item_type} completed with status={normalized_status}, raw_error={}",
+                            raw_error
+                        );
+                    } else {
+                        log::warn!(
+                            "codex {item_type} completed with status={normalized_status} and no error payload"
+                        );
+                    }
+                }
                 let duration_ms =
                     extract_any_u64(item, &["durationMs", "duration_ms"]).unwrap_or(0);
                 let diff = if item_type == "fileChange" {
@@ -420,6 +458,75 @@ impl TurnEventMapper {
     }
 }
 
+fn extract_item_error(item: &Value) -> Option<String> {
+    if let Some(message) = extract_nested_string(item, &["error", "message"])
+        .or_else(|| extract_nested_string(item, &["error", "reason"]))
+        .or_else(|| extract_nested_string(item, &["error", "details"]))
+        .or_else(|| extract_nested_string(item, &["error", "stderr"]))
+        .or_else(|| extract_nested_string(item, &["error", "stdout"]))
+    {
+        return Some(message);
+    }
+
+    if let Some(error_value) = item.get("error") {
+        if let Some(message) = error_value.as_str() {
+            return Some(message.to_string());
+        }
+
+        if !error_value.is_null() {
+            return Some(error_value.to_string());
+        }
+    }
+
+    None
+}
+
+fn extract_turn_completion_status(params: &Value) -> TurnCompletionStatus {
+    let status = params
+        .get("turn")
+        .and_then(|turn| turn.get("status"))
+        .and_then(Value::as_str)
+        .unwrap_or("completed");
+    parse_turn_completion_status(status)
+}
+
+fn render_plan_update(params: &Value) -> String {
+    let mut lines = Vec::new();
+    if let Some(explanation) = extract_any_string(params, &["explanation"]) {
+        if !explanation.is_empty() {
+            lines.push(explanation);
+        }
+    }
+
+    if let Some(plan) = params.get("plan").and_then(Value::as_array) {
+        for entry in plan {
+            let Some(step) = extract_any_string(entry, &["step"]) else {
+                continue;
+            };
+            let status =
+                extract_any_string(entry, &["status"]).unwrap_or_else(|| "pending".to_string());
+            lines.push(format!("- [{status}] {step}"));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn parse_turn_completion_status(status: &str) -> TurnCompletionStatus {
+    if status.eq_ignore_ascii_case("failed") {
+        TurnCompletionStatus::Failed
+    } else if status.eq_ignore_ascii_case("interrupted") {
+        TurnCompletionStatus::Interrupted
+    } else {
+        TurnCompletionStatus::Completed
+    }
+}
+
+fn extract_first_question_text(params: &Value) -> Option<String> {
+    let questions = params.get("questions")?.as_array()?;
+    let first = questions.first()?;
+    extract_any_string(first, &["question", "header"])
+}
 
 fn extract_token_usage(value: &Value) -> Option<TokenUsage> {
     let mut candidates: Vec<&Value> = vec![value];

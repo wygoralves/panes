@@ -1,5 +1,7 @@
 use anyhow::Context;
-use rusqlite::params;
+use std::collections::HashMap;
+
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -109,7 +111,47 @@ pub fn get_thread_messages(db: &Database, thread_id: &str) -> anyhow::Result<Vec
     for row in rows {
         out.push(row?);
     }
+
+    apply_answered_approvals_to_messages(&conn, thread_id, &mut out)?;
+
     Ok(out)
+}
+
+pub fn mark_approval_block_answered(
+    db: &Database,
+    message_id: &str,
+    approval_id: &str,
+    decision: &str,
+) -> anyhow::Result<bool> {
+    let conn = db.connect()?;
+    let Some(raw_blocks): Option<String> = conn
+        .query_row(
+            "SELECT blocks_json FROM messages WHERE id = ?1",
+            params![message_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("failed to load message blocks for approval update")?
+    else {
+        return Ok(false);
+    };
+
+    let mut blocks_value: Value =
+        serde_json::from_str(&raw_blocks).unwrap_or_else(|_| serde_json::json!([]));
+    let mut answered = HashMap::new();
+    answered.insert(approval_id.to_string(), decision.to_string());
+    let changed = apply_answered_approvals_to_blocks(&mut blocks_value, &answered);
+    if !changed {
+        return Ok(false);
+    }
+
+    conn.execute(
+        "UPDATE messages SET blocks_json = ?1 WHERE id = ?2",
+        params![blocks_value.to_string(), message_id],
+    )
+    .context("failed to persist answered approval in message blocks")?;
+
+    Ok(true)
 }
 
 pub fn search_messages(
@@ -193,4 +235,112 @@ fn insert_message(
         },
     )
     .context("failed to load inserted message")
+}
+
+fn apply_answered_approvals_to_messages(
+    conn: &Connection,
+    thread_id: &str,
+    messages: &mut [MessageDto],
+) -> anyhow::Result<()> {
+    let answered = load_answered_approvals(conn, thread_id)?;
+    if answered.is_empty() {
+        return Ok(());
+    }
+
+    for message in messages.iter_mut() {
+        let Some(blocks) = message.blocks.as_mut() else {
+            continue;
+        };
+
+        if !apply_answered_approvals_to_blocks(blocks, &answered) {
+            continue;
+        }
+
+        conn.execute(
+            "UPDATE messages SET blocks_json = ?1 WHERE id = ?2",
+            params![blocks.to_string(), message.id],
+        )
+        .context("failed to backfill answered approval status in message blocks")?;
+    }
+
+    Ok(())
+}
+
+fn load_answered_approvals(
+    conn: &Connection,
+    thread_id: &str,
+) -> anyhow::Result<HashMap<String, String>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, decision
+     FROM approvals
+     WHERE thread_id = ?1
+       AND status = 'answered'
+       AND decision IS NOT NULL",
+    )?;
+
+    let rows = stmt.query_map(params![thread_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+
+    let mut out = HashMap::new();
+    for row in rows {
+        let (approval_id, decision) = row?;
+        out.insert(approval_id, decision);
+    }
+
+    Ok(out)
+}
+
+fn apply_answered_approvals_to_blocks(
+    blocks: &mut Value,
+    answered: &HashMap<String, String>,
+) -> bool {
+    let Some(items) = blocks.as_array_mut() else {
+        return false;
+    };
+
+    let mut changed = false;
+    for block in items.iter_mut() {
+        let Some(object) = block.as_object_mut() else {
+            continue;
+        };
+
+        if object.get("type").and_then(Value::as_str) != Some("approval") {
+            continue;
+        }
+
+        let approval_id = object
+            .get("approvalId")
+            .and_then(Value::as_str)
+            .or_else(|| object.get("approval_id").and_then(Value::as_str));
+        let Some(approval_id) = approval_id else {
+            continue;
+        };
+
+        let Some(decision) = answered.get(approval_id) else {
+            continue;
+        };
+
+        let should_update_status = object
+            .get("status")
+            .and_then(Value::as_str)
+            .map(|value| value != "answered")
+            .unwrap_or(true);
+        let should_update_decision = object
+            .get("decision")
+            .and_then(Value::as_str)
+            .map(|value| value != decision)
+            .unwrap_or(true);
+
+        if should_update_status {
+            object.insert("status".to_string(), Value::String("answered".to_string()));
+            changed = true;
+        }
+        if should_update_decision {
+            object.insert("decision".to_string(), Value::String(decision.to_string()));
+            changed = true;
+        }
+    }
+
+    changed
 }

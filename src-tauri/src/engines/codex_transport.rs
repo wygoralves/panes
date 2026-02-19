@@ -181,7 +181,7 @@ impl CodexTransport {
 
     pub async fn respond_success(
         &self,
-        request_id: &str,
+        request_id: &serde_json::Value,
         result: serde_json::Value,
     ) -> anyhow::Result<()> {
         self.ensure_alive().await?;
@@ -191,7 +191,7 @@ impl CodexTransport {
 
     pub async fn respond_error(
         &self,
-        request_id: &str,
+        request_id: &serde_json::Value,
         code: i64,
         message: &str,
         data: Option<serde_json::Value>,

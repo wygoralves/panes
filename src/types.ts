@@ -109,8 +109,38 @@ export interface ApprovalBlock {
   summary: string;
   details: Record<string, unknown>;
   status: "pending" | "answered";
-  decision?: "accept" | "accept_for_session" | "decline" | "custom";
+  decision?:
+    | "accept"
+    | "accept_for_session"
+    | "decline"
+    | "cancel"
+    | "custom";
 }
+
+export type ApprovalDecision =
+  | "accept"
+  | "accept_for_session"
+  | "decline"
+  | "cancel";
+
+export interface AcceptWithExecpolicyAmendmentDecision {
+  acceptWithExecpolicyAmendment: {
+    execpolicy_amendment: string[];
+  };
+}
+
+export interface ToolInputAnswer {
+  answers: string[];
+}
+
+export type ApprovalResponse =
+  | {
+      decision: ApprovalDecision;
+    }
+  | AcceptWithExecpolicyAmendmentDecision
+  | {
+      answers: Record<string, ToolInputAnswer>;
+    };
 
 export interface ThinkingBlock {
   type: "thinking";
@@ -158,6 +188,7 @@ export interface EngineHealth {
   available: boolean;
   version?: string;
   details?: string;
+  warnings?: string[];
 }
 
 export interface SearchResult {
@@ -179,7 +210,89 @@ export interface GitStatus {
   behind: number;
 }
 
-export interface StreamEvent {
-  type: string;
-  [key: string]: unknown;
+export type TurnCompletionStatus = "completed" | "interrupted" | "failed";
+
+export interface StreamTokenUsage {
+  input: number;
+  output: number;
 }
+
+export interface TurnStartedEvent {
+  type: "TurnStarted";
+}
+
+export interface TurnCompletedEvent {
+  type: "TurnCompleted";
+  token_usage?: StreamTokenUsage | null;
+  status?: TurnCompletionStatus;
+}
+
+export interface TextDeltaEvent {
+  type: "TextDelta";
+  content: string;
+}
+
+export interface ThinkingDeltaEvent {
+  type: "ThinkingDelta";
+  content: string;
+}
+
+export interface ActionStartedEvent {
+  type: "ActionStarted";
+  action_id: string;
+  engine_action_id?: string | null;
+  action_type: ActionType;
+  summary: string;
+  details: Record<string, unknown>;
+}
+
+export interface ActionOutputDeltaEvent {
+  type: "ActionOutputDelta";
+  action_id: string;
+  stream: "stdout" | "stderr";
+  content: string;
+}
+
+export interface ActionCompletedEvent {
+  type: "ActionCompleted";
+  action_id: string;
+  result: {
+    success: boolean;
+    output?: string | null;
+    error?: string | null;
+    diff?: string | null;
+    durationMs: number;
+  };
+}
+
+export interface DiffUpdatedEvent {
+  type: "DiffUpdated";
+  diff: string;
+  scope: "turn" | "file" | "workspace";
+}
+
+export interface ApprovalRequestedEvent {
+  type: "ApprovalRequested";
+  approval_id: string;
+  action_type: ActionType;
+  summary: string;
+  details: Record<string, unknown>;
+}
+
+export interface ErrorEvent {
+  type: "Error";
+  message: string;
+  recoverable: boolean;
+}
+
+export type StreamEvent =
+  | TurnStartedEvent
+  | TurnCompletedEvent
+  | TextDeltaEvent
+  | ThinkingDeltaEvent
+  | ActionStartedEvent
+  | ActionOutputDeltaEvent
+  | ActionCompletedEvent
+  | DiffUpdatedEvent
+  | ApprovalRequestedEvent
+  | ErrorEvent;

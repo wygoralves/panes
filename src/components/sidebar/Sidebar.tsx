@@ -45,7 +45,7 @@ export function Sidebar() {
     removeWorkspace,
     error,
   } = useWorkspaceStore();
-  const { threads, activeThreadId, setActiveThread, removeThread } = useThreadStore();
+  const { threads, activeThreadId, setActiveThread, removeThread, createThread } = useThreadStore();
   const bindChatThread = useChatStore((s) => s.setActiveThread);
 
   const projects = useMemo<ProjectGroup[]>(() => {
@@ -80,6 +80,26 @@ export function Sidebar() {
     // Expand the folder and switch workspace
     setCollapsed((prev) => ({ ...prev, [wsId]: false }));
     await setActiveWorkspace(wsId);
+  }
+
+  async function onCreateProjectThread(project: Workspace) {
+    if (project.id !== activeWorkspaceId) {
+      await setActiveWorkspace(project.id);
+    }
+    setActiveRepo(null);
+
+    const createdThreadId = await createThread({
+      workspaceId: project.id,
+      repoId: null,
+      title: "New Thread",
+    });
+
+    if (!createdThreadId) {
+      return;
+    }
+
+    setCollapsed((prev) => ({ ...prev, [project.id]: false }));
+    await bindChatThread(createdThreadId);
   }
 
   async function onDeleteWorkspace(project: Workspace) {
@@ -160,8 +180,8 @@ export function Sidebar() {
               e.currentTarget.style.background = "var(--accent-dim)";
             }}
           >
-            <Plus size={15} strokeWidth={2.5} />
-            New thread
+            <FolderOpen size={15} strokeWidth={2.3} />
+            Open Project
           </button>
         </div>
       </div>
@@ -439,6 +459,36 @@ export function Sidebar() {
                         );
                       })
                     )}
+
+                    <button
+                      type="button"
+                      onClick={() => void onCreateProjectThread(project.workspace)}
+                      style={{
+                        width: "100%",
+                        padding: "5px 8px 5px 22px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 7,
+                        borderRadius: "var(--radius-sm)",
+                        fontSize: 12,
+                        color: "var(--accent)",
+                        background: "transparent",
+                        border: "1px dashed rgba(14, 240, 195, 0.35)",
+                        cursor: "pointer",
+                        transition: "all var(--duration-fast) var(--ease-out)",
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = "rgba(14, 240, 195, 0.08)";
+                        e.currentTarget.style.borderColor = "rgba(14, 240, 195, 0.55)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = "transparent";
+                        e.currentTarget.style.borderColor = "rgba(14, 240, 195, 0.35)";
+                      }}
+                    >
+                      <Plus size={12} style={{ flexShrink: 0 }} />
+                      <span>New Thread</span>
+                    </button>
 
                     {/* Repos under this workspace that have no thread yet */}
                     {repos

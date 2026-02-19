@@ -193,6 +193,8 @@ pub struct EngineHealthDto {
     pub available: bool,
     pub version: Option<String>,
     pub details: Option<String>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

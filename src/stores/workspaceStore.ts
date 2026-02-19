@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Repo, Workspace } from "../types";
+import type { Repo, TrustLevel, Workspace } from "../types";
 import { ipc } from "../lib/ipc";
 
 interface WorkspaceState {
@@ -15,6 +15,8 @@ interface WorkspaceState {
   loadRepos: (workspaceId: string) => Promise<void>;
   setActiveWorkspace: (workspaceId: string) => Promise<void>;
   setActiveRepo: (repoId: string | null) => void;
+  setRepoTrustLevel: (repoId: string, trustLevel: TrustLevel) => Promise<void>;
+  setAllReposTrustLevel: (trustLevel: TrustLevel) => Promise<void>;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
@@ -85,5 +87,42 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ activeWorkspaceId: workspaceId, activeRepoId: null, repos: [], error: undefined });
     await get().loadRepos(workspaceId);
   },
-  setActiveRepo: (repoId) => set({ activeRepoId: repoId })
+  setActiveRepo: (repoId) => set({ activeRepoId: repoId }),
+  setRepoTrustLevel: async (repoId, trustLevel) => {
+    try {
+      await ipc.setRepoTrustLevel(repoId, trustLevel);
+      set((state) => ({
+        repos: state.repos.map((repo) =>
+          repo.id === repoId
+            ? {
+                ...repo,
+                trustLevel
+              }
+            : repo
+        )
+      }));
+    } catch (error) {
+      set({ error: String(error) });
+    }
+  },
+  setAllReposTrustLevel: async (trustLevel) => {
+    const repos = get().repos;
+    if (!repos.length) {
+      return;
+    }
+
+    try {
+      await Promise.all(
+        repos.map((repo) => ipc.setRepoTrustLevel(repo.id, trustLevel))
+      );
+      set((state) => ({
+        repos: state.repos.map((repo) => ({
+          ...repo,
+          trustLevel
+        }))
+      }));
+    } catch (error) {
+      set({ error: String(error) });
+    }
+  }
 }));

@@ -13,7 +13,10 @@
       "Bash(export PNPM_HOME=\"/Users/wygorbarbosa/Library/pnpm\":*)",
       "Bash(export PATH=\"$PNPM_HOME:$PATH\")",
       "Bash(source:*)",
-      "Bash(. \"$HOME/.cargo/env\")"
+      "Bash(. \"$HOME/.cargo/env\")",
+      "WebSearch",
+      "WebFetch(domain:developers.openai.com)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

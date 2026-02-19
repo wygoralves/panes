@@ -10,12 +10,21 @@ interface EnsureThreadInput {
   title?: string;
 }
 
+interface CreateThreadInput {
+  workspaceId: string;
+  repoId: string | null;
+  engineId?: string;
+  modelId?: string;
+  title?: string;
+}
+
 interface ThreadState {
   threads: Thread[];
   threadsByWorkspace: Record<string, Thread[]>;
   activeThreadId: string | null;
   loading: boolean;
   error?: string;
+  createThread: (input: CreateThreadInput) => Promise<string | null>;
   ensureThreadForScope: (input: EnsureThreadInput) => Promise<string | null>;
   refreshThreads: (workspaceId: string) => Promise<void>;
   refreshAllThreads: (workspaceIds: string[]) => Promise<void>;
@@ -48,6 +57,39 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
   threadsByWorkspace: {},
   activeThreadId: null,
   loading: false,
+  createThread: async ({ workspaceId, repoId, engineId, modelId, title }) => {
+    const effectiveEngine = engineId ?? DEFAULT_ENGINE;
+    const effectiveModel = modelId ?? DEFAULT_MODEL;
+
+    set({ loading: true, error: undefined });
+
+    try {
+      const created = await ipc.createThread(
+        workspaceId,
+        repoId,
+        effectiveEngine,
+        effectiveModel,
+        title ?? (repoId ? "Repo Chat" : "Workspace Chat")
+      );
+
+      const existingWorkspaceThreads = get().threadsByWorkspace[workspaceId] ?? [];
+      const workspaceThreads = [created, ...existingWorkspaceThreads.filter((thread) => thread.id !== created.id)];
+      const threadsByWorkspace = mergeWorkspaceThreads(get().threadsByWorkspace, workspaceId, workspaceThreads);
+      const threads = flattenThreadsByWorkspace(threadsByWorkspace);
+
+      set({
+        threadsByWorkspace,
+        threads,
+        activeThreadId: created.id,
+        loading: false,
+      });
+
+      return created.id;
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      return null;
+    }
+  },
   ensureThreadForScope: async ({ workspaceId, repoId, engineId, modelId, title }) => {
     const effectiveEngine = engineId ?? DEFAULT_ENGINE;
     const effectiveModel = modelId ?? DEFAULT_MODEL;

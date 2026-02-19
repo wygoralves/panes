@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::{
     Engine, EngineEvent, EngineThread, ModelInfo, ReasoningEffortOption, SandboxPolicy,
-    ThreadScope, TokenUsage,
+    ThreadScope, TokenUsage, TurnCompletionStatus,
 };
 
 #[derive(Default)]
@@ -97,6 +97,7 @@ impl Engine for ClaudeSidecarEngine {
                     input: 0,
                     output: 0,
                 }),
+                status: TurnCompletionStatus::Completed,
             })
             .await
             .ok();

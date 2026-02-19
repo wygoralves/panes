@@ -6,6 +6,7 @@ pub enum EngineEvent {
     TurnStarted,
     TurnCompleted {
         token_usage: Option<TokenUsage>,
+        status: TurnCompletionStatus,
     },
     TextDelta {
         content: String,
@@ -43,6 +44,14 @@ pub enum EngineEvent {
         message: String,
         recoverable: bool,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnCompletionStatus {
+    Completed,
+    Interrupted,
+    Failed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

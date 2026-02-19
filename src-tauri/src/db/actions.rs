@@ -1,5 +1,5 @@
 use anyhow::Context;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
 
 use crate::engines::events::{ActionResult, ActionType};
@@ -94,6 +94,22 @@ pub fn answer_approval(db: &Database, approval_id: &str, decision: &str) -> anyh
     )
     .context("failed to answer approval")?;
     Ok(())
+}
+
+pub fn find_approval_message_id(
+    db: &Database,
+    approval_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let conn = db.connect()?;
+    let message_id = conn
+        .query_row(
+            "SELECT message_id FROM approvals WHERE id = ?1",
+            params![approval_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("failed to load approval message id")?;
+    Ok(message_id)
 }
 
 pub fn append_event_log(

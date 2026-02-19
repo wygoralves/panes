@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  ApprovalResponse,
   EngineHealth,
   EngineInfo,
   GitStatus,
@@ -9,6 +10,7 @@ import type {
   SearchResult,
   StreamEvent,
   Thread,
+  TrustLevel,
   Workspace
 } from "../types";
 
@@ -17,6 +19,8 @@ export const ipc = {
   openWorkspace: (path: string) => invoke<Workspace>("open_workspace", { path }),
   deleteWorkspace: (workspaceId: string) => invoke<void>("delete_workspace", { workspaceId }),
   getRepos: (workspaceId: string) => invoke<Repo[]>("get_repos", { workspaceId }),
+  setRepoTrustLevel: (repoId: string, trustLevel: TrustLevel) =>
+    invoke<void>("set_repo_trust_level", { repoId, trustLevel }),
   listThreads: (workspaceId: string) => invoke<Thread[]>("list_threads", { workspaceId }),
   createThread: (
     workspaceId: string,
@@ -42,7 +46,7 @@ export const ipc = {
   sendMessage: (threadId: string, message: string) =>
     invoke<string>("send_message", { threadId, message }),
   cancelTurn: (threadId: string) => invoke<void>("cancel_turn", { threadId }),
-  respondApproval: (threadId: string, approvalId: string, response: unknown) =>
+  respondApproval: (threadId: string, approvalId: string, response: ApprovalResponse) =>
     invoke<void>("respond_to_approval", { threadId, approvalId, response }),
   getThreadMessages: (threadId: string) =>
     invoke<Message[]>("get_thread_messages", { threadId }),

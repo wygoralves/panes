@@ -6,6 +6,7 @@ pub enum IncomingMessage {
     Response(RpcResponse),
     Request {
         id: String,
+        raw_id: Value,
         method: String,
         params: Value,
     },
@@ -54,7 +55,8 @@ pub fn parse_incoming(line: &str) -> anyhow::Result<IncomingMessage> {
         .get("method")
         .and_then(Value::as_str)
         .map(str::to_string);
-    let id = object.get("id").and_then(normalize_id);
+    let raw_id_value = object.get("id").cloned();
+    let id = raw_id_value.as_ref().and_then(normalize_id);
 
     if let Some(method) = method {
         let params = object
@@ -63,7 +65,13 @@ pub fn parse_incoming(line: &str) -> anyhow::Result<IncomingMessage> {
             .unwrap_or_else(|| Value::Object(Map::new()));
 
         if let Some(id) = id {
-            return Ok(IncomingMessage::Request { id, method, params });
+            let raw_id = raw_id_value.unwrap_or_else(|| Value::String(id.clone()));
+            return Ok(IncomingMessage::Request {
+                id,
+                raw_id,
+                method,
+                params,
+            });
         }
 
         return Ok(IncomingMessage::Notification { method, params });
@@ -98,14 +106,14 @@ pub fn notification_payload(method: &str, params: Value) -> Value {
     })
 }
 
-pub fn response_success_payload(id: &str, result: Value) -> Value {
+pub fn response_success_payload(id: &Value, result: Value) -> Value {
     serde_json::json!({
       "id": id,
       "result": result,
     })
 }
 
-pub fn response_error_payload(id: &str, code: i64, message: &str, data: Option<Value>) -> Value {
+pub fn response_error_payload(id: &Value, code: i64, message: &str, data: Option<Value>) -> Value {
     serde_json::json!({
       "id": id,
       "error": {
@@ -118,7 +126,7 @@ pub fn response_error_payload(id: &str, code: i64, message: &str, data: Option<V
 
 fn normalize_id(raw: &Value) -> Option<String> {
     match raw {
-        Value::String(value) => Some(value.to_string()),
+        Value::String(value) => Some(value.clone()),
         Value::Number(value) => Some(value.to_string()),
         Value::Bool(value) => Some(value.to_string()),
         _ => None,

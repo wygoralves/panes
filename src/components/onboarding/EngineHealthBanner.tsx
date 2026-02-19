@@ -5,10 +5,24 @@ import { useEngineStore } from "../../stores/engineStore";
 export function EngineHealthBanner() {
   const { health } = useEngineStore();
   const codexState = useMemo(() => health.codex, [health]);
+  const codexWarning = codexState?.warnings?.[0];
 
-  if (!codexState || codexState.available) {
+  if (!codexState) {
     return null;
   }
+
+  if (codexState.available && !codexWarning) {
+    return null;
+  }
+
+  const title = codexState.available
+    ? "Codex sandbox check failed"
+    : "Codex engine not detected";
+  const description = codexState.available
+    ? codexWarning ??
+      "Codex is installed, but the local OS sandbox check failed."
+    : codexState.details ??
+      "Install Codex CLI and authenticate before starting chat turns.";
 
   return (
     <div
@@ -26,11 +40,24 @@ export function EngineHealthBanner() {
       <AlertTriangle size={16} style={{ color: "var(--warning)", flexShrink: 0 }} />
       <div>
         <p style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>
-          Codex engine not detected
+          {title}
         </p>
         <p style={{ margin: "3px 0 0", color: "var(--text-2)", fontSize: 12 }}>
-          Install Codex CLI and authenticate before starting chat turns.
+          {description}
         </p>
+        {codexState.available && (
+          <p
+            style={{
+              margin: "6px 0 0",
+              color: "var(--text-3)",
+              fontSize: 11,
+              fontFamily: '"JetBrains Mono", monospace',
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            Run in Terminal: `sandbox-exec -p '(version 1) (allow default)' /usr/bin/true`
+          </p>
+        )}
       </div>
     </div>
   );

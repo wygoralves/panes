@@ -15,7 +15,75 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore } from "../../stores/gitStore";
 import { ipc } from "../../lib/ipc";
 import { MessageBlocks } from "./MessageBlocks";
-import type { ApprovalBlock } from "../../types";
+import type { ApprovalBlock, ApprovalResponse, TrustLevel } from "../../types";
+
+interface ToolInputOption {
+  label: string;
+}
+
+interface ToolInputQuestion {
+  id: string;
+  question: string;
+  options: ToolInputOption[];
+}
+
+function readToolInputQuestions(details: Record<string, unknown>): ToolInputQuestion[] {
+  const rawQuestions = details.questions;
+  if (!Array.isArray(rawQuestions)) {
+    return [];
+  }
+
+  const questions: ToolInputQuestion[] = [];
+  for (const raw of rawQuestions) {
+    if (typeof raw !== "object" || raw === null) {
+      continue;
+    }
+
+    const questionObj = raw as Record<string, unknown>;
+    const id = typeof questionObj.id === "string" ? questionObj.id : "";
+    const question = typeof questionObj.question === "string" ? questionObj.question : "";
+    if (!id || !question) {
+      continue;
+    }
+
+    const options = Array.isArray(questionObj.options)
+      ? questionObj.options
+          .filter((option): option is ToolInputOption => {
+            if (typeof option !== "object" || option === null) {
+              return false;
+            }
+            const optionObj = option as Record<string, unknown>;
+            return typeof optionObj.label === "string";
+          })
+          .map((option) => ({ label: option.label }))
+      : [];
+    if (!options.length) {
+      continue;
+    }
+
+    questions.push({ id, question, options });
+  }
+
+  return questions;
+}
+
+function buildToolInputResponse(
+  questions: ToolInputQuestion[],
+  selectedQuestionId: string,
+  selectedLabel: string
+): ApprovalResponse {
+  const answers: Record<string, { answers: string[] }> = {};
+
+  for (const question of questions) {
+    const chosen =
+      question.id === selectedQuestionId
+        ? selectedLabel
+        : question.options[0]?.label ?? "";
+    answers[question.id] = { answers: [chosen] };
+  }
+
+  return { answers };
+}
 
 export function ChatPanel() {
   const [input, setInput] = useState("");
@@ -33,7 +101,13 @@ export function ChatPanel() {
     threadId,
   } = useChatStore();
   const engines = useEngineStore((s) => s.engines);
-  const { repos, activeRepoId, activeWorkspaceId } = useWorkspaceStore();
+  const {
+    repos,
+    activeRepoId,
+    activeWorkspaceId,
+    setRepoTrustLevel,
+    setAllReposTrustLevel
+  } = useWorkspaceStore();
   const {
     ensureThreadForScope,
     refreshThreads,
@@ -76,6 +150,18 @@ export function ChatPanel() {
     typeof activeThread?.engineMetadata?.reasoningEffort === "string"
       ? activeThread.engineMetadata.reasoningEffort
       : undefined;
+  const workspaceTrustLevel: TrustLevel = useMemo(() => {
+    if (!repos.length) {
+      return "standard";
+    }
+    if (repos.some((repo) => repo.trustLevel === "restricted")) {
+      return "restricted";
+    }
+    if (repos.every((repo) => repo.trustLevel === "trusted")) {
+      return "trusted";
+    }
+    return "standard";
+  }, [repos]);
 
   const pendingApprovals = useMemo<ApprovalBlock[]>(() => {
     const approvals: ApprovalBlock[] = [];
@@ -299,6 +385,18 @@ export function ChatPanel() {
     }
   }
 
+  async function onRepoTrustLevelChange(nextTrustLevel: TrustLevel) {
+    if (!activeRepo) {
+      return;
+    }
+
+    await setRepoTrustLevel(activeRepo.id, nextTrustLevel);
+  }
+
+  async function onWorkspaceTrustLevelChange(nextTrustLevel: TrustLevel) {
+    await setAllReposTrustLevel(nextTrustLevel);
+  }
+
   return (
     <div
       style={{
@@ -413,6 +511,81 @@ export function ChatPanel() {
             </select>
           )}
 
+          {activeRepo && (
+            <select
+              value={activeRepo.trustLevel}
+              onChange={(event) =>
+                void onRepoTrustLevelChange(event.target.value as TrustLevel)
+              }
+              style={{
+                padding: "4px 8px",
+                borderRadius: 99,
+                fontSize: 11,
+                background:
+                  activeRepo.trustLevel === "trusted"
+                    ? "rgba(52, 211, 153, 0.16)"
+                    : "rgba(255,255,255,0.04)",
+                color:
+                  activeRepo.trustLevel === "trusted"
+                    ? "var(--success)"
+                    : "var(--text-2)",
+                border:
+                  activeRepo.trustLevel === "trusted"
+                    ? "1px solid rgba(52, 211, 153, 0.35)"
+                    : "1px solid var(--border)",
+                cursor: "pointer",
+              }}
+              title="Execution policy for this repository"
+            >
+              <option value="trusted" style={{ color: "black" }}>
+                exec: trusted
+              </option>
+              <option value="standard" style={{ color: "black" }}>
+                exec: ask-on-request
+              </option>
+              <option value="restricted" style={{ color: "black" }}>
+                exec: restricted
+              </option>
+            </select>
+          )}
+          {!activeRepo && repos.length > 0 && (
+            <select
+              value={workspaceTrustLevel}
+              onChange={(event) =>
+                void onWorkspaceTrustLevelChange(event.target.value as TrustLevel)
+              }
+              style={{
+                padding: "4px 8px",
+                borderRadius: 99,
+                fontSize: 11,
+                background:
+                  workspaceTrustLevel === "trusted"
+                    ? "rgba(52, 211, 153, 0.16)"
+                    : "rgba(255,255,255,0.04)",
+                color:
+                  workspaceTrustLevel === "trusted"
+                    ? "var(--success)"
+                    : "var(--text-2)",
+                border:
+                  workspaceTrustLevel === "trusted"
+                    ? "1px solid rgba(52, 211, 153, 0.35)"
+                    : "1px solid var(--border)",
+                cursor: "pointer",
+              }}
+              title="Execution policy for workspace chat (applies to all repositories in this workspace)."
+            >
+              <option value="trusted" style={{ color: "black" }}>
+                exec(workspace): trusted
+              </option>
+              <option value="standard" style={{ color: "black" }}>
+                exec(workspace): ask-on-request
+              </option>
+              <option value="restricted" style={{ color: "black" }}>
+                exec(workspace): restricted
+              </option>
+            </select>
+          )}
+
         </div>
       </div>
 
@@ -501,12 +674,8 @@ export function ChatPanel() {
                       <MessageBlocks
                         blocks={message.blocks}
                         status={message.status}
-                        onApproval={(approvalId, decision) =>
-                          void respondApproval(approvalId, {
-                            decision,
-                            engine: activeThread?.engineId ?? "codex",
-                            model: activeThread?.modelId ?? "gpt-5.3-codex",
-                          })
+                        onApproval={(approvalId, response) =>
+                          void respondApproval(approvalId, response)
                         }
                       />
                     </div>
@@ -576,17 +745,71 @@ export function ChatPanel() {
                 <div style={{ fontSize: 11, color: "var(--text-3)" }}>
                   The engine is waiting for your decision.
                 </div>
+                {activeRepo && activeRepo.trustLevel !== "trusted" && (
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => void onRepoTrustLevelChange("trusted")}
+                    style={{
+                      marginLeft: 8,
+                      padding: "4px 8px",
+                      fontSize: 11,
+                      borderRadius: "var(--radius-sm)",
+                      border: "1px solid rgba(52, 211, 153, 0.25)",
+                      color: "var(--success)",
+                      cursor: "pointer",
+                    }}
+                    title="Persist trust for this repo to reduce approval errors"
+                  >
+                    Trust repo
+                  </button>
+                )}
+                {!activeRepo && repos.length > 0 && workspaceTrustLevel !== "trusted" && (
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => void onWorkspaceTrustLevelChange("trusted")}
+                    style={{
+                      marginLeft: 8,
+                      padding: "4px 8px",
+                      fontSize: 11,
+                      borderRadius: "var(--radius-sm)",
+                      border: "1px solid rgba(52, 211, 153, 0.25)",
+                      color: "var(--success)",
+                      cursor: "pointer",
+                    }}
+                    title="Persist trust for all repositories in this workspace"
+                  >
+                    Trust workspace
+                  </button>
+                )}
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {pendingApprovals.slice(-3).map((approval) => {
+                  const details = approval.details ?? {};
+                  const serverMethod =
+                    typeof details._serverMethod === "string"
+                      ? details._serverMethod
+                      : "";
+                  const toolInputQuestions =
+                    serverMethod === "item/tool/requestUserInput"
+                      ? readToolInputQuestions(details)
+                      : [];
+                  const proposedExecpolicyAmendment = Array.isArray(
+                    details.proposedExecpolicyAmendment
+                  )
+                    ? details.proposedExecpolicyAmendment.filter(
+                        (entry): entry is string => typeof entry === "string"
+                      )
+                    : [];
                   const command =
-                    typeof approval.details?.command === "string"
-                      ? approval.details.command
+                    typeof details.command === "string"
+                      ? details.command
                       : undefined;
                   const reason =
-                    typeof approval.details?.reason === "string"
-                      ? approval.details.reason
+                    typeof details.reason === "string"
+                      ? details.reason
                       : undefined;
 
                   return (
@@ -635,51 +858,128 @@ export function ChatPanel() {
                       </div>
 
                       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                        <button
-                          type="button"
-                          className="btn-primary"
-                          onClick={() => void respondApproval(approval.approvalId, { decision: "accept" })}
-                          style={{
-                            padding: "5px 10px",
-                            fontSize: 12,
-                            cursor: "pointer",
-                          }}
-                        >
-                          Allow
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-ghost"
-                          onClick={() =>
-                            void respondApproval(approval.approvalId, { decision: "accept_for_session" })
-                          }
-                          style={{
-                            padding: "5px 10px",
-                            fontSize: 12,
-                            cursor: "pointer",
-                            borderRadius: "var(--radius-sm)",
-                            border: "1px solid rgba(255,255,255,0.08)",
-                            background: "rgba(0,0,0,0.1)",
-                          }}
-                        >
-                          Allow session
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-ghost"
-                          onClick={() => void respondApproval(approval.approvalId, { decision: "decline" })}
-                          style={{
-                            padding: "5px 10px",
-                            fontSize: 12,
-                            cursor: "pointer",
-                            color: "var(--danger)",
-                            borderRadius: "var(--radius-sm)",
-                            border: "1px solid rgba(248, 113, 113, 0.22)",
-                            background: "rgba(248, 113, 113, 0.06)",
-                          }}
-                        >
-                          Deny
-                        </button>
+                        {toolInputQuestions.length > 0 ? (
+                          toolInputQuestions[0].options.map((option) => (
+                            <button
+                              key={option.label}
+                              type="button"
+                              className="btn-ghost"
+                              onClick={() =>
+                                void respondApproval(
+                                  approval.approvalId,
+                                  buildToolInputResponse(
+                                    toolInputQuestions,
+                                    toolInputQuestions[0].id,
+                                    option.label
+                                  )
+                                )
+                              }
+                              style={{
+                                padding: "5px 10px",
+                                fontSize: 12,
+                                cursor: "pointer",
+                              }}
+                            >
+                              {option.label}
+                            </button>
+                          ))
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="btn-primary"
+                              onClick={() =>
+                                void respondApproval(approval.approvalId, { decision: "accept" })
+                              }
+                              style={{
+                                padding: "5px 10px",
+                                fontSize: 12,
+                                cursor: "pointer",
+                              }}
+                            >
+                              Allow
+                            </button>
+                            {proposedExecpolicyAmendment.length > 0 && (
+                              <button
+                                type="button"
+                                className="btn-ghost"
+                                onClick={() =>
+                                  void respondApproval(approval.approvalId, {
+                                    acceptWithExecpolicyAmendment: {
+                                      execpolicy_amendment: proposedExecpolicyAmendment,
+                                    },
+                                  })
+                                }
+                                style={{
+                                  padding: "5px 10px",
+                                  fontSize: 12,
+                                  cursor: "pointer",
+                                  borderRadius: "var(--radius-sm)",
+                                  border: "1px solid rgba(255,255,255,0.08)",
+                                  background: "rgba(0,0,0,0.1)",
+                                }}
+                              >
+                                Allow + policy
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              onClick={() =>
+                                void respondApproval(approval.approvalId, {
+                                  decision: "accept_for_session",
+                                })
+                              }
+                              style={{
+                                padding: "5px 10px",
+                                fontSize: 12,
+                                cursor: "pointer",
+                                borderRadius: "var(--radius-sm)",
+                                border: "1px solid rgba(255,255,255,0.08)",
+                                background: "rgba(0,0,0,0.1)",
+                              }}
+                            >
+                              Allow session
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              onClick={() =>
+                                void respondApproval(approval.approvalId, {
+                                  decision: "decline",
+                                })
+                              }
+                              style={{
+                                padding: "5px 10px",
+                                fontSize: 12,
+                                cursor: "pointer",
+                                color: "var(--danger)",
+                                borderRadius: "var(--radius-sm)",
+                                border: "1px solid rgba(248, 113, 113, 0.22)",
+                                background: "rgba(248, 113, 113, 0.06)",
+                              }}
+                            >
+                              Deny
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              onClick={() =>
+                                void respondApproval(approval.approvalId, { decision: "cancel" })
+                              }
+                              style={{
+                                padding: "5px 10px",
+                                fontSize: 12,
+                                cursor: "pointer",
+                                borderRadius: "var(--radius-sm)",
+                                border: "1px solid rgba(255,255,255,0.08)",
+                                background: "rgba(0,0,0,0.1)",
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   );

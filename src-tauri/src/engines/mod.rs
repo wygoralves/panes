@@ -135,6 +135,12 @@ impl EngineManager {
             "codex" => {
                 let available = self.codex.is_available().await;
                 let version = self.codex.version().await;
+                let mut warnings = Vec::new();
+                if available {
+                    if let Some(warning) = self.codex.sandbox_preflight_warning().await {
+                        warnings.push(warning);
+                    }
+                }
                 Ok(EngineHealthDto {
                     id: "codex".to_string(),
                     available,
@@ -144,6 +150,7 @@ impl EngineManager {
                     } else {
                         Some("`codex` executable not found in PATH".to_string())
                     },
+                    warnings,
                 })
             }
             "claude" => {
@@ -157,6 +164,7 @@ impl EngineManager {
                         "Claude sidecar scaffold is present; SDK runtime wiring pending"
                             .to_string(),
                     ),
+                    warnings: Vec::new(),
                 })
             }
             _ => anyhow::bail!("unknown engine: {engine_id}"),
