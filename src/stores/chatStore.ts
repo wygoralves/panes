@@ -10,22 +10,21 @@ import type {
 } from "../types";
 
 interface ChatState {
-  threadId: string;
+  threadId: string | null;
   messages: Message[];
   status: ThreadStatus;
   streaming: boolean;
   error?: string;
   unlisten?: () => void;
-  bootstrap: () => Promise<void>;
-  connectStream: () => Promise<void>;
+  setActiveThread: (threadId: string | null) => Promise<void>;
   send: (message: string) => Promise<void>;
   cancel: () => Promise<void>;
   respondApproval: (approvalId: string, response: Record<string, unknown>) => Promise<void>;
 }
 
-const DEFAULT_THREAD_ID = "demo-thread";
+let activeThreadBindSeq = 0;
 
-function ensureAssistantMessage(messages: Message[]): Message[] {
+function ensureAssistantMessage(messages: Message[], threadId: string): Message[] {
   const existing = messages[messages.length - 1];
   if (existing && existing.role === "assistant" && existing.status === "streaming") {
     return messages;
@@ -35,7 +34,7 @@ function ensureAssistantMessage(messages: Message[]): Message[] {
     ...messages,
     {
       id: crypto.randomUUID(),
-      threadId: DEFAULT_THREAD_ID,
+      threadId,
       role: "assistant",
       status: "streaming",
       schemaVersion: 1,
@@ -71,8 +70,8 @@ function upsertBlock(blocks: ContentBlock[], block: ContentBlock): ContentBlock[
   return [...blocks, block];
 }
 
-function applyStreamEvent(messages: Message[], event: StreamEvent): Message[] {
-  let next = ensureAssistantMessage(messages);
+function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: string): Message[] {
+  let next = ensureAssistantMessage(messages, threadId);
   const assistant = next[next.length - 1];
   const blocks = assistant.blocks ?? [];
 
@@ -138,7 +137,7 @@ function applyStreamEvent(messages: Message[], event: StreamEvent): Message[] {
           output: result.output as string | undefined,
           error: result.error as string | undefined,
           diff: result.diff as string | undefined,
-          durationMs: Number(result.durationMs ?? 0)
+          durationMs: Number(result.durationMs ?? result.duration_ms ?? 0)
         }
       };
     });
@@ -180,37 +179,71 @@ function applyStreamEvent(messages: Message[], event: StreamEvent): Message[] {
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
-  threadId: DEFAULT_THREAD_ID,
+  threadId: null,
   messages: [],
   status: "idle",
   streaming: false,
-  bootstrap: async () => {
-    try {
-      const messages = await ipc.getThreadMessages(DEFAULT_THREAD_ID);
-      set({ messages });
-    } catch {
-      set({ messages: [] });
-    }
-  },
-  connectStream: async () => {
+  setActiveThread: async (threadId) => {
+    activeThreadBindSeq += 1;
+    const bindSeq = activeThreadBindSeq;
+
     const current = get().unlisten;
     if (current) {
       current();
     }
 
-    const unlisten = await listenThreadEvents(get().threadId, (event) => {
-      set((state) => ({
-        messages: applyStreamEvent(state.messages, event),
-        streaming: event.type !== "TurnCompleted"
-      }));
-    });
+    if (!threadId) {
+      if (bindSeq !== activeThreadBindSeq) {
+        return;
+      }
 
-    set({ unlisten });
+      set({ threadId: null, messages: [], streaming: false, status: "idle", unlisten: undefined });
+      return;
+    }
+
+    try {
+      const messages = await ipc.getThreadMessages(threadId);
+      if (bindSeq !== activeThreadBindSeq) {
+        return;
+      }
+
+      const unlisten = await listenThreadEvents(threadId, (event) => {
+        if (bindSeq !== activeThreadBindSeq) {
+          return;
+        }
+
+        set((state) => ({
+          messages:
+            state.threadId === threadId
+              ? applyStreamEvent(state.messages, event, state.threadId)
+              : state.messages,
+          streaming: event.type !== "TurnCompleted"
+        }));
+      });
+
+      if (bindSeq !== activeThreadBindSeq) {
+        unlisten();
+        return;
+      }
+
+      set({ threadId, messages, unlisten, error: undefined, streaming: false, status: "idle" });
+    } catch (error) {
+      if (bindSeq !== activeThreadBindSeq) {
+        return;
+      }
+      set({ threadId, messages: [], error: String(error) });
+    }
   },
   send: async (message) => {
+    const threadId = get().threadId;
+    if (!threadId) {
+      set({ error: "No active thread selected" });
+      return;
+    }
+
     const userMessage: Message = {
       id: crypto.randomUUID(),
-      threadId: get().threadId,
+      threadId,
       role: "user",
       content: message,
       blocks: [{ type: "text", content: message }],
@@ -227,21 +260,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     try {
-      await ipc.sendMessage(get().threadId, message);
+      await ipc.sendMessage(threadId, message);
     } catch (error) {
       set({ status: "error", streaming: false, error: String(error) });
     }
   },
   cancel: async () => {
+    const threadId = get().threadId;
+    if (!threadId) {
+      return;
+    }
+
     try {
-      await ipc.cancelTurn(get().threadId);
+      await ipc.cancelTurn(threadId);
       set({ status: "idle", streaming: false });
     } catch (error) {
       set({ error: String(error) });
     }
   },
   respondApproval: async (approvalId, response) => {
-    await ipc.respondApproval(get().threadId, approvalId, response);
+    const threadId = get().threadId;
+    if (!threadId) {
+      set({ error: "No active thread selected" });
+      return;
+    }
+
+    await ipc.respondApproval(threadId, approvalId, response);
     set((state) => ({
       messages: state.messages.map((message) => ({
         ...message,

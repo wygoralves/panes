@@ -1,25 +1,53 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useChatStore } from "../../stores/chatStore";
+import { useThreadStore } from "../../stores/threadStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { MessageBlocks } from "./MessageBlocks";
 
 export function ChatPanel() {
   const [input, setInput] = useState("");
-  const [engineId, setEngineId] = useState("codex");
-  const [modelId, setModelId] = useState("gpt-5-codex");
-  const { messages, send, cancel, bootstrap, connectStream, respondApproval, streaming, error } = useChatStore();
-  const { repos, activeRepoId } = useWorkspaceStore();
+  const {
+    messages,
+    send,
+    cancel,
+    respondApproval,
+    streaming,
+    error,
+    setActiveThread: bindChatThread,
+    threadId
+  } = useChatStore();
+  const { repos, activeRepoId, activeWorkspaceId } = useWorkspaceStore();
+  const { ensureThreadForScope, threads, activeThreadId } = useThreadStore();
   const viewportRef = useRef<HTMLDivElement>(null);
 
   const activeRepo = useMemo(
-    () => repos.find((repo) => repo.id === activeRepoId) ?? repos[0],
+    () => repos.find((repo) => repo.id === activeRepoId) ?? null,
     [repos, activeRepoId]
   );
 
+  const activeThread = useMemo(
+    () => threads.find((item) => item.id === activeThreadId) ?? null,
+    [threads, activeThreadId]
+  );
+
   useEffect(() => {
-    void bootstrap();
-    void connectStream();
-  }, [bootstrap, connectStream]);
+    if (!activeWorkspaceId) {
+      void bindChatThread(null);
+      return;
+    }
+
+    void (async () => {
+      const thread = await ensureThreadForScope({
+        workspaceId: activeWorkspaceId,
+        repoId: activeRepo?.id ?? null,
+        engineId: "codex",
+        modelId: "gpt-5-codex",
+        title: activeRepo ? `${activeRepo.name} Chat` : "General"
+      });
+
+      await bindChatThread(thread);
+    })();
+  }, [activeWorkspaceId, activeRepo?.id, activeRepo?.name, ensureThreadForScope, bindChatThread]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -32,9 +60,21 @@ export function ChatPanel() {
     }
   }, [messages]);
 
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key === ".") {
+        event.preventDefault();
+        void cancel();
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [cancel]);
+
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!input.trim()) {
+    if (!input.trim() || !threadId) {
       return;
     }
 
@@ -46,18 +86,12 @@ export function ChatPanel() {
   return (
     <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr auto", gap: 12, padding: 16 }}>
       <div className="surface" style={{ padding: 10, display: "flex", gap: 8, alignItems: "center" }}>
-        <select value={engineId} onChange={(e) => setEngineId(e.target.value)}>
-          <option value="codex">Codex</option>
-          <option value="claude">Claude</option>
-        </select>
-        <input
-          value={modelId}
-          onChange={(e) => setModelId(e.target.value)}
-          style={{ minWidth: 220 }}
-          placeholder="model id"
-        />
+        <span style={{ fontSize: 13, fontWeight: 600 }}>Engine: {activeThread?.engineId ?? "codex"}</span>
+        <span style={{ fontSize: 12, color: "var(--text-soft)" }}>
+          Model: {activeThread?.modelId ?? "gpt-5-codex"}
+        </span>
         <span style={{ marginLeft: "auto", color: "var(--text-soft)", fontSize: 12 }}>
-          Repo: {activeRepo?.name ?? "none"}
+          Repo: {activeRepo?.name ?? "workspace"}
         </span>
       </div>
 
@@ -71,8 +105,8 @@ export function ChatPanel() {
                 onApproval={(approvalId, decision) =>
                   void respondApproval(approvalId, {
                     decision,
-                    engine: engineId,
-                    model: modelId
+                    engine: activeThread?.engineId ?? "codex",
+                    model: activeThread?.modelId ?? "gpt-5-codex"
                   })
                 }
               />
@@ -80,7 +114,7 @@ export function ChatPanel() {
           ))}
           {messages.length === 0 && (
             <p style={{ margin: 0, color: "var(--text-soft)" }}>
-              Start by sending a message to the active thread.
+              Open a folder and send a message to start working with Codex.
             </p>
           )}
         </div>
@@ -91,14 +125,23 @@ export function ChatPanel() {
           rows={4}
           value={input}
           onChange={(event) => setInput(event.target.value)}
-          placeholder="Ask the agent to inspect, edit, or run tasks in this repo..."
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+              event.preventDefault();
+              void onSubmit(event);
+            }
+          }}
+          placeholder="Ask Codex to inspect, edit, or run tasks in this repo..."
           style={{ width: "100%", resize: "vertical" }}
+          disabled={!threadId}
         />
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button type="button" onClick={() => void cancel()} disabled={!streaming}>
+          <button type="button" onClick={() => void cancel()} disabled={!streaming || !threadId}>
             Cancel (Cmd+.)
           </button>
-          <button type="submit">Send (Cmd+Enter)</button>
+          <button type="submit" disabled={!threadId}>
+            Send (Cmd+Enter)
+          </button>
         </div>
         {error && <p style={{ margin: 0, color: "var(--danger)", fontSize: 12 }}>{error}</p>}
       </form>

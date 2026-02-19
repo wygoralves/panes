@@ -7,14 +7,26 @@ interface Props {
   onApproval: (approvalId: string, decision: "accept" | "accept_for_session" | "decline") => void;
 }
 
+function isBlockLike(value: unknown): value is { type: string } {
+  return typeof value === "object" && value !== null && "type" in value;
+}
+
 export function MessageBlocks({ blocks = [], onApproval }: Props) {
+  const safeBlocks = Array.isArray(blocks) ? blocks : [];
+
   return (
     <div style={{ display: "grid", gap: 10 }}>
-      {blocks.map((block, index) => {
+      {safeBlocks.map((rawBlock, index) => {
+        if (!isBlockLike(rawBlock)) {
+          return null;
+        }
+
+        const block = rawBlock as ContentBlock;
+
         if (block.type === "text") {
           return (
             <div key={index} className="surface" style={{ padding: 12 }}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{String(block.content ?? "")}</ReactMarkdown>
             </div>
           );
         }
@@ -22,8 +34,10 @@ export function MessageBlocks({ blocks = [], onApproval }: Props) {
         if (block.type === "code") {
           return (
             <div key={index} className="surface" style={{ padding: 12, background: "var(--code-bg)" }}>
-              <p style={{ margin: "0 0 8px", fontSize: 12, color: "var(--text-soft)" }}>{block.language}</p>
-              <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{block.content}</pre>
+              <p style={{ margin: "0 0 8px", fontSize: 12, color: "var(--text-soft)" }}>
+                {String(block.language ?? "text")}
+              </p>
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{String(block.content ?? "")}</pre>
             </div>
           );
         }
@@ -32,14 +46,15 @@ export function MessageBlocks({ blocks = [], onApproval }: Props) {
           return (
             <div key={index} className="surface" style={{ padding: 12, background: "#101a11" }}>
               <p style={{ margin: "0 0 6px", fontSize: 12, color: "var(--text-soft)" }}>
-                Diff ({block.scope})
+                Diff ({String(block.scope ?? "turn")})
               </p>
-              <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{block.diff}</pre>
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{String(block.diff ?? "")}</pre>
             </div>
           );
         }
 
         if (block.type === "action") {
+          const outputChunks = Array.isArray(block.outputChunks) ? block.outputChunks : [];
           return (
             <div
               key={index}
@@ -54,9 +69,9 @@ export function MessageBlocks({ blocks = [], onApproval }: Props) {
               <p style={{ margin: "4px 0", fontSize: 12, color: "var(--text-soft)" }}>
                 status: {block.status}
               </p>
-              {block.outputChunks.length > 0 && (
+              {outputChunks.length > 0 && (
                 <pre style={{ margin: 0, maxHeight: 180, overflow: "auto", whiteSpace: "pre-wrap" }}>
-                  {block.outputChunks.map((chunk) => chunk.content).join("")}
+                  {outputChunks.map((chunk) => String(chunk.content ?? "")).join("")}
                 </pre>
               )}
             </div>

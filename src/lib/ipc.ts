@@ -7,6 +7,7 @@ import type {
   Message,
   Repo,
   StreamEvent,
+  Thread,
   Workspace
 } from "../types";
 
@@ -14,6 +15,21 @@ export const ipc = {
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
   openWorkspace: (path: string) => invoke<Workspace>("open_workspace", { path }),
   getRepos: (workspaceId: string) => invoke<Repo[]>("get_repos", { workspaceId }),
+  listThreads: (workspaceId: string) => invoke<Thread[]>("list_threads", { workspaceId }),
+  createThread: (
+    workspaceId: string,
+    repoId: string | null,
+    engineId: string,
+    modelId: string,
+    title: string
+  ) =>
+    invoke<Thread>("create_thread", {
+      workspaceId,
+      repoId,
+      engineId,
+      modelId,
+      title
+    }),
   listEngines: () => invoke<EngineInfo[]>("list_engines"),
   engineHealth: (engineId: string) => invoke<EngineHealth>("engine_health", { engineId }),
   sendMessage: (threadId: string, message: string) =>

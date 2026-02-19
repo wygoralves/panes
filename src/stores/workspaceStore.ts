@@ -12,6 +12,7 @@ interface WorkspaceState {
   loadWorkspaces: () => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
   loadRepos: (workspaceId: string) => Promise<void>;
+  setActiveWorkspace: (workspaceId: string) => Promise<void>;
   setActiveRepo: (repoId: string | null) => void;
 }
 
@@ -53,6 +54,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch (error) {
       set({ error: String(error) });
     }
+  },
+  setActiveWorkspace: async (workspaceId) => {
+    set({ activeWorkspaceId: workspaceId, activeRepoId: null, repos: [], error: undefined });
+    await get().loadRepos(workspaceId);
   },
   setActiveRepo: (repoId) => set({ activeRepoId: repoId })
 }));

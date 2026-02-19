@@ -39,6 +39,11 @@ select {
   height: 100%;
 }
 
+.app-shell-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) minmax(260px, 380px);
+}
+
 .panel {
   height: 100%;
   overflow: hidden;
@@ -48,6 +53,16 @@ select {
 
 .panel:last-child {
   border-right: none;
+}
+
+@media (max-width: 1180px) {
+  .app-shell-grid {
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  }
+
+  .app-shell-grid .panel:nth-child(3) {
+    display: none;
+  }
 }
 
 .section-title {
