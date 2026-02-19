@@ -276,14 +276,32 @@ export function ChatPanel() {
       return;
     }
 
+    const activeRepoScopeId = activeRepo?.id ?? null;
+    const activeThreadInCurrentScope =
+      activeThread &&
+      activeThread.workspaceId === activeWorkspaceId &&
+      activeThread.repoId === activeRepoScopeId;
+
+    if (activeThreadInCurrentScope && threadId !== activeThread.id) {
+      void bindChatThread(activeThread.id);
+      return;
+    }
+
+    const activeThreadMatchesSelection =
+      activeThreadInCurrentScope &&
+      activeThread.engineId === selectedEngineId &&
+      activeThread.modelId === selectedModelId;
+
     const matchedThread =
+      (activeThreadMatchesSelection ? activeThread : null) ??
       threads.find(
         (thread) =>
           thread.workspaceId === activeWorkspaceId &&
-          thread.repoId === (activeRepo?.id ?? null) &&
+          thread.repoId === activeRepoScopeId &&
           thread.engineId === selectedEngineId &&
           thread.modelId === selectedModelId,
-      ) ?? null;
+      ) ??
+      null;
 
     const targetThreadId = matchedThread?.id ?? null;
     if (targetThreadId === threadId) {
@@ -295,6 +313,11 @@ export function ChatPanel() {
   }, [
     activeWorkspaceId,
     activeRepo?.id,
+    activeThread?.id,
+    activeThread?.workspaceId,
+    activeThread?.repoId,
+    activeThread?.engineId,
+    activeThread?.modelId,
     threads,
     selectedEngineId,
     selectedModelId,

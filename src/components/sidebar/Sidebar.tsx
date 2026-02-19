@@ -74,7 +74,7 @@ export function Sidebar() {
     if (thread.workspaceId !== activeWorkspaceId) {
       await setActiveWorkspace(thread.workspaceId);
     }
-    if (thread.repoId) setActiveRepo(thread.repoId);
+    setActiveRepo(thread.repoId ?? null);
     setActiveThread(thread.id);
     await bindChatThread(thread.id);
   }
