@@ -14,6 +14,7 @@ import {
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { useUiStore } from "../../stores/uiStore";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import type { Thread, Workspace } from "../../types";
 
@@ -51,6 +52,7 @@ export function Sidebar() {
     error,
   } = useWorkspaceStore();
   const { threads, activeThreadId, setActiveThread, removeThread, createThread } = useThreadStore();
+  const openEngineSetup = useUiStore((state) => state.openEngineSetup);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
 
   const projects = useMemo<ProjectGroup[]>(() => {
@@ -560,6 +562,7 @@ export function Sidebar() {
       >
         <button
           type="button"
+          onClick={openEngineSetup}
           style={{
             display: "flex",
             alignItems: "center",
@@ -581,7 +584,7 @@ export function Sidebar() {
           }}
         >
           <Settings size={14} style={{ opacity: 0.6 }} />
-          Settings
+          Engine setup
         </button>
       </div>
 
