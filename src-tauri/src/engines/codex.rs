@@ -712,8 +712,8 @@ impl CodexEngine {
 
         let initialize_params = serde_json::json!({
           "clientInfo": {
-            "name": "agent-workspace",
-            "title": "Agent Workspace",
+            "name": "panes",
+            "title": "Panes",
             "version": env!("CARGO_PKG_VERSION"),
           },
           "capabilities": {

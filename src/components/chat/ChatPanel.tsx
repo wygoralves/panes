@@ -963,7 +963,7 @@ export function ChatPanel() {
                 maxWidth: 360,
               }}
             >
-              {activeThread?.title || "Agent Workspace"}
+              {activeThread?.title || "Panes"}
             </button>
           )}
           {workspaceName && (

@@ -179,9 +179,21 @@ pub async fn send_message(
         thread.engine_metadata = Some(metadata);
     }
 
-    db::messages::insert_user_message(&state.db, &thread.id, &message).map_err(err_to_string)?;
-    let assistant_message =
-        db::messages::insert_assistant_placeholder(&state.db, &thread.id).map_err(err_to_string)?;
+    db::messages::insert_user_message(
+        &state.db,
+        &thread.id,
+        &message,
+        Some(thread.engine_id.as_str()),
+        Some(effective_model_id.as_str()),
+    )
+    .map_err(err_to_string)?;
+    let assistant_message = db::messages::insert_assistant_placeholder(
+        &state.db,
+        &thread.id,
+        Some(thread.engine_id.as_str()),
+        Some(effective_model_id.as_str()),
+    )
+    .map_err(err_to_string)?;
     db::threads::update_thread_status(&state.db, &thread.id, ThreadStatusDto::Streaming)
         .map_err(err_to_string)?;
 

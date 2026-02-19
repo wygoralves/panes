@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS messages (
   role TEXT NOT NULL,
   content TEXT,
   blocks_json TEXT,
+  turn_engine_id TEXT,
+  turn_model_id TEXT,
   schema_version INTEGER NOT NULL DEFAULT 1,
   status TEXT NOT NULL DEFAULT 'completed',
   token_input INTEGER DEFAULT 0,

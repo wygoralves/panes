@@ -41,8 +41,41 @@ impl Database {
         let conn = self.connect()?;
         conn.execute_batch(include_str!("migrations/001_initial.sql"))
             .context("failed to apply migrations")?;
+        ensure_messages_audit_columns(&conn)?;
         Ok(())
     }
+}
+
+fn ensure_messages_audit_columns(conn: &Connection) -> anyhow::Result<()> {
+    let mut has_turn_engine_id = false;
+    let mut has_turn_model_id = false;
+
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(messages)")
+        .context("failed to inspect messages table schema")?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .context("failed to read messages table columns")?;
+
+    for row in rows {
+        let column_name = row.context("failed to decode messages table column")?;
+        if column_name == "turn_engine_id" {
+            has_turn_engine_id = true;
+        } else if column_name == "turn_model_id" {
+            has_turn_model_id = true;
+        }
+    }
+
+    if !has_turn_engine_id {
+        conn.execute("ALTER TABLE messages ADD COLUMN turn_engine_id TEXT", [])
+            .context("failed to add messages.turn_engine_id column")?;
+    }
+    if !has_turn_model_id {
+        conn.execute("ALTER TABLE messages ADD COLUMN turn_model_id TEXT", [])
+            .context("failed to add messages.turn_model_id column")?;
+    }
+
+    Ok(())
 }
 
 fn dirs_home() -> PathBuf {

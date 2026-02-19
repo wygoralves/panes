@@ -102,6 +102,7 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
               key={index}
               style={{
                 borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--border)",
                 overflow: "hidden",
                 background: "var(--code-bg)",
               }}
@@ -148,6 +149,7 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
               key={index}
               style={{
                 borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--border)",
                 overflow: "hidden",
                 background: "var(--code-bg)",
               }}
@@ -212,6 +214,7 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
               key={index}
               style={{
                 borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--border)",
                 background: isError
                   ? "rgba(248, 113, 113, 0.04)"
                   : isRunning
@@ -319,6 +322,7 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
               key={index}
               style={{
                 borderRadius: "var(--radius-sm)",
+                border: "1px solid rgba(251, 191, 36, 0.15)",
                 background: "rgba(251, 191, 36, 0.04)",
                 overflow: "hidden",
               }}
@@ -448,6 +452,7 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
               style={{
                 padding: "8px 12px",
                 borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--border)",
                 background: "var(--bg-2)",
                 fontSize: 12.5,
                 color: "var(--text-2)",
@@ -477,6 +482,7 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
               style={{
                 padding: "10px 14px",
                 borderRadius: "var(--radius-sm)",
+                border: "1px solid rgba(248, 113, 113, 0.15)",
                 background: "rgba(248, 113, 113, 0.06)",
                 color: "var(--danger)",
                 fontSize: 13,

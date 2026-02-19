@@ -1,8 +1,8 @@
 [package]
-name = "agent-workspace"
+name = "Panes"
 version = "0.1.0"
 edition = "2021"
-authors = ["Agent Workspace contributors"]
+authors = ["Panes contributors"]
 license = "MIT"
 
 [lib]

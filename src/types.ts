@@ -50,6 +50,8 @@ export interface Message {
   role: "user" | "assistant";
   content?: string;
   blocks?: ContentBlock[];
+  turnEngineId?: string | null;
+  turnModelId?: string | null;
   status: MessageStatus;
   schemaVersion: number;
   tokenUsage?: { input: number; output: number };

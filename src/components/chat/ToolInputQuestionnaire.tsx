@@ -44,8 +44,8 @@ export function ToolInputQuestionnaire({ details, onSubmit }: Props) {
           key={question.id}
           style={{
             borderRadius: "var(--radius-sm)",
-            border: "1px solid var(--border)",
-            background: "var(--bg-3)",
+            border: "1px solid rgba(255, 255, 255, 0.08)",
+            background: "rgba(0, 0, 0, 0.12)",
             padding: "8px 10px",
           }}
         >
@@ -79,9 +79,9 @@ export function ToolInputQuestionnaire({ details, onSubmit }: Props) {
                       fontSize: 12,
                       cursor: "pointer",
                       border: selected
-                        ? "1px solid var(--success)"
-                        : "1px solid var(--border)",
-                      background: selected ? "rgba(52, 211, 153, 0.12)" : "var(--bg-2)",
+                        ? "1px solid rgba(52, 211, 153, 0.4)"
+                        : "1px solid rgba(255, 255, 255, 0.12)",
+                      background: selected ? "rgba(52, 211, 153, 0.12)" : "rgba(0, 0, 0, 0.1)",
                     }}
                     title={option.description}
                   >

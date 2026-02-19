@@ -108,6 +108,8 @@ pub struct MessageDto {
     pub role: String,
     pub content: Option<String>,
     pub blocks: Option<Value>,
+    pub turn_engine_id: Option<String>,
+    pub turn_model_id: Option<String>,
     pub schema_version: i64,
     pub status: MessageStatusDto,
     pub token_usage: Option<TokenUsageDto>,
