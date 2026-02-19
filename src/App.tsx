@@ -1,12 +1,11 @@
 import { useEffect } from "react";
 import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
-import { EngineHealthBanner } from "./components/onboarding/EngineHealthBanner";
 import { useWorkspaceStore } from "./stores/workspaceStore";
 import { useEngineStore } from "./stores/engineStore";
 
 export function App() {
-  const loadWorkspaces = useWorkspaceStore((state) => state.loadWorkspaces);
-  const loadEngines = useEngineStore((state) => state.load);
+  const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces);
+  const loadEngines = useEngineStore((s) => s.load);
 
   useEffect(() => {
     void loadWorkspaces();
@@ -14,10 +13,7 @@ export function App() {
   }, [loadWorkspaces, loadEngines]);
 
   return (
-    <div style={{ width: "100%", height: "100%", display: "grid", gridTemplateRows: "auto 1fr" }}>
-      <div style={{ padding: "8px 12px" }}>
-        <EngineHealthBanner />
-      </div>
+    <div style={{ width: "100%", height: "100vh", position: "relative", zIndex: 1 }}>
       <ThreeColumnLayout />
     </div>
   );
