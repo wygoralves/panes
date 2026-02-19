@@ -528,7 +528,7 @@ export function GitPanel() {
             type="button"
             onClick={() => void onCommit()}
             disabled={!commitMessage.trim() || !activeRepo}
-            className="btn-primary"
+            className="btn btn-primary"
             style={{
               width: "100%",
               justifyContent: "center",
