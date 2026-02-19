@@ -21,7 +21,28 @@ export const useGitStore = create<GitState>((set, get) => ({
     set({ loading: true, error: undefined });
     try {
       const status = await ipc.getGitStatus(repoPath);
-      set({ status, loading: false });
+      const selectedFile = get().selectedFile;
+      let selectedDiff: string | undefined = get().diff;
+
+      if (selectedFile) {
+        const selectedStatus = status.files.find((file) => file.path === selectedFile);
+        if (!selectedStatus) {
+          selectedDiff = undefined;
+        } else {
+          try {
+            selectedDiff = await ipc.getFileDiff(repoPath, selectedFile, selectedStatus.staged);
+          } catch {
+            selectedDiff = undefined;
+          }
+        }
+      }
+
+      set({
+        status,
+        selectedFile: selectedFile && status.files.some((file) => file.path === selectedFile) ? selectedFile : undefined,
+        diff: selectedDiff,
+        loading: false
+      });
     } catch (error) {
       set({ loading: false, error: String(error) });
     }

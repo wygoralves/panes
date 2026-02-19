@@ -50,7 +50,8 @@ export const ipc = {
   stageFiles: (repoPath: string, files: string[]) => invoke<void>("stage_files", { repoPath, files }),
   unstageFiles: (repoPath: string, files: string[]) =>
     invoke<void>("unstage_files", { repoPath, files }),
-  commit: (repoPath: string, message: string) => invoke<string>("commit", { repoPath, message })
+  commit: (repoPath: string, message: string) => invoke<string>("commit", { repoPath, message }),
+  watchGitRepo: (repoPath: string) => invoke<void>("watch_git_repo", { repoPath })
 };
 
 export async function listenThreadEvents(
@@ -58,4 +59,14 @@ export async function listenThreadEvents(
   onEvent: (event: StreamEvent) => void
 ): Promise<UnlistenFn> {
   return listen<StreamEvent>(`stream-event-${threadId}`, ({ payload }) => onEvent(payload));
+}
+
+export interface GitRepoChangedEvent {
+  repoPath: string;
+}
+
+export async function listenGitRepoChanged(
+  onEvent: (event: GitRepoChangedEvent) => void
+): Promise<UnlistenFn> {
+  return listen<GitRepoChangedEvent>("git-repo-changed", ({ payload }) => onEvent(payload));
 }

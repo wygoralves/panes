@@ -3,13 +3,17 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-use crate::{config::app_config::AppConfig, db::Database, engines::EngineManager};
+use crate::{
+    config::app_config::AppConfig, db::Database, engines::EngineManager,
+    git::watcher::GitWatcherManager,
+};
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: Database,
     pub config: Arc<AppConfig>,
     pub engines: Arc<EngineManager>,
+    pub git_watchers: Arc<GitWatcherManager>,
     pub turns: Arc<TurnManager>,
 }
 

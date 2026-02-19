@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore } from "../../stores/gitStore";
+import { ipc, listenGitRepoChanged } from "../../lib/ipc";
 
 const statusColors: Record<string, string> = {
   added: "var(--success)",
@@ -41,11 +42,53 @@ export function GitPanel() {
     () => repos.find((r) => r.id === activeRepoId) ?? repos[0],
     [repos, activeRepoId],
   );
+  const activeRepoPath = activeRepo?.path ?? null;
 
   useEffect(() => {
-    if (!activeRepo) return;
-    void refresh(activeRepo.path);
-  }, [activeRepo, refresh]);
+    if (!activeRepoPath) return;
+    void refresh(activeRepoPath);
+  }, [activeRepoPath, refresh]);
+
+  useEffect(() => {
+    if (!activeRepoPath) {
+      return;
+    }
+
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    const repoPath = activeRepoPath;
+
+    const attach = async () => {
+      try {
+        await ipc.watchGitRepo(repoPath);
+      } catch {
+        return;
+      }
+
+      const stop = await listenGitRepoChanged((event) => {
+        if (event.repoPath !== repoPath) {
+          return;
+        }
+        void refresh(repoPath);
+      });
+
+      if (disposed) {
+        stop();
+        return;
+      }
+
+      unlisten = stop;
+    };
+
+    void attach();
+
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [activeRepoPath, refresh]);
 
   async function onCommit() {
     if (!activeRepo || !commitMessage.trim()) return;

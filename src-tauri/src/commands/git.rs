@@ -1,3 +1,5 @@
+use serde::Serialize;
+use tauri::Emitter;
 use tauri::State;
 
 use crate::{
@@ -75,6 +77,32 @@ pub async fn get_file_tree(
     tokio::task::spawn_blocking(move || repo::get_file_tree(&repo_path).map_err(err_to_string))
         .await
         .map_err(|error| error.to_string())?
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitRepoChangedEvent {
+    repo_path: String,
+}
+
+#[tauri::command]
+pub async fn watch_git_repo(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    repo_path: String,
+) -> Result<(), String> {
+    let callback = std::sync::Arc::new(move |changed_repo_path: String| {
+        let payload = GitRepoChangedEvent {
+            repo_path: changed_repo_path,
+        };
+        let _ = app.emit("git-repo-changed", payload);
+    });
+
+    state
+        .git_watchers
+        .watch_repo(repo_path, callback)
+        .await
+        .map_err(err_to_string)
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {

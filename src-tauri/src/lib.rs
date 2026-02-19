@@ -11,6 +11,7 @@ use std::sync::Arc;
 use config::app_config::AppConfig;
 use db::Database;
 use engines::EngineManager;
+use git::watcher::GitWatcherManager;
 use state::{AppState, TurnManager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -34,6 +35,7 @@ pub fn run() {
         db,
         config: Arc::new(app_config),
         engines: Arc::new(EngineManager::new()),
+        git_watchers: Arc::new(GitWatcherManager::default()),
         turns: Arc::new(TurnManager::default()),
     };
 
@@ -59,6 +61,7 @@ pub fn run() {
             commands::git::unstage_files,
             commands::git::commit,
             commands::git::get_file_tree,
+            commands::git::watch_git_repo,
             commands::engines::list_engines,
             commands::engines::engine_health,
             commands::threads::list_threads,
