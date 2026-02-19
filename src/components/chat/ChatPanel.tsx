@@ -119,6 +119,7 @@ export function ChatPanel() {
     threads,
     activeThreadId,
     setActiveThread: setActiveThreadInStore,
+    setThreadReasoningEffortLocal,
   } = useThreadStore();
   const gitStatus = useGitStore((s) => s.status);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -369,6 +370,7 @@ export function ChatPanel() {
 
     if (selectedEngineId === "codex" && selectedEffort) {
       await ipc.setThreadReasoningEffort(targetThreadId, selectedEffort);
+      setThreadReasoningEffortLocal(targetThreadId, selectedEffort);
     }
 
     await send(text, targetThreadId);
@@ -389,10 +391,8 @@ export function ChatPanel() {
       return;
     }
 
+    setThreadReasoningEffortLocal(targetThreadId, nextEffort);
     await ipc.setThreadReasoningEffort(targetThreadId, nextEffort);
-    if (activeWorkspaceId) {
-      await refreshThreads(activeWorkspaceId);
-    }
   }
 
   async function onRepoTrustLevelChange(nextTrustLevel: TrustLevel) {

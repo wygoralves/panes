@@ -30,6 +30,7 @@ interface ThreadState {
   refreshAllThreads: (workspaceIds: string[]) => Promise<void>;
   removeThread: (threadId: string) => Promise<void>;
   setActiveThread: (threadId: string | null) => void;
+  setThreadReasoningEffortLocal: (threadId: string, reasoningEffort: string | null) => void;
 }
 
 const DEFAULT_ENGINE = "codex";
@@ -50,6 +51,23 @@ function flattenThreadsByWorkspace(threadsByWorkspace: Record<string, Thread[]>)
   return Object.values(threadsByWorkspace)
     .flat()
     .sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime());
+}
+
+function applyThreadReasoningEffort(
+  thread: Thread,
+  reasoningEffort: string | null
+): Thread {
+  const metadata = { ...(thread.engineMetadata ?? {}) };
+  if (reasoningEffort) {
+    metadata.reasoningEffort = reasoningEffort;
+  } else {
+    delete metadata.reasoningEffort;
+  }
+
+  return {
+    ...thread,
+    engineMetadata: Object.keys(metadata).length ? metadata : undefined,
+  };
 }
 
 export const useThreadStore = create<ThreadState>((set, get) => ({
@@ -209,5 +227,24 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       set({ loading: false, error: String(error) });
     }
   },
-  setActiveThread: (threadId) => set({ activeThreadId: threadId })
+  setActiveThread: (threadId) => set({ activeThreadId: threadId }),
+  setThreadReasoningEffortLocal: (threadId, reasoningEffort) =>
+    set((state) => {
+      const updateThread = (thread: Thread) =>
+        thread.id === threadId
+          ? applyThreadReasoningEffort(thread, reasoningEffort)
+          : thread;
+
+      const threadsByWorkspace = Object.entries(state.threadsByWorkspace).reduce<
+        Record<string, Thread[]>
+      >((acc, [workspaceId, threads]) => {
+        acc[workspaceId] = threads.map(updateThread);
+        return acc;
+      }, {});
+
+      return {
+        threadsByWorkspace,
+        threads: state.threads.map(updateThread),
+      };
+    }),
 }));
