@@ -36,6 +36,10 @@ Phase 1 scaffold + core runtime has been implemented:
 - Git panel IPC and status/diff/stage/commit commands
 - Frontend three-column shell with typed blocks
 
+## Delivery plan
+
+- Full roadmap and acceptance criteria: `docs/PLANO_COMPLETO.md`
+
 ## License
 
 MIT
