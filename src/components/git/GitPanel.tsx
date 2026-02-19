@@ -14,6 +14,7 @@ import {
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore } from "../../stores/gitStore";
 import { ipc, listenGitRepoChanged } from "../../lib/ipc";
+import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 
 const statusColors: Record<string, string> = {
   added: "var(--success)",
@@ -149,7 +150,8 @@ export function GitPanel() {
     >
       {/* ── Header ── */}
       <div
-        data-tauri-drag-region
+        onMouseDown={handleDragMouseDown}
+        onDoubleClick={handleDragDoubleClick}
         style={{
           padding: "10px 14px",
           paddingTop: 38,

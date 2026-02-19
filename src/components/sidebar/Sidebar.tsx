@@ -14,6 +14,7 @@ import {
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import type { Thread, Workspace } from "../../types";
 
 function relativeTime(dateStr: string): string {
@@ -148,13 +149,14 @@ export function Sidebar() {
     >
       {/* ── Header ── */}
       <div
-        data-tauri-drag-region
+        onMouseDown={handleDragMouseDown}
+        onDoubleClick={handleDragDoubleClick}
         style={{
           padding: "42px 14px 10px",
           borderBottom: "1px solid var(--border)",
         }}
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div className="no-drag" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {/* New thread button */}
           <button
             type="button"

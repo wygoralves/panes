@@ -19,7 +19,8 @@ import { useGitStore } from "../../stores/gitStore";
 import { ipc } from "../../lib/ipc";
 import { MessageBlocks } from "./MessageBlocks";
 import { Dropdown } from "../shared/Dropdown";
-import type { ApprovalBlock, ApprovalResponse, TrustLevel } from "../../types";
+import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
+import type { ApprovalBlock, ApprovalResponse, ContentBlock, TrustLevel } from "../../types";
 
 interface ToolInputOption {
   label: string;
@@ -87,6 +88,14 @@ function buildToolInputResponse(
   }
 
   return { answers };
+}
+
+function hasVisibleContent(blocks?: ContentBlock[]): boolean {
+  if (!blocks || blocks.length === 0) return false;
+  return blocks.some((b) => {
+    if (b.type === "text" || b.type === "thinking") return Boolean(b.content?.trim());
+    return true;
+  });
 }
 
 export function ChatPanel() {
@@ -161,6 +170,16 @@ export function ChatPanel() {
     typeof activeThread?.engineMetadata?.reasoningEffort === "string"
       ? activeThread.engineMetadata.reasoningEffort
       : undefined;
+  const assistantLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (selectedEngine?.name) parts.push(selectedEngine.name);
+    if (selectedModel?.displayName) parts.push(selectedModel.displayName);
+    if (activeThreadReasoningEffort) {
+      parts.push(activeThreadReasoningEffort.charAt(0).toUpperCase() + activeThreadReasoningEffort.slice(1));
+    }
+    return parts.join(" ") || "Assistant";
+  }, [selectedEngine?.name, selectedModel?.displayName, activeThreadReasoningEffort]);
+
   const workspaceTrustLevel: TrustLevel = useMemo(() => {
     if (!repos.length) {
       return "standard";
@@ -447,7 +466,8 @@ export function ChatPanel() {
     >
       {/* ── Top Header Bar ── */}
       <div
-        data-tauri-drag-region
+        onMouseDown={handleDragMouseDown}
+        onDoubleClick={handleDragDoubleClick}
         style={{
           padding: "8px 16px",
           paddingTop: 38,
@@ -459,7 +479,7 @@ export function ChatPanel() {
         }}
       >
         {/* Thread title + workspace label */}
-        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+        <div className="no-drag" style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           <span
             style={{
               fontSize: 13,
@@ -497,7 +517,7 @@ export function ChatPanel() {
         </div>
 
         {/* Right-side action buttons */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <div className="no-drag" style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {streaming && (
             <button
               type="button"
@@ -665,18 +685,29 @@ export function ChatPanel() {
                     >
                       {message.content || (message.blocks ?? []).filter((b) => b.type === "text").map((b) => b.content).join("\n")}
                     </div>
-                  ) : (
+                  ) : hasVisibleContent(message.blocks) ? (
                     <div
                       style={{
                         width: "100%",
                         maxWidth: "100%",
                         padding: "8px 4px",
                         borderRadius: "var(--radius-md)",
-                        background: "var(--bg-3)",
+                        background: "var(--bg-2)",
                         border: "1px solid var(--border)",
                         overflow: "hidden",
                       }}
                     >
+                      <div
+                        style={{
+                          padding: "2px 14px 6px",
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color: "var(--text-3)",
+                          letterSpacing: "0.02em",
+                        }}
+                      >
+                        {assistantLabel}
+                      </div>
                       <MessageBlocks
                         blocks={message.blocks}
                         status={message.status}
@@ -685,7 +716,7 @@ export function ChatPanel() {
                         }
                       />
                     </div>
-                  )}
+                  ) : null}
                 </div>
               );
             })}
