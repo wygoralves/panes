@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   Plus,
@@ -114,6 +115,36 @@ export function Sidebar() {
     String(readDefaultScanDepth()),
   );
   const [advancedScanError, setAdvancedScanError] = useState<string | null>(null);
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const [settingsMenuPos, setSettingsMenuPos] = useState({ top: 0, left: 0 });
+  const settingsMenuRef = useRef<HTMLDivElement>(null);
+  const settingsTriggerRef = useRef<HTMLButtonElement>(null);
+
+  const closeSettingsMenu = useCallback(() => setSettingsMenuOpen(false), []);
+
+  useEffect(() => {
+    if (!settingsMenuOpen) return;
+
+    function onPointerDown(e: PointerEvent) {
+      const target = e.target as Node;
+      if (
+        settingsMenuRef.current?.contains(target) ||
+        settingsTriggerRef.current?.contains(target)
+      ) return;
+      closeSettingsMenu();
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") closeSettingsMenu();
+    }
+
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [settingsMenuOpen, closeSettingsMenu]);
   const archivedThreads = useMemo(
     () =>
       activeWorkspaceId
@@ -831,13 +862,25 @@ export function Sidebar() {
         style={{
           padding: "8px 14px",
           borderTop: "1px solid var(--border)",
-          display: "grid",
+          display: "flex",
+          flexDirection: "column",
           gap: 6,
         }}
       >
         <button
+          ref={settingsTriggerRef}
           type="button"
-          onClick={openEngineSetup}
+          onClick={() => {
+            if (settingsMenuOpen) {
+              closeSettingsMenu();
+              return;
+            }
+            const rect = settingsTriggerRef.current?.getBoundingClientRect();
+            if (rect) {
+              setSettingsMenuPos({ top: rect.top - 4, left: rect.left });
+            }
+            setSettingsMenuOpen(true);
+          }}
           style={{
             display: "flex",
             alignItems: "center",
@@ -859,37 +902,7 @@ export function Sidebar() {
           }}
         >
           <Settings size={14} style={{ opacity: 0.6 }} />
-          Engine setup
-        </button>
-
-        <button
-          type="button"
-          onClick={toggleAdvancedScanConfig}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
-            padding: "6px 4px",
-            fontSize: 12,
-            color: "var(--text-3)",
-            background: "transparent",
-            cursor: "pointer",
-            width: "100%",
-            borderRadius: "var(--radius-sm)",
-            transition: "color var(--duration-fast)",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.color = "var(--text-2)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = "var(--text-3)";
-          }}
-        >
-          <span>Advanced: scan depth</span>
-          <span style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 11 }}>
-            {readDefaultScanDepth()}
-          </span>
+          Settings
         </button>
 
         {advancedScanOpen && (
@@ -967,6 +980,46 @@ export function Sidebar() {
           </div>
         )}
       </div>
+
+      {settingsMenuOpen &&
+        createPortal(
+          <div
+            ref={settingsMenuRef}
+            className="git-action-menu"
+            style={{
+              position: "fixed",
+              bottom: window.innerHeight - settingsMenuPos.top,
+              left: settingsMenuPos.left,
+              minWidth: 180,
+            }}
+          >
+            <button
+              type="button"
+              className="git-action-menu-item"
+              onClick={() => {
+                closeSettingsMenu();
+                openEngineSetup();
+              }}
+            >
+              Engine setup
+            </button>
+            <button
+              type="button"
+              className="git-action-menu-item"
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+              onClick={() => {
+                closeSettingsMenu();
+                toggleAdvancedScanConfig();
+              }}
+            >
+              <span>Scan depth</span>
+              <span style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 11, color: "var(--text-3)" }}>
+                {readDefaultScanDepth()}
+              </span>
+            </button>
+          </div>,
+          document.body,
+        )}
 
       {error && (
         <div
