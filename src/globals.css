@@ -1869,3 +1869,65 @@ button, input, textarea, select {
   border-color: var(--accent);
   outline: none;
 }
+
+/* ── Chat Input ── */
+.chat-input-box {
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  transition: border-color var(--duration-fast) var(--ease-out),
+              box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.chat-input-box:focus-within {
+  border-color: var(--border-accent);
+  box-shadow: var(--accent-glow);
+}
+
+.chat-toolbar-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.chat-approval-banner {
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(251, 191, 36, 0.18);
+  background: rgba(251, 191, 36, 0.04);
+  padding: 10px 12px;
+  animation: slide-up var(--duration-slow) var(--ease-out) both;
+}
+
+.chat-approval-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.chat-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.chat-status-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.chat-status-branch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: "JetBrains Mono", monospace;
+}
