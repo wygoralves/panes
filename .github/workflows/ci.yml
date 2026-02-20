@@ -52,6 +52,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+      - name: Ensure frontendDist placeholder
+        run: |
+          mkdir -p dist
+          if [ ! -f dist/index.html ]; then
+            echo "<!doctype html><html><body>CI placeholder</body></html>" > dist/index.html
+          fi
       - name: Rust fmt check
         working-directory: src-tauri
         run: cargo fmt -- --check
