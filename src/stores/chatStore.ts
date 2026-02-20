@@ -356,14 +356,38 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
 
   if (event.type === "DiffUpdated") {
     const blocks = assistant.blocks ?? [];
-    assistant.blocks = [
-      ...blocks,
-      {
-        type: "diff",
-        diff: String(event.diff ?? ""),
-        scope: String(event.scope ?? "turn") as "turn" | "file" | "workspace"
+    const scope = String(event.scope ?? "turn") as "turn" | "file" | "workspace";
+    const diff = String(event.diff ?? "");
+
+    let existingDiffIndex = -1;
+    for (let index = blocks.length - 1; index >= 0; index -= 1) {
+      const block = blocks[index];
+      if (block.type === "diff" && block.scope === scope) {
+        existingDiffIndex = index;
+        break;
       }
-    ];
+    }
+
+    if (existingDiffIndex >= 0) {
+      const existingBlock = blocks[existingDiffIndex];
+      if (existingBlock.type === "diff" && existingBlock.diff !== diff) {
+        const nextBlocks = [...blocks];
+        nextBlocks[existingDiffIndex] = {
+          ...existingBlock,
+          diff,
+        };
+        assistant.blocks = nextBlocks;
+      }
+    } else {
+      assistant.blocks = [
+        ...blocks,
+        {
+          type: "diff",
+          diff,
+          scope,
+        },
+      ];
+    }
   }
 
   if (event.type === "Error") {

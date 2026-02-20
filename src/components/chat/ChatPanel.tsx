@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { FormEvent, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Send,
   Square,
@@ -207,6 +207,162 @@ function estimateMessageOffset(
   }
   return offset;
 }
+
+interface MessageRowProps {
+  message: Message;
+  index: number;
+  isHighlighted: boolean;
+  assistantLabel: string;
+  assistantIsCodex: boolean;
+  onApproval: (approvalId: string, response: ApprovalResponse) => void;
+}
+
+function MessageRowView({
+  message,
+  index,
+  isHighlighted,
+  assistantLabel,
+  assistantIsCodex,
+  onApproval,
+}: MessageRowProps) {
+  const isUser = message.role === "user";
+  const messageTimestamp = useMemo(
+    () => formatMessageTimestamp(message.createdAt),
+    [message.createdAt],
+  );
+  const userContent = useMemo(() => {
+    if (message.content) {
+      return message.content;
+    }
+    return (message.blocks ?? [])
+      .filter((block) => block.type === "text")
+      .map((block) => block.content)
+      .join("\n");
+  }, [message.blocks, message.content]);
+  const hasAssistantContent = !isUser && hasVisibleContent(message.blocks);
+
+  return (
+    <div
+      data-message-id={message.id}
+      className="animate-slide-up"
+      style={{
+        animationDelay: `${Math.min(index * 20, 200)}ms`,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: isUser ? "flex-end" : "flex-start",
+        maxWidth: "100%",
+        borderRadius: "var(--radius-md)",
+        outline: isHighlighted ? "2px solid rgba(14, 240, 195, 0.35)" : "none",
+        boxShadow: isHighlighted
+          ? "0 10px 28px rgba(14, 240, 195, 0.12)"
+          : "none",
+        transition:
+          "outline-color var(--duration-normal) var(--ease-out), box-shadow var(--duration-normal) var(--ease-out)",
+      }}
+    >
+      {isUser ? (
+        <>
+          <div
+            style={{
+              maxWidth: "75%",
+              padding: "10px 14px",
+              borderRadius: "var(--radius-md)",
+              background: "var(--bg-3)",
+              border: "1px solid var(--border)",
+              fontSize: 13,
+              lineHeight: 1.6,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {userContent}
+          </div>
+          {messageTimestamp && (
+            <span
+              style={{
+                fontSize: 10,
+                color: "var(--text-3)",
+                paddingRight: 4,
+                marginTop: 4,
+              }}
+            >
+              {messageTimestamp}
+            </span>
+          )}
+        </>
+      ) : hasAssistantContent ? (
+        <>
+          <div
+            style={{
+              width: "100%",
+              maxWidth: "100%",
+              padding: "8px 4px",
+              borderRadius: "var(--radius-md)",
+              background: "var(--bg-2)",
+              border: "1px solid var(--border)",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                padding: "2px 14px 6px",
+                fontSize: 11,
+                fontWeight: 600,
+                color: "var(--text-3)",
+                letterSpacing: "0.02em",
+              }}
+            >
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                {assistantIsCodex && (
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 12,
+                      height: 12,
+                    }}
+                  >
+                    <OpenAiIcon size={11} />
+                  </span>
+                )}
+                <span>{assistantLabel}</span>
+              </span>
+            </div>
+            <MessageBlocks
+              blocks={message.blocks}
+              status={message.status}
+              onApproval={onApproval}
+            />
+          </div>
+          {messageTimestamp && (
+            <span
+              style={{
+                fontSize: 10,
+                color: "var(--text-3)",
+                marginTop: 4,
+                paddingLeft: 4,
+              }}
+            >
+              {messageTimestamp}
+            </span>
+          )}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+const MessageRow = memo(
+  MessageRowView,
+  (prev, next) =>
+    prev.message === next.message &&
+    prev.index === next.index &&
+    prev.isHighlighted === next.isHighlighted &&
+    prev.assistantLabel === next.assistantLabel &&
+    prev.assistantIsCodex === next.assistantIsCodex &&
+    prev.onApproval === next.onApproval,
+);
 
 export function ChatPanel() {
   const [input, setInput] = useState("");
@@ -911,6 +1067,17 @@ export function ChatPanel() {
     [respondApproval],
   );
 
+  const assistantIdentityByMessageId = useMemo(() => {
+    const identityByMessageId = new Map<string, { label: string; isCodex: boolean }>();
+    for (const message of messages) {
+      if (message.role !== "assistant") {
+        continue;
+      }
+      identityByMessageId.set(message.id, renderAssistantIdentity(message));
+    }
+    return identityByMessageId;
+  }, [messages, renderAssistantIdentity]);
+
   const virtualizedLayout = useMemo(() => {
     if (!virtualizationEnabled || messages.length === 0) {
       return null;
@@ -986,129 +1153,6 @@ export function ChatPanel() {
     viewportHeight,
     viewportScrollTop,
   ]);
-
-  function renderMessageItem(message: Message, index: number) {
-    const isUser = message.role === "user";
-    const messageTimestamp = formatMessageTimestamp(message.createdAt);
-    const isHighlighted = message.id === highlightedMessageId;
-    const assistantIdentity = renderAssistantIdentity(message);
-
-    return (
-      <div
-        key={message.id}
-        data-message-id={message.id}
-        className="animate-slide-up"
-        style={{
-          animationDelay: `${Math.min(index * 20, 200)}ms`,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: isUser ? "flex-end" : "flex-start",
-          maxWidth: "100%",
-          borderRadius: "var(--radius-md)",
-          outline: isHighlighted ? "2px solid rgba(14, 240, 195, 0.35)" : "none",
-          boxShadow: isHighlighted
-            ? "0 10px 28px rgba(14, 240, 195, 0.12)"
-            : "none",
-          transition:
-            "outline-color var(--duration-normal) var(--ease-out), box-shadow var(--duration-normal) var(--ease-out)",
-        }}
-      >
-        {isUser ? (
-          <>
-            <div
-              style={{
-                maxWidth: "75%",
-                padding: "10px 14px",
-                borderRadius: "var(--radius-md)",
-                background: "var(--bg-3)",
-                border: "1px solid var(--border)",
-                fontSize: 13,
-                lineHeight: 1.6,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-              }}
-            >
-              {message.content ||
-                (message.blocks ?? [])
-                  .filter((b) => b.type === "text")
-                  .map((b) => b.content)
-                  .join("\n")}
-            </div>
-            {messageTimestamp && (
-              <span
-                style={{
-                  fontSize: 10,
-                  color: "var(--text-3)",
-                  paddingRight: 4,
-                  marginTop: 4,
-                }}
-              >
-                {messageTimestamp}
-              </span>
-            )}
-          </>
-        ) : hasVisibleContent(message.blocks) ? (
-          <>
-            <div
-              style={{
-                width: "100%",
-                maxWidth: "100%",
-                padding: "8px 4px",
-                borderRadius: "var(--radius-md)",
-                background: "var(--bg-2)",
-                border: "1px solid var(--border)",
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  padding: "2px 14px 6px",
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: "var(--text-3)",
-                  letterSpacing: "0.02em",
-                }}
-              >
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  {assistantIdentity.isCodex && (
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        width: 12,
-                        height: 12,
-                      }}
-                    >
-                      <OpenAiIcon size={11} />
-                    </span>
-                  )}
-                  <span>{assistantIdentity.label}</span>
-                </span>
-              </div>
-              <MessageBlocks
-                blocks={message.blocks}
-                status={message.status}
-                onApproval={handleApproval}
-              />
-            </div>
-            {messageTimestamp && (
-              <span
-                style={{
-                  fontSize: 10,
-                  color: "var(--text-3)",
-                  marginTop: 4,
-                  paddingLeft: 4,
-                }}
-              >
-                {messageTimestamp}
-              </span>
-            )}
-          </>
-        ) : null}
-      </div>
-    );
-  }
 
   const streamingIndicator = streaming ? (
     <div
@@ -1432,13 +1476,21 @@ export function ChatPanel() {
                 .slice(virtualWindow.startIndex, virtualWindow.endIndexExclusive)
                 .map((message, relativeIndex) => {
                   const absoluteIndex = virtualWindow.startIndex + relativeIndex;
+                  const assistantIdentity = assistantIdentityByMessageId.get(message.id);
                   return (
                     <MeasuredMessageRow
                       key={message.id}
                       messageId={message.id}
                       onHeightChange={onMessageRowHeightChange}
                     >
-                      {renderMessageItem(message, absoluteIndex)}
+                      <MessageRow
+                        message={message}
+                        index={absoluteIndex}
+                        isHighlighted={message.id === highlightedMessageId}
+                        assistantLabel={assistantIdentity?.label ?? ""}
+                        assistantIsCodex={assistantIdentity?.isCodex ?? false}
+                        onApproval={handleApproval}
+                      />
                     </MeasuredMessageRow>
                   );
                 })}
@@ -1452,7 +1504,20 @@ export function ChatPanel() {
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: MESSAGE_ROW_GAP }}>
-            {messages.map((message, index) => renderMessageItem(message, index))}
+            {messages.map((message, index) => {
+              const assistantIdentity = assistantIdentityByMessageId.get(message.id);
+              return (
+                <MessageRow
+                  key={message.id}
+                  message={message}
+                  index={index}
+                  isHighlighted={message.id === highlightedMessageId}
+                  assistantLabel={assistantIdentity?.label ?? ""}
+                  assistantIsCodex={assistantIdentity?.isCodex ?? false}
+                  onApproval={handleApproval}
+                />
+              );
+            })}
             {streamingIndicator}
           </div>
         )}

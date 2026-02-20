@@ -39,6 +39,7 @@ import type {
 
 const MarkdownContent = lazy(() => import("./MarkdownContent"));
 const DIFF_WORKER_THRESHOLD_CHARS = 12_000;
+const DIFF_WORKER_IDLE_TERMINATE_MS = 30_000;
 const DIFF_VIRTUALIZATION_THRESHOLD_LINES = 500;
 const DIFF_VIEWPORT_MAX_HEIGHT = 400;
 const DIFF_OVERSCAN_PX = 240;
@@ -55,6 +56,7 @@ interface DiffParseResult {
 
 let diffWorkerInstance: Worker | null = null;
 let diffWorkerRequestSeq = 0;
+let diffWorkerIdleTimer: number | null = null;
 const diffWorkerCallbacks = new Map<
   number,
   {
@@ -62,6 +64,30 @@ const diffWorkerCallbacks = new Map<
     reject: (reason?: unknown) => void;
   }
 >();
+
+function clearDiffWorkerIdleTimer() {
+  if (diffWorkerIdleTimer === null) {
+    return;
+  }
+  window.clearTimeout(diffWorkerIdleTimer);
+  diffWorkerIdleTimer = null;
+}
+
+function scheduleDiffWorkerIdleTermination() {
+  clearDiffWorkerIdleTimer();
+  if (!diffWorkerInstance || diffWorkerCallbacks.size > 0) {
+    return;
+  }
+
+  diffWorkerIdleTimer = window.setTimeout(() => {
+    diffWorkerIdleTimer = null;
+    if (!diffWorkerInstance || diffWorkerCallbacks.size > 0) {
+      return;
+    }
+    diffWorkerInstance.terminate();
+    diffWorkerInstance = null;
+  }, DIFF_WORKER_IDLE_TERMINATE_MS);
+}
 
 function getDiffLineHeight(line: ParsedLine): number {
   return line.type === "hunk" ? DIFF_HUNK_HEIGHT : DIFF_LINE_HEIGHT;
@@ -103,6 +129,7 @@ function ensureDiffWorker(): Worker | null {
     return null;
   }
   if (!diffWorkerInstance) {
+    clearDiffWorkerIdleTimer();
     diffWorkerInstance = new Worker(
       new URL("../../workers/diffParser.worker.ts", import.meta.url),
       { type: "module" },
@@ -120,8 +147,10 @@ function ensureDiffWorker(): Worker | null {
         adds: payload.adds,
         dels: payload.dels,
       });
+      scheduleDiffWorkerIdleTermination();
     };
     diffWorkerInstance.onerror = (error) => {
+      clearDiffWorkerIdleTimer();
       for (const callback of diffWorkerCallbacks.values()) {
         callback.reject(error);
       }
@@ -138,6 +167,7 @@ function parseDiffInWorker(raw: string): Promise<DiffParseResult> {
   if (!worker) {
     return Promise.resolve(parseDiffSync(raw));
   }
+  clearDiffWorkerIdleTimer();
   return new Promise((resolve, reject) => {
     diffWorkerRequestSeq += 1;
     const requestId = diffWorkerRequestSeq;
