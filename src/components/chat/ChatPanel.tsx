@@ -403,6 +403,7 @@ export function ChatPanel() {
   } = useWorkspaceStore();
   const {
     ensureThreadForScope,
+    createThread,
     refreshThreads,
     threads,
     activeThreadId,
@@ -930,7 +931,7 @@ export function ChatPanel() {
         : null;
 
     if (!targetThreadId) {
-      const createdThreadId = await ensureThreadForScope({
+      const createdThreadId = await createThread({
         workspaceId: activeWorkspaceId,
         repoId: activeScopeRepoId,
         engineId: selectedEngineId,
