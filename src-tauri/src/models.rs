@@ -204,6 +204,10 @@ pub struct EngineHealthDto {
     pub details: Option<String>,
     #[serde(default)]
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub checks: Vec<String>,
+    #[serde(default)]
+    pub fixes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

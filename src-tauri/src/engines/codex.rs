@@ -1,5 +1,7 @@
 use std::{
     collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -35,6 +37,13 @@ const TURN_COMPLETION_FALLBACK_TIMEOUT: Duration = Duration::from_secs(900);
 const TRANSPORT_RESTART_MAX_ATTEMPTS: usize = 3;
 const TRANSPORT_RESTART_BASE_BACKOFF: Duration = Duration::from_millis(250);
 const TRANSPORT_RESTART_MAX_BACKOFF: Duration = Duration::from_secs(2);
+const CODEX_MISSING_DEFAULT_DETAILS: &str = "`codex` executable not found in PATH";
+
+#[cfg(not(target_os = "windows"))]
+const LOGIN_SHELL_CLI_PROBES: &[(&str, &[&str])] = &[
+    ("/bin/zsh", &["-lic", "command -v codex"]),
+    ("/bin/bash", &["-lic", "command -v codex"]),
+];
 
 #[derive(Default)]
 pub struct CodexEngine {
@@ -64,6 +73,24 @@ struct CodexState {
     thread_runtimes: HashMap<String, ThreadRuntime>,
     sandbox_probe_completed: bool,
     force_external_sandbox: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CodexExecutableResolution {
+    executable: Option<PathBuf>,
+    source: &'static str,
+    app_path: Option<String>,
+    login_shell_executable: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CodexHealthReport {
+    pub available: bool,
+    pub version: Option<String>,
+    pub details: Option<String>,
+    pub warnings: Vec<String>,
+    pub checks: Vec<String>,
+    pub fixes: Vec<String>,
 }
 
 #[async_trait]
@@ -129,20 +156,12 @@ impl Engine for CodexEngine {
     }
 
     async fn is_available(&self) -> bool {
-        which::which("codex").is_ok()
+        resolve_codex_executable().await.executable.is_some()
     }
 
     async fn version(&self) -> Option<String> {
-        if !self.is_available().await {
-            return None;
-        }
-
-        let output = Command::new("codex").arg("--version").output().await.ok()?;
-        if !output.status.success() {
-            return None;
-        }
-
-        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        let resolution = resolve_codex_executable().await;
+        self.version_from_resolution(&resolution).await
     }
 
     async fn start_thread(
@@ -541,6 +560,30 @@ impl Engine for CodexEngine {
 }
 
 impl CodexEngine {
+    pub async fn health_report(&self) -> CodexHealthReport {
+        let resolution = resolve_codex_executable().await;
+        let available = resolution.executable.is_some();
+        let version = self.version_from_resolution(&resolution).await;
+        let mut warnings = Vec::new();
+        let details =
+            codex_unavailable_details(&resolution).or_else(|| codex_resolution_note(&resolution));
+
+        if available {
+            if let Some(warning) = self.sandbox_preflight_warning().await {
+                warnings.push(warning);
+            }
+        }
+
+        CodexHealthReport {
+            available,
+            version,
+            details,
+            warnings,
+            checks: codex_health_checks(),
+            fixes: codex_fix_commands(&resolution),
+        }
+    }
+
     pub async fn list_models_runtime(&self) -> Vec<ModelInfo> {
         match self.fetch_models_from_server().await {
             Ok(models) if !models.is_empty() => models,
@@ -560,6 +603,22 @@ impl CodexEngine {
         } else {
             None
         }
+    }
+
+    async fn version_from_resolution(
+        &self,
+        resolution: &CodexExecutableResolution,
+    ) -> Option<String> {
+        let executable = resolution.executable.as_ref()?;
+        let output = Command::new(executable)
+            .arg("--version")
+            .output()
+            .await
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
     pub async fn read_thread_preview(&self, engine_thread_id: &str) -> Option<String> {
@@ -703,11 +762,17 @@ impl CodexEngine {
     }
 
     async fn spawn_transport_with_backoff(&self) -> anyhow::Result<Arc<CodexTransport>> {
+        let resolution = resolve_codex_executable().await;
+        let codex_executable = resolution.executable.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(codex_unavailable_details(&resolution)
+                .unwrap_or_else(|| CODEX_MISSING_DEFAULT_DETAILS.to_string()))
+        })?;
+
         let mut backoff = TRANSPORT_RESTART_BASE_BACKOFF;
         let mut last_error: Option<anyhow::Error> = None;
 
         for attempt in 0..TRANSPORT_RESTART_MAX_ATTEMPTS {
-            match CodexTransport::spawn().await {
+            match CodexTransport::spawn(codex_executable.to_string_lossy().as_ref()).await {
                 Ok(transport) => return Ok(Arc::new(transport)),
                 Err(error) => {
                     log::warn!(
@@ -982,6 +1047,208 @@ fn map_codex_model(value: CodexModel) -> ModelInfo {
                 })
                 .collect()
         },
+    }
+}
+
+async fn resolve_codex_executable() -> CodexExecutableResolution {
+    let app_path = std::env::var("PATH").ok();
+
+    if let Ok(path) = which::which("codex") {
+        return CodexExecutableResolution {
+            executable: Some(path),
+            source: "app-path",
+            app_path,
+            login_shell_executable: None,
+        };
+    }
+
+    if let Some(path) = first_existing_executable_path(well_known_codex_paths()) {
+        return CodexExecutableResolution {
+            executable: Some(path),
+            source: "well-known-path",
+            app_path,
+            login_shell_executable: None,
+        };
+    }
+
+    let login_shell_executable = detect_codex_via_login_shell().await;
+    let executable = login_shell_executable.clone();
+
+    CodexExecutableResolution {
+        executable,
+        source: if login_shell_executable.is_some() {
+            "login-shell"
+        } else {
+            "unavailable"
+        },
+        app_path,
+        login_shell_executable,
+    }
+}
+
+fn codex_unavailable_details(resolution: &CodexExecutableResolution) -> Option<String> {
+    if resolution.executable.is_some() {
+        return None;
+    }
+
+    let path_preview = resolution
+        .app_path
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "(empty)".to_string());
+
+    match resolution.login_shell_executable.as_ref() {
+        Some(shell_path) => Some(format!(
+            "Codex was found in your login shell at `{}`, but Panes does not see this in its app PATH. This is common when launching from Finder on macOS. App PATH: `{}`",
+            shell_path.display(),
+            path_preview
+        )),
+        None => Some(format!(
+            "{}. App PATH: `{}`",
+            CODEX_MISSING_DEFAULT_DETAILS, path_preview
+        )),
+    }
+}
+
+fn codex_resolution_note(resolution: &CodexExecutableResolution) -> Option<String> {
+    if resolution.source == "app-path" {
+        return None;
+    }
+
+    let executable = resolution.executable.as_ref()?;
+    Some(format!(
+        "Codex detected via {} at `{}`.",
+        resolution.source,
+        executable.display()
+    ))
+}
+
+fn codex_health_checks() -> Vec<String> {
+    let mut checks = vec![
+        "codex --version".to_string(),
+        "command -v codex".to_string(),
+    ];
+
+    #[cfg(target_os = "macos")]
+    {
+        checks.push("echo \"$PATH\"".to_string());
+        checks.push("/bin/zsh -lic 'command -v codex && codex --version'".to_string());
+        checks.push("sandbox-exec -p '(version 1) (allow default)' /usr/bin/true".to_string());
+    }
+
+    checks
+}
+
+fn codex_fix_commands(resolution: &CodexExecutableResolution) -> Vec<String> {
+    let mut fixes = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    {
+        if resolution.executable.is_none() {
+            if let Some(shell_path) = &resolution.login_shell_executable {
+                if let Some(bin_dir) = shell_path.parent() {
+                    fixes.push(format!(
+                        "launchctl setenv PATH \"{}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"",
+                        bin_dir.display()
+                    ));
+                    fixes.push("open -a Panes".to_string());
+                }
+            } else {
+                fixes.push("/bin/zsh -lic 'command -v codex && codex --version'".to_string());
+                fixes.push("open -a Panes".to_string());
+            }
+        }
+    }
+
+    fixes
+}
+
+fn well_known_codex_paths() -> Vec<PathBuf> {
+    let mut candidates = vec![
+        PathBuf::from("/opt/homebrew/bin/codex"),
+        PathBuf::from("/usr/local/bin/codex"),
+        PathBuf::from("/opt/local/bin/codex"),
+    ];
+
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        candidates.push(home.join(".local/bin/codex"));
+        candidates.push(home.join(".volta/bin/codex"));
+        candidates.push(home.join(".npm-global/bin/codex"));
+        candidates.push(home.join("bin/codex"));
+        candidates.extend(nvm_codex_paths(&home));
+    }
+
+    candidates
+}
+
+fn nvm_codex_paths(home: &Path) -> Vec<PathBuf> {
+    let versions_dir = home.join(".nvm/versions/node");
+    let Ok(entries) = fs::read_dir(versions_dir) else {
+        return Vec::new();
+    };
+
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("bin/codex"))
+        .collect()
+}
+
+fn first_existing_executable_path(paths: Vec<PathBuf>) -> Option<PathBuf> {
+    paths.into_iter().find(|path| is_executable_file(path))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path)
+            .map(|metadata| metadata.is_file() && (metadata.permissions().mode() & 0o111 != 0))
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
+}
+
+async fn detect_codex_via_login_shell() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        None
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        for (shell, args) in LOGIN_SHELL_CLI_PROBES.iter().copied() {
+            if !Path::new(shell).exists() {
+                continue;
+            }
+
+            let output = match Command::new(shell).args(args).output().await {
+                Ok(output) if output.status.success() => output,
+                Ok(_) => continue,
+                Err(_) => continue,
+            };
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(path) = stdout
+                .lines()
+                .map(str::trim)
+                .find(|line| line.starts_with('/'))
+                .map(PathBuf::from)
+                .filter(|path| is_executable_file(path))
+            {
+                return Some(path);
+            }
+        }
+
+        None
     }
 }
 

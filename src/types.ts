@@ -197,6 +197,8 @@ export interface EngineHealth {
   version?: string;
   details?: string;
   warnings?: string[];
+  checks?: string[];
+  fixes?: string[];
 }
 
 export interface SearchResult {

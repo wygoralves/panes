@@ -130,24 +130,15 @@ impl EngineManager {
     pub async fn health(&self, engine_id: &str) -> anyhow::Result<EngineHealthDto> {
         match engine_id {
             "codex" => {
-                let available = self.codex.is_available().await;
-                let version = self.codex.version().await;
-                let mut warnings = Vec::new();
-                if available {
-                    if let Some(warning) = self.codex.sandbox_preflight_warning().await {
-                        warnings.push(warning);
-                    }
-                }
+                let report = self.codex.health_report().await;
                 Ok(EngineHealthDto {
                     id: "codex".to_string(),
-                    available,
-                    version,
-                    details: if available {
-                        None
-                    } else {
-                        Some("`codex` executable not found in PATH".to_string())
-                    },
-                    warnings,
+                    available: report.available,
+                    version: report.version,
+                    details: report.details,
+                    warnings: report.warnings,
+                    checks: report.checks,
+                    fixes: report.fixes,
                 })
             }
             "claude" => {
@@ -162,6 +153,8 @@ impl EngineManager {
                             .to_string(),
                     ),
                     warnings: Vec::new(),
+                    checks: Vec::new(),
+                    fixes: Vec::new(),
                 })
             }
             _ => anyhow::bail!("unknown engine: {engine_id}"),

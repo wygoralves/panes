@@ -23,6 +23,10 @@ export function EngineHealthBanner() {
       "Codex is installed, but the local OS sandbox check failed."
     : codexState.details ??
       "Install Codex CLI and authenticate before starting chat turns.";
+  const commandHint = codexState.available
+    ? codexState.checks?.find((command) => command.includes("sandbox-exec")) ??
+      "sandbox-exec -p '(version 1) (allow default)' /usr/bin/true"
+    : codexState.fixes?.[0] ?? codexState.checks?.[0];
 
   return (
     <div
@@ -45,7 +49,7 @@ export function EngineHealthBanner() {
         <p style={{ margin: "3px 0 0", color: "var(--text-2)", fontSize: 12 }}>
           {description}
         </p>
-        {codexState.available && (
+        {commandHint && (
           <p
             style={{
               margin: "6px 0 0",
@@ -55,7 +59,7 @@ export function EngineHealthBanner() {
               whiteSpace: "pre-wrap",
             }}
           >
-            Run in Terminal: `sandbox-exec -p '(version 1) (allow default)' /usr/bin/true`
+            Run in Terminal: {commandHint}
           </p>
         )}
       </div>

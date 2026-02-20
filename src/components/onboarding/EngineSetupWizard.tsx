@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   CircleDashed,
+  Copy,
   Loader2,
   TerminalSquare,
   X,
@@ -74,6 +75,100 @@ function StepItem({
   );
 }
 
+function CommandList({
+  title,
+  commands,
+}: {
+  title: string;
+  commands: string[];
+}) {
+  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+
+  async function copyCommand(command: string) {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopiedCommand(command);
+      window.setTimeout(() => {
+        setCopiedCommand((current) => (current === command ? null : current));
+      }, 1400);
+    } catch {
+      setCopiedCommand(null);
+    }
+  }
+
+  if (commands.length === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        borderRadius: "var(--radius-sm)",
+        border: "1px solid var(--border)",
+        background: "var(--code-bg)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          padding: "6px 10px",
+          borderBottom: "1px solid var(--border)",
+          fontSize: 11,
+          color: "var(--text-3)",
+        }}
+      >
+        {title}
+      </div>
+      <div style={{ display: "grid", gap: 1 }}>
+        {commands.map((command, index) => (
+          <div
+            key={`${title}-${index}`}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "9px 10px",
+              borderTop: index === 0 ? "none" : "1px solid var(--border)",
+              background: "var(--code-bg)",
+            }}
+          >
+            <code
+              style={{
+                fontSize: 11.5,
+                lineHeight: 1.5,
+                fontFamily: '"JetBrains Mono", monospace',
+                color: "var(--text-2)",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                flex: 1,
+              }}
+            >
+              {command}
+            </code>
+            <button
+              type="button"
+              onClick={() => void copyCommand(command)}
+              className="btn-ghost"
+              style={{
+                padding: "5px 8px",
+                fontSize: 11,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                cursor: "pointer",
+                flexShrink: 0,
+              }}
+            >
+              <Copy size={12} />
+              {copiedCommand === command ? "Copied" : "Copy"}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function EngineSetupWizard() {
   const loadEngines = useEngineStore((state) => state.load);
   const loadingEngines = useEngineStore((state) => state.loading);
@@ -87,25 +182,34 @@ export function EngineSetupWizard() {
 
   const codexState = health.codex;
   const codexWarning = codexState?.warnings?.[0];
+  const codexDetails = codexState?.details;
+  const codexChecks =
+    codexState?.checks && codexState.checks.length > 0
+      ? codexState.checks
+      : ["codex --version", "command -v codex"];
+  const codexFixes = codexState?.fixes ?? [];
 
   const healthChecked = !loadingEngines && Object.keys(health).length > 0;
   const codexDetected = Boolean(codexState?.available);
   const sandboxReady = codexDetected && !codexWarning;
-  const readyForChat = codexDetected && !codexWarning;
-  const hasBlockingIssue = healthChecked && !readyForChat;
+  const readyForChat = codexDetected;
+  const hasBlockingIssue = healthChecked && !codexDetected;
 
   const summary = useMemo(() => {
     if (!healthChecked) {
       return "Checking local engine health...";
     }
-    if (readyForChat) {
+    if (readyForChat && !codexWarning) {
       return "Codex is ready. You can start chat turns now.";
     }
+    if (readyForChat && codexWarning) {
+      return "Codex is detected. Panes can run with fallback sandbox mode while you fix local sandbox checks.";
+    }
     if (!codexDetected) {
-      return "Codex CLI was not found in PATH.";
+      return codexDetails ?? "Codex CLI was not found in PATH.";
     }
     return codexWarning ?? "Codex was detected, but local sandbox checks failed.";
-  }, [codexDetected, codexWarning, healthChecked, readyForChat]);
+  }, [codexDetected, codexDetails, codexWarning, healthChecked, readyForChat]);
 
   useEffect(() => {
     if (!healthChecked) {
@@ -228,18 +332,29 @@ export function EngineSetupWizard() {
               codexDetected
                 ? codexState?.version
                   ? `Detected version ${codexState.version}.`
-                  : "Detected in PATH."
-                : "Install Codex CLI and ensure `codex` is available in your PATH."
+                  : "Detected and ready for chat turns."
+                : codexDetails ??
+                  "Install Codex CLI and ensure `codex` is available in your PATH."
             }
           />
           <StepItem
             title="Sandbox preflight"
-            status={healthChecked ? (sandboxReady ? "ok" : "error") : "pending"}
+            status={
+              healthChecked
+                ? codexDetected
+                  ? sandboxReady
+                    ? "ok"
+                    : "error"
+                  : "pending"
+                : "pending"
+            }
             description={
-              sandboxReady
-                ? "Sandbox checks are healthy for local execution."
-                : codexWarning ??
-                  "Local sandbox check failed. Panes can still run with fallback behavior, but setup should be fixed."
+              !codexDetected
+                ? "Sandbox checks run after Codex is detected."
+                : sandboxReady
+                  ? "Sandbox checks are healthy for local execution."
+                  : codexWarning ??
+                    "Local sandbox check failed. Panes can still run with fallback behavior, but setup should be fixed."
             }
           />
           <StepItem
@@ -247,45 +362,16 @@ export function EngineSetupWizard() {
             status={healthChecked ? (readyForChat ? "ok" : "pending") : "pending"}
             description={
               readyForChat
-                ? "You can open a workspace and send messages now."
+                ? codexWarning
+                  ? "You can already start chat turns. Panes will use fallback sandbox mode while local checks are failing."
+                  : "You can open a workspace and send messages now."
                 : "Resolve steps above and click recheck."
             }
           />
         </div>
 
-        <div
-          style={{
-            borderRadius: "var(--radius-sm)",
-            border: "1px solid var(--border)",
-            background: "var(--code-bg)",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              padding: "6px 10px",
-              borderBottom: "1px solid var(--border)",
-              fontSize: 11,
-              color: "var(--text-3)",
-            }}
-          >
-            Terminal checks
-          </div>
-          <pre
-            style={{
-              margin: 0,
-              padding: "10px 12px",
-              fontSize: 11.5,
-              lineHeight: 1.5,
-              fontFamily: '"JetBrains Mono", monospace',
-              color: "var(--text-2)",
-              whiteSpace: "pre-wrap",
-            }}
-          >
-{`codex --version
-sandbox-exec -p '(version 1) (allow default)' /usr/bin/true`}
-          </pre>
-        </div>
+        <CommandList title="Terminal checks" commands={codexChecks} />
+        {codexFixes.length > 0 && <CommandList title="Suggested fixes" commands={codexFixes} />}
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
           {hasBlockingIssue ? (

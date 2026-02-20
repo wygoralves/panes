@@ -21,14 +21,16 @@ pub struct CodexTransport {
 }
 
 impl CodexTransport {
-    pub async fn spawn() -> anyhow::Result<Self> {
-        let mut child = Command::new("codex")
+    pub async fn spawn(codex_executable: &str) -> anyhow::Result<Self> {
+        let mut child = Command::new(codex_executable)
             .arg("app-server")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .context("failed to spawn `codex app-server`")?;
+            .with_context(|| {
+                format!("failed to spawn `codex app-server` using `{codex_executable}`")
+            })?;
 
         let stdin = child
             .stdin
