@@ -365,6 +365,8 @@ fn spawn_session(
     let shell = default_shell();
     let mut cmd = CommandBuilder::new(shell.clone());
     cmd.cwd(PathBuf::from(&cwd));
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
     #[cfg(not(target_os = "windows"))]
     {
         cmd.arg("-i");

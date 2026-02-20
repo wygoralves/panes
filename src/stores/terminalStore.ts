@@ -225,6 +225,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
             sessions,
             activeSessionId: nextActiveSessionId(sessions, current.activeSessionId),
+            ...(sessions.length > 0 ? { isOpen: true } : {}),
           }),
         };
       });

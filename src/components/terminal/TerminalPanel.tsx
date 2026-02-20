@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Plus, SquareTerminal, X } from "lucide-react";
+import { Folder, Plus, SquareTerminal, X } from "lucide-react";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
+import { Unicode11Addon } from "xterm-addon-unicode11";
 import "xterm/css/xterm.css";
 import { ipc, listenTerminalExit, listenTerminalOutput } from "../../lib/ipc";
 import { useTerminalStore } from "../../stores/terminalStore";
@@ -19,6 +20,30 @@ interface SessionTerminal {
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 36;
 
+// Module-level cache — xterm instances survive component mount/unmount cycles.
+// This is what preserves terminal scrollback when switching workspaces.
+const cachedTerminals = new Map<string, SessionTerminal>();
+const pendingOutput = new Map<string, string[]>();
+
+function terminalCacheKey(workspaceId: string, sessionId: string): string {
+  return `${workspaceId}::${sessionId}`;
+}
+
+function terminalWorkspacePrefix(workspaceId: string): string {
+  return `${workspaceId}::`;
+}
+
+/** Permanently destroy a cached terminal (used when session is explicitly closed). */
+function destroyCachedTerminal(workspaceId: string, sessionId: string) {
+  const key = terminalCacheKey(workspaceId, sessionId);
+  const cached = cachedTerminals.get(key);
+  if (cached) {
+    cached.dispose();
+    cachedTerminals.delete(key);
+  }
+  pendingOutput.delete(key);
+}
+
 export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const workspaceState = useTerminalStore((state) => state.workspaces[workspaceId]);
   const sessions = workspaceState?.sessions ?? [];
@@ -31,21 +56,48 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const handleSessionExit = useTerminalStore((state) => state.handleSessionExit);
   const syncSessions = useTerminalStore((state) => state.syncSessions);
 
-  const terminalsRef = useRef<Map<string, SessionTerminal>>(new Map());
+  // Component-level refs — only track DOM containers (reset on mount/unmount).
+  // Terminal instances live in the module-level cachedTerminals map.
   const containerRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const pendingOutputRef = useRef<Map<string, string[]>>(new Map());
 
   const ensureTerminal = useCallback((sessionId: string) => {
-    if (terminalsRef.current.has(sessionId)) {
-      return;
-    }
-
     const container = containerRefs.current.get(sessionId);
     if (!container) {
       return;
     }
+    const cacheKey = terminalCacheKey(workspaceId, sessionId);
 
+    // Check module-level cache first — re-attach if the instance already exists
+    const cached = cachedTerminals.get(cacheKey);
+    if (cached) {
+      const el = cached.terminal.element;
+      if (el && el.parentElement !== container) {
+        // Move xterm DOM element to the new container (preserves scrollback)
+        while (container.firstChild) {
+          container.removeChild(container.firstChild);
+        }
+        container.appendChild(el);
+      }
+      // Re-fit and force a full redraw — the canvas goes stale when detached from the DOM
+      cached.fitAddon.fit();
+      cached.terminal.refresh(0, cached.terminal.rows - 1);
+      void ipc
+        .terminalResize(workspaceId, sessionId, cached.terminal.cols, cached.terminal.rows)
+        .catch(() => undefined);
+      // Drain any output buffered while unmounted
+      const queued = pendingOutput.get(cacheKey);
+      if (queued?.length) {
+        for (const chunk of queued) {
+          cached.terminal.write(chunk);
+        }
+        pendingOutput.delete(cacheKey);
+      }
+      return;
+    }
+
+    // No cached instance — create a fresh terminal
     const terminal = new Terminal({
+      allowProposedApi: true,
       convertEol: false,
       cursorBlink: true,
       fontFamily: '"JetBrains Mono", monospace',
@@ -62,7 +114,13 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
+
+    const unicode11 = new Unicode11Addon();
+    terminal.loadAddon(unicode11);
+    terminal.unicode.activeVersion = "11";
+
     terminal.open(container);
+
     fitAddon.fit();
     void ipc
       .terminalResize(workspaceId, sessionId, terminal.cols, terminal.rows)
@@ -76,18 +134,24 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       void ipc.terminalResize(workspaceId, sessionId, cols, rows).catch(() => undefined);
     });
 
-    const queued = pendingOutputRef.current.get(sessionId);
+    // Drain any output that arrived before the terminal was created
+    const queued = pendingOutput.get(cacheKey);
     if (queued?.length) {
       for (const chunk of queued) {
         terminal.write(chunk);
       }
-      pendingOutputRef.current.delete(sessionId);
+      pendingOutput.delete(cacheKey);
     }
 
-    terminalsRef.current.set(sessionId, {
+    let disposed = false;
+    cachedTerminals.set(cacheKey, {
       terminal,
       fitAddon,
       dispose: () => {
+        if (disposed) {
+          return;
+        }
+        disposed = true;
         writeDisposable.dispose();
         resizeDisposable.dispose();
         terminal.dispose();
@@ -99,7 +163,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     if (!activeSessionId) {
       return;
     }
-    const active = terminalsRef.current.get(activeSessionId);
+    const active = cachedTerminals.get(terminalCacheKey(workspaceId, activeSessionId));
     if (!active) {
       return;
     }
@@ -124,17 +188,19 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       ensureTerminal(session.id);
     }
 
+    // Dispose terminals for sessions that no longer exist (explicitly closed)
     const sessionIds = new Set(sessions.map((session) => session.id));
-    for (const [sessionId, entry] of terminalsRef.current.entries()) {
-      if (sessionIds.has(sessionId)) {
+    const workspacePrefix = terminalWorkspacePrefix(workspaceId);
+    for (const cacheKey of cachedTerminals.keys()) {
+      if (!cacheKey.startsWith(workspacePrefix)) {
         continue;
       }
-      entry.dispose();
-      terminalsRef.current.delete(sessionId);
-      pendingOutputRef.current.delete(sessionId);
-      containerRefs.current.delete(sessionId);
+      const sessionId = cacheKey.slice(workspacePrefix.length);
+      if (!sessionIds.has(sessionId)) {
+        destroyCachedTerminal(workspaceId, sessionId);
+      }
     }
-  }, [sessions, ensureTerminal]);
+  }, [sessions, ensureTerminal, workspaceId]);
 
   useEffect(() => {
     fitActiveTerminal();
@@ -170,15 +236,17 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     let disposed = false;
 
     void listenTerminalOutput(workspaceId, (event) => {
-      const entry = terminalsRef.current.get(event.sessionId);
+      const cacheKey = terminalCacheKey(workspaceId, event.sessionId);
+      const entry = cachedTerminals.get(cacheKey);
       if (entry) {
         entry.terminal.write(event.data);
         return;
       }
 
-      const current = pendingOutputRef.current.get(event.sessionId) ?? [];
+      // Buffer output — the terminal may not be created yet
+      const current = pendingOutput.get(cacheKey) ?? [];
       current.push(event.data);
-      pendingOutputRef.current.set(event.sessionId, current);
+      pendingOutput.set(cacheKey, current);
     }).then((fn) => {
       if (disposed) {
         fn();
@@ -188,6 +256,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     });
 
     void listenTerminalExit(workspaceId, (event) => {
+      destroyCachedTerminal(workspaceId, event.sessionId);
       handleSessionExit(workspaceId, event.sessionId);
     }).then((fn) => {
       if (disposed) {
@@ -208,14 +277,10 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     };
   }, [handleSessionExit, workspaceId]);
 
+  // On unmount: only clear DOM refs. Do NOT dispose terminals — they live in the module cache.
   useEffect(() => {
     return () => {
-      for (const entry of terminalsRef.current.values()) {
-        entry.dispose();
-      }
-      terminalsRef.current.clear();
       containerRefs.current.clear();
-      pendingOutputRef.current.clear();
     };
   }, []);
 
@@ -226,7 +291,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
   const spawnNewSession = useCallback(() => {
     const active = activeSessionId
-      ? terminalsRef.current.get(activeSessionId)
+      ? cachedTerminals.get(terminalCacheKey(workspaceId, activeSessionId))
       : undefined;
     const cols = active?.terminal.cols ?? DEFAULT_COLS;
     const rows = active?.terminal.rows ?? DEFAULT_ROWS;
@@ -249,26 +314,17 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
               >
                 <SquareTerminal size={12} />
                 <span className="terminal-tab-label">Terminal {index + 1}</span>
-                <span
-                  role="button"
-                  tabIndex={0}
+                <button
+                  type="button"
                   className="terminal-tab-close"
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
                     void closeSession(workspaceId, session.id);
                   }}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") {
-                      return;
-                    }
-                    event.preventDefault();
-                    event.stopPropagation();
-                    void closeSession(workspaceId, session.id);
-                  }}
                 >
-                  <X size={11} />
-                </span>
+                  <X size={10} />
+                </button>
               </button>
             );
           })}
@@ -287,11 +343,19 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       <div className="terminal-body">
         {sessions.length === 0 ? (
           <div className="terminal-empty-state">
-            <p>{loading ? "Starting terminal..." : "No terminal session"}</p>
+            <SquareTerminal size={36} style={{ opacity: 0.18 }} />
+            <span className="terminal-empty-state-title">
+              {loading ? "Starting terminal..." : "No terminal session"}
+            </span>
             {!loading && (
-              <button type="button" className="btn-outline" onClick={spawnNewSession}>
-                New Terminal
-              </button>
+              <>
+                <span className="terminal-empty-state-subtitle">
+                  Open a new terminal to get started
+                </span>
+                <button type="button" className="btn-outline" onClick={spawnNewSession} style={{ marginTop: 4 }}>
+                  New Terminal
+                </button>
+              </>
             )}
           </div>
         ) : (
@@ -321,7 +385,8 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         )}
         {activeTerminal && (
           <div className="terminal-meta-bar" title={activeTerminal.cwd}>
-            {activeTerminal.cwd}
+            <Folder size={10} style={{ opacity: 0.5, flexShrink: 0 }} />
+            <span className="terminal-meta-bar-path">{activeTerminal.cwd}</span>
           </div>
         )}
       </div>

@@ -256,6 +256,7 @@ export function ChatPanel() {
   const openTerminal = useTerminalStore((s) => s.openTerminal);
   const closeTerminal = useTerminalStore((s) => s.closeTerminal);
   const setTerminalPanelSize = useTerminalStore((s) => s.setPanelSize);
+  const syncTerminalSessions = useTerminalStore((s) => s.syncSessions);
   const viewportRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -372,6 +373,12 @@ export function ChatPanel() {
 
     return approvals;
   }, [messages]);
+
+  useEffect(() => {
+    if (activeWorkspaceId) {
+      void syncTerminalSessions(activeWorkspaceId);
+    }
+  }, [activeWorkspaceId, syncTerminalSessions]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
