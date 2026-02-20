@@ -704,20 +704,41 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
 function CollapsedRail({
   onHoverStart,
   onHoverEnd,
+  flyoutVisible,
 }: {
   onHoverStart: () => void;
   onHoverEnd: () => void;
+  flyoutVisible?: boolean;
 }) {
   const projects = useWorkspaceStore((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
-  const toggleSidebarPin = useUiStore((s) => s.toggleSidebarPin);
+  const setActiveRepo = useWorkspaceStore((s) => s.setActiveRepo);
+  const createThread = useThreadStore((s) => s.createThread);
+  const bindChatThread = useChatStore((s) => s.setActiveThread);
+
+  async function onNewThread() {
+    const activeProject = projects.find((p) => p.id === activeWorkspaceId);
+    if (!activeProject) return;
+    setActiveRepo(null);
+    const createdThreadId = await createThread({
+      workspaceId: activeProject.id,
+      repoId: null,
+      title: "New Thread",
+    });
+    if (!createdThreadId) return;
+    await bindChatThread(createdThreadId);
+  }
 
   return (
     <div
       className="sb-rail"
       onMouseEnter={onHoverStart}
       onMouseLeave={onHoverEnd}
+      style={{
+        opacity: flyoutVisible ? 0 : 1,
+        transition: "opacity 150ms var(--ease-out)",
+      }}
     >
       {/* Drag region for traffic lights */}
       <div
@@ -726,15 +747,22 @@ function CollapsedRail({
         style={{ height: 42, width: "100%", flexShrink: 0 }}
       />
 
-      {/* Pin button */}
+      {/* New thread button */}
       <button
         type="button"
         className="sb-rail-btn"
-        onClick={toggleSidebarPin}
-        title="Pin sidebar"
-        style={{ marginBottom: 4 }}
+        onClick={() => void onNewThread()}
+        disabled={!activeWorkspaceId}
+        title="New thread"
+        style={{
+          marginBottom: 4,
+          color: activeWorkspaceId ? "var(--accent)" : "var(--text-3)",
+          opacity: activeWorkspaceId ? 1 : 0.45,
+          border: "1px solid var(--border-accent)",
+          background: "var(--accent-dim)",
+        }}
       >
-        <Pin size={15} />
+        <Plus size={16} strokeWidth={2.2} />
       </button>
 
       <div className="sb-rail-divider" />
@@ -828,7 +856,7 @@ export function Sidebar() {
 
   return (
     <>
-      <CollapsedRail onHoverStart={handleHoverStart} onHoverEnd={handleHoverEnd} />
+      <CollapsedRail onHoverStart={handleHoverStart} onHoverEnd={handleHoverEnd} flyoutVisible={hovered} />
 
       {/* Flyout overlay */}
       {createPortal(

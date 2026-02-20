@@ -25,6 +25,8 @@ interface WorkspaceState {
   setAllReposTrustLevel: (trustLevel: TrustLevel) => Promise<void>;
 }
 
+const LAST_WORKSPACE_KEY = "panes:lastActiveWorkspaceId";
+
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],
   archivedWorkspaces: [],
@@ -36,7 +38,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ loading: true, error: undefined });
     try {
       const workspaces = await ipc.listWorkspaces();
-      const activeWorkspaceId = workspaces[0]?.id ?? null;
+      const savedId = localStorage.getItem(LAST_WORKSPACE_KEY);
+      const restored = savedId ? workspaces.find((w) => w.id === savedId) : null;
+      const activeWorkspaceId = restored?.id ?? null;
       set({ workspaces, activeWorkspaceId, loading: false });
       if (activeWorkspaceId) {
         await get().loadRepos(activeWorkspaceId);
@@ -148,6 +152,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
   setActiveWorkspace: async (workspaceId) => {
+    localStorage.setItem(LAST_WORKSPACE_KEY, workspaceId);
     set({ activeWorkspaceId: workspaceId, activeRepoId: null, repos: [], error: undefined });
     await get().loadRepos(workspaceId);
   },

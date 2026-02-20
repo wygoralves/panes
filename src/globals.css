@@ -1445,7 +1445,7 @@ button, input, textarea, select {
 .sb-flyout-wrapper {
   position: fixed;
   top: 0;
-  left: 52px;
+  left: 0;
   bottom: 0;
   z-index: 9990;
   pointer-events: none;

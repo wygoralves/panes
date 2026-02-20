@@ -105,6 +105,8 @@ function threadMatchesRequestedModel(thread: Thread, modelId: string): boolean {
   return thread.modelId === modelId || readThreadLastModelId(thread) === modelId;
 }
 
+const LAST_THREAD_KEY = "panes:lastActiveThreadId";
+
 export const useThreadStore = create<ThreadState>((set, get) => ({
   threads: [],
   threadsByWorkspace: {},
@@ -131,6 +133,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       const threadsByWorkspace = mergeWorkspaceThreads(get().threadsByWorkspace, workspaceId, workspaceThreads);
       const threads = flattenThreadsByWorkspace(threadsByWorkspace);
 
+      localStorage.setItem(LAST_THREAD_KEY, created.id);
       set({
         threadsByWorkspace,
         threads,
@@ -277,11 +280,16 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       }, {});
       const threads = flattenThreadsByWorkspace(threadsByWorkspace);
       const active = get().activeThreadId;
+      const savedId = localStorage.getItem(LAST_THREAD_KEY);
+      const restoredId =
+        (active && threads.some((item) => item.id === active)) ? active
+        : (savedId && threads.some((item) => item.id === savedId)) ? savedId
+        : null;
 
       set({
         threadsByWorkspace,
         threads,
-        activeThreadId: active && threads.some((item) => item.id === active) ? active : threads[0]?.id ?? null,
+        activeThreadId: restoredId,
         loading: false,
       });
     } catch (error) {
@@ -364,7 +372,14 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       set({ loading: false, error: String(error) });
     }
   },
-  setActiveThread: (threadId) => set({ activeThreadId: threadId }),
+  setActiveThread: (threadId) => {
+    if (threadId) {
+      localStorage.setItem(LAST_THREAD_KEY, threadId);
+    } else {
+      localStorage.removeItem(LAST_THREAD_KEY);
+    }
+    set({ activeThreadId: threadId });
+  },
   setThreadReasoningEffortLocal: (threadId, reasoningEffort) =>
     set((state) => {
       const updateThread = (thread: Thread) =>
