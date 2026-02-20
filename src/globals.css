@@ -1300,20 +1300,53 @@ button, input, textarea, select {
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  gap: 8px;
+  gap: 16px;
   color: var(--text-3);
+  text-align: center;
 }
 
 .terminal-empty-state-title {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-2);
+  margin: 0 0 4px;
 }
 
 .terminal-empty-state-subtitle {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-3);
-  opacity: 0.7;
+  margin: 0;
+}
+
+.terminal-empty-state-icon-box {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-lg);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+}
+
+.terminal-new-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  background: var(--accent-dim);
+  border: 1px solid var(--border-accent);
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.terminal-new-btn:hover {
+  background: var(--accent-dim-hover, rgba(99, 102, 241, 0.15));
+  border-color: var(--accent);
 }
 
 .terminal-error-banner {

@@ -342,20 +342,25 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
       <div className="terminal-body">
         {sessions.length === 0 ? (
-          <div className="terminal-empty-state">
-            <SquareTerminal size={36} style={{ opacity: 0.18 }} />
-            <span className="terminal-empty-state-title">
-              {loading ? "Starting terminal..." : "No terminal session"}
-            </span>
-            {!loading && (
-              <>
-                <span className="terminal-empty-state-subtitle">
+          <div className="terminal-empty-state animate-fade-in">
+            <div className="terminal-empty-state-icon-box">
+              <SquareTerminal size={20} opacity={0.5} />
+            </div>
+            <div>
+              <p className="terminal-empty-state-title">
+                {loading ? "Starting terminal..." : "No terminal session"}
+              </p>
+              {!loading && (
+                <p className="terminal-empty-state-subtitle">
                   Open a new terminal to get started
-                </span>
-                <button type="button" className="btn-outline" onClick={spawnNewSession} style={{ marginTop: 4 }}>
-                  New Terminal
-                </button>
-              </>
+                </p>
+              )}
+            </div>
+            {!loading && (
+              <button type="button" className="terminal-new-btn" onClick={spawnNewSession}>
+                <Plus size={12} />
+                New Terminal
+              </button>
             )}
           </div>
         ) : (
