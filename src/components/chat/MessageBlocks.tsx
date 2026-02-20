@@ -552,13 +552,25 @@ function ActionStatusBadge({ status }: { status: string }) {
 function ActionBlockView({ block }: { block: ActionBlock }) {
   const outputChunks = Array.isArray(block.outputChunks) ? block.outputChunks : [];
   const outputText = useMemo(
-    () => outputChunks.map((chunk) => String(chunk.content ?? "")).join(""),
+    () => {
+      if (outputChunks.length === 0) {
+        return "";
+      }
+      if (outputChunks.length === 1) {
+        const firstContent = outputChunks[0].content;
+        return typeof firstContent === "string" ? firstContent : String(firstContent ?? "");
+      }
+      return outputChunks.map((chunk) => String(chunk.content ?? "")).join("");
+    },
     [outputChunks],
   );
   const Icon = actionIcons[block.actionType] ?? Terminal;
   const isRunning = block.status === "running";
   const isPending = block.status === "pending";
   const hasBody = outputChunks.length > 0 || Boolean(block.result?.error);
+  const actionDetails = (block.details ?? {}) as Record<string, unknown>;
+  const outputTruncated =
+    "outputTruncated" in actionDetails && actionDetails.outputTruncated === true;
   const [expanded, setExpanded] = useState(isRunning || isPending);
   const canToggle = hasBody;
 
@@ -608,12 +620,30 @@ function ActionBlockView({ block }: { block: ActionBlock }) {
             </pre>
           )}
 
+          {outputTruncated && (
+            <div
+              style={{
+                margin: 0,
+                padding: "5px 12px",
+                borderTop: outputChunks.length > 0 ? "1px solid var(--border)" : undefined,
+                background: "rgba(148, 163, 184, 0.06)",
+                fontSize: 10.5,
+                color: "var(--text-3)",
+              }}
+            >
+              Showing latest action output only (older chunks truncated for performance).
+            </div>
+          )}
+
           {block.result?.error && (
             <pre
               style={{
                 margin: 0,
                 padding: "8px 12px",
-                borderTop: outputChunks.length > 0 ? "1px solid rgba(248, 113, 113, 0.2)" : undefined,
+                borderTop:
+                  outputChunks.length > 0 || outputTruncated
+                    ? "1px solid rgba(248, 113, 113, 0.2)"
+                    : undefined,
                 background: "rgba(248, 113, 113, 0.06)",
                 fontSize: 11.5,
                 lineHeight: 1.5,

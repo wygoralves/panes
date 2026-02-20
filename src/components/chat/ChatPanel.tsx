@@ -911,7 +911,7 @@ export function ChatPanel() {
     [respondApproval],
   );
 
-  const virtualWindow = useMemo(() => {
+  const virtualizedLayout = useMemo(() => {
     if (!virtualizationEnabled || messages.length === 0) {
       return null;
     }
@@ -927,6 +927,19 @@ export function ChatPanel() {
       offsets[index + 1] =
         offsets[index] + rowHeight + (index < rowCount - 1 ? MESSAGE_ROW_GAP : 0);
     }
+
+    return {
+      offsets,
+      rowCount,
+    };
+  }, [messages, virtualizationEnabled, listLayoutVersion]);
+
+  const virtualWindow = useMemo(() => {
+    if (!virtualizedLayout) {
+      return null;
+    }
+
+    const { offsets, rowCount } = virtualizedLayout;
 
     const visibleStart = Math.max(0, viewportScrollTop - MESSAGE_OVERSCAN_PX);
     const visibleEnd =
@@ -969,11 +982,9 @@ export function ChatPanel() {
       bottomSpacerHeight: offsets[rowCount] - offsets[endIndexExclusive],
     };
   }, [
-    messages,
-    virtualizationEnabled,
+    virtualizedLayout,
     viewportHeight,
     viewportScrollTop,
-    listLayoutVersion,
   ]);
 
   function renderMessageItem(message: Message, index: number) {
