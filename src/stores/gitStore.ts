@@ -7,6 +7,7 @@ import type {
   GitStatus,
 } from "../types";
 import { ipc } from "../lib/ipc";
+import { recordPerfMetric } from "../lib/perfTelemetry";
 
 const BRANCH_PAGE_SIZE = 200;
 const COMMIT_PAGE_SIZE = 100;
@@ -90,6 +91,7 @@ export const useGitStore = create<GitState>((set, get) => ({
   stashes: [],
   refresh: async (repoPath) => {
     set({ loading: true, error: undefined });
+    const startedAt = performance.now();
 
     try {
       const status = await ipc.getGitStatus(repoPath);
@@ -143,8 +145,16 @@ export const useGitStore = create<GitState>((set, get) => ({
         diff: selectedDiff,
         loading: false,
       });
+      recordPerfMetric("git.refresh.ms", performance.now() - startedAt, {
+        repoPath,
+        fileCount: status.files.length,
+      });
     } catch (error) {
       set({ loading: false, error: String(error) });
+      recordPerfMetric("git.refresh.ms", performance.now() - startedAt, {
+        repoPath,
+        failed: true,
+      });
     }
   },
   setActiveView: (view) => {
@@ -154,11 +164,23 @@ export const useGitStore = create<GitState>((set, get) => ({
     set({ branchScope: scope, error: undefined });
   },
   selectFile: async (repoPath, filePath, staged = false) => {
+    const startedAt = performance.now();
     try {
       const diff = await ipc.getFileDiff(repoPath, filePath, staged);
       set({ selectedFile: filePath, selectedFileStaged: staged, diff, error: undefined });
+      recordPerfMetric("git.file_diff.ms", performance.now() - startedAt, {
+        repoPath,
+        filePath,
+        staged,
+      });
     } catch (error) {
       set({ error: String(error) });
+      recordPerfMetric("git.file_diff.ms", performance.now() - startedAt, {
+        repoPath,
+        filePath,
+        staged,
+        failed: true,
+      });
     }
   },
   stage: async (repoPath, filePath) => {

@@ -1,4 +1,4 @@
-import { FormEvent, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { FormEvent, Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Send,
   Square,
@@ -19,10 +19,10 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { ipc } from "../../lib/ipc";
+import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { MessageBlocks } from "./MessageBlocks";
 import { isRequestUserInputApproval } from "./toolInputApproval";
 import { Dropdown } from "../shared/Dropdown";
-import { TerminalPanel } from "../terminal/TerminalPanel";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import type { ApprovalBlock, ApprovalResponse, ContentBlock, Message, TrustLevel } from "../../types";
 
@@ -30,6 +30,11 @@ const MESSAGE_VIRTUALIZATION_THRESHOLD = 40;
 const MESSAGE_ESTIMATED_ROW_HEIGHT = 220;
 const MESSAGE_ROW_GAP = 16;
 const MESSAGE_OVERSCAN_PX = 700;
+const LazyTerminalPanel = lazy(() =>
+  import("../terminal/TerminalPanel").then((module) => ({
+    default: module.TerminalPanel,
+  })),
+);
 
 interface MeasuredMessageRowProps {
   messageId: string;
@@ -365,6 +370,9 @@ const MessageRow = memo(
 );
 
 export function ChatPanel() {
+  const renderStartedAtRef = useRef(performance.now());
+  renderStartedAtRef.current = performance.now();
+
   const [input, setInput] = useState("");
   const [selectedEngineId, setSelectedEngineId] = useState("codex");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
@@ -1059,6 +1067,15 @@ export function ChatPanel() {
 
   const virtualizationEnabled =
     messages.length >= MESSAGE_VIRTUALIZATION_THRESHOLD;
+
+  useEffect(() => {
+    recordPerfMetric("chat.render.commit.ms", performance.now() - renderStartedAtRef.current, {
+      threadId,
+      messageCount: messages.length,
+      virtualized: virtualizationEnabled,
+      streaming,
+    });
+  }, [messages.length, streaming, threadId, virtualizationEnabled]);
 
   const handleApproval = useCallback(
     (approvalId: string, response: ApprovalResponse) => {
@@ -2062,7 +2079,24 @@ export function ChatPanel() {
               onResize={(size) => setTerminalPanelSize(activeWorkspaceId, size)}
             >
               <div className="terminal-split-panel">
-                <TerminalPanel workspaceId={activeWorkspaceId} />
+                <Suspense
+                  fallback={
+                    <div
+                      style={{
+                        height: "100%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 12,
+                        color: "var(--text-3)",
+                      }}
+                    >
+                      Loading terminal...
+                    </div>
+                  }
+                >
+                  <LazyTerminalPanel workspaceId={activeWorkspaceId} />
+                </Suspense>
               </div>
             </Panel>
           </>

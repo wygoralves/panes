@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { ipc, listenThreadEvents } from "../lib/ipc";
+import { recordPerfMetric } from "../lib/perfTelemetry";
 import type {
   ApprovalResponse,
   ActionBlock,
@@ -462,6 +463,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const queuedStreamEvents: StreamEvent[] = [];
       let streamFlushTimer: number | null = null;
       let streamFlushInProgress = false;
+      let eventRateWindowStartedAt = performance.now();
+      let eventRateWindowCount = 0;
+
+      const emitEventRateMetric = (now: number) => {
+        const elapsedMs = now - eventRateWindowStartedAt;
+        if (elapsedMs <= 0 || eventRateWindowCount <= 0) {
+          eventRateWindowStartedAt = now;
+          eventRateWindowCount = 0;
+          return;
+        }
+        const eventsPerSecond = (eventRateWindowCount * 1000) / elapsedMs;
+        recordPerfMetric("chat.stream.events_per_sec", eventsPerSecond, {
+          threadId,
+          events: eventRateWindowCount,
+          windowMs: elapsedMs,
+        });
+        eventRateWindowStartedAt = now;
+        eventRateWindowCount = 0;
+      };
 
       const flushQueuedStreamEvents = () => {
         if (streamFlushInProgress) {
@@ -477,6 +497,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         streamFlushInProgress = true;
         const batch = queuedStreamEvents.splice(0, queuedStreamEvents.length);
+        const flushStartedAt = performance.now();
         set((state) => {
           if (bindSeq !== activeThreadBindSeq || state.threadId !== threadId) {
             return state;
@@ -503,6 +524,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           };
         });
         streamFlushInProgress = false;
+        recordPerfMetric("chat.stream.flush.ms", performance.now() - flushStartedAt, {
+          threadId,
+          batchSize: batch.length,
+        });
 
         if (queuedStreamEvents.length > 0) {
           scheduleStreamFlush();
@@ -524,8 +549,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return;
         }
         queuedStreamEvents.push(event);
+        eventRateWindowCount += 1;
+        const now = performance.now();
+        if (now - eventRateWindowStartedAt >= 1000) {
+          emitEventRateMetric(now);
+        }
         if (event.type === "TurnCompleted") {
           flushQueuedStreamEvents();
+          emitEventRateMetric(performance.now());
           return;
         }
         scheduleStreamFlush();
@@ -537,6 +568,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           streamFlushTimer = null;
         }
         queuedStreamEvents.length = 0;
+        emitEventRateMetric(performance.now());
         unlistenStream();
       };
 

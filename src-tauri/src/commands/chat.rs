@@ -17,6 +17,7 @@ use crate::{
 };
 
 const MAX_THREAD_TITLE_CHARS: usize = 72;
+const STREAM_EVENT_COALESCE_MAX_CHARS: usize = 8_192;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -380,94 +381,103 @@ async fn run_turn(
     let mut message_status = MessageStatusDto::Streaming;
     let mut thread_status = ThreadStatusDto::Streaming;
     let mut token_usage: Option<(u64, u64)> = None;
+    let stream_event_topic = format!("stream-event-{}", thread.id);
+    let approval_event_topic = format!("approval-request-{}", thread.id);
+    let mut pending_event: Option<EngineEvent> = None;
 
-    while let Some(event) = event_rx.recv().await {
-        let _ = app.emit(&format!("stream-event-{}", thread.id), &event);
-        if matches!(event, EngineEvent::ApprovalRequested { .. }) {
-            let _ = app.emit(&format!("approval-request-{}", thread.id), &event);
-        }
+    while let Some(incoming_event) = event_rx.recv().await {
+        let mut current_event = incoming_event;
 
-        if state.config.debug.persist_engine_event_logs {
-            if let Ok(value) = serde_json::to_value(&event) {
-                let _ = db::actions::append_event_log(
-                    &state.db,
-                    &thread.id,
+        loop {
+            if let Some(previous_event) = pending_event.take() {
+                match try_coalesce_stream_events(previous_event, current_event) {
+                    Ok(merged_event) => {
+                        if coalesced_event_content_len(&merged_event)
+                            >= STREAM_EVENT_COALESCE_MAX_CHARS
+                        {
+                            process_stream_event(
+                                &app,
+                                &state,
+                                &thread,
+                                &assistant_message_id,
+                                &stream_event_topic,
+                                &approval_event_topic,
+                                &merged_event,
+                                &mut blocks,
+                                &mut action_index,
+                                &mut approval_index,
+                                &mut message_status,
+                                &mut thread_status,
+                                &mut token_usage,
+                                max_output_chars,
+                            );
+                        } else {
+                            pending_event = Some(merged_event);
+                        }
+                        break;
+                    }
+                    Err((unmerged_previous_event, unmerged_current_event)) => {
+                        process_stream_event(
+                            &app,
+                            &state,
+                            &thread,
+                            &assistant_message_id,
+                            &stream_event_topic,
+                            &approval_event_topic,
+                            &unmerged_previous_event,
+                            &mut blocks,
+                            &mut action_index,
+                            &mut approval_index,
+                            &mut message_status,
+                            &mut thread_status,
+                            &mut token_usage,
+                            max_output_chars,
+                        );
+                        current_event = unmerged_current_event;
+                    }
+                }
+            } else if is_coalescable_stream_event(&current_event) {
+                pending_event = Some(current_event);
+                break;
+            } else {
+                process_stream_event(
+                    &app,
+                    &state,
+                    &thread,
                     &assistant_message_id,
-                    &value,
+                    &stream_event_topic,
+                    &approval_event_topic,
+                    &current_event,
+                    &mut blocks,
+                    &mut action_index,
+                    &mut approval_index,
+                    &mut message_status,
+                    &mut thread_status,
+                    &mut token_usage,
+                    max_output_chars,
                 );
+                break;
             }
         }
+    }
 
-        match &event {
-            EngineEvent::ActionStarted {
-                action_id,
-                engine_action_id,
-                action_type,
-                summary,
-                details,
-            } => {
-                let _ = db::actions::insert_action_started(
-                    &state.db,
-                    action_id,
-                    &thread.id,
-                    &assistant_message_id,
-                    engine_action_id.as_deref(),
-                    action_type,
-                    summary,
-                    details,
-                );
-            }
-            EngineEvent::ActionCompleted { action_id, result } => {
-                let _ = db::actions::update_action_completed(&state.db, action_id, result);
-            }
-            EngineEvent::ApprovalRequested {
-                approval_id,
-                action_type,
-                summary,
-                details,
-            } => {
-                let _ = db::actions::insert_approval(
-                    &state.db,
-                    approval_id,
-                    &thread.id,
-                    &assistant_message_id,
-                    action_type,
-                    summary,
-                    details,
-                );
-            }
-            _ => {}
-        }
-
-        let progress = apply_event_to_blocks(
+    if let Some(event) = pending_event.take() {
+        process_stream_event(
+            &app,
+            &state,
+            &thread,
+            &assistant_message_id,
+            &stream_event_topic,
+            &approval_event_topic,
+            &event,
             &mut blocks,
             &mut action_index,
             &mut approval_index,
-            &event,
+            &mut message_status,
+            &mut thread_status,
+            &mut token_usage,
             max_output_chars,
         );
-
-        if let Some(status) = progress.message_status {
-            message_status = status;
-        }
-
-        if let Some(status) = progress.thread_status {
-            thread_status = status;
-            let _ = db::threads::update_thread_status(&state.db, &thread.id, thread_status.clone());
-        }
-
-        if let Some(tokens) = progress.token_usage {
-            token_usage = Some(tokens);
-        }
-
-        if let Ok(blocks_json) = serde_json::to_value(&blocks) {
-            let _ = db::messages::update_assistant_blocks(
-                &state.db,
-                &assistant_message_id,
-                &blocks_json,
-                message_status.clone(),
-            );
-        }
     }
 
     match engine_task.await {
@@ -479,7 +489,7 @@ async fn run_turn(
             message_status = MessageStatusDto::Error;
             thread_status = ThreadStatusDto::Error;
             let _ = app.emit(
-                &format!("stream-event-{}", thread.id),
+                &stream_event_topic,
                 EngineEvent::Error {
                     message: format!("{error}"),
                     recoverable: false,
@@ -535,6 +545,193 @@ async fn run_turn(
     }
 
     state.turns.finish(&thread.id).await;
+}
+
+fn is_coalescable_stream_event(event: &EngineEvent) -> bool {
+    matches!(
+        event,
+        EngineEvent::TextDelta { .. }
+            | EngineEvent::ThinkingDelta { .. }
+            | EngineEvent::ActionOutputDelta { .. }
+    )
+}
+
+fn coalesced_event_content_len(event: &EngineEvent) -> usize {
+    match event {
+        EngineEvent::TextDelta { content }
+        | EngineEvent::ThinkingDelta { content }
+        | EngineEvent::ActionOutputDelta { content, .. } => content.len(),
+        _ => 0,
+    }
+}
+
+fn same_output_stream(left: &OutputStream, right: &OutputStream) -> bool {
+    matches!(
+        (left, right),
+        (OutputStream::Stdout, OutputStream::Stdout) | (OutputStream::Stderr, OutputStream::Stderr)
+    )
+}
+
+fn try_coalesce_stream_events(
+    previous: EngineEvent,
+    next: EngineEvent,
+) -> Result<EngineEvent, (EngineEvent, EngineEvent)> {
+    match (previous, next) {
+        (
+            EngineEvent::TextDelta { mut content },
+            EngineEvent::TextDelta {
+                content: next_content,
+            },
+        ) => {
+            content.push_str(&next_content);
+            Ok(EngineEvent::TextDelta { content })
+        }
+        (
+            EngineEvent::ThinkingDelta { mut content },
+            EngineEvent::ThinkingDelta {
+                content: next_content,
+            },
+        ) => {
+            content.push_str(&next_content);
+            Ok(EngineEvent::ThinkingDelta { content })
+        }
+        (
+            EngineEvent::ActionOutputDelta {
+                action_id,
+                stream,
+                mut content,
+            },
+            EngineEvent::ActionOutputDelta {
+                action_id: next_action_id,
+                stream: next_stream,
+                content: next_content,
+            },
+        ) => {
+            if action_id == next_action_id && same_output_stream(&stream, &next_stream) {
+                content.push_str(&next_content);
+                Ok(EngineEvent::ActionOutputDelta {
+                    action_id,
+                    stream,
+                    content,
+                })
+            } else {
+                Err((
+                    EngineEvent::ActionOutputDelta {
+                        action_id,
+                        stream,
+                        content,
+                    },
+                    EngineEvent::ActionOutputDelta {
+                        action_id: next_action_id,
+                        stream: next_stream,
+                        content: next_content,
+                    },
+                ))
+            }
+        }
+        (previous, next) => Err((previous, next)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_stream_event(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    thread: &ThreadDto,
+    assistant_message_id: &str,
+    stream_event_topic: &str,
+    approval_event_topic: &str,
+    event: &EngineEvent,
+    blocks: &mut Vec<ContentBlock>,
+    action_index: &mut HashMap<String, usize>,
+    approval_index: &mut HashMap<String, usize>,
+    message_status: &mut MessageStatusDto,
+    thread_status: &mut ThreadStatusDto,
+    token_usage: &mut Option<(u64, u64)>,
+    max_output_chars: usize,
+) {
+    let _ = app.emit(stream_event_topic, event);
+    if matches!(event, EngineEvent::ApprovalRequested { .. }) {
+        let _ = app.emit(approval_event_topic, event);
+    }
+
+    if state.config.debug.persist_engine_event_logs {
+        if let Ok(value) = serde_json::to_value(event) {
+            let _ =
+                db::actions::append_event_log(&state.db, &thread.id, assistant_message_id, &value);
+        }
+    }
+
+    match event {
+        EngineEvent::ActionStarted {
+            action_id,
+            engine_action_id,
+            action_type,
+            summary,
+            details,
+        } => {
+            let _ = db::actions::insert_action_started(
+                &state.db,
+                action_id,
+                &thread.id,
+                assistant_message_id,
+                engine_action_id.as_deref(),
+                action_type,
+                summary,
+                details,
+            );
+        }
+        EngineEvent::ActionCompleted { action_id, result } => {
+            let _ = db::actions::update_action_completed(&state.db, action_id, result);
+        }
+        EngineEvent::ApprovalRequested {
+            approval_id,
+            action_type,
+            summary,
+            details,
+        } => {
+            let _ = db::actions::insert_approval(
+                &state.db,
+                approval_id,
+                &thread.id,
+                assistant_message_id,
+                action_type,
+                summary,
+                details,
+            );
+        }
+        _ => {}
+    }
+
+    let progress = apply_event_to_blocks(
+        blocks,
+        action_index,
+        approval_index,
+        event,
+        max_output_chars,
+    );
+
+    if let Some(status) = progress.message_status {
+        *message_status = status;
+    }
+
+    if let Some(status) = progress.thread_status {
+        *thread_status = status;
+        let _ = db::threads::update_thread_status(&state.db, &thread.id, thread_status.clone());
+    }
+
+    if let Some(tokens) = progress.token_usage {
+        *token_usage = Some(tokens);
+    }
+
+    if let Ok(blocks_json) = serde_json::to_value(blocks) {
+        let _ = db::messages::update_assistant_blocks(
+            &state.db,
+            assistant_message_id,
+            &blocks_json,
+            message_status.clone(),
+        );
+    }
 }
 
 async fn maybe_update_thread_title(

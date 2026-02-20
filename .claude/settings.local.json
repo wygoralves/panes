@@ -19,7 +19,11 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:www.npmjs.com)",
       "WebFetch(domain:www.usmartcloud.com)",
-      "WebFetch(domain:xtermjs.org)"
+      "WebFetch(domain:xtermjs.org)",
+      "Bash(rsvg-convert:*)",
+      "Bash(sips:*)",
+      "Bash(git status:*)",
+      "Bash(magick:*)"
     ]
   }
 }
