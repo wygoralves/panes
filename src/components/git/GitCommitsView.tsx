@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { GitCommitHorizontal } from "lucide-react";
+import { useEffect, useState, useMemo } from "react";
+import { GitCommitHorizontal, Loader2, Search, X } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
 import type { Repo } from "../../types";
 
@@ -28,9 +28,37 @@ export function GitCommitsView({ repo }: Props) {
     loadMoreCommits,
   } = useGitStore();
 
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [filterQuery, setFilterQuery] = useState("");
+
   useEffect(() => {
     void loadCommits(repo.path, false);
   }, [repo.path, loadCommits]);
+
+  useEffect(() => {
+    setFilterQuery("");
+  }, [repo.path]);
+
+  const filteredCommits = useMemo(() => {
+    const q = filterQuery.toLowerCase().trim();
+    if (!q) return commits;
+    return commits.filter(
+      (c) =>
+        c.subject.toLowerCase().includes(q) ||
+        c.shortHash.toLowerCase().includes(q) ||
+        c.authorName.toLowerCase().includes(q),
+    );
+  }, [commits, filterQuery]);
+
+  async function onLoadMore() {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      await loadMoreCommits(repo.path);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   return (
     <>
@@ -45,8 +73,41 @@ export function GitCommitsView({ repo }: Props) {
         }}
       >
         <span>History</span>
-        <span>{commitsTotal} commits</span>
+        <span>
+          {filterQuery
+            ? `${filteredCommits.length}/${commitsTotal} commits`
+            : `${commitsTotal} commits`}
+        </span>
       </div>
+
+      {commits.length > 0 && (
+        <div className="git-filter-bar">
+          <Search size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+          <input
+            type="text"
+            className="git-inline-input"
+            placeholder="Filter commits..."
+            value={filterQuery}
+            onChange={(e) => setFilterQuery(e.target.value)}
+            style={{ padding: "3px 8px", fontSize: 11 }}
+          />
+          {filterQuery && (
+            <button
+              type="button"
+              className="git-toolbar-btn"
+              style={{ padding: 2 }}
+              onClick={() => setFilterQuery("")}
+            >
+              <X size={12} />
+            </button>
+          )}
+          {filterQuery && (
+            <span style={{ fontSize: 10, color: "var(--text-3)", flexShrink: 0 }}>
+              {filteredCommits.length}/{commits.length}
+            </span>
+          )}
+        </div>
+      )}
 
       <div style={{ flex: 1, overflow: "auto" }}>
         {commits.length === 0 ? (
@@ -58,7 +119,9 @@ export function GitCommitsView({ repo }: Props) {
             <p className="git-empty-sub">Commit changes to build history</p>
           </div>
         ) : (
-          commits.map((entry) => (
+          filteredCommits.length === 0 ? (
+            <p className="git-empty-inline">No matching commits</p>
+          ) : filteredCommits.map((entry) => (
             <div key={entry.hash} className="git-commit-row">
               <div
                 style={{
@@ -99,19 +162,24 @@ export function GitCommitsView({ repo }: Props) {
           ))
         )}
 
-        {commitsHasMore && (
+        {commitsHasMore && !filterQuery && (
           <div style={{ padding: "10px 12px" }}>
             <button
               type="button"
               className="btn btn-outline"
-              onClick={() => void loadMoreCommits(repo.path)}
+              onClick={() => void onLoadMore()}
+              disabled={loadingMore}
               style={{
                 width: "100%",
                 justifyContent: "center",
                 fontSize: 12,
+                opacity: loadingMore ? 0.6 : 1,
               }}
             >
-              Load more
+              {loadingMore ? (
+                <Loader2 size={13} className="git-spin" />
+              ) : null}
+              {loadingMore ? "Loading..." : "Load more"}
             </button>
           </div>
         )}

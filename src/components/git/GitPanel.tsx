@@ -139,6 +139,23 @@ export function GitPanel() {
     void runSyncAction(action);
   }, [closeMoreMenu, runSyncAction]);
 
+  const onSyncClick = useCallback(async () => {
+    if (!activeRepo || syncDisabled) return;
+    setSyncingAction("fetch");
+    try {
+      setLocalError(undefined);
+      invalidateRepoCache(activeRepo.path);
+      await Promise.all([
+        refresh(activeRepo.path, { force: true }),
+        fetchRemote(activeRepo.path),
+      ]);
+    } catch (e) {
+      setLocalError(String(e));
+    } finally {
+      setSyncingAction(null);
+    }
+  }, [activeRepo, syncDisabled, invalidateRepoCache, refresh, fetchRemote]);
+
   // Auto-activate all repos when none are active
   useEffect(() => {
     if (!activeWorkspaceId || repos.length === 0) return;
@@ -285,6 +302,16 @@ export function GitPanel() {
         )}
 
         <button
+          type="button"
+          className="git-toolbar-btn no-drag"
+          disabled={syncDisabled}
+          title={loading || syncingAction !== null ? "Syncing..." : "Refresh & fetch"}
+          onClick={() => void onSyncClick()}
+        >
+          <RefreshCw size={14} className={loading || syncingAction !== null ? "git-spin" : ""} />
+        </button>
+
+        <button
           ref={moreTriggerRef}
           type="button"
           className="git-toolbar-btn no-drag"
@@ -379,15 +406,6 @@ export function GitPanel() {
             <button
               type="button"
               className="git-action-menu-item"
-              onClick={() => runSyncActionFromMore("fetch")}
-              disabled={syncDisabled}
-            >
-              <RefreshCw size={13} className={syncingAction === "fetch" ? "git-spin" : ""} />
-              Fetch
-            </button>
-            <button
-              type="button"
-              className="git-action-menu-item"
               onClick={() => runSyncActionFromMore("pull")}
               disabled={syncDisabled}
             >
@@ -404,21 +422,6 @@ export function GitPanel() {
               <ArrowUp size={13} className={syncingAction === "push" ? "git-spin" : ""} />
               <span style={{ flex: 1 }}>Push</span>
               <span className="git-sync-counter">↑{pushCount}</span>
-            </button>
-            <button
-              type="button"
-              className="git-action-menu-item"
-              onClick={() => {
-                closeMoreMenu();
-                if (activeRepo) {
-                  invalidateRepoCache(activeRepo.path);
-                  void refresh(activeRepo.path, { force: true });
-                }
-              }}
-              disabled={!activeRepo}
-            >
-              <RefreshCw size={13} className={loading ? "git-spin" : ""} />
-              Refresh
             </button>
             {activeView === "changes" && (
               <button

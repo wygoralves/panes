@@ -1,6 +1,6 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { Plus, X, MoreHorizontal, GitBranch, GitBranchPlus, Pencil, Trash2 } from "lucide-react";
+import { Plus, X, MoreHorizontal, GitBranch, GitBranchPlus, Pencil, Trash2, Loader2, Search } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
 import type { Repo, GitBranchScope } from "../../types";
 
@@ -39,6 +39,8 @@ export function GitBranchesView({ repo, onError }: Props) {
     deleteBranch,
   } = useGitStore();
 
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
+  const [filterQuery, setFilterQuery] = useState("");
   const [showNewBranch, setShowNewBranch] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
   const [renamingBranch, setRenamingBranch] = useState<string | null>(null);
@@ -53,6 +55,16 @@ export function GitBranchesView({ repo, onError }: Props) {
   useEffect(() => {
     void loadBranches(repo.path, branchScope);
   }, [repo.path, branchScope, loadBranches]);
+
+  useEffect(() => {
+    setFilterQuery("");
+  }, [repo.path, branchScope]);
+
+  const filteredBranches = useMemo(() => {
+    const q = filterQuery.toLowerCase().trim();
+    if (!q) return branches;
+    return branches.filter((b) => b.name.toLowerCase().includes(q));
+  }, [branches, filterQuery]);
 
   useEffect(() => {
     if (showNewBranch) newBranchInputRef.current?.focus();
@@ -97,6 +109,10 @@ export function GitBranchesView({ repo, onError }: Props) {
   }, [actionMenu, closeMenu]);
 
   function openActionMenu(branchName: string, e: React.MouseEvent<HTMLButtonElement>) {
+    if (actionMenu?.branchName === branchName) {
+      closeMenu();
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     actionTriggerRef.current = e.currentTarget;
     setActionMenu({
@@ -107,17 +123,22 @@ export function GitBranchesView({ repo, onError }: Props) {
   }
 
   async function onCheckout(branchName: string, isRemote: boolean) {
+    if (loadingKey !== null) return;
+    setLoadingKey(`checkout:${branchName}`);
     try {
       onError(undefined);
       await checkoutBranch(repo.path, branchName, isRemote);
     } catch (e) {
       onError(String(e));
+    } finally {
+      setLoadingKey(null);
     }
   }
 
   async function onCreateBranch() {
     const name = newBranchName.trim();
-    if (!name) return;
+    if (!name || loadingKey !== null) return;
+    setLoadingKey("create");
     try {
       onError(undefined);
       await createBranch(repo.path, name, null);
@@ -125,6 +146,8 @@ export function GitBranchesView({ repo, onError }: Props) {
       setShowNewBranch(false);
     } catch (e) {
       onError(String(e));
+    } finally {
+      setLoadingKey(null);
     }
   }
 
@@ -134,12 +157,16 @@ export function GitBranchesView({ repo, onError }: Props) {
       setRenamingBranch(null);
       return;
     }
+    if (loadingKey !== null) return;
+    setLoadingKey(`rename:${oldName}`);
     try {
       onError(undefined);
       await renameBranch(repo.path, oldName, newName);
       setRenamingBranch(null);
     } catch (e) {
       onError(String(e));
+    } finally {
+      setLoadingKey(null);
     }
   }
 
@@ -148,6 +175,8 @@ export function GitBranchesView({ repo, onError }: Props) {
       setConfirmingDelete(branchName);
       return;
     }
+    if (loadingKey !== null) return;
+    setLoadingKey(`delete:${branchName}`);
     try {
       onError(undefined);
       setConfirmingDelete(null);
@@ -158,6 +187,8 @@ export function GitBranchesView({ repo, onError }: Props) {
       } catch (e2) {
         onError(String(e2));
       }
+    } finally {
+      setLoadingKey(null);
     }
   }
 
@@ -181,6 +212,7 @@ export function GitBranchesView({ repo, onError }: Props) {
               <button
                 type="button"
                 className="git-action-menu-item"
+                disabled={loadingKey !== null}
                 onClick={() => {
                   closeMenu();
                   void onCheckout(menuBranch.name, menuBranch.isRemote);
@@ -194,6 +226,7 @@ export function GitBranchesView({ repo, onError }: Props) {
               <button
                 type="button"
                 className="git-action-menu-item"
+                disabled={loadingKey !== null}
                 onClick={() => {
                   closeMenu();
                   setRenamingBranch(menuBranch.name);
@@ -212,6 +245,7 @@ export function GitBranchesView({ repo, onError }: Props) {
                     ? " git-action-menu-item-danger"
                     : ""
                 }`}
+                disabled={loadingKey !== null}
                 onClick={() => {
                   void onDeleteBranch(menuBranch.name);
                   if (confirmingDelete === menuBranch.name) closeMenu();
@@ -294,11 +328,43 @@ export function GitBranchesView({ repo, onError }: Props) {
             type="button"
             className="btn btn-primary"
             style={{ padding: "4px 10px", fontSize: 11 }}
-            disabled={!newBranchName.trim()}
+            disabled={!newBranchName.trim() || loadingKey !== null}
             onClick={() => void onCreateBranch()}
           >
-            Create
+            {loadingKey === "create" ? (
+              <Loader2 size={11} className="git-spin" />
+            ) : null}
+            {loadingKey === "create" ? "Creating..." : "Create"}
           </button>
+        </div>
+      )}
+
+      {branches.length > 0 && (
+        <div className="git-filter-bar">
+          <Search size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+          <input
+            type="text"
+            className="git-inline-input"
+            placeholder="Filter branches..."
+            value={filterQuery}
+            onChange={(e) => setFilterQuery(e.target.value)}
+            style={{ padding: "3px 8px", fontSize: 11 }}
+          />
+          {filterQuery && (
+            <button
+              type="button"
+              className="git-toolbar-btn"
+              style={{ padding: 2 }}
+              onClick={() => setFilterQuery("")}
+            >
+              <X size={12} />
+            </button>
+          )}
+          {filterQuery && (
+            <span style={{ fontSize: 10, color: "var(--text-3)", flexShrink: 0 }}>
+              {filteredBranches.length}/{branches.length}
+            </span>
+          )}
         </div>
       )}
 
@@ -311,8 +377,10 @@ export function GitBranchesView({ repo, onError }: Props) {
             <p className="git-empty-title">No branches found</p>
             <p className="git-empty-sub">Create a branch to get started</p>
           </div>
+        ) : filteredBranches.length === 0 ? (
+          <p className="git-empty-inline">No matching branches</p>
         ) : (
-          branches.map((branch) => {
+          filteredBranches.map((branch) => {
             const isRenaming = renamingBranch === branch.name;
             const remoteName = branch.upstream
               ? branch.upstream.split("/")[0]
@@ -329,10 +397,6 @@ export function GitBranchesView({ repo, onError }: Props) {
               <div
                 key={branch.fullName}
                 className="git-branch-row"
-                onDoubleClick={() => {
-                  if (!branch.isCurrent)
-                    void onCheckout(branch.name, branch.isRemote);
-                }}
               >
                 <span
                   className="git-branch-current-dot"
@@ -403,10 +467,9 @@ export function GitBranchesView({ repo, onError }: Props) {
                     >
                       {remoteName && <span>{remoteName}</span>}
                       {hasSync && (
-                        <span>
-                          {branch.ahead ? `↑${branch.ahead}` : ""}
-                          {branch.ahead && branch.behind ? " " : ""}
-                          {branch.behind ? `↓${branch.behind}` : ""}
+                        <span className="git-ahead-behind">
+                          {branch.ahead ? <span className="git-ahead">↑{branch.ahead}</span> : null}
+                          {branch.behind ? <span className="git-behind">↓{branch.behind}</span> : null}
                         </span>
                       )}
                       {branch.lastCommitAt && (

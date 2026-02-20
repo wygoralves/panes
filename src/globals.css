@@ -943,6 +943,15 @@ button, input, textarea, select {
   margin: 0;
 }
 
+.git-filter-bar {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 /* Error bar */
 .git-error-bar {
   padding: 8px 12px;

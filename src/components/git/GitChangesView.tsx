@@ -6,6 +6,7 @@ import {
   Minus,
   Check,
   RotateCcw,
+  Loader2,
 } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
 import { ipc } from "../../lib/ipc";
@@ -190,6 +191,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
   } = useGitStore();
 
   const [commitMessage, setCommitMessage] = useState("");
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
   const [sectionCollapsed, setSectionCollapsed] = useState<
     Record<ChangeSection, boolean>
   >({
@@ -229,18 +231,22 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
   const noChanges = unstagedFiles.length === 0 && !hasStagedFiles;
 
   async function onCommit() {
-    if (!commitMessage.trim()) return;
+    if (!commitMessage.trim() || loadingKey !== null) return;
+    setLoadingKey("commit");
     try {
       onError(undefined);
       await commit(repo.path, commitMessage.trim());
       setCommitMessage("");
     } catch (e) {
       onError(String(e));
+    } finally {
+      setLoadingKey(null);
     }
   }
 
   async function onStageAll() {
-    if (unstagedFiles.length === 0) return;
+    if (unstagedFiles.length === 0 || loadingKey !== null) return;
+    setLoadingKey("stage-all");
     try {
       onError(undefined);
       await ipc.stageFiles(
@@ -250,11 +256,14 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
       await refresh(repo.path);
     } catch (e) {
       onError(String(e));
+    } finally {
+      setLoadingKey(null);
     }
   }
 
   async function onUnstageAll() {
-    if (stagedFiles.length === 0) return;
+    if (stagedFiles.length === 0 || loadingKey !== null) return;
+    setLoadingKey("unstage-all");
     try {
       onError(undefined);
       await ipc.unstageFiles(
@@ -264,16 +273,19 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
       await refresh(repo.path);
     } catch (e) {
       onError(String(e));
+    } finally {
+      setLoadingKey(null);
     }
   }
 
   async function onToggleDirectoryStage(dirPath: string, staged: boolean) {
     const filesByDirectory = staged ? stagedDirectoryFiles : unstagedDirectoryFiles;
     const directoryFiles = filesByDirectory.get(dirPath) ?? [];
-    if (directoryFiles.length === 0) {
+    if (directoryFiles.length === 0 || loadingKey !== null) {
       return;
     }
 
+    setLoadingKey(`dir:${dirPath}`);
     try {
       onError(undefined);
       if (staged) {
@@ -284,6 +296,34 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
       await refresh(repo.path);
     } catch (e) {
       onError(String(e));
+    } finally {
+      setLoadingKey(null);
+    }
+  }
+
+  async function onStageFile(filePath: string) {
+    if (loadingKey !== null) return;
+    setLoadingKey(`file:${filePath}`);
+    try {
+      onError(undefined);
+      await stage(repo.path, filePath);
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setLoadingKey(null);
+    }
+  }
+
+  async function onUnstageFile(filePath: string) {
+    if (loadingKey !== null) return;
+    setLoadingKey(`file:${filePath}`);
+    try {
+      onError(undefined);
+      await unstage(repo.path, filePath);
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setLoadingKey(null);
     }
   }
 
@@ -330,18 +370,24 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
               e.stopPropagation();
               void onToggleDirectoryStage(row.path, staged);
             }}
-            disabled={directoryFileCount === 0}
+            disabled={directoryFileCount === 0 || loadingKey !== null}
             title={
               staged
                 ? "Unstage all changes in this folder"
                 : "Stage all changes in this folder"
             }
             style={{
-              opacity: directoryFileCount === 0 ? 0.35 : undefined,
-              cursor: directoryFileCount === 0 ? "default" : "pointer",
+              opacity: directoryFileCount === 0 || (loadingKey !== null && loadingKey !== `dir:${row.path}`) ? 0.35 : undefined,
+              cursor: directoryFileCount === 0 || loadingKey !== null ? "default" : "pointer",
             }}
           >
-            {staged ? <Minus size={13} /> : <Plus size={13} />}
+            {loadingKey === `dir:${row.path}` ? (
+              <Loader2 size={13} className="git-spin" />
+            ) : staged ? (
+              <Minus size={13} />
+            ) : (
+              <Plus size={13} />
+            )}
           </button>
         </div>
       );
@@ -377,16 +423,25 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
           className="git-stage-btn"
           onClick={(e) => {
             e.stopPropagation();
-            onError(undefined);
             if (staged) {
-              void unstage(repo.path, row.file.path);
+              void onUnstageFile(row.file.path);
             } else {
-              void stage(repo.path, row.file.path);
+              void onStageFile(row.file.path);
             }
           }}
+          disabled={loadingKey !== null}
           title={staged ? "Unstage" : "Stage"}
+          style={{
+            opacity: loadingKey !== null && loadingKey !== `file:${row.file.path}` ? 0.35 : undefined,
+          }}
         >
-          {staged ? <Minus size={13} /> : <Plus size={13} />}
+          {loadingKey === `file:${row.file.path}` ? (
+            <Loader2 size={13} className="git-spin" />
+          ) : staged ? (
+            <Minus size={13} />
+          ) : (
+            <Plus size={13} />
+          )}
         </button>
       </div>
     );
@@ -423,30 +478,38 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
                 type="button"
                 className="btn btn-ghost"
                 onClick={() => void onUnstageAll()}
-                disabled={files.length === 0}
+                disabled={files.length === 0 || loadingKey !== null}
                 style={{
                   padding: "3px 8px",
                   fontSize: 11,
-                  opacity: files.length === 0 ? 0.4 : 1,
+                  opacity: files.length === 0 || loadingKey !== null ? 0.4 : 1,
                 }}
               >
-                <RotateCcw size={11} />
-                Unstage all
+                {loadingKey === "unstage-all" ? (
+                  <Loader2 size={11} className="git-spin" />
+                ) : (
+                  <RotateCcw size={11} />
+                )}
+                {loadingKey === "unstage-all" ? "Unstaging..." : "Unstage all"}
               </button>
             ) : (
               <button
                 type="button"
                 className="btn btn-ghost"
                 onClick={() => void onStageAll()}
-                disabled={files.length === 0}
+                disabled={files.length === 0 || loadingKey !== null}
                 style={{
                   padding: "3px 8px",
                   fontSize: 11,
-                  opacity: files.length === 0 ? 0.4 : 1,
+                  opacity: files.length === 0 || loadingKey !== null ? 0.4 : 1,
                 }}
               >
-                <Plus size={11} />
-                Stage all
+                {loadingKey === "stage-all" ? (
+                  <Loader2 size={11} className="git-spin" />
+                ) : (
+                  <Plus size={11} />
+                )}
+                {loadingKey === "stage-all" ? "Staging..." : "Stage all"}
               </button>
             )}
           </div>
@@ -521,18 +584,22 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
           <button
             type="button"
             onClick={() => void onCommit()}
-            disabled={!commitMessage.trim()}
+            disabled={!commitMessage.trim() || loadingKey !== null}
             className="btn btn-primary"
             style={{
               width: "100%",
               justifyContent: "center",
               padding: "7px 12px",
-              opacity: commitMessage.trim() ? 1 : 0.4,
-              cursor: commitMessage.trim() ? "pointer" : "default",
+              opacity: commitMessage.trim() && loadingKey === null ? 1 : 0.4,
+              cursor: commitMessage.trim() && loadingKey === null ? "pointer" : "default",
             }}
           >
-            <Check size={13} />
-            Commit
+            {loadingKey === "commit" ? (
+              <Loader2 size={13} className="git-spin" />
+            ) : (
+              <Check size={13} />
+            )}
+            {loadingKey === "commit" ? "Committing..." : "Commit"}
           </button>
         </div>
       )}

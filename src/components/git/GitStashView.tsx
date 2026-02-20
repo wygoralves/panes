@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { Archive } from "lucide-react";
+import { useEffect, useState, useMemo } from "react";
+import { Archive, Loader2, Search, X } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
 import type { Repo } from "../../types";
 
@@ -23,110 +23,185 @@ function formatDate(raw?: string): string {
 export function GitStashView({ repo, onError }: Props) {
   const { stashes, loadStashes, applyStash, popStash } = useGitStore();
 
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
+  const [filterQuery, setFilterQuery] = useState("");
+
   useEffect(() => {
     void loadStashes(repo.path);
   }, [repo.path, loadStashes]);
 
+  useEffect(() => {
+    setFilterQuery("");
+  }, [repo.path]);
+
+  const filteredStashes = useMemo(() => {
+    const q = filterQuery.toLowerCase().trim();
+    if (!q) return stashes;
+    return stashes.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        (s.branchHint && s.branchHint.toLowerCase().includes(q)),
+    );
+  }, [stashes, filterQuery]);
+
   async function onApply(index: number) {
+    if (loadingKey !== null) return;
+    setLoadingKey(`apply:${index}`);
     try {
       onError(undefined);
       await applyStash(repo.path, index);
     } catch (e) {
       onError(String(e));
+    } finally {
+      setLoadingKey(null);
     }
   }
 
   async function onPop(index: number) {
+    if (loadingKey !== null) return;
+    setLoadingKey(`pop:${index}`);
     try {
       onError(undefined);
       await popStash(repo.path, index);
     } catch (e) {
       onError(String(e));
+    } finally {
+      setLoadingKey(null);
     }
   }
 
   return (
-    <div style={{ flex: 1, overflow: "auto" }}>
-      {stashes.length === 0 ? (
-        <div className="git-empty">
-          <div className="git-empty-icon-box">
-            <Archive size={20} />
-          </div>
-          <p className="git-empty-title">No stashes</p>
-          <p className="git-empty-sub">Stashed changes will appear here</p>
+    <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      {stashes.length > 0 && (
+        <div className="git-filter-bar">
+          <Search size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+          <input
+            type="text"
+            className="git-inline-input"
+            placeholder="Filter stashes..."
+            value={filterQuery}
+            onChange={(e) => setFilterQuery(e.target.value)}
+            style={{ padding: "3px 8px", fontSize: 11 }}
+          />
+          {filterQuery && (
+            <button
+              type="button"
+              className="git-toolbar-btn"
+              style={{ padding: 2 }}
+              onClick={() => setFilterQuery("")}
+            >
+              <X size={12} />
+            </button>
+          )}
+          {filterQuery && (
+            <span style={{ fontSize: 10, color: "var(--text-3)", flexShrink: 0 }}>
+              {filteredStashes.length}/{stashes.length}
+            </span>
+          )}
         </div>
-      ) : (
-        stashes.map((entry) => (
-          <div key={entry.index} className="git-stash-row">
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  minWidth: 0,
-                }}
-              >
-                <span
-                  style={{
-                    fontFamily: '"JetBrains Mono", monospace',
-                    fontSize: 11,
-                    color: "var(--accent)",
-                    flexShrink: 0,
-                  }}
-                >
-                  {`stash@{${entry.index}}`}
-                </span>
-                <span
-                  style={{
-                    fontSize: 12,
-                    color: "var(--text-2)",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                  title={entry.name}
-                >
-                  {entry.name}
-                </span>
-              </div>
-              <div
-                style={{
-                  marginTop: 1,
-                  fontSize: 11,
-                  color: "var(--text-3)",
-                  display: "flex",
-                  gap: 8,
-                }}
-              >
-                {entry.branchHint && <span>{entry.branchHint}</span>}
-                {entry.createdAt && (
-                  <span>{formatDate(entry.createdAt)}</span>
-                )}
-              </div>
-            </div>
-
-            <div className="git-stash-actions">
-              <button
-                type="button"
-                className="btn btn-ghost"
-                style={{ padding: "3px 6px", fontSize: 11 }}
-                onClick={() => void onApply(entry.index)}
-              >
-                Apply
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                style={{ padding: "3px 6px", fontSize: 11 }}
-                onClick={() => void onPop(entry.index)}
-              >
-                Pop
-              </button>
-            </div>
-          </div>
-        ))
       )}
+
+      <div style={{ flex: 1, overflow: "auto" }}>
+        {stashes.length === 0 ? (
+          <div className="git-empty">
+            <div className="git-empty-icon-box">
+              <Archive size={20} />
+            </div>
+            <p className="git-empty-title">No stashes</p>
+            <p className="git-empty-sub">Stashed changes will appear here</p>
+          </div>
+        ) : filteredStashes.length === 0 ? (
+          <p className="git-empty-inline">No matching stashes</p>
+        ) : (
+          filteredStashes.map((entry) => {
+            const isLoading = loadingKey === `apply:${entry.index}` || loadingKey === `pop:${entry.index}`;
+
+            return (
+              <div key={entry.index} className="git-stash-row">
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      minWidth: 0,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontFamily: '"JetBrains Mono", monospace',
+                        fontSize: 11,
+                        color: "var(--accent)",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {`stash@{${entry.index}}`}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 12,
+                        color: "var(--text-2)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                      title={entry.name}
+                    >
+                      {entry.name}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 1,
+                      fontSize: 11,
+                      color: "var(--text-3)",
+                      display: "flex",
+                      gap: 8,
+                    }}
+                  >
+                    {entry.branchHint && <span>{entry.branchHint}</span>}
+                    {entry.createdAt && (
+                      <span>{formatDate(entry.createdAt)}</span>
+                    )}
+                  </div>
+                </div>
+
+                <div
+                  className="git-stash-actions"
+                  style={isLoading ? { opacity: 1 } : undefined}
+                >
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ padding: "3px 6px", fontSize: 11 }}
+                    disabled={loadingKey !== null}
+                    onClick={() => void onApply(entry.index)}
+                  >
+                    {loadingKey === `apply:${entry.index}` ? (
+                      <Loader2 size={11} className="git-spin" />
+                    ) : (
+                      "Apply"
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ padding: "3px 6px", fontSize: 11 }}
+                    disabled={loadingKey !== null}
+                    onClick={() => void onPop(entry.index)}
+                  >
+                    {loadingKey === `pop:${entry.index}` ? (
+                      <Loader2 size={11} className="git-spin" />
+                    ) : (
+                      "Pop"
+                    )}
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
