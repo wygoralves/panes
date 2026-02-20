@@ -472,7 +472,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
         {!isCollapsed && (
           <div>
             {rows.length === 0 ? (
-              <p className="git-empty" style={{ padding: "12px 14px" }}>
+              <p className="git-empty-inline">
                 {staged ? "No staged changes" : "Working tree clean"}
               </p>
             ) : (
@@ -493,11 +493,9 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
       <div style={{ flex: 1, overflow: "auto" }}>
         {noChanges ? (
           <div className="git-empty">
-            <Check
-              size={24}
-              style={{ opacity: 0.2, marginBottom: 8 }}
-            />
-            <p style={{ margin: 0 }}>Working tree clean</p>
+            <Check size={28} className="git-empty-icon" />
+            <p className="git-empty-title">Working tree clean</p>
+            <p className="git-empty-sub">No uncommitted changes</p>
           </div>
         ) : (
           <>

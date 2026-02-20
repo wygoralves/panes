@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Plus, X, MoreHorizontal } from "lucide-react";
+import { Plus, X, MoreHorizontal, GitBranch, GitBranchPlus, Pencil, Trash2 } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
 import type { Repo, GitBranchScope } from "../../types";
 
@@ -186,6 +186,7 @@ export function GitBranchesView({ repo, onError }: Props) {
                   void onCheckout(menuBranch.name, menuBranch.isRemote);
                 }}
               >
+                <GitBranchPlus size={13} />
                 Checkout
               </button>
             )}
@@ -199,6 +200,7 @@ export function GitBranchesView({ repo, onError }: Props) {
                   setRenameValue(menuBranch.name);
                 }}
               >
+                <Pencil size={13} />
                 Rename
               </button>
             )}
@@ -215,6 +217,7 @@ export function GitBranchesView({ repo, onError }: Props) {
                   if (confirmingDelete === menuBranch.name) closeMenu();
                 }}
               >
+                <Trash2 size={13} />
                 {confirmingDelete === menuBranch.name ? "Confirm delete?" : "Delete"}
               </button>
             )}
@@ -301,7 +304,11 @@ export function GitBranchesView({ repo, onError }: Props) {
 
       <div style={{ flex: 1, overflow: "auto" }}>
         {branches.length === 0 ? (
-          <p className="git-empty">No branches found</p>
+          <div className="git-empty">
+            <GitBranch size={28} className="git-empty-icon" />
+            <p className="git-empty-title">No branches found</p>
+            <p className="git-empty-sub">Create a branch to get started</p>
+          </div>
         ) : (
           branches.map((branch) => {
             const isRenaming = renamingBranch === branch.name;

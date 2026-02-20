@@ -253,7 +253,11 @@ export function GitPanel() {
           )}
         </>
       ) : (
-        <p className="git-empty">No repositories found</p>
+        <div className="git-empty">
+          <GitBranchIcon size={28} className="git-empty-icon" />
+          <p className="git-empty-title">No repositories found</p>
+          <p className="git-empty-sub">Open a folder with a git repository</p>
+        </div>
       )}
 
       {effectiveError && (
@@ -289,10 +293,8 @@ export function GitPanel() {
               }}
               disabled={!activeRepo}
             >
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                <RefreshCw size={12} className={loading ? "git-spin" : ""} />
-                Refresh
-              </span>
+              <RefreshCw size={13} className={loading ? "git-spin" : ""} />
+              Refresh
             </button>
             {activeView === "changes" && (
               <button
@@ -303,10 +305,8 @@ export function GitPanel() {
                   setShowDiff((v) => !v);
                 }}
               >
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                  {showDiff ? <EyeOff size={12} /> : <Eye size={12} />}
-                  {showDiff ? "Hide diff preview" : "Show diff preview"}
-                </span>
+                {showDiff ? <EyeOff size={13} /> : <Eye size={13} />}
+                {showDiff ? "Hide diff preview" : "Show diff preview"}
               </button>
             )}
           </div>,

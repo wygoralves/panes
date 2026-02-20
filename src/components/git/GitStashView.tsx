@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { Archive } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
 import type { Repo } from "../../types";
 
@@ -47,7 +48,11 @@ export function GitStashView({ repo, onError }: Props) {
   return (
     <div style={{ flex: 1, overflow: "auto" }}>
       {stashes.length === 0 ? (
-        <p className="git-empty">No stashes</p>
+        <div className="git-empty">
+          <Archive size={28} className="git-empty-icon" />
+          <p className="git-empty-title">No stashes</p>
+          <p className="git-empty-sub">Stashed changes will appear here</p>
+        </div>
       ) : (
         stashes.map((entry) => (
           <div key={entry.index} className="git-stash-row">

@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { GitCommitHorizontal } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
 import type { Repo } from "../../types";
 
@@ -49,7 +50,11 @@ export function GitCommitsView({ repo }: Props) {
 
       <div style={{ flex: 1, overflow: "auto" }}>
         {commits.length === 0 ? (
-          <p className="git-empty">No commits found</p>
+          <div className="git-empty">
+            <GitCommitHorizontal size={28} className="git-empty-icon" />
+            <p className="git-empty-title">No commits yet</p>
+            <p className="git-empty-sub">Commit changes to build history</p>
+          </div>
         ) : (
           commits.map((entry) => (
             <div key={entry.hash} className="git-commit-row">
