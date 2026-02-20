@@ -1,7 +1,4 @@
-import { useState, useMemo } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
+import { Suspense, lazy, memo, useMemo, useState } from "react";
 import {
   CheckCircle2,
   Circle,
@@ -30,6 +27,8 @@ import {
   parseToolInputQuestions,
 } from "./toolInputApproval";
 import { parseDiff, extractDiffFilename, LINE_CLASS } from "../../lib/parseDiff";
+
+const MarkdownContent = lazy(() => import("./MarkdownContent"));
 
 interface Props {
   blocks?: ContentBlock[];
@@ -115,6 +114,7 @@ function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaul
 
 function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStreaming: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const content = String(block.content ?? "");
 
   return (
     <div>
@@ -136,14 +136,52 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
         </span>
       </div>
       {expanded && (
-        <div className="prose" style={{ fontSize: 12.5, color: "var(--text-2)", padding: "2px 12px 8px 30px", minWidth: 0 }}>
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeHighlight]}
+        isStreaming ? (
+          <pre
+            style={{
+              margin: 0,
+              fontSize: 12.5,
+              color: "var(--text-2)",
+              padding: "2px 12px 8px 30px",
+              minWidth: 0,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontFamily: "inherit",
+            }}
           >
-            {String(block.content ?? "")}
-          </ReactMarkdown>
-        </div>
+            {content}
+          </pre>
+        ) : (
+          <Suspense
+            fallback={
+              <pre
+                style={{
+                  margin: 0,
+                  fontSize: 12.5,
+                  color: "var(--text-2)",
+                  padding: "2px 12px 8px 30px",
+                  minWidth: 0,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "inherit",
+                }}
+              >
+                {content}
+              </pre>
+            }
+          >
+            <MarkdownContent
+              content={content}
+              className="prose"
+              style={{
+                fontSize: 12.5,
+                color: "var(--text-2)",
+                padding: "2px 12px 8px 30px",
+                minWidth: 0,
+              }}
+            />
+          </Suspense>
+        )
       )}
     </div>
   );
@@ -186,6 +224,10 @@ function ActionStatusBadge({ status }: { status: string }) {
 
 function ActionBlockView({ block }: { block: ActionBlock }) {
   const outputChunks = Array.isArray(block.outputChunks) ? block.outputChunks : [];
+  const outputText = useMemo(
+    () => outputChunks.map((chunk) => String(chunk.content ?? "")).join(""),
+    [outputChunks],
+  );
   const Icon = actionIcons[block.actionType] ?? Terminal;
   const isRunning = block.status === "running";
   const isPending = block.status === "pending";
@@ -235,7 +277,7 @@ function ActionBlockView({ block }: { block: ActionBlock }) {
                 color: "var(--text-2)",
               }}
             >
-              {outputChunks.map((c) => String(c.content ?? "")).join("")}
+              {outputText}
             </pre>
           )}
 
@@ -530,7 +572,7 @@ function ApprovalCard({
 
 /* ── Main Component ── */
 
-export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
+function MessageBlocksView({ blocks = [], status, onApproval }: Props) {
   const safeBlocks = Array.isArray(blocks) ? blocks : [];
 
   const lastDiffIndex = useMemo(() => {
@@ -549,15 +591,48 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
 
         /* ── Text ── */
         if (block.type === "text") {
-          return (
-            <div key={index} className="prose" style={{ fontSize: 13, padding: "4px 14px" }}>
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeHighlight]}
+          const textContent = String(block.content ?? "");
+          const isLastBlock = index === safeBlocks.length - 1;
+          const isStreamingText = status === "streaming" && isLastBlock;
+
+          if (isStreamingText) {
+            return (
+              <div
+                key={index}
+                style={{
+                  fontSize: 13,
+                  padding: "4px 14px",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
               >
-                {String(block.content ?? "")}
-              </ReactMarkdown>
-            </div>
+                {textContent}
+              </div>
+            );
+          }
+
+          return (
+            <Suspense
+              key={index}
+              fallback={
+                <div
+                  style={{
+                    fontSize: 13,
+                    padding: "4px 14px",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {textContent}
+                </div>
+              }
+            >
+              <MarkdownContent
+                content={textContent}
+                className="prose"
+                style={{ fontSize: 13, padding: "4px 14px" }}
+              />
+            </Suspense>
           );
         }
 
@@ -658,3 +733,11 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
     </div>
   );
 }
+
+export const MessageBlocks = memo(
+  MessageBlocksView,
+  (prev, next) =>
+    prev.blocks === next.blocks &&
+    prev.status === next.status &&
+    prev.onApproval === next.onApproval,
+);

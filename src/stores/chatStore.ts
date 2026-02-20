@@ -32,6 +32,7 @@ interface ChatState {
 }
 
 let activeThreadBindSeq = 0;
+const STREAM_EVENT_BATCH_WINDOW_MS = 16;
 const pendingTurnMetaByThread = new Map<
   string,
   {
@@ -172,15 +173,28 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
       if (b.type !== "action" || b.actionId !== actionId) {
         return b;
       }
+      const stream = String(event.stream ?? "stdout") as "stdout" | "stderr";
+      const content = String(event.content ?? "");
+      const previousChunk = b.outputChunks[b.outputChunks.length - 1];
+      const nextOutputChunks =
+        previousChunk && previousChunk.stream === stream
+          ? [
+              ...b.outputChunks.slice(0, -1),
+              {
+                ...previousChunk,
+                content: `${previousChunk.content}${content}`,
+              },
+            ]
+          : [
+              ...b.outputChunks,
+              {
+                stream,
+                content,
+              },
+            ];
       return {
         ...b,
-        outputChunks: [
-          ...b.outputChunks,
-          {
-            stream: String(event.stream ?? "stdout") as "stdout" | "stderr",
-            content: String(event.content ?? "")
-          }
-        ]
+        outputChunks: nextOutputChunks,
       };
     });
   }
@@ -285,26 +299,86 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
 
-      const unlisten = await listenThreadEvents(threadId, (event) => {
-        if (event.type === "TurnCompleted") {
-          pendingTurnMetaByThread.delete(threadId);
+      const queuedStreamEvents: StreamEvent[] = [];
+      let streamFlushTimer: number | null = null;
+      let streamFlushInProgress = false;
+
+      const flushQueuedStreamEvents = () => {
+        if (streamFlushInProgress) {
+          return;
         }
-        if (bindSeq !== activeThreadBindSeq) {
+        if (streamFlushTimer !== null) {
+          window.clearTimeout(streamFlushTimer);
+          streamFlushTimer = null;
+        }
+        if (queuedStreamEvents.length === 0) {
           return;
         }
 
+        streamFlushInProgress = true;
+        const batch = queuedStreamEvents.splice(0, queuedStreamEvents.length);
         set((state) => {
-          if (state.threadId !== threadId) {
+          if (bindSeq !== activeThreadBindSeq || state.threadId !== threadId) {
+            return state;
+          }
+
+          let nextMessages = state.messages;
+          let nextStreaming = state.streaming;
+          for (const queuedEvent of batch) {
+            if (queuedEvent.type === "TurnCompleted") {
+              pendingTurnMetaByThread.delete(threadId);
+            }
+            nextMessages = applyStreamEvent(nextMessages, queuedEvent, state.threadId);
+            nextStreaming = queuedEvent.type !== "TurnCompleted";
+          }
+
+          if (nextMessages === state.messages && nextStreaming === state.streaming) {
             return state;
           }
 
           return {
             ...state,
-            messages: applyStreamEvent(state.messages, event, state.threadId),
-            streaming: event.type !== "TurnCompleted"
+            messages: nextMessages,
+            streaming: nextStreaming,
           };
         });
+        streamFlushInProgress = false;
+
+        if (queuedStreamEvents.length > 0) {
+          scheduleStreamFlush();
+        }
+      };
+
+      const scheduleStreamFlush = () => {
+        if (streamFlushTimer !== null) {
+          return;
+        }
+        streamFlushTimer = window.setTimeout(() => {
+          streamFlushTimer = null;
+          flushQueuedStreamEvents();
+        }, STREAM_EVENT_BATCH_WINDOW_MS);
+      };
+
+      const unlistenStream = await listenThreadEvents(threadId, (event) => {
+        if (bindSeq !== activeThreadBindSeq) {
+          return;
+        }
+        queuedStreamEvents.push(event);
+        if (event.type === "TurnCompleted") {
+          flushQueuedStreamEvents();
+          return;
+        }
+        scheduleStreamFlush();
       });
+
+      const unlisten = () => {
+        if (streamFlushTimer !== null) {
+          window.clearTimeout(streamFlushTimer);
+          streamFlushTimer = null;
+        }
+        queuedStreamEvents.length = 0;
+        unlistenStream();
+      };
 
       if (bindSeq !== activeThreadBindSeq) {
         unlisten();

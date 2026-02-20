@@ -24,9 +24,9 @@ import { isRequestUserInputApproval } from "./toolInputApproval";
 import { Dropdown } from "../shared/Dropdown";
 import { TerminalPanel } from "../terminal/TerminalPanel";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
-import type { ApprovalBlock, ContentBlock, Message, TrustLevel } from "../../types";
+import type { ApprovalBlock, ApprovalResponse, ContentBlock, Message, TrustLevel } from "../../types";
 
-const MESSAGE_VIRTUALIZATION_THRESHOLD = 80;
+const MESSAGE_VIRTUALIZATION_THRESHOLD = 40;
 const MESSAGE_ESTIMATED_ROW_HEIGHT = 220;
 const MESSAGE_ROW_GAP = 16;
 const MESSAGE_OVERSCAN_PX = 700;
@@ -889,6 +889,13 @@ export function ChatPanel() {
   const virtualizationEnabled =
     messages.length >= MESSAGE_VIRTUALIZATION_THRESHOLD;
 
+  const handleApproval = useCallback(
+    (approvalId: string, response: ApprovalResponse) => {
+      void respondApproval(approvalId, response);
+    },
+    [respondApproval],
+  );
+
   const virtualWindow = useMemo(() => {
     if (!virtualizationEnabled || messages.length === 0) {
       return null;
@@ -1056,9 +1063,7 @@ export function ChatPanel() {
               <MessageBlocks
                 blocks={message.blocks}
                 status={message.status}
-                onApproval={(approvalId, response) =>
-                  void respondApproval(approvalId, response)
-                }
+                onApproval={handleApproval}
               />
             </div>
             {messageTimestamp && (
