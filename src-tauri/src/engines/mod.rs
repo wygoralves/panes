@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
+use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -110,7 +111,16 @@ impl EngineManager {
     }
 
     pub async fn list_engines(&self) -> anyhow::Result<Vec<EngineInfoDto>> {
-        let codex_models = self.codex.list_models_runtime().await;
+        let codex_models =
+            match timeout(Duration::from_secs(4), self.codex.list_models_runtime()).await {
+                Ok(models) => models,
+                Err(_) => {
+                    log::warn!(
+                    "timed out loading codex runtime models; falling back to static model catalog"
+                );
+                    self.codex.models()
+                }
+            };
         let claude_models = self.claude.models();
 
         Ok(vec![

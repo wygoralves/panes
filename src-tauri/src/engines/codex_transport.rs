@@ -1,4 +1,6 @@
-use std::{collections::HashMap, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap, env, ffi::OsString, path::Path, process::Stdio, sync::Arc, time::Duration,
+};
 
 use anyhow::Context;
 use tokio::{
@@ -22,7 +24,12 @@ pub struct CodexTransport {
 
 impl CodexTransport {
     pub async fn spawn(codex_executable: &str) -> anyhow::Result<Self> {
-        let mut child = Command::new(codex_executable)
+        let mut command = Command::new(codex_executable);
+        if let Some(augmented_path) = codex_augmented_path(codex_executable) {
+            command.env("PATH", augmented_path);
+        }
+
+        let mut child = command
             .arg("app-server")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -241,4 +248,26 @@ impl CodexTransport {
         }
         Ok(())
     }
+}
+
+fn codex_augmented_path(executable: &str) -> Option<OsString> {
+    let executable_dir = Path::new(executable).parent()?.to_path_buf();
+    let mut entries = vec![executable_dir.clone()];
+
+    if let Some(current) = env::var_os("PATH") {
+        for path in env::split_paths(&current) {
+            if path != executable_dir {
+                entries.push(path);
+            }
+        }
+    } else {
+        for fallback in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
+            let fallback_path = Path::new(fallback).to_path_buf();
+            if fallback_path != executable_dir {
+                entries.push(fallback_path);
+            }
+        }
+    }
+
+    env::join_paths(entries).ok()
 }

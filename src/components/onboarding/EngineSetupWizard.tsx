@@ -380,6 +380,8 @@ function CommandList({
 export function EngineSetupWizard() {
   const loadEngines = useEngineStore((state) => state.load);
   const loadingEngines = useEngineStore((state) => state.loading);
+  const loadedOnce = useEngineStore((state) => state.loadedOnce);
+  const engineError = useEngineStore((state) => state.error);
   const health = useEngineStore((state) => state.health);
 
   const open = useUiStore((state) => state.engineSetupOpen);
@@ -397,7 +399,7 @@ export function EngineSetupWizard() {
       : ["codex --version", "command -v codex"];
   const codexFixes = codexState?.fixes ?? [];
 
-  const healthChecked = !loadingEngines && Object.keys(health).length > 0;
+  const healthChecked = loadedOnce && !loadingEngines;
   const codexDetected = Boolean(codexState?.available);
   const sandboxReady = codexDetected && !codexWarning;
   const readyForChat = codexDetected;
@@ -415,10 +417,10 @@ export function EngineSetupWizard() {
       return "Codex detected with warnings. Chat works, but sandbox needs attention.";
     }
     if (!codexDetected) {
-      return codexDetails ?? "Codex CLI was not found in PATH.";
+      return codexDetails ?? engineError ?? "Codex CLI was not found in PATH.";
     }
     return codexWarning ?? "Codex was detected, but local sandbox checks failed.";
-  }, [codexDetected, codexDetails, codexWarning, healthChecked, readyForChat]);
+  }, [codexDetected, codexDetails, codexWarning, engineError, healthChecked, readyForChat]);
 
   useEffect(() => {
     if (!healthChecked) {
@@ -580,6 +582,7 @@ export function EngineSetupWizard() {
                   ? `Version ${codexState.version} found in PATH.`
                   : "Detected and ready for chat turns."
                 : codexDetails ??
+                  engineError ??
                   "Install Codex CLI and ensure `codex` is available in your PATH."
             }
           />

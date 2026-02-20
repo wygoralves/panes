@@ -3,27 +3,28 @@ import { AlertTriangle } from "lucide-react";
 import { useEngineStore } from "../../stores/engineStore";
 
 export function EngineHealthBanner() {
-  const { health } = useEngineStore();
+  const { health, error } = useEngineStore();
   const codexState = useMemo(() => health.codex, [health]);
   const codexWarning = codexState?.warnings?.[0];
 
-  if (!codexState) {
+  if (!codexState && !error) {
     return null;
   }
 
-  if (codexState.available && !codexWarning) {
+  if (codexState?.available && !codexWarning) {
     return null;
   }
 
-  const title = codexState.available
+  const title = codexState?.available
     ? "Codex sandbox check failed"
     : "Codex engine not detected";
-  const description = codexState.available
+  const description = codexState?.available
     ? codexWarning ??
       "Codex is installed, but the local OS sandbox check failed."
     : codexState.details ??
+      error ??
       "Install Codex CLI and authenticate before starting chat turns.";
-  const commandHint = codexState.available
+  const commandHint = codexState?.available
     ? codexState.checks?.find((command) => command.includes("sandbox-exec")) ??
       "sandbox-exec -p '(version 1) (allow default)' /usr/bin/true"
     : codexState.fixes?.[0] ?? codexState.checks?.[0];

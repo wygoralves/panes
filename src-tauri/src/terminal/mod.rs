@@ -379,6 +379,7 @@ fn spawn_session(
     cmd.env("COLORTERM", "truecolor");
     #[cfg(not(target_os = "windows"))]
     {
+        cmd.arg("-l");
         cmd.arg("-i");
     }
     let child = pair

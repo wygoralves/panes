@@ -1,5 +1,7 @@
 use std::{
     collections::HashMap,
+    env,
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -33,7 +35,8 @@ const MODEL_LIST_METHODS: &[&str] = &["model/list", "models/list"];
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const TURN_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
-const TURN_COMPLETION_FALLBACK_TIMEOUT: Duration = Duration::from_secs(900);
+const TURN_COMPLETION_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(90);
+const HEALTH_APP_SERVER_TIMEOUT: Duration = Duration::from_secs(12);
 const TRANSPORT_RESTART_MAX_ATTEMPTS: usize = 3;
 const TRANSPORT_RESTART_BASE_BACKOFF: Duration = Duration::from_millis(250);
 const TRANSPORT_RESTART_MAX_BACKOFF: Duration = Duration::from_secs(2);
@@ -161,7 +164,7 @@ impl Engine for CodexEngine {
 
     async fn version(&self) -> Option<String> {
         let resolution = resolve_codex_executable().await;
-        self.version_from_resolution(&resolution).await
+        self.probe_version_from_resolution(&resolution).await.ok()
     }
 
     async fn start_thread(
@@ -319,7 +322,7 @@ impl Engine for CodexEngine {
         let mut turn_request_done = false;
         let mut completion_seen = false;
         let mut expected_turn_id: Option<String> = None;
-        let mut completion_fallback_deadline: Option<Instant> = None;
+        let mut completion_last_progress_at: Option<Instant> = None;
 
         while !completion_seen || !turn_request_done {
             tokio::select! {
@@ -353,7 +356,7 @@ impl Engine for CodexEngine {
                 }
 
                 if !completion_seen {
-                  completion_fallback_deadline = Some(Instant::now() + TURN_COMPLETION_FALLBACK_TIMEOUT);
+                  completion_last_progress_at = Some(Instant::now());
                 }
               }
               incoming = subscription.recv() => {
@@ -376,6 +379,9 @@ impl Engine for CodexEngine {
                       }
                     } else if normalized_method == "turn/completed" {
                       self.clear_active_turn(&thread_id).await;
+                    }
+                    if turn_request_done && !completion_seen {
+                      completion_last_progress_at = Some(Instant::now());
                     }
 
                     for event in mapper.map_notification(&method, &params) {
@@ -407,6 +413,9 @@ impl Engine for CodexEngine {
                         "codex approval request mapped: approval_id={}, method={method}",
                         approval.approval_id
                       );
+                      if turn_request_done && !completion_seen {
+                        completion_last_progress_at = Some(Instant::now());
+                      }
                       self
                         .register_approval_request(
                           &approval.approval_id,
@@ -459,10 +468,10 @@ impl Engine for CodexEngine {
                 }
               }
               _ = tokio::time::sleep(Duration::from_millis(200)), if turn_request_done && !completion_seen => {
-                if let Some(deadline) = completion_fallback_deadline {
-                  if Instant::now() >= deadline {
+                if let Some(last_progress_at) = completion_last_progress_at {
+                  if Instant::now().duration_since(last_progress_at) >= TURN_COMPLETION_INACTIVITY_TIMEOUT {
                     log::warn!(
-                      "codex turn completion timeout reached for thread {thread_id}; synthesizing completion"
+                      "codex turn completion inactivity timeout reached for thread {thread_id}; synthesizing completion"
                     );
                     break;
                   }
@@ -562,11 +571,25 @@ impl Engine for CodexEngine {
 impl CodexEngine {
     pub async fn health_report(&self) -> CodexHealthReport {
         let resolution = resolve_codex_executable().await;
-        let available = resolution.executable.is_some();
-        let version = self.version_from_resolution(&resolution).await;
+        let version_result = self.probe_version_from_resolution(&resolution).await;
+        let transport_result = if version_result.is_ok() {
+            self.probe_transport_ready().await
+        } else {
+            None
+        };
+        let version = version_result.as_ref().ok().cloned();
+        let execution_error = version_result.err().or_else(|| transport_result.clone());
+        let available = execution_error.is_none();
         let mut warnings = Vec::new();
-        let details =
-            codex_unavailable_details(&resolution).or_else(|| codex_resolution_note(&resolution));
+        let details = if let Some(error) = execution_error.as_deref() {
+            if resolution.executable.is_some() {
+                Some(codex_execution_failure_details(&resolution, error))
+            } else {
+                codex_unavailable_details(&resolution)
+            }
+        } else {
+            codex_unavailable_details(&resolution).or_else(|| codex_resolution_note(&resolution))
+        };
 
         if available {
             if let Some(warning) = self.sandbox_preflight_warning().await {
@@ -580,7 +603,7 @@ impl CodexEngine {
             details,
             warnings,
             checks: codex_health_checks(),
-            fixes: codex_fix_commands(&resolution),
+            fixes: codex_fix_commands(&resolution, execution_error.as_deref()),
         }
     }
 
@@ -605,20 +628,52 @@ impl CodexEngine {
         }
     }
 
-    async fn version_from_resolution(
+    async fn probe_version_from_resolution(
         &self,
         resolution: &CodexExecutableResolution,
-    ) -> Option<String> {
-        let executable = resolution.executable.as_ref()?;
-        let output = Command::new(executable)
+    ) -> Result<String, String> {
+        let executable = resolution
+            .executable
+            .as_ref()
+            .ok_or_else(|| CODEX_MISSING_DEFAULT_DETAILS.to_string())?;
+        let output = codex_command(executable)
             .arg("--version")
             .output()
             .await
-            .ok()?;
+            .map_err(|error| {
+                format!(
+                    "failed to execute `{}`: {error}",
+                    executable.to_string_lossy()
+                )
+            })?;
         if !output.status.success() {
-            return None;
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let message = if !stderr.is_empty() {
+                stderr
+            } else if !stdout.is_empty() {
+                stdout
+            } else {
+                format!("process exited with status {}", output.status)
+            };
+            return Err(message);
         }
-        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if version.is_empty() {
+            return Err("codex --version returned empty output".to_string());
+        }
+        Ok(version)
+    }
+
+    async fn probe_transport_ready(&self) -> Option<String> {
+        match tokio::time::timeout(HEALTH_APP_SERVER_TIMEOUT, self.ensure_ready_transport()).await {
+            Ok(Ok(_)) => None,
+            Ok(Err(error)) => Some(format!("failed to initialize `codex app-server`: {error}")),
+            Err(_) => Some(format!(
+                "timed out initializing `codex app-server` after {}s",
+                HEALTH_APP_SERVER_TIMEOUT.as_secs()
+            )),
+        }
     }
 
     pub async fn read_thread_preview(&self, engine_thread_id: &str) -> Option<String> {
@@ -1110,6 +1165,32 @@ fn codex_unavailable_details(resolution: &CodexExecutableResolution) -> Option<S
     }
 }
 
+fn codex_execution_failure_details(resolution: &CodexExecutableResolution, error: &str) -> String {
+    let path_preview = resolution
+        .app_path
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "(empty)".to_string());
+    let executable = resolution
+        .executable
+        .as_ref()
+        .map(|value| value.display().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    if error
+        .to_lowercase()
+        .contains("env: node: no such file or directory")
+    {
+        return format!(
+            "Codex executable was found at `{executable}`, but Panes could not find `node` when launching it (Finder-launched apps often have a limited PATH). App PATH: `{path_preview}`. Error: {error}"
+        );
+    }
+
+    format!(
+        "Codex executable was found at `{executable}`, but Panes could not run it. App PATH: `{path_preview}`. Error: {error}"
+    )
+}
+
 fn codex_resolution_note(resolution: &CodexExecutableResolution) -> Option<String> {
     if resolution.source == "app-path" {
         return None;
@@ -1127,6 +1208,9 @@ fn codex_health_checks() -> Vec<String> {
     let mut checks = vec![
         "codex --version".to_string(),
         "command -v codex".to_string(),
+        "node --version".to_string(),
+        "command -v node".to_string(),
+        "codex app-server --help".to_string(),
     ];
 
     #[cfg(target_os = "macos")]
@@ -1139,7 +1223,10 @@ fn codex_health_checks() -> Vec<String> {
     checks
 }
 
-fn codex_fix_commands(resolution: &CodexExecutableResolution) -> Vec<String> {
+fn codex_fix_commands(
+    resolution: &CodexExecutableResolution,
+    execution_error: Option<&str>,
+) -> Vec<String> {
     let mut fixes = Vec::new();
 
     #[cfg(target_os = "macos")]
@@ -1157,10 +1244,54 @@ fn codex_fix_commands(resolution: &CodexExecutableResolution) -> Vec<String> {
                 fixes.push("/bin/zsh -lic 'command -v codex && codex --version'".to_string());
                 fixes.push("open -a Panes".to_string());
             }
+        } else if execution_error.is_some() {
+            if let Some(executable) = resolution.executable.as_ref() {
+                if let Some(bin_dir) = executable.parent() {
+                    fixes.push(format!(
+                        "launchctl setenv PATH \"{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"",
+                        bin_dir.display()
+                    ));
+                }
+            }
+            fixes.push(
+                "/bin/zsh -lic 'command -v node && command -v codex && codex --version'"
+                    .to_string(),
+            );
+            fixes.push("open -a Panes".to_string());
         }
     }
 
     fixes
+}
+
+fn codex_augmented_path(executable: &Path) -> Option<OsString> {
+    let executable_dir = executable.parent()?.to_path_buf();
+    let mut entries = vec![executable_dir.clone()];
+
+    if let Some(current_path) = env::var_os("PATH") {
+        for path in env::split_paths(&current_path) {
+            if path != executable_dir {
+                entries.push(path);
+            }
+        }
+    } else {
+        for fallback in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
+            let fallback_path = PathBuf::from(fallback);
+            if fallback_path != executable_dir {
+                entries.push(fallback_path);
+            }
+        }
+    }
+
+    env::join_paths(entries).ok()
+}
+
+fn codex_command(executable: &Path) -> Command {
+    let mut command = Command::new(executable);
+    if let Some(augmented_path) = codex_augmented_path(executable) {
+        command.env("PATH", augmented_path);
+    }
+    command
 }
 
 fn well_known_codex_paths() -> Vec<PathBuf> {
