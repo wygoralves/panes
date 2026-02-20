@@ -71,6 +71,9 @@ jobs:
     needs: [frontend, rust]
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      should_release: ${{ steps.release_check.outputs.should_release }}
+      released_tag: ${{ steps.release_meta.outputs.tag }}
     permissions:
       contents: write
 
@@ -115,5 +118,98 @@ jobs:
       - name: Run release-it
         if: steps.release_check.outputs.should_release == 'true'
         run: pnpm release -- --ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Capture released tag
+        id: release_meta
+        if: steps.release_check.outputs.should_release == 'true'
+        run: |
+          tag="$(git describe --tags --abbrev=0)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Released tag: $tag"
+
+  release_bundles:
+    name: Build Release Bundles (${{ matrix.platform }})
+    if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
+    needs: [release]
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, ubuntu-22.04]
+
+    steps:
+      - name: Checkout released tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.release.outputs.released_tag }}
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Build Tauri bundles
+        run: pnpm tauri:build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Upload Linux assets to GitHub Release
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release.outputs.released_tag }}
+          files: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb.sig
+            src-tauri/target/release/bundle/appimage/*.AppImage.sig
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Upload macOS assets to GitHub Release
+        if: matrix.platform == 'macos-latest'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release.outputs.released_tag }}
+          files: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/release/bundle/dmg/*.dmg.sig
+            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
