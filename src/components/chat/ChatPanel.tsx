@@ -264,6 +264,7 @@ export function ChatPanel() {
   const highlightTimeoutRef = useRef<number | null>(null);
   const initialScrollThreadRef = useRef<string | null>(null);
   const messageHeightsRef = useRef<Map<string, number>>(new Map());
+  const layoutVersionRafRef = useRef<number | null>(null);
   const [listLayoutVersion, setListLayoutVersion] = useState(0);
   const [viewportScrollTop, setViewportScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
@@ -374,6 +375,16 @@ export function ChatPanel() {
     return approvals;
   }, [messages]);
 
+  const scheduleListLayoutVersionBump = useCallback(() => {
+    if (layoutVersionRafRef.current !== null) {
+      return;
+    }
+    layoutVersionRafRef.current = window.requestAnimationFrame(() => {
+      layoutVersionRafRef.current = null;
+      setListLayoutVersion((version) => version + 1);
+    });
+  }, []);
+
   useEffect(() => {
     if (activeWorkspaceId) {
       void syncTerminalSessions(activeWorkspaceId);
@@ -435,8 +446,8 @@ export function ChatPanel() {
 
   useEffect(() => {
     messageHeightsRef.current.clear();
-    setListLayoutVersion((version) => version + 1);
-  }, [activeThread?.id]);
+    scheduleListLayoutVersionBump();
+  }, [activeThread?.id, scheduleListLayoutVersionBump]);
 
   useEffect(() => {
     const existingIds = new Set(messages.map((message) => message.id));
@@ -448,9 +459,9 @@ export function ChatPanel() {
       }
     }
     if (changed) {
-      setListLayoutVersion((version) => version + 1);
+      scheduleListLayoutVersionBump();
     }
-  }, [messages]);
+  }, [messages, scheduleListLayoutVersionBump]);
 
   useEffect(() => {
     if (!editingThreadTitle) {
@@ -709,6 +720,10 @@ export function ChatPanel() {
       if (highlightTimeoutRef.current !== null) {
         window.clearTimeout(highlightTimeoutRef.current);
       }
+      if (layoutVersionRafRef.current !== null) {
+        window.cancelAnimationFrame(layoutVersionRafRef.current);
+        layoutVersionRafRef.current = null;
+      }
     };
   }, []);
 
@@ -881,9 +896,9 @@ export function ChatPanel() {
       }
 
       messageHeightsRef.current.set(messageId, normalizedHeight);
-      setListLayoutVersion((version) => version + 1);
+      scheduleListLayoutVersionBump();
     },
-    [],
+    [scheduleListLayoutVersionBump],
   );
 
   const virtualizationEnabled =

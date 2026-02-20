@@ -1,4 +1,4 @@
-import { Suspense, lazy, memo, useMemo, useState } from "react";
+import { Suspense, lazy, memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Circle,
@@ -26,9 +26,284 @@ import {
   isRequestUserInputApproval,
   parseToolInputQuestions,
 } from "./toolInputApproval";
-import { parseDiff, extractDiffFilename, LINE_CLASS } from "../../lib/parseDiff";
+import {
+  parseDiff,
+  extractDiffFilename,
+  LINE_CLASS,
+  type ParsedLine,
+} from "../../lib/parseDiff";
+import type {
+  DiffParseWorkerRequest,
+  DiffParseWorkerResponse,
+} from "../../workers/diffParser.types";
 
 const MarkdownContent = lazy(() => import("./MarkdownContent"));
+const DIFF_WORKER_THRESHOLD_CHARS = 12_000;
+const DIFF_VIRTUALIZATION_THRESHOLD_LINES = 500;
+const DIFF_VIEWPORT_MAX_HEIGHT = 400;
+const DIFF_OVERSCAN_PX = 240;
+const DIFF_CONTENT_VERTICAL_PADDING = 4;
+const DIFF_LINE_HEIGHT = 19;
+const DIFF_HUNK_HEIGHT = 24;
+
+interface DiffParseResult {
+  parsed: ParsedLine[];
+  filename: string | null;
+  adds: number;
+  dels: number;
+}
+
+let diffWorkerInstance: Worker | null = null;
+let diffWorkerRequestSeq = 0;
+const diffWorkerCallbacks = new Map<
+  number,
+  {
+    resolve: (value: DiffParseResult) => void;
+    reject: (reason?: unknown) => void;
+  }
+>();
+
+function getDiffLineHeight(line: ParsedLine): number {
+  return line.type === "hunk" ? DIFF_HUNK_HEIGHT : DIFF_LINE_HEIGHT;
+}
+
+function renderDiffLine(line: ParsedLine, key: number | string) {
+  return (
+    <span key={key} className={`git-diff-line ${LINE_CLASS[line.type]}`}>
+      <span className="git-diff-gutter">{line.gutter}</span>
+      <span className="git-diff-line-num">{line.lineNum}</span>
+      <span className="git-diff-line-content">{line.content}</span>
+    </span>
+  );
+}
+
+function parseDiffSync(raw: string): DiffParseResult {
+  const parsed = parseDiff(raw);
+  let adds = 0;
+  let dels = 0;
+  for (const line of parsed) {
+    if (line.type === "add") {
+      adds += 1;
+      continue;
+    }
+    if (line.type === "del") {
+      dels += 1;
+    }
+  }
+  return {
+    parsed,
+    filename: extractDiffFilename(raw),
+    adds,
+    dels,
+  };
+}
+
+function ensureDiffWorker(): Worker | null {
+  if (typeof Worker === "undefined") {
+    return null;
+  }
+  if (!diffWorkerInstance) {
+    diffWorkerInstance = new Worker(
+      new URL("../../workers/diffParser.worker.ts", import.meta.url),
+      { type: "module" },
+    );
+    diffWorkerInstance.onmessage = (event: MessageEvent<DiffParseWorkerResponse>) => {
+      const payload = event.data;
+      const callback = diffWorkerCallbacks.get(payload.id);
+      if (!callback) {
+        return;
+      }
+      diffWorkerCallbacks.delete(payload.id);
+      callback.resolve({
+        parsed: payload.parsed,
+        filename: payload.filename,
+        adds: payload.adds,
+        dels: payload.dels,
+      });
+    };
+    diffWorkerInstance.onerror = (error) => {
+      for (const callback of diffWorkerCallbacks.values()) {
+        callback.reject(error);
+      }
+      diffWorkerCallbacks.clear();
+      diffWorkerInstance?.terminate();
+      diffWorkerInstance = null;
+    };
+  }
+  return diffWorkerInstance;
+}
+
+function parseDiffInWorker(raw: string): Promise<DiffParseResult> {
+  const worker = ensureDiffWorker();
+  if (!worker) {
+    return Promise.resolve(parseDiffSync(raw));
+  }
+  return new Promise((resolve, reject) => {
+    diffWorkerRequestSeq += 1;
+    const requestId = diffWorkerRequestSeq;
+    diffWorkerCallbacks.set(requestId, { resolve, reject });
+    const payload: DiffParseWorkerRequest = {
+      id: requestId,
+      raw,
+    };
+    worker.postMessage(payload);
+  });
+}
+
+function VirtualizedDiffBody({ parsed }: { parsed: ParsedLine[] }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(DIFF_VIEWPORT_MAX_HEIGHT);
+
+  const virtualizationEnabled = parsed.length >= DIFF_VIRTUALIZATION_THRESHOLD_LINES;
+
+  const offsets = useMemo(() => {
+    const nextOffsets = new Array<number>(parsed.length + 1);
+    nextOffsets[0] = 0;
+    for (let index = 0; index < parsed.length; index += 1) {
+      nextOffsets[index + 1] = nextOffsets[index] + getDiffLineHeight(parsed[index]);
+    }
+    return nextOffsets;
+  }, [parsed]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    let rafId = 0;
+    const updateViewportHeight = () => {
+      setViewportHeight(container.clientHeight || DIFF_VIEWPORT_MAX_HEIGHT);
+    };
+    const updateScroll = () => {
+      setScrollTop(container.scrollTop);
+    };
+    const onScroll = () => {
+      if (rafId !== 0) {
+        return;
+      }
+      rafId = window.requestAnimationFrame(() => {
+        rafId = 0;
+        updateScroll();
+      });
+    };
+
+    updateViewportHeight();
+    updateScroll();
+    container.addEventListener("scroll", onScroll, { passive: true });
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => updateViewportHeight());
+      resizeObserver.observe(container);
+    } else {
+      window.addEventListener("resize", updateViewportHeight);
+    }
+
+    return () => {
+      container.removeEventListener("scroll", onScroll);
+      if (rafId !== 0) {
+        window.cancelAnimationFrame(rafId);
+      }
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      } else {
+        window.removeEventListener("resize", updateViewportHeight);
+      }
+    };
+  }, [parsed.length]);
+
+  const virtualWindow = useMemo(() => {
+    if (!virtualizationEnabled) {
+      return null;
+    }
+
+    const rowCount = parsed.length;
+    const totalHeight = offsets[rowCount];
+    const visibleStart = Math.max(0, scrollTop - DIFF_OVERSCAN_PX);
+    const visibleEnd = scrollTop + viewportHeight + DIFF_OVERSCAN_PX;
+
+    let lo = 0;
+    let hi = rowCount;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (offsets[mid + 1] < visibleStart) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    const startIndex = lo;
+
+    lo = startIndex;
+    hi = rowCount;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (offsets[mid] <= visibleEnd) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    let endIndexExclusive = lo;
+    if (endIndexExclusive <= startIndex) {
+      endIndexExclusive = Math.min(rowCount, startIndex + 1);
+    }
+
+    return {
+      startIndex,
+      endIndexExclusive,
+      totalHeight,
+      topOffset: offsets[startIndex],
+    };
+  }, [offsets, parsed, scrollTop, viewportHeight, virtualizationEnabled]);
+
+  if (!virtualizationEnabled || !virtualWindow) {
+    return (
+      <div ref={containerRef} style={{ overflow: "auto", maxHeight: DIFF_VIEWPORT_MAX_HEIGHT }}>
+        <div
+          style={{
+            width: "fit-content",
+            minWidth: "100%",
+            padding: `${DIFF_CONTENT_VERTICAL_PADDING}px 0`,
+          }}
+        >
+          {parsed.map((line, index) => renderDiffLine(line, index))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={containerRef} style={{ overflow: "auto", maxHeight: DIFF_VIEWPORT_MAX_HEIGHT }}>
+      <div
+        style={{
+          position: "relative",
+          width: "fit-content",
+          minWidth: "100%",
+          height: virtualWindow.totalHeight + DIFF_CONTENT_VERTICAL_PADDING * 2,
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: virtualWindow.topOffset + DIFF_CONTENT_VERTICAL_PADDING,
+          }}
+        >
+          {parsed
+            .slice(virtualWindow.startIndex, virtualWindow.endIndexExclusive)
+            .map((line, relativeIndex) => {
+              const absoluteIndex = virtualWindow.startIndex + relativeIndex;
+              return renderDiffLine(line, absoluteIndex);
+            })}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface Props {
   blocks?: ContentBlock[];
@@ -53,11 +328,64 @@ const actionIcons: Record<string, typeof Terminal> = {
 function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaultExpanded: boolean }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const raw = String(block.diff ?? "");
-  const parsed = useMemo(() => parseDiff(raw), [raw]);
-  const filename = useMemo(() => extractDiffFilename(raw), [raw]);
+  const fallbackFilename = useMemo(() => extractDiffFilename(raw), [raw]);
+  const [parseResult, setParseResult] = useState<DiffParseResult | null>(
+    defaultExpanded && raw.length < DIFF_WORKER_THRESHOLD_CHARS
+      ? parseDiffSync(raw)
+      : null,
+  );
+  const [loadingParse, setLoadingParse] = useState(false);
+  const [parseAttempted, setParseAttempted] = useState(Boolean(parseResult));
+  const didInitializeRawRef = useRef(false);
 
-  const adds = parsed.filter((l) => l.type === "add").length;
-  const dels = parsed.filter((l) => l.type === "del").length;
+  useEffect(() => {
+    if (!expanded || parseAttempted) {
+      return;
+    }
+    setParseAttempted(true);
+
+    if (raw.length < DIFF_WORKER_THRESHOLD_CHARS) {
+      setParseResult(parseDiffSync(raw));
+      setLoadingParse(false);
+      return;
+    }
+
+    let disposed = false;
+    setLoadingParse(true);
+    parseDiffInWorker(raw)
+      .then((nextResult) => {
+        if (disposed) {
+          return;
+        }
+        setParseResult(nextResult);
+        setLoadingParse(false);
+      })
+      .catch(() => {
+        if (disposed) {
+          return;
+        }
+        setParseResult(parseDiffSync(raw));
+        setLoadingParse(false);
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [expanded, parseAttempted, raw]);
+
+  useEffect(() => {
+    if (!didInitializeRawRef.current) {
+      didInitializeRawRef.current = true;
+      return;
+    }
+    setParseResult(null);
+    setLoadingParse(false);
+    setParseAttempted(false);
+  }, [raw]);
+
+  const filename = parseResult?.filename ?? fallbackFilename;
+  const adds = parseResult?.adds ?? 0;
+  const dels = parseResult?.dels ?? 0;
 
   return (
     <div>
@@ -73,6 +401,11 @@ function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaul
         <span style={{ fontSize: 11.5, color: "var(--text-2)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {filename ?? `diff (${String(block.scope ?? "turn")})`}
         </span>
+        {loadingParse && (
+          <span style={{ fontSize: 10, color: "var(--text-3)", flexShrink: 0 }}>
+            Parsing...
+          </span>
+        )}
         {(adds > 0 || dels > 0) && (
           <span style={{ fontSize: 10, fontFamily: '"JetBrains Mono", monospace', display: "flex", gap: 5, flexShrink: 0 }}>
             {adds > 0 && <span style={{ color: "var(--success)" }}>+{adds}</span>}
@@ -81,24 +414,18 @@ function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaul
         )}
       </div>
       {expanded && (
-        parsed.length > 0 ? (
+        !parseResult && (loadingParse || !parseAttempted) ? (
+          <div style={{ padding: "4px 14px", fontSize: 11.5, color: "var(--text-3)" }}>
+            Parsing diff...
+          </div>
+        ) : parseResult && parseResult.parsed.length > 0 ? (
           <div style={{
-            overflow: "auto",
-            maxHeight: 400,
             margin: "2px 12px 4px",
             borderRadius: "var(--radius-sm)",
             border: "1px solid var(--border)",
             background: "var(--code-bg)",
           }}>
-            <pre style={{ margin: 0, padding: "4px 0", width: "fit-content", minWidth: "100%" }}>
-              {parsed.map((line, idx) => (
-                <span key={idx} className={`git-diff-line ${LINE_CLASS[line.type]}`}>
-                  <span className="git-diff-gutter">{line.gutter}</span>
-                  <span className="git-diff-line-num">{line.lineNum}</span>
-                  <span className="git-diff-line-content">{line.content}</span>
-                </span>
-              ))}
-            </pre>
+            <VirtualizedDiffBody parsed={parseResult.parsed} />
           </div>
         ) : (
           <div style={{ padding: "4px 14px", fontSize: 11.5, color: "var(--text-3)" }}>
