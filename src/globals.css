@@ -1376,3 +1376,496 @@ button, input, textarea, select {
   text-overflow: ellipsis;
   min-width: 0;
 }
+
+/* ── Sidebar ── */
+.sb {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-1);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Collapsed rail — the thin icon strip */
+.sb-rail {
+  width: 52px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--bg-1);
+  border-right: 1px solid var(--border);
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+}
+
+.sb-rail-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  position: relative;
+}
+
+.sb-rail-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-1);
+}
+
+.sb-rail-btn-active {
+  color: var(--accent);
+}
+
+.sb-rail-btn-active::after {
+  content: "";
+  position: absolute;
+  left: -2px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+.sb-rail-divider {
+  width: 24px;
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* Flyout overlay — slides out from rail on hover */
+.sb-flyout-wrapper {
+  position: fixed;
+  top: 0;
+  left: 52px;
+  bottom: 0;
+  z-index: 9990;
+  pointer-events: none;
+}
+
+.sb-flyout {
+  width: 260px;
+  height: 100%;
+  background: var(--bg-2);
+  border-right: 1px solid var(--border);
+  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.4), 2px 0 8px rgba(0, 0, 0, 0.2);
+  transform: translateX(-100%);
+  opacity: 0;
+  transition: transform 220ms var(--ease-out), opacity 180ms var(--ease-out);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sb-flyout-visible {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Pin button */
+.sb-pin-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.sb-pin-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-1);
+}
+
+.sb-pin-btn-active {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.sb-pin-btn-active:hover {
+  background: rgba(14, 240, 195, 0.15);
+  color: var(--accent);
+}
+
+/* Section headers */
+.sb-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-3);
+  padding: 12px 16px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Project row */
+.sb-project {
+  width: 100%;
+  padding: 7px 12px 7px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  color: var(--text-2);
+  position: relative;
+}
+
+.sb-project:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-1);
+}
+
+.sb-project-active {
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.sb-project-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 0 1px 1px 0;
+}
+
+.sb-project-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.sb-project-count {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 500;
+  min-width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-project-archive {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  transition: all var(--duration-fast) var(--ease-out);
+  flex-shrink: 0;
+}
+
+.sb-project:hover .sb-project-archive {
+  opacity: 0.6;
+}
+
+.sb-project-archive:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-1);
+  opacity: 1 !important;
+}
+
+/* Thread row */
+.sb-thread {
+  width: 100%;
+  padding: 6px 12px 6px 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  color: var(--text-2);
+  position: relative;
+  text-align: left;
+}
+
+.sb-thread:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.sb-thread-active {
+  color: var(--text-1);
+  background: rgba(14, 240, 195, 0.04);
+}
+
+.sb-thread-active::before {
+  content: "";
+  position: absolute;
+  left: 28px;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  transform: translateY(-50%);
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.sb-thread-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 400;
+}
+
+.sb-thread-active .sb-thread-title {
+  font-weight: 500;
+}
+
+.sb-thread-time {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-thread-archive {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  transition: all var(--duration-fast) var(--ease-out);
+  flex-shrink: 0;
+}
+
+.sb-thread:hover .sb-thread-archive {
+  opacity: 0.5;
+}
+
+.sb-thread-archive:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-1);
+  opacity: 1 !important;
+}
+
+/* New thread button (expanded) */
+.sb-new-thread-btn {
+  width: 100%;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(14, 240, 195, 0.06);
+  border: 1px solid rgba(14, 240, 195, 0.12);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  margin: 0 12px;
+}
+
+.sb-new-thread-btn:hover {
+  background: rgba(14, 240, 195, 0.1);
+  border-color: rgba(14, 240, 195, 0.2);
+  box-shadow: 0 0 16px rgba(14, 240, 195, 0.06);
+}
+
+/* Open project button */
+.sb-open-project-btn {
+  width: 100%;
+  padding: 7px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  margin: 0 12px;
+}
+
+.sb-open-project-btn:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--border-active);
+  color: var(--text-1);
+}
+
+/* Archived section */
+.sb-archived-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+  color: var(--text-3);
+  font-size: 11.5px;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.sb-archived-toggle:hover {
+  color: var(--text-2);
+}
+
+.sb-archived-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px 5px 38px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  border-radius: var(--radius-sm);
+}
+
+.sb-archived-restore {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  flex-shrink: 0;
+}
+
+.sb-archived-restore:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--accent);
+}
+
+/* Footer settings */
+.sb-footer {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sb-settings-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  cursor: pointer;
+  width: 100%;
+  border-radius: var(--radius-sm);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.sb-settings-btn:hover {
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Show more link */
+.sb-show-more {
+  padding: 4px 12px 4px 44px;
+  font-size: 11px;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out);
+  text-align: left;
+}
+
+.sb-show-more:hover {
+  color: var(--accent);
+}
+
+/* Sidebar thread stagger animation */
+@keyframes sb-thread-in {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.sb-thread-animate {
+  animation: sb-thread-in 280ms var(--ease-out) both;
+}
+
+/* Empty state */
+.sb-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.sb-no-threads {
+  padding: 4px 12px 4px 44px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  font-style: italic;
+}
+
+/* Scan config */
+.sb-scan-config {
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  margin: 0 12px;
+}
+
+.sb-scan-input {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-1);
+  color: var(--text-1);
+  font-size: 12px;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.sb-scan-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}

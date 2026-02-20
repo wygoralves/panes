@@ -11,7 +11,8 @@ import {
   Archive,
   RotateCcw,
   Settings,
-  Filter,
+  Pin,
+  PinOff,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -47,37 +48,27 @@ const SCAN_DEPTH_STORAGE_KEY = "panes.workspace.scanDepth";
 
 function readDefaultScanDepth(): number {
   const stored = window.localStorage.getItem(SCAN_DEPTH_STORAGE_KEY);
-  if (!stored) {
-    return DEFAULT_SCAN_DEPTH;
-  }
-
+  if (!stored) return DEFAULT_SCAN_DEPTH;
   const parsed = Number.parseInt(stored, 10);
-  if (!Number.isFinite(parsed)) {
-    return DEFAULT_SCAN_DEPTH;
-  }
-
-  if (parsed < MIN_SCAN_DEPTH || parsed > MAX_SCAN_DEPTH) {
-    return DEFAULT_SCAN_DEPTH;
-  }
-
+  if (!Number.isFinite(parsed)) return DEFAULT_SCAN_DEPTH;
+  if (parsed < MIN_SCAN_DEPTH || parsed > MAX_SCAN_DEPTH) return DEFAULT_SCAN_DEPTH;
   return parsed;
 }
 
 function parseScanDepth(input: string): number | null {
   const parsed = Number.parseInt(input.trim(), 10);
-  if (!Number.isFinite(parsed) || parsed < MIN_SCAN_DEPTH || parsed > MAX_SCAN_DEPTH) {
-    return null;
-  }
-
+  if (!Number.isFinite(parsed) || parsed < MIN_SCAN_DEPTH || parsed > MAX_SCAN_DEPTH) return null;
   return parsed;
 }
 
-export function Sidebar() {
+/* ─────────────────────────────────────────────────────
+   Sidebar content — shared between pinned and flyout
+   ───────────────────────────────────────────────────── */
+
+function SidebarContent({ onPin }: { onPin?: () => void }) {
   const {
     workspaces,
     archivedWorkspaces,
-    repos,
-    activeRepoId,
     activeWorkspaceId,
     setActiveWorkspace,
     setActiveRepo,
@@ -98,14 +89,18 @@ export function Sidebar() {
     refreshArchivedThreads,
   } = useThreadStore();
   const openEngineSetup = useUiStore((state) => state.openEngineSetup);
+  const sidebarPinned = useUiStore((state) => state.sidebarPinned);
+  const toggleSidebarPin = useUiStore((state) => state.toggleSidebarPin);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
 
-  const projects = useMemo<ProjectGroup[]>(() => {
-    return workspaces.map((ws) => ({
-      workspace: ws,
-      threads: threads.filter((t) => t.workspaceId === ws.id),
-    }));
-  }, [workspaces, threads]);
+  const projects = useMemo<ProjectGroup[]>(
+    () =>
+      workspaces.map((ws) => ({
+        workspace: ws,
+        threads: threads.filter((t) => t.workspaceId === ws.id),
+      })),
+    [workspaces, threads],
+  );
 
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [showAll, setShowAll] = useState<Record<string, boolean>>({});
@@ -124,20 +119,18 @@ export function Sidebar() {
 
   useEffect(() => {
     if (!settingsMenuOpen) return;
-
     function onPointerDown(e: PointerEvent) {
       const target = e.target as Node;
       if (
         settingsMenuRef.current?.contains(target) ||
         settingsTriggerRef.current?.contains(target)
-      ) return;
+      )
+        return;
       closeSettingsMenu();
     }
-
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") closeSettingsMenu();
     }
-
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("keydown", onKeyDown, true);
     return () => {
@@ -145,6 +138,7 @@ export function Sidebar() {
       document.removeEventListener("keydown", onKeyDown, true);
     };
   }, [settingsMenuOpen, closeSettingsMenu]);
+
   const archivedThreads = useMemo(
     () =>
       activeWorkspaceId
@@ -152,6 +146,7 @@ export function Sidebar() {
         : [],
     [archivedThreadsByWorkspace, activeWorkspaceId],
   );
+
   const toggleCollapse = (wsId: string) =>
     setCollapsed((prev) => ({ ...prev, [wsId]: !prev[wsId] }));
 
@@ -160,9 +155,7 @@ export function Sidebar() {
   }, [refreshArchivedWorkspaces]);
 
   useEffect(() => {
-    if (!activeWorkspaceId) {
-      return;
-    }
+    if (!activeWorkspaceId) return;
     void refreshArchivedThreads(activeWorkspaceId);
   }, [activeWorkspaceId, refreshArchivedThreads]);
 
@@ -191,7 +184,6 @@ export function Sidebar() {
       );
       return;
     }
-
     setAdvancedScanError(null);
     window.localStorage.setItem(SCAN_DEPTH_STORAGE_KEY, String(parsedDepth));
     setAdvancedScanOpen(false);
@@ -216,17 +208,12 @@ export function Sidebar() {
       await setActiveWorkspace(project.id);
     }
     setActiveRepo(null);
-
     const createdThreadId = await createThread({
       workspaceId: project.id,
       repoId: null,
       title: "New Thread",
     });
-
-    if (!createdThreadId) {
-      return;
-    }
-
+    if (!createdThreadId) return;
     setCollapsed((prev) => ({ ...prev, [project.id]: false }));
     await bindChatThread(createdThreadId);
   }
@@ -235,13 +222,9 @@ export function Sidebar() {
     const confirmed = window.confirm(
       `Archive workspace "${project.name}" and hide its repos/threads/messages from the sidebar? You can reopen this folder later to restore it.`,
     );
-    if (!confirmed) {
-      return;
-    }
-
+    if (!confirmed) return;
     const wasActive = project.id === activeWorkspaceId;
     await removeWorkspace(project.id);
-
     if (wasActive) {
       setActiveThread(null);
       await bindChatThread(null);
@@ -253,13 +236,9 @@ export function Sidebar() {
     const confirmed = window.confirm(
       `Archive thread "${threadLabel}"? It will be hidden from this project list.`,
     );
-    if (!confirmed) {
-      return;
-    }
-
+    if (!confirmed) return;
     const wasActive = thread.id === activeThreadId;
     await removeThread(thread.id);
-
     if (wasActive) {
       setActiveThread(null);
       await bindChatThread(null);
@@ -274,135 +253,100 @@ export function Sidebar() {
     await restoreThread(thread.id);
   }
 
-  function toggleArchivedSection() {
-    setArchivedOpen((current) => !current);
-  }
-
   return (
     <div
       style={{
         height: "100%",
         display: "flex",
         flexDirection: "column",
-        background: "var(--bg-1)",
+        background: "inherit",
+        minWidth: 0,
       }}
     >
-      {/* ── Header ── */}
+      {/* ── Header — drag region + actions ── */}
       <div
         onMouseDown={handleDragMouseDown}
         onDoubleClick={handleDragDoubleClick}
         style={{
-          padding: "42px 14px 10px",
+          padding: "42px 12px 10px",
           borderBottom: "1px solid var(--border)",
+          flexShrink: 0,
         }}
       >
         <div className="no-drag" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {/* New thread button */}
+          {/* Top row: Pin button */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 2,
+            }}
+          >
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: "0.06em",
+                textTransform: "uppercase",
+                color: "var(--text-3)",
+              }}
+            >
+              Panes
+            </span>
+            <button
+              type="button"
+              className={`sb-pin-btn ${sidebarPinned ? "sb-pin-btn-active" : ""}`}
+              onClick={onPin ?? toggleSidebarPin}
+              title={sidebarPinned ? "Unpin sidebar" : "Pin sidebar"}
+            >
+              {sidebarPinned ? <Pin size={13} /> : <PinOff size={13} />}
+            </button>
+          </div>
+
+          {/* New thread */}
           <button
             type="button"
+            className="sb-new-thread-btn"
+            style={{ margin: 0 }}
             onClick={() => {
-              const activeProject = projects.find((p) => p.workspace.id === activeWorkspaceId);
+              const activeProject = projects.find(
+                (p) => p.workspace.id === activeWorkspaceId,
+              );
               if (activeProject) {
                 void onCreateProjectThread(activeProject.workspace);
               }
-            }}
-            style={{
-              width: "100%",
-              padding: "8px 12px",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              borderRadius: "var(--radius-sm)",
-              background: "var(--bg-3)",
-              border: "1px solid var(--border)",
-              color: "var(--text-1)",
-              fontSize: 13,
-              fontWeight: 500,
-              cursor: "pointer",
-              transition: "all var(--duration-fast) var(--ease-out)",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "var(--bg-4)";
-              e.currentTarget.style.borderColor = "var(--border-active)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "var(--bg-3)";
-              e.currentTarget.style.borderColor = "var(--border)";
             }}
           >
             <Plus size={14} strokeWidth={2.2} />
             New thread
           </button>
 
-          {/* Open project button */}
+          {/* Open project */}
           <button
             type="button"
+            className="sb-open-project-btn"
+            style={{ margin: 0 }}
             onClick={() => void onOpenFolder()}
-            style={{
-              width: "100%",
-              padding: "7px 12px",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              borderRadius: "var(--radius-sm)",
-              background: "transparent",
-              border: "1px solid var(--border)",
-              color: "var(--text-2)",
-              fontSize: 12,
-              fontWeight: 400,
-              cursor: "pointer",
-              transition: "all var(--duration-fast) var(--ease-out)",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "var(--bg-3)";
-              e.currentTarget.style.color = "var(--text-1)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.color = "var(--text-2)";
-            }}
           >
             <FolderOpen size={13} strokeWidth={2} />
-            Open Project
+            Open project
           </button>
         </div>
       </div>
 
-      {/* ── Threads Section ── */}
-      <div
-        style={{
-          flex: 1,
-          overflow: "auto",
-          padding: "6px 8px",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "10px 6px 6px",
-          }}
-        >
-          <span className="section-label">Projects</span>
-          <Filter size={12} style={{ color: "var(--text-3)", opacity: 0.6 }} />
+      {/* ── Scrollable content ── */}
+      <div style={{ flex: 1, overflow: "auto", paddingBottom: 4 }}>
+        <div className="sb-section-label">
+          <span>Projects</span>
         </div>
 
         {projects.length === 0 ? (
-          <p
-            style={{
-              margin: 0,
-              padding: "20px 8px",
-              color: "var(--text-3)",
-              fontSize: 12,
-              textAlign: "center",
-              lineHeight: 1.6,
-            }}
-          >
+          <div className="sb-empty">
             No projects yet.
             <br />
             Open a folder to get started.
-          </p>
+          </div>
         ) : (
           projects.map((project) => {
             const isActiveProject = project.workspace.id === activeWorkspaceId;
@@ -419,9 +363,10 @@ export function Sidebar() {
 
             return (
               <div key={project.workspace.id} style={{ marginBottom: 2 }}>
-                {/* ── Project Folder Header ── */}
+                {/* Project header */}
                 <button
                   type="button"
+                  className={`sb-project ${isActiveProject ? "sb-project-active" : ""}`}
                   onClick={() => {
                     if (isActiveProject) {
                       toggleCollapse(project.workspace.id);
@@ -429,41 +374,11 @@ export function Sidebar() {
                       void onSelectProject(project.workspace.id);
                     }
                   }}
-                  style={{
-                    width: "100%",
-                    padding: "6px 6px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    borderRadius: "var(--radius-sm)",
-                    fontSize: 13,
-                    fontWeight: isActiveProject ? 500 : 400,
-                    color: isActiveProject ? "var(--text-1)" : "var(--text-2)",
-                    background: isActiveProject
-                      ? "rgba(255,255,255,0.04)"
-                      : "transparent",
-                    cursor: "pointer",
-                    transition: "all var(--duration-fast) var(--ease-out)",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isActiveProject)
-                      e.currentTarget.style.background = "rgba(255,255,255,0.03)";
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isActiveProject)
-                      e.currentTarget.style.background = "transparent";
-                  }}
                 >
                   {isCollapsed ? (
-                    <ChevronRight
-                      size={13}
-                      style={{ flexShrink: 0, opacity: 0.4 }}
-                    />
+                    <ChevronRight size={12} style={{ flexShrink: 0, opacity: 0.4 }} />
                   ) : (
-                    <ChevronDown
-                      size={13}
-                      style={{ flexShrink: 0, opacity: 0.4 }}
-                    />
+                    <ChevronDown size={12} style={{ flexShrink: 0, opacity: 0.4 }} />
                   )}
                   <FolderGit2
                     size={14}
@@ -472,30 +387,10 @@ export function Sidebar() {
                       color: isActiveProject ? "var(--accent)" : "var(--text-3)",
                     }}
                   />
-                  <span
-                    style={{
-                      flex: 1,
-                      textAlign: "left",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {projectName}
-                  </span>
+                  <span className="sb-project-name">{projectName}</span>
 
                   {project.threads.length > 0 && (
-                    <span
-                      style={{
-                        flexShrink: 0,
-                        fontSize: 10,
-                        fontWeight: 500,
-                        padding: "1px 6px",
-                        borderRadius: 99,
-                        background: "rgba(255,255,255,0.06)",
-                        color: "var(--text-3)",
-                      }}
-                    >
+                    <span className="sb-project-count">
                       {project.threads.length}
                     </span>
                   )}
@@ -503,50 +398,22 @@ export function Sidebar() {
                   <span
                     role="button"
                     title="Archive workspace"
-                    onMouseDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
+                    className="sb-project-archive"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
                       void onDeleteWorkspace(project.workspace);
-                    }}
-                    style={{
-                      marginLeft: 4,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 18,
-                      height: 18,
-                      borderRadius: 6,
-                      color: "var(--text-3)",
-                      opacity: 0.65,
                     }}
                   >
                     <Archive size={11} />
                   </span>
                 </button>
 
-                {/* ── Threads inside this project ── */}
+                {/* Threads */}
                 {!isCollapsed && (
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 1,
-                      paddingLeft: 8,
-                      marginTop: 1,
-                    }}
-                  >
+                  <div style={{ display: "flex", flexDirection: "column", gap: 1, marginTop: 1 }}>
                     {project.threads.length === 0 ? (
-                      <p
-                        style={{
-                          margin: 0,
-                          padding: "4px 6px 4px 28px",
-                          fontSize: 11.5,
-                          color: "var(--text-3)",
-                          fontStyle: "italic",
-                        }}
-                      >
-                        No threads
-                      </p>
+                      <div className="sb-no-threads">No threads</div>
                     ) : (
                       <>
                         {visibleThreads.map((thread, i) => {
@@ -555,94 +422,26 @@ export function Sidebar() {
                             <button
                               key={thread.id}
                               type="button"
+                              className={`sb-thread sb-thread-animate ${isActive ? "sb-thread-active" : ""}`}
+                              style={{ animationDelay: `${i * 20}ms` }}
                               onClick={() => void onSelectThread(thread)}
-                              className="animate-slide-in-left"
-                              style={{
-                                animationDelay: `${i * 25}ms`,
-                                width: "100%",
-                                padding: "6px 8px 6px 22px",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 7,
-                                borderRadius: "var(--radius-sm)",
-                                fontSize: 12.5,
-                                textAlign: "left",
-                                cursor: "pointer",
-                                transition: "all var(--duration-fast) var(--ease-out)",
-                                background: isActive
-                                  ? "rgba(255, 255, 255, 0.06)"
-                                  : "transparent",
-                                borderLeft: isActive
-                                  ? "2px solid var(--text-1)"
-                                  : "2px solid transparent",
-                                color: isActive ? "var(--text-1)" : "var(--text-2)",
-                              }}
-                              onMouseEnter={(e) => {
-                                if (!isActive)
-                                  e.currentTarget.style.background =
-                                    "rgba(255,255,255,0.03)";
-                              }}
-                              onMouseLeave={(e) => {
-                                if (!isActive)
-                                  e.currentTarget.style.background = "transparent";
-                              }}
                             >
-                              <MessageSquare
-                                size={13}
-                                style={{
-                                  flexShrink: 0,
-                                  opacity: isActive ? 0.8 : 0.35,
-                                }}
-                              />
-                              <span
-                                style={{
-                                  flex: 1,
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                  fontWeight: isActive ? 500 : 400,
-                                }}
-                              >
+                              <span className="sb-thread-title">
                                 {thread.title || "Untitled thread"}
                               </span>
-
-                              <span
-                                style={{
-                                  flexShrink: 0,
-                                  fontSize: 11,
-                                  color: "var(--text-3)",
-                                  fontVariantNumeric: "tabular-nums",
-                                }}
-                              >
+                              <span className="sb-thread-time">
                                 {thread.lastActivityAt
                                   ? relativeTime(thread.lastActivityAt)
                                   : ""}
                               </span>
-
                               <span
                                 role="button"
                                 title="Archive thread"
-                                onMouseDown={(event) => event.stopPropagation()}
-                                onClick={(event) => {
-                                  event.stopPropagation();
+                                className="sb-thread-archive"
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   void onDeleteThread(thread);
-                                }}
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  width: 18,
-                                  height: 18,
-                                  borderRadius: 6,
-                                  color: "var(--text-3)",
-                                  opacity: 0,
-                                  transition: "opacity var(--duration-fast)",
-                                }}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.opacity = "0.8";
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.opacity = "0";
                                 }}
                               >
                                 <Archive size={11} />
@@ -651,38 +450,22 @@ export function Sidebar() {
                           );
                         })}
 
-                        {/* Show more */}
                         {hasMore && !isShowingAll && (
                           <button
                             type="button"
+                            className="sb-show-more"
                             onClick={() =>
                               setShowAll((prev) => ({
                                 ...prev,
                                 [project.workspace.id]: true,
                               }))
                             }
-                            style={{
-                              padding: "4px 8px 4px 30px",
-                              fontSize: 11.5,
-                              color: "var(--text-3)",
-                              background: "transparent",
-                              cursor: "pointer",
-                              textAlign: "left",
-                              transition: "color var(--duration-fast)",
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.color = "var(--text-2)";
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.color = "var(--text-3)";
-                            }}
                           >
-                            Show more
+                            Show {project.threads.length - MAX_VISIBLE_THREADS} more
                           </button>
                         )}
                       </>
                     )}
-
                   </div>
                 )}
               </div>
@@ -690,80 +473,34 @@ export function Sidebar() {
           })
         )}
 
-        <div style={{ marginTop: 12, padding: "8px 6px 2px" }}>
+        {/* Archived section */}
+        <div style={{ marginTop: 8, borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 4 }}>
           <button
             type="button"
-            onClick={toggleArchivedSection}
-            style={{
-              width: "100%",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "6px 4px",
-              borderRadius: "var(--radius-sm)",
-              background: "transparent",
-              color: "var(--text-3)",
-              cursor: "pointer",
-              fontSize: 12,
-            }}
-            onMouseEnter={(event) => {
-              event.currentTarget.style.color = "var(--text-2)";
-              event.currentTarget.style.background = "rgba(255,255,255,0.03)";
-            }}
-            onMouseLeave={(event) => {
-              event.currentTarget.style.color = "var(--text-3)";
-              event.currentTarget.style.background = "transparent";
-            }}
+            className="sb-archived-toggle"
+            onClick={() => setArchivedOpen((c) => !c)}
           >
             {archivedOpen ? (
-              <ChevronDown size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
+              <ChevronDown size={11} style={{ flexShrink: 0, opacity: 0.6 }} />
             ) : (
-              <ChevronRight size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
+              <ChevronRight size={11} style={{ flexShrink: 0, opacity: 0.6 }} />
             )}
-            <Archive size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
+            <Archive size={11} style={{ flexShrink: 0, opacity: 0.6 }} />
             <span style={{ flex: 1, textAlign: "left" }}>Archived</span>
-            <span
-              style={{
-                fontSize: 10,
-                padding: "1px 6px",
-                borderRadius: 99,
-                background: "rgba(255,255,255,0.06)",
-                color: "var(--text-3)",
-              }}
-            >
+            <span className="sb-project-count" style={{ fontSize: 9 }}>
               {archivedWorkspaces.length + archivedThreads.length}
             </span>
           </button>
 
           {archivedOpen && (
-            <div
-              style={{
-                marginTop: 6,
-                paddingLeft: 6,
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-              }}
-            >
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, paddingBottom: 4 }}>
               {archivedWorkspaces.map((workspace) => (
-                <div
-                  key={workspace.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "5px 6px",
-                    borderRadius: "var(--radius-sm)",
-                    background: "rgba(255,255,255,0.02)",
-                  }}
-                >
+                <div key={workspace.id} className="sb-archived-item">
                   <FolderGit2 size={12} style={{ flexShrink: 0, color: "var(--text-3)" }} />
                   <span
                     style={{
                       flex: 1,
                       minWidth: 0,
-                      fontSize: 11.5,
-                      color: "var(--text-2)",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
@@ -774,18 +511,9 @@ export function Sidebar() {
                   </span>
                   <button
                     type="button"
+                    className="sb-archived-restore"
                     onClick={() => void onRestoreWorkspace(workspace)}
                     title="Restore workspace"
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 20,
-                      height: 20,
-                      borderRadius: 6,
-                      color: "var(--text-3)",
-                      cursor: "pointer",
-                    }}
                   >
                     <RotateCcw size={11} />
                   </button>
@@ -793,24 +521,12 @@ export function Sidebar() {
               ))}
 
               {archivedThreads.map((thread) => (
-                <div
-                  key={thread.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "5px 6px",
-                    borderRadius: "var(--radius-sm)",
-                    background: "rgba(255,255,255,0.02)",
-                  }}
-                >
+                <div key={thread.id} className="sb-archived-item">
                   <MessageSquare size={12} style={{ flexShrink: 0, color: "var(--text-3)" }} />
                   <span
                     style={{
                       flex: 1,
                       minWidth: 0,
-                      fontSize: 11.5,
-                      color: "var(--text-2)",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
@@ -821,18 +537,9 @@ export function Sidebar() {
                   </span>
                   <button
                     type="button"
+                    className="sb-archived-restore"
                     onClick={() => void onRestoreThread(thread)}
                     title="Restore thread"
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 20,
-                      height: 20,
-                      borderRadius: 6,
-                      color: "var(--text-3)",
-                      cursor: "pointer",
-                    }}
                   >
                     <RotateCcw size={11} />
                   </button>
@@ -840,36 +547,19 @@ export function Sidebar() {
               ))}
 
               {archivedWorkspaces.length === 0 && archivedThreads.length === 0 && (
-                <p
-                  style={{
-                    margin: 0,
-                    padding: "4px 2px",
-                    fontSize: 11,
-                    color: "var(--text-3)",
-                    fontStyle: "italic",
-                  }}
-                >
-                  Nothing archived.
-                </p>
+                <div className="sb-no-threads">Nothing archived.</div>
               )}
             </div>
           )}
         </div>
       </div>
 
-      {/* ── Settings ── */}
-      <div
-        style={{
-          padding: "8px 14px",
-          borderTop: "1px solid var(--border)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 6,
-        }}
-      >
+      {/* ── Footer ── */}
+      <div className="sb-footer">
         <button
           ref={settingsTriggerRef}
           type="button"
+          className="sb-settings-btn"
           onClick={() => {
             if (settingsMenuOpen) {
               closeSettingsMenu();
@@ -881,41 +571,13 @@ export function Sidebar() {
             }
             setSettingsMenuOpen(true);
           }}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "6px 4px",
-            fontSize: 13,
-            color: "var(--text-2)",
-            background: "transparent",
-            cursor: "pointer",
-            width: "100%",
-            borderRadius: "var(--radius-sm)",
-            transition: "color var(--duration-fast)",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.color = "var(--text-1)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = "var(--text-2)";
-          }}
         >
-          <Settings size={14} style={{ opacity: 0.6 }} />
+          <Settings size={14} style={{ opacity: 0.5 }} />
           Settings
         </button>
 
         {advancedScanOpen && (
-          <div
-            style={{
-              borderRadius: "var(--radius-sm)",
-              border: "1px solid var(--border)",
-              background: "var(--bg-2)",
-              padding: "8px",
-              display: "grid",
-              gap: 6,
-            }}
-          >
+          <div className="sb-scan-config">
             <p style={{ margin: 0, fontSize: 11, color: "var(--text-3)" }}>
               Default depth used when opening new projects ({MIN_SCAN_DEPTH}-{MAX_SCAN_DEPTH}).
             </p>
@@ -925,30 +587,20 @@ export function Sidebar() {
               max={MAX_SCAN_DEPTH}
               step={1}
               value={advancedScanDraft}
-              onChange={(event) => {
-                setAdvancedScanDraft(event.target.value);
-                if (advancedScanError) {
-                  setAdvancedScanError(null);
-                }
+              className="sb-scan-input"
+              onChange={(e) => {
+                setAdvancedScanDraft(e.target.value);
+                if (advancedScanError) setAdvancedScanError(null);
               }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
                   saveAdvancedScanConfig();
-                } else if (event.key === "Escape") {
-                  event.preventDefault();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
                   setAdvancedScanOpen(false);
                   setAdvancedScanError(null);
                 }
-              }}
-              style={{
-                width: "100%",
-                padding: "6px 8px",
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid var(--border)",
-                background: "var(--bg-1)",
-                color: "var(--text-1)",
-                fontSize: 12,
               }}
             />
             {advancedScanError && (
@@ -981,6 +633,7 @@ export function Sidebar() {
         )}
       </div>
 
+      {/* Settings portal menu */}
       {settingsMenuOpen &&
         createPortal(
           <div
@@ -1013,7 +666,13 @@ export function Sidebar() {
               }}
             >
               <span>Scan depth</span>
-              <span style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 11, color: "var(--text-3)" }}>
+              <span
+                style={{
+                  fontFamily: '"JetBrains Mono", monospace',
+                  fontSize: 11,
+                  color: "var(--text-3)",
+                }}
+              >
                 {readDefaultScanDepth()}
               </span>
             </button>
@@ -1035,5 +694,164 @@ export function Sidebar() {
         </div>
       )}
     </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   Collapsed rail — shown when unpinned
+   ───────────────────────────────────────────────────── */
+
+function CollapsedRail({
+  onHoverStart,
+  onHoverEnd,
+}: {
+  onHoverStart: () => void;
+  onHoverEnd: () => void;
+}) {
+  const projects = useWorkspaceStore((s) => s.workspaces);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
+  const toggleSidebarPin = useUiStore((s) => s.toggleSidebarPin);
+
+  return (
+    <div
+      className="sb-rail"
+      onMouseEnter={onHoverStart}
+      onMouseLeave={onHoverEnd}
+    >
+      {/* Drag region for traffic lights */}
+      <div
+        onMouseDown={handleDragMouseDown}
+        onDoubleClick={handleDragDoubleClick}
+        style={{ height: 42, width: "100%", flexShrink: 0 }}
+      />
+
+      {/* Pin button */}
+      <button
+        type="button"
+        className="sb-rail-btn"
+        onClick={toggleSidebarPin}
+        title="Pin sidebar"
+        style={{ marginBottom: 4 }}
+      >
+        <Pin size={15} />
+      </button>
+
+      <div className="sb-rail-divider" />
+
+      {/* Project icons */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 2,
+          paddingTop: 4,
+          overflow: "auto",
+        }}
+      >
+        {projects.map((ws) => {
+          const isActive = ws.id === activeWorkspaceId;
+          const name = ws.name || ws.rootPath.split("/").pop() || "P";
+          return (
+            <button
+              key={ws.id}
+              type="button"
+              className={`sb-rail-btn ${isActive ? "sb-rail-btn-active" : ""}`}
+              title={ws.name || ws.rootPath}
+              onClick={() => void setActiveWorkspace(ws.id)}
+            >
+              <span
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  letterSpacing: "-0.02em",
+                }}
+              >
+                {name.charAt(0).toUpperCase()}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="sb-rail-divider" />
+
+      {/* Settings at bottom */}
+      <button
+        type="button"
+        className="sb-rail-btn"
+        title="Settings"
+        style={{ marginBottom: 8 }}
+      >
+        <Settings size={15} />
+      </button>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   Main Sidebar export
+   ───────────────────────────────────────────────────── */
+
+export function Sidebar() {
+  const sidebarPinned = useUiStore((s) => s.sidebarPinned);
+  const toggleSidebarPin = useUiStore((s) => s.toggleSidebarPin);
+  const [hovered, setHovered] = useState(false);
+  const hoverTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const flyoutRef = useRef<HTMLDivElement>(null);
+
+  // When pinned, render the full sidebar content directly
+  if (sidebarPinned) {
+    return <SidebarContent />;
+  }
+
+  // When unpinned, render rail + hover flyout
+  const handleHoverStart = () => {
+    clearTimeout(hoverTimeout.current);
+    setHovered(true);
+  };
+
+  const handleHoverEnd = () => {
+    hoverTimeout.current = setTimeout(() => setHovered(false), 200);
+  };
+
+  const handleFlyoutEnter = () => {
+    clearTimeout(hoverTimeout.current);
+    setHovered(true);
+  };
+
+  const handleFlyoutLeave = () => {
+    hoverTimeout.current = setTimeout(() => setHovered(false), 150);
+  };
+
+  return (
+    <>
+      <CollapsedRail onHoverStart={handleHoverStart} onHoverEnd={handleHoverEnd} />
+
+      {/* Flyout overlay */}
+      {createPortal(
+        <div
+          className="sb-flyout-wrapper"
+          onMouseEnter={handleFlyoutEnter}
+          onMouseLeave={handleFlyoutLeave}
+          style={{ pointerEvents: hovered ? "auto" : "none" }}
+        >
+          <div
+            ref={flyoutRef}
+            className={`sb-flyout ${hovered ? "sb-flyout-visible" : ""}`}
+          >
+            <SidebarContent
+              onPin={() => {
+                setHovered(false);
+                toggleSidebarPin();
+              }}
+            />
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }

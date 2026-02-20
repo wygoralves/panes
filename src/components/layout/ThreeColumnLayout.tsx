@@ -6,36 +6,45 @@ import { useUiStore } from "../../stores/uiStore";
 
 export function ThreeColumnLayout() {
   const showSidebar = useUiStore((state) => state.showSidebar);
+  const sidebarPinned = useUiStore((state) => state.sidebarPinned);
   const showGitPanel = useUiStore((state) => state.showGitPanel);
-  const centerDefaultSize = showSidebar && showGitPanel ? 56 : showSidebar || showGitPanel ? 74 : 100;
+
+  const sidebarVisible = showSidebar && sidebarPinned;
+  const centerDefaultSize = sidebarVisible && showGitPanel ? 56 : sidebarVisible || showGitPanel ? 74 : 100;
 
   return (
-    <PanelGroup key={`${showSidebar}-${showGitPanel}`} direction="horizontal" style={{ height: "100%" }}>
-      {showSidebar && (
-        <Panel defaultSize={18} minSize={14} maxSize={28}>
-          <div className="panel panel-border-r" style={{ height: "100%" }}>
-            <Sidebar />
-          </div>
-        </Panel>
-      )}
+    <div style={{ height: "100%", display: "flex" }}>
+      {/* Unpinned sidebar — collapsed rail + hover flyout, outside PanelGroup */}
+      {showSidebar && !sidebarPinned && <Sidebar />}
 
-      {showSidebar && <PanelResizeHandle className="resize-handle" />}
+      {/* Main panel group */}
+      <PanelGroup key={`${sidebarVisible}-${showGitPanel}`} direction="horizontal" style={{ height: "100%", flex: 1 }}>
+        {sidebarVisible && (
+          <Panel defaultSize={18} minSize={14} maxSize={28}>
+            <div className="panel panel-border-r" style={{ height: "100%" }}>
+              <Sidebar />
+            </div>
+          </Panel>
+        )}
 
-      <Panel defaultSize={centerDefaultSize} minSize={35}>
-        <div className="panel" style={{ height: "100%" }}>
-          <ChatPanel />
-        </div>
-      </Panel>
+        {sidebarVisible && <PanelResizeHandle className="resize-handle" />}
 
-      {showGitPanel && <PanelResizeHandle className="resize-handle" />}
-
-      {showGitPanel && (
-        <Panel defaultSize={26} minSize={18} maxSize={40}>
+        <Panel defaultSize={centerDefaultSize} minSize={35}>
           <div className="panel" style={{ height: "100%" }}>
-            <GitPanel />
+            <ChatPanel />
           </div>
         </Panel>
-      )}
-    </PanelGroup>
+
+        {showGitPanel && <PanelResizeHandle className="resize-handle" />}
+
+        {showGitPanel && (
+          <Panel defaultSize={26} minSize={18} maxSize={40}>
+            <div className="panel" style={{ height: "100%" }}>
+              <GitPanel />
+            </div>
+          </Panel>
+        )}
+      </PanelGroup>
+    </div>
   );
 }
