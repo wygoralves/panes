@@ -532,12 +532,14 @@ button, input, textarea, select {
 }
 
 .git-header {
-  padding: 10px 14px;
+  height: 74px;
+  padding: 8px 14px;
   padding-top: 38px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .git-branch-label {

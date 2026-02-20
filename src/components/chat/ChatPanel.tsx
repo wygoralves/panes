@@ -1231,13 +1231,13 @@ export function ChatPanel() {
         onMouseDown={handleDragMouseDown}
         onDoubleClick={handleDragDoubleClick}
         style={{
+          height: 74,
           padding: "8px 16px",
           paddingTop: 38,
           display: "flex",
           alignItems: "center",
           gap: 8,
           borderBottom: "1px solid var(--border)",
-          minHeight: 52,
           flexShrink: 0,
         }}
       >
