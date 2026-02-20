@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.3.0...vnull) (2026-02-20)
+
+### Bug Fixes
+
+* fix health check lockages and improve initialization timeouts ([eb5b22b](https://github.com/wygoralves/panes/commit/eb5b22b3593e21ab7ba4e0e95dbfcc7ba087da8d))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.2.0...vnull) (2026-02-20)
 
 ### Features
