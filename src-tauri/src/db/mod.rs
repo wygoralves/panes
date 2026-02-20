@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, time::Duration};
 
 use anyhow::Context;
 use rusqlite::Connection;
@@ -30,6 +30,14 @@ impl Database {
         let conn = Connection::open(&self.path).context("failed to open sqlite database")?;
         conn.pragma_update(None, "foreign_keys", "ON")
             .context("failed to enable sqlite foreign keys")?;
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .context("failed to enable sqlite WAL mode")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")
+            .context("failed to set sqlite synchronous mode")?;
+        conn.pragma_update(None, "temp_store", "MEMORY")
+            .context("failed to set sqlite temp_store mode")?;
+        conn.busy_timeout(Duration::from_millis(5_000))
+            .context("failed to set sqlite busy timeout")?;
         Ok(conn)
     }
 

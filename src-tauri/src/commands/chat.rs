@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,6 +21,8 @@ use crate::{
 
 const MAX_THREAD_TITLE_CHARS: usize = 72;
 const STREAM_EVENT_COALESCE_MAX_CHARS: usize = 8_192;
+const STREAM_DB_FLUSH_INTERVAL: Duration = Duration::from_millis(180);
+const ACTION_OUTPUT_MAX_CHUNKS: usize = 240;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -86,6 +91,8 @@ struct EventProgress {
     message_status: Option<MessageStatusDto>,
     thread_status: Option<ThreadStatusDto>,
     token_usage: Option<(u64, u64)>,
+    blocks_changed: bool,
+    force_persist: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -381,6 +388,11 @@ async fn run_turn(
     let mut message_status = MessageStatusDto::Streaming;
     let mut thread_status = ThreadStatusDto::Streaming;
     let mut token_usage: Option<(u64, u64)> = None;
+    let mut blocks_dirty = false;
+    let mut message_state_dirty = false;
+    let mut thread_status_dirty = false;
+    let mut last_persist_at = Instant::now();
+    let mut last_persisted_thread_status = thread_status.clone();
     let stream_event_topic = format!("stream-event-{}", thread.id);
     let approval_event_topic = format!("approval-request-{}", thread.id);
     let mut pending_event: Option<EngineEvent> = None;
@@ -395,7 +407,7 @@ async fn run_turn(
                         if coalesced_event_content_len(&merged_event)
                             >= STREAM_EVENT_COALESCE_MAX_CHARS
                         {
-                            process_stream_event(
+                            let progress = process_stream_event(
                                 &app,
                                 &state,
                                 &thread,
@@ -406,10 +418,30 @@ async fn run_turn(
                                 &mut blocks,
                                 &mut action_index,
                                 &mut approval_index,
+                                max_output_chars,
+                            );
+                            let force_persist = apply_stream_progress(
+                                progress,
                                 &mut message_status,
                                 &mut thread_status,
                                 &mut token_usage,
-                                max_output_chars,
+                                &mut blocks_dirty,
+                                &mut message_state_dirty,
+                                &mut thread_status_dirty,
+                            );
+                            flush_stream_state(
+                                &state,
+                                &thread,
+                                &assistant_message_id,
+                                &blocks,
+                                &message_status,
+                                &thread_status,
+                                &mut blocks_dirty,
+                                &mut message_state_dirty,
+                                &mut thread_status_dirty,
+                                &mut last_persisted_thread_status,
+                                &mut last_persist_at,
+                                force_persist,
                             );
                         } else {
                             pending_event = Some(merged_event);
@@ -417,7 +449,7 @@ async fn run_turn(
                         break;
                     }
                     Err((unmerged_previous_event, unmerged_current_event)) => {
-                        process_stream_event(
+                        let progress = process_stream_event(
                             &app,
                             &state,
                             &thread,
@@ -428,10 +460,30 @@ async fn run_turn(
                             &mut blocks,
                             &mut action_index,
                             &mut approval_index,
+                            max_output_chars,
+                        );
+                        let force_persist = apply_stream_progress(
+                            progress,
                             &mut message_status,
                             &mut thread_status,
                             &mut token_usage,
-                            max_output_chars,
+                            &mut blocks_dirty,
+                            &mut message_state_dirty,
+                            &mut thread_status_dirty,
+                        );
+                        flush_stream_state(
+                            &state,
+                            &thread,
+                            &assistant_message_id,
+                            &blocks,
+                            &message_status,
+                            &thread_status,
+                            &mut blocks_dirty,
+                            &mut message_state_dirty,
+                            &mut thread_status_dirty,
+                            &mut last_persisted_thread_status,
+                            &mut last_persist_at,
+                            force_persist,
                         );
                         current_event = unmerged_current_event;
                     }
@@ -440,7 +492,7 @@ async fn run_turn(
                 pending_event = Some(current_event);
                 break;
             } else {
-                process_stream_event(
+                let progress = process_stream_event(
                     &app,
                     &state,
                     &thread,
@@ -451,10 +503,30 @@ async fn run_turn(
                     &mut blocks,
                     &mut action_index,
                     &mut approval_index,
+                    max_output_chars,
+                );
+                let force_persist = apply_stream_progress(
+                    progress,
                     &mut message_status,
                     &mut thread_status,
                     &mut token_usage,
-                    max_output_chars,
+                    &mut blocks_dirty,
+                    &mut message_state_dirty,
+                    &mut thread_status_dirty,
+                );
+                flush_stream_state(
+                    &state,
+                    &thread,
+                    &assistant_message_id,
+                    &blocks,
+                    &message_status,
+                    &thread_status,
+                    &mut blocks_dirty,
+                    &mut message_state_dirty,
+                    &mut thread_status_dirty,
+                    &mut last_persisted_thread_status,
+                    &mut last_persist_at,
+                    force_persist,
                 );
                 break;
             }
@@ -462,7 +534,7 @@ async fn run_turn(
     }
 
     if let Some(event) = pending_event.take() {
-        process_stream_event(
+        let progress = process_stream_event(
             &app,
             &state,
             &thread,
@@ -473,10 +545,30 @@ async fn run_turn(
             &mut blocks,
             &mut action_index,
             &mut approval_index,
+            max_output_chars,
+        );
+        let force_persist = apply_stream_progress(
+            progress,
             &mut message_status,
             &mut thread_status,
             &mut token_usage,
-            max_output_chars,
+            &mut blocks_dirty,
+            &mut message_state_dirty,
+            &mut thread_status_dirty,
+        );
+        flush_stream_state(
+            &state,
+            &thread,
+            &assistant_message_id,
+            &blocks,
+            &message_status,
+            &thread_status,
+            &mut blocks_dirty,
+            &mut message_state_dirty,
+            &mut thread_status_dirty,
+            &mut last_persisted_thread_status,
+            &mut last_persist_at,
+            force_persist,
         );
     }
 
@@ -486,8 +578,15 @@ async fn run_turn(
             blocks.push(ContentBlock::Error {
                 message: format!("Engine error: {error}"),
             });
-            message_status = MessageStatusDto::Error;
-            thread_status = ThreadStatusDto::Error;
+            blocks_dirty = true;
+            if message_status != MessageStatusDto::Error {
+                message_status = MessageStatusDto::Error;
+                message_state_dirty = true;
+            }
+            if thread_status != ThreadStatusDto::Error {
+                thread_status = ThreadStatusDto::Error;
+                thread_status_dirty = true;
+            }
             let _ = app.emit(
                 &stream_event_topic,
                 EngineEvent::Error {
@@ -500,24 +599,39 @@ async fn run_turn(
             blocks.push(ContentBlock::Error {
                 message: format!("Engine task join error: {error}"),
             });
-            message_status = MessageStatusDto::Error;
-            thread_status = ThreadStatusDto::Error;
+            blocks_dirty = true;
+            if message_status != MessageStatusDto::Error {
+                message_status = MessageStatusDto::Error;
+                message_state_dirty = true;
+            }
+            if thread_status != ThreadStatusDto::Error {
+                thread_status = ThreadStatusDto::Error;
+                thread_status_dirty = true;
+            }
         }
     }
 
     if cancellation.is_cancelled() && matches!(message_status, MessageStatusDto::Streaming) {
         message_status = MessageStatusDto::Interrupted;
+        message_state_dirty = true;
         thread_status = ThreadStatusDto::Idle;
+        thread_status_dirty = true;
     }
 
-    if let Ok(blocks_json) = serde_json::to_value(&blocks) {
-        let _ = db::messages::update_assistant_blocks(
-            &state.db,
-            &assistant_message_id,
-            &blocks_json,
-            message_status.clone(),
-        );
-    }
+    flush_stream_state(
+        &state,
+        &thread,
+        &assistant_message_id,
+        &blocks,
+        &message_status,
+        &thread_status,
+        &mut blocks_dirty,
+        &mut message_state_dirty,
+        &mut thread_status_dirty,
+        &mut last_persisted_thread_status,
+        &mut last_persist_at,
+        true,
+    );
 
     let _ = db::messages::complete_assistant_message(
         &state.db,
@@ -525,7 +639,6 @@ async fn run_turn(
         message_status.clone(),
         token_usage,
     );
-    let _ = db::threads::update_thread_status(&state.db, &thread.id, thread_status.clone());
 
     if matches!(message_status, MessageStatusDto::Completed) {
         let _ = db::threads::bump_message_counters(&state.db, &thread.id, token_usage);
@@ -645,11 +758,8 @@ fn process_stream_event(
     blocks: &mut Vec<ContentBlock>,
     action_index: &mut HashMap<String, usize>,
     approval_index: &mut HashMap<String, usize>,
-    message_status: &mut MessageStatusDto,
-    thread_status: &mut ThreadStatusDto,
-    token_usage: &mut Option<(u64, u64)>,
     max_output_chars: usize,
-) {
+) -> EventProgress {
     let _ = app.emit(stream_event_topic, event);
     if matches!(event, EngineEvent::ApprovalRequested { .. }) {
         let _ = app.emit(approval_event_topic, event);
@@ -711,27 +821,87 @@ fn process_stream_event(
         max_output_chars,
     );
 
+    progress
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_stream_progress(
+    progress: EventProgress,
+    message_status: &mut MessageStatusDto,
+    thread_status: &mut ThreadStatusDto,
+    token_usage: &mut Option<(u64, u64)>,
+    blocks_dirty: &mut bool,
+    message_state_dirty: &mut bool,
+    thread_status_dirty: &mut bool,
+) -> bool {
+    if progress.blocks_changed {
+        *blocks_dirty = true;
+    }
+
     if let Some(status) = progress.message_status {
-        *message_status = status;
+        if *message_status != status {
+            *message_status = status;
+            *message_state_dirty = true;
+        }
     }
 
     if let Some(status) = progress.thread_status {
-        *thread_status = status;
-        let _ = db::threads::update_thread_status(&state.db, &thread.id, thread_status.clone());
+        if *thread_status != status {
+            *thread_status = status;
+            *thread_status_dirty = true;
+        }
     }
 
     if let Some(tokens) = progress.token_usage {
         *token_usage = Some(tokens);
     }
 
-    if let Ok(blocks_json) = serde_json::to_value(blocks) {
-        let _ = db::messages::update_assistant_blocks(
-            &state.db,
-            assistant_message_id,
-            &blocks_json,
-            message_status.clone(),
-        );
+    progress.force_persist
+}
+
+#[allow(clippy::too_many_arguments)]
+fn flush_stream_state(
+    state: &AppState,
+    thread: &ThreadDto,
+    assistant_message_id: &str,
+    blocks: &[ContentBlock],
+    message_status: &MessageStatusDto,
+    thread_status: &ThreadStatusDto,
+    blocks_dirty: &mut bool,
+    message_state_dirty: &mut bool,
+    thread_status_dirty: &mut bool,
+    last_persisted_thread_status: &mut ThreadStatusDto,
+    last_persist_at: &mut Instant,
+    force: bool,
+) {
+    if !*blocks_dirty && !*message_state_dirty && !*thread_status_dirty {
+        return;
     }
+
+    let now = Instant::now();
+    if !force && now.duration_since(*last_persist_at) < STREAM_DB_FLUSH_INTERVAL {
+        return;
+    }
+
+    if *blocks_dirty || *message_state_dirty {
+        if let Ok(blocks_json) = serde_json::to_value(blocks) {
+            let _ = db::messages::update_assistant_blocks(
+                &state.db,
+                assistant_message_id,
+                &blocks_json,
+                message_status.clone(),
+            );
+        }
+        *blocks_dirty = false;
+        *message_state_dirty = false;
+    }
+
+    if *thread_status_dirty && *last_persisted_thread_status != *thread_status {
+        let _ = db::threads::update_thread_status(&state.db, &thread.id, thread_status.clone());
+        *last_persisted_thread_status = thread_status.clone();
+    }
+    *thread_status_dirty = false;
+    *last_persist_at = now;
 }
 
 async fn maybe_update_thread_title(
@@ -829,6 +999,7 @@ fn apply_event_to_blocks(
             token_usage,
             status,
         } => {
+            progress.force_persist = true;
             match status {
                 TurnCompletionStatus::Completed => {
                     progress.message_status = Some(MessageStatusDto::Completed);
@@ -848,10 +1019,10 @@ fn apply_event_to_blocks(
                 .map(|usage| (usage.input, usage.output));
         }
         EngineEvent::TextDelta { content } => {
-            append_text_delta(blocks, content);
+            progress.blocks_changed = append_text_delta(blocks, content);
         }
         EngineEvent::ThinkingDelta { content } => {
-            append_thinking_delta(blocks, content);
+            progress.blocks_changed = append_thinking_delta(blocks, content);
         }
         EngineEvent::ActionStarted {
             action_id,
@@ -870,7 +1041,7 @@ fn apply_event_to_blocks(
                 status: "running".to_string(),
                 result: None,
             };
-            upsert_action_block(blocks, action_index, action_id, block);
+            progress.blocks_changed = upsert_action_block(blocks, action_index, action_id, block);
         }
         EngineEvent::ActionOutputDelta {
             action_id,
@@ -878,14 +1049,41 @@ fn apply_event_to_blocks(
             content,
         } => {
             if let Some(index) = action_index.get(action_id).copied() {
-                if let Some(ContentBlock::Action { output_chunks, .. }) = blocks.get_mut(index) {
-                    output_chunks.push(ActionOutputChunk {
-                        stream: match stream {
-                            OutputStream::Stdout => "stdout".to_string(),
-                            OutputStream::Stderr => "stderr".to_string(),
-                        },
-                        content: truncate_chars(content, max_output_chars),
-                    });
+                if let Some(ContentBlock::Action {
+                    output_chunks,
+                    details,
+                    ..
+                }) = blocks.get_mut(index)
+                {
+                    let stream_name = match stream {
+                        OutputStream::Stdout => "stdout",
+                        OutputStream::Stderr => "stderr",
+                    };
+                    let chunk_content = truncate_chars(content, max_output_chars);
+                    if chunk_content.is_empty() {
+                        return progress;
+                    }
+
+                    if let Some(previous_chunk) = output_chunks.last_mut() {
+                        if previous_chunk.stream == stream_name {
+                            previous_chunk.content.push_str(&chunk_content);
+                        } else {
+                            output_chunks.push(ActionOutputChunk {
+                                stream: stream_name.to_string(),
+                                content: chunk_content,
+                            });
+                        }
+                    } else {
+                        output_chunks.push(ActionOutputChunk {
+                            stream: stream_name.to_string(),
+                            content: chunk_content,
+                        });
+                    }
+
+                    if trim_action_output_chunks(output_chunks, max_output_chars) {
+                        mark_output_truncated(details);
+                    }
+                    progress.blocks_changed = true;
                 }
             }
         }
@@ -905,6 +1103,7 @@ fn apply_event_to_blocks(
                         diff: result.diff.clone(),
                         duration_ms: result.duration_ms,
                     });
+                    progress.blocks_changed = true;
                 }
             }
         }
@@ -920,6 +1119,7 @@ fn apply_event_to_blocks(
                 diff: diff.to_string(),
                 scope,
             });
+            progress.blocks_changed = true;
         }
         EngineEvent::ApprovalRequested {
             approval_id,
@@ -935,8 +1135,10 @@ fn apply_event_to_blocks(
                 status: "pending".to_string(),
                 decision: None,
             };
-            upsert_approval_block(blocks, approval_index, approval_id, block);
+            progress.blocks_changed =
+                upsert_approval_block(blocks, approval_index, approval_id, block);
             progress.thread_status = Some(ThreadStatusDto::AwaitingApproval);
+            progress.force_persist = true;
         }
         EngineEvent::Error {
             message,
@@ -945,9 +1147,11 @@ fn apply_event_to_blocks(
             blocks.push(ContentBlock::Error {
                 message: message.to_string(),
             });
+            progress.blocks_changed = true;
             if !recoverable {
                 progress.message_status = Some(MessageStatusDto::Error);
                 progress.thread_status = Some(ThreadStatusDto::Error);
+                progress.force_persist = true;
             }
         }
     }
@@ -955,26 +1159,36 @@ fn apply_event_to_blocks(
     progress
 }
 
-fn append_text_delta(blocks: &mut Vec<ContentBlock>, content: &str) {
+fn append_text_delta(blocks: &mut Vec<ContentBlock>, content: &str) -> bool {
+    if content.is_empty() {
+        return false;
+    }
+
     if let Some(ContentBlock::Text { content: current }) = blocks.last_mut() {
         current.push_str(content);
-        return;
+        return true;
     }
 
     blocks.push(ContentBlock::Text {
         content: content.to_string(),
     });
+    true
 }
 
-fn append_thinking_delta(blocks: &mut Vec<ContentBlock>, content: &str) {
+fn append_thinking_delta(blocks: &mut Vec<ContentBlock>, content: &str) -> bool {
+    if content.is_empty() {
+        return false;
+    }
+
     if let Some(ContentBlock::Thinking { content: current }) = blocks.last_mut() {
         current.push_str(content);
-        return;
+        return true;
     }
 
     blocks.push(ContentBlock::Thinking {
         content: content.to_string(),
     });
+    true
 }
 
 fn upsert_action_block(
@@ -982,17 +1196,18 @@ fn upsert_action_block(
     action_index: &mut HashMap<String, usize>,
     action_id: &str,
     block: ContentBlock,
-) {
+) -> bool {
     if let Some(index) = action_index.get(action_id).copied() {
         if let Some(existing) = blocks.get_mut(index) {
             *existing = block;
-            return;
+            return true;
         }
     }
 
     let index = blocks.len();
     blocks.push(block);
     action_index.insert(action_id.to_string(), index);
+    true
 }
 
 fn upsert_approval_block(
@@ -1000,17 +1215,70 @@ fn upsert_approval_block(
     approval_index: &mut HashMap<String, usize>,
     approval_id: &str,
     block: ContentBlock,
-) {
+) -> bool {
     if let Some(index) = approval_index.get(approval_id).copied() {
         if let Some(existing) = blocks.get_mut(index) {
             *existing = block;
-            return;
+            return true;
         }
     }
 
     let index = blocks.len();
     blocks.push(block);
     approval_index.insert(approval_id.to_string(), index);
+    true
+}
+
+fn trim_action_output_chunks(
+    output_chunks: &mut Vec<ActionOutputChunk>,
+    max_output_chars: usize,
+) -> bool {
+    let mut truncated = false;
+
+    if output_chunks.len() > ACTION_OUTPUT_MAX_CHUNKS {
+        let overflow = output_chunks.len() - ACTION_OUTPUT_MAX_CHUNKS;
+        output_chunks.drain(0..overflow);
+        truncated = true;
+    }
+
+    let max_chars = max_output_chars.max(1);
+    let total_chars: usize = output_chunks.iter().map(|chunk| chunk.content.len()).sum();
+    if total_chars <= max_chars {
+        return truncated;
+    }
+
+    let target_chars = max_chars.saturating_mul(2) / 3;
+    let chars_to_trim = total_chars.saturating_sub(target_chars.max(1));
+    if chars_to_trim == 0 {
+        return truncated;
+    }
+
+    let mut remaining_to_trim = chars_to_trim;
+    let mut remove_count = 0usize;
+    for chunk in output_chunks.iter() {
+        if remaining_to_trim == 0 {
+            break;
+        }
+        remaining_to_trim = remaining_to_trim.saturating_sub(chunk.content.len());
+        remove_count += 1;
+    }
+
+    if remove_count > 0 {
+        output_chunks.drain(0..remove_count);
+        truncated = true;
+    }
+
+    truncated
+}
+
+fn mark_output_truncated(details: &mut Value) {
+    if !details.is_object() {
+        *details = Value::Object(serde_json::Map::new());
+    }
+
+    if let Some(details_object) = details.as_object_mut() {
+        details_object.insert("outputTruncated".to_string(), Value::Bool(true));
+    }
 }
 
 fn truncate_chars(value: &str, max_chars: usize) -> String {

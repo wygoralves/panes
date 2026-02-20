@@ -1,7 +1,7 @@
 use anyhow::Context;
 use std::collections::HashMap;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -129,8 +129,6 @@ pub fn get_thread_messages(db: &Database, thread_id: &str) -> anyhow::Result<Vec
     for row in rows {
         out.push(row?);
     }
-
-    apply_answered_approvals_to_messages(&conn, thread_id, &mut out)?;
 
     Ok(out)
 }
@@ -264,60 +262,6 @@ fn insert_message(
         },
     )
     .context("failed to load inserted message")
-}
-
-fn apply_answered_approvals_to_messages(
-    conn: &Connection,
-    thread_id: &str,
-    messages: &mut [MessageDto],
-) -> anyhow::Result<()> {
-    let answered = load_answered_approvals(conn, thread_id)?;
-    if answered.is_empty() {
-        return Ok(());
-    }
-
-    for message in messages.iter_mut() {
-        let Some(blocks) = message.blocks.as_mut() else {
-            continue;
-        };
-
-        if !apply_answered_approvals_to_blocks(blocks, &answered) {
-            continue;
-        }
-
-        conn.execute(
-            "UPDATE messages SET blocks_json = ?1 WHERE id = ?2",
-            params![blocks.to_string(), message.id],
-        )
-        .context("failed to backfill answered approval status in message blocks")?;
-    }
-
-    Ok(())
-}
-
-fn load_answered_approvals(
-    conn: &Connection,
-    thread_id: &str,
-) -> anyhow::Result<HashMap<String, String>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, decision
-     FROM approvals
-     WHERE thread_id = ?1
-       AND status = 'answered'
-       AND decision IS NOT NULL",
-    )?;
-
-    let rows = stmt.query_map(params![thread_id], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })?;
-
-    let mut out = HashMap::new();
-    for row in rows {
-        let (approval_id, decision) = row?;
-        out.insert(approval_id, decision);
-    }
-
-    Ok(out)
 }
 
 fn apply_answered_approvals_to_blocks(

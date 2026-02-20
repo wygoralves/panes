@@ -106,7 +106,8 @@ pub fn update_thread_status(
     conn.execute(
         "UPDATE threads
      SET status = ?1, last_activity_at = datetime('now')
-     WHERE id = ?2",
+     WHERE id = ?2
+       AND status != ?1",
         params![status.as_str(), thread_id],
     )
     .context("failed to update thread status")?;
