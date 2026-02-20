@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   ChevronRight,
   FileCode2,
+  FileDiff,
   Terminal,
   Shield,
   Loader2,
@@ -15,16 +16,20 @@ import {
   Brain,
 } from "lucide-react";
 import type {
+  ActionBlock,
   ApprovalBlock,
   ApprovalResponse,
   ContentBlock,
+  DiffBlock,
   MessageStatus,
+  ThinkingBlock,
 } from "../../types";
 import { ToolInputQuestionnaire } from "./ToolInputQuestionnaire";
 import {
   isRequestUserInputApproval,
   parseToolInputQuestions,
 } from "./toolInputApproval";
+import { parseDiff, extractDiffFilename, LINE_CLASS } from "../../lib/parseDiff";
 
 interface Props {
   blocks?: ContentBlock[];
@@ -44,38 +49,216 @@ const actionIcons: Record<string, typeof Terminal> = {
   file_delete: FileCode2,
 };
 
+/* ── Diff Block ── */
+
+function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaultExpanded: boolean }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const raw = String(block.diff ?? "");
+  const parsed = useMemo(() => parseDiff(raw), [raw]);
+  const filename = useMemo(() => extractDiffFilename(raw), [raw]);
+
+  const adds = parsed.filter((l) => l.type === "add").length;
+  const dels = parsed.filter((l) => l.type === "del").length;
+
+  return (
+    <div>
+      <div
+        className="msg-block-header"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <ChevronRight
+          size={11}
+          className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
+        />
+        <FileDiff size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+        <span style={{ fontSize: 11.5, color: "var(--text-2)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {filename ?? `diff (${String(block.scope ?? "turn")})`}
+        </span>
+        {(adds > 0 || dels > 0) && (
+          <span style={{ fontSize: 10, fontFamily: '"JetBrains Mono", monospace', display: "flex", gap: 5, flexShrink: 0 }}>
+            {adds > 0 && <span style={{ color: "var(--success)" }}>+{adds}</span>}
+            {dels > 0 && <span style={{ color: "var(--danger)" }}>-{dels}</span>}
+          </span>
+        )}
+      </div>
+      {expanded && (
+        parsed.length > 0 ? (
+          <div style={{
+            overflow: "auto",
+            maxHeight: 400,
+            margin: "2px 12px 4px",
+            borderRadius: "var(--radius-sm)",
+            border: "1px solid var(--border)",
+            background: "var(--code-bg)",
+          }}>
+            <pre style={{ margin: 0, padding: "4px 0", width: "fit-content", minWidth: "100%" }}>
+              {parsed.map((line, idx) => (
+                <span key={idx} className={`git-diff-line ${LINE_CLASS[line.type]}`}>
+                  <span className="git-diff-gutter">{line.gutter}</span>
+                  <span className="git-diff-line-num">{line.lineNum}</span>
+                  <span className="git-diff-line-content">{line.content}</span>
+                </span>
+              ))}
+            </pre>
+          </div>
+        ) : (
+          <div style={{ padding: "4px 14px", fontSize: 11.5, color: "var(--text-3)" }}>
+            No changes
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+/* ── Thinking Block ── */
+
+function ThinkingBlockView({ block }: { block: ThinkingBlock }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div>
+      <div
+        className="msg-block-header"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <ChevronRight
+          size={11}
+          className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
+        />
+        <Brain size={12} style={{ color: "var(--info)", opacity: 0.6, flexShrink: 0 }} />
+        <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>Thinking</span>
+      </div>
+      {expanded && (
+        <div className="prose" style={{ fontSize: 12.5, color: "var(--text-2)", padding: "2px 12px 8px 30px", minWidth: 0 }}>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeHighlight]}
+          >
+            {String(block.content ?? "")}
+          </ReactMarkdown>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Action Block ── */
+
 function ActionStatusBadge({ status }: { status: string }) {
   if (status === "done") {
     return (
-      <span style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--success)", fontSize: 11, fontWeight: 500 }}>
-        <CheckCircle2 size={12} />
+      <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--success)", fontSize: 10, opacity: 0.7 }}>
+        <CheckCircle2 size={11} />
         Done
       </span>
     );
   }
   if (status === "running") {
     return (
-      <span style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--warning)", fontSize: 11, fontWeight: 500 }}>
-        <Loader2 size={12} style={{ animation: "pulse-soft 1s ease-in-out infinite" }} />
+      <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--warning)", fontSize: 10, fontWeight: 500 }}>
+        <Loader2 size={11} style={{ animation: "pulse-soft 1s ease-in-out infinite" }} />
         Running
       </span>
     );
   }
   if (status === "error") {
     return (
-      <span style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--danger)", fontSize: 11, fontWeight: 500 }}>
-        <XCircle size={12} />
+      <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--danger)", fontSize: 10 }}>
+        <XCircle size={11} />
         Error
       </span>
     );
   }
   return (
-    <span style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-3)", fontSize: 11 }}>
-      <Circle size={12} />
+    <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-3)", fontSize: 10 }}>
+      <Circle size={11} />
       Pending
     </span>
   );
 }
+
+function ActionBlockView({ block }: { block: ActionBlock }) {
+  const outputChunks = Array.isArray(block.outputChunks) ? block.outputChunks : [];
+  const Icon = actionIcons[block.actionType] ?? Terminal;
+  const isRunning = block.status === "running";
+  const isPending = block.status === "pending";
+  const hasBody = outputChunks.length > 0 || Boolean(block.result?.error);
+  const [expanded, setExpanded] = useState(isRunning || isPending);
+  const canToggle = hasBody;
+
+  return (
+    <div>
+      <div
+        className={canToggle ? "msg-block-header" : undefined}
+        style={canToggle ? undefined : { display: "flex", alignItems: "center", gap: 6, padding: "3px 12px" }}
+        onClick={canToggle ? () => setExpanded((v) => !v) : undefined}
+      >
+        {canToggle && (
+          <ChevronRight
+            size={11}
+            className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
+          />
+        )}
+        <Icon size={12} style={{ color: "var(--text-3)", flexShrink: 0, opacity: 0.7 }} />
+        <span style={{ fontSize: 11.5, color: "var(--text-2)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {block.summary}
+        </span>
+        <ActionStatusBadge status={block.status} />
+      </div>
+
+      {expanded && (outputChunks.length > 0 || block.result?.error) && (
+        <div style={{
+          margin: "2px 12px 4px",
+          borderRadius: "var(--radius-sm)",
+          border: "1px solid var(--border)",
+          overflow: "hidden",
+        }}>
+          {outputChunks.length > 0 && (
+            <pre
+              style={{
+                margin: 0,
+                padding: "8px 12px",
+                background: "var(--code-bg)",
+                fontSize: 11.5,
+                lineHeight: 1.5,
+                fontFamily: '"JetBrains Mono", monospace',
+                whiteSpace: "pre-wrap",
+                overflow: "auto",
+                maxHeight: 160,
+                color: "var(--text-2)",
+              }}
+            >
+              {outputChunks.map((c) => String(c.content ?? "")).join("")}
+            </pre>
+          )}
+
+          {block.result?.error && (
+            <pre
+              style={{
+                margin: 0,
+                padding: "8px 12px",
+                borderTop: outputChunks.length > 0 ? "1px solid rgba(248, 113, 113, 0.2)" : undefined,
+                background: "rgba(248, 113, 113, 0.06)",
+                fontSize: 11.5,
+                lineHeight: 1.5,
+                fontFamily: '"JetBrains Mono", monospace',
+                whiteSpace: "pre-wrap",
+                overflow: "auto",
+                maxHeight: 120,
+                color: "var(--danger)",
+              }}
+            >
+              {String(block.result.error)}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Approval Card ── */
 
 function ApprovalCard({
   block,
@@ -339,11 +522,21 @@ function ApprovalCard({
   );
 }
 
+/* ── Main Component ── */
+
 export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
   const safeBlocks = Array.isArray(blocks) ? blocks : [];
 
+  const lastDiffIndex = useMemo(() => {
+    for (let i = safeBlocks.length - 1; i >= 0; i--) {
+      const b = safeBlocks[i];
+      if (isBlockLike(b) && b.type === "diff") return i;
+    }
+    return -1;
+  }, [safeBlocks]);
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
       {safeBlocks.map((rawBlock, index) => {
         if (!isBlockLike(rawBlock)) return null;
         const block = rawBlock as ContentBlock;
@@ -375,7 +568,6 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
                 background: "var(--code-bg)",
               }}
             >
-              {/* Code header */}
               <div
                 style={{
                   display: "flex",
@@ -412,142 +604,12 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
 
         /* ── Diff ── */
         if (block.type === "diff") {
-          return (
-            <div
-              key={index}
-              style={{
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid var(--border)",
-                overflow: "hidden",
-                background: "var(--code-bg)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "6px 12px",
-                  borderBottom: "1px solid var(--border)",
-                  fontSize: 11,
-                  color: "var(--text-3)",
-                }}
-              >
-                <ChevronRight size={12} style={{ opacity: 0.5 }} />
-                Diff ({String(block.scope ?? "turn")})
-              </div>
-              <pre
-                style={{
-                  margin: 0,
-                  padding: "10px 14px",
-                  fontSize: 12,
-                  lineHeight: 1.5,
-                  fontFamily: '"JetBrains Mono", monospace',
-                  whiteSpace: "pre-wrap",
-                  overflow: "auto",
-                  maxHeight: 300,
-                }}
-              >
-                {String(block.diff ?? "")
-                  .split("\n")
-                  .map((line, li) => (
-                    <span
-                      key={li}
-                      style={{
-                        display: "block",
-                        ...(line.startsWith("+") && !line.startsWith("+++")
-                          ? { color: "#aff5b4", background: "rgba(46,160,67,0.1)" }
-                          : line.startsWith("-") && !line.startsWith("---")
-                            ? { color: "#ffdcd7", background: "rgba(248,81,73,0.1)" }
-                            : {}),
-                      }}
-                    >
-                      {line}
-                    </span>
-                  ))}
-              </pre>
-            </div>
-          );
+          return <MessageDiffBlock key={index} block={block} defaultExpanded={index === lastDiffIndex} />;
         }
 
         /* ── Action ── */
         if (block.type === "action") {
-          const outputChunks = Array.isArray(block.outputChunks) ? block.outputChunks : [];
-          const Icon = actionIcons[block.actionType] ?? Terminal;
-          const isRunning = block.status === "running";
-          const isError = block.status === "error";
-
-          return (
-            <div
-              key={index}
-              style={{
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid var(--border)",
-                background: isError
-                  ? "rgba(248, 113, 113, 0.04)"
-                  : isRunning
-                    ? "rgba(251, 191, 36, 0.03)"
-                    : "var(--bg-2)",
-                overflow: "hidden",
-                transition: "background var(--duration-normal) var(--ease-out)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "8px 12px",
-                }}
-              >
-                <Icon size={13} style={{ color: "var(--text-3)", flexShrink: 0 }} />
-                <span style={{ fontSize: 12.5, fontWeight: 500, flex: 1 }}>
-                  {block.summary}
-                </span>
-                <ActionStatusBadge status={block.status} />
-              </div>
-
-              {outputChunks.length > 0 && (
-                <pre
-                  style={{
-                    margin: 0,
-                    padding: "8px 12px",
-                    borderTop: "1px solid var(--border)",
-                    background: "var(--code-bg)",
-                    fontSize: 11.5,
-                    lineHeight: 1.5,
-                    fontFamily: '"JetBrains Mono", monospace',
-                    whiteSpace: "pre-wrap",
-                    overflow: "auto",
-                    maxHeight: 160,
-                    color: "var(--text-2)",
-                  }}
-                >
-                  {outputChunks.map((c) => String(c.content ?? "")).join("")}
-                </pre>
-              )}
-
-              {block.result?.error && (
-                <pre
-                  style={{
-                    margin: 0,
-                    padding: "8px 12px",
-                    borderTop: "1px solid rgba(248, 113, 113, 0.2)",
-                    background: "rgba(248, 113, 113, 0.06)",
-                    fontSize: 11.5,
-                    lineHeight: 1.5,
-                    fontFamily: '"JetBrains Mono", monospace',
-                    whiteSpace: "pre-wrap",
-                    overflow: "auto",
-                    maxHeight: 120,
-                    color: "var(--danger)",
-                  }}
-                >
-                  {String(block.result.error)}
-                </pre>
-              )}
-            </div>
-          );
+          return <ActionBlockView key={index} block={block} />;
         }
 
         /* ── Approval ── */
@@ -557,32 +619,7 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
 
         /* ── Thinking ── */
         if (block.type === "thinking") {
-          return (
-            <div
-              key={index}
-              style={{
-                padding: "8px 12px",
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid var(--border)",
-                background: "var(--bg-2)",
-                fontSize: 12.5,
-                color: "var(--text-2)",
-                display: "flex",
-                alignItems: "flex-start",
-                gap: 8,
-              }}
-            >
-              <Brain size={14} style={{ flexShrink: 0, marginTop: 2, color: "var(--info)", opacity: 0.8 }} />
-              <div className="prose" style={{ fontSize: 12.5, color: "var(--text-2)", minWidth: 0 }}>
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  rehypePlugins={[rehypeHighlight]}
-                >
-                  {String(block.content ?? "")}
-                </ReactMarkdown>
-              </div>
-            </div>
-          );
+          return <ThinkingBlockView key={index} block={block} />;
         }
 
         /* ── Error ── */

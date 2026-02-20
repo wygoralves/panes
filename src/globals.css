@@ -297,7 +297,7 @@ button, input, textarea, select {
   background: var(--bg-4);
   border: 1px solid var(--border);
 }
-.prose pre { margin: 8px 0; }
+.prose pre { margin: 8px 0; padding: 10px 14px; border-radius: var(--radius-sm); background: var(--code-bg); border: 1px solid var(--border); overflow-x: auto; }
 .prose pre code {
   padding: 0;
   background: none;
@@ -320,6 +320,25 @@ button, input, textarea, select {
 .prose h1 { font-size: 1.3em; }
 .prose h2 { font-size: 1.15em; }
 .prose h3 { font-size: 1.05em; }
+.prose table { width: 100%; border-collapse: collapse; font-size: 0.9em; margin: 8px 0; }
+.prose th, .prose td { padding: 5px 10px; border: 1px solid var(--border); text-align: left; }
+.prose th { background: var(--bg-3); font-weight: 600; color: var(--text-1); }
+.prose blockquote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid var(--border-active); color: var(--text-2); }
+.prose hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+
+/* ── Collapsible block headers ── */
+.msg-block-header {
+  display: flex; align-items: center; gap: 6px; padding: 3px 12px;
+  cursor: pointer; user-select: none;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.msg-block-header:hover { background: rgba(255, 255, 255, 0.04); }
+.msg-block-chevron {
+  flex-shrink: 0; color: var(--text-3); opacity: 0.5;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.msg-block-chevron-open { transform: rotate(90deg); }
 
 /* ── Tauri window drag area ── */
 .drag-region {

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
 import { ipc } from "../../lib/ipc";
+import { parseDiff, LINE_CLASS } from "../../lib/parseDiff";
 import type { Repo, GitFileStatus } from "../../types";
 
 interface Props {
@@ -130,60 +131,6 @@ function getStatusClass(status?: string): string {
   if (status === "conflicted") return "git-status-conflicted";
   return "git-status-untracked";
 }
-
-interface ParsedLine {
-  type: "add" | "del" | "context" | "hunk";
-  content: string;
-  gutter: string;
-  lineNum: string;
-}
-
-function parseDiff(raw: string): ParsedLine[] {
-  const lines = raw.split("\n");
-  const result: ParsedLine[] = [];
-  let newLine = 0;
-
-  for (const line of lines) {
-    // Skip noise: diff --git, index, --- a/, +++ b/, etc.
-    if (
-      line.startsWith("diff --git") ||
-      line.startsWith("index ") ||
-      line.startsWith("---") ||
-      line.startsWith("+++") ||
-      line.startsWith("new file") ||
-      line.startsWith("deleted file") ||
-      line.startsWith("similarity") ||
-      line.startsWith("rename") ||
-      line.startsWith("old mode") ||
-      line.startsWith("new mode")
-    ) {
-      continue;
-    }
-    if (line.startsWith("@@")) {
-      const match = line.match(/\+(\d+)/);
-      newLine = match ? parseInt(match[1], 10) : 0;
-      // Show just the function/context hint if present
-      const hunkLabel = line.replace(/^@@[^@]*@@\s?/, "").trim();
-      result.push({ type: "hunk", content: hunkLabel, gutter: "", lineNum: "" });
-    } else if (line.startsWith("+")) {
-      result.push({ type: "add", content: line.slice(1), gutter: "+", lineNum: String(newLine) });
-      newLine++;
-    } else if (line.startsWith("-")) {
-      result.push({ type: "del", content: line.slice(1), gutter: "-", lineNum: "" });
-    } else {
-      result.push({ type: "context", content: line.startsWith(" ") ? line.slice(1) : line, gutter: "", lineNum: String(newLine || "") });
-      if (newLine) newLine++;
-    }
-  }
-  return result;
-}
-
-const LINE_CLASS: Record<string, string> = {
-  add: "git-diff-add",
-  del: "git-diff-del",
-  hunk: "git-diff-hunk",
-  context: "",
-};
 
 function DiffPanel({ diff }: { diff: string }) {
   const parsed = useMemo(() => parseDiff(diff), [diff]);
