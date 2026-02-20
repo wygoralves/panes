@@ -102,20 +102,31 @@ export const useGitStore = create<GitState>((set, get) => ({
 
       if (selectedFile) {
         const selectedStatus = status.files.find((file) => file.path === selectedFile);
-        const selectedStillExists = selectedStatus
+        const sameStateExists = selectedStatus
           ? (selectedFileStaged ? Boolean(selectedStatus.indexStatus) : Boolean(selectedStatus.worktreeStatus))
           : false;
+        const oppositeStateExists = selectedStatus
+          ? (selectedFileStaged ? Boolean(selectedStatus.worktreeStatus) : Boolean(selectedStatus.indexStatus))
+          : false;
 
-        if (!selectedStillExists) {
-          selectedDiff = undefined;
-          nextSelectedFile = undefined;
-          nextSelectedFileStaged = undefined;
-        } else {
+        if (sameStateExists) {
           try {
             selectedDiff = await ipc.getFileDiff(repoPath, selectedFile, selectedFileStaged);
           } catch {
             selectedDiff = undefined;
           }
+        } else if (oppositeStateExists) {
+          const flippedStaged = !selectedFileStaged;
+          nextSelectedFileStaged = flippedStaged;
+          try {
+            selectedDiff = await ipc.getFileDiff(repoPath, selectedFile, flippedStaged);
+          } catch {
+            selectedDiff = undefined;
+          }
+        } else {
+          selectedDiff = undefined;
+          nextSelectedFile = undefined;
+          nextSelectedFileStaged = undefined;
         }
       }
 

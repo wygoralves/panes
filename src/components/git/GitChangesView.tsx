@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -185,50 +185,11 @@ const LINE_CLASS: Record<string, string> = {
   context: "",
 };
 
-const MIN_DIFF_HEIGHT = 80;
-const DEFAULT_DIFF_HEIGHT = 220;
-const MAX_DIFF_RATIO = 0.55;
-
 function DiffPanel({ diff }: { diff: string }) {
-  const [height, setHeight] = useState(DEFAULT_DIFF_HEIGHT);
-  const dragging = useRef(false);
-  const startY = useRef(0);
-  const startH = useRef(0);
-
   const parsed = useMemo(() => parseDiff(diff), [diff]);
 
-  const onResizeStart = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      dragging.current = true;
-      startY.current = e.clientY;
-      startH.current = height;
-
-      const onMove = (ev: MouseEvent) => {
-        if (!dragging.current) return;
-        const maxH = window.innerHeight * MAX_DIFF_RATIO;
-        const next = Math.min(maxH, Math.max(MIN_DIFF_HEIGHT, startH.current + (ev.clientY - startY.current)));
-        setHeight(next);
-      };
-
-      const onUp = () => {
-        dragging.current = false;
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-      };
-
-      document.body.style.cursor = "ns-resize";
-      document.body.style.userSelect = "none";
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
-    },
-    [height],
-  );
-
   return (
-    <div className="git-diff-viewer" style={{ height }}>
+    <div className="git-diff-viewer" style={{ flex: 1, minHeight: 0 }}>
       <div className="git-diff-scroll">
         <pre style={{ margin: 0, padding: "4px 0" }}>
           {parsed.map((line, idx) => (
@@ -240,10 +201,6 @@ function DiffPanel({ diff }: { diff: string }) {
           ))}
         </pre>
       </div>
-      <div
-        className={`git-diff-resize-handle${dragging.current ? " git-diff-resize-handle-active" : ""}`}
-        onMouseDown={onResizeStart}
-      />
     </div>
   );
 }
@@ -486,11 +443,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
 
   return (
     <>
-      {selectedFile && diff && showDiff && (
-        <DiffPanel diff={diff} />
-      )}
-
-      <div style={{ flex: 1, overflow: "auto" }}>
+      <div style={{ overflow: "auto", flexShrink: 0, maxHeight: "50%" }}>
         {noChanges ? (
           <div className="git-empty">
             <Check size={28} className="git-empty-icon" />
@@ -518,6 +471,10 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
           </>
         )}
       </div>
+
+      {selectedFile && diff && showDiff && (
+        <DiffPanel diff={diff} />
+      )}
 
       {hasStagedFiles && (
         <div className="git-commit-area">
