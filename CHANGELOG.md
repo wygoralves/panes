@@ -1,5 +1,16 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.3.1...vnull) (2026-02-20)
+
+### Features
+
+* add search to branches, commits and stash tabs, and improve loading feedback ([dc2a49c](https://github.com/wygoralves/panes/commit/dc2a49c2614cf9314ebd1197d1bbf1fd2754b95a))
+* persist history and drafts of commit messages and branch names ([0ceab37](https://github.com/wygoralves/panes/commit/0ceab37938b40683d0c6bf326df9d8bead6c7349))
+
+### Bug Fixes
+
+* fix minor misalignment on the git panel header border ([ca4c26a](https://github.com/wygoralves/panes/commit/ca4c26aec062219c8aaa783970d3023eb90d410f))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.3.0...vnull) (2026-02-20)
 
 ### Bug Fixes
