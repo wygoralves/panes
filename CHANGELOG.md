@@ -1,5 +1,15 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.2.0...vnull) (2026-02-20)
+
+### Features
+
+* improve wizard styling and add commands to active troubleshoot health checks ([0a8c678](https://github.com/wygoralves/panes/commit/0a8c67801676574824fbd80670b3be4375925a6b))
+
+### Bug Fixes
+
+* fix path detection for codex install on macos ([bee40b2](https://github.com/wygoralves/panes/commit/bee40b2500ddfc224e2572129c43671c692f7302))
+
 ##  (2026-02-20)
 
 ### Features
