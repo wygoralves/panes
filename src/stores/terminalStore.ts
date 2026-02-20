@@ -20,6 +20,7 @@ interface TerminalState {
   openTerminal: (workspaceId: string) => Promise<void>;
   closeTerminal: (workspaceId: string) => Promise<void>;
   toggleTerminal: (workspaceId: string) => Promise<void>;
+  runCommandInTerminal: (workspaceId: string, command: string) => Promise<boolean>;
   createSession: (workspaceId: string, cols?: number, rows?: number) => Promise<string | null>;
   closeSession: (workspaceId: string, sessionId: string) => Promise<void>;
   setActiveSession: (workspaceId: string, sessionId: string) => void;
@@ -139,6 +140,45 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return;
     }
     await get().openTerminal(workspaceId);
+  },
+
+  runCommandInTerminal: async (workspaceId, command) => {
+    const normalized = command.trim();
+    if (!workspaceId || !normalized) {
+      return false;
+    }
+
+    try {
+      let workspace = get().workspaces[workspaceId] ?? defaultWorkspaceState();
+
+      if (!workspace.isOpen || workspace.sessions.length === 0) {
+        await get().openTerminal(workspaceId);
+        workspace = get().workspaces[workspaceId] ?? defaultWorkspaceState();
+      }
+
+      let sessionId = workspace.activeSessionId;
+      if (!sessionId) {
+        sessionId = workspace.sessions[workspace.sessions.length - 1]?.id ?? null;
+      }
+
+      if (!sessionId) {
+        sessionId = await get().createSession(workspaceId, DEFAULT_COLS, DEFAULT_ROWS);
+      }
+
+      if (!sessionId) {
+        return false;
+      }
+
+      await ipc.terminalWrite(workspaceId, sessionId, `${normalized}\r`);
+      return true;
+    } catch (error) {
+      set((state) => ({
+        workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+          error: String(error),
+        }),
+      }));
+      return false;
+    }
   },
 
   createSession: async (workspaceId, cols = DEFAULT_COLS, rows = DEFAULT_ROWS) => {

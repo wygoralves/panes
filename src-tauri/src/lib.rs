@@ -94,6 +94,7 @@ pub fn run() {
             commands::git::watch_git_repo,
             commands::engines::list_engines,
             commands::engines::engine_health,
+            commands::engines::run_engine_check,
             commands::threads::list_threads,
             commands::threads::list_archived_threads,
             commands::threads::create_thread,

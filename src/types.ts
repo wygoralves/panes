@@ -201,6 +201,15 @@ export interface EngineHealth {
   fixes?: string[];
 }
 
+export interface EngineCheckResult {
+  command: string;
+  success: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+}
+
 export interface SearchResult {
   threadId: string;
   messageId: string;

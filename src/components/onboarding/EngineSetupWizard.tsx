@@ -5,11 +5,14 @@ import {
   CircleDashed,
   Copy,
   Loader2,
-  TerminalSquare,
+  RefreshCw,
+  Settings2,
   X,
 } from "lucide-react";
+import { ipc } from "../../lib/ipc";
 import { useEngineStore } from "../../stores/engineStore";
 import { useUiStore } from "../../stores/uiStore";
+import type { EngineCheckResult } from "../../types";
 
 type StepStatus = "ok" | "error" | "pending";
 
@@ -34,43 +37,107 @@ function writeDismissedState(value: boolean): void {
 }
 
 function StepItem({
+  step,
   title,
   description,
   status,
 }: {
+  step: number;
   title: string;
   description: string;
   status: StepStatus;
 }) {
+  const borderColor =
+    status === "ok"
+      ? "rgba(52, 211, 153, 0.25)"
+      : status === "error"
+        ? "rgba(251, 191, 36, 0.25)"
+        : "var(--border)";
+
+  const bgColor =
+    status === "ok"
+      ? "rgba(52, 211, 153, 0.04)"
+      : status === "error"
+        ? "rgba(251, 191, 36, 0.04)"
+        : "var(--bg-2)";
+
   const icon =
     status === "ok" ? (
-      <CheckCircle2 size={14} style={{ color: "var(--success)" }} />
+      <CheckCircle2 size={15} style={{ color: "var(--success)" }} />
     ) : status === "error" ? (
-      <AlertTriangle size={14} style={{ color: "var(--warning)" }} />
+      <AlertTriangle size={15} style={{ color: "var(--warning)" }} />
     ) : (
-      <CircleDashed size={14} style={{ color: "var(--text-3)" }} />
+      <CircleDashed size={15} style={{ color: "var(--text-3)" }} />
     );
 
   return (
     <div
       style={{
         borderRadius: "var(--radius-sm)",
-        border: "1px solid var(--border)",
-        background: "var(--bg-2)",
-        padding: "10px 12px",
-        display: "grid",
-        gap: 4,
+        border: `1px solid ${borderColor}`,
+        background: bgColor,
+        padding: "12px 14px",
+        display: "flex",
+        gap: 12,
+        alignItems: "flex-start",
+        transition: "border-color 0.2s, background 0.2s",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        {icon}
-        <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text-1)" }}>
-          {title}
-        </span>
+      <div
+        style={{
+          width: 26,
+          height: 26,
+          borderRadius: "50%",
+          background:
+            status === "ok"
+              ? "rgba(52, 211, 153, 0.12)"
+              : status === "error"
+                ? "rgba(251, 191, 36, 0.12)"
+                : "var(--bg-3)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+        }}
+      >
+        {status === "pending" ? (
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--text-3)",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {step}
+          </span>
+        ) : (
+          icon
+        )}
       </div>
-      <p style={{ margin: 0, color: "var(--text-2)", fontSize: 12, lineHeight: 1.45 }}>
-        {description}
-      </p>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: 12.5,
+            fontWeight: 600,
+            color: "var(--text-1)",
+            lineHeight: 1.6,
+          }}
+        >
+          {title}
+        </p>
+        <p
+          style={{
+            margin: "2px 0 0",
+            color: "var(--text-2)",
+            fontSize: 11.5,
+            lineHeight: 1.5,
+          }}
+        >
+          {description}
+        </p>
+      </div>
     </div>
   );
 }
@@ -78,11 +145,16 @@ function StepItem({
 function CommandList({
   title,
   commands,
+  onRunCheck,
 }: {
   title: string;
   commands: string[];
+  onRunCheck: (command: string) => Promise<EngineCheckResult>;
 }) {
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+  const [runningCheckCommand, setRunningCheckCommand] = useState<string | null>(null);
+  const [resultsByCommand, setResultsByCommand] = useState<Record<string, EngineCheckResult>>({});
+  const [errorsByCommand, setErrorsByCommand] = useState<Record<string, string>>({});
 
   async function copyCommand(command: string) {
     try {
@@ -100,70 +172,206 @@ function CommandList({
     return null;
   }
 
+  async function runCheck(command: string) {
+    setRunningCheckCommand(command);
+    setErrorsByCommand((current) => {
+      const next = { ...current };
+      delete next[command];
+      return next;
+    });
+    try {
+      const result = await onRunCheck(command);
+      setResultsByCommand((current) => ({
+        ...current,
+        [command]: result,
+      }));
+    } catch (error) {
+      setErrorsByCommand((current) => ({
+        ...current,
+        [command]: String(error),
+      }));
+    } finally {
+      setRunningCheckCommand((current) => (current === command ? null : current));
+    }
+  }
+
   return (
     <div
       style={{
         borderRadius: "var(--radius-sm)",
         border: "1px solid var(--border)",
-        background: "var(--code-bg)",
         overflow: "hidden",
       }}
     >
       <div
         style={{
-          padding: "6px 10px",
+          padding: "7px 12px",
+          background: "var(--bg-3)",
           borderBottom: "1px solid var(--border)",
           fontSize: 11,
+          fontWeight: 600,
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
           color: "var(--text-3)",
         }}
       >
         {title}
       </div>
-      <div style={{ display: "grid", gap: 1 }}>
-        {commands.map((command, index) => (
-          <div
-            key={`${title}-${index}`}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "9px 10px",
-              borderTop: index === 0 ? "none" : "1px solid var(--border)",
-              background: "var(--code-bg)",
-            }}
-          >
-            <code
+      <div style={{ background: "var(--code-bg)" }}>
+        {commands.map((command, index) => {
+          const result = resultsByCommand[command];
+          const error = errorsByCommand[command];
+          const hasResult = Boolean(result) || Boolean(error);
+          const isRunning = runningCheckCommand === command;
+          return (
+            <div
+              key={`${title}-${index}`}
               style={{
-                fontSize: 11.5,
-                lineHeight: 1.5,
-                fontFamily: '"JetBrains Mono", monospace',
-                color: "var(--text-2)",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                flex: 1,
+                padding: "10px 12px",
+                borderTop: index === 0 ? "none" : "1px solid var(--border)",
+                display: "grid",
+                gap: 8,
               }}
             >
-              {command}
-            </code>
-            <button
-              type="button"
-              onClick={() => void copyCommand(command)}
-              className="btn-ghost"
-              style={{
-                padding: "5px 8px",
-                fontSize: 11,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 5,
-                cursor: "pointer",
-                flexShrink: 0,
-              }}
-            >
-              <Copy size={12} />
-              {copiedCommand === command ? "Copied" : "Copy"}
-            </button>
-          </div>
-        ))}
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <code
+                  style={{
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    fontFamily: '"JetBrains Mono", monospace',
+                    color: "var(--text-1)",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    flex: 1,
+                    padding: "4px 8px",
+                    borderRadius: 4,
+                    background: "rgba(255, 255, 255, 0.03)",
+                  }}
+                >
+                  <span style={{ color: "var(--text-3)", userSelect: "none" }}>$ </span>
+                  {command}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => void copyCommand(command)}
+                  className="btn-ghost"
+                  style={{
+                    padding: "5px 10px",
+                    fontSize: 11,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    cursor: "pointer",
+                    flexShrink: 0,
+                    borderRadius: "var(--radius-sm)",
+                  }}
+                >
+                  <Copy size={11} />
+                  {copiedCommand === command ? "Copied" : "Copy"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runCheck(command)}
+                  disabled={isRunning}
+                  className="btn-outline"
+                  style={{
+                    padding: "5px 10px",
+                    fontSize: 11,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    cursor: isRunning ? "not-allowed" : "pointer",
+                    flexShrink: 0,
+                    opacity: isRunning ? 0.6 : 1,
+                    borderRadius: "var(--radius-sm)",
+                  }}
+                >
+                  {isRunning ? (
+                    <>
+                      <Loader2
+                        size={11}
+                        style={{ animation: "spin 1s linear infinite" }}
+                      />
+                      Running
+                    </>
+                  ) : (
+                    "Run check"
+                  )}
+                </button>
+              </div>
+              {hasResult ? (
+                <div
+                  style={{
+                    borderRadius: "var(--radius-sm)",
+                    border: `1px solid ${result?.success ? "rgba(52, 211, 153, 0.2)" : "rgba(251, 191, 36, 0.2)"}`,
+                    padding: "8px 10px",
+                    background: result?.success
+                      ? "rgba(52, 211, 153, 0.04)"
+                      : "rgba(251, 191, 36, 0.04)",
+                    display: "grid",
+                    gap: 6,
+                  }}
+                >
+                  {result ? (
+                    <>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          fontSize: 11.5,
+                          color: result.success ? "var(--success)" : "var(--warning)",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {result.success ? (
+                          <CheckCircle2 size={12} />
+                        ) : (
+                          <AlertTriangle size={12} />
+                        )}
+                        {result.success ? "Passed" : "Failed"}{" "}
+                        <span style={{ fontWeight: 400, color: "var(--text-3)" }}>
+                          exit {result.exitCode === null ? "null" : String(result.exitCode)} · {result.durationMs}ms
+                        </span>
+                      </div>
+                      {result.stdout ? (
+                        <pre
+                          style={{
+                            margin: 0,
+                            fontSize: 11,
+                            lineHeight: 1.45,
+                            fontFamily: '"JetBrains Mono", monospace',
+                            color: "var(--text-2)",
+                            whiteSpace: "pre-wrap",
+                          }}
+                        >
+                          {result.stdout}
+                        </pre>
+                      ) : null}
+                      {result.stderr ? (
+                        <pre
+                          style={{
+                            margin: 0,
+                            fontSize: 11,
+                            lineHeight: 1.45,
+                            fontFamily: '"JetBrains Mono", monospace',
+                            color: "var(--warning)",
+                            whiteSpace: "pre-wrap",
+                          }}
+                        >
+                          {result.stderr}
+                        </pre>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {error ? (
+                    <p style={{ margin: 0, fontSize: 11.5, color: "var(--warning)" }}>{error}</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -194,16 +402,17 @@ export function EngineSetupWizard() {
   const sandboxReady = codexDetected && !codexWarning;
   const readyForChat = codexDetected;
   const hasBlockingIssue = healthChecked && !codexDetected;
+  const allGreen = readyForChat && !codexWarning;
 
   const summary = useMemo(() => {
     if (!healthChecked) {
       return "Checking local engine health...";
     }
     if (readyForChat && !codexWarning) {
-      return "Codex is ready. You can start chat turns now.";
+      return "All checks passed. You're ready to go.";
     }
     if (readyForChat && codexWarning) {
-      return "Codex is detected. Panes can run with fallback sandbox mode while you fix local sandbox checks.";
+      return "Codex detected with warnings. Chat works, but sandbox needs attention.";
     }
     if (!codexDetected) {
       return codexDetails ?? "Codex CLI was not found in PATH.";
@@ -233,6 +442,10 @@ export function EngineSetupWizard() {
     await loadEngines();
   }
 
+  async function runCommandCheck(command: string): Promise<EngineCheckResult> {
+    return ipc.runEngineCheck("codex", command);
+  }
+
   function dismissForNow() {
     setDismissed(true);
     writeDismissedState(true);
@@ -257,50 +470,79 @@ export function EngineSetupWizard() {
         position: "fixed",
         inset: 0,
         zIndex: 70,
-        background: "rgba(8, 9, 12, 0.70)",
-        backdropFilter: "blur(8px)",
-        WebkitBackdropFilter: "blur(8px)",
+        background: "rgba(0, 0, 0, 0.65)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        padding: 18,
+        padding: 20,
+        animation: "fade-in 0.15s ease-out",
       }}
       onClick={closeWizard}
     >
       <div
         className="surface"
         style={{
-          width: "min(760px, 100%)",
+          width: "min(640px, 100%)",
           maxHeight: "84vh",
           overflow: "auto",
           display: "grid",
-          gap: 14,
-          padding: 14,
-          boxShadow: "0 22px 70px rgba(0, 0, 0, 0.45)",
+          gap: 20,
+          padding: "20px 22px",
+          boxShadow:
+            "0 24px 80px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06)",
+          animation: "slide-up 0.2s ease-out",
         }}
         onClick={(event) => event.stopPropagation()}
       >
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
           <div
             style={{
-              width: 28,
-              height: 28,
+              width: 32,
+              height: 32,
               borderRadius: "var(--radius-sm)",
-              border: "1px solid var(--border)",
+              border: allGreen
+                ? "1px solid rgba(52, 211, 153, 0.3)"
+                : "1px solid var(--border)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              background: "var(--bg-2)",
+              background: allGreen
+                ? "rgba(52, 211, 153, 0.08)"
+                : "var(--bg-2)",
               flexShrink: 0,
+              transition: "all 0.2s",
             }}
           >
-            <TerminalSquare size={15} style={{ color: "var(--text-2)" }} />
+            {allGreen ? (
+              <CheckCircle2 size={16} style={{ color: "var(--success)" }} />
+            ) : (
+              <Settings2 size={16} style={{ color: "var(--text-2)" }} />
+            )}
           </div>
           <div style={{ minWidth: 0, flex: 1 }}>
-            <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "var(--text-1)" }}>
-              Engine Setup Wizard
+            <p
+              style={{
+                margin: 0,
+                fontSize: 14.5,
+                fontWeight: 600,
+                color: "var(--text-1)",
+                lineHeight: 1.4,
+              }}
+            >
+              Engine Setup
             </p>
-            <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--text-2)" }}>
+            <p
+              style={{
+                margin: "3px 0 0",
+                fontSize: 12,
+                color: allGreen ? "var(--success)" : "var(--text-2)",
+                lineHeight: 1.4,
+                transition: "color 0.2s",
+              }}
+            >
               {summary}
             </p>
           </div>
@@ -308,36 +550,41 @@ export function EngineSetupWizard() {
             type="button"
             onClick={closeWizard}
             style={{
-              width: 24,
-              height: 24,
-              borderRadius: 6,
+              width: 28,
+              height: 28,
+              borderRadius: "var(--radius-sm)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              color: "var(--text-2)",
+              color: "var(--text-3)",
               cursor: "pointer",
               flexShrink: 0,
+              transition: "all 0.12s",
             }}
-            title="Close setup wizard"
+            className="btn-ghost"
+            title="Close"
           >
             <X size={14} />
           </button>
         </div>
 
-        <div style={{ display: "grid", gap: 8 }}>
+        {/* Steps */}
+        <div style={{ display: "grid", gap: 6 }}>
           <StepItem
+            step={1}
             title="Codex CLI detected"
             status={healthChecked ? (codexDetected ? "ok" : "error") : "pending"}
             description={
               codexDetected
                 ? codexState?.version
-                  ? `Detected version ${codexState.version}.`
+                  ? `Version ${codexState.version} found in PATH.`
                   : "Detected and ready for chat turns."
                 : codexDetails ??
                   "Install Codex CLI and ensure `codex` is available in your PATH."
             }
           />
           <StepItem
+            step={2}
             title="Sandbox preflight"
             status={
               healthChecked
@@ -350,65 +597,117 @@ export function EngineSetupWizard() {
             }
             description={
               !codexDetected
-                ? "Sandbox checks run after Codex is detected."
+                ? "Runs after Codex CLI is detected."
                 : sandboxReady
-                  ? "Sandbox checks are healthy for local execution."
+                  ? "Sandbox checks passed for local execution."
                   : codexWarning ??
-                    "Local sandbox check failed. Panes can still run with fallback behavior, but setup should be fixed."
+                    "Sandbox check failed. Panes can still run with fallback behavior."
             }
           />
           <StepItem
-            title="Ready to start chat turns"
+            step={3}
+            title="Ready for chat"
             status={healthChecked ? (readyForChat ? "ok" : "pending") : "pending"}
             description={
               readyForChat
                 ? codexWarning
-                  ? "You can already start chat turns. Panes will use fallback sandbox mode while local checks are failing."
-                  : "You can open a workspace and send messages now."
-                : "Resolve steps above and click recheck."
+                  ? "Chat works with fallback sandbox mode. Fix sandbox warnings for full functionality."
+                  : "All systems go. Open a workspace and start chatting."
+                : "Complete the steps above to get started."
             }
           />
         </div>
 
-        <CommandList title="Terminal checks" commands={codexChecks} />
-        {codexFixes.length > 0 && <CommandList title="Suggested fixes" commands={codexFixes} />}
+        {/* Terminal checks — hidden when everything is green */}
+        {!allGreen && (
+          <>
+            <CommandList
+              title="Diagnostic commands"
+              commands={codexChecks}
+              onRunCheck={runCommandCheck}
+            />
+            {codexFixes.length > 0 && (
+              <CommandList
+                title="Suggested fixes"
+                commands={codexFixes}
+                onRunCheck={runCommandCheck}
+              />
+            )}
+          </>
+        )}
 
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        {/* Footer actions */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            alignItems: "center",
+            gap: 8,
+            borderTop: "1px solid var(--border)",
+            marginTop: -4,
+            paddingTop: 14,
+          }}
+        >
           {hasBlockingIssue ? (
             <button
               type="button"
               className="btn-ghost"
               onClick={dismissForNow}
-              style={{ padding: "6px 10px", fontSize: 12, cursor: "pointer" }}
+              style={{
+                padding: "7px 14px",
+                fontSize: 12,
+                cursor: "pointer",
+                borderRadius: "var(--radius-sm)",
+              }}
             >
-              Not now
+              Dismiss
             </button>
           ) : (
             <button
               type="button"
               className="btn-ghost"
               onClick={closeEngineSetup}
-              style={{ padding: "6px 10px", fontSize: 12, cursor: "pointer" }}
+              style={{
+                padding: "7px 14px",
+                fontSize: 12,
+                cursor: "pointer",
+                borderRadius: "var(--radius-sm)",
+              }}
             >
               Close
             </button>
           )}
           <button
             type="button"
-            className="btn-primary"
+            className={allGreen ? "btn-outline" : "btn-primary"}
             onClick={() => void recheck()}
-            style={{ padding: "6px 12px", fontSize: 12, cursor: "pointer", minWidth: 112 }}
+            disabled={loadingEngines}
+            style={{
+              padding: "7px 16px",
+              fontSize: 12,
+              cursor: loadingEngines ? "not-allowed" : "pointer",
+              borderRadius: "var(--radius-sm)",
+              minWidth: 120,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              opacity: loadingEngines ? 0.7 : 1,
+            }}
           >
             {loadingEngines ? (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <>
                 <Loader2
                   size={12}
-                  style={{ animation: "pulse-soft 1s ease-in-out infinite" }}
+                  style={{ animation: "spin 1s linear infinite" }}
                 />
-                Rechecking...
-              </span>
+                Checking...
+              </>
             ) : (
-              "Recheck now"
+              <>
+                <RefreshCw size={12} />
+                Recheck
+              </>
             )}
           </button>
         </div>
