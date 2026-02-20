@@ -13,6 +13,60 @@ const BRANCH_PAGE_SIZE = 200;
 const COMMIT_PAGE_SIZE = 100;
 const GIT_STATUS_CACHE_TTL_MS = 1_000;
 const GIT_DIFF_CACHE_TTL_MS = 1_200;
+const DRAFT_HISTORY_MAX = 3;
+
+export interface GitDraftsPayload {
+  commitMessage: string;
+  branchName: string;
+  commitHistory: string[];
+  branchHistory: string[];
+}
+
+const EMPTY_DRAFTS: GitDraftsPayload = {
+  commitMessage: "",
+  branchName: "",
+  commitHistory: [],
+  branchHistory: [],
+};
+
+function draftStorageKey(workspaceId: string): string {
+  return `panes:git.drafts:${workspaceId}`;
+}
+
+function loadDraftsFromStorage(workspaceId: string): GitDraftsPayload {
+  try {
+    const raw = localStorage.getItem(draftStorageKey(workspaceId));
+    if (!raw) return { ...EMPTY_DRAFTS };
+    const parsed = JSON.parse(raw) as Partial<GitDraftsPayload>;
+    return {
+      commitMessage: typeof parsed.commitMessage === "string" ? parsed.commitMessage : "",
+      branchName: typeof parsed.branchName === "string" ? parsed.branchName : "",
+      commitHistory: Array.isArray(parsed.commitHistory)
+        ? parsed.commitHistory.filter((v): v is string => typeof v === "string").slice(0, DRAFT_HISTORY_MAX)
+        : [],
+      branchHistory: Array.isArray(parsed.branchHistory)
+        ? parsed.branchHistory.filter((v): v is string => typeof v === "string").slice(0, DRAFT_HISTORY_MAX)
+        : [],
+    };
+  } catch {
+    return { ...EMPTY_DRAFTS };
+  }
+}
+
+function saveDraftsToStorage(workspaceId: string, payload: GitDraftsPayload): void {
+  try {
+    localStorage.setItem(draftStorageKey(workspaceId), JSON.stringify(payload));
+  } catch {
+    // localStorage full or unavailable — silently ignore
+  }
+}
+
+function addToHistory(history: string[], entry: string): string[] {
+  const trimmed = entry.trim();
+  if (!trimmed) return history;
+  const deduped = history.filter((h) => h !== trimmed);
+  return [trimmed, ...deduped].slice(0, DRAFT_HISTORY_MAX);
+}
 
 export type GitPanelView = "changes" | "branches" | "commits" | "stash";
 
@@ -184,6 +238,13 @@ interface GitState {
   loadStashes: (repoPath: string) => Promise<void>;
   applyStash: (repoPath: string, stashIndex: number) => Promise<void>;
   popStash: (repoPath: string, stashIndex: number) => Promise<void>;
+  drafts: GitDraftsPayload;
+  loadDraftsForWorkspace: (workspaceId: string) => void;
+  setCommitMessageDraft: (workspaceId: string, message: string) => void;
+  setBranchNameDraft: (workspaceId: string, name: string) => void;
+  pushCommitHistory: (workspaceId: string, message: string) => void;
+  pushBranchHistory: (workspaceId: string, name: string) => void;
+  flushDrafts: (workspaceId: string) => void;
 }
 
 async function refreshActiveView(repoPath: string, state: Pick<GitState, "activeView" | "branchScope">) {
@@ -500,5 +561,38 @@ export const useGitStore = create<GitState>((set, get) => ({
       set({ loading: false, error: String(error) });
       throw error;
     }
+  },
+  drafts: { ...EMPTY_DRAFTS },
+  loadDraftsForWorkspace: (workspaceId) => {
+    set({ drafts: loadDraftsFromStorage(workspaceId) });
+  },
+  setCommitMessageDraft: (_workspaceId, message) => {
+    set((state) => ({ drafts: { ...state.drafts, commitMessage: message } }));
+  },
+  setBranchNameDraft: (_workspaceId, name) => {
+    set((state) => ({ drafts: { ...state.drafts, branchName: name } }));
+  },
+  pushCommitHistory: (workspaceId, message) => {
+    const drafts = get().drafts;
+    const next: GitDraftsPayload = {
+      ...drafts,
+      commitMessage: "",
+      commitHistory: addToHistory(drafts.commitHistory, message),
+    };
+    set({ drafts: next });
+    saveDraftsToStorage(workspaceId, next);
+  },
+  pushBranchHistory: (workspaceId, name) => {
+    const drafts = get().drafts;
+    const next: GitDraftsPayload = {
+      ...drafts,
+      branchName: "",
+      branchHistory: addToHistory(drafts.branchHistory, name),
+    };
+    set({ drafts: next });
+    saveDraftsToStorage(workspaceId, next);
+  },
+  flushDrafts: (workspaceId) => {
+    saveDraftsToStorage(workspaceId, get().drafts);
   },
 }));

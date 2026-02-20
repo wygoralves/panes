@@ -50,6 +50,7 @@ export function GitPanel() {
     fetchRemote,
     pullRemote,
     pushRemote,
+    flushDrafts,
   } = useGitStore();
 
   const [showDiff, setShowDiff] = useState(true);
@@ -266,6 +267,7 @@ export function GitPanel() {
             options={VIEW_OPTIONS}
             value={activeView}
             onChange={(value) => {
+              if (activeWorkspaceId) flushDrafts(activeWorkspaceId);
               setLocalError(undefined);
               setActiveView(value as GitPanelView);
             }}

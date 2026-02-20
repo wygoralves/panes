@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -9,6 +9,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { ipc } from "../../lib/ipc";
 import { parseDiff, LINE_CLASS } from "../../lib/parseDiff";
 import type { Repo, GitFileStatus } from "../../types";
@@ -188,9 +189,21 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     unstage,
     commit,
     refresh,
+    drafts,
+    setCommitMessageDraft,
+    pushCommitHistory,
   } = useGitStore();
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 
-  const [commitMessage, setCommitMessage] = useState("");
+  const commitMessage = drafts.commitMessage;
+  const setCommitMessage = useCallback(
+    (value: string) => {
+      if (activeWorkspaceId) setCommitMessageDraft(activeWorkspaceId, value);
+    },
+    [activeWorkspaceId, setCommitMessageDraft],
+  );
+  const histCursorRef = useRef<number>(-1);
+  const liveDraftRef = useRef<string>("");
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
   const [sectionCollapsed, setSectionCollapsed] = useState<
     Record<ChangeSection, boolean>
@@ -232,11 +245,14 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
 
   async function onCommit() {
     if (!commitMessage.trim() || loadingKey !== null) return;
+    const msg = commitMessage.trim();
     setLoadingKey("commit");
     try {
       onError(undefined);
-      await commit(repo.path, commitMessage.trim());
-      setCommitMessage("");
+      await commit(repo.path, msg);
+      if (activeWorkspaceId) pushCommitHistory(activeWorkspaceId, msg);
+      histCursorRef.current = -1;
+      liveDraftRef.current = "";
     } catch (e) {
       onError(String(e));
     } finally {
@@ -572,12 +588,38 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
           <textarea
             rows={2}
             value={commitMessage}
-            onChange={(e) => setCommitMessage(e.target.value)}
+            onChange={(e) => {
+              setCommitMessage(e.target.value);
+              histCursorRef.current = -1;
+            }}
             placeholder="Commit message..."
             className="git-commit-input"
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 void onCommit();
+                return;
+              }
+              const ta = e.currentTarget;
+              const history = drafts.commitHistory;
+              if (e.key === "ArrowUp" && history.length > 0) {
+                const onFirstLine = ta.value.lastIndexOf("\n", ta.selectionStart - 1) === -1;
+                if (!onFirstLine && histCursorRef.current === -1) return;
+                e.preventDefault();
+                if (histCursorRef.current === -1) {
+                  liveDraftRef.current = commitMessage;
+                }
+                const next = Math.min(histCursorRef.current + 1, history.length - 1);
+                histCursorRef.current = next;
+                setCommitMessage(history[next]);
+                return;
+              }
+              if (e.key === "ArrowDown" && histCursorRef.current >= 0) {
+                const onLastLine = ta.value.indexOf("\n", ta.selectionStart) === -1;
+                if (!onLastLine) return;
+                e.preventDefault();
+                const next = histCursorRef.current - 1;
+                histCursorRef.current = next;
+                setCommitMessage(next === -1 ? liveDraftRef.current : history[next]);
               }
             }}
           />

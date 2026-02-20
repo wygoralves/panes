@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { Plus, X, MoreHorizontal, GitBranch, GitBranchPlus, Pencil, Trash2, Loader2, Search } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import type { Repo, GitBranchScope } from "../../types";
 
 interface Props {
@@ -37,12 +38,24 @@ export function GitBranchesView({ repo, onError }: Props) {
     createBranch,
     renameBranch,
     deleteBranch,
+    drafts,
+    setBranchNameDraft,
+    pushBranchHistory,
   } = useGitStore();
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
   const [showNewBranch, setShowNewBranch] = useState(false);
-  const [newBranchName, setNewBranchName] = useState("");
+  const newBranchName = drafts.branchName;
+  const setNewBranchName = useCallback(
+    (value: string) => {
+      if (activeWorkspaceId) setBranchNameDraft(activeWorkspaceId, value);
+    },
+    [activeWorkspaceId, setBranchNameDraft],
+  );
+  const branchHistCursorRef = useRef<number>(-1);
+  const branchLiveDraftRef = useRef<string>("");
   const [renamingBranch, setRenamingBranch] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
@@ -142,7 +155,9 @@ export function GitBranchesView({ repo, onError }: Props) {
     try {
       onError(undefined);
       await createBranch(repo.path, name, null);
-      setNewBranchName("");
+      if (activeWorkspaceId) pushBranchHistory(activeWorkspaceId, name);
+      branchHistCursorRef.current = -1;
+      branchLiveDraftRef.current = "";
       setShowNewBranch(false);
     } catch (e) {
       onError(String(e));
@@ -291,8 +306,8 @@ export function GitBranchesView({ repo, onError }: Props) {
           className="btn btn-ghost"
           style={{ padding: "3px 8px", fontSize: 11 }}
           onClick={() => {
+            if (showNewBranch) setNewBranchName("");
             setShowNewBranch(!showNewBranch);
-            setNewBranchName("");
           }}
         >
           {showNewBranch ? <X size={11} /> : <Plus size={11} />}
@@ -315,12 +330,36 @@ export function GitBranchesView({ repo, onError }: Props) {
             className="git-inline-input"
             placeholder="Branch name..."
             value={newBranchName}
-            onChange={(e) => setNewBranchName(e.target.value)}
+            onChange={(e) => {
+              setNewBranchName(e.target.value);
+              branchHistCursorRef.current = -1;
+            }}
             onKeyDown={(e) => {
-              if (e.key === "Enter") void onCreateBranch();
+              if (e.key === "Enter") {
+                void onCreateBranch();
+                return;
+              }
               if (e.key === "Escape") {
                 setShowNewBranch(false);
                 setNewBranchName("");
+                return;
+              }
+              const history = drafts.branchHistory;
+              if (e.key === "ArrowUp" && history.length > 0) {
+                e.preventDefault();
+                if (branchHistCursorRef.current === -1) {
+                  branchLiveDraftRef.current = newBranchName;
+                }
+                const next = Math.min(branchHistCursorRef.current + 1, history.length - 1);
+                branchHistCursorRef.current = next;
+                setNewBranchName(history[next]);
+                return;
+              }
+              if (e.key === "ArrowDown" && branchHistCursorRef.current >= 0) {
+                e.preventDefault();
+                const next = branchHistCursorRef.current - 1;
+                branchHistCursorRef.current = next;
+                setNewBranchName(next === -1 ? branchLiveDraftRef.current : history[next]);
               }
             }}
           />

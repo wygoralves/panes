@@ -8,6 +8,7 @@ import { useWorkspaceStore } from "./stores/workspaceStore";
 import { useEngineStore } from "./stores/engineStore";
 import { useUiStore } from "./stores/uiStore";
 import { useThreadStore } from "./stores/threadStore";
+import { useGitStore } from "./stores/gitStore";
 
 export function App() {
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces);
@@ -43,6 +44,18 @@ export function App() {
       }
     };
   }, [refreshThreads]);
+
+  useEffect(() => {
+    function onBeforeUnload() {
+      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (wsId) {
+        useGitStore.getState().flushDrafts(wsId);
+      }
+    }
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {

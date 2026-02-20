@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Repo, TrustLevel, Workspace } from "../types";
 import { ipc } from "../lib/ipc";
+import { useGitStore } from "./gitStore";
 
 interface WorkspaceState {
   workspaces: Workspace[];
@@ -43,6 +44,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const activeWorkspaceId = restored?.id ?? null;
       set({ workspaces, activeWorkspaceId, loading: false });
       if (activeWorkspaceId) {
+        useGitStore.getState().loadDraftsForWorkspace(activeWorkspaceId);
         await get().loadRepos(activeWorkspaceId);
       }
       await get().refreshArchivedWorkspaces();
@@ -152,9 +154,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
   setActiveWorkspace: async (workspaceId) => {
+    const prevWorkspaceId = get().activeWorkspaceId;
+    if (prevWorkspaceId) {
+      useGitStore.getState().flushDrafts(prevWorkspaceId);
+    }
     localStorage.setItem(LAST_WORKSPACE_KEY, workspaceId);
     set({ activeWorkspaceId: workspaceId, activeRepoId: null, repos: [], error: undefined });
     await get().loadRepos(workspaceId);
+    useGitStore.getState().loadDraftsForWorkspace(workspaceId);
   },
   setActiveRepo: (repoId) => set({ activeRepoId: repoId }),
   setRepoGitActive: async (repoId, isActive) => {
