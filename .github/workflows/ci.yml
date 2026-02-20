@@ -2,7 +2,7 @@ name: CI and Release
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "master"]
   pull_request:
   workflow_dispatch:
 
@@ -51,7 +51,7 @@ jobs:
 
   release:
     name: Automated Release
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master')
     needs: [frontend, rust]
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -59,11 +59,11 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout main with full history
+      - name: Checkout release branch with full history
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: main
+          ref: ${{ github.ref_name }}
           token: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Fetch tags

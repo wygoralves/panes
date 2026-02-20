@@ -2,7 +2,7 @@
   "git": {
     "commitMessage": "chore(release): v${version}",
     "tagName": "v${version}",
-    "requireBranch": "main",
+    "requireBranch": false,
     "requireCleanWorkingDir": true
   },
   "npm": {
