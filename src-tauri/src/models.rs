@@ -25,6 +25,12 @@ pub struct RepoDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitSelectionStatusDto {
+    pub configured: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrustLevelDto {
     Trusted,

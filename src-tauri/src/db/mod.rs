@@ -42,6 +42,7 @@ impl Database {
         conn.execute_batch(include_str!("migrations/001_initial.sql"))
             .context("failed to apply migrations")?;
         ensure_archived_columns(&conn)?;
+        ensure_workspace_git_columns(&conn)?;
         ensure_runtime_columns(&conn)?;
         ensure_messages_audit_columns(&conn)?;
         Ok(())
@@ -51,6 +52,16 @@ impl Database {
 fn ensure_archived_columns(conn: &Connection) -> anyhow::Result<()> {
     ensure_column(conn, "workspaces", "archived_at", "TEXT")?;
     ensure_column(conn, "threads", "archived_at", "TEXT")?;
+    Ok(())
+}
+
+fn ensure_workspace_git_columns(conn: &Connection) -> anyhow::Result<()> {
+    ensure_column(
+        conn,
+        "workspaces",
+        "git_repo_selection_configured",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
     Ok(())
 }
 

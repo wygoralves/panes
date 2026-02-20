@@ -470,6 +470,7 @@ button, input, textarea, select {
 
 /* ── Git Panel ── */
 .git-panel {
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -546,6 +547,16 @@ button, input, textarea, select {
 .git-toolbar-btn:hover {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-1);
+}
+
+/* Repo bar (multi-repo switcher) */
+.git-repo-bar {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
 }
 
 @keyframes spin {
@@ -966,3 +977,41 @@ button, input, textarea, select {
   flex-shrink: 0;
 }
 .git-stash-row:hover .git-stash-actions { opacity: 1; }
+
+/* Branch action menu */
+.git-action-menu {
+  min-width: 140px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-3);
+  border: 1px solid var(--border-active);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  z-index: 9999;
+  animation: dropdown-in var(--duration-fast) var(--ease-out) both;
+}
+
+.git-action-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+  border-radius: 4px;
+  text-align: left;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.git-action-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-1);
+}
+
+.git-action-menu-item-danger {
+  color: var(--danger);
+}
+
+.git-action-menu-item-danger:hover {
+  color: var(--danger);
+  background: rgba(248, 113, 113, 0.1);
+}

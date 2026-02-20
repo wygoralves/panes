@@ -12,8 +12,9 @@ pub fn upsert_repo(
     name: &str,
     path: &str,
     default_branch: &str,
+    default_is_active: bool,
 ) -> anyhow::Result<RepoDto> {
-    let mut conn = db.connect()?;
+    let conn = db.connect()?;
 
     let existing = conn
         .query_row(
@@ -28,7 +29,7 @@ pub fn upsert_repo(
         Some(id) => {
             conn.execute(
                 "UPDATE repos
-         SET name = ?1, default_branch = ?2, is_active = 1
+         SET name = ?1, default_branch = ?2
          WHERE id = ?3",
                 params![name, default_branch, id],
             )
@@ -37,8 +38,15 @@ pub fn upsert_repo(
         None => {
             conn.execute(
         "INSERT INTO repos (id, workspace_id, name, path, default_branch, is_active, trust_level)
-         VALUES (?1, ?2, ?3, ?4, ?5, 1, 'standard')",
-        params![Uuid::new_v4().to_string(), workspace_id, name, path, default_branch],
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'standard')",
+        params![
+            Uuid::new_v4().to_string(),
+            workspace_id,
+            name,
+            path,
+            default_branch,
+            if default_is_active { 1 } else { 0 }
+        ],
       )
       .context("failed to insert repo")?;
         }
@@ -85,6 +93,56 @@ pub fn set_repo_trust_level(
         params![trust_level.as_str(), repo_id],
     )
     .context("failed to update repo trust level")?;
+    Ok(())
+}
+
+pub fn set_repo_active(db: &Database, repo_id: &str, is_active: bool) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    let affected = conn
+        .execute(
+            "UPDATE repos
+         SET is_active = ?1
+         WHERE id = ?2",
+            params![if is_active { 1 } else { 0 }, repo_id],
+        )
+        .context("failed to update repo active flag")?;
+
+    if affected == 0 {
+        anyhow::bail!("repo not found: {repo_id}");
+    }
+
+    Ok(())
+}
+
+pub fn set_workspace_active_repos(
+    db: &Database,
+    workspace_id: &str,
+    repo_ids: &[String],
+) -> anyhow::Result<()> {
+    let mut conn = db.connect()?;
+    let tx = conn.transaction().context("failed to start transaction")?;
+
+    tx.execute(
+        "UPDATE repos
+     SET is_active = 0
+     WHERE workspace_id = ?1",
+        params![workspace_id],
+    )
+    .context("failed to clear active repos")?;
+
+    for repo_id in repo_ids {
+        tx.execute(
+            "UPDATE repos
+         SET is_active = 1
+         WHERE workspace_id = ?1
+           AND id = ?2",
+            params![workspace_id, repo_id],
+        )
+        .context("failed to activate selected repo")?;
+    }
+
+    tx.commit()
+        .context("failed to commit repo active selection transaction")?;
     Ok(())
 }
 

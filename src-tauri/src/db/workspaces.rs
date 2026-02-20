@@ -156,6 +156,44 @@ pub fn restore_workspace(db: &Database, workspace_id: &str) -> anyhow::Result<Wo
     get_workspace_by_id(&conn, workspace_id)
 }
 
+pub fn is_git_repo_selection_configured(db: &Database, workspace_id: &str) -> anyhow::Result<bool> {
+    let conn = db.connect()?;
+    let configured = conn
+        .query_row(
+            "SELECT git_repo_selection_configured
+         FROM workspaces
+         WHERE id = ?1",
+            params![workspace_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .context("failed to load workspace git selection state")?;
+
+    Ok(configured.unwrap_or(0) > 0)
+}
+
+pub fn set_git_repo_selection_configured(
+    db: &Database,
+    workspace_id: &str,
+    configured: bool,
+) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    let affected = conn
+        .execute(
+            "UPDATE workspaces
+         SET git_repo_selection_configured = ?1
+         WHERE id = ?2",
+            params![if configured { 1 } else { 0 }, workspace_id],
+        )
+        .context("failed to update workspace git selection state")?;
+
+    if affected == 0 {
+        anyhow::bail!("workspace not found: {workspace_id}");
+    }
+
+    Ok(())
+}
+
 fn get_workspace_by_root(
     conn: &rusqlite::Connection,
     root_path: &str,

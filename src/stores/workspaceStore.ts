@@ -18,6 +18,9 @@ interface WorkspaceState {
   loadRepos: (workspaceId: string) => Promise<void>;
   setActiveWorkspace: (workspaceId: string) => Promise<void>;
   setActiveRepo: (repoId: string | null) => void;
+  setRepoGitActive: (repoId: string, isActive: boolean) => Promise<void>;
+  setWorkspaceGitActiveRepos: (workspaceId: string, repoIds: string[]) => Promise<void>;
+  hasWorkspaceGitSelection: (workspaceId: string) => Promise<boolean>;
   setRepoTrustLevel: (repoId: string, trustLevel: TrustLevel) => Promise<void>;
   setAllReposTrustLevel: (trustLevel: TrustLevel) => Promise<void>;
 }
@@ -130,7 +133,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   loadRepos: async (workspaceId) => {
     try {
       const repos = await ipc.getRepos(workspaceId);
-      set({ repos, activeRepoId: repos[0]?.id ?? null });
+      const currentActiveRepoId = get().activeRepoId;
+      const activeStillExists = currentActiveRepoId
+        ? repos.some((repo) => repo.id === currentActiveRepoId)
+        : false;
+      const fallbackActiveRepoId =
+        repos.find((repo) => repo.isActive)?.id ?? repos[0]?.id ?? null;
+      set({
+        repos,
+        activeRepoId: activeStillExists ? currentActiveRepoId : fallbackActiveRepoId,
+      });
     } catch (error) {
       set({ error: String(error) });
     }
@@ -140,6 +152,49 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     await get().loadRepos(workspaceId);
   },
   setActiveRepo: (repoId) => set({ activeRepoId: repoId }),
+  setRepoGitActive: async (repoId, isActive) => {
+    try {
+      await ipc.setRepoGitActive(repoId, isActive);
+      set((state) => ({
+        repos: state.repos.map((repo) =>
+          repo.id === repoId
+            ? {
+                ...repo,
+                isActive,
+              }
+            : repo,
+        ),
+      }));
+    } catch (error) {
+      set({ error: String(error) });
+      throw error;
+    }
+  },
+  setWorkspaceGitActiveRepos: async (workspaceId, repoIds) => {
+    try {
+      await ipc.setWorkspaceGitActiveRepos(workspaceId, repoIds);
+      set((state) => {
+        const selected = new Set(repoIds);
+        return {
+          repos: state.repos.map((repo) =>
+            repo.workspaceId === workspaceId
+              ? {
+                  ...repo,
+                  isActive: selected.has(repo.id),
+                }
+              : repo,
+          ),
+        };
+      });
+    } catch (error) {
+      set({ error: String(error) });
+      throw error;
+    }
+  },
+  hasWorkspaceGitSelection: async (workspaceId) => {
+    const status = await ipc.hasWorkspaceGitSelection(workspaceId);
+    return status.configured;
+  },
   setRepoTrustLevel: async (repoId, trustLevel) => {
     try {
       await ipc.setRepoTrustLevel(repoId, trustLevel);

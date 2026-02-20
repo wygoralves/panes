@@ -1,5 +1,6 @@
-import { useEffect, useState, useRef } from "react";
-import { Plus, X } from "lucide-react";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
+import { Plus, X, MoreHorizontal } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
 import type { Repo, GitBranchScope } from "../../types";
 
@@ -20,6 +21,12 @@ function formatDate(raw?: string): string {
   });
 }
 
+interface ActionMenuState {
+  branchName: string;
+  top: number;
+  left: number;
+}
+
 export function GitBranchesView({ repo, onError }: Props) {
   const {
     branchScope,
@@ -37,8 +44,11 @@ export function GitBranchesView({ repo, onError }: Props) {
   const [renamingBranch, setRenamingBranch] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+  const [actionMenu, setActionMenu] = useState<ActionMenuState | null>(null);
   const newBranchInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const actionMenuRef = useRef<HTMLDivElement>(null);
+  const actionTriggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     void loadBranches(repo.path, branchScope);
@@ -57,6 +67,44 @@ export function GitBranchesView({ repo, onError }: Props) {
     const timer = setTimeout(() => setConfirmingDelete(null), 3000);
     return () => clearTimeout(timer);
   }, [confirmingDelete]);
+
+  const closeMenu = useCallback(() => setActionMenu(null), []);
+
+  useEffect(() => {
+    if (!actionMenu) return;
+
+    function onPointerDown(e: PointerEvent) {
+      const target = e.target as Node;
+      if (
+        actionMenuRef.current?.contains(target) ||
+        actionTriggerRef.current?.contains(target)
+      ) {
+        return;
+      }
+      closeMenu();
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") closeMenu();
+    }
+
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [actionMenu, closeMenu]);
+
+  function openActionMenu(branchName: string, e: React.MouseEvent<HTMLButtonElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    actionTriggerRef.current = e.currentTarget;
+    setActionMenu({
+      branchName,
+      top: rect.bottom + 4,
+      left: rect.right - 140,
+    });
+  }
 
   async function onCheckout(branchName: string, isRemote: boolean) {
     try {
@@ -112,6 +160,68 @@ export function GitBranchesView({ repo, onError }: Props) {
       }
     }
   }
+
+  const menuBranch = actionMenu
+    ? branches.find((b) => b.name === actionMenu.branchName)
+    : null;
+
+  const actionMenuPortal =
+    actionMenu && menuBranch
+      ? createPortal(
+          <div
+            ref={actionMenuRef}
+            className="git-action-menu"
+            style={{
+              position: "fixed",
+              top: actionMenu.top,
+              left: actionMenu.left,
+            }}
+          >
+            {!menuBranch.isCurrent && (
+              <button
+                type="button"
+                className="git-action-menu-item"
+                onClick={() => {
+                  closeMenu();
+                  void onCheckout(menuBranch.name, menuBranch.isRemote);
+                }}
+              >
+                Checkout
+              </button>
+            )}
+            {!menuBranch.isRemote && renamingBranch !== menuBranch.name && (
+              <button
+                type="button"
+                className="git-action-menu-item"
+                onClick={() => {
+                  closeMenu();
+                  setRenamingBranch(menuBranch.name);
+                  setRenameValue(menuBranch.name);
+                }}
+              >
+                Rename
+              </button>
+            )}
+            {!menuBranch.isRemote && !menuBranch.isCurrent && (
+              <button
+                type="button"
+                className={`git-action-menu-item${
+                  confirmingDelete === menuBranch.name
+                    ? " git-action-menu-item-danger"
+                    : ""
+                }`}
+                onClick={() => {
+                  void onDeleteBranch(menuBranch.name);
+                  if (confirmingDelete === menuBranch.name) closeMenu();
+                }}
+              >
+                {confirmingDelete === menuBranch.name ? "Confirm delete?" : "Delete"}
+              </button>
+            )}
+          </div>,
+          document.body,
+        )
+      : null;
 
   return (
     <>
@@ -203,6 +313,11 @@ export function GitBranchesView({ repo, onError }: Props) {
                 }`
               : "No upstream";
 
+            const hasActions =
+              !branch.isCurrent ||
+              (!branch.isRemote && !isRenaming) ||
+              (!branch.isRemote && !branch.isCurrent);
+
             return (
               <div
                 key={branch.fullName}
@@ -286,50 +401,15 @@ export function GitBranchesView({ repo, onError }: Props) {
                 </div>
 
                 <div className="git-branch-row-actions">
-                  {!branch.isCurrent && (
+                  {hasActions && (
                     <button
                       type="button"
-                      className="btn btn-ghost"
-                      style={{ padding: "3px 6px", fontSize: 11 }}
-                      onClick={() =>
-                        void onCheckout(branch.name, branch.isRemote)
-                      }
+                      className="git-toolbar-btn"
+                      style={{ padding: 3 }}
+                      onClick={(e) => openActionMenu(branch.name, e)}
+                      title="Branch actions"
                     >
-                      Checkout
-                    </button>
-                  )}
-
-                  {!branch.isRemote && !isRenaming && (
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ padding: "3px 6px", fontSize: 11 }}
-                      onClick={() => {
-                        setRenamingBranch(branch.name);
-                        setRenameValue(branch.name);
-                      }}
-                    >
-                      Rename
-                    </button>
-                  )}
-
-                  {!branch.isRemote && !branch.isCurrent && (
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{
-                        padding: "3px 6px",
-                        fontSize: 11,
-                        color:
-                          confirmingDelete === branch.name
-                            ? "var(--danger)"
-                            : undefined,
-                      }}
-                      onClick={() => void onDeleteBranch(branch.name)}
-                    >
-                      {confirmingDelete === branch.name
-                        ? "Confirm?"
-                        : "Delete"}
+                      <MoreHorizontal size={14} />
                     </button>
                   )}
                 </div>
@@ -338,6 +418,8 @@ export function GitBranchesView({ repo, onError }: Props) {
           })
         )}
       </div>
+
+      {actionMenuPortal}
     </>
   );
 }

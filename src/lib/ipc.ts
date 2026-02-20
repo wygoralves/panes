@@ -17,6 +17,7 @@ import type {
   StreamEvent,
   Thread,
   TrustLevel,
+  WorkspaceGitSelectionStatus,
   Workspace
 } from "../types";
 
@@ -34,6 +35,12 @@ export const ipc = {
   getRepos: (workspaceId: string) => invoke<Repo[]>("get_repos", { workspaceId }),
   setRepoTrustLevel: (repoId: string, trustLevel: TrustLevel) =>
     invoke<void>("set_repo_trust_level", { repoId, trustLevel }),
+  setRepoGitActive: (repoId: string, isActive: boolean) =>
+    invoke<void>("set_repo_git_active", { repoId, isActive }),
+  setWorkspaceGitActiveRepos: (workspaceId: string, repoIds: string[]) =>
+    invoke<void>("set_workspace_git_active_repos", { workspaceId, repoIds }),
+  hasWorkspaceGitSelection: (workspaceId: string) =>
+    invoke<WorkspaceGitSelectionStatus>("has_workspace_git_selection", { workspaceId }),
   listThreads: (workspaceId: string) => invoke<Thread[]>("list_threads", { workspaceId }),
   listArchivedThreads: (workspaceId: string) =>
     invoke<Thread[]>("list_archived_threads", { workspaceId }),

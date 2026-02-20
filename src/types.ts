@@ -19,6 +19,10 @@ export interface Repo {
   trustLevel: TrustLevel;
 }
 
+export interface WorkspaceGitSelectionStatus {
+  configured: boolean;
+}
+
 export type ThreadStatus =
   | "idle"
   | "streaming"
