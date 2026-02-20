@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Folder, Plus, SquareTerminal, X } from "lucide-react";
-import { Terminal } from "xterm";
-import { FitAddon } from "xterm-addon-fit";
-import { Unicode11Addon } from "xterm-addon-unicode11";
-import "xterm/css/xterm.css";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { WebglAddon } from "@xterm/addon-webgl";
+import "@xterm/xterm/css/xterm.css";
 import { ipc, listenTerminalExit, listenTerminalOutput } from "../../lib/ipc";
 import { useTerminalStore } from "../../stores/terminalStore";
 
@@ -11,14 +12,36 @@ interface TerminalPanelProps {
   workspaceId: string;
 }
 
+interface TerminalSize {
+  cols: number;
+  rows: number;
+}
+
 interface SessionTerminal {
   terminal: Terminal;
   fitAddon: FitAddon;
+  outputQueue: string[];
+  flushInProgress: boolean;
+  flushTimer?: ReturnType<typeof window.setTimeout>;
+  fitTimer?: ReturnType<typeof window.setTimeout>;
+  isAttached: boolean;
+  lastResizeSent?: TerminalSize;
+  debugSample: {
+    chunks: number;
+    chars: number;
+    lastLogAt: number;
+  };
+  webglCleanup?: () => void;
   dispose: () => void;
 }
 
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 36;
+const FIT_DEBOUNCE_MS = 80;
+const OUTPUT_FLUSH_DELAY_MS = 16;
+const OUTPUT_BATCH_CHAR_LIMIT = 65536;
+const TERMINAL_DEBUG =
+  import.meta.env.DEV && import.meta.env.VITE_TERMINAL_DEBUG === "1";
 
 // Module-level cache — xterm instances survive component mount/unmount cycles.
 // This is what preserves terminal scrollback when switching workspaces.
@@ -33,11 +56,281 @@ function terminalWorkspacePrefix(workspaceId: string): string {
   return `${workspaceId}::`;
 }
 
+function logTerminalDebug(
+  message: string,
+  details?: Record<string, string | number | boolean | undefined>
+) {
+  if (!TERMINAL_DEBUG) {
+    return;
+  }
+  if (details) {
+    console.debug(`[terminal] ${message}`, details);
+    return;
+  }
+  console.debug(`[terminal] ${message}`);
+}
+
+function setupWebglRenderer(
+  cacheKey: string,
+  terminal: Terminal
+): (() => void) | null {
+  if (typeof WebGL2RenderingContext === "undefined") {
+    logTerminalDebug("webgl-unsupported", { cacheKey });
+    return null;
+  }
+  try {
+    const webglAddon = new WebglAddon();
+    terminal.loadAddon(webglAddon);
+    const contextLossDisposable = webglAddon.onContextLoss(() => {
+      logTerminalDebug("webgl-context-loss", { cacheKey });
+    });
+    logTerminalDebug("webgl-enabled", { cacheKey });
+    return () => {
+      contextLossDisposable.dispose();
+      webglAddon.dispose();
+    };
+  } catch (error) {
+    logTerminalDebug("webgl-disabled", {
+      cacheKey,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+function normalizeSize(cols: number, rows: number): TerminalSize {
+  return {
+    cols: Math.max(1, cols),
+    rows: Math.max(1, rows),
+  };
+}
+
+function sameSize(a?: TerminalSize, b?: TerminalSize): boolean {
+  if (!a || !b) {
+    return false;
+  }
+  return a.cols === b.cols && a.rows === b.rows;
+}
+
+function hasRenderableSize(container: HTMLElement): boolean {
+  return container.offsetWidth > 0 && container.offsetHeight > 0;
+}
+
+function clearSessionTimers(session: SessionTerminal) {
+  if (session.fitTimer !== undefined) {
+    window.clearTimeout(session.fitTimer);
+    session.fitTimer = undefined;
+  }
+  if (session.flushTimer !== undefined) {
+    window.clearTimeout(session.flushTimer);
+    session.flushTimer = undefined;
+  }
+}
+
+function sendResizeIfNeeded(
+  workspaceId: string,
+  sessionId: string,
+  session: SessionTerminal,
+  cols: number,
+  rows: number
+) {
+  const next = normalizeSize(cols, rows);
+  if (sameSize(session.lastResizeSent, next)) {
+    return;
+  }
+  session.lastResizeSent = next;
+  void ipc
+    .terminalResize(workspaceId, sessionId, next.cols, next.rows)
+    .catch(() => undefined);
+}
+
+function pullOutputBatch(outputQueue: string[]): string | null {
+  if (outputQueue.length === 0) {
+    return null;
+  }
+
+  let totalChars = 0;
+  let take = 0;
+  for (const chunk of outputQueue) {
+    if (take > 0 && totalChars + chunk.length > OUTPUT_BATCH_CHAR_LIMIT) {
+      break;
+    }
+    totalChars += chunk.length;
+    take += 1;
+    if (totalChars >= OUTPUT_BATCH_CHAR_LIMIT) {
+      break;
+    }
+  }
+
+  if (take === 0) {
+    take = 1;
+  }
+
+  return outputQueue.splice(0, take).join("");
+}
+
+function flushOutputQueue(cacheKey: string) {
+  const session = cachedTerminals.get(cacheKey);
+  if (!session || session.flushInProgress) {
+    return;
+  }
+  if (!session.isAttached) {
+    return;
+  }
+
+  const payload = pullOutputBatch(session.outputQueue);
+  if (!payload) {
+    return;
+  }
+
+  session.flushInProgress = true;
+  session.terminal.write(payload, () => {
+    const latest = cachedTerminals.get(cacheKey);
+    if (!latest) {
+      return;
+    }
+    latest.flushInProgress = false;
+    if (latest.outputQueue.length > 0) {
+      scheduleOutputFlush(cacheKey, latest, 0);
+    }
+  });
+}
+
+function scheduleOutputFlush(
+  cacheKey: string,
+  session: SessionTerminal,
+  delayMs: number = OUTPUT_FLUSH_DELAY_MS
+) {
+  if (session.flushTimer !== undefined) {
+    return;
+  }
+  session.flushTimer = window.setTimeout(() => {
+    const latest = cachedTerminals.get(cacheKey);
+    if (!latest) {
+      return;
+    }
+    latest.flushTimer = undefined;
+    flushOutputQueue(cacheKey);
+  }, delayMs);
+}
+
+function queueOutput(cacheKey: string, data: string) {
+  const session = cachedTerminals.get(cacheKey);
+  if (!session) {
+    const current = pendingOutput.get(cacheKey) ?? [];
+    current.push(data);
+    pendingOutput.set(cacheKey, current);
+    return;
+  }
+
+  session.outputQueue.push(data);
+
+  session.debugSample.chunks += 1;
+  session.debugSample.chars += data.length;
+  const now = Date.now();
+  if (TERMINAL_DEBUG && now - session.debugSample.lastLogAt >= 1000) {
+    logTerminalDebug("output-sample", {
+      queueDepth: session.outputQueue.length,
+      chunks: session.debugSample.chunks,
+      chars: session.debugSample.chars,
+      attached: session.isAttached,
+    });
+    session.debugSample.lastLogAt = now;
+    session.debugSample.chunks = 0;
+    session.debugSample.chars = 0;
+  }
+
+  if (session.isAttached) {
+    scheduleOutputFlush(cacheKey, session);
+  }
+}
+
+function drainPendingOutput(cacheKey: string, session: SessionTerminal) {
+  const buffered = pendingOutput.get(cacheKey);
+  if (!buffered?.length) {
+    return;
+  }
+  session.outputQueue.push(...buffered);
+  pendingOutput.delete(cacheKey);
+  if (session.isAttached) {
+    scheduleOutputFlush(cacheKey, session, 0);
+  }
+}
+
+function runTerminalFit(workspaceId: string, sessionId: string) {
+  const cacheKey = terminalCacheKey(workspaceId, sessionId);
+  const session = cachedTerminals.get(cacheKey);
+  if (!session || !session.isAttached) {
+    return;
+  }
+
+  const container = session.terminal.element?.parentElement;
+  if (!(container instanceof HTMLElement) || !hasRenderableSize(container)) {
+    return;
+  }
+
+  const before = normalizeSize(session.terminal.cols, session.terminal.rows);
+  session.fitAddon.fit();
+  const after = normalizeSize(session.terminal.cols, session.terminal.rows);
+  if (!sameSize(before, after) && after.rows > 0) {
+    session.terminal.refresh(0, after.rows - 1);
+  }
+
+  sendResizeIfNeeded(workspaceId, sessionId, session, after.cols, after.rows);
+
+  if (session.outputQueue.length > 0) {
+    scheduleOutputFlush(cacheKey, session, 0);
+  }
+}
+
+function scheduleTerminalFit(
+  workspaceId: string,
+  sessionId: string,
+  delayMs: number = FIT_DEBOUNCE_MS
+) {
+  const cacheKey = terminalCacheKey(workspaceId, sessionId);
+  const session = cachedTerminals.get(cacheKey);
+  if (!session) {
+    return;
+  }
+
+  if (session.fitTimer !== undefined) {
+    window.clearTimeout(session.fitTimer);
+  }
+  session.fitTimer = window.setTimeout(() => {
+    const latest = cachedTerminals.get(cacheKey);
+    if (!latest) {
+      return;
+    }
+    latest.fitTimer = undefined;
+    runTerminalFit(workspaceId, sessionId);
+  }, delayMs);
+}
+
+function markWorkspaceTerminalsDetached(workspaceId: string) {
+  const workspacePrefix = terminalWorkspacePrefix(workspaceId);
+  for (const [cacheKey, session] of cachedTerminals) {
+    if (!cacheKey.startsWith(workspacePrefix)) {
+      continue;
+    }
+    session.isAttached = false;
+    if (session.fitTimer !== undefined) {
+      window.clearTimeout(session.fitTimer);
+      session.fitTimer = undefined;
+    }
+    if (session.flushTimer !== undefined) {
+      window.clearTimeout(session.flushTimer);
+      session.flushTimer = undefined;
+    }
+  }
+}
+
 /** Permanently destroy a cached terminal (used when session is explicitly closed). */
 function destroyCachedTerminal(workspaceId: string, sessionId: string) {
   const key = terminalCacheKey(workspaceId, sessionId);
   const cached = cachedTerminals.get(key);
   if (cached) {
+    clearSessionTimers(cached);
     cached.dispose();
     cachedTerminals.delete(key);
   }
@@ -78,20 +371,9 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         }
         container.appendChild(el);
       }
-      // Re-fit and force a full redraw — the canvas goes stale when detached from the DOM
-      cached.fitAddon.fit();
-      cached.terminal.refresh(0, cached.terminal.rows - 1);
-      void ipc
-        .terminalResize(workspaceId, sessionId, cached.terminal.cols, cached.terminal.rows)
-        .catch(() => undefined);
-      // Drain any output buffered while unmounted
-      const queued = pendingOutput.get(cacheKey);
-      if (queued?.length) {
-        for (const chunk of queued) {
-          cached.terminal.write(chunk);
-        }
-        pendingOutput.delete(cacheKey);
-      }
+      cached.isAttached = true;
+      drainPendingOutput(cacheKey, cached);
+      scheduleTerminalFit(workspaceId, sessionId, 0);
       return;
     }
 
@@ -120,57 +402,56 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     terminal.unicode.activeVersion = "11";
 
     terminal.open(container);
-
-    fitAddon.fit();
-    void ipc
-      .terminalResize(workspaceId, sessionId, terminal.cols, terminal.rows)
-      .catch(() => undefined);
+    const webglCleanup = setupWebglRenderer(cacheKey, terminal) ?? undefined;
 
     const writeDisposable = terminal.onData((data) => {
       void ipc.terminalWrite(workspaceId, sessionId, data).catch(() => undefined);
     });
 
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
-      void ipc.terminalResize(workspaceId, sessionId, cols, rows).catch(() => undefined);
+      const current = cachedTerminals.get(cacheKey);
+      if (!current) {
+        return;
+      }
+      sendResizeIfNeeded(workspaceId, sessionId, current, cols, rows);
     });
 
-    // Drain any output that arrived before the terminal was created
-    const queued = pendingOutput.get(cacheKey);
-    if (queued?.length) {
-      for (const chunk of queued) {
-        terminal.write(chunk);
-      }
-      pendingOutput.delete(cacheKey);
-    }
-
     let disposed = false;
-    cachedTerminals.set(cacheKey, {
+    const entry: SessionTerminal = {
       terminal,
       fitAddon,
+      outputQueue: [],
+      flushInProgress: false,
+      isAttached: true,
+      debugSample: {
+        chunks: 0,
+        chars: 0,
+        lastLogAt: Date.now(),
+      },
+      webglCleanup,
       dispose: () => {
         if (disposed) {
           return;
         }
         disposed = true;
+        clearSessionTimers(entry);
+        entry.webglCleanup?.();
+        entry.webglCleanup = undefined;
         writeDisposable.dispose();
         resizeDisposable.dispose();
         terminal.dispose();
       },
-    });
+    };
+    cachedTerminals.set(cacheKey, entry);
+    drainPendingOutput(cacheKey, entry);
+    scheduleTerminalFit(workspaceId, sessionId, 0);
   }, [workspaceId]);
 
   const fitActiveTerminal = useCallback(() => {
     if (!activeSessionId) {
       return;
     }
-    const active = cachedTerminals.get(terminalCacheKey(workspaceId, activeSessionId));
-    if (!active) {
-      return;
-    }
-    active.fitAddon.fit();
-    void ipc
-      .terminalResize(workspaceId, activeSessionId, active.terminal.cols, active.terminal.rows)
-      .catch(() => undefined);
+    scheduleTerminalFit(workspaceId, activeSessionId);
   }, [activeSessionId, workspaceId]);
 
   useEffect(() => {
@@ -237,16 +518,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
     void listenTerminalOutput(workspaceId, (event) => {
       const cacheKey = terminalCacheKey(workspaceId, event.sessionId);
-      const entry = cachedTerminals.get(cacheKey);
-      if (entry) {
-        entry.terminal.write(event.data);
-        return;
-      }
-
-      // Buffer output — the terminal may not be created yet
-      const current = pendingOutput.get(cacheKey) ?? [];
-      current.push(event.data);
-      pendingOutput.set(cacheKey, current);
+      queueOutput(cacheKey, event.data);
     }).then((fn) => {
       if (disposed) {
         fn();
@@ -277,12 +549,13 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     };
   }, [handleSessionExit, workspaceId]);
 
-  // On unmount: only clear DOM refs. Do NOT dispose terminals — they live in the module cache.
+  // On unmount/workspace swap: mark cache entries detached but keep the session alive.
   useEffect(() => {
     return () => {
+      markWorkspaceTerminalsDetached(workspaceId);
       containerRefs.current.clear();
     };
-  }, []);
+  }, [workspaceId]);
 
   const activeTerminal = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) ?? null,
@@ -371,6 +644,16 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                 ref={(node) => {
                   if (!node) {
                     containerRefs.current.delete(session.id);
+                    const cached = cachedTerminals.get(
+                      terminalCacheKey(workspaceId, session.id)
+                    );
+                    if (cached) {
+                      cached.isAttached = false;
+                      if (cached.fitTimer !== undefined) {
+                        window.clearTimeout(cached.fitTimer);
+                        cached.fitTimer = undefined;
+                      }
+                    }
                     return;
                   }
                   containerRefs.current.set(session.id, node);

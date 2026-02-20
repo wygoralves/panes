@@ -55,14 +55,6 @@ impl Engine for ClaudeSidecarEngine {
         None
     }
 
-    async fn start(&mut self) -> Result<(), anyhow::Error> {
-        Ok(())
-    }
-
-    async fn stop(&mut self) -> Result<(), anyhow::Error> {
-        Ok(())
-    }
-
     async fn start_thread(
         &self,
         _scope: ThreadScope,

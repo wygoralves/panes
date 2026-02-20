@@ -145,28 +145,6 @@ impl Engine for CodexEngine {
         Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
-    async fn start(&mut self) -> Result<(), anyhow::Error> {
-        self.ensure_ready_transport().await?;
-        Ok(())
-    }
-
-    async fn stop(&mut self) -> Result<(), anyhow::Error> {
-        let transport = {
-            let mut state = self.state.lock().await;
-            state.initialized = false;
-            state.approval_requests.clear();
-            state.active_turn_ids.clear();
-            state.thread_runtimes.clear();
-            state.transport.take()
-        };
-
-        if let Some(transport) = transport {
-            transport.shutdown().await.ok();
-        }
-
-        Ok(())
-    }
-
     async fn start_thread(
         &self,
         scope: ThreadScope,

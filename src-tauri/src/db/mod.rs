@@ -26,10 +26,6 @@ impl Database {
         Ok(db)
     }
 
-    pub fn path(&self) -> &PathBuf {
-        &self.path
-    }
-
     pub fn connect(&self) -> anyhow::Result<Connection> {
         let conn = Connection::open(&self.path).context("failed to open sqlite database")?;
         conn.pragma_update(None, "foreign_keys", "ON")

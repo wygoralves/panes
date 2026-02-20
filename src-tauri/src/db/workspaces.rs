@@ -13,7 +13,7 @@ pub fn upsert_workspace(
     root_path: &str,
     scan_depth: i64,
 ) -> anyhow::Result<WorkspaceDto> {
-    let mut conn = db.connect()?;
+    let conn = db.connect()?;
     let canonical = Path::new(root_path)
         .canonicalize()
         .unwrap_or_else(|_| Path::new(root_path).to_path_buf());

@@ -218,12 +218,13 @@ impl TerminalManager {
         let runtime = tokio::runtime::Handle::current();
         thread::spawn(move || {
             let mut buf = [0_u8; 8192];
+            let mut decode_buffer = Vec::new();
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
-                        if !chunk.is_empty() {
+                        decode_buffer.extend_from_slice(&buf[..n]);
+                        while let Some(chunk) = take_next_utf8_chunk(&mut decode_buffer) {
                             emit_output(&app, &workspace_id, &session_id, chunk);
                         }
                     }
@@ -233,6 +234,12 @@ impl TerminalManager {
                         }
                         break;
                     }
+                }
+            }
+            if !decode_buffer.is_empty() {
+                let trailing = String::from_utf8_lossy(&decode_buffer).to_string();
+                if !trailing.is_empty() {
+                    emit_output(&app, &workspace_id, &session_id, trailing);
                 }
             }
 
@@ -265,7 +272,10 @@ impl TerminalManager {
         let exit = match tokio::task::spawn_blocking(move || session.wait_for_exit()).await {
             Ok(payload) => payload,
             Err(error) => {
-                log::warn!("terminal wait task failed for session {}: {error}", event_session_id);
+                log::warn!(
+                    "terminal wait task failed for session {}: {error}",
+                    event_session_id
+                );
                 ExitPayload::default()
             }
         };
@@ -432,4 +442,45 @@ fn emit_exit(app: &AppHandle, workspace_id: &str, session_id: &str, exit: ExitPa
         signal: exit.signal,
     };
     let _ = app.emit(&event_name, payload);
+}
+
+fn take_next_utf8_chunk(buffer: &mut Vec<u8>) -> Option<String> {
+    if buffer.is_empty() {
+        return None;
+    }
+
+    match std::str::from_utf8(buffer) {
+        Ok(valid) => {
+            let out = valid.to_string();
+            buffer.clear();
+            if out.is_empty() {
+                None
+            } else {
+                Some(out)
+            }
+        }
+        Err(error) => {
+            let valid_up_to = error.valid_up_to();
+            if let Some(error_len) = error.error_len() {
+                let end = (valid_up_to + error_len).min(buffer.len());
+                let out = String::from_utf8_lossy(&buffer[..end]).to_string();
+                buffer.drain(..end);
+                if out.is_empty() {
+                    None
+                } else {
+                    Some(out)
+                }
+            } else if valid_up_to > 0 {
+                let out = String::from_utf8_lossy(&buffer[..valid_up_to]).to_string();
+                buffer.drain(..valid_up_to);
+                if out.is_empty() {
+                    None
+                } else {
+                    Some(out)
+                }
+            } else {
+                None
+            }
+        }
+    }
 }

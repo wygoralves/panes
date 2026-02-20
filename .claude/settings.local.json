@@ -16,7 +16,10 @@
       "Bash(. \"$HOME/.cargo/env\")",
       "WebSearch",
       "WebFetch(domain:developers.openai.com)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:www.usmartcloud.com)",
+      "WebFetch(domain:xtermjs.org)"
     ]
   }
 }

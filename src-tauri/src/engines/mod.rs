@@ -71,9 +71,6 @@ pub trait Engine: Send + Sync {
     async fn is_available(&self) -> bool;
     async fn version(&self) -> Option<String>;
 
-    async fn start(&mut self) -> Result<(), anyhow::Error>;
-    async fn stop(&mut self) -> Result<(), anyhow::Error>;
-
     async fn start_thread(
         &self,
         scope: ThreadScope,

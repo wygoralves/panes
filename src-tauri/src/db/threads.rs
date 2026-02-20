@@ -32,21 +32,6 @@ pub fn create_thread(
     get_thread(db, &id)?.context("thread not found after insert")
 }
 
-pub fn ensure_workspace_thread(
-    db: &Database,
-    workspace_id: &str,
-    engine_id: &str,
-    model_id: &str,
-) -> anyhow::Result<ThreadDto> {
-    if let Some(existing) =
-        find_latest_thread_for_scope(db, workspace_id, None, Some(engine_id), Some(model_id))?
-    {
-        return Ok(existing);
-    }
-
-    create_thread(db, workspace_id, None, engine_id, model_id, "General")
-}
-
 pub fn get_thread(db: &Database, thread_id: &str) -> anyhow::Result<Option<ThreadDto>> {
     let conn = db.connect()?;
     conn.query_row(
@@ -110,49 +95,6 @@ pub fn list_archived_threads_for_workspace(
         out.push(row?);
     }
     Ok(out)
-}
-
-pub fn find_latest_thread_for_scope(
-    db: &Database,
-    workspace_id: &str,
-    repo_id: Option<&str>,
-    engine_id: Option<&str>,
-    model_id: Option<&str>,
-) -> anyhow::Result<Option<ThreadDto>> {
-    let conn = db.connect()?;
-
-    let result = match repo_id {
-    Some(repo_id) => conn.query_row(
-      "SELECT id, workspace_id, repo_id, engine_id, model_id, engine_thread_id, engine_metadata_json,
-              COALESCE(title, ''), status, message_count, total_tokens, created_at, last_activity_at
-       FROM threads
-       WHERE workspace_id = ?1
-         AND repo_id = ?2
-         AND archived_at IS NULL
-         AND (?3 IS NULL OR engine_id = ?3)
-         AND (?4 IS NULL OR model_id = ?4)
-       ORDER BY last_activity_at DESC
-       LIMIT 1",
-      params![workspace_id, repo_id, engine_id, model_id],
-      map_thread_row,
-    ),
-    None => conn.query_row(
-      "SELECT id, workspace_id, repo_id, engine_id, model_id, engine_thread_id, engine_metadata_json,
-              COALESCE(title, ''), status, message_count, total_tokens, created_at, last_activity_at
-       FROM threads
-       WHERE workspace_id = ?1
-         AND repo_id IS NULL
-         AND archived_at IS NULL
-         AND (?2 IS NULL OR engine_id = ?2)
-         AND (?3 IS NULL OR model_id = ?3)
-       ORDER BY last_activity_at DESC
-       LIMIT 1",
-      params![workspace_id, engine_id, model_id],
-      map_thread_row,
-    ),
-  };
-
-    result.optional().context("failed to query thread scope")
 }
 
 pub fn update_thread_status(
