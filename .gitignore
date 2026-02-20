@@ -2,7 +2,6 @@ node_modules/
 dist/
 .vite/
 .DS_Store
-pnpm-lock.yaml
 src-tauri/target/
 src-tauri/gen/
 *.log
