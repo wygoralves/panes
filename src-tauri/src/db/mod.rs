@@ -1,4 +1,10 @@
-use std::{fs, path::PathBuf, time::Duration};
+use std::{
+    fs,
+    ops::{Deref, DerefMut},
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::Context;
 use rusqlite::Connection;
@@ -9,9 +15,57 @@ pub mod repos;
 pub mod threads;
 pub mod workspaces;
 
+const SQLITE_POOL_MAX_IDLE: usize = 8;
+
 #[derive(Clone)]
 pub struct Database {
     path: PathBuf,
+    pool: Arc<ConnectionPool>,
+}
+
+struct ConnectionPool {
+    idle: Mutex<Vec<Connection>>,
+    max_idle: usize,
+}
+
+pub struct PooledConnection {
+    conn: Option<Connection>,
+    pool: Arc<ConnectionPool>,
+}
+
+impl Deref for PooledConnection {
+    type Target = Connection;
+
+    fn deref(&self) -> &Self::Target {
+        self.conn
+            .as_ref()
+            .expect("pooled sqlite connection missing inner value")
+    }
+}
+
+impl DerefMut for PooledConnection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.conn
+            .as_mut()
+            .expect("pooled sqlite connection missing inner value")
+    }
+}
+
+impl Drop for PooledConnection {
+    fn drop(&mut self) {
+        let Some(conn) = self.conn.take() else {
+            return;
+        };
+
+        let mut idle = match self.pool.idle.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        if idle.len() < self.pool.max_idle {
+            idle.push(conn);
+        }
+    }
 }
 
 impl Database {
@@ -20,25 +74,40 @@ impl Database {
         fs::create_dir_all(base_dir.join("logs")).context("failed to create app data dir")?;
 
         let path = base_dir.join("workspaces.db");
-        let db = Self { path };
+        let db = Self {
+            path,
+            pool: Arc::new(ConnectionPool {
+                idle: Mutex::new(Vec::new()),
+                max_idle: SQLITE_POOL_MAX_IDLE,
+            }),
+        };
         db.run_migrations()?;
 
         Ok(db)
     }
 
-    pub fn connect(&self) -> anyhow::Result<Connection> {
+    pub fn connect(&self) -> anyhow::Result<PooledConnection> {
+        if let Some(conn) = self.take_idle_connection() {
+            return Ok(PooledConnection {
+                conn: Some(conn),
+                pool: self.pool.clone(),
+            });
+        }
+
         let conn = Connection::open(&self.path).context("failed to open sqlite database")?;
-        conn.pragma_update(None, "foreign_keys", "ON")
-            .context("failed to enable sqlite foreign keys")?;
-        conn.pragma_update(None, "journal_mode", "WAL")
-            .context("failed to enable sqlite WAL mode")?;
-        conn.pragma_update(None, "synchronous", "NORMAL")
-            .context("failed to set sqlite synchronous mode")?;
-        conn.pragma_update(None, "temp_store", "MEMORY")
-            .context("failed to set sqlite temp_store mode")?;
-        conn.busy_timeout(Duration::from_millis(5_000))
-            .context("failed to set sqlite busy timeout")?;
-        Ok(conn)
+        configure_connection(&conn)?;
+        Ok(PooledConnection {
+            conn: Some(conn),
+            pool: self.pool.clone(),
+        })
+    }
+
+    fn take_idle_connection(&self) -> Option<Connection> {
+        let mut idle = match self.pool.idle.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        idle.pop()
     }
 
     fn run_migrations(&self) -> anyhow::Result<()> {
@@ -51,6 +120,20 @@ impl Database {
         ensure_messages_audit_columns(&conn)?;
         Ok(())
     }
+}
+
+fn configure_connection(conn: &Connection) -> anyhow::Result<()> {
+    conn.pragma_update(None, "foreign_keys", "ON")
+        .context("failed to enable sqlite foreign keys")?;
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .context("failed to enable sqlite WAL mode")?;
+    conn.pragma_update(None, "synchronous", "NORMAL")
+        .context("failed to set sqlite synchronous mode")?;
+    conn.pragma_update(None, "temp_store", "MEMORY")
+        .context("failed to set sqlite temp_store mode")?;
+    conn.busy_timeout(Duration::from_millis(5_000))
+        .context("failed to set sqlite busy timeout")?;
+    Ok(())
 }
 
 fn ensure_archived_columns(conn: &Connection) -> anyhow::Result<()> {

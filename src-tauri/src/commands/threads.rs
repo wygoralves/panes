@@ -6,12 +6,26 @@ use crate::{db, models::ThreadDto, state::AppState};
 
 const MAX_THREAD_TITLE_CHARS: usize = 120;
 
+async fn run_db<T, F>(db: crate::db::Database, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&crate::db::Database) -> anyhow::Result<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || operation(&db))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(err_to_string)
+}
+
 #[tauri::command]
 pub async fn list_threads(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> Result<Vec<ThreadDto>, String> {
-    db::threads::list_threads_for_workspace(&state.db, &workspace_id).map_err(err_to_string)
+    run_db(state.db.clone(), move |db| {
+        db::threads::list_threads_for_workspace(db, &workspace_id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -19,8 +33,10 @@ pub async fn list_archived_threads(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> Result<Vec<ThreadDto>, String> {
-    db::threads::list_archived_threads_for_workspace(&state.db, &workspace_id)
-        .map_err(err_to_string)
+    run_db(state.db.clone(), move |db| {
+        db::threads::list_archived_threads_for_workspace(db, &workspace_id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -32,15 +48,17 @@ pub async fn create_thread(
     model_id: String,
     title: String,
 ) -> Result<ThreadDto, String> {
-    db::threads::create_thread(
-        &state.db,
-        &workspace_id,
-        repo_id.as_deref(),
-        &engine_id,
-        &model_id,
-        &title,
-    )
-    .map_err(err_to_string)
+    run_db(state.db.clone(), move |db| {
+        db::threads::create_thread(
+            db,
+            &workspace_id,
+            repo_id.as_deref(),
+            &engine_id,
+            &model_id,
+            &title,
+        )
+    })
+    .await
 }
 
 #[tauri::command]
@@ -49,9 +67,13 @@ pub async fn confirm_workspace_thread(
     thread_id: String,
     writable_roots: Vec<String>,
 ) -> Result<(), String> {
-    let thread = db::threads::get_thread(&state.db, &thread_id)
-        .map_err(err_to_string)?
-        .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
     if thread.repo_id.is_some() {
         return Err("confirmation only applies to workspace threads".to_string());
@@ -71,7 +93,10 @@ pub async fn confirm_workspace_thread(
         );
     }
 
-    db::threads::update_engine_metadata(&state.db, &thread_id, &metadata).map_err(err_to_string)
+    run_db(db, move |db| {
+        db::threads::update_engine_metadata(db, &thread_id, &metadata)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -81,9 +106,13 @@ pub async fn set_thread_reasoning_effort(
     reasoning_effort: Option<String>,
     model_id: Option<String>,
 ) -> Result<(), String> {
-    let thread = db::threads::get_thread(&state.db, &thread_id)
-        .map_err(err_to_string)?
-        .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
     let normalized_model_id = model_id
         .as_deref()
         .map(str::trim)
@@ -131,7 +160,10 @@ pub async fn set_thread_reasoning_effort(
         };
     }
 
-    db::threads::update_engine_metadata(&state.db, &thread_id, &metadata).map_err(err_to_string)
+    run_db(db, move |db| {
+        db::threads::update_engine_metadata(db, &thread_id, &metadata)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -140,14 +172,22 @@ pub async fn rename_thread(
     thread_id: String,
     title: String,
 ) -> Result<ThreadDto, String> {
-    let thread = db::threads::get_thread(&state.db, &thread_id)
-        .map_err(err_to_string)?
-        .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
     let normalized_title = normalize_thread_title(&title)?;
 
-    db::threads::update_thread_title(&state.db, &thread_id, &normalized_title)
-        .map_err(err_to_string)?;
+    run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        let normalized_title = normalized_title.clone();
+        move |db| db::threads::update_thread_title(db, &thread_id, &normalized_title)
+    })
+    .await?;
 
     let mut metadata = thread.engine_metadata.unwrap_or_else(|| json!({}));
     if !metadata.is_object() {
@@ -162,18 +202,32 @@ pub async fn rename_thread(
         );
     }
 
-    db::threads::update_engine_metadata(&state.db, &thread_id, &metadata).map_err(err_to_string)?;
+    run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        let metadata = metadata.clone();
+        move |db| db::threads::update_engine_metadata(db, &thread_id, &metadata)
+    })
+    .await?;
 
-    db::threads::get_thread(&state.db, &thread_id)
-        .map_err(err_to_string)?
-        .ok_or_else(|| format!("thread not found after rename: {thread_id}"))
+    run_db(db, {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found after rename: {thread_id}"))
 }
 
 #[tauri::command]
 pub async fn delete_thread(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
     state.turns.cancel(&thread_id).await;
 
-    if let Some(thread) = db::threads::get_thread(&state.db, &thread_id).map_err(err_to_string)? {
+    let db = state.db.clone();
+    if let Some(thread) = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    {
         if let Err(error) = state.engines.interrupt(&thread).await {
             log::warn!("failed to interrupt thread before deletion: {error}");
         }
@@ -182,7 +236,11 @@ pub async fn delete_thread(state: State<'_, AppState>, thread_id: String) -> Res
         return Err(format!("thread not found: {thread_id}"));
     }
 
-    db::threads::delete_thread(&state.db, &thread_id).map_err(err_to_string)?;
+    run_db(db, {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::delete_thread(db, &thread_id)
+    })
+    .await?;
     state.turns.finish(&thread_id).await;
     Ok(())
 }
@@ -191,7 +249,13 @@ pub async fn delete_thread(state: State<'_, AppState>, thread_id: String) -> Res
 pub async fn archive_thread(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
     state.turns.cancel(&thread_id).await;
 
-    if let Some(thread) = db::threads::get_thread(&state.db, &thread_id).map_err(err_to_string)? {
+    let db = state.db.clone();
+    if let Some(thread) = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    {
         if let Err(error) = state.engines.interrupt(&thread).await {
             log::warn!("failed to interrupt thread before archive: {error}");
         }
@@ -200,7 +264,11 @@ pub async fn archive_thread(state: State<'_, AppState>, thread_id: String) -> Re
         return Err(format!("thread not found: {thread_id}"));
     }
 
-    db::threads::archive_thread(&state.db, &thread_id).map_err(err_to_string)?;
+    run_db(db, {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::archive_thread(db, &thread_id)
+    })
+    .await?;
     state.turns.finish(&thread_id).await;
     Ok(())
 }
@@ -210,7 +278,10 @@ pub async fn restore_thread(
     state: State<'_, AppState>,
     thread_id: String,
 ) -> Result<ThreadDto, String> {
-    db::threads::restore_thread(&state.db, &thread_id).map_err(err_to_string)
+    run_db(state.db.clone(), move |db| {
+        db::threads::restore_thread(db, &thread_id)
+    })
+    .await
 }
 
 async fn validate_reasoning_effort(

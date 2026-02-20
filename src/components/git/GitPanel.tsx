@@ -29,6 +29,7 @@ const VIEW_OPTIONS = [
   { value: "commits", label: "Commits", icon: <GitCommitHorizontal size={13} /> },
   { value: "stash", label: "Stash", icon: <Archive size={13} /> },
 ];
+const GIT_WATCHER_REFRESH_DEBOUNCE_MS = 550;
 
 export function GitPanel() {
   const {
@@ -58,6 +59,9 @@ export function GitPanel() {
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const moreTriggerRef = useRef<HTMLButtonElement>(null);
   const [moreMenuPos, setMoreMenuPos] = useState({ top: 0, left: 0 });
+  const watcherRefreshTimerRef = useRef<number | null>(null);
+  const watcherRefreshInFlightRef = useRef(false);
+  const watcherRefreshQueuedRef = useRef(false);
 
   const closeMoreMenu = useCallback(() => setMoreMenuOpen(false), []);
 
@@ -161,6 +165,40 @@ export function GitPanel() {
     let disposed = false;
     const repoPath = activeRepoPath;
 
+    function scheduleRefresh() {
+      if (watcherRefreshTimerRef.current !== null) {
+        return;
+      }
+      watcherRefreshTimerRef.current = window.setTimeout(() => {
+        watcherRefreshTimerRef.current = null;
+        void flushRefresh();
+      }, GIT_WATCHER_REFRESH_DEBOUNCE_MS);
+    }
+
+    async function flushRefresh() {
+      if (disposed) {
+        return;
+      }
+
+      if (watcherRefreshInFlightRef.current) {
+        watcherRefreshQueuedRef.current = true;
+        return;
+      }
+
+      watcherRefreshInFlightRef.current = true;
+      try {
+        watcherRefreshQueuedRef.current = false;
+        invalidateRepoCache(repoPath);
+        await refresh(repoPath);
+      } finally {
+        watcherRefreshInFlightRef.current = false;
+        if (watcherRefreshQueuedRef.current) {
+          watcherRefreshQueuedRef.current = false;
+          scheduleRefresh();
+        }
+      }
+    }
+
     const attach = async () => {
       try {
         await ipc.watchGitRepo(repoPath);
@@ -170,8 +208,8 @@ export function GitPanel() {
 
       const stop = await listenGitRepoChanged((event) => {
         if (event.repoPath !== repoPath) return;
-        invalidateRepoCache(repoPath);
-        void refresh(repoPath);
+        watcherRefreshQueuedRef.current = true;
+        scheduleRefresh();
       });
 
       if (disposed) {
@@ -184,6 +222,12 @@ export function GitPanel() {
     void attach();
     return () => {
       disposed = true;
+      if (watcherRefreshTimerRef.current !== null) {
+        window.clearTimeout(watcherRefreshTimerRef.current);
+        watcherRefreshTimerRef.current = null;
+      }
+      watcherRefreshInFlightRef.current = false;
+      watcherRefreshQueuedRef.current = false;
       unlisten?.();
     };
   }, [activeRepoPath, invalidateRepoCache, refresh]);

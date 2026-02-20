@@ -102,6 +102,17 @@ struct ThreadUpdatedEvent {
     workspace_id: String,
 }
 
+async fn run_db<T, F>(db: crate::db::Database, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&crate::db::Database) -> anyhow::Result<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || operation(&db))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(err_to_string)
+}
+
 #[tauri::command]
 pub async fn send_message(
     app: tauri::AppHandle,
@@ -117,9 +128,13 @@ pub async fn send_message(
         );
     }
 
-    let mut thread = db::threads::get_thread(&state.db, &thread_id)
-        .map_err(err_to_string)?
-        .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+    let db = state.db.clone();
+    let mut thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
     let requested_model_id = model_id
         .as_deref()
         .map(str::trim)
@@ -127,18 +142,25 @@ pub async fn send_message(
     let effective_model_id =
         resolve_turn_model_id(state.inner(), &thread, requested_model_id).await?;
 
-    let workspace = db::workspaces::list_workspaces(&state.db)
-        .map_err(err_to_string)?
-        .into_iter()
-        .find(|item| item.id == thread.workspace_id)
-        .ok_or_else(|| format!("workspace not found for thread {}", thread.id))?;
-
-    let repos = db::repos::get_repos(&state.db, &thread.workspace_id).map_err(err_to_string)?;
-    let selected_repo = if let Some(repo_id) = &thread.repo_id {
-        db::repos::find_repo_by_id(&state.db, repo_id).map_err(err_to_string)?
-    } else {
-        None
-    };
+    let (workspace, repos, selected_repo) = run_db(db.clone(), {
+        let workspace_id = thread.workspace_id.clone();
+        let thread_id = thread.id.clone();
+        let repo_id = thread.repo_id.clone();
+        move |db| {
+            let workspace = db::workspaces::list_workspaces(db)?
+                .into_iter()
+                .find(|item| item.id == workspace_id)
+                .ok_or_else(|| anyhow::anyhow!("workspace not found for thread {thread_id}"))?;
+            let repos = db::repos::get_repos(db, &workspace_id)?;
+            let selected_repo = if let Some(repo_id) = repo_id.as_deref() {
+                db::repos::find_repo_by_id(db, repo_id)?
+            } else {
+                None
+            };
+            Ok((workspace, repos, selected_repo))
+        }
+    })
+    .await?;
 
     let workspace_root = workspace.root_path.clone();
     let scope = if let Some(repo) = selected_repo.as_ref() {
@@ -182,30 +204,42 @@ pub async fn send_message(
                 Value::String(effective_model_id.clone()),
             );
         }
-        db::threads::update_engine_metadata(&state.db, &thread.id, &metadata)
-            .map_err(err_to_string)?;
+        run_db(db.clone(), {
+            let thread_id = thread.id.clone();
+            let metadata = metadata.clone();
+            move |db| db::threads::update_engine_metadata(db, &thread_id, &metadata)
+        })
+        .await?;
         thread.engine_metadata = Some(metadata);
     }
 
-    db::messages::insert_user_message(
-        &state.db,
-        &thread.id,
-        &message,
-        Some(thread.engine_id.as_str()),
-        Some(effective_model_id.as_str()),
-        reasoning_effort.as_deref(),
-    )
-    .map_err(err_to_string)?;
-    let assistant_message = db::messages::insert_assistant_placeholder(
-        &state.db,
-        &thread.id,
-        Some(thread.engine_id.as_str()),
-        Some(effective_model_id.as_str()),
-        reasoning_effort.as_deref(),
-    )
-    .map_err(err_to_string)?;
-    db::threads::update_thread_status(&state.db, &thread.id, ThreadStatusDto::Streaming)
-        .map_err(err_to_string)?;
+    let assistant_message = run_db(db.clone(), {
+        let thread_id = thread.id.clone();
+        let message = message.clone();
+        let engine_id = thread.engine_id.clone();
+        let model_id = effective_model_id.clone();
+        let reasoning_effort = reasoning_effort.clone();
+        move |db| {
+            db::messages::insert_user_message(
+                db,
+                &thread_id,
+                &message,
+                Some(engine_id.as_str()),
+                Some(model_id.as_str()),
+                reasoning_effort.as_deref(),
+            )?;
+            let assistant_message = db::messages::insert_assistant_placeholder(
+                db,
+                &thread_id,
+                Some(engine_id.as_str()),
+                Some(model_id.as_str()),
+                reasoning_effort.as_deref(),
+            )?;
+            db::threads::update_thread_status(db, &thread_id, ThreadStatusDto::Streaming)?;
+            Ok(assistant_message)
+        }
+    })
+    .await?;
 
     let writable_roots = match &scope {
         ThreadScope::Repo { repo_path } => vec![repo_path.clone()],
@@ -235,8 +269,12 @@ pub async fn send_message(
         .map_err(err_to_string)?;
 
     if thread.engine_thread_id.as_deref() != Some(&engine_thread_id) {
-        db::threads::set_engine_thread_id(&state.db, &thread.id, &engine_thread_id)
-            .map_err(err_to_string)?;
+        run_db(db.clone(), {
+            let thread_id = thread.id.clone();
+            let engine_thread_id = engine_thread_id.clone();
+            move |db| db::threads::set_engine_thread_id(db, &thread_id, &engine_thread_id)
+        })
+        .await?;
         thread.engine_thread_id = Some(engine_thread_id.clone());
     }
 
@@ -278,7 +316,13 @@ pub async fn send_message(
 pub async fn cancel_turn(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
     state.turns.cancel(&thread_id).await;
 
-    if let Some(thread) = db::threads::get_thread(&state.db, &thread_id).map_err(err_to_string)? {
+    let db = state.db.clone();
+    if let Some(thread) = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    {
         state
             .engines
             .interrupt(&thread)
@@ -286,8 +330,11 @@ pub async fn cancel_turn(state: State<'_, AppState>, thread_id: String) -> Resul
             .map_err(err_to_string)?;
     }
 
-    db::threads::update_thread_status(&state.db, &thread_id, ThreadStatusDto::Idle)
-        .map_err(err_to_string)?;
+    run_db(db, {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::update_thread_status(db, &thread_id, ThreadStatusDto::Idle)
+    })
+    .await?;
     state.turns.finish(&thread_id).await;
     Ok(())
 }
@@ -303,9 +350,13 @@ pub async fn respond_to_approval(
         return Err("approval response must be a JSON object".to_string());
     }
 
-    let thread = db::threads::get_thread(&state.db, &thread_id)
-        .map_err(err_to_string)?
-        .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
     state
         .engines
@@ -317,20 +368,25 @@ pub async fn respond_to_approval(
         .get("decision")
         .and_then(|value| value.as_str())
         .unwrap_or("custom");
-    db::actions::answer_approval(&state.db, &approval_id, decision).map_err(err_to_string)?;
-    if let Some(message_id) =
-        db::actions::find_approval_message_id(&state.db, &approval_id).map_err(err_to_string)?
-    {
-        let _ = db::messages::mark_approval_block_answered(
-            &state.db,
-            &message_id,
-            &approval_id,
-            decision,
-        );
-    }
-
-    db::threads::update_thread_status(&state.db, &thread_id, ThreadStatusDto::Streaming)
-        .map_err(err_to_string)?;
+    run_db(db, {
+        let approval_id = approval_id.clone();
+        let thread_id = thread_id.clone();
+        let decision = decision.to_string();
+        move |db| {
+            db::actions::answer_approval(db, &approval_id, &decision)?;
+            if let Some(message_id) = db::actions::find_approval_message_id(db, &approval_id)? {
+                let _ = db::messages::mark_approval_block_answered(
+                    db,
+                    &message_id,
+                    &approval_id,
+                    &decision,
+                );
+            }
+            db::threads::update_thread_status(db, &thread_id, ThreadStatusDto::Streaming)?;
+            Ok(())
+        }
+    })
+    .await?;
 
     Ok(())
 }
@@ -340,7 +396,10 @@ pub async fn get_thread_messages(
     state: State<'_, AppState>,
     thread_id: String,
 ) -> Result<Vec<MessageDto>, String> {
-    db::messages::get_thread_messages(&state.db, &thread_id).map_err(err_to_string)
+    run_db(state.db.clone(), move |db| {
+        db::messages::get_thread_messages(db, &thread_id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -349,7 +408,10 @@ pub async fn search_messages(
     workspace_id: String,
     query: String,
 ) -> Result<Vec<SearchResultDto>, String> {
-    db::messages::search_messages(&state.db, &workspace_id, &query).map_err(err_to_string)
+    run_db(state.db.clone(), move |db| {
+        db::messages::search_messages(db, &workspace_id, &query)
+    })
+    .await
 }
 
 async fn run_turn(
@@ -419,7 +481,8 @@ async fn run_turn(
                                 &mut action_index,
                                 &mut approval_index,
                                 max_output_chars,
-                            );
+                            )
+                            .await;
                             let force_persist = apply_stream_progress(
                                 progress,
                                 &mut message_status,
@@ -442,7 +505,8 @@ async fn run_turn(
                                 &mut last_persisted_thread_status,
                                 &mut last_persist_at,
                                 force_persist,
-                            );
+                            )
+                            .await;
                         } else {
                             pending_event = Some(merged_event);
                         }
@@ -461,7 +525,8 @@ async fn run_turn(
                             &mut action_index,
                             &mut approval_index,
                             max_output_chars,
-                        );
+                        )
+                        .await;
                         let force_persist = apply_stream_progress(
                             progress,
                             &mut message_status,
@@ -484,7 +549,8 @@ async fn run_turn(
                             &mut last_persisted_thread_status,
                             &mut last_persist_at,
                             force_persist,
-                        );
+                        )
+                        .await;
                         current_event = unmerged_current_event;
                     }
                 }
@@ -504,7 +570,8 @@ async fn run_turn(
                     &mut action_index,
                     &mut approval_index,
                     max_output_chars,
-                );
+                )
+                .await;
                 let force_persist = apply_stream_progress(
                     progress,
                     &mut message_status,
@@ -527,7 +594,8 @@ async fn run_turn(
                     &mut last_persisted_thread_status,
                     &mut last_persist_at,
                     force_persist,
-                );
+                )
+                .await;
                 break;
             }
         }
@@ -546,7 +614,8 @@ async fn run_turn(
             &mut action_index,
             &mut approval_index,
             max_output_chars,
-        );
+        )
+        .await;
         let force_persist = apply_stream_progress(
             progress,
             &mut message_status,
@@ -569,7 +638,8 @@ async fn run_turn(
             &mut last_persisted_thread_status,
             &mut last_persist_at,
             force_persist,
-        );
+        )
+        .await;
     }
 
     match engine_task.await {
@@ -631,17 +701,37 @@ async fn run_turn(
         &mut last_persisted_thread_status,
         &mut last_persist_at,
         true,
-    );
+    )
+    .await;
 
-    let _ = db::messages::complete_assistant_message(
-        &state.db,
-        &assistant_message_id,
-        message_status.clone(),
-        token_usage,
-    );
+    if let Err(error) = run_db(state.db.clone(), {
+        let assistant_message_id = assistant_message_id.clone();
+        let message_status = message_status.clone();
+        let token_usage = token_usage;
+        move |db| {
+            db::messages::complete_assistant_message(
+                db,
+                &assistant_message_id,
+                message_status,
+                token_usage,
+            )
+        }
+    })
+    .await
+    {
+        log::warn!("failed to complete assistant message: {error}");
+    }
 
     if matches!(message_status, MessageStatusDto::Completed) {
-        let _ = db::threads::bump_message_counters(&state.db, &thread.id, token_usage);
+        if let Err(error) = run_db(state.db.clone(), {
+            let thread_id = thread.id.clone();
+            let token_usage = token_usage;
+            move |db| db::threads::bump_message_counters(db, &thread_id, token_usage)
+        })
+        .await
+        {
+            log::warn!("failed to bump thread counters: {error}");
+        }
     }
 
     if maybe_update_thread_title(&state, &thread, &engine_thread_id, &message)
@@ -747,7 +837,7 @@ fn try_coalesce_stream_events(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn process_stream_event(
+async fn process_stream_event(
     app: &tauri::AppHandle,
     state: &AppState,
     thread: &ThreadDto,
@@ -767,8 +857,18 @@ fn process_stream_event(
 
     if state.config.debug.persist_engine_event_logs {
         if let Ok(value) = serde_json::to_value(event) {
-            let _ =
-                db::actions::append_event_log(&state.db, &thread.id, assistant_message_id, &value);
+            if let Err(error) = run_db(state.db.clone(), {
+                let thread_id = thread.id.clone();
+                let assistant_message_id = assistant_message_id.to_string();
+                let value = value.clone();
+                move |db| {
+                    db::actions::append_event_log(db, &thread_id, &assistant_message_id, &value)
+                }
+            })
+            .await
+            {
+                log::warn!("failed to append engine event log: {error}");
+            }
         }
     }
 
@@ -780,19 +880,42 @@ fn process_stream_event(
             summary,
             details,
         } => {
-            let _ = db::actions::insert_action_started(
-                &state.db,
-                action_id,
-                &thread.id,
-                assistant_message_id,
-                engine_action_id.as_deref(),
-                action_type,
-                summary,
-                details,
-            );
+            if let Err(error) = run_db(state.db.clone(), {
+                let action_id = action_id.clone();
+                let thread_id = thread.id.clone();
+                let assistant_message_id = assistant_message_id.to_string();
+                let engine_action_id = engine_action_id.clone();
+                let action_type = action_type.clone();
+                let summary = summary.clone();
+                let details = details.clone();
+                move |db| {
+                    db::actions::insert_action_started(
+                        db,
+                        &action_id,
+                        &thread_id,
+                        &assistant_message_id,
+                        engine_action_id.as_deref(),
+                        &action_type,
+                        &summary,
+                        &details,
+                    )
+                }
+            })
+            .await
+            {
+                log::warn!("failed to persist action start: {error}");
+            }
         }
         EngineEvent::ActionCompleted { action_id, result } => {
-            let _ = db::actions::update_action_completed(&state.db, action_id, result);
+            if let Err(error) = run_db(state.db.clone(), {
+                let action_id = action_id.clone();
+                let result = result.clone();
+                move |db| db::actions::update_action_completed(db, &action_id, &result)
+            })
+            .await
+            {
+                log::warn!("failed to persist action completion: {error}");
+            }
         }
         EngineEvent::ApprovalRequested {
             approval_id,
@@ -800,28 +923,40 @@ fn process_stream_event(
             summary,
             details,
         } => {
-            let _ = db::actions::insert_approval(
-                &state.db,
-                approval_id,
-                &thread.id,
-                assistant_message_id,
-                action_type,
-                summary,
-                details,
-            );
+            if let Err(error) = run_db(state.db.clone(), {
+                let approval_id = approval_id.clone();
+                let thread_id = thread.id.clone();
+                let assistant_message_id = assistant_message_id.to_string();
+                let action_type = action_type.clone();
+                let summary = summary.clone();
+                let details = details.clone();
+                move |db| {
+                    db::actions::insert_approval(
+                        db,
+                        &approval_id,
+                        &thread_id,
+                        &assistant_message_id,
+                        &action_type,
+                        &summary,
+                        &details,
+                    )
+                }
+            })
+            .await
+            {
+                log::warn!("failed to persist approval: {error}");
+            }
         }
         _ => {}
     }
 
-    let progress = apply_event_to_blocks(
+    apply_event_to_blocks(
         blocks,
         action_index,
         approval_index,
         event,
         max_output_chars,
-    );
-
-    progress
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -860,7 +995,7 @@ fn apply_stream_progress(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn flush_stream_state(
+async fn flush_stream_state(
     state: &AppState,
     thread: &ThreadDto,
     assistant_message_id: &str,
@@ -884,20 +1019,38 @@ fn flush_stream_state(
     }
 
     if *blocks_dirty || *message_state_dirty {
-        if let Ok(blocks_json) = serde_json::to_value(blocks) {
-            let _ = db::messages::update_assistant_blocks(
-                &state.db,
-                assistant_message_id,
-                &blocks_json,
-                message_status.clone(),
-            );
+        if let Err(error) = run_db(state.db.clone(), {
+            let assistant_message_id = assistant_message_id.to_string();
+            let blocks = blocks.to_vec();
+            let message_status = message_status.clone();
+            move |db| {
+                let blocks_json = serde_json::to_value(&blocks)?;
+                db::messages::update_assistant_blocks(
+                    db,
+                    &assistant_message_id,
+                    &blocks_json,
+                    message_status,
+                )
+            }
+        })
+        .await
+        {
+            log::warn!("failed to persist assistant stream blocks: {error}");
         }
         *blocks_dirty = false;
         *message_state_dirty = false;
     }
 
     if *thread_status_dirty && *last_persisted_thread_status != *thread_status {
-        let _ = db::threads::update_thread_status(&state.db, &thread.id, thread_status.clone());
+        if let Err(error) = run_db(state.db.clone(), {
+            let thread_id = thread.id.clone();
+            let thread_status = thread_status.clone();
+            move |db| db::threads::update_thread_status(db, &thread_id, thread_status)
+        })
+        .await
+        {
+            log::warn!("failed to persist thread status during stream: {error}");
+        }
         *last_persisted_thread_status = thread_status.clone();
     }
     *thread_status_dirty = false;
@@ -926,7 +1079,13 @@ async fn maybe_update_thread_title(
         return None;
     }
 
-    if let Err(error) = db::threads::update_thread_title(&state.db, &thread.id, &candidate) {
+    if let Err(error) = run_db(state.db.clone(), {
+        let thread_id = thread.id.clone();
+        let candidate = candidate.clone();
+        move |db| db::threads::update_thread_title(db, &thread_id, &candidate)
+    })
+    .await
+    {
         log::warn!("failed to update thread title: {error}");
         return None;
     }

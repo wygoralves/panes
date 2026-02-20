@@ -2,6 +2,17 @@ use tauri::State;
 
 use crate::{db, models::TerminalSessionDto, state::AppState};
 
+async fn run_db<T, F>(db: crate::db::Database, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&crate::db::Database) -> anyhow::Result<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || operation(&db))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(err_to_string)
+}
+
 #[tauri::command]
 pub async fn terminal_create_session(
     app: tauri::AppHandle,
@@ -10,7 +21,7 @@ pub async fn terminal_create_session(
     cols: u16,
     rows: u16,
 ) -> Result<TerminalSessionDto, String> {
-    let cwd = workspace_root_path(&state, &workspace_id).map_err(err_to_string)?;
+    let cwd = workspace_root_path(state.inner(), &workspace_id).await?;
     state
         .terminals
         .create_session(app, workspace_id, cwd, cols.max(1), rows.max(1))
@@ -82,12 +93,18 @@ pub async fn terminal_list_sessions(
     Ok(state.terminals.list_sessions(&workspace_id).await)
 }
 
-fn workspace_root_path(state: &AppState, workspace_id: &str) -> anyhow::Result<String> {
-    db::workspaces::list_workspaces(&state.db)?
-        .into_iter()
-        .find(|workspace| workspace.id == workspace_id)
-        .map(|workspace| workspace.root_path)
-        .ok_or_else(|| anyhow::anyhow!("workspace not found: {workspace_id}"))
+async fn workspace_root_path(state: &AppState, workspace_id: &str) -> Result<String, String> {
+    run_db(state.db.clone(), {
+        let workspace_id = workspace_id.to_string();
+        move |db| {
+            db::workspaces::list_workspaces(db)?
+                .into_iter()
+                .find(|workspace| workspace.id == workspace_id)
+                .map(|workspace| workspace.root_path)
+                .ok_or_else(|| anyhow::anyhow!("workspace not found: {workspace_id}"))
+        }
+    })
+    .await
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {
