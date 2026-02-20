@@ -23,6 +23,8 @@ interface ChatState {
     options?: {
       threadIdOverride?: string;
       modelId?: string | null;
+      engineId?: string | null;
+      reasoningEffort?: string | null;
     },
   ) => Promise<void>;
   cancel: () => Promise<void>;
@@ -30,6 +32,14 @@ interface ChatState {
 }
 
 let activeThreadBindSeq = 0;
+const pendingTurnMetaByThread = new Map<
+  string,
+  {
+    turnEngineId?: string | null;
+    turnModelId?: string | null;
+    turnReasoningEffort?: string | null;
+  }
+>();
 
 function ensureAssistantMessage(messages: Message[], threadId: string): Message[] {
   const existing = messages[messages.length - 1];
@@ -37,12 +47,16 @@ function ensureAssistantMessage(messages: Message[], threadId: string): Message[
     return messages;
   }
 
+  const pendingTurnMeta = pendingTurnMetaByThread.get(threadId);
   return [
     ...messages,
     {
       id: crypto.randomUUID(),
       threadId,
       role: "assistant",
+      turnEngineId: pendingTurnMeta?.turnEngineId ?? null,
+      turnModelId: pendingTurnMeta?.turnModelId ?? null,
+      turnReasoningEffort: pendingTurnMeta?.turnReasoningEffort ?? null,
       status: "streaming",
       schemaVersion: 1,
       blocks: [],
@@ -272,6 +286,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const unlisten = await listenThreadEvents(threadId, (event) => {
+        if (event.type === "TurnCompleted") {
+          pendingTurnMetaByThread.delete(threadId);
+        }
         if (bindSeq !== activeThreadBindSeq) {
           return;
         }
@@ -314,6 +331,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ error: "No active thread selected" });
       return;
     }
+    pendingTurnMetaByThread.set(threadId, {
+      turnEngineId: options?.engineId ?? null,
+      turnModelId: options?.modelId ?? null,
+      turnReasoningEffort: options?.reasoningEffort ?? null,
+    });
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -336,6 +358,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       await ipc.sendMessage(threadId, message, options?.modelId ?? null);
     } catch (error) {
+      pendingTurnMetaByThread.delete(threadId);
       set({ status: "error", streaming: false, error: String(error) });
     }
   },
@@ -347,6 +370,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     try {
       await ipc.cancelTurn(threadId);
+      pendingTurnMetaByThread.delete(threadId);
       set({ status: "idle", streaming: false });
     } catch (error) {
       set({ error: String(error) });

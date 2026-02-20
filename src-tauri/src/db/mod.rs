@@ -75,6 +75,7 @@ fn ensure_runtime_columns(conn: &Connection) -> anyhow::Result<()> {
 fn ensure_messages_audit_columns(conn: &Connection) -> anyhow::Result<()> {
     let mut has_turn_engine_id = false;
     let mut has_turn_model_id = false;
+    let mut has_turn_reasoning_effort = false;
 
     let mut stmt = conn
         .prepare("PRAGMA table_info(messages)")
@@ -89,6 +90,8 @@ fn ensure_messages_audit_columns(conn: &Connection) -> anyhow::Result<()> {
             has_turn_engine_id = true;
         } else if column_name == "turn_model_id" {
             has_turn_model_id = true;
+        } else if column_name == "turn_reasoning_effort" {
+            has_turn_reasoning_effort = true;
         }
     }
 
@@ -99,6 +102,13 @@ fn ensure_messages_audit_columns(conn: &Connection) -> anyhow::Result<()> {
     if !has_turn_model_id {
         conn.execute("ALTER TABLE messages ADD COLUMN turn_model_id TEXT", [])
             .context("failed to add messages.turn_model_id column")?;
+    }
+    if !has_turn_reasoning_effort {
+        conn.execute(
+            "ALTER TABLE messages ADD COLUMN turn_reasoning_effort TEXT",
+            [],
+        )
+        .context("failed to add messages.turn_reasoning_effort column")?;
     }
 
     Ok(())

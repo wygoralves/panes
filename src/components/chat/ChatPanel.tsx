@@ -4,7 +4,7 @@ import {
   Square,
   Plus,
   GitBranch,
-  Loader2,
+  Brain,
   Shield,
   Monitor,
   Mic,
@@ -303,16 +303,34 @@ export function ChatPanel() {
     typeof activeThread?.engineMetadata?.reasoningEffort === "string"
       ? activeThread.engineMetadata.reasoningEffort
       : undefined;
-  const assistantLabel = useMemo(() => {
-    const effortLabel = selectedEngineId === "codex"
-      ? activeThreadReasoningEffort
-      : undefined;
-    return formatEngineModelLabel(selectedEngine?.name, selectedModel?.displayName, effortLabel);
-  }, [selectedEngine?.name, selectedModel?.displayName, activeThreadReasoningEffort, selectedEngineId]);
-
   const modelPickerLabel = useMemo(() => {
     return formatEngineModelLabel(selectedEngine?.name, selectedModel?.displayName);
   }, [selectedEngine?.name, selectedModel?.displayName]);
+
+  const renderAssistantIdentity = useCallback((message: Message) => {
+    const messageEngineId =
+      typeof message.turnEngineId === "string" && message.turnEngineId.trim()
+        ? message.turnEngineId.trim()
+        : activeThread?.engineId ?? selectedEngineId;
+    const engineInfo =
+      engines.find((engine) => engine.id === messageEngineId) ?? selectedEngine ?? null;
+    const messageModelId =
+      typeof message.turnModelId === "string" && message.turnModelId.trim()
+        ? message.turnModelId.trim()
+        : activeThread?.modelId ?? selectedModel?.id ?? null;
+    const modelDisplayName = messageModelId
+      ? engineInfo?.models.find((model) => model.id === messageModelId)?.displayName ?? messageModelId
+      : undefined;
+    const messageReasoningEffort =
+      typeof message.turnReasoningEffort === "string" && message.turnReasoningEffort.trim()
+        ? message.turnReasoningEffort.trim()
+        : undefined;
+
+    return {
+      label: formatEngineModelLabel(engineInfo?.name, modelDisplayName, messageReasoningEffort),
+      isCodex: messageEngineId === "codex",
+    };
+  }, [activeThread?.engineId, activeThread?.modelId, engines, selectedEngine, selectedEngineId, selectedModel?.id]);
 
   const workspaceTrustLevel: TrustLevel = useMemo(() => {
     if (!repos.length) {
@@ -765,7 +783,9 @@ export function ChatPanel() {
 
     await send(text, {
       threadIdOverride: targetThreadId,
+      engineId: selectedEngineId,
       modelId: selectedModelId,
+      reasoningEffort: selectedEngineId === "codex" ? selectedEffort : null,
     });
 
     if (confirmedWorkspaceOptIn) {
@@ -921,6 +941,7 @@ export function ChatPanel() {
     const isUser = message.role === "user";
     const messageTimestamp = formatMessageTimestamp(message.createdAt);
     const isHighlighted = message.id === highlightedMessageId;
+    const assistantIdentity = renderAssistantIdentity(message);
 
     return (
       <div
@@ -999,7 +1020,7 @@ export function ChatPanel() {
                 }}
               >
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  {selectedEngineId === "codex" && (
+                  {assistantIdentity.isCodex && (
                     <span
                       style={{
                         display: "inline-flex",
@@ -1012,7 +1033,7 @@ export function ChatPanel() {
                       <OpenAiIcon size={11} />
                     </span>
                   )}
-                  <span>{assistantLabel}</span>
+                  <span>{assistantIdentity.label}</span>
                 </span>
               </div>
               <MessageBlocks
@@ -1048,17 +1069,17 @@ export function ChatPanel() {
         display: "flex",
         alignItems: "center",
         gap: 6,
-        color: "var(--text-2)",
-        fontSize: 12,
-        padding: "4px 0",
+        color: "var(--text-3)",
+        fontSize: 11.5,
+        padding: "4px 12px",
       }}
     >
-      <Loader2
-        size={13}
-        className="animate-pulse-soft"
-        style={{ animation: "pulse-soft 1s ease-in-out infinite" }}
+      <Brain
+        size={12}
+        className="thinking-icon-active"
+        style={{ color: "var(--info)" }}
       />
-      <span style={{ opacity: 0.8 }}>Thinking...</span>
+      <span>Thinking&hellip;</span>
     </div>
   ) : null;
 

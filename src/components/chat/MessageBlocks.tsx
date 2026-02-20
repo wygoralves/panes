@@ -113,7 +113,7 @@ function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaul
 
 /* ── Thinking Block ── */
 
-function ThinkingBlockView({ block }: { block: ThinkingBlock }) {
+function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStreaming: boolean }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -126,8 +126,14 @@ function ThinkingBlockView({ block }: { block: ThinkingBlock }) {
           size={11}
           className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
         />
-        <Brain size={12} style={{ color: "var(--info)", opacity: 0.6, flexShrink: 0 }} />
-        <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>Thinking</span>
+        <Brain
+          size={12}
+          className={isStreaming ? "thinking-icon-active" : undefined}
+          style={isStreaming ? { color: "var(--info)", flexShrink: 0 } : { color: "var(--info)", opacity: 0.45, flexShrink: 0 }}
+        />
+        <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>
+          Thinking{isStreaming ? "\u2026" : ""}
+        </span>
       </div>
       {expanded && (
         <div className="prose" style={{ fontSize: 12.5, color: "var(--text-2)", padding: "2px 12px 8px 30px", minWidth: 0 }}>
@@ -619,7 +625,9 @@ export function MessageBlocks({ blocks = [], status, onApproval }: Props) {
 
         /* ── Thinking ── */
         if (block.type === "thinking") {
-          return <ThinkingBlockView key={index} block={block} />;
+          const isLastBlock = index === safeBlocks.length - 1;
+          const thinkingActive = status === "streaming" && isLastBlock;
+          return <ThinkingBlockView key={index} block={block} isStreaming={thinkingActive} />;
         }
 
         /* ── Error ── */

@@ -245,6 +245,14 @@ button, input, textarea, select {
   50% { box-shadow: 0 0 20px rgba(14, 240, 195, 0.3); }
 }
 
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.45; filter: drop-shadow(0 0 0 transparent); }
+  50% { opacity: 1; filter: drop-shadow(0 0 4px rgba(96, 165, 250, 0.5)); }
+}
+.thinking-icon-active {
+  animation: thinking-pulse 2s ease-in-out infinite;
+}
+
 .animate-fade-in {
   animation: fade-in var(--duration-normal) var(--ease-out) both;
 }
@@ -287,8 +295,12 @@ button, input, textarea, select {
 }
 .prose p { margin: 0 0 8px; }
 .prose p:last-child { margin-bottom: 0; }
-.prose ul, .prose ol { margin: 4px 0 8px; padding-left: 20px; }
+.prose ul, .prose ol { margin: 4px 0 8px; padding-left: 20px; list-style: revert; }
+.prose ul ul { list-style-type: circle; }
+.prose ul ul ul { list-style-type: square; }
+.prose ol ol { list-style-type: lower-alpha; }
 .prose li { margin: 2px 0; }
+.prose img { max-width: 100%; border-radius: var(--radius-sm); }
 .prose code {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.88em;
@@ -312,7 +324,7 @@ button, input, textarea, select {
   text-decoration: underline;
 }
 .prose strong { font-weight: 600; color: var(--text-1); }
-.prose h1, .prose h2, .prose h3 {
+.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
   margin: 16px 0 8px;
   font-weight: 600;
   color: var(--text-1);
@@ -320,6 +332,9 @@ button, input, textarea, select {
 .prose h1 { font-size: 1.3em; }
 .prose h2 { font-size: 1.15em; }
 .prose h3 { font-size: 1.05em; }
+.prose h4 { font-size: 1em; }
+.prose h5 { font-size: 0.95em; }
+.prose h6 { font-size: 0.9em; color: var(--text-2); }
 .prose table { width: 100%; border-collapse: collapse; font-size: 0.9em; margin: 8px 0; }
 .prose th, .prose td { padding: 5px 10px; border: 1px solid var(--border); text-align: left; }
 .prose th { background: var(--bg-3); font-weight: 600; color: var(--text-1); }
@@ -712,16 +727,28 @@ button, input, textarea, select {
 .git-dir-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding: 4px 12px;
-  width: 100%;
   font-size: 12px;
   color: var(--text-3);
-  cursor: pointer;
   user-select: none;
-  text-align: left;
 }
 .git-dir-row:hover { color: var(--text-2); }
+.git-dir-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.git-dir-row:hover .git-dir-stage-btn { opacity: 1; }
 
 /* Diff viewer */
 .git-diff-viewer {

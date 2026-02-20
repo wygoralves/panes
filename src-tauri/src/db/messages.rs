@@ -15,6 +15,7 @@ pub fn insert_user_message(
     content: &str,
     turn_engine_id: Option<&str>,
     turn_model_id: Option<&str>,
+    turn_reasoning_effort: Option<&str>,
 ) -> anyhow::Result<MessageDto> {
     insert_message(
         db,
@@ -25,6 +26,7 @@ pub fn insert_user_message(
         MessageStatusDto::Completed,
         turn_engine_id,
         turn_model_id,
+        turn_reasoning_effort,
     )
 }
 
@@ -33,6 +35,7 @@ pub fn insert_assistant_placeholder(
     thread_id: &str,
     turn_engine_id: Option<&str>,
     turn_model_id: Option<&str>,
+    turn_reasoning_effort: Option<&str>,
 ) -> anyhow::Result<MessageDto> {
     insert_message(
         db,
@@ -43,6 +46,7 @@ pub fn insert_assistant_placeholder(
         MessageStatusDto::Streaming,
         turn_engine_id,
         turn_model_id,
+        turn_reasoning_effort,
     )
 }
 
@@ -87,7 +91,7 @@ pub fn get_thread_messages(db: &Database, thread_id: &str) -> anyhow::Result<Vec
     let conn = db.connect()?;
     let mut stmt = conn.prepare(
         "SELECT id, thread_id, role, content, blocks_json, schema_version, status,
-            token_input, token_output, turn_engine_id, turn_model_id, created_at
+            token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at
      FROM messages
      WHERE thread_id = ?1
      ORDER BY created_at ASC",
@@ -106,6 +110,7 @@ pub fn get_thread_messages(db: &Database, thread_id: &str) -> anyhow::Result<Vec
             blocks: blocks_raw.and_then(|raw| serde_json::from_str(&raw).ok()),
             turn_engine_id: row.get(9)?,
             turn_model_id: row.get(10)?,
+            turn_reasoning_effort: row.get(11)?,
             schema_version: row.get(5)?,
             status: MessageStatusDto::from_str(&row.get::<_, String>(6)?),
             token_usage: if token_input > 0 || token_output > 0 {
@@ -116,7 +121,7 @@ pub fn get_thread_messages(db: &Database, thread_id: &str) -> anyhow::Result<Vec
             } else {
                 None
             },
-            created_at: row.get(11)?,
+            created_at: row.get(12)?,
         })
     })?;
 
@@ -210,14 +215,15 @@ fn insert_message(
     status: MessageStatusDto,
     turn_engine_id: Option<&str>,
     turn_model_id: Option<&str>,
+    turn_reasoning_effort: Option<&str>,
 ) -> anyhow::Result<MessageDto> {
     let id = Uuid::new_v4().to_string();
     let conn = db.connect()?;
     conn.execute(
         "INSERT INTO messages (
-            id, thread_id, role, content, blocks_json, schema_version, status, turn_engine_id, turn_model_id
+            id, thread_id, role, content, blocks_json, schema_version, status, turn_engine_id, turn_model_id, turn_reasoning_effort
         )
-     VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8)",
+     VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8, ?9)",
         params![
             id,
             thread_id,
@@ -226,7 +232,8 @@ fn insert_message(
             blocks.map(|value| value.to_string()),
             status.as_str(),
             turn_engine_id,
-            turn_model_id
+            turn_model_id,
+            turn_reasoning_effort
         ],
     )
     .context("failed to insert message")?;
@@ -234,7 +241,7 @@ fn insert_message(
     let conn = db.connect()?;
     conn.query_row(
         "SELECT id, thread_id, role, content, blocks_json, schema_version, status,
-            token_input, token_output, turn_engine_id, turn_model_id, created_at
+            token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at
      FROM messages
      WHERE id = ?1",
         params![id],
@@ -248,10 +255,11 @@ fn insert_message(
                 blocks: blocks_raw.and_then(|raw| serde_json::from_str(&raw).ok()),
                 turn_engine_id: row.get(9)?,
                 turn_model_id: row.get(10)?,
+                turn_reasoning_effort: row.get(11)?,
                 schema_version: row.get(5)?,
                 status: MessageStatusDto::from_str(&row.get::<_, String>(6)?),
                 token_usage: None,
-                created_at: row.get(11)?,
+                created_at: row.get(12)?,
             })
         },
     )

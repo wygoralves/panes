@@ -56,6 +56,7 @@ export interface Message {
   blocks?: ContentBlock[];
   turnEngineId?: string | null;
   turnModelId?: string | null;
+  turnReasoningEffort?: string | null;
   status: MessageStatus;
   schemaVersion: number;
   tokenUsage?: { input: number; output: number };

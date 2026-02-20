@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS messages (
   blocks_json TEXT,
   turn_engine_id TEXT,
   turn_model_id TEXT,
+  turn_reasoning_effort TEXT,
   schema_version INTEGER NOT NULL DEFAULT 1,
   stream_seq INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'completed',

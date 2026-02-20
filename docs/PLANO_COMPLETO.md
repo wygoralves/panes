@@ -10,7 +10,7 @@ Levar a base atual (v0 scaffold) até um **v1 funcional de produção inicial** 
 4. Segurança por sandbox e trust-level aplicada de ponta a ponta.
 5. CI, build, release e documentação operacional.
 
-## 1.1 Status Atualizado (2026-02-19)
+## 1.1 Status Atualizado (2026-02-20)
 
 ### Concluído
 
@@ -22,47 +22,48 @@ Levar a base atual (v0 scaffold) até um **v1 funcional de produção inicial** 
 3. Painel Git operacional com status, diff, stage, unstage e commit.
 4. Watchers Git conectados backend → frontend com evento `git-repo-changed`
    e refresh automático no painel.
-5. Correções de robustez:
-   - requests desconhecidas do Codex não recebem ACK silencioso;
-   - `item/tool/requestUserInput` não é tratado como approval simples;
-   - corrida assíncrona de troca de thread no frontend corrigida.
-6. UX base do chat estabilizada com layout em 3 colunas e fallback de erro global.
-7. Model picker real para Codex conectado ao `model/list`:
+5. Aplicação de `trustLevel` no runtime com política:
+   `trusted -> on-failure`, `standard -> on-request`, `restricted -> untrusted`.
+6. Política explícita de workspace multi-repo:
+   confirmação obrigatória para thread de workspace com múltiplos `writableRoots`.
+7. Suporte estruturado a `item/tool/requestUserInput` no fluxo de approval
+   (backend + renderização de questionário no frontend).
+8. Fluxo avançado de threads por escopo + engine + modelo:
+   seleção/reuso só ocorre quando houver correspondência explícita desses campos.
+9. Model picker real para Codex conectado ao `model/list`:
    lista dinâmica de modelos suportados (incluindo legacy/hidden), picker de thinking budget por
    `supportedReasoningEfforts` e persistência de `reasoningEffort` por thread.
-8. Validação de thinking budget no backend por modelo:
-   `set_thread_reasoning_effort` rejeita valores fora do conjunto suportado do modelo ativo.
-9. Fluxo avançado de threads por escopo + engine + modelo:
-   seleção/reuso só ocorre quando houver correspondência explícita desses campos.
-10. UX de chat com lock explícito de autoscroll:
+10. Validação de thinking budget no backend por modelo:
+    `set_thread_reasoning_effort` rejeita valores fora do conjunto suportado do modelo ativo.
+11. UX de chat com lock explícito de autoscroll:
     ao subir no histórico, o autoscroll é bloqueado e a UI exibe ação de retorno ao final.
-11. Renderização de approvals com modo avançado de payload JSON customizado:
+12. Renderização de approvals com modo avançado de payload JSON customizado:
     validação de JSON no frontend antes do envio da resposta.
-12. Robustez do Codex com reconexão/restart por backoff limitado:
+13. UX de produtividade já ativa:
+    atalhos globais principais e busca de mensagens com navegação para thread/mensagem.
+14. Virtualização de mensagens para threads longas no chat.
+15. Setup wizard inicial de engine + banner de health para Codex.
+16. Robustez do Codex com reconexão/restart por backoff limitado:
     transporte inválido é reciclado e inicializado novamente com tentativas progressivas.
-13. Evolução incremental de schema SQLite:
+17. Evolução incremental de schema SQLite:
     colunas `threads.engine_capabilities_json`, `messages.stream_seq`,
     `actions.truncated` e índices por status/thread/created_at com compatibilidade runtime.
-14. Proteção para repositórios grandes no file tree:
+18. Proteção para repositórios grandes no file tree:
     limite de varredura, timeout e paginação via `get_file_tree_page`.
 
 ### Em andamento
 
-1. Aplicação de políticas de segurança por trust-level no runtime:
-   `trusted -> on-failure`, `standard -> on-request`, `restricted -> untrusted`.
-2. Política explícita de workspace multi-repo:
-   confirmação obrigatória para thread de workspace com múltiplos `writableRoots`.
-3. UX de produtividade:
-   atalhos globais e busca de mensagens com navegação rápida para thread.
+1. Claude sidecar real com SDK e fluxo completo de approvals/cancelamento.
+2. Onboarding completo multi-engine (wizard atual cobre principalmente Codex).
+3. CI completa com `lint/typecheck/test/check` em frontend + rust + sidecar.
+4. Pipeline de release para macOS (app/dmg) e Linux (.deb/AppImage).
+5. Padronização de fallback CLI para cenários limítrofes do `git2`.
 
 ### Pendente
 
-1. Claude sidecar real com SDK e fluxo completo de approvals/cancelamento.
-2. Virtualização de mensagens para threads longas.
-3. Setup wizard de engines e onboarding completo.
-4. Suíte de testes (unit/integration/e2e) cobrindo fluxos críticos.
-5. CI/release para macOS (app/dmg) e Linux (.deb/AppImage) com pipeline de publicação.
-6. Suporte completo a `requestUserInput` estruturado no frontend.
+1. Suíte de testes (unit/integration/e2e) cobrindo fluxos críticos.
+2. Contract tests do sidecar Claude e testes de protocolo cross-engine.
+3. Publicação automática de artefatos + documentação operacional de release/troubleshooting.
 
 ## 2. Estado Atual (baseline)
 
@@ -79,14 +80,12 @@ Levar a base atual (v0 scaffold) até um **v1 funcional de produção inicial** 
 
 ## 2.2 Gap principal
 
-1. Suporte completo a `item/tool/requestUserInput` ainda pendente no frontend.
-2. Políticas de `trustLevel` e opt-in multi-repo estão em rollout e precisam fechamento de UX.
-3. Sidecar Claude ainda está em scaffold, sem execução real via SDK.
-4. Fluxo de threads avançado (multi-engine/multi-model) foi parcialmente fechado; ainda faltam
-   refinamentos de UX em casos limite.
-5. Testes automatizados e critérios de qualidade ainda incompletos.
-6. Pipeline de release (dmg/deb/appimage) ainda não finalizada.
-7. Virtualização de mensagens e tuning de performance para threads longas ainda pendentes.
+1. Sidecar Claude ainda está em scaffold, sem execução real via SDK.
+2. Onboarding ainda não está completo para múltiplas engines (setup atual é focado em Codex).
+3. Testes automatizados e critérios de qualidade ainda incompletos.
+4. CI cobre checks básicos, mas ainda não executa suíte de testes/lint completo/sidecar.
+5. Pipeline de release (dmg/deb/appimage) ainda não finalizada.
+6. Documentação operacional de instalação, troubleshooting e release ainda incompleta.
 
 ## 3. Plano Macro (fases)
 
@@ -173,12 +172,12 @@ Objetivo: fechar v1 utilizável e distribuível.
 
 Entregáveis:
 
-1. Atalhos de teclado (`Cmd+Enter`, `Cmd+.`, `Cmd+Shift+F`, `Cmd+B`, `Cmd+Shift+B`).
-2. Virtualização da lista de mensagens para threads longas.
-3. Onboarding completo de engines + setup wizard.
-4. CI com lint/typecheck/test/check em frontend + rust + sidecar.
-5. Build de release para macOS (app/dmg) e Linux (deb/appimage).
-6. Documentação de instalação e troubleshooting.
+1. Atalhos de teclado (`Cmd+Enter`, `Cmd+.`, `Cmd+Shift+F`, `Cmd+B`, `Cmd+Shift+B`). (concluído)
+2. Virtualização da lista de mensagens para threads longas. (concluído)
+3. Onboarding completo de engines + setup wizard. (parcial: wizard/base health implementados)
+4. CI com lint/typecheck/test/check em frontend + rust + sidecar. (parcial)
+5. Build de release para macOS (app/dmg) e Linux (deb/appimage). (pendente)
+6. Documentação de instalação e troubleshooting. (pendente)
 
 Critérios de aceite:
 
@@ -201,7 +200,7 @@ Critérios de aceite:
 1. Extrair mutação de `ContentBlock` para módulo próprio (`message_builder.rs`).
 2. Encapsular persistência transacional por evento crítico.
 3. Garantir atualização de estado de thread atomizada em erros.
-4. Incluir canal dedicado `approval-request-{thread_id}` quando evento de approval chegar.
+4. Incluir canal dedicado `approval-request-{thread_id}` quando evento de approval chegar. (concluído)
 
 ## 4.3 `src-tauri/src/db/`
 
@@ -221,8 +220,8 @@ Critérios de aceite:
 1. Store de threads separada com criação/seleção/filtro por repo. (concluído)
 2. Renderização de approvals com modo avançado JSON custom. (concluído)
 3. Comportamento de autoscroll com lock explícito quando usuário sobe. (concluído)
-4. Busca global com preview/snippets e navegação para mensagem. (em andamento)
-5. Tela de onboarding de engines e setup guiado. (pendente)
+4. Busca global com preview/snippets e navegação para mensagem. (concluído)
+5. Tela de onboarding de engines e setup guiado. (parcial: fluxo inicial Codex concluído)
 
 ## 4.6 Sidecar Claude (`src-tauri/src/sidecars/claude_agent/`)
 

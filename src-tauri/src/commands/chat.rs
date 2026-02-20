@@ -185,6 +185,7 @@ pub async fn send_message(
         &message,
         Some(thread.engine_id.as_str()),
         Some(effective_model_id.as_str()),
+        reasoning_effort.as_deref(),
     )
     .map_err(err_to_string)?;
     let assistant_message = db::messages::insert_assistant_placeholder(
@@ -192,6 +193,7 @@ pub async fn send_message(
         &thread.id,
         Some(thread.engine_id.as_str()),
         Some(effective_model_id.as_str()),
+        reasoning_effort.as_deref(),
     )
     .map_err(err_to_string)?;
     db::threads::update_thread_status(&state.db, &thread.id, ThreadStatusDto::Streaming)

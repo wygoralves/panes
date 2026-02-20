@@ -47,6 +47,30 @@ interface FileRow {
 
 type TreeRow = DirectoryRow | FileRow;
 
+function buildDirectoryFileMap(files: GitFileStatus[]): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+
+  for (const file of files) {
+    const parts = file.path.split("/").filter(Boolean);
+    if (parts.length <= 1) {
+      continue;
+    }
+
+    let currentPath = "";
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      currentPath = currentPath ? `${currentPath}/${parts[index]}` : parts[index];
+      const currentFiles = map.get(currentPath);
+      if (currentFiles) {
+        currentFiles.push(file.path);
+      } else {
+        map.set(currentPath, [file.path]);
+      }
+    }
+  }
+
+  return map;
+}
+
 function buildTreeRows(
   files: GitFileStatus[],
   section: ChangeSection,
@@ -192,6 +216,14 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     () => buildTreeRows(stagedFiles, "staged", collapsedDirs),
     [stagedFiles, collapsedDirs],
   );
+  const unstagedDirectoryFiles = useMemo(
+    () => buildDirectoryFileMap(unstagedFiles),
+    [unstagedFiles],
+  );
+  const stagedDirectoryFiles = useMemo(
+    () => buildDirectoryFileMap(stagedFiles),
+    [stagedFiles],
+  );
 
   const hasStagedFiles = stagedFiles.length > 0;
   const noChanges = unstagedFiles.length === 0 && !hasStagedFiles;
@@ -235,6 +267,26 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     }
   }
 
+  async function onToggleDirectoryStage(dirPath: string, staged: boolean) {
+    const filesByDirectory = staged ? stagedDirectoryFiles : unstagedDirectoryFiles;
+    const directoryFiles = filesByDirectory.get(dirPath) ?? [];
+    if (directoryFiles.length === 0) {
+      return;
+    }
+
+    try {
+      onError(undefined);
+      if (staged) {
+        await ipc.unstageFiles(repo.path, directoryFiles);
+      } else {
+        await ipc.stageFiles(repo.path, directoryFiles);
+      }
+      await refresh(repo.path);
+    } catch (e) {
+      onError(String(e));
+    }
+  }
+
   function toggleSection(section: ChangeSection) {
     setSectionCollapsed((prev) => ({ ...prev, [section]: !prev[section] }));
   }
@@ -250,21 +302,48 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     staged: boolean,
   ) {
     if (row.type === "dir") {
+      const filesByDirectory = staged ? stagedDirectoryFiles : unstagedDirectoryFiles;
+      const directoryFileCount = (filesByDirectory.get(row.path) ?? []).length;
+
       return (
-        <button
+        <div
           key={row.key}
-          type="button"
           className="git-dir-row"
-          onClick={() => toggleDir(section, row.path)}
           style={{ paddingLeft: 12 + row.depth * 14 }}
         >
-          {row.collapsed ? (
-            <ChevronRight size={12} />
-          ) : (
-            <ChevronDown size={12} />
-          )}
-          <span>{row.name}</span>
-        </button>
+          <button
+            type="button"
+            className="git-dir-toggle"
+            onClick={() => toggleDir(section, row.path)}
+          >
+            {row.collapsed ? (
+              <ChevronRight size={12} />
+            ) : (
+              <ChevronDown size={12} />
+            )}
+            <span>{row.name}</span>
+          </button>
+          <button
+            type="button"
+            className="git-stage-btn git-dir-stage-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              void onToggleDirectoryStage(row.path, staged);
+            }}
+            disabled={directoryFileCount === 0}
+            title={
+              staged
+                ? "Unstage all changes in this folder"
+                : "Stage all changes in this folder"
+            }
+            style={{
+              opacity: directoryFileCount === 0 ? 0.35 : undefined,
+              cursor: directoryFileCount === 0 ? "default" : "pointer",
+            }}
+          >
+            {staged ? <Minus size={13} /> : <Plus size={13} />}
+          </button>
+        </div>
       );
     }
 
