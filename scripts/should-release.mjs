@@ -39,16 +39,14 @@ if (/^chore\(release\):/.test(latestSubject)) {
 }
 
 const lastTag = run("git describe --tags --abbrev=0");
-if (!lastTag) {
-  finish(false, "no release tags found");
-  process.exit(0);
-}
+const hasTagHistory = Boolean(lastTag);
+const range = hasTagHistory ? `${lastTag}..HEAD` : "HEAD";
 
-const subjects = run(`git log ${lastTag}..HEAD --format=%s`);
-const bodies = run(`git log ${lastTag}..HEAD --format=%b`);
+const subjects = run(`git log ${range} --format=%s`);
+const bodies = run(`git log ${range} --format=%b`);
 
 if (!subjects && !bodies) {
-  finish(false, `no commits since ${lastTag}`);
+  finish(false, hasTagHistory ? `no commits since ${lastTag}` : "no commits found");
   process.exit(0);
 }
 
@@ -57,7 +55,15 @@ const hasBreakingByBang = /^[a-z]+(\(.+\))?!:/m.test(subjects);
 const hasBreakingFooter = /(^|[ \t])BREAKING[ -]CHANGE:/m.test(bodies);
 
 if (hasMinorOrPatch || hasBreakingByBang || hasBreakingFooter) {
-  finish(true, `release-worthy commits detected since ${lastTag}`);
+  const reason = hasTagHistory
+    ? `release-worthy commits detected since ${lastTag}`
+    : "release-worthy commits detected (initial release)";
+  finish(true, reason);
+  process.exit(0);
+}
+
+if (!hasTagHistory) {
+  finish(false, "no release-worthy commits for initial release");
   process.exit(0);
 }
 
