@@ -1,9 +1,17 @@
-name: CI
+name: CI and Release
 
 on:
   push:
     branches: ["main"]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   frontend:
@@ -21,6 +29,8 @@ jobs:
         run: pnpm install --frozen-lockfile=false
       - name: Typecheck
         run: pnpm typecheck
+      - name: Unit tests
+        run: pnpm test -- --passWithNoTests
       - name: Build frontend
         run: pnpm build
 
@@ -32,6 +42,61 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+      - name: Rust fmt check
+        working-directory: src-tauri
+        run: cargo fmt -- --check
       - name: Rust check
         working-directory: src-tauri
         run: cargo check
+
+  release:
+    name: Automated Release
+    if: github.event_name == 'push'
+    needs: [frontend, rust]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+          token: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Fetch tags
+        run: git fetch --force --tags origin
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Evaluate release necessity
+        id: release_check
+        run: node scripts/should-release.mjs
+
+      - name: Skip release (no release-worthy commits)
+        if: steps.release_check.outputs.should_release != 'true'
+        run: 'echo "Skipping release: ${{ steps.release_check.outputs.reason }}"'
+
+      - name: Configure git user for release commit
+        if: steps.release_check.outputs.should_release == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run release-it
+        if: steps.release_check.outputs.should_release == 'true'
+        run: pnpm release -- --ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}

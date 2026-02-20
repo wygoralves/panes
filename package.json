@@ -11,7 +11,9 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "release:check": "node scripts/should-release.mjs",
+    "release": "release-it"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
@@ -37,10 +39,12 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@release-it/conventional-changelog": "^10.0.5",
     "@tauri-apps/cli": "^2.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "release-it": "^19.2.4",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.5.0",
     "vite": "^6.0.0",
