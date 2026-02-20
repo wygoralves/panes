@@ -49,7 +49,9 @@ export function GitStashView({ repo, onError }: Props) {
     <div style={{ flex: 1, overflow: "auto" }}>
       {stashes.length === 0 ? (
         <div className="git-empty">
-          <Archive size={28} className="git-empty-icon" />
+          <div className="git-empty-icon-box">
+            <Archive size={20} />
+          </div>
           <p className="git-empty-title">No stashes</p>
           <p className="git-empty-sub">Stashed changes will appear here</p>
         </div>

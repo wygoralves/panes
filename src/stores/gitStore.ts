@@ -11,8 +11,142 @@ import { recordPerfMetric } from "../lib/perfTelemetry";
 
 const BRANCH_PAGE_SIZE = 200;
 const COMMIT_PAGE_SIZE = 100;
+const GIT_STATUS_CACHE_TTL_MS = 1_000;
+const GIT_DIFF_CACHE_TTL_MS = 1_200;
 
 export type GitPanelView = "changes" | "branches" | "commits" | "stash";
+
+interface GitStatusCacheEntry {
+  status: GitStatus;
+  revision: number;
+  updatedAt: number;
+}
+
+interface GitDiffCacheEntry {
+  diff: string;
+  revision: number;
+  updatedAt: number;
+}
+
+const repoRevisionByPath = new Map<string, number>();
+const statusCacheByRepo = new Map<string, GitStatusCacheEntry>();
+const statusInFlightByRepo = new Map<string, Promise<GitStatus>>();
+const diffCacheByKey = new Map<string, GitDiffCacheEntry>();
+const diffInFlightByKey = new Map<string, Promise<string>>();
+
+function getRepoRevision(repoPath: string): number {
+  return repoRevisionByPath.get(repoPath) ?? 0;
+}
+
+function incrementRepoRevision(repoPath: string): number {
+  const next = getRepoRevision(repoPath) + 1;
+  repoRevisionByPath.set(repoPath, next);
+  return next;
+}
+
+function buildDiffCacheKey(repoPath: string, filePath: string, staged: boolean): string {
+  return `${repoPath}::${staged ? "staged" : "worktree"}::${filePath}`;
+}
+
+function invalidateRepoCaches(repoPath: string) {
+  incrementRepoRevision(repoPath);
+  statusCacheByRepo.delete(repoPath);
+  statusInFlightByRepo.delete(repoPath);
+  for (const key of diffCacheByKey.keys()) {
+    if (key.startsWith(`${repoPath}::`)) {
+      diffCacheByKey.delete(key);
+    }
+  }
+  for (const key of diffInFlightByKey.keys()) {
+    if (key.startsWith(`${repoPath}::`)) {
+      diffInFlightByKey.delete(key);
+    }
+  }
+}
+
+async function getGitStatusCached(repoPath: string, force = false): Promise<GitStatus> {
+  const revision = getRepoRevision(repoPath);
+  const now = performance.now();
+  const cached = statusCacheByRepo.get(repoPath);
+  if (
+    !force &&
+    cached &&
+    cached.revision === revision &&
+    now - cached.updatedAt <= GIT_STATUS_CACHE_TTL_MS
+  ) {
+    return cached.status;
+  }
+
+  const inFlight = statusInFlightByRepo.get(repoPath);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const requestRevision = revision;
+  const requestPromise = ipc
+    .getGitStatus(repoPath)
+    .then((status) => {
+      if (getRepoRevision(repoPath) === requestRevision) {
+        statusCacheByRepo.set(repoPath, {
+          status,
+          revision: requestRevision,
+          updatedAt: performance.now(),
+        });
+      }
+      return status;
+    })
+    .finally(() => {
+      statusInFlightByRepo.delete(repoPath);
+    });
+
+  statusInFlightByRepo.set(repoPath, requestPromise);
+  return requestPromise;
+}
+
+async function getGitDiffCached(
+  repoPath: string,
+  filePath: string,
+  staged: boolean,
+  force = false,
+): Promise<string> {
+  const key = buildDiffCacheKey(repoPath, filePath, staged);
+  const revision = getRepoRevision(repoPath);
+  const now = performance.now();
+  const cached = diffCacheByKey.get(key);
+  if (
+    !force &&
+    cached &&
+    cached.revision === revision &&
+    now - cached.updatedAt <= GIT_DIFF_CACHE_TTL_MS
+  ) {
+    return cached.diff;
+  }
+
+  const inFlight = diffInFlightByKey.get(key);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const requestRevision = revision;
+  const requestPromise = ipc
+    .getFileDiff(repoPath, filePath, staged)
+    .then((diff) => {
+      if (getRepoRevision(repoPath) === requestRevision) {
+        diffCacheByKey.set(key, {
+          diff,
+          revision: requestRevision,
+          updatedAt: performance.now(),
+        });
+      }
+      return diff;
+    })
+    .finally(() => {
+      diffInFlightByKey.delete(key);
+    });
+
+  diffInFlightByKey.set(key, requestPromise);
+  return requestPromise;
+}
 
 interface GitState {
   status?: GitStatus;
@@ -29,7 +163,8 @@ interface GitState {
   commitsHasMore: boolean;
   commitsTotal: number;
   stashes: GitStash[];
-  refresh: (repoPath: string) => Promise<void>;
+  refresh: (repoPath: string, options?: { force?: boolean }) => Promise<void>;
+  invalidateRepoCache: (repoPath: string) => void;
   setActiveView: (view: GitPanelView) => void;
   setBranchScope: (scope: GitBranchScope) => void;
   selectFile: (repoPath: string, filePath: string, staged?: boolean) => Promise<void>;
@@ -89,12 +224,12 @@ export const useGitStore = create<GitState>((set, get) => ({
   commitsHasMore: false,
   commitsTotal: 0,
   stashes: [],
-  refresh: async (repoPath) => {
+  refresh: async (repoPath, options) => {
     set({ loading: true, error: undefined });
     const startedAt = performance.now();
 
     try {
-      const status = await ipc.getGitStatus(repoPath);
+      const status = await getGitStatusCached(repoPath, options?.force ?? false);
       const currentState = get();
       const selectedFile = currentState.selectedFile;
       const selectedFileStaged = currentState.selectedFileStaged ?? false;
@@ -113,7 +248,7 @@ export const useGitStore = create<GitState>((set, get) => ({
 
         if (sameStateExists) {
           try {
-            selectedDiff = await ipc.getFileDiff(repoPath, selectedFile, selectedFileStaged);
+            selectedDiff = await getGitDiffCached(repoPath, selectedFile, selectedFileStaged);
           } catch {
             selectedDiff = undefined;
           }
@@ -121,7 +256,7 @@ export const useGitStore = create<GitState>((set, get) => ({
           const flippedStaged = !selectedFileStaged;
           nextSelectedFileStaged = flippedStaged;
           try {
-            selectedDiff = await ipc.getFileDiff(repoPath, selectedFile, flippedStaged);
+            selectedDiff = await getGitDiffCached(repoPath, selectedFile, flippedStaged);
           } catch {
             selectedDiff = undefined;
           }
@@ -148,6 +283,7 @@ export const useGitStore = create<GitState>((set, get) => ({
       recordPerfMetric("git.refresh.ms", performance.now() - startedAt, {
         repoPath,
         fileCount: status.files.length,
+        cached: !(options?.force ?? false),
       });
     } catch (error) {
       set({ loading: false, error: String(error) });
@@ -156,6 +292,9 @@ export const useGitStore = create<GitState>((set, get) => ({
         failed: true,
       });
     }
+  },
+  invalidateRepoCache: (repoPath) => {
+    invalidateRepoCaches(repoPath);
   },
   setActiveView: (view) => {
     set({ activeView: view, error: undefined });
@@ -166,7 +305,7 @@ export const useGitStore = create<GitState>((set, get) => ({
   selectFile: async (repoPath, filePath, staged = false) => {
     const startedAt = performance.now();
     try {
-      const diff = await ipc.getFileDiff(repoPath, filePath, staged);
+      const diff = await getGitDiffCached(repoPath, filePath, staged);
       set({ selectedFile: filePath, selectedFileStaged: staged, diff, error: undefined });
       recordPerfMetric("git.file_diff.ms", performance.now() - startedAt, {
         repoPath,
@@ -187,7 +326,8 @@ export const useGitStore = create<GitState>((set, get) => ({
     try {
       set({ loading: true, error: undefined });
       await ipc.stageFiles(repoPath, [filePath]);
-      await get().refresh(repoPath);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
     } catch (error) {
       set({ loading: false, error: String(error) });
       throw error;
@@ -197,7 +337,8 @@ export const useGitStore = create<GitState>((set, get) => ({
     try {
       set({ loading: true, error: undefined });
       await ipc.unstageFiles(repoPath, [filePath]);
-      await get().refresh(repoPath);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
     } catch (error) {
       set({ loading: false, error: String(error) });
       throw error;
@@ -207,7 +348,8 @@ export const useGitStore = create<GitState>((set, get) => ({
     try {
       set({ loading: true, error: undefined });
       const hash = await ipc.commit(repoPath, message);
-      await get().refresh(repoPath);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
       return hash;
     } catch (error) {
       set({ loading: false, error: String(error) });
@@ -218,7 +360,8 @@ export const useGitStore = create<GitState>((set, get) => ({
     try {
       set({ loading: true, error: undefined });
       await ipc.fetchGit(repoPath);
-      await get().refresh(repoPath);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
     } catch (error) {
       set({ loading: false, error: String(error) });
       throw error;
@@ -228,7 +371,8 @@ export const useGitStore = create<GitState>((set, get) => ({
     try {
       set({ loading: true, error: undefined });
       await ipc.pullGit(repoPath);
-      await get().refresh(repoPath);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
     } catch (error) {
       set({ loading: false, error: String(error) });
       throw error;
@@ -238,7 +382,8 @@ export const useGitStore = create<GitState>((set, get) => ({
     try {
       set({ loading: true, error: undefined });
       await ipc.pushGit(repoPath);
-      await get().refresh(repoPath);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
     } catch (error) {
       set({ loading: false, error: String(error) });
       throw error;
@@ -259,7 +404,8 @@ export const useGitStore = create<GitState>((set, get) => ({
     try {
       set({ loading: true, error: undefined });
       await ipc.checkoutGitBranch(repoPath, branchName, isRemote);
-      await get().refresh(repoPath);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
     } catch (error) {
       set({ loading: false, error: String(error) });
       throw error;
@@ -269,7 +415,8 @@ export const useGitStore = create<GitState>((set, get) => ({
     try {
       set({ loading: true, error: undefined });
       await ipc.createGitBranch(repoPath, branchName, fromRef ?? null);
-      await get().refresh(repoPath);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
     } catch (error) {
       set({ loading: false, error: String(error) });
       throw error;
@@ -279,7 +426,8 @@ export const useGitStore = create<GitState>((set, get) => ({
     try {
       set({ loading: true, error: undefined });
       await ipc.renameGitBranch(repoPath, oldName, newName);
-      await get().refresh(repoPath);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
     } catch (error) {
       set({ loading: false, error: String(error) });
       throw error;
@@ -289,7 +437,8 @@ export const useGitStore = create<GitState>((set, get) => ({
     try {
       set({ loading: true, error: undefined });
       await ipc.deleteGitBranch(repoPath, branchName, force);
-      await get().refresh(repoPath);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
     } catch (error) {
       set({ loading: false, error: String(error) });
       throw error;
@@ -334,7 +483,8 @@ export const useGitStore = create<GitState>((set, get) => ({
     try {
       set({ loading: true, error: undefined });
       await ipc.applyGitStash(repoPath, stashIndex);
-      await get().refresh(repoPath);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
     } catch (error) {
       set({ loading: false, error: String(error) });
       throw error;
@@ -344,7 +494,8 @@ export const useGitStore = create<GitState>((set, get) => ({
     try {
       set({ loading: true, error: undefined });
       await ipc.popGitStash(repoPath, stashIndex);
-      await get().refresh(repoPath);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
     } catch (error) {
       set({ loading: false, error: String(error) });
       throw error;

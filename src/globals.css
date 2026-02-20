@@ -900,25 +900,35 @@ button, input, textarea, select {
   color: var(--text-3);
   font-size: 12px;
   margin: 0;
-  gap: 6px;
+  gap: 12px;
 }
 
-.git-empty-icon {
-  color: var(--text-3);
-  opacity: 0.18;
-  margin-bottom: 2px;
+.git-empty-icon-box {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.git-empty-icon-box > svg {
+  color: var(--text-2);
+  opacity: 0.5;
 }
 
 .git-empty-title {
   margin: 0;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 500;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 .git-empty-sub {
-  margin: 0;
-  font-size: 11px;
+  margin: -6px 0 0;
+  font-size: 11.5px;
   color: var(--text-3);
   opacity: 0.7;
 }

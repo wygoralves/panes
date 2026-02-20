@@ -51,7 +51,9 @@ export function GitCommitsView({ repo }: Props) {
       <div style={{ flex: 1, overflow: "auto" }}>
         {commits.length === 0 ? (
           <div className="git-empty">
-            <GitCommitHorizontal size={28} className="git-empty-icon" />
+            <div className="git-empty-icon-box">
+              <GitCommitHorizontal size={20} />
+            </div>
             <p className="git-empty-title">No commits yet</p>
             <p className="git-empty-sub">Commit changes to build history</p>
           </div>

@@ -305,7 +305,9 @@ export function GitBranchesView({ repo, onError }: Props) {
       <div style={{ flex: 1, overflow: "auto" }}>
         {branches.length === 0 ? (
           <div className="git-empty">
-            <GitBranch size={28} className="git-empty-icon" />
+            <div className="git-empty-icon-box">
+              <GitBranch size={20} />
+            </div>
             <p className="git-empty-title">No branches found</p>
             <p className="git-empty-sub">Create a branch to get started</p>
           </div>

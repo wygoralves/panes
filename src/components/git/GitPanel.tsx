@@ -41,6 +41,7 @@ export function GitPanel() {
   const {
     status,
     refresh,
+    invalidateRepoCache,
     loading,
     error,
     activeView,
@@ -169,6 +170,7 @@ export function GitPanel() {
 
       const stop = await listenGitRepoChanged((event) => {
         if (event.repoPath !== repoPath) return;
+        invalidateRepoCache(repoPath);
         void refresh(repoPath);
       });
 
@@ -184,7 +186,7 @@ export function GitPanel() {
       disposed = true;
       unlisten?.();
     };
-  }, [activeRepoPath, refresh]);
+  }, [activeRepoPath, invalidateRepoCache, refresh]);
 
   const repoOptions = useMemo(
     () => repos.map((repo) => ({ value: repo.id, label: repo.name })),
@@ -298,7 +300,9 @@ export function GitPanel() {
         </>
       ) : (
         <div className="git-empty">
-          <GitBranchIcon size={28} className="git-empty-icon" />
+          <div className="git-empty-icon-box">
+            <GitBranchIcon size={20} />
+          </div>
           <p className="git-empty-title">No repositories found</p>
           <p className="git-empty-sub">Open a folder with a git repository</p>
         </div>
@@ -362,7 +366,10 @@ export function GitPanel() {
               className="git-action-menu-item"
               onClick={() => {
                 closeMoreMenu();
-                if (activeRepo) void refresh(activeRepo.path);
+                if (activeRepo) {
+                  invalidateRepoCache(activeRepo.path);
+                  void refresh(activeRepo.path, { force: true });
+                }
               }}
               disabled={!activeRepo}
             >

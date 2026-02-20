@@ -2,6 +2,7 @@ type PerfMetricName =
   | "chat.stream.flush.ms"
   | "chat.stream.events_per_sec"
   | "chat.render.commit.ms"
+  | "chat.markdown.worker.ms"
   | "git.refresh.ms"
   | "git.file_diff.ms";
 
@@ -25,6 +26,7 @@ const PERF_BUDGETS: Record<PerfMetricName, number> = {
   "chat.stream.flush.ms": 12,
   "chat.stream.events_per_sec": 450,
   "chat.render.commit.ms": 16,
+  "chat.markdown.worker.ms": 28,
   "git.refresh.ms": 350,
   "git.file_diff.ms": 250,
 };
@@ -135,4 +137,3 @@ if (typeof window !== "undefined" && !window.__panesPerf) {
     recent: () => [...metrics],
   };
 }
-

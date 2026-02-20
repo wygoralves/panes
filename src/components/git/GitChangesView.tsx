@@ -472,7 +472,9 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
       <div style={{ overflow: "auto", flexShrink: 0, maxHeight: "50%" }}>
         {noChanges ? (
           <div className="git-empty">
-            <Check size={28} className="git-empty-icon" />
+            <div className="git-empty-icon-box">
+              <Check size={20} />
+            </div>
             <p className="git-empty-title">Working tree clean</p>
             <p className="git-empty-sub">No uncommitted changes</p>
           </div>
