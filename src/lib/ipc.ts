@@ -98,6 +98,9 @@ export const ipc = {
   unstageFiles: (repoPath: string, files: string[]) =>
     invoke<void>("unstage_files", { repoPath, files }),
   commit: (repoPath: string, message: string) => invoke<string>("commit", { repoPath, message }),
+  fetchGit: (repoPath: string) => invoke<void>("fetch_git", { repoPath }),
+  pullGit: (repoPath: string) => invoke<void>("pull_git", { repoPath }),
+  pushGit: (repoPath: string) => invoke<void>("push_git", { repoPath }),
   listGitBranches: (repoPath: string, scope: GitBranchScope, offset?: number, limit?: number) =>
     invoke<GitBranchPage>("list_git_branches", {
       repoPath,

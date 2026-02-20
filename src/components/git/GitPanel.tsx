@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   RefreshCw,
+  ArrowDown,
+  ArrowUp,
   Eye,
   EyeOff,
   X,
@@ -36,11 +38,21 @@ export function GitPanel() {
     setActiveRepo,
     setWorkspaceGitActiveRepos,
   } = useWorkspaceStore();
-  const { status, refresh, loading, error, activeView, setActiveView } =
-    useGitStore();
+  const {
+    status,
+    refresh,
+    loading,
+    error,
+    activeView,
+    setActiveView,
+    fetchRemote,
+    pullRemote,
+    pushRemote,
+  } = useGitStore();
 
   const [showDiff, setShowDiff] = useState(true);
   const [localError, setLocalError] = useState<string | undefined>();
+  const [syncingAction, setSyncingAction] = useState<"fetch" | "pull" | "push" | null>(null);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const moreTriggerRef = useRef<HTMLButtonElement>(null);
@@ -89,6 +101,38 @@ export function GitPanel() {
 
   const activeRepoPath = activeRepo?.path ?? null;
   const effectiveError = localError ?? error;
+  const syncDisabled = !activeRepo || loading || syncingAction !== null;
+  const pushCount = status?.ahead ?? 0;
+  const pullCount = status?.behind ?? 0;
+
+  const runSyncAction = useCallback(async (action: "fetch" | "pull" | "push") => {
+    if (!activeRepo) {
+      return;
+    }
+
+    setLocalError(undefined);
+    setSyncingAction(action);
+    try {
+      if (action === "fetch") {
+        await fetchRemote(activeRepo.path);
+        return;
+      }
+      if (action === "pull") {
+        await pullRemote(activeRepo.path);
+        return;
+      }
+      await pushRemote(activeRepo.path);
+    } catch (syncError) {
+      setLocalError(String(syncError));
+    } finally {
+      setSyncingAction(null);
+    }
+  }, [activeRepo, fetchRemote, pullRemote, pushRemote]);
+
+  const runSyncActionFromMore = useCallback((action: "fetch" | "pull" | "push") => {
+    closeMoreMenu();
+    void runSyncAction(action);
+  }, [closeMoreMenu, runSyncAction]);
 
   // Auto-activate all repos when none are active
   useEffect(() => {
@@ -184,10 +228,10 @@ export function GitPanel() {
             {((status?.ahead ?? 0) > 0 || (status?.behind ?? 0) > 0) && (
               <span className="git-ahead-behind">
                 {(status?.ahead ?? 0) > 0 && (
-                  <span className="git-ahead">+{status?.ahead}</span>
+                  <span className="git-ahead">↑{status?.ahead}</span>
                 )}
                 {(status?.behind ?? 0) > 0 && (
-                  <span className="git-behind">-{status?.behind}</span>
+                  <span className="git-behind">↓{status?.behind}</span>
                 )}
               </span>
             )}
@@ -284,6 +328,35 @@ export function GitPanel() {
               left: moreMenuPos.left,
             }}
           >
+            <button
+              type="button"
+              className="git-action-menu-item"
+              onClick={() => runSyncActionFromMore("fetch")}
+              disabled={syncDisabled}
+            >
+              <RefreshCw size={13} className={syncingAction === "fetch" ? "git-spin" : ""} />
+              Fetch
+            </button>
+            <button
+              type="button"
+              className="git-action-menu-item"
+              onClick={() => runSyncActionFromMore("pull")}
+              disabled={syncDisabled}
+            >
+              <ArrowDown size={13} className={syncingAction === "pull" ? "git-spin" : ""} />
+              <span style={{ flex: 1 }}>Pull</span>
+              <span className="git-sync-counter">↓{pullCount}</span>
+            </button>
+            <button
+              type="button"
+              className="git-action-menu-item"
+              onClick={() => runSyncActionFromMore("push")}
+              disabled={syncDisabled}
+            >
+              <ArrowUp size={13} className={syncingAction === "push" ? "git-spin" : ""} />
+              <span style={{ flex: 1 }}>Push</span>
+              <span className="git-sync-counter">↑{pushCount}</span>
+            </button>
             <button
               type="button"
               className="git-action-menu-item"

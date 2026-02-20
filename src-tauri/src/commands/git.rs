@@ -73,6 +73,27 @@ pub async fn commit(
 }
 
 #[tauri::command]
+pub async fn fetch_git(_state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || repo::fetch_repo(&repo_path).map_err(err_to_string))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn pull_git(_state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || repo::pull_repo(&repo_path).map_err(err_to_string))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn push_git(_state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || repo::push_repo(&repo_path).map_err(err_to_string))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub async fn list_git_branches(
     _state: State<'_, AppState>,
     repo_path: String,

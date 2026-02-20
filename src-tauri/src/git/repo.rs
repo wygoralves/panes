@@ -119,6 +119,53 @@ pub fn commit(repo_path: &str, message: &str) -> anyhow::Result<String> {
     Ok(hash.trim().to_string())
 }
 
+pub fn fetch_repo(repo_path: &str) -> anyhow::Result<()> {
+    run_git(repo_path, &["fetch", "--all", "--prune"]).context("failed to fetch from remotes")?;
+    Ok(())
+}
+
+pub fn pull_repo(repo_path: &str) -> anyhow::Result<()> {
+    match run_git(repo_path, &["pull", "--ff-only"]) {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            if is_no_upstream_error(&error) {
+                anyhow::bail!(
+                    "current branch has no upstream configured; checkout a tracking branch or push with upstream first"
+                );
+            }
+            Err(error).context("failed to pull current branch")
+        }
+    }
+}
+
+pub fn push_repo(repo_path: &str) -> anyhow::Result<()> {
+    match run_git(repo_path, &["push"]) {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            if !is_no_upstream_error(&error) {
+                return Err(error).context("failed to push current branch");
+            }
+
+            let repo = Repository::open(repo_path).context("failed to open repository")?;
+            let branch_name = current_branch_name(&repo).ok_or_else(|| {
+                anyhow::anyhow!("detached HEAD; checkout a local branch before pushing")
+            })?;
+            let remote_name = default_remote_name(&repo)
+                .ok_or_else(|| anyhow::anyhow!("no git remote configured for this repository"))?;
+
+            let push_args = [
+                "push",
+                "--set-upstream",
+                remote_name.as_str(),
+                branch_name.as_str(),
+            ];
+            run_git(repo_path, &push_args)
+                .context("failed to push current branch and set upstream")?;
+            Ok(())
+        }
+    }
+}
+
 pub fn list_git_branches(
     repo_path: &str,
     scope: GitBranchScopeDto,
@@ -555,6 +602,22 @@ fn resolve_branch_ahead_behind(repo: &Repository) -> (usize, usize) {
         .unwrap_or((0, 0))
 }
 
+fn current_branch_name(repo: &Repository) -> Option<String> {
+    let head = repo.head().ok()?;
+    if !head.is_branch() {
+        return None;
+    }
+    head.shorthand().map(ToOwned::to_owned)
+}
+
+fn default_remote_name(repo: &Repository) -> Option<String> {
+    let remotes = repo.remotes().ok()?;
+    if remotes.iter().flatten().any(|name| name == "origin") {
+        return Some("origin".to_string());
+    }
+    remotes.iter().flatten().next().map(ToOwned::to_owned)
+}
+
 fn count_head_commits(repo_path: &str) -> anyhow::Result<usize> {
     match run_git(repo_path, &["rev-list", "--count", "HEAD"]) {
         Ok(output) => Ok(output.trim().parse::<usize>().unwrap_or(0)),
@@ -673,4 +736,12 @@ fn is_missing_head_error(error: &anyhow::Error) -> bool {
     text.contains("unknown revision")
         || text.contains("ambiguous argument 'HEAD'")
         || text.contains("does not have any commits yet")
+}
+
+fn is_no_upstream_error(error: &anyhow::Error) -> bool {
+    let text = error.to_string().to_lowercase();
+    text.contains("has no upstream branch")
+        || text.contains("no upstream configured")
+        || text.contains("no tracking information")
+        || text.contains("set-upstream")
 }

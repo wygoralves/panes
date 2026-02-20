@@ -312,13 +312,11 @@ export function GitBranchesView({ repo, onError }: Props) {
         ) : (
           branches.map((branch) => {
             const isRenaming = renamingBranch === branch.name;
-            const trackSummary = branch.upstream
-              ? `${branch.upstream}${
-                  branch.ahead || branch.behind
-                    ? ` \u00B7 +${branch.ahead} -${branch.behind}`
-                    : ""
-                }`
-              : "No upstream";
+            const remoteName = branch.upstream
+              ? branch.upstream.split("/")[0]
+              : null;
+            const hasSync = !!(branch.ahead || branch.behind);
+            const hasSecondLine = !!(remoteName || hasSync || branch.lastCommitAt);
 
             const hasActions =
               !branch.isCurrent ||
@@ -391,20 +389,29 @@ export function GitBranchesView({ repo, onError }: Props) {
                     )}
                   </div>
 
-                  <div
-                    style={{
-                      marginTop: 1,
-                      fontSize: 11,
-                      color: "var(--text-3)",
-                      display: "flex",
-                      gap: 8,
-                    }}
-                  >
-                    <span>{trackSummary}</span>
-                    {branch.lastCommitAt && (
-                      <span>{formatDate(branch.lastCommitAt)}</span>
-                    )}
-                  </div>
+                  {hasSecondLine && (
+                    <div
+                      style={{
+                        marginTop: 1,
+                        fontSize: 11,
+                        color: "var(--text-3)",
+                        display: "flex",
+                        gap: 8,
+                      }}
+                    >
+                      {remoteName && <span>{remoteName}</span>}
+                      {hasSync && (
+                        <span>
+                          {branch.ahead ? `↑${branch.ahead}` : ""}
+                          {branch.ahead && branch.behind ? " " : ""}
+                          {branch.behind ? `↓${branch.behind}` : ""}
+                        </span>
+                      )}
+                      {branch.lastCommitAt && (
+                        <span>{formatDate(branch.lastCommitAt)}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="git-branch-row-actions">

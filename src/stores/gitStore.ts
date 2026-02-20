@@ -35,6 +35,9 @@ interface GitState {
   stage: (repoPath: string, filePath: string) => Promise<void>;
   unstage: (repoPath: string, filePath: string) => Promise<void>;
   commit: (repoPath: string, message: string) => Promise<string>;
+  fetchRemote: (repoPath: string) => Promise<void>;
+  pullRemote: (repoPath: string) => Promise<void>;
+  pushRemote: (repoPath: string) => Promise<void>;
   loadBranches: (repoPath: string, scope?: GitBranchScope) => Promise<void>;
   checkoutBranch: (repoPath: string, branchName: string, isRemote: boolean) => Promise<void>;
   createBranch: (repoPath: string, branchName: string, fromRef?: string | null) => Promise<void>;
@@ -173,6 +176,36 @@ export const useGitStore = create<GitState>((set, get) => ({
       const hash = await ipc.commit(repoPath, message);
       await get().refresh(repoPath);
       return hash;
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      throw error;
+    }
+  },
+  fetchRemote: async (repoPath) => {
+    try {
+      set({ loading: true, error: undefined });
+      await ipc.fetchGit(repoPath);
+      await get().refresh(repoPath);
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      throw error;
+    }
+  },
+  pullRemote: async (repoPath) => {
+    try {
+      set({ loading: true, error: undefined });
+      await ipc.pullGit(repoPath);
+      await get().refresh(repoPath);
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      throw error;
+    }
+  },
+  pushRemote: async (repoPath) => {
+    try {
+      set({ loading: true, error: undefined });
+      await ipc.pushGit(repoPath);
+      await get().refresh(repoPath);
     } catch (error) {
       set({ loading: false, error: String(error) });
       throw error;

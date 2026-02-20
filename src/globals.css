@@ -548,6 +548,14 @@ button, input, textarea, select {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-1);
 }
+.git-toolbar-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.git-toolbar-btn:disabled:hover {
+  background: transparent;
+  color: var(--text-3);
+}
 
 /* Repo bar (multi-repo switcher) */
 .git-repo-bar {
@@ -1040,6 +1048,22 @@ button, input, textarea, select {
 .git-action-menu-item:hover {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-1);
+}
+
+.git-action-menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.git-action-menu-item:disabled:hover {
+  background: transparent;
+  color: var(--text-2);
+}
+
+.git-sync-counter {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--text-3);
 }
 
 .git-action-menu-item-danger {
