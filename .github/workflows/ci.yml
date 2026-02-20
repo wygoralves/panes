@@ -27,7 +27,7 @@ jobs:
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile=false
+        run: pnpm install --frozen-lockfile
       - name: Typecheck
         run: pnpm typecheck
       - name: Unit tests
@@ -99,7 +99,17 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile=false
+        run: pnpm install --frozen-lockfile
+
+      - name: Ensure clean working tree before release-it
+        if: steps.release_check.outputs.should_release == 'true'
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Working tree is dirty before release-it:"
+            git status --porcelain
+            git --no-pager diff --stat
+            exit 1
+          fi
 
       - name: Evaluate release necessity
         id: release_check
@@ -178,7 +188,7 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile=false
+        run: pnpm install --frozen-lockfile
 
       - name: Build Tauri bundles
         run: pnpm tauri:build
