@@ -15,6 +15,9 @@ import type {
   Repo,
   SearchResult,
   StreamEvent,
+  TerminalExitEvent,
+  TerminalOutputEvent,
+  TerminalSession,
   Thread,
   TrustLevel,
   WorkspaceGitSelectionStatus,
@@ -128,7 +131,19 @@ export const ipc = {
     invoke<void>("apply_git_stash", { repoPath, stashIndex }),
   popGitStash: (repoPath: string, stashIndex: number) =>
     invoke<void>("pop_git_stash", { repoPath, stashIndex }),
-  watchGitRepo: (repoPath: string) => invoke<void>("watch_git_repo", { repoPath })
+  watchGitRepo: (repoPath: string) => invoke<void>("watch_git_repo", { repoPath }),
+  terminalCreateSession: (workspaceId: string, cols: number, rows: number) =>
+    invoke<TerminalSession>("terminal_create_session", { workspaceId, cols, rows }),
+  terminalWrite: (workspaceId: string, sessionId: string, data: string) =>
+    invoke<void>("terminal_write", { workspaceId, sessionId, data }),
+  terminalResize: (workspaceId: string, sessionId: string, cols: number, rows: number) =>
+    invoke<void>("terminal_resize", { workspaceId, sessionId, cols, rows }),
+  terminalCloseSession: (workspaceId: string, sessionId: string) =>
+    invoke<void>("terminal_close_session", { workspaceId, sessionId }),
+  terminalCloseWorkspaceSessions: (workspaceId: string) =>
+    invoke<void>("terminal_close_workspace_sessions", { workspaceId }),
+  terminalListSessions: (workspaceId: string) =>
+    invoke<TerminalSession[]>("terminal_list_sessions", { workspaceId })
 };
 
 export async function listenThreadEvents(
@@ -157,4 +172,24 @@ export async function listenThreadUpdated(
   onEvent: (event: ThreadUpdatedEvent) => void
 ): Promise<UnlistenFn> {
   return listen<ThreadUpdatedEvent>("thread-updated", ({ payload }) => onEvent(payload));
+}
+
+export async function listenTerminalOutput(
+  workspaceId: string,
+  onEvent: (event: TerminalOutputEvent) => void
+): Promise<UnlistenFn> {
+  return listen<TerminalOutputEvent>(
+    `terminal-output-${workspaceId}`,
+    ({ payload }) => onEvent(payload)
+  );
+}
+
+export async function listenTerminalExit(
+  workspaceId: string,
+  onEvent: (event: TerminalExitEvent) => void
+): Promise<UnlistenFn> {
+  return listen<TerminalExitEvent>(
+    `terminal-exit-${workspaceId}`,
+    ({ payload }) => onEvent(payload)
+  );
 }

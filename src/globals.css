@@ -148,6 +148,26 @@ button, input, textarea, select {
   box-shadow: var(--accent-glow);
 }
 
+.resize-handle-vertical {
+  height: 1px;
+  background: var(--border);
+  transition: background var(--duration-normal) var(--ease-out),
+              height var(--duration-normal) var(--ease-out);
+  cursor: row-resize;
+  position: relative;
+}
+.resize-handle-vertical::after {
+  content: "";
+  position: absolute;
+  inset: -3px 0;
+}
+.resize-handle-vertical:hover,
+.resize-handle-vertical[data-resize-handle-active] {
+  height: 2px;
+  background: var(--accent);
+  box-shadow: var(--accent-glow);
+}
+
 /* ── Buttons ── */
 .btn {
   display: inline-flex;
@@ -1119,4 +1139,158 @@ button, input, textarea, select {
 .git-action-menu-item-danger:hover {
   color: var(--danger);
   background: rgba(248, 113, 113, 0.1);
+}
+
+/* Terminal panel */
+.terminal-split-panel {
+  height: 100%;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  background: #050505;
+}
+
+.terminal-panel-root {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #050505;
+}
+
+.terminal-tabs-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+}
+
+.terminal-tabs-list {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  flex: 1;
+}
+
+.terminal-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  white-space: nowrap;
+  min-width: 0;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.terminal-tab:hover {
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.terminal-tab-active {
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--border-active);
+}
+
+.terminal-tab-label {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  color: var(--text-3);
+}
+
+.terminal-tab-close:hover {
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.terminal-add-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.terminal-add-btn:hover {
+  color: var(--text-1);
+  border-color: var(--border-active);
+}
+
+.terminal-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-viewport-stack {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.terminal-viewport {
+  position: absolute;
+  inset: 0;
+}
+
+.terminal-viewport .xterm {
+  height: 100%;
+}
+
+.terminal-viewport .xterm-viewport {
+  overflow-y: auto !important;
+}
+
+.terminal-empty-state {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--text-3);
+}
+
+.terminal-error-banner {
+  margin: 0 10px 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  background: rgba(248, 113, 113, 0.08);
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.terminal-meta-bar {
+  padding: 4px 10px;
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: "JetBrains Mono", monospace;
 }

@@ -8,17 +8,21 @@ import {
   Shield,
   Monitor,
   Mic,
+  SquareTerminal,
 } from "lucide-react";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useChatStore } from "../../stores/chatStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useThreadStore } from "../../stores/threadStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore } from "../../stores/gitStore";
+import { useTerminalStore } from "../../stores/terminalStore";
 import { ipc } from "../../lib/ipc";
 import { MessageBlocks } from "./MessageBlocks";
 import { isRequestUserInputApproval } from "./toolInputApproval";
 import { Dropdown } from "../shared/Dropdown";
+import { TerminalPanel } from "../terminal/TerminalPanel";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import type { ApprovalBlock, ContentBlock, Message, TrustLevel } from "../../types";
 
@@ -246,6 +250,12 @@ export function ChatPanel() {
     renameThread,
   } = useThreadStore();
   const gitStatus = useGitStore((s) => s.status);
+  const terminalWorkspaceState = useTerminalStore((s) =>
+    activeWorkspaceId ? s.workspaces[activeWorkspaceId] : undefined,
+  );
+  const openTerminal = useTerminalStore((s) => s.openTerminal);
+  const closeTerminal = useTerminalStore((s) => s.closeTerminal);
+  const setTerminalPanelSize = useTerminalStore((s) => s.setPanelSize);
   const viewportRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -1088,6 +1098,26 @@ export function ChatPanel() {
   // Compute total diff stats for header display
   const gitFiles = gitStatus?.files ?? [];
   const totalAdded = gitFiles.length;
+  const terminalOpen = activeWorkspaceId
+    ? terminalWorkspaceState?.isOpen ?? false
+    : false;
+  const terminalPanelSize = activeWorkspaceId
+    ? terminalWorkspaceState?.panelSize ?? 32
+    : 32;
+  const terminalLoading = activeWorkspaceId
+    ? terminalWorkspaceState?.loading ?? false
+    : false;
+
+  const toggleTerminalPanel = useCallback(() => {
+    if (!activeWorkspaceId) {
+      return;
+    }
+    if (terminalOpen) {
+      void closeTerminal(activeWorkspaceId);
+      return;
+    }
+    void openTerminal(activeWorkspaceId);
+  }, [activeWorkspaceId, closeTerminal, openTerminal, terminalOpen]);
 
   return (
     <div
@@ -1188,6 +1218,32 @@ export function ChatPanel() {
 
         {/* Right-side action buttons */}
         <div className="no-drag" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <button
+            type="button"
+            onClick={toggleTerminalPanel}
+            disabled={!activeWorkspaceId}
+            style={{
+              padding: "4px 8px",
+              borderRadius: "var(--radius-sm)",
+              border: terminalOpen
+                ? "1px solid var(--border-accent)"
+                : "1px solid var(--border)",
+              background: terminalOpen ? "var(--accent-dim)" : "var(--bg-2)",
+              color: terminalOpen ? "var(--accent)" : "var(--text-2)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 11.5,
+              cursor: activeWorkspaceId ? "pointer" : "default",
+              opacity: activeWorkspaceId ? 1 : 0.55,
+              transition: "all var(--duration-fast) var(--ease-out)",
+            }}
+            title="Toggle terminal"
+          >
+            <SquareTerminal size={12} />
+            <span>{terminalLoading ? "Starting..." : "Terminal"}</span>
+          </button>
+
           {streaming && (
             <button
               type="button"
@@ -1277,16 +1333,19 @@ export function ChatPanel() {
         </div>
       </div>
 
-      {/* ── Messages ── */}
-      <div
-        ref={viewportRef}
-        style={{
-          position: "relative",
-          flex: 1,
-          overflow: "auto",
-          padding: "20px 24px",
-        }}
-      >
+      <PanelGroup direction="vertical" style={{ flex: 1 }}>
+        <Panel defaultSize={Math.max(30, 100 - terminalPanelSize)} minSize={28}>
+          <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+            {/* ── Messages ── */}
+            <div
+              ref={viewportRef}
+              style={{
+                position: "relative",
+                flex: 1,
+                overflow: "auto",
+                padding: "20px 24px",
+              }}
+            >
         {messages.length === 0 ? (
           <div
             className="animate-fade-in"
@@ -1389,15 +1448,15 @@ export function ChatPanel() {
             Jump to latest
           </button>
         )}
-      </div>
+            </div>
 
-      {/* ── Input Area ── */}
-      <div
-        style={{
-          padding: "10px 16px 12px",
-          borderTop: "1px solid var(--border)",
-        }}
-      >
+            {/* ── Input Area ── */}
+            <div
+              style={{
+                padding: "10px 16px 12px",
+                borderTop: "1px solid var(--border)",
+              }}
+            >
         <form
           onSubmit={onSubmit}
           style={{
@@ -1872,22 +1931,40 @@ export function ChatPanel() {
           </div>
         </form>
 
-        {error && (
-          <div
-            style={{
-              marginTop: 8,
-              padding: "8px 12px",
-              borderRadius: "var(--radius-sm)",
-              background: "rgba(248, 113, 113, 0.06)",
-              border: "1px solid rgba(248, 113, 113, 0.15)",
-              color: "var(--danger)",
-              fontSize: 12,
-            }}
-          >
-            {error}
+              {error && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    padding: "8px 12px",
+                    borderRadius: "var(--radius-sm)",
+                    background: "rgba(248, 113, 113, 0.06)",
+                    border: "1px solid rgba(248, 113, 113, 0.15)",
+                    color: "var(--danger)",
+                    fontSize: 12,
+                  }}
+                >
+                  {error}
+                </div>
+              )}
+            </div>
           </div>
+        </Panel>
+
+        {terminalOpen && activeWorkspaceId && (
+          <>
+            <PanelResizeHandle className="resize-handle-vertical" />
+            <Panel
+              defaultSize={terminalPanelSize}
+              minSize={15}
+              onResize={(size) => setTerminalPanelSize(activeWorkspaceId, size)}
+            >
+              <div className="terminal-split-panel">
+                <TerminalPanel workspaceId={activeWorkspaceId} />
+              </div>
+            </Panel>
+          </>
         )}
-      </div>
+      </PanelGroup>
     </div>
   );
 }

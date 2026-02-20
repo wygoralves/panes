@@ -310,3 +310,13 @@ pub struct FileTreePageDto {
     pub has_more: bool,
     pub scan_truncated: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSessionDto {
+    pub id: String,
+    pub workspace_id: String,
+    pub shell: String,
+    pub cwd: String,
+    pub created_at: String,
+}

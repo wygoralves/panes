@@ -5,6 +5,7 @@ mod engines;
 mod git;
 mod models;
 mod state;
+mod terminal;
 
 use std::sync::Arc;
 
@@ -13,6 +14,7 @@ use db::Database;
 use engines::EngineManager;
 use git::watcher::GitWatcherManager;
 use state::{AppState, TurnManager};
+use terminal::TerminalManager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -43,6 +45,7 @@ pub fn run() {
         config: Arc::new(app_config),
         engines: Arc::new(EngineManager::new()),
         git_watchers: Arc::new(GitWatcherManager::default()),
+        terminals: Arc::new(TerminalManager::default()),
         turns: Arc::new(TurnManager::default()),
     };
 
@@ -100,6 +103,12 @@ pub fn run() {
             commands::threads::archive_thread,
             commands::threads::restore_thread,
             commands::threads::delete_thread,
+            commands::terminal::terminal_create_session,
+            commands::terminal::terminal_write,
+            commands::terminal::terminal_resize,
+            commands::terminal::terminal_close_session,
+            commands::terminal::terminal_close_workspace_sessions,
+            commands::terminal::terminal_list_sessions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

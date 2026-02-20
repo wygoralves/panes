@@ -1,0 +1,95 @@
+use tauri::State;
+
+use crate::{db, models::TerminalSessionDto, state::AppState};
+
+#[tauri::command]
+pub async fn terminal_create_session(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    workspace_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<TerminalSessionDto, String> {
+    let cwd = workspace_root_path(&state, &workspace_id).map_err(err_to_string)?;
+    state
+        .terminals
+        .create_session(app, workspace_id, cwd, cols.max(1), rows.max(1))
+        .await
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn terminal_write(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    session_id: String,
+    data: String,
+) -> Result<(), String> {
+    state
+        .terminals
+        .write(&workspace_id, &session_id, data)
+        .await
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn terminal_resize(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    session_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    state
+        .terminals
+        .resize(&workspace_id, &session_id, cols.max(1), rows.max(1))
+        .await
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn terminal_close_session(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    workspace_id: String,
+    session_id: String,
+) -> Result<(), String> {
+    state
+        .terminals
+        .close_session(app, &workspace_id, &session_id)
+        .await
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn terminal_close_workspace_sessions(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<(), String> {
+    state
+        .terminals
+        .close_workspace(app, &workspace_id)
+        .await
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn terminal_list_sessions(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<Vec<TerminalSessionDto>, String> {
+    Ok(state.terminals.list_sessions(&workspace_id).await)
+}
+
+fn workspace_root_path(state: &AppState, workspace_id: &str) -> anyhow::Result<String> {
+    db::workspaces::list_workspaces(&state.db)?
+        .into_iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .map(|workspace| workspace.root_path)
+        .ok_or_else(|| anyhow::anyhow!("workspace not found: {workspace_id}"))
+}
+
+fn err_to_string(error: impl std::fmt::Display) -> String {
+    error.to_string()
+}

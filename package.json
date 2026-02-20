@@ -26,6 +26,8 @@
     "react-resizable-panels": "^2.1.4",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.0",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {

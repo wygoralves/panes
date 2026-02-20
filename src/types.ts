@@ -278,6 +278,25 @@ export interface FileTreePage {
   scanTruncated: boolean;
 }
 
+export interface TerminalSession {
+  id: string;
+  workspaceId: string;
+  shell: string;
+  cwd: string;
+  createdAt: string;
+}
+
+export interface TerminalOutputEvent {
+  sessionId: string;
+  data: string;
+}
+
+export interface TerminalExitEvent {
+  sessionId: string;
+  code: number | null;
+  signal: number | null;
+}
+
 export type TurnCompletionStatus = "completed" | "interrupted" | "failed";
 
 export interface StreamTokenUsage {
