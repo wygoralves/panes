@@ -1561,7 +1561,7 @@ export function ChatPanel() {
                       color: "var(--success)",
                       cursor: "pointer",
                     }}
-                    title="Persist trust for this repo to reduce approval errors"
+                    title="Set trusted policy for this repo (ask-on-request with network enabled)"
                   >
                     Trust repo
                   </button>
@@ -1580,7 +1580,7 @@ export function ChatPanel() {
                       color: "var(--success)",
                       cursor: "pointer",
                     }}
-                    title="Persist trust for all repositories in this workspace"
+                    title="Set trusted policy for all repositories (ask-on-request with network enabled)"
                   >
                     Trust workspace
                   </button>
@@ -1837,9 +1837,9 @@ export function ChatPanel() {
                   onChange={(v) => void onRepoTrustLevelChange(v as TrustLevel)}
                   title="Execution policy"
                   options={[
-                    { value: "trusted", label: "trusted" },
-                    { value: "standard", label: "ask-on-request" },
-                    { value: "restricted", label: "restricted" },
+                    { value: "trusted", label: "trusted (network on)" },
+                    { value: "standard", label: "ask-on-request (network off)" },
+                    { value: "restricted", label: "restricted (trusted cmds only)" },
                   ]}
                   triggerStyle={
                     activeRepo.trustLevel === "trusted"
@@ -1864,9 +1864,9 @@ export function ChatPanel() {
                   onChange={(v) => void onWorkspaceTrustLevelChange(v as TrustLevel)}
                   title="Workspace execution policy"
                   options={[
-                    { value: "trusted", label: "trusted" },
-                    { value: "standard", label: "ask-on-request" },
-                    { value: "restricted", label: "restricted" },
+                    { value: "trusted", label: "trusted (network on)" },
+                    { value: "standard", label: "ask-on-request (network off)" },
+                    { value: "restricted", label: "restricted (trusted cmds only)" },
                   ]}
                   triggerStyle={
                     workspaceTrustLevel === "trusted"
@@ -1957,19 +1957,19 @@ export function ChatPanel() {
             <span
               className="chat-status-item"
               style={{
-                color: activeRepo?.trustLevel === "trusted"
+                color: (activeRepo?.trustLevel ?? workspaceTrustLevel) === "trusted"
                   ? "var(--success)"
-                  : activeRepo?.trustLevel === "restricted"
+                  : (activeRepo?.trustLevel ?? workspaceTrustLevel) === "restricted"
                     ? "var(--danger)"
                     : undefined,
               }}
             >
               <Shield size={11} />
-              {activeRepo?.trustLevel === "trusted"
-                ? "Trusted"
-                : activeRepo?.trustLevel === "restricted"
-                  ? "Restricted"
-                  : "Default permissions"}
+              {(activeRepo?.trustLevel ?? workspaceTrustLevel) === "trusted"
+                ? "Trusted (network on)"
+                : (activeRepo?.trustLevel ?? workspaceTrustLevel) === "restricted"
+                  ? "Restricted (trusted cmds only)"
+                  : "Ask-on-request (network off)"}
             </span>
 
             <div style={{ flex: 1 }} />

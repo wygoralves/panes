@@ -257,7 +257,7 @@ pub async fn send_message(
 
     let sandbox = SandboxPolicy {
         writable_roots,
-        allow_network: false,
+        allow_network: allow_network_for_trust_level(&trust_level),
         approval_policy: Some(approval_policy_for_trust_level(&trust_level).to_string()),
         reasoning_effort,
     };
@@ -1478,10 +1478,14 @@ fn aggregate_workspace_trust_level(repos: &[RepoDto]) -> TrustLevelDto {
 
 fn approval_policy_for_trust_level(trust_level: &TrustLevelDto) -> &'static str {
     match trust_level {
-        TrustLevelDto::Trusted => "on-failure",
+        TrustLevelDto::Trusted => "on-request",
         TrustLevelDto::Standard => "on-request",
         TrustLevelDto::Restricted => "untrusted",
     }
+}
+
+fn allow_network_for_trust_level(trust_level: &TrustLevelDto) -> bool {
+    matches!(trust_level, TrustLevelDto::Trusted)
 }
 
 fn thread_reasoning_effort(metadata: Option<&Value>) -> Option<String> {
