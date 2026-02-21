@@ -18,9 +18,11 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/wygoralves/panes/releases/latest"><img src="https://img.shields.io/github/v/release/wygoralves/panes?label=download&color=blue" alt="Latest Release" /></a>
   <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" />
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg" alt="Platform" />
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg" alt="Platform" />
   <img src="https://img.shields.io/badge/tauri-v2-blue?logo=tauri" alt="Tauri v2" />
+  <img src="https://img.shields.io/badge/auto--update-OTA-green.svg" alt="OTA Auto-Update" />
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome" />
 </p>
 
@@ -178,7 +180,9 @@ Panes is in **pre-MVP** stage. Core architecture and runtime are fully operation
 
 **Working:** Codex engine integration, streaming chat with content blocks, full git panel (status/diff/stage/commit/branches/stash/fetch/pull/push), multi-repo management, integrated terminal, FTS search, approval workflows, crash recovery, performance telemetry.
 
-**In progress:** Claude sidecar engine, direct API engine, automated tests, CI/CD, release builds.
+**Working:** OTA auto-updates via Tauri updater + GitHub Pages, CI/CD with automated releases.
+
+**In progress:** Claude sidecar engine, direct API engine, automated tests.
 
 ## Contributing
 
