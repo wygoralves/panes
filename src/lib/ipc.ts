@@ -103,6 +103,8 @@ export const ipc = {
   stageFiles: (repoPath: string, files: string[]) => invoke<void>("stage_files", { repoPath, files }),
   unstageFiles: (repoPath: string, files: string[]) =>
     invoke<void>("unstage_files", { repoPath, files }),
+  discardFiles: (repoPath: string, files: string[]) =>
+    invoke<void>("discard_files", { repoPath, files }),
   commit: (repoPath: string, message: string) => invoke<string>("commit", { repoPath, message }),
   fetchGit: (repoPath: string) => invoke<void>("fetch_git", { repoPath }),
   pullGit: (repoPath: string) => invoke<void>("pull_git", { repoPath }),

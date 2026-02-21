@@ -224,6 +224,7 @@ interface GitState {
   selectFile: (repoPath: string, filePath: string, staged?: boolean) => Promise<void>;
   stage: (repoPath: string, filePath: string) => Promise<void>;
   unstage: (repoPath: string, filePath: string) => Promise<void>;
+  discardFiles: (repoPath: string, files: string[]) => Promise<void>;
   commit: (repoPath: string, message: string) => Promise<string>;
   fetchRemote: (repoPath: string) => Promise<void>;
   pullRemote: (repoPath: string) => Promise<void>;
@@ -398,6 +399,17 @@ export const useGitStore = create<GitState>((set, get) => ({
     try {
       set({ loading: true, error: undefined });
       await ipc.unstageFiles(repoPath, [filePath]);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      throw error;
+    }
+  },
+  discardFiles: async (repoPath, files) => {
+    try {
+      set({ loading: true, error: undefined });
+      await ipc.discardFiles(repoPath, files);
       get().invalidateRepoCache(repoPath);
       await get().refresh(repoPath, { force: true });
     } catch (error) {

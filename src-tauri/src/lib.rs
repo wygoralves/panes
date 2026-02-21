@@ -78,6 +78,7 @@ pub fn run() {
             commands::git::get_file_diff,
             commands::git::stage_files,
             commands::git::unstage_files,
+            commands::git::discard_files,
             commands::git::commit,
             commands::git::fetch_git,
             commands::git::pull_git,

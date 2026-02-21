@@ -6,8 +6,10 @@ import {
   Minus,
   Check,
   RotateCcw,
+  Undo2,
   Loader2,
 } from "lucide-react";
+import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { useGitStore } from "../../stores/gitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { ipc } from "../../lib/ipc";
@@ -187,6 +189,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     selectFile,
     stage,
     unstage,
+    discardFiles,
     commit,
     refresh,
     drafts,
@@ -214,6 +217,11 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
   const [collapsedDirs, setCollapsedDirs] = useState<Record<string, boolean>>(
     {},
   );
+  const [discardPrompt, setDiscardPrompt] = useState<{
+    title: string;
+    message: string;
+    files: string[];
+  } | null>(null);
 
   const unstagedFiles = useMemo(
     () => status?.files.filter((f) => Boolean(f.worktreeStatus)) ?? [],
@@ -343,6 +351,38 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     }
   }
 
+  function onDiscardFile(filePath: string) {
+    if (loadingKey !== null) return;
+    const fileName = filePath.split("/").pop() ?? filePath;
+    setDiscardPrompt({
+      title: "Discard changes",
+      message: `Discard all changes to "${fileName}"? This cannot be undone.`,
+      files: [filePath],
+    });
+  }
+
+  function onDiscardAll() {
+    if (unstagedFiles.length === 0 || loadingKey !== null) return;
+    setDiscardPrompt({
+      title: "Discard all changes",
+      message: `Discard all unstaged changes? ${unstagedFiles.length} file${unstagedFiles.length === 1 ? "" : "s"} will be reverted. This cannot be undone.`,
+      files: unstagedFiles.map((f) => f.path),
+    });
+  }
+
+  async function executeDiscard(files: string[]) {
+    setDiscardPrompt(null);
+    setLoadingKey("discard");
+    try {
+      onError(undefined);
+      await discardFiles(repo.path, files);
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setLoadingKey(null);
+    }
+  }
+
   function toggleSection(section: ChangeSection) {
     setSectionCollapsed((prev) => ({ ...prev, [section]: !prev[section] }));
   }
@@ -431,6 +471,23 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
         <span className="git-file-name" title={row.path}>
           {row.name}
         </span>
+        {!staged && (
+          <button
+            type="button"
+            className="git-stage-btn git-discard-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              void onDiscardFile(row.file.path);
+            }}
+            disabled={loadingKey !== null}
+            title="Discard changes"
+            style={{
+              opacity: loadingKey !== null ? 0.35 : undefined,
+            }}
+          >
+            <Undo2 size={13} />
+          </button>
+        )}
         <span className={`git-status ${getStatusClass(fileStatus)}`}>
           {getStatusLabel(fileStatus)}
         </span>
@@ -509,24 +566,42 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
                 {loadingKey === "unstage-all" ? "Unstaging..." : "Unstage all"}
               </button>
             ) : (
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => void onStageAll()}
-                disabled={files.length === 0 || loadingKey !== null}
-                style={{
-                  padding: "3px 8px",
-                  fontSize: 11,
-                  opacity: files.length === 0 || loadingKey !== null ? 0.4 : 1,
-                }}
-              >
-                {loadingKey === "stage-all" ? (
-                  <Loader2 size={11} className="git-spin" />
-                ) : (
-                  <Plus size={11} />
-                )}
-                {loadingKey === "stage-all" ? "Staging..." : "Stage all"}
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="git-toolbar-btn git-discard-btn"
+                  onClick={() => void onDiscardAll()}
+                  disabled={files.length === 0 || loadingKey !== null}
+                  title="Discard all changes"
+                  style={{
+                    opacity: files.length === 0 || loadingKey !== null ? 0.35 : undefined,
+                  }}
+                >
+                  {loadingKey === "discard" ? (
+                    <Loader2 size={13} className="git-spin" />
+                  ) : (
+                    <Undo2 size={13} />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => void onStageAll()}
+                  disabled={files.length === 0 || loadingKey !== null}
+                  style={{
+                    padding: "3px 8px",
+                    fontSize: 11,
+                    opacity: files.length === 0 || loadingKey !== null ? 0.4 : 1,
+                  }}
+                >
+                  {loadingKey === "stage-all" ? (
+                    <Loader2 size={11} className="git-spin" />
+                  ) : (
+                    <Plus size={11} />
+                  )}
+                  {loadingKey === "stage-all" ? "Staging..." : "Stage all"}
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -582,6 +657,17 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
       {selectedFile && diff && showDiff && (
         <DiffPanel diff={diff} />
       )}
+
+      <ConfirmDialog
+        open={discardPrompt !== null}
+        title={discardPrompt?.title ?? ""}
+        message={discardPrompt?.message ?? ""}
+        confirmLabel="Discard"
+        onConfirm={() => {
+          if (discardPrompt) void executeDiscard(discardPrompt.files);
+        }}
+        onCancel={() => setDiscardPrompt(null)}
+      />
 
       {hasStagedFiles && (
         <div className="git-commit-area">

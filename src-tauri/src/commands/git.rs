@@ -62,6 +62,19 @@ pub async fn unstage_files(
 }
 
 #[tauri::command]
+pub async fn discard_files(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    files: Vec<String>,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        repo::discard_files(&repo_path, &files).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub async fn commit(
     _state: State<'_, AppState>,
     repo_path: String,

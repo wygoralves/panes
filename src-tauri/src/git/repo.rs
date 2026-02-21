@@ -113,6 +113,40 @@ pub fn unstage_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn discard_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
+    if files.is_empty() {
+        return Ok(());
+    }
+
+    let repo = Repository::open(repo_path).context("failed to open repository")?;
+    let mut tracked = Vec::new();
+    let mut untracked = Vec::new();
+
+    for f in files {
+        let path = std::path::Path::new(f);
+        let status = repo.status_file(path).unwrap_or(Status::empty());
+        if status.contains(Status::WT_NEW) {
+            untracked.push(f.as_str());
+        } else {
+            tracked.push(f.as_str());
+        }
+    }
+
+    if !tracked.is_empty() {
+        let mut args = vec!["checkout", "--"];
+        args.extend(&tracked);
+        run_git(repo_path, &args)?;
+    }
+
+    if !untracked.is_empty() {
+        let mut args = vec!["clean", "-fd", "--"];
+        args.extend(&untracked);
+        run_git(repo_path, &args)?;
+    }
+
+    Ok(())
+}
+
 pub fn commit(repo_path: &str, message: &str) -> anyhow::Result<String> {
     run_git(repo_path, &["commit", "-m", message])?;
     let hash = run_git(repo_path, &["rev-parse", "HEAD"])?;
