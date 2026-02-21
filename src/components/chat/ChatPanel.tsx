@@ -1675,7 +1675,7 @@ export function ChatPanel() {
                             {proposedExecpolicyAmendment.length > 0 && (
                               <button
                                 type="button"
-                                className="btn-ghost"
+                                className="btn-outline"
                                 onClick={() =>
                                   void respondApproval(approval.approvalId, {
                                     acceptWithExecpolicyAmendment: {
@@ -1687,9 +1687,6 @@ export function ChatPanel() {
                                   padding: "5px 10px",
                                   fontSize: 12,
                                   cursor: "pointer",
-                                  borderRadius: "var(--radius-sm)",
-                                  border: "1px solid rgba(255,255,255,0.08)",
-                                  background: "rgba(0,0,0,0.1)",
                                 }}
                               >
                                 Allow + policy
@@ -1697,7 +1694,7 @@ export function ChatPanel() {
                             )}
                             <button
                               type="button"
-                              className="btn-ghost"
+                              className="btn-outline"
                               onClick={() =>
                                 void respondApproval(approval.approvalId, {
                                   decision: "accept_for_session",
@@ -1707,16 +1704,13 @@ export function ChatPanel() {
                                 padding: "5px 10px",
                                 fontSize: 12,
                                 cursor: "pointer",
-                                borderRadius: "var(--radius-sm)",
-                                border: "1px solid rgba(255,255,255,0.08)",
-                                background: "rgba(0,0,0,0.1)",
                               }}
                             >
                               Allow session
                             </button>
                             <button
                               type="button"
-                              className="btn-ghost"
+                              className="btn-danger-ghost"
                               onClick={() =>
                                 void respondApproval(approval.approvalId, {
                                   decision: "decline",
@@ -1726,10 +1720,7 @@ export function ChatPanel() {
                                 padding: "5px 10px",
                                 fontSize: 12,
                                 cursor: "pointer",
-                                color: "var(--danger)",
                                 borderRadius: "var(--radius-sm)",
-                                border: "1px solid rgba(248, 113, 113, 0.22)",
-                                background: "rgba(248, 113, 113, 0.06)",
                               }}
                             >
                               Deny
@@ -1745,8 +1736,8 @@ export function ChatPanel() {
                                 fontSize: 12,
                                 cursor: "pointer",
                                 borderRadius: "var(--radius-sm)",
-                                border: "1px solid rgba(255,255,255,0.08)",
-                                background: "rgba(0,0,0,0.1)",
+                                border: "1px solid var(--border)",
+                                color: "var(--text-3)",
                               }}
                             >
                               Cancel

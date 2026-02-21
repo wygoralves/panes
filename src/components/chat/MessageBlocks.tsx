@@ -695,6 +695,31 @@ function ActionBlockView({ block }: { block: ActionBlock }) {
 
 /* ── Approval Card ── */
 
+const APPROVAL_INTERNAL_KEYS = new Set([
+  "_serverMethod",
+  "threadId",
+  "turnId",
+  "itemId",
+  "proposedExecpolicyAmendment",
+  "questions",
+  "command",
+  "reason",
+  "commandActions",
+]);
+
+function extractApprovalDetails(details: Record<string, unknown>) {
+  const command = typeof details.command === "string" ? details.command : undefined;
+  const reason = typeof details.reason === "string" ? details.reason : undefined;
+  const commandActions = Array.isArray(details.commandActions) ? details.commandActions : [];
+  const commandActionCount = commandActions.length;
+  const remainingDetails: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(details)) {
+    if (!APPROVAL_INTERNAL_KEYS.has(k)) remainingDetails[k] = v;
+  }
+  const hasRemainingDetails = Object.keys(remainingDetails).length > 0;
+  return { command, reason, commandActionCount, remainingDetails, hasRemainingDetails };
+}
+
 function ApprovalCard({
   block,
   onApproval,
@@ -714,11 +739,15 @@ function ApprovalCard({
       )
     : [];
 
+  const { command, reason, commandActionCount, remainingDetails, hasRemainingDetails } =
+    extractApprovalDetails(details);
+
   const [showAdvancedJson, setShowAdvancedJson] = useState(false);
   const [advancedJsonPayload, setAdvancedJsonPayload] = useState(() =>
     JSON.stringify({ decision: "accept" }, null, 2),
   );
   const [advancedJsonError, setAdvancedJsonError] = useState<string | null>(null);
+  const [showRemainingDetails, setShowRemainingDetails] = useState(false);
 
   let decisionLabel = "Answered";
   if (block.decision === "decline") {
@@ -765,12 +794,14 @@ function ApprovalCard({
   return (
     <div
       style={{
-        borderRadius: "var(--radius-sm)",
+        borderRadius: "var(--radius-md)",
         border: "1px solid rgba(251, 191, 36, 0.15)",
+        borderLeft: "3px solid rgba(251, 191, 36, 0.5)",
         background: "rgba(251, 191, 36, 0.04)",
         overflow: "hidden",
       }}
     >
+      {/* Zone 1 — Header */}
       <div
         style={{
           display: "flex",
@@ -783,83 +814,22 @@ function ApprovalCard({
           size={16}
           style={{ color: "var(--warning)", flexShrink: 0 }}
         />
-        <div style={{ flex: 1 }}>
-          <p style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>
-            {block.summary}
-          </p>
-          {isToolInputRequest && toolInputQuestions.length > 0 && (
-            <p style={{ margin: "3px 0 0", fontSize: 12, color: "var(--text-2)" }}>
-              {toolInputQuestions.length} question
-              {toolInputQuestions.length > 1 ? "s" : ""} pending input.
-            </p>
-          )}
-          {!isToolInputRequest && details && Object.keys(details).length > 0 && (
-            <p style={{ margin: "3px 0 0", fontSize: 12, color: "var(--text-2)" }}>
-              {JSON.stringify(details)}
-            </p>
-          )}
-        </div>
-
-        {isPending && !showStructuredToolInput && (
-          <div style={{ display: "flex", gap: 6 }}>
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={() => onApproval(block.approvalId, { decision: "accept" })}
-              style={{ padding: "5px 12px", fontSize: 12, cursor: "pointer" }}
-            >
-              Apply
-            </button>
-            {proposedExecpolicyAmendment.length > 0 && (
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={() =>
-                  onApproval(block.approvalId, {
-                    acceptWithExecpolicyAmendment: {
-                      execpolicy_amendment: proposedExecpolicyAmendment,
-                    },
-                  })
-                }
-                style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
-              >
-                Allow + policy
-              </button>
-            )}
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() =>
-                onApproval(block.approvalId, { decision: "accept_for_session" })
-              }
-              style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
-            >
-              Always
-            </button>
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => onApproval(block.approvalId, { decision: "decline" })}
-              style={{
-                padding: "5px 10px",
-                fontSize: 12,
-                color: "var(--danger)",
-                cursor: "pointer",
-              }}
-            >
-              Deny
-            </button>
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => onApproval(block.approvalId, { decision: "cancel" })}
-              style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
-            >
-              Cancel
-            </button>
-          </div>
-        )}
-
+        <p style={{ margin: 0, fontSize: 13, fontWeight: 500, flex: 1 }}>
+          {block.summary}
+        </p>
+        <span
+          style={{
+            fontSize: 10,
+            fontFamily: '"JetBrains Mono", monospace',
+            padding: "2px 6px",
+            borderRadius: 4,
+            background: "rgba(255,255,255,0.05)",
+            color: "var(--text-3)",
+            flexShrink: 0,
+          }}
+        >
+          {block.actionType}
+        </span>
         {!isPending && block.decision && (
           <span
             style={{
@@ -869,12 +839,99 @@ function ApprovalCard({
               background: decisionBackground,
               color: decisionColor,
               fontWeight: 500,
+              flexShrink: 0,
             }}
           >
             {decisionLabel}
           </span>
         )}
       </div>
+
+      {/* Zone 2 — Details */}
+      {!isToolInputRequest && (command || reason || commandActionCount > 0 || hasRemainingDetails) && (
+        <div style={{ padding: "0 14px 10px" }}>
+          {command && (
+            <pre
+              style={{
+                margin: 0,
+                padding: "8px 10px",
+                borderRadius: "var(--radius-sm)",
+                background: "var(--code-bg)",
+                border: "1px solid var(--border)",
+                fontFamily: '"JetBrains Mono", monospace',
+                fontSize: 11.5,
+                lineHeight: 1.5,
+                color: "var(--text-2)",
+                maxHeight: 80,
+                overflowY: "auto",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-all",
+              }}
+            >
+              {command}
+            </pre>
+          )}
+          {!command && reason && (
+            <p style={{ margin: 0, fontSize: 12, color: "var(--text-2)" }}>
+              {reason}
+            </p>
+          )}
+          {commandActionCount > 0 && (
+            <p style={{ margin: command || reason ? "6px 0 0" : 0, fontSize: 11, color: "var(--text-3)" }}>
+              {commandActionCount} action{commandActionCount > 1 ? "s" : ""} in this request
+            </p>
+          )}
+          {hasRemainingDetails && (
+            <div style={{ marginTop: 6 }}>
+              <button
+                type="button"
+                onClick={() => setShowRemainingDetails((v) => !v)}
+                style={{
+                  fontSize: 11,
+                  color: "var(--text-3)",
+                  cursor: "pointer",
+                  padding: 0,
+                  background: "none",
+                  border: "none",
+                }}
+              >
+                {showRemainingDetails ? "Hide details" : "Show details"}
+              </button>
+              {showRemainingDetails && (
+                <pre
+                  style={{
+                    margin: "4px 0 0",
+                    padding: "8px 10px",
+                    borderRadius: "var(--radius-sm)",
+                    background: "var(--code-bg)",
+                    border: "1px solid var(--border)",
+                    fontFamily: '"JetBrains Mono", monospace',
+                    fontSize: 11,
+                    lineHeight: 1.5,
+                    color: "var(--text-3)",
+                    maxHeight: 160,
+                    overflowY: "auto",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-all",
+                  }}
+                >
+                  {JSON.stringify(remainingDetails, null, 2)}
+                </pre>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tool input questions sub-section */}
+      {isToolInputRequest && toolInputQuestions.length > 0 && (
+        <div style={{ padding: "0 14px 4px" }}>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--text-2)" }}>
+            {toolInputQuestions.length} question
+            {toolInputQuestions.length > 1 ? "s" : ""} pending input.
+          </p>
+        </div>
+      )}
 
       {showStructuredToolInput && (
         <div style={{ padding: "0 14px 12px" }}>
@@ -885,25 +942,106 @@ function ApprovalCard({
         </div>
       )}
 
-      {isPending && (
-        <div style={{ padding: "0 14px 12px", display: "grid", gap: 8 }}>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+      {/* Zone 3 — Action buttons */}
+      {isPending && !showStructuredToolInput && (
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            flexWrap: "wrap",
+            alignItems: "center",
+            padding: "0 14px 10px",
+          }}
+        >
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => onApproval(block.approvalId, { decision: "accept" })}
+            style={{ padding: "5px 12px", fontSize: 12, cursor: "pointer" }}
+          >
+            Allow
+          </button>
+          {proposedExecpolicyAmendment.length > 0 && (
             <button
               type="button"
-              className="btn-ghost"
-              onClick={() => {
-                setShowAdvancedJson((current) => !current);
-                setAdvancedJsonError(null);
-              }}
+              className="btn-outline"
+              onClick={() =>
+                onApproval(block.approvalId, {
+                  acceptWithExecpolicyAmendment: {
+                    execpolicy_amendment: proposedExecpolicyAmendment,
+                  },
+                })
+              }
               style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
             >
-              {showAdvancedJson ? "Hide custom JSON" : "Custom JSON payload"}
+              Allow + policy
             </button>
-          </div>
+          )}
+          <button
+            type="button"
+            className="btn-outline"
+            onClick={() =>
+              onApproval(block.approvalId, { decision: "accept_for_session" })
+            }
+            style={{ padding: "5px 10px", fontSize: 12, cursor: "pointer" }}
+          >
+            Allow session
+          </button>
+          <div style={{ flex: 1 }} />
+          <button
+            type="button"
+            className="btn-danger-ghost"
+            onClick={() => onApproval(block.approvalId, { decision: "decline" })}
+            style={{
+              padding: "5px 10px",
+              fontSize: 12,
+              cursor: "pointer",
+              borderRadius: "var(--radius-sm)",
+            }}
+          >
+            Deny
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => onApproval(block.approvalId, { decision: "cancel" })}
+            style={{
+              padding: "5px 10px",
+              fontSize: 12,
+              cursor: "pointer",
+              color: "var(--text-3)",
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Zone 4 — Advanced toggle */}
+      {isPending && (
+        <div style={{ padding: "0 14px 10px" }}>
+          <button
+            type="button"
+            onClick={() => {
+              setShowAdvancedJson((current) => !current);
+              setAdvancedJsonError(null);
+            }}
+            style={{
+              fontSize: 11,
+              color: "var(--text-3)",
+              cursor: "pointer",
+              padding: 0,
+              background: "none",
+              border: "none",
+            }}
+          >
+            {showAdvancedJson ? "Hide advanced" : "Advanced..."}
+          </button>
 
           {showAdvancedJson && (
             <div
               style={{
+                marginTop: 8,
                 borderRadius: "var(--radius-sm)",
                 border: "1px solid var(--border)",
                 background: "var(--code-bg)",

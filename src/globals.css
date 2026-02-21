@@ -210,6 +210,16 @@ button, input, textarea, select {
   background: var(--accent-dim);
 }
 
+.btn-danger-ghost {
+  color: var(--danger);
+  border: 1px solid rgba(248, 113, 113, 0.22);
+  background: rgba(248, 113, 113, 0.06);
+}
+.btn-danger-ghost:hover {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.4);
+}
+
 /* ── Surface / Card ── */
 .surface {
   background: var(--bg-3);
@@ -1932,6 +1942,7 @@ button, input, textarea, select {
   border-radius: var(--radius-md);
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 2px solid rgba(251, 191, 36, 0.35);
 }
 
 .chat-status-bar {
