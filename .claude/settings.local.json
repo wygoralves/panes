@@ -23,7 +23,8 @@
       "Bash(rsvg-convert:*)",
       "Bash(sips:*)",
       "Bash(git status:*)",
-      "Bash(magick:*)"
+      "Bash(magick:*)",
+      "Bash(npx tauri:*)"
     ]
   }
 }

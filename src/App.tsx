@@ -3,6 +3,8 @@ import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
 import { SearchModal } from "./components/chat/SearchModal";
 import { EngineHealthBanner } from "./components/onboarding/EngineHealthBanner";
 import { EngineSetupWizard } from "./components/onboarding/EngineSetupWizard";
+import { UpdateBanner } from "./components/onboarding/UpdateBanner";
+import { useUpdateStore } from "./stores/updateStore";
 import { listenThreadUpdated } from "./lib/ipc";
 import { useWorkspaceStore } from "./stores/workspaceStore";
 import { useEngineStore } from "./stores/engineStore";
@@ -20,6 +22,7 @@ export function App() {
   const setSearchOpen = useUiStore((s) => s.setSearchOpen);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   const toggleGitPanel = useUiStore((s) => s.toggleGitPanel);
+  const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
 
   useEffect(() => {
     void loadWorkspaces();
@@ -58,6 +61,13 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const timer = setTimeout(() => {
+      void checkForUpdate();
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [checkForUpdate]);
+
+  useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const ctrlOrCmd = event.metaKey || event.ctrlKey;
       if (!ctrlOrCmd) {
@@ -92,6 +102,7 @@ export function App() {
       <ThreeColumnLayout />
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, pointerEvents: "none", zIndex: 10 }}>
         <div style={{ pointerEvents: "auto" }}>
+          <UpdateBanner />
           <EngineHealthBanner />
         </div>
       </div>

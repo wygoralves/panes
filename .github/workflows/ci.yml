@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -223,3 +225,35 @@ jobs:
           fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+  update_manifest:
+    name: Publish Update Manifest
+    if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
+    needs: [release, release_bundles]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Generate latest.json
+        run: node scripts/generate-update-manifest.mjs "${{ needs.release.outputs.released_tag }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy to gh-pages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mv latest.json /tmp/latest.json
+          git checkout --orphan gh-pages-tmp
+          git rm -rf .
+          mv /tmp/latest.json latest.json
+          git add latest.json
+          git commit -m "Update manifest for ${{ needs.release.outputs.released_tag }}"
+          git push origin gh-pages-tmp:gh-pages --force

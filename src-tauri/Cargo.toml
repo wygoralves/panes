@@ -18,6 +18,8 @@ tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"

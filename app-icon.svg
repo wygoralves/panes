@@ -1,97 +1,20 @@
-<svg viewBox="0 0 1024 1024" width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" rx="230" fill="#09090B"/>
+  <rect x="8" y="8" width="1008" height="1008" rx="222" stroke="#27272A" stroke-width="16"/>
+
   <defs>
-    <!-- App Base Background (Lighter Steel/Graphite to make the black panels pop aggressively) -->
-    <radialGradient id="bgGradient" cx="50%" cy="0%" r="100%">
-      <stop offset="0%" stop-color="#3A4354" />
-      <stop offset="100%" stop-color="#161A22" />
-    </radialGradient>
-
-    <!-- Floating Panels Background (Pitch Black / Deep Void) -->
-    <linearGradient id="panelBg" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#05070A" />
-      <stop offset="100%" stop-color="#000000" />
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#73F8D6"/>
+      <stop offset="100%" stop-color="#12EFC3"/>
     </linearGradient>
-
-    <!-- Accent Green (Verde Água da UI) -->
-    <linearGradient id="accentGreen" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#00FFB2" />
-      <stop offset="100%" stop-color="#00D287" />
-    </linearGradient>
-
-    <!-- Thick Neon Border Gradient (Fades downwards gracefully) -->
-    <linearGradient id="panelBorder" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#00D287" stop-opacity="1.0" />
-      <stop offset="35%" stop-color="#00D287" stop-opacity="0.3" />
-      <stop offset="100%" stop-color="#00D287" stop-opacity="0.0" />
-    </linearGradient>
-
-    <!-- Intense Neon Glow Filter for Sparkle and Borders -->
-    <filter id="neonGlow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="16" result="blur1" />
-      <feGaussianBlur stdDeviation="32" result="blur2" />
-      <feMerge>
-        <feMergeNode in="blur2" />
-        <feMergeNode in="blur1" />
-        <feMergeNode in="SourceGraphic" />
-      </feMerge>
-    </filter>
-
-    <!-- Heavy Drop Shadow to elevate the panels off the steel background -->
-    <filter id="heavyShadow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="32" stdDeviation="32" flood-color="#000000" flood-opacity="0.95" />
-      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.8" />
-    </filter>
   </defs>
 
-  <!-- ================= BASE SQUIRCLE ================= -->
-  <rect x="0" y="0" width="1024" height="1024" rx="224" fill="url(#bgGradient)" />
-  <!-- Inner metallic bezel for macOS 3D feel -->
-  <rect x="4" y="4" width="1016" height="1016" rx="220" fill="none" stroke="#5D6A7D" stroke-width="6" opacity="0.5" />
+  <rect x="192" y="192" width="208" height="640" rx="40" fill="#FFFFFF"/>
 
-  <!-- ================= LEFT PANEL (Pure Monolith) ================= -->
-  <g transform="translate(48, 200)" filter="url(#heavyShadow)" opacity="0.9">
-    <rect x="0" y="0" width="300" height="624" rx="40" fill="url(#panelBg)" />
-    <!-- Thick 10px Border -->
-    <rect x="0" y="0" width="300" height="624" rx="40" fill="none" stroke="url(#panelBorder)" stroke-width="10" />
-  </g>
+  <rect x="464" y="192" width="368" height="368" rx="40" fill="url(#accentGrad)"/>
 
-  <!-- ================= RIGHT PANEL (Pure Monolith) ================= -->
-  <g transform="translate(676, 200)" filter="url(#heavyShadow)" opacity="0.9">
-    <rect x="0" y="0" width="300" height="624" rx="40" fill="url(#panelBg)" />
-    <!-- Thick 10px Border -->
-    <rect x="0" y="0" width="300" height="624" rx="40" fill="none" stroke="url(#panelBorder)" stroke-width="10" />
-  </g>
+  <rect x="464" y="624" width="368" height="208" rx="40" fill="#18181B" stroke="#27272A" stroke-width="12"/>
 
-  <!-- ================= CENTER PANEL (Hero Codex Window) ================= -->
-  <!-- Backlight spill on the steel base -->
-  <rect x="232" y="80" width="560" height="864" rx="64" fill="#00D287" opacity="0.15" filter="blur(56px)" />
-
-  <g transform="translate(208, 96)" filter="url(#heavyShadow)">
-    <rect x="0" y="0" width="608" height="832" rx="48" fill="url(#panelBg)" />
-    <!-- MASSIVE 16px Hero Border -->
-    <rect x="0" y="0" width="608" height="832" rx="48" fill="none" stroke="url(#panelBorder)" stroke-width="16" />
-
-    <!-- CLI/Terminal Header Dots (Anchors the "Window" concept visually) -->
-    <circle cx="64" cy="64" r="12" fill="#8b949e" opacity="0.6" />
-    <circle cx="104" cy="64" r="12" fill="#8b949e" opacity="0.6" />
-    <circle cx="144" cy="64" r="12" fill="#8b949e" opacity="0.6" />
-
-    <!-- ====== THE COLOSSAL, SOLITARY AI SPARKLE ====== -->
-    <!-- Center coordinate is exactly (304, 460) within this panel -->
-    <g transform="translate(304, 460)">
-
-      <!-- Massive ambient aura behind the single sparkle -->
-      <circle cx="0" cy="0" r="280" fill="#00D287" opacity="0.25" filter="blur(80px)" />
-
-      <!-- The Sparkle with Intense Neon Glow -->
-      <g filter="url(#neonGlow)">
-        <!-- Main GIGANTIC Star (Scaled up even more to fill the void) -->
-        <path d="M 0 -240 Q 0 0 240 0 Q 0 0 0 240 Q 0 0 -240 0 Q 0 0 0 -240 Z" fill="url(#accentGreen)" />
-
-        <!-- Blinding White Core -->
-        <path d="M 0 -96 Q 0 0 96 0 Q 0 0 0 96 Q 0 0 -96 0 Q 0 0 0 -96 Z" fill="#FFFFFF" />
-      </g>
-
-    </g>
-  </g>
+  <path d="M 528 696 L 568 728 L 528 760" stroke="#12EFC3" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="600" y1="760" x2="664" y2="760" stroke="#12EFC3" stroke-width="24" stroke-linecap="round"/>
 </svg>

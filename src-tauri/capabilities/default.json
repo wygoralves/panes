@@ -10,6 +10,8 @@
     "shell:allow-open",
     "dialog:allow-open",
     "fs:allow-read-text-file",
-    "notification:default"
+    "notification:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }
