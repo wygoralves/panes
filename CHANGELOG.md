@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.5.0...vnull) (2026-02-21)
+
+### Bug Fixes
+
+* update some docs text ([a8c6178](https://github.com/wygoralves/panes/commit/a8c617898bedc0aa33afca4bd49265a947ab2468))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.4.0...vnull) (2026-02-21)
 
 ### Features
