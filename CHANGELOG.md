@@ -1,5 +1,20 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.5.1...vnull) (2026-02-21)
+
+### Features
+
+* add individual, folder and discard all changes to git panel ([827e699](https://github.com/wygoralves/panes/commit/827e699ad4aa52b26d38f191cc9f985ec486af5c))
+* expand and improve the onboarding flow to setup the required deps ([22ad92a](https://github.com/wygoralves/panes/commit/22ad92a51a053e472ee4540ead5fd471ead69958))
+* expand support on approvals mapper, add dedicated treatment to account refresh and avoid transport ambiguity ([961c19a](https://github.com/wygoralves/panes/commit/961c19a06a586c5239196f01e63c6b2d5b8958f7))
+* improve ui for approval banner on codex chat ([844020a](https://github.com/wygoralves/panes/commit/844020a2e428799a75f10a3cead6faf3a93f3b47))
+* persist sidebar expansion preference ([040544e](https://github.com/wygoralves/panes/commit/040544e37d6f9453e7e75761741b696e321779c0))
+* small UI improvements to approval elements ([66f62c2](https://github.com/wygoralves/panes/commit/66f62c2ea3ec6250c1f8073a757522cb77788574))
+
+### Bug Fixes
+
+* correctly match execution policy options in chat ([7799452](https://github.com/wygoralves/panes/commit/7799452ef53af9b63510dab05ae07f29cedc19da))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.5.0...vnull) (2026-02-21)
 
 ### Bug Fixes
