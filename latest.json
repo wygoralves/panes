@@ -1,0 +1,15 @@
+{
+  "version": "0.6.0",
+  "notes": "## [](https://github.com/wygoralves/panes/compare/v0.5.1...vnull) (2026-02-21)\n\n### Features\n\n* add individual, folder and discard all changes to git panel ([827e699](https://github.com/wygoralves/panes/commit/827e699ad4aa52b26d38f191cc9f985ec486af5c))\n* expand and improve the onboarding flow to setup the required deps ([22ad92a](https://github.com/wygoralves/panes/commit/22ad92a51a053e472ee4540ead5fd471ead69958))\n* expand support on approvals mapper, add dedicated treatment to account refresh and avoid transport ambiguity ([961c19a](https://github.com/wygoralves/panes/commit/961c19a06a586c5239196f01e63c6b2d5b8958f7))\n* improve ui for approval banner on codex chat ([844020a](https://github.com/wygoralves/panes/commit/844020a2e428799a75f10a3cead6faf3a93f3b47))\n* persist sidebar expansion preference ([040544e](https://github.com/wygoralves/panes/commit/040544e37d6f9453e7e75761741b696e321779c0))\n* small UI improvements to approval elements ([66f62c2](https://github.com/wygoralves/panes/commit/66f62c2ea3ec6250c1f8073a757522cb77788574))\n\n### Bug Fixes\n\n* correctly match execution policy options in chat ([7799452](https://github.com/wygoralves/panes/commit/7799452ef53af9b63510dab05ae07f29cedc19da))",
+  "pub_date": "2026-02-21T03:37:01Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cW9HeVZJNHQzdFNIeU1xWjJPU3NHTlQ1QWdMMjlmMThyY0dCSVErR0FLMFh5V3NUT3IxU3RneHJHdldXQTBOUHJ4UmlJRHBRbjJEeWxDRU9LdWcyaGc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcxNjQ1MzM5CWZpbGU6UGFuZXMuYXBwLnRhci5negpOTC9qclhGeGxqeVNUM2hCMEdPVlAwYzlmNVJwTmx1ZW5PQ1F0anlXUm9tQVRsdHR0MjRSV3Vhd1laLzFHMjlpeks2T1RIa0p0M2dQQWg2SXVCdUpCUT09Cg==",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.6.0/Panes.app.tar.gz"
+    },
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWd0aTY2U1A4bnozN05UYklycXVRRkJxTmZaenlyajcxOWw2Q1A1Y0ovR09wWnd1aEE2TzQwUUwyN2JETFo5VC92YWVnRFBCQkppNUppbnNPNnkyU1FRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcxNjQ1NTIxCWZpbGU6UGFuZXNfMC42LjBfYW1kNjQuQXBwSW1hZ2UKb0dGQ0pVTmY5NmdvWVZpRjJvcG5uMk52cWZwaEdyc3V0SGFiZ3dEMXVkRk9TNng1UjJaUlppQTdQaGIwbXcvdnAxYWRmcDB2Unp3RUVXWGo4OEpNQ3c9PQo=",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.6.0/Panes_0.6.0_amd64.AppImage"
+    }
+  }
+}
