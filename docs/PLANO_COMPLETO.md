@@ -23,7 +23,7 @@ Levar a base atual (v0 scaffold) até um **v1 funcional de produção inicial** 
 4. Watchers Git conectados backend → frontend com evento `git-repo-changed`
    e refresh automático no painel.
 5. Aplicação de `trustLevel` no runtime com política:
-   `trusted -> on-failure`, `standard -> on-request`, `restricted -> untrusted`.
+   `trusted -> on-request`, `standard -> on-request`, `restricted -> untrusted` (com `trusted` habilitando network).
 6. Política explícita de workspace multi-repo:
    confirmação obrigatória para thread de workspace com múltiplos `writableRoots`.
 7. Suporte estruturado a `item/tool/requestUserInput` no fluxo de approval
@@ -146,7 +146,7 @@ Critérios de aceite:
 
 1. Alterações externas ao app atualizam painel Git automaticamente.
 2. Workspace com 2+ repos permite thread de workspace apenas após opt-in.
-3. Em repo `restricted`, ações com efeito colateral exigem approval sempre.
+3. Em repo `restricted`, comandos fora da lista de trusted commands exigem approval; comandos trusted podem rodar sem prompt.
 
 ## Fase D — Claude Sidecar Real
 

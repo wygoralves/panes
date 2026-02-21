@@ -19,7 +19,7 @@ import { useTerminalStore } from "../../stores/terminalStore";
 import { ipc } from "../../lib/ipc";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { MessageBlocks } from "./MessageBlocks";
-import { isRequestUserInputApproval } from "./toolInputApproval";
+import { isRequestUserInputApproval, requiresCustomApprovalPayload } from "./toolInputApproval";
 import { Dropdown } from "../shared/Dropdown";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import type { ApprovalBlock, ApprovalResponse, ContentBlock, Message, TrustLevel } from "../../types";
@@ -1591,6 +1591,7 @@ export function ChatPanel() {
                 {pendingApprovals.slice(-3).map((approval) => {
                   const details = approval.details ?? {};
                   const isToolInputRequest = isRequestUserInputApproval(details);
+                  const requiresCustomPayload = requiresCustomApprovalPayload(details);
                   const proposedExecpolicyAmendment = Array.isArray(
                     details.proposedExecpolicyAmendment
                   )
@@ -1645,7 +1646,7 @@ export function ChatPanel() {
                       </div>
 
                       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                        {isToolInputRequest ? (
+                        {isToolInputRequest || requiresCustomPayload ? (
                           <span
                             style={{
                               fontSize: 11.5,
@@ -1654,7 +1655,9 @@ export function ChatPanel() {
                               textAlign: "right",
                             }}
                           >
-                            Respond in the approval card below.
+                            {isToolInputRequest
+                              ? "Respond in the approval card below."
+                              : "This request requires custom JSON. Respond in the approval card below."}
                           </span>
                         ) : (
                           <>

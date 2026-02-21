@@ -31,6 +31,8 @@ impl CodexTransport {
 
         let mut child = command
             .arg("app-server")
+            .arg("--listen")
+            .arg("stdio://")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

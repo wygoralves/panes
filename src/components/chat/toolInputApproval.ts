@@ -14,14 +14,40 @@ export interface ToolInputQuestion {
 }
 
 const REQUEST_USER_INPUT_METHOD = "item/tool/requestuserinput";
+const DYNAMIC_TOOL_CALL_METHOD = "item/tool/call";
 
 function normalizeServerMethod(method: string): string {
   return method.replace(/[._]/g, "/").toLowerCase();
 }
 
-export function isRequestUserInputApproval(details?: Record<string, unknown>): boolean {
+export function getApprovalServerMethod(details?: Record<string, unknown>): string {
   const serverMethod = typeof details?._serverMethod === "string" ? details._serverMethod : "";
-  return normalizeServerMethod(serverMethod) === REQUEST_USER_INPUT_METHOD;
+  return normalizeServerMethod(serverMethod);
+}
+
+export function isRequestUserInputApproval(details?: Record<string, unknown>): boolean {
+  return getApprovalServerMethod(details) === REQUEST_USER_INPUT_METHOD;
+}
+
+export function isDynamicToolCallApproval(details?: Record<string, unknown>): boolean {
+  return getApprovalServerMethod(details) === DYNAMIC_TOOL_CALL_METHOD;
+}
+
+export function requiresCustomApprovalPayload(details?: Record<string, unknown>): boolean {
+  return isDynamicToolCallApproval(details);
+}
+
+export function defaultAdvancedApprovalPayload(
+  details?: Record<string, unknown>
+): ApprovalResponse {
+  if (isDynamicToolCallApproval(details)) {
+    return {
+      success: true,
+      contentItems: [],
+    };
+  }
+
+  return { decision: "accept" };
 }
 
 function parseOption(raw: unknown): ToolInputOption | null {
@@ -146,4 +172,3 @@ export function buildToolInputResponseFromSelections(
 
   return { answers };
 }
-

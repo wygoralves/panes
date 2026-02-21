@@ -23,8 +23,10 @@ import type {
 } from "../../types";
 import { ToolInputQuestionnaire } from "./ToolInputQuestionnaire";
 import {
+  defaultAdvancedApprovalPayload,
   isRequestUserInputApproval,
   parseToolInputQuestions,
+  requiresCustomApprovalPayload,
 } from "./toolInputApproval";
 import {
   parseDiff,
@@ -730,6 +732,7 @@ function ApprovalCard({
   const isPending = block.status === "pending";
   const details = block.details ?? {};
   const isToolInputRequest = isRequestUserInputApproval(details);
+  const requiresCustomPayload = requiresCustomApprovalPayload(details);
   const toolInputQuestions = isToolInputRequest ? parseToolInputQuestions(details) : [];
   const showStructuredToolInput =
     isPending && isToolInputRequest && toolInputQuestions.length > 0;
@@ -742,12 +745,18 @@ function ApprovalCard({
   const { command, reason, commandActionCount, remainingDetails, hasRemainingDetails } =
     extractApprovalDetails(details);
 
-  const [showAdvancedJson, setShowAdvancedJson] = useState(false);
-  const [advancedJsonPayload, setAdvancedJsonPayload] = useState(() =>
-    JSON.stringify({ decision: "accept" }, null, 2),
+  const defaultAdvancedPayload = useMemo(
+    () => JSON.stringify(defaultAdvancedApprovalPayload(details), null, 2),
+    [details],
   );
+  const [showAdvancedJson, setShowAdvancedJson] = useState(requiresCustomPayload);
+  const [advancedJsonPayload, setAdvancedJsonPayload] = useState(defaultAdvancedPayload);
   const [advancedJsonError, setAdvancedJsonError] = useState<string | null>(null);
   const [showRemainingDetails, setShowRemainingDetails] = useState(false);
+
+  useEffect(() => {
+    setAdvancedJsonPayload(defaultAdvancedPayload);
+  }, [defaultAdvancedPayload, block.approvalId]);
 
   let decisionLabel = "Answered";
   if (block.decision === "decline") {
@@ -942,8 +951,17 @@ function ApprovalCard({
         </div>
       )}
 
+      {isPending && requiresCustomPayload && !showStructuredToolInput && (
+        <div style={{ padding: "0 14px 10px" }}>
+          <p style={{ margin: 0, fontSize: 11.5, color: "var(--text-2)" }}>
+            This request requires a custom JSON response. Use Advanced and submit a
+            DynamicToolCallResponse payload (`success` + `contentItems`).
+          </p>
+        </div>
+      )}
+
       {/* Zone 3 — Action buttons */}
-      {isPending && !showStructuredToolInput && (
+      {isPending && !showStructuredToolInput && !requiresCustomPayload && (
         <div
           style={{
             display: "flex",

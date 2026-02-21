@@ -408,6 +408,26 @@ impl Engine for CodexEngine {
                       log::warn!("codex server request dropped by belongs_to_turn: method={method}");
                       continue;
                     }
+                    let normalized_method = normalize_method(&method);
+                    if normalized_method == "account/chatgptauthtokens/refresh" {
+                      log::warn!(
+                        "codex requested external ChatGPT token refresh, but Panes does not manage chatgptAuthTokens mode"
+                      );
+                      transport
+                        .respond_error(
+                          &raw_id,
+                          -32601,
+                          "`account/chatgptAuthTokens/refresh` is not supported by Panes",
+                          Some(serde_json::json!({
+                            "method": method,
+                            "normalizedMethod": normalized_method,
+                          })),
+                        )
+                        .await
+                        .ok();
+                      continue;
+                    }
+
                     if let Some(approval) = mapper.map_server_request(&id, &method, &params) {
                       log::info!(
                         "codex approval request mapped: approval_id={}, method={method}",
@@ -425,7 +445,6 @@ impl Engine for CodexEngine {
                         .await;
                       event_tx.send(approval.event).await.ok();
                     } else {
-                      let normalized_method = normalize_method(&method);
                       log::warn!(
                         "codex server request not mapped: method={method}, normalized={normalized_method}"
                       );
@@ -1650,48 +1669,67 @@ fn belongs_to_turn(params: &serde_json::Value, expected_turn_id: Option<&str>) -
 
 fn normalize_approval_response(
     method: Option<&str>,
-    response: serde_json::Value,
+    mut response: serde_json::Value,
 ) -> serde_json::Value {
     let Some(method) = method else {
         return response;
     };
     let normalized_method = normalize_method(method);
-
-    if matches!(
+    let is_modern = matches!(
         normalized_method.as_str(),
         "item/commandexecution/requestapproval" | "item/filechange/requestapproval"
-    ) {
-        if let Some(decision_object) = response
-            .get("decision")
-            .and_then(serde_json::Value::as_object)
-        {
-            if let Some(amendment) = decision_object.get("acceptWithExecpolicyAmendment") {
-                return serde_json::json!({
+    );
+    let is_legacy = matches!(
+        normalized_method.as_str(),
+        "execcommandapproval" | "applypatchapproval"
+    );
+
+    if is_modern {
+        if let Some(amendment) = response.get("acceptWithExecpolicyAmendment").cloned() {
+            response = serde_json::json!({
+                "decision": {
                     "acceptWithExecpolicyAmendment": amendment,
-                });
+                }
+            });
+        }
+
+        if let Some(object) = response.as_object_mut() {
+            if let Some(decision) = object.get("decision").and_then(serde_json::Value::as_str) {
+                object.insert(
+                    "decision".to_string(),
+                    serde_json::Value::String(normalize_modern_approval_decision(decision)),
+                );
             }
         }
+
+        return response;
     }
 
-    let mut response = response;
-
-    if let Some(object) = response.as_object_mut() {
-        if let Some(decision) = object.get("decision").and_then(serde_json::Value::as_str) {
-            let normalized_decision = match normalized_method.as_str() {
-                "item/commandexecution/requestapproval" | "item/filechange/requestapproval" => {
-                    normalize_modern_approval_decision(decision)
+    if is_legacy {
+        if let Some(amendment_values) = response
+            .get("acceptWithExecpolicyAmendment")
+            .and_then(|value| value.get("execpolicy_amendment"))
+            .cloned()
+        {
+            response = serde_json::json!({
+                "decision": {
+                    "approved_execpolicy_amendment": {
+                        "proposed_execpolicy_amendment": amendment_values,
+                    }
                 }
-                "execcommandapproval" | "applypatchapproval" => {
-                    normalize_legacy_approval_decision(decision)
-                }
-                _ => decision.to_string(),
-            };
-
-            object.insert(
-                "decision".to_string(),
-                serde_json::Value::String(normalized_decision),
-            );
+            });
         }
+
+        if let Some(object) = response.as_object_mut() {
+            if let Some(decision) = object.get("decision").and_then(serde_json::Value::as_str) {
+                object.insert(
+                    "decision".to_string(),
+                    serde_json::Value::String(normalize_legacy_approval_decision(decision)),
+                );
+            }
+        }
+
+        return response;
     }
 
     response
@@ -1724,4 +1762,76 @@ fn normalize_legacy_approval_decision(value: &str) -> String {
 
 fn normalize_method(method: &str) -> String {
     method.replace('.', "/").replace('_', "/").to_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn normalize_modern_accept_with_execpolicy_from_top_level() {
+        let response = json!({
+            "acceptWithExecpolicyAmendment": {
+                "execpolicy_amendment": ["npm", "test"]
+            }
+        });
+
+        let normalized =
+            normalize_approval_response(Some("item/commandExecution/requestApproval"), response);
+
+        assert_eq!(
+            normalized,
+            json!({
+                "decision": {
+                    "acceptWithExecpolicyAmendment": {
+                        "execpolicy_amendment": ["npm", "test"]
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn normalize_modern_accept_for_session_to_camel_case() {
+        let response = json!({ "decision": "accept_for_session" });
+        let normalized =
+            normalize_approval_response(Some("item/fileChange/requestApproval"), response);
+
+        assert_eq!(normalized, json!({ "decision": "acceptForSession" }));
+    }
+
+    #[test]
+    fn normalize_legacy_accept_with_execpolicy_to_legacy_shape() {
+        let response = json!({
+            "acceptWithExecpolicyAmendment": {
+                "execpolicy_amendment": ["pnpm", "install"]
+            }
+        });
+
+        let normalized = normalize_approval_response(Some("execCommandApproval"), response);
+
+        assert_eq!(
+            normalized,
+            json!({
+                "decision": {
+                    "approved_execpolicy_amendment": {
+                        "proposed_execpolicy_amendment": ["pnpm", "install"]
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn normalize_dynamic_tool_call_response_is_unchanged() {
+        let response = json!({
+            "success": true,
+            "contentItems": []
+        });
+
+        let normalized = normalize_approval_response(Some("item/tool/call"), response.clone());
+
+        assert_eq!(normalized, response);
+    }
 }

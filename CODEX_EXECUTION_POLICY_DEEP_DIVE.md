@@ -208,3 +208,33 @@ To close the gap long-term:
 - Local protocol evidence:
   - generated JSON schema via `codex app-server generate-json-schema`
   - generated TS types via `codex app-server generate-ts`
+
+## 13) Addendum: Cross-check of pasted app-server doc excerpt
+
+Additional issues found in the excerpt that can cause integration errors if copied literally:
+
+1. Invalid `thread/start.sandbox` example value
+   - Excerpt uses `"sandbox": "workspaceWrite"`.
+   - For `thread/start`, valid values are sandbox *mode* enums: `"read-only"`, `"workspace-write"`, `"danger-full-access"`.
+   - `workspaceWrite` is a `sandboxPolicy.type` variant (used in `turn/start`), not a `thread/start` mode value.
+
+2. Invalid `turn/start.approvalPolicy` example value
+   - Excerpt uses `"approvalPolicy": "unlessTrusted"`.
+   - Valid values are: `"untrusted"`, `"on-failure"` (deprecated), `"on-request"`, `"never"`.
+   - `unlessTrusted` is not accepted by the current protocol schema.
+
+3. `on-failure` should not be used for interactive default behavior
+   - The excerpt lists it as supported (true), but it is deprecated.
+   - Practical behavior reproduced in probes: `on-failure + workspaceWrite` often degrades into repeated failed command attempts without useful approval flow.
+
+4. Key shape distinction that must stay explicit in Panes docs/UI code
+   - `thread/start` / `thread/resume`:
+     - `sandbox` = mode enum (`workspace-write`, etc.)
+   - `turn/start` / `command/exec`:
+     - `sandboxPolicy` = object (`workspaceWrite`, `externalSandbox`, `readOnly`, `dangerFullAccess`)
+
+5. What is already aligned in Panes
+   - `initialize` uses `capabilities.experimentalApi = true`.
+   - Modern approval requests (`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`) are handled.
+   - `item/tool/requestUserInput` is mapped and rendered in the UI.
+

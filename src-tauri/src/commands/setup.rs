@@ -13,11 +13,7 @@ use crate::models::{DepStatus, DependencyReport, InstallProgressEvent, InstallRe
 
 #[tauri::command]
 pub async fn check_dependencies() -> Result<DependencyReport, String> {
-    let (node, git, codex) = tokio::join!(
-        detect_node(),
-        detect_git(),
-        detect_codex(),
-    );
+    let (node, git, codex) = tokio::join!(detect_node(), detect_git(), detect_codex(),);
 
     let has_homebrew = which::which("brew").is_ok()
         || Path::new("/opt/homebrew/bin/brew").exists()
@@ -177,8 +173,7 @@ async fn detect_git() -> DepStatus {
     }
 
     if Path::new("/usr/bin/git").exists() {
-        if let Some(version) =
-            get_command_version(Path::new("/usr/bin/git"), &["--version"]).await
+        if let Some(version) = get_command_version(Path::new("/usr/bin/git"), &["--version"]).await
         {
             return DepStatus {
                 found: true,
@@ -355,9 +350,7 @@ async fn get_command_version(path: &Path, args: &[&str]) -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    let version = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .to_string();
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if version.is_empty() {
         None
     } else {

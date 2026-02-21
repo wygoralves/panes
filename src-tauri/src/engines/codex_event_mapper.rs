@@ -196,15 +196,21 @@ impl TurnEventMapper {
                 extract_any_string(params, &["reason"])
                     .unwrap_or_else(|| "Approval required to apply patch".to_string()),
             ),
-            "item/tool/requestuserinput" => (
+            "item/tool/requestuserinput" | "tool/requestuserinput" => (
                 ActionType::Other,
                 extract_first_question_text(params)
                     .unwrap_or_else(|| "Codex requested user input".to_string()),
             ),
+            "item/tool/call" => (
+                ActionType::Other,
+                extract_any_string(params, &["tool", "name"])
+                    .map(|tool| format!("Codex requested dynamic tool call: {tool}"))
+                    .unwrap_or_else(|| "Codex requested dynamic tool call".to_string()),
+            ),
             _ => return None,
         };
 
-        let approval_id = extract_any_string(params, &["approvalId", "itemId", "id"])
+        let approval_id = extract_any_string(params, &["approvalId", "itemId", "callId", "id"])
             .unwrap_or_else(|| request_id.to_string());
 
         let mut details = params.clone();
@@ -665,5 +671,84 @@ fn join_string_array(items: Option<&Vec<Value>>) -> Option<String> {
         None
     } else {
         Some(values.join("\n"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn map_server_request_dynamic_tool_call_uses_call_id() {
+        let mut mapper = TurnEventMapper::default();
+        let params = json!({
+            "threadId": "thr_123",
+            "turnId": "turn_123",
+            "callId": "call_abc",
+            "tool": "my_tool",
+            "arguments": { "query": "docs" }
+        });
+
+        let approval = mapper
+            .map_server_request("request-1", "item/tool/call", &params)
+            .expect("expected approval request");
+
+        assert_eq!(approval.approval_id, "call_abc");
+        assert_eq!(approval.server_method, "item/tool/call");
+
+        match approval.event {
+            EngineEvent::ApprovalRequested {
+                approval_id,
+                action_type,
+                summary,
+                details,
+            } => {
+                assert_eq!(approval_id, "call_abc");
+                assert!(matches!(action_type, ActionType::Other));
+                assert_eq!(summary, "Codex requested dynamic tool call: my_tool");
+                assert_eq!(
+                    details.get("_serverMethod").and_then(Value::as_str),
+                    Some("item/tool/call")
+                );
+            }
+            _ => panic!("expected approval request event"),
+        }
+    }
+
+    #[test]
+    fn map_server_request_supports_tool_request_user_input_alias() {
+        let mut mapper = TurnEventMapper::default();
+        let params = json!({
+            "threadId": "thr_123",
+            "turnId": "turn_123",
+            "itemId": "item_42",
+            "questions": [
+                {
+                    "id": "lang",
+                    "question": "Qual linguagem usar?",
+                    "options": ["TypeScript"]
+                }
+            ]
+        });
+
+        let approval = mapper
+            .map_server_request("request-2", "tool/requestUserInput", &params)
+            .expect("expected approval request");
+
+        assert_eq!(approval.approval_id, "item_42");
+        assert_eq!(approval.server_method, "tool/requestuserinput");
+
+        match approval.event {
+            EngineEvent::ApprovalRequested {
+                action_type,
+                summary,
+                ..
+            } => {
+                assert!(matches!(action_type, ActionType::Other));
+                assert_eq!(summary, "Qual linguagem usar?");
+            }
+            _ => panic!("expected approval request event"),
+        }
     }
 }
