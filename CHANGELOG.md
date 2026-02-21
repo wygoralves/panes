@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.4.0...vnull) (2026-02-21)
+
+### Features
+
+* add autoupdater and update icons ([a5f9336](https://github.com/wygoralves/panes/commit/a5f9336e449cf79e764ad55690de014a8a94e556))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.3.1...vnull) (2026-02-20)
 
 ### Features
