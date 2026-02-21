@@ -3,7 +3,6 @@ import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
 import { SearchModal } from "./components/chat/SearchModal";
 import { EngineHealthBanner } from "./components/onboarding/EngineHealthBanner";
 import { SetupWizard } from "./components/onboarding/SetupWizard";
-import { UpdateBanner } from "./components/onboarding/UpdateBanner";
 import { useUpdateStore } from "./stores/updateStore";
 import { listenThreadUpdated } from "./lib/ipc";
 import { useWorkspaceStore } from "./stores/workspaceStore";
@@ -102,7 +101,6 @@ export function App() {
       <ThreeColumnLayout />
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, pointerEvents: "none", zIndex: 10 }}>
         <div style={{ pointerEvents: "auto" }}>
-          <UpdateBanner />
           <EngineHealthBanner />
         </div>
       </div>

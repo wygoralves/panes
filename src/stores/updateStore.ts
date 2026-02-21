@@ -8,22 +8,24 @@ interface UpdateState {
   status: UpdateStatus;
   version: string | null;
   error: string | null;
-  dismissed: boolean;
+  /** True after user clicks "Not now" — hides dot until next app launch */
+  snoozed: boolean;
 
   checkForUpdate: () => Promise<void>;
   downloadAndInstall: () => Promise<void>;
-  dismiss: () => void;
+  resetToIdle: () => void;
+  snooze: () => void;
 }
 
 export const useUpdateStore = create<UpdateState>((set, get) => ({
   status: "idle",
   version: null,
   error: null,
-  dismissed: false,
+  snoozed: false,
 
   checkForUpdate: async () => {
     if (get().status === "checking") return;
-    set({ status: "checking", error: null, dismissed: false });
+    set({ status: "checking", error: null });
     try {
       const update = await check();
       if (update) {
@@ -56,7 +58,11 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     }
   },
 
-  dismiss: () => {
-    set({ dismissed: true });
+  resetToIdle: () => {
+    set({ status: "idle", error: null });
+  },
+
+  snooze: () => {
+    set({ snoozed: true });
   },
 }));

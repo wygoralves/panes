@@ -19,7 +19,9 @@ import { useThreadStore } from "../../stores/threadStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useSetupStore } from "../../stores/setupStore";
+import { useUpdateStore } from "../../stores/updateStore";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
+import { UpdateDialog } from "../onboarding/UpdateDialog";
 import type { Thread, Workspace } from "../../types";
 
 function relativeTime(dateStr: string): string {
@@ -93,6 +95,9 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const sidebarPinned = useUiStore((state) => state.sidebarPinned);
   const toggleSidebarPin = useUiStore((state) => state.toggleSidebarPin);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
+  const updateStatus = useUpdateStore((s) => s.status);
+  const updateSnoozed = useUpdateStore((s) => s.snoozed);
+  const hasUpdate = updateStatus === "available" && !updateSnoozed;
 
   const projects = useMemo<ProjectGroup[]>(
     () =>
@@ -111,6 +116,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     String(readDefaultScanDepth()),
   );
   const [advancedScanError, setAdvancedScanError] = useState<string | null>(null);
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [settingsMenuPos, setSettingsMenuPos] = useState({ top: 0, left: 0 });
   const settingsMenuRef = useRef<HTMLDivElement>(null);
@@ -573,7 +579,10 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             setSettingsMenuOpen(true);
           }}
         >
-          <Settings size={14} style={{ opacity: 0.5 }} />
+          <span style={{ position: "relative", display: "inline-flex" }}>
+            <Settings size={14} style={{ opacity: 0.5 }} />
+            {hasUpdate && <span className="sb-update-dot" />}
+          </span>
           Settings
         </button>
 
@@ -663,6 +672,29 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
               onClick={() => {
                 closeSettingsMenu();
+                setUpdateDialogOpen(true);
+              }}
+            >
+              <span>Check for updates</span>
+              {hasUpdate && (
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    background: "var(--accent)",
+                    flexShrink: 0,
+                  }}
+                />
+              )}
+            </button>
+            <div style={{ height: 1, margin: "4px 0", background: "var(--border)" }} />
+            <button
+              type="button"
+              className="git-action-menu-item"
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+              onClick={() => {
+                closeSettingsMenu();
                 toggleAdvancedScanConfig();
               }}
             >
@@ -680,6 +712,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
           </div>,
           document.body,
         )}
+
+      <UpdateDialog open={updateDialogOpen} onClose={() => setUpdateDialogOpen(false)} />
 
       {error && (
         <div
@@ -717,6 +751,7 @@ function CollapsedRail({
   const setActiveRepo = useWorkspaceStore((s) => s.setActiveRepo);
   const createThread = useThreadStore((s) => s.createThread);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
+  const hasUpdate = useUpdateStore((s) => s.status === "available" && !s.snoozed);
 
   async function onNewThread() {
     const activeProject = projects.find((p) => p.id === activeWorkspaceId);
@@ -815,6 +850,7 @@ function CollapsedRail({
         style={{ marginBottom: 8 }}
       >
         <Settings size={15} />
+        {hasUpdate && <span className="sb-update-dot" />}
       </button>
     </div>
   );

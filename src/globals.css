@@ -1844,6 +1844,85 @@ button, input, textarea, select {
   background: rgba(255, 255, 255, 0.04);
 }
 
+/* Update notification dot */
+.sb-update-dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1.5px solid var(--bg-1);
+  pointer-events: none;
+}
+
+/* ── Update Dialog ── */
+.update-dlg-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.update-dlg-icon--accent {
+  background: var(--accent-dim);
+  border: 1px solid var(--border-accent);
+  color: var(--accent);
+}
+
+.update-dlg-icon--error {
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.15);
+  color: var(--danger);
+}
+
+.update-dlg-spin {
+  animation: spin 1s linear infinite;
+}
+
+.update-dlg-btn-accent {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid var(--border-accent);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.update-dlg-btn-accent:hover {
+  background: rgba(14, 240, 195, 0.14);
+  border-color: rgba(14, 240, 195, 0.35);
+  box-shadow: var(--accent-glow);
+}
+
+.update-dlg-progress {
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--bg-4);
+  overflow: hidden;
+}
+
+.update-dlg-progress-bar {
+  width: 40%;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent), rgba(14, 240, 195, 0.3), var(--accent));
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
 /* Show more link */
 .sb-show-more {
   padding: 4px 12px 4px 44px;
