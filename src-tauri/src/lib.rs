@@ -113,6 +113,8 @@ pub fn run() {
             commands::terminal::terminal_close_session,
             commands::terminal::terminal_close_workspace_sessions,
             commands::terminal::terminal_list_sessions,
+            commands::setup::check_dependencies,
+            commands::setup::install_dependency,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

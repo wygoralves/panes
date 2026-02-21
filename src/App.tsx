@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
 import { SearchModal } from "./components/chat/SearchModal";
 import { EngineHealthBanner } from "./components/onboarding/EngineHealthBanner";
-import { EngineSetupWizard } from "./components/onboarding/EngineSetupWizard";
+import { SetupWizard } from "./components/onboarding/SetupWizard";
 import { UpdateBanner } from "./components/onboarding/UpdateBanner";
 import { useUpdateStore } from "./stores/updateStore";
 import { listenThreadUpdated } from "./lib/ipc";
@@ -107,7 +107,7 @@ export function App() {
         </div>
       </div>
       <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
-      <EngineSetupWizard />
+      <SetupWizard />
     </div>
   );
 }

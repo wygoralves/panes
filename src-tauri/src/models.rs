@@ -335,3 +335,41 @@ pub struct TerminalSessionDto {
     pub cwd: String,
     pub created_at: String,
 }
+
+// ── Setup / Onboarding ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyReport {
+    pub node: DepStatus,
+    pub codex: DepStatus,
+    pub git: DepStatus,
+    pub platform: String,
+    pub package_managers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DepStatus {
+    pub found: bool,
+    pub version: Option<String>,
+    pub path: Option<String>,
+    pub can_auto_install: bool,
+    pub install_method: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallResult {
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallProgressEvent {
+    pub dependency: String,
+    pub line: String,
+    pub stream: String,
+    pub finished: bool,
+}

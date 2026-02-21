@@ -308,6 +308,38 @@ export interface TerminalExitEvent {
   signal: number | null;
 }
 
+// ── Setup / Onboarding ──────────────────────────────────────────────
+
+export interface DependencyReport {
+  node: DepStatus;
+  codex: DepStatus;
+  git: DepStatus;
+  platform: string;
+  packageManagers: string[];
+}
+
+export interface DepStatus {
+  found: boolean;
+  version: string | null;
+  path: string | null;
+  canAutoInstall: boolean;
+  installMethod: string | null;
+}
+
+export interface InstallResult {
+  success: boolean;
+  message: string;
+}
+
+export interface InstallProgressEvent {
+  dependency: string;
+  line: string;
+  stream: string;
+  finished: boolean;
+}
+
+// ── Stream Events ───────────────────────────────────────────────────
+
 export type TurnCompletionStatus = "completed" | "interrupted" | "failed";
 
 export interface StreamTokenUsage {

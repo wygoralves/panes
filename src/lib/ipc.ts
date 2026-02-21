@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   ApprovalResponse,
+  DependencyReport,
   EngineCheckResult,
   GitBranchPage,
   GitBranchScope,
@@ -12,6 +13,8 @@ import type {
   FileTreeEntry,
   FileTreePage,
   GitStatus,
+  InstallProgressEvent,
+  InstallResult,
   Message,
   Repo,
   SearchResult,
@@ -148,7 +151,10 @@ export const ipc = {
   terminalCloseWorkspaceSessions: (workspaceId: string) =>
     invoke<void>("terminal_close_workspace_sessions", { workspaceId }),
   terminalListSessions: (workspaceId: string) =>
-    invoke<TerminalSession[]>("terminal_list_sessions", { workspaceId })
+    invoke<TerminalSession[]>("terminal_list_sessions", { workspaceId }),
+  checkDependencies: () => invoke<DependencyReport>("check_dependencies"),
+  installDependency: (dependency: string, method: string) =>
+    invoke<InstallResult>("install_dependency", { dependency, method }),
 };
 
 export async function listenThreadEvents(
@@ -187,6 +193,12 @@ export async function listenTerminalOutput(
     `terminal-output-${workspaceId}`,
     ({ payload }) => onEvent(payload)
   );
+}
+
+export async function listenInstallProgress(
+  onEvent: (event: InstallProgressEvent) => void
+): Promise<UnlistenFn> {
+  return listen<InstallProgressEvent>("setup-install-progress", ({ payload }) => onEvent(payload));
 }
 
 export async function listenTerminalExit(

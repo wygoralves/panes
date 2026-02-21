@@ -79,11 +79,11 @@ struct CodexState {
 }
 
 #[derive(Debug, Clone)]
-struct CodexExecutableResolution {
-    executable: Option<PathBuf>,
-    source: &'static str,
-    app_path: Option<String>,
-    login_shell_executable: Option<PathBuf>,
+pub struct CodexExecutableResolution {
+    pub executable: Option<PathBuf>,
+    pub source: &'static str,
+    pub app_path: Option<String>,
+    pub login_shell_executable: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -1105,7 +1105,7 @@ fn map_codex_model(value: CodexModel) -> ModelInfo {
     }
 }
 
-async fn resolve_codex_executable() -> CodexExecutableResolution {
+pub async fn resolve_codex_executable() -> CodexExecutableResolution {
     let app_path = std::env::var("PATH").ok();
 
     if let Ok(path) = which::which("codex") {

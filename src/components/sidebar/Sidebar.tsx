@@ -18,6 +18,7 @@ import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
+import { useSetupStore } from "../../stores/setupStore";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import type { Thread, Workspace } from "../../types";
 
@@ -88,7 +89,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     createThread,
     refreshArchivedThreads,
   } = useThreadStore();
-  const openEngineSetup = useUiStore((state) => state.openEngineSetup);
+  const openEngineSetup = useSetupStore((state) => state.openSetup);
   const sidebarPinned = useUiStore((state) => state.sidebarPinned);
   const toggleSidebarPin = useUiStore((state) => state.toggleSidebarPin);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
