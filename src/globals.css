@@ -213,11 +213,24 @@ button, input, textarea, select {
 .btn-danger-ghost {
   color: var(--danger);
   border: 1px solid rgba(248, 113, 113, 0.22);
+  border-radius: var(--radius-sm);
   background: rgba(248, 113, 113, 0.06);
 }
 .btn-danger-ghost:hover {
   background: rgba(248, 113, 113, 0.12);
   border-color: rgba(248, 113, 113, 0.4);
+}
+
+.btn-cancel-ghost {
+  color: var(--text-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+.btn-cancel-ghost:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-2);
+  border-color: var(--border-active);
 }
 
 /* ── Surface / Card ── */

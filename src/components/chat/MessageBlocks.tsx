@@ -1014,20 +1014,18 @@ function ApprovalCard({
               padding: "5px 10px",
               fontSize: 12,
               cursor: "pointer",
-              borderRadius: "var(--radius-sm)",
             }}
           >
             Deny
           </button>
           <button
             type="button"
-            className="btn-ghost"
+            className="btn-cancel-ghost"
             onClick={() => onApproval(block.approvalId, { decision: "cancel" })}
             style={{
               padding: "5px 10px",
               fontSize: 12,
               cursor: "pointer",
-              color: "var(--text-3)",
             }}
           >
             Cancel

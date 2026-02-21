@@ -1723,14 +1723,13 @@ export function ChatPanel() {
                                 padding: "5px 10px",
                                 fontSize: 12,
                                 cursor: "pointer",
-                                borderRadius: "var(--radius-sm)",
                               }}
                             >
                               Deny
                             </button>
                             <button
                               type="button"
-                              className="btn-ghost"
+                              className="btn-cancel-ghost"
                               onClick={() =>
                                 void respondApproval(approval.approvalId, { decision: "cancel" })
                               }
@@ -1738,9 +1737,6 @@ export function ChatPanel() {
                                 padding: "5px 10px",
                                 fontSize: 12,
                                 cursor: "pointer",
-                                borderRadius: "var(--radius-sm)",
-                                border: "1px solid var(--border)",
-                                color: "var(--text-3)",
                               }}
                             >
                               Cancel
@@ -1954,26 +1950,30 @@ export function ChatPanel() {
               Local
             </span>
 
-            <span style={{ color: "var(--text-3)", opacity: 0.4 }}>&middot;</span>
+            {repos.length > 0 && (
+              <>
+                <span style={{ color: "var(--text-3)", opacity: 0.4 }}>&middot;</span>
 
-            {/* Permissions */}
-            <span
-              className="chat-status-item"
-              style={{
-                color: (activeRepo?.trustLevel ?? workspaceTrustLevel) === "trusted"
-                  ? "var(--success)"
-                  : (activeRepo?.trustLevel ?? workspaceTrustLevel) === "restricted"
-                    ? "var(--danger)"
-                    : undefined,
-              }}
-            >
-              <Shield size={11} />
-              {(activeRepo?.trustLevel ?? workspaceTrustLevel) === "trusted"
-                ? "Trusted (network on)"
-                : (activeRepo?.trustLevel ?? workspaceTrustLevel) === "restricted"
-                  ? "Restricted (trusted cmds only)"
-                  : "Ask-on-request (network off)"}
-            </span>
+                {/* Permissions */}
+                <span
+                  className="chat-status-item"
+                  style={{
+                    color: (activeRepo?.trustLevel ?? workspaceTrustLevel) === "trusted"
+                      ? "var(--success)"
+                      : (activeRepo?.trustLevel ?? workspaceTrustLevel) === "restricted"
+                        ? "var(--danger)"
+                        : undefined,
+                  }}
+                >
+                  <Shield size={11} />
+                  {(activeRepo?.trustLevel ?? workspaceTrustLevel) === "trusted"
+                    ? "Trusted (network on)"
+                    : (activeRepo?.trustLevel ?? workspaceTrustLevel) === "restricted"
+                      ? "Restricted (trusted cmds only)"
+                      : "Ask-on-request (network off)"}
+                </span>
+              </>
+            )}
 
             <div style={{ flex: 1 }} />
 
