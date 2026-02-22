@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { Archive, Loader2, Package, Search, X } from "lucide-react";
+import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import type { Repo } from "../../types";
 
@@ -56,6 +57,7 @@ export function GitStashView({ repo, onError }: Props) {
       const msg = stashMessage.trim() || undefined;
       await pushStash(repo.path, msg);
       setStashMessage("");
+      toast.success("Stash saved");
     } catch (e) {
       onError(String(e));
     } finally {
@@ -69,6 +71,7 @@ export function GitStashView({ repo, onError }: Props) {
     try {
       onError(undefined);
       await applyStash(repo.path, index);
+      toast.success("Stash applied");
     } catch (e) {
       onError(String(e));
     } finally {
@@ -82,6 +85,7 @@ export function GitStashView({ repo, onError }: Props) {
     try {
       onError(undefined);
       await popStash(repo.path, index);
+      toast.success("Stash applied");
     } catch (e) {
       onError(String(e));
     } finally {

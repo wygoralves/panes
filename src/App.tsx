@@ -3,6 +3,7 @@ import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
 import { SearchModal } from "./components/chat/SearchModal";
 import { EngineHealthBanner } from "./components/onboarding/EngineHealthBanner";
 import { SetupWizard } from "./components/onboarding/SetupWizard";
+import { ToastContainer } from "./components/shared/ToastContainer";
 import { useUpdateStore } from "./stores/updateStore";
 import { listenThreadUpdated } from "./lib/ipc";
 import { useWorkspaceStore } from "./stores/workspaceStore";
@@ -115,6 +116,7 @@ export function App() {
       </div>
       <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
       <SetupWizard />
+      <ToastContainer />
     </div>
   );
 }

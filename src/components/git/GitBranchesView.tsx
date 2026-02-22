@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { Plus, X, MoreHorizontal, GitBranch, GitBranchPlus, Pencil, Trash2, Loader2, Search } from "lucide-react";
+import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import type { Repo, GitBranchScope } from "../../types";
@@ -141,6 +142,7 @@ export function GitBranchesView({ repo, onError }: Props) {
     try {
       onError(undefined);
       await checkoutBranch(repo.path, branchName, isRemote);
+      toast.success(`Switched to ${branchName}`);
     } catch (e) {
       onError(String(e));
     } finally {
@@ -159,6 +161,7 @@ export function GitBranchesView({ repo, onError }: Props) {
       branchHistCursorRef.current = -1;
       branchLiveDraftRef.current = "";
       setShowNewBranch(false);
+      toast.success(`Created branch: ${name}`);
     } catch (e) {
       onError(String(e));
     } finally {
@@ -178,6 +181,7 @@ export function GitBranchesView({ repo, onError }: Props) {
       onError(undefined);
       await renameBranch(repo.path, oldName, newName);
       setRenamingBranch(null);
+      toast.success("Renamed branch");
     } catch (e) {
       onError(String(e));
     } finally {
@@ -196,9 +200,11 @@ export function GitBranchesView({ repo, onError }: Props) {
       onError(undefined);
       setConfirmingDelete(null);
       await deleteBranch(repo.path, branchName, false);
+      toast.success(`Deleted branch: ${branchName}`);
     } catch (e) {
       try {
         await deleteBranch(repo.path, branchName, true);
+        toast.success(`Deleted branch: ${branchName}`);
       } catch (e2) {
         onError(String(e2));
       }

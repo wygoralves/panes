@@ -10,6 +10,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
+import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { ipc } from "../../lib/ipc";
@@ -259,6 +260,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
       onError(undefined);
       await commit(repo.path, msg);
       if (activeWorkspaceId) pushCommitHistory(activeWorkspaceId, msg);
+      toast.success(`Committed: ${msg.split("\n")[0]}`);
       histCursorRef.current = -1;
       liveDraftRef.current = "";
     } catch (e) {

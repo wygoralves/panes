@@ -17,6 +17,7 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore, type GitPanelView } from "../../stores/gitStore";
 import { ipc, listenGitRepoChanged } from "../../lib/ipc";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
+import { toast } from "../../stores/toastStore";
 import { Dropdown } from "../shared/Dropdown";
 import { GitChangesView } from "./GitChangesView";
 import { GitBranchesView } from "./GitBranchesView";
@@ -121,13 +122,16 @@ export function GitPanel() {
     try {
       if (action === "fetch") {
         await fetchRemote(activeRepo.path);
+        toast.success("Fetched from remote");
         return;
       }
       if (action === "pull") {
         await pullRemote(activeRepo.path);
+        toast.success("Pulled from remote");
         return;
       }
       await pushRemote(activeRepo.path);
+      toast.success("Pushed to remote");
     } catch (syncError) {
       setLocalError(String(syncError));
     } finally {
@@ -150,6 +154,7 @@ export function GitPanel() {
         refresh(activeRepo.path, { force: true }),
         fetchRemote(activeRepo.path),
       ]);
+      toast.success("Refreshed");
     } catch (e) {
       setLocalError(String(e));
     } finally {
