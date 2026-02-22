@@ -244,6 +244,7 @@ interface GitState {
   popStash: (repoPath: string, stashIndex: number) => Promise<void>;
   selectCommit: (repoPath: string, commitHash: string) => Promise<void>;
   clearCommitSelection: () => void;
+  clearError: () => void;
   drafts: GitDraftsPayload;
   loadDraftsForWorkspace: (workspaceId: string) => void;
   setCommitMessageDraft: (workspaceId: string, message: string) => void;
@@ -611,6 +612,7 @@ export const useGitStore = create<GitState>((set, get) => ({
   clearCommitSelection: () => {
     set({ selectedCommitHash: undefined, commitDiff: undefined });
   },
+  clearError: () => set({ error: undefined }),
   drafts: { ...EMPTY_DRAFTS },
   loadDraftsForWorkspace: (workspaceId) => {
     set({ drafts: loadDraftsFromStorage(workspaceId) });

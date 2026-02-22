@@ -52,6 +52,7 @@ export function GitPanel() {
     pullRemote,
     pushRemote,
     flushDrafts,
+    clearError,
   } = useGitStore();
 
   const [showDiff, setShowDiff] = useState(true);
@@ -392,7 +393,7 @@ export function GitPanel() {
           <button
             type="button"
             className="git-error-dismiss"
-            onClick={() => setLocalError(undefined)}
+            onClick={() => { setLocalError(undefined); clearError(); }}
           >
             <X size={12} />
           </button>
