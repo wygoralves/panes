@@ -1622,10 +1622,19 @@ button, input, textarea, select {
   flex-direction: column;
   align-items: center;
   background: var(--bg-1);
-  border-right: 1px solid var(--border);
   position: relative;
   z-index: 2;
   flex-shrink: 0;
+}
+
+.sb-rail::after {
+  content: "";
+  position: absolute;
+  top: 73px;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
 }
 
 .sb-rail-btn {
