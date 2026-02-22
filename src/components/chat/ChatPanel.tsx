@@ -21,6 +21,7 @@ import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { MessageBlocks } from "./MessageBlocks";
 import { isRequestUserInputApproval, requiresCustomApprovalPayload } from "./toolInputApproval";
 import { Dropdown } from "../shared/Dropdown";
+import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import type { ApprovalBlock, ApprovalResponse, ContentBlock, Message, TrustLevel } from "../../types";
 
@@ -431,6 +432,16 @@ export function ChatPanel() {
   const [viewportScrollTop, setViewportScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [autoScrollLocked, setAutoScrollLocked] = useState(false);
+  const [workspaceOptInPrompt, setWorkspaceOptInPrompt] = useState<{
+    repoNames: string;
+    workspaceId: string;
+    threadId: string;
+    threadPaths: string[];
+    text: string;
+    engineId: string;
+    modelId: string;
+    effort: string | null;
+  } | null>(null);
 
   const activeWorkspace = useMemo(
     () => workspaces.find((w) => w.id === activeWorkspaceId) ?? null,
@@ -949,20 +960,21 @@ export function ChatPanel() {
       useThreadStore.getState().threads.find((thread) => thread.id === targetThreadId) ??
       activeThread;
 
-    let confirmedWorkspaceOptIn = false;
     if (currentThread && currentThread.repoId === null && repos.length > 1) {
       const optIn = Boolean(currentThread.engineMetadata?.workspaceWriteOptIn);
       if (!optIn) {
         const repoNames = repos.map((repo) => repo.name).join(", ");
-        const confirmed = window.confirm(
-          `This workspace thread can write to multiple repositories (${repoNames}). Continue?`
-        );
-        if (!confirmed) {
-          return;
-        }
-
-        await ipc.confirmWorkspaceThread(currentThread.id, repos.map((repo) => repo.path));
-        confirmedWorkspaceOptIn = true;
+        setWorkspaceOptInPrompt({
+          repoNames,
+          workspaceId: activeWorkspaceId,
+          threadId: targetThreadId,
+          threadPaths: repos.map((repo) => repo.path),
+          text: input.trim(),
+          engineId: selectedEngineId,
+          modelId: selectedModelId!,
+          effort: selectedEngineId === "codex" ? selectedEffort : null,
+        });
+        return;
       }
     }
 
@@ -981,9 +993,34 @@ export function ChatPanel() {
       modelId: selectedModelId,
       reasoningEffort: selectedEngineId === "codex" ? selectedEffort : null,
     });
+  }
 
-    if (confirmedWorkspaceOptIn) {
-      await refreshThreads(activeWorkspaceId);
+  async function executeWorkspaceOptInSend() {
+    const prompt = workspaceOptInPrompt;
+    if (!prompt) return;
+    setWorkspaceOptInPrompt(null);
+
+    try {
+      await ipc.confirmWorkspaceThread(prompt.threadId, prompt.threadPaths);
+
+      setInput("");
+
+      if (prompt.engineId === "codex" && prompt.effort) {
+        await ipc.setThreadReasoningEffort(prompt.threadId, prompt.effort, prompt.modelId);
+        setThreadReasoningEffortLocal(prompt.threadId, prompt.effort);
+      }
+      setThreadLastModelLocal(prompt.threadId, prompt.modelId);
+
+      await send(prompt.text, {
+        threadIdOverride: prompt.threadId,
+        engineId: prompt.engineId,
+        modelId: prompt.modelId,
+        reasoningEffort: prompt.effort,
+      });
+
+      await refreshThreads(prompt.workspaceId);
+    } catch {
+      setInput(prompt.text);
     }
   }
 
@@ -2085,6 +2122,19 @@ export function ChatPanel() {
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={workspaceOptInPrompt !== null}
+        title="Enable multi-repo writes"
+        message={
+          workspaceOptInPrompt
+            ? `This workspace thread can write to multiple repositories (${workspaceOptInPrompt.repoNames}). Continue?`
+            : ""
+        }
+        confirmLabel="Continue"
+        onConfirm={() => void executeWorkspaceOptInSend()}
+        onCancel={() => setWorkspaceOptInPrompt(null)}
+      />
     </div>
   );
 }

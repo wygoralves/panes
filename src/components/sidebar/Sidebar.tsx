@@ -22,6 +22,7 @@ import { useSetupStore } from "../../stores/setupStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { UpdateDialog } from "../onboarding/UpdateDialog";
+import { ConfirmDialog } from "../shared/ConfirmDialog";
 import type { Thread, Workspace } from "../../types";
 
 function relativeTime(dateStr: string): string {
@@ -117,6 +118,12 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   );
   const [advancedScanError, setAdvancedScanError] = useState<string | null>(null);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  const [archiveWorkspacePrompt, setArchiveWorkspacePrompt] = useState<{
+    workspace: Workspace;
+  } | null>(null);
+  const [archiveThreadPrompt, setArchiveThreadPrompt] = useState<{
+    thread: Thread;
+  } | null>(null);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [settingsMenuPos, setSettingsMenuPos] = useState({ top: 0, left: 0 });
   const settingsMenuRef = useRef<HTMLDivElement>(null);
@@ -225,11 +232,12 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     await bindChatThread(createdThreadId);
   }
 
-  async function onDeleteWorkspace(project: Workspace) {
-    const confirmed = window.confirm(
-      `Archive workspace "${project.name}" and hide its repos/threads/messages from the sidebar? You can reopen this folder later to restore it.`,
-    );
-    if (!confirmed) return;
+  function onDeleteWorkspace(project: Workspace) {
+    setArchiveWorkspacePrompt({ workspace: project });
+  }
+
+  async function executeArchiveWorkspace(project: Workspace) {
+    setArchiveWorkspacePrompt(null);
     const wasActive = project.id === activeWorkspaceId;
     await removeWorkspace(project.id);
     if (wasActive) {
@@ -238,12 +246,12 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     }
   }
 
-  async function onDeleteThread(thread: Thread) {
-    const threadLabel = thread.title?.trim() || "Untitled thread";
-    const confirmed = window.confirm(
-      `Archive thread "${threadLabel}"? It will be hidden from this project list.`,
-    );
-    if (!confirmed) return;
+  function onDeleteThread(thread: Thread) {
+    setArchiveThreadPrompt({ thread });
+  }
+
+  async function executeArchiveThread(thread: Thread) {
+    setArchiveThreadPrompt(null);
     const wasActive = thread.id === activeThreadId;
     await removeThread(thread.id);
     if (wasActive) {
@@ -714,6 +722,36 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
         )}
 
       <UpdateDialog open={updateDialogOpen} onClose={() => setUpdateDialogOpen(false)} />
+
+      <ConfirmDialog
+        open={archiveWorkspacePrompt !== null}
+        title="Archive workspace"
+        message={
+          archiveWorkspacePrompt
+            ? `Archive workspace "${archiveWorkspacePrompt.workspace.name}" and hide its repos/threads/messages from the sidebar? You can reopen this folder later to restore it.`
+            : ""
+        }
+        confirmLabel="Archive"
+        onConfirm={() => {
+          if (archiveWorkspacePrompt) void executeArchiveWorkspace(archiveWorkspacePrompt.workspace);
+        }}
+        onCancel={() => setArchiveWorkspacePrompt(null)}
+      />
+
+      <ConfirmDialog
+        open={archiveThreadPrompt !== null}
+        title="Archive thread"
+        message={
+          archiveThreadPrompt
+            ? `Archive thread "${archiveThreadPrompt.thread.title?.trim() || "Untitled thread"}"? It will be hidden from this project list.`
+            : ""
+        }
+        confirmLabel="Archive"
+        onConfirm={() => {
+          if (archiveThreadPrompt) void executeArchiveThread(archiveThreadPrompt.thread);
+        }}
+        onCancel={() => setArchiveThreadPrompt(null)}
+      />
 
       {error && (
         <div
