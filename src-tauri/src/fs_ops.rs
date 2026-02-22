@@ -19,10 +19,7 @@ pub fn list_dir(repo_path: &str, dir_path: &str) -> anyhow::Result<Vec<FileTreeE
             .canonicalize()
             .context("directory not found")?
     };
-    anyhow::ensure!(
-        target.starts_with(&repo_root),
-        "path traversal not allowed"
-    );
+    anyhow::ensure!(target.starts_with(&repo_root), "path traversal not allowed");
     anyhow::ensure!(target.is_dir(), "path is not a directory");
 
     let mut entries = Vec::new();

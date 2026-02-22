@@ -69,8 +69,8 @@ pub fn run() {
             app.on_menu_event(move |_app, event| {
                 let id = event.id().as_ref();
                 match id {
-                    "toggle-sidebar" | "toggle-git-panel" | "toggle-search"
-                    | "toggle-terminal" | "close-window" => {
+                    "toggle-sidebar" | "toggle-git-panel" | "toggle-search" | "toggle-terminal"
+                    | "close-window" => {
                         let _ = handle.emit("menu-action", id);
                     }
                     _ => {}
@@ -223,13 +223,8 @@ fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> 
         .item(&toggle_terminal)
         .build()?;
 
-    let close_window = MenuItem::with_id(
-        handle,
-        "close-window",
-        "Close",
-        true,
-        Some("CmdOrCtrl+W"),
-    )?;
+    let close_window =
+        MenuItem::with_id(handle, "close-window", "Close", true, Some("CmdOrCtrl+W"))?;
     let window_menu = SubmenuBuilder::new(handle, "Window")
         .minimize()
         .item(&PredefinedMenuItem::maximize(handle, None)?)

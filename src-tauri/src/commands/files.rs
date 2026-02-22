@@ -1,8 +1,7 @@
 use tauri::State;
 
 use crate::{
-    db,
-    fs_ops,
+    db, fs_ops,
     models::{FileTreeEntryDto, ReadFileResultDto, TrustLevelDto},
     state::AppState,
 };
@@ -20,10 +19,7 @@ pub async fn list_dir(
 }
 
 #[tauri::command]
-pub async fn read_file(
-    repo_path: String,
-    file_path: String,
-) -> Result<ReadFileResultDto, String> {
+pub async fn read_file(repo_path: String, file_path: String) -> Result<ReadFileResultDto, String> {
     tokio::task::spawn_blocking(move || {
         fs_ops::read_file(&repo_path, &file_path).map_err(err_to_string)
     })
@@ -46,7 +42,10 @@ pub async fn write_file(
         //   so they don't require approval flow (approval is for agent operations)
         if let Some(repo) = db::repos::find_repo_by_path(&db, &repo_path).map_err(err_to_string)? {
             if matches!(repo.trust_level, TrustLevelDto::Restricted) {
-                return Err("cannot write to a restricted repository; change the trust level first".to_string());
+                return Err(
+                    "cannot write to a restricted repository; change the trust level first"
+                        .to_string(),
+                );
             }
         }
         fs_ops::write_file(&repo_path, &file_path, &content).map_err(err_to_string)
