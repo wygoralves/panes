@@ -148,10 +148,23 @@ button {
   padding: 8px 16px;
   border-radius: var(--radius-sm);
   transition: transform 0.1s ease, box-shadow 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 .btn-download:hover {
   transform: translateY(-1px);
   box-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
+}
+
+.apple-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.btn-primary .apple-icon {
+  width: 16px;
+  height: 16px;
 }
 
 /* ── Hero Section ── */
@@ -196,6 +209,9 @@ button {
   font-size: 14px;
   transition: all 0.2s ease;
   box-shadow: 0 0 20px rgba(14, 240, 195, 0.15);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 .btn-primary:hover {
   box-shadow: 0 0 30px rgba(14, 240, 195, 0.3);
