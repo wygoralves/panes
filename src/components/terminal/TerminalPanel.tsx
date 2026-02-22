@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Folder, Plus, SquareTerminal, X } from "lucide-react";
+import { Columns2, Folder, Plus, Rows2, SquareTerminal, X } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { ipc, listenTerminalExit, listenTerminalOutput } from "../../lib/ipc";
-import { useTerminalStore } from "../../stores/terminalStore";
+import { useTerminalStore, collectSessionIds } from "../../stores/terminalStore";
+import type { SplitNode, SplitContainer as SplitContainerType } from "../../types";
 
 interface TerminalPanelProps {
   workspaceId: string;
@@ -337,17 +338,224 @@ function destroyCachedTerminal(workspaceId: string, sessionId: string) {
   pendingOutput.delete(key);
 }
 
+// ── Split pane components ───────────────────────────────────────────
+
+interface SplitPaneViewProps {
+  node: SplitNode;
+  workspaceId: string;
+  groupId: string;
+  focusedSessionId: string | null;
+  containerRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
+  onFocus: (sessionId: string) => void;
+  onClose: (sessionId: string) => void;
+  onRatioChange: (containerId: string, ratio: number) => void;
+  ensureTerminal: (sessionId: string) => void;
+  showCloseButton: boolean;
+}
+
+function SplitPaneView({
+  node,
+  workspaceId,
+  groupId,
+  focusedSessionId,
+  containerRefs,
+  onFocus,
+  onClose,
+  onRatioChange,
+  ensureTerminal,
+  showCloseButton,
+}: SplitPaneViewProps) {
+  if (node.type === "leaf") {
+    const isFocused = node.sessionId === focusedSessionId;
+    return (
+      <div
+        className={`terminal-leaf-pane${isFocused ? " terminal-leaf-pane-focused" : ""}`}
+        onMouseDown={() => onFocus(node.sessionId)}
+      >
+        <div
+          ref={(el) => {
+            if (!el) {
+              containerRefs.current.delete(node.sessionId);
+              const cached = cachedTerminals.get(
+                terminalCacheKey(workspaceId, node.sessionId)
+              );
+              if (cached) {
+                cached.isAttached = false;
+                if (cached.fitTimer !== undefined) {
+                  window.clearTimeout(cached.fitTimer);
+                  cached.fitTimer = undefined;
+                }
+              }
+              return;
+            }
+            containerRefs.current.set(node.sessionId, el);
+            ensureTerminal(node.sessionId);
+          }}
+          className="terminal-viewport"
+          style={{ position: "absolute", inset: 0 }}
+        />
+        {showCloseButton && (
+          <button
+            type="button"
+            className="terminal-pane-close-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose(node.sessionId);
+            }}
+            title="Close pane"
+          >
+            <X size={10} />
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <SplitContainerView
+      container={node}
+      workspaceId={workspaceId}
+      groupId={groupId}
+      focusedSessionId={focusedSessionId}
+      containerRefs={containerRefs}
+      onFocus={onFocus}
+      onClose={onClose}
+      onRatioChange={onRatioChange}
+      ensureTerminal={ensureTerminal}
+    />
+  );
+}
+
+interface SplitContainerViewProps {
+  container: SplitContainerType;
+  workspaceId: string;
+  groupId: string;
+  focusedSessionId: string | null;
+  containerRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
+  onFocus: (sessionId: string) => void;
+  onClose: (sessionId: string) => void;
+  onRatioChange: (containerId: string, ratio: number) => void;
+  ensureTerminal: (sessionId: string) => void;
+}
+
+function SplitContainerView({
+  container,
+  workspaceId,
+  groupId,
+  focusedSessionId,
+  containerRefs,
+  onFocus,
+  onClose,
+  onRatioChange,
+  ensureTerminal,
+}: SplitContainerViewProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => dragCleanupRef.current?.();
+  }, []);
+
+  const isVertical = container.direction === "vertical";
+  const handleClass = isVertical
+    ? "terminal-split-handle-v"
+    : "terminal-split-handle-h";
+  const flexDir = isVertical ? "row" : "column";
+
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const el = containerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const dimension = isVertical ? rect.width : rect.height;
+      const start = isVertical ? rect.left : rect.top;
+      const sessionIds = collectSessionIds(container);
+
+      document.body.style.userSelect = "none";
+
+      const onMove = (moveEvent: MouseEvent) => {
+        const pos = isVertical ? moveEvent.clientX : moveEvent.clientY;
+        const newRatio = (pos - start) / dimension;
+        onRatioChange(container.id, newRatio);
+      };
+      const cleanup = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", cleanup);
+        document.body.style.userSelect = "";
+        dragCleanupRef.current = null;
+        for (const id of sessionIds) {
+          scheduleTerminalFit(workspaceId, id, 0);
+        }
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", cleanup);
+      dragCleanupRef.current = cleanup;
+    },
+    [container.id, isVertical, onRatioChange, workspaceId],
+  );
+
+  const firstPct = `${container.ratio * 100}%`;
+  const secondPct = `${(1 - container.ratio) * 100}%`;
+
+  return (
+    <div
+      ref={containerRef}
+      className="terminal-split-container"
+      style={{ flexDirection: flexDir }}
+    >
+      <div style={{ flex: `0 0 calc(${firstPct} - 2px)`, minWidth: 0, minHeight: 0, display: "flex", overflow: "hidden" }}>
+        <SplitPaneView
+          node={container.children[0]}
+          workspaceId={workspaceId}
+          groupId={groupId}
+          focusedSessionId={focusedSessionId}
+          containerRefs={containerRefs}
+          onFocus={onFocus}
+          onClose={onClose}
+          onRatioChange={onRatioChange}
+          ensureTerminal={ensureTerminal}
+          showCloseButton
+        />
+      </div>
+      <div className={handleClass} onMouseDown={handleMouseDown} />
+      <div style={{ flex: `0 0 calc(${secondPct} - 2px)`, minWidth: 0, minHeight: 0, display: "flex", overflow: "hidden" }}>
+        <SplitPaneView
+          node={container.children[1]}
+          workspaceId={workspaceId}
+          groupId={groupId}
+          focusedSessionId={focusedSessionId}
+          containerRefs={containerRefs}
+          onFocus={onFocus}
+          onClose={onClose}
+          onRatioChange={onRatioChange}
+          ensureTerminal={ensureTerminal}
+          showCloseButton
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── Main component ──────────────────────────────────────────────────
+
 export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const workspaceState = useTerminalStore((state) => state.workspaces[workspaceId]);
   const sessions = workspaceState?.sessions ?? [];
-  const activeSessionId = workspaceState?.activeSessionId ?? null;
   const loading = workspaceState?.loading ?? false;
   const error = workspaceState?.error;
+  const groups = workspaceState?.groups ?? [];
+  const activeGroupId = workspaceState?.activeGroupId ?? null;
+  const focusedSessionId = workspaceState?.focusedSessionId ?? null;
+
   const createSession = useTerminalStore((state) => state.createSession);
   const closeSession = useTerminalStore((state) => state.closeSession);
-  const setActiveSession = useTerminalStore((state) => state.setActiveSession);
   const handleSessionExit = useTerminalStore((state) => state.handleSessionExit);
   const syncSessions = useTerminalStore((state) => state.syncSessions);
+  const splitSession = useTerminalStore((state) => state.splitSession);
+  const setFocusedSession = useTerminalStore((state) => state.setFocusedSession);
+  const setActiveGroup = useTerminalStore((state) => state.setActiveGroup);
+  const updateGroupRatio = useTerminalStore((state) => state.updateGroupRatio);
 
   // Component-level refs — only track DOM containers (reset on mount/unmount).
   // Terminal instances live in the module-level cachedTerminals map.
@@ -447,22 +655,23 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     scheduleTerminalFit(workspaceId, sessionId, 0);
   }, [workspaceId]);
 
-  const fitActiveTerminal = useCallback(() => {
-    if (!activeSessionId) {
-      return;
+  // Fit all sessions in the active group — reads store at call time to stay
+  // stable across group tree mutations (e.g. ratio drag) and avoid
+  // ResizeObserver churn.
+  const fitActiveGroup = useCallback(() => {
+    const state = useTerminalStore.getState().workspaces[workspaceId];
+    const gid = state?.activeGroupId;
+    if (!gid) return;
+    const group = state?.groups.find((g) => g.id === gid);
+    if (!group) return;
+    for (const id of collectSessionIds(group.root)) {
+      scheduleTerminalFit(workspaceId, id);
     }
-    scheduleTerminalFit(workspaceId, activeSessionId);
-  }, [activeSessionId, workspaceId]);
+  }, [workspaceId]);
 
   useEffect(() => {
     void syncSessions(workspaceId);
   }, [workspaceId, syncSessions]);
-
-  useEffect(() => {
-    if (!activeSessionId && sessions.length > 0) {
-      setActiveSession(workspaceId, sessions[sessions.length - 1].id);
-    }
-  }, [activeSessionId, sessions, setActiveSession, workspaceId]);
 
   useEffect(() => {
     for (const session of sessions) {
@@ -483,33 +692,49 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     }
   }, [sessions, ensureTerminal, workspaceId]);
 
+  // Fit when active group changes
   useEffect(() => {
-    fitActiveTerminal();
-  }, [activeSessionId, sessions.length, fitActiveTerminal]);
+    fitActiveGroup();
+  }, [activeGroupId, sessions.length, fitActiveGroup]);
 
   useEffect(() => {
     function onWindowResize() {
-      fitActiveTerminal();
+      fitActiveGroup();
     }
 
     window.addEventListener("resize", onWindowResize);
     return () => window.removeEventListener("resize", onWindowResize);
-  }, [fitActiveTerminal]);
+  }, [fitActiveGroup]);
 
+  // ResizeObserver: observe all containers in the active group.
+  // Re-subscribes when activeGroupId or sessions.length changes (new
+  // tab or split/close adds/removes panes) but NOT on ratio changes.
   useEffect(() => {
-    if (!activeSessionId || typeof ResizeObserver === "undefined") {
+    if (!activeGroupId || typeof ResizeObserver === "undefined") {
       return;
     }
-    const activeContainer = containerRefs.current.get(activeSessionId);
-    if (!activeContainer) {
-      return;
+    const state = useTerminalStore.getState().workspaces[workspaceId];
+    const group = state?.groups.find((g) => g.id === activeGroupId);
+    if (!group) return;
+
+    const ids = collectSessionIds(group.root);
+    const containers: HTMLDivElement[] = [];
+    for (const id of ids) {
+      const el = containerRefs.current.get(id);
+      if (el) containers.push(el);
     }
 
-    const observer = new ResizeObserver(() => fitActiveTerminal());
-    observer.observe(activeContainer);
+    if (containers.length === 0) return;
+
+    const observer = new ResizeObserver(() => fitActiveGroup());
+    for (const el of containers) {
+      observer.observe(el);
+    }
 
     return () => observer.disconnect();
-  }, [activeSessionId, fitActiveTerminal]);
+    // sessions.length triggers re-subscribe when panes are added/removed
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeGroupId, sessions.length, workspaceId, fitActiveGroup]);
 
   useEffect(() => {
     let unlistenOutput: (() => void) | undefined;
@@ -557,43 +782,61 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     };
   }, [workspaceId]);
 
-  const activeTerminal = useMemo(
-    () => sessions.find((session) => session.id === activeSessionId) ?? null,
-    [activeSessionId, sessions],
+  const focusedTerminal = useMemo(
+    () => sessions.find((session) => session.id === focusedSessionId) ?? null,
+    [focusedSessionId, sessions],
   );
 
   const spawnNewSession = useCallback(() => {
-    const active = activeSessionId
-      ? cachedTerminals.get(terminalCacheKey(workspaceId, activeSessionId))
+    const active = focusedSessionId
+      ? cachedTerminals.get(terminalCacheKey(workspaceId, focusedSessionId))
       : undefined;
     const cols = active?.terminal.cols ?? DEFAULT_COLS;
     const rows = active?.terminal.rows ?? DEFAULT_ROWS;
     void createSession(workspaceId, cols, rows);
-  }, [activeSessionId, createSession, workspaceId]);
+  }, [focusedSessionId, createSession, workspaceId]);
+
+  const handleSplit = useCallback(
+    (direction: "horizontal" | "vertical") => {
+      if (!focusedSessionId) return;
+      const active = cachedTerminals.get(
+        terminalCacheKey(workspaceId, focusedSessionId),
+      );
+      const cols = active?.terminal.cols ?? DEFAULT_COLS;
+      const rows = active?.terminal.rows ?? DEFAULT_ROWS;
+      void splitSession(workspaceId, focusedSessionId, direction, cols, rows);
+    },
+    [focusedSessionId, splitSession, workspaceId],
+  );
 
   return (
     <div className="terminal-panel-root">
       <div className="terminal-tabs-bar">
         <div className="terminal-tabs-list">
-          {sessions.map((session, index) => {
-            const isActive = session.id === activeSessionId;
+          {groups.map((group, index) => {
+            const isActive = group.id === activeGroupId;
+            const groupSessionIds = collectSessionIds(group.root);
             return (
               <button
-                key={session.id}
+                key={group.id}
                 type="button"
                 className={`terminal-tab ${isActive ? "terminal-tab-active" : ""}`}
-                onClick={() => setActiveSession(workspaceId, session.id)}
-                title={session.cwd}
+                onClick={() => setActiveGroup(workspaceId, group.id)}
               >
                 <SquareTerminal size={12} />
                 <span className="terminal-tab-label">Terminal {index + 1}</span>
+                {groupSessionIds.length > 1 && (
+                  <span className="terminal-tab-badge">{groupSessionIds.length}</span>
+                )}
                 <button
                   type="button"
                   className="terminal-tab-close"
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    void closeSession(workspaceId, session.id);
+                    for (const id of groupSessionIds) {
+                      void closeSession(workspaceId, id);
+                    }
                   }}
                 >
                   <X size={10} />
@@ -603,14 +846,36 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
           })}
         </div>
 
-        <button
-          type="button"
-          className="terminal-add-btn"
-          onClick={spawnNewSession}
-          title="New terminal"
-        >
-          <Plus size={13} />
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <button
+            type="button"
+            className="terminal-add-btn"
+            onClick={spawnNewSession}
+            title="New terminal"
+          >
+            <Plus size={13} />
+          </button>
+          {focusedSessionId && (
+            <>
+              <button
+                type="button"
+                className="terminal-add-btn"
+                onClick={() => handleSplit("vertical")}
+                title="Split right"
+              >
+                <Columns2 size={13} />
+              </button>
+              <button
+                type="button"
+                className="terminal-add-btn"
+                onClick={() => handleSplit("horizontal")}
+                title="Split down"
+              >
+                <Rows2 size={13} />
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="terminal-body">
@@ -638,30 +903,30 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
           </div>
         ) : (
           <div className="terminal-viewport-stack">
-            {sessions.map((session) => (
+            {groups.map((group) => (
               <div
-                key={session.id}
-                ref={(node) => {
-                  if (!node) {
-                    containerRefs.current.delete(session.id);
-                    const cached = cachedTerminals.get(
-                      terminalCacheKey(workspaceId, session.id)
-                    );
-                    if (cached) {
-                      cached.isAttached = false;
-                      if (cached.fitTimer !== undefined) {
-                        window.clearTimeout(cached.fitTimer);
-                        cached.fitTimer = undefined;
-                      }
-                    }
-                    return;
-                  }
-                  containerRefs.current.set(session.id, node);
-                  ensureTerminal(session.id);
+                key={group.id}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: group.id === activeGroupId ? "flex" : "none",
                 }}
-                className="terminal-viewport"
-                style={{ display: session.id === activeSessionId ? "block" : "none" }}
-              />
+              >
+                <SplitPaneView
+                  node={group.root}
+                  workspaceId={workspaceId}
+                  groupId={group.id}
+                  focusedSessionId={focusedSessionId}
+                  containerRefs={containerRefs}
+                  onFocus={(id) => setFocusedSession(workspaceId, id)}
+                  onClose={(id) => void closeSession(workspaceId, id)}
+                  onRatioChange={(containerId, ratio) =>
+                    updateGroupRatio(workspaceId, group.id, containerId, ratio)
+                  }
+                  ensureTerminal={ensureTerminal}
+                  showCloseButton={group.root.type === "split"}
+                />
+              </div>
             ))}
           </div>
         )}
@@ -671,10 +936,10 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
             {error}
           </div>
         )}
-        {activeTerminal && (
-          <div className="terminal-meta-bar" title={activeTerminal.cwd}>
+        {focusedTerminal && (
+          <div className="terminal-meta-bar" title={focusedTerminal.cwd}>
             <Folder size={10} style={{ opacity: 0.5, flexShrink: 0 }} />
-            <span className="terminal-meta-bar-path">{activeTerminal.cwd}</span>
+            <span className="terminal-meta-bar-path">{focusedTerminal.cwd}</span>
           </div>
         )}
       </div>

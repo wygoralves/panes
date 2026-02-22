@@ -308,6 +308,30 @@ export interface TerminalExitEvent {
   signal: number | null;
 }
 
+// ── Terminal Split Layout ───────────────────────────────────────────
+
+export type SplitDirection = "horizontal" | "vertical";
+
+export interface SplitLeaf {
+  type: "leaf";
+  sessionId: string;
+}
+
+export interface SplitContainer {
+  type: "split";
+  id: string;
+  direction: SplitDirection;
+  ratio: number;
+  children: [SplitNode, SplitNode];
+}
+
+export type SplitNode = SplitLeaf | SplitContainer;
+
+export interface TerminalGroup {
+  id: string;
+  root: SplitNode;
+}
+
 // ── Setup / Onboarding ──────────────────────────────────────────────
 
 export interface DependencyReport {

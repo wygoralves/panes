@@ -24,7 +24,8 @@
       "Bash(sips:*)",
       "Bash(git status:*)",
       "Bash(magick:*)",
-      "Bash(npx tauri:*)"
+      "Bash(npx tauri:*)",
+      "Bash(grep:*)"
     ]
   }
 }

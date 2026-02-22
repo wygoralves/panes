@@ -1493,6 +1493,93 @@ button, input, textarea, select {
   min-width: 0;
 }
 
+/* ── Terminal split layout ── */
+.terminal-split-container {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.terminal-split-handle-v {
+  width: 4px;
+  flex-shrink: 0;
+  background: var(--border);
+  cursor: col-resize;
+  position: relative;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.terminal-split-handle-v::after { content: ""; position: absolute; inset: 0 -2px; }
+.terminal-split-handle-v:hover,
+.terminal-split-handle-v:active { background: var(--accent); }
+
+.terminal-split-handle-h {
+  height: 4px;
+  flex-shrink: 0;
+  background: var(--border);
+  cursor: row-resize;
+  position: relative;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.terminal-split-handle-h::after { content: ""; position: absolute; inset: -2px 0; }
+.terminal-split-handle-h:hover,
+.terminal-split-handle-h:active { background: var(--accent); }
+
+.terminal-leaf-pane {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.terminal-leaf-pane::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border: 1.5px solid transparent;
+  border-radius: 2px;
+  transition: border-color var(--duration-fast) var(--ease-out);
+  z-index: 1;
+}
+.terminal-leaf-pane-focused::after {
+  border-color: var(--border-accent);
+}
+
+.terminal-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 99px;
+  font-size: 9px;
+  font-weight: 600;
+  background: var(--bg-4);
+  color: var(--text-3);
+}
+
+.terminal-pane-close-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--bg-4);
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  z-index: 2;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.terminal-leaf-pane:hover .terminal-pane-close-btn { opacity: 1; }
+.terminal-pane-close-btn:hover { color: var(--text-1); background: var(--bg-5); }
+
 /* ── Sidebar ── */
 .sb {
   height: 100%;
