@@ -565,8 +565,10 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   // Only one tab can be renamed at a time, so a single ref is safe despite being inside .map()
   const renameInputRef = useRef<HTMLInputElement>(null);
 
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [dropTarget, setDropTarget] = useState<{ index: number; side: "before" | "after" } | null>(null);
+  const [draggingGroupId, setDraggingGroupId] = useState<string | null>(null);
+  const dragStateRef = useRef<{ groupId: string; startX: number; started: boolean; el: HTMLElement } | null>(null);
+  const suppressClickRef = useRef(false);
+  const tabsListRef = useRef<HTMLDivElement>(null);
 
   const [ctxMenu, setCtxMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
   const ctxMenuRef = useRef<HTMLDivElement>(null);
@@ -631,36 +633,70 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     }
   }, [groups, closeSession, workspaceId]);
 
-  const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
-    if (renamingGroupId) { e.preventDefault(); return; }
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", String(index));
-    setDragIndex(index);
-  }, [renamingGroupId]);
+  const handleTabPointerDown = useCallback((e: React.PointerEvent, groupId: string) => {
+    if (renamingGroupId || groups.length <= 1 || e.button !== 0) return;
+    const tabEl = e.currentTarget as HTMLElement;
+    dragStateRef.current = { groupId, startX: e.clientX, started: false, el: tabEl };
 
-  const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    if (dragIndex === null || dragIndex === index) { setDropTarget(null); return; }
-    const rect = e.currentTarget.getBoundingClientRect();
-    const side = e.clientX < rect.left + rect.width / 2 ? "before" : "after";
-    setDropTarget({ index, side });
-  }, [dragIndex]);
+    const onMove = (me: PointerEvent) => {
+      const ds = dragStateRef.current;
+      if (!ds) return;
+      if (!ds.started) {
+        if (Math.abs(me.clientX - ds.startX) < 5) return;
+        ds.started = true;
+        suppressClickRef.current = true;
+        setDraggingGroupId(groupId);
+        document.body.style.userSelect = "none";
+        document.body.style.cursor = "grabbing";
+      }
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    if (dragIndex === null || !dropTarget) { setDragIndex(null); setDropTarget(null); return; }
-    let target = dropTarget.side === "after" ? dropTarget.index + 1 : dropTarget.index;
-    if (dragIndex < target) target -= 1;
-    reorderGroups(workspaceId, dragIndex, target);
-    setDragIndex(null);
-    setDropTarget(null);
-  }, [dragIndex, dropTarget, reorderGroups, workspaceId]);
+      // Tab follows cursor via direct DOM transform (bypasses React for 60fps)
+      const dx = me.clientX - ds.startX;
+      ds.el.style.transform = `translateX(${dx}px)`;
 
-  const handleDragEnd = useCallback(() => {
-    setDragIndex(null);
-    setDropTarget(null);
-  }, []);
+      // Check for swap with neighboring tabs
+      const listEl = tabsListRef.current;
+      if (!listEl) return;
+      const tabs = Array.from(listEl.children) as HTMLElement[];
+      const currentGroups = useTerminalStore.getState().workspaces[workspaceId]?.groups ?? [];
+      const curIdx = currentGroups.findIndex((g) => g.id === groupId);
+      if (curIdx === -1) return;
+      for (let i = 0; i < tabs.length; i++) {
+        if (i === curIdx) continue;
+        const rect = tabs[i].getBoundingClientRect();
+        const mid = rect.left + rect.width / 2;
+        if (i < curIdx && me.clientX < mid) {
+          // Swapping left — natural position shifts left by swapped tab width
+          ds.startX -= rect.width;
+          reorderGroups(workspaceId, curIdx, i);
+          break;
+        }
+        if (i > curIdx && me.clientX > mid) {
+          // Swapping right — natural position shifts right by swapped tab width
+          ds.startX += rect.width;
+          reorderGroups(workspaceId, curIdx, i);
+          break;
+        }
+      }
+    };
+
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      const ds = dragStateRef.current;
+      if (ds?.started) {
+        ds.el.style.transform = "";
+        setDraggingGroupId(null);
+        requestAnimationFrame(() => { suppressClickRef.current = false; });
+      }
+      dragStateRef.current = null;
+    };
+
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  }, [renamingGroupId, groups.length, workspaceId, reorderGroups]);
 
   // Component-level refs — only track DOM containers (reset on mount/unmount).
   // Terminal instances live in the module-level cachedTerminals map.
@@ -927,31 +963,24 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   return (
     <div className="terminal-panel-root">
       <div className="terminal-tabs-bar">
-        <div className="terminal-tabs-list">
-          {groups.map((group, index) => {
+        <div className="terminal-tabs-list" ref={tabsListRef}>
+          {groups.map((group) => {
             const isActive = group.id === activeGroupId;
             const groupSessionIds = collectSessionIds(group.root);
             return (
               <button
                 key={group.id}
                 type="button"
-                className={[
-                  "terminal-tab",
-                  isActive ? "terminal-tab-active" : "",
-                  dragIndex === index ? "terminal-tab-dragging" : "",
-                  dropTarget?.index === index && dropTarget.side === "before" ? "terminal-tab-drop-before" : "",
-                  dropTarget?.index === index && dropTarget.side === "after" ? "terminal-tab-drop-after" : "",
-                ].filter(Boolean).join(" ")}
-                draggable={groups.length > 1}
-                onClick={() => setActiveGroup(workspaceId, group.id)}
+                className={`terminal-tab${isActive ? " terminal-tab-active" : ""}${draggingGroupId === group.id ? " terminal-tab-dragging" : ""}`}
+                onClick={() => {
+                  if (suppressClickRef.current) return;
+                  setActiveGroup(workspaceId, group.id);
+                }}
+                onPointerDown={(e) => handleTabPointerDown(e, group.id)}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setCtxMenu({ groupId: group.id, x: e.clientX, y: e.clientY });
                 }}
-                onDragStart={(e) => handleDragStart(e, index)}
-                onDragOver={(e) => handleDragOver(e, index)}
-                onDrop={handleDrop}
-                onDragEnd={handleDragEnd}
               >
                 <SquareTerminal size={12} />
                 {renamingGroupId === group.id ? (
