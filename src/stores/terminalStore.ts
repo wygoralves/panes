@@ -65,8 +65,8 @@ function findGroupForSession(groups: TerminalGroup[], sessionId: string): Termin
   return null;
 }
 
-function makeLeafGroup(sessionId: string): TerminalGroup {
-  return { id: crypto.randomUUID(), root: { type: "leaf", sessionId } };
+function makeLeafGroup(sessionId: string, name: string): TerminalGroup {
+  return { id: crypto.randomUUID(), root: { type: "leaf", sessionId }, name };
 }
 
 function nextFocusedSessionId(
@@ -94,6 +94,7 @@ interface WorkspaceTerminalState {
   groups: TerminalGroup[];
   activeGroupId: string | null;
   focusedSessionId: string | null;
+  groupCounter: number;
   loading: boolean;
   error?: string;
 }
@@ -116,6 +117,7 @@ interface TerminalState {
   setFocusedSession: (workspaceId: string, sessionId: string) => void;
   setActiveGroup: (workspaceId: string, groupId: string) => void;
   updateGroupRatio: (workspaceId: string, groupId: string, containerId: string, ratio: number) => void;
+  renameGroup: (workspaceId: string, groupId: string, name: string) => void;
 }
 
 function defaultWorkspaceState(): WorkspaceTerminalState {
@@ -128,6 +130,7 @@ function defaultWorkspaceState(): WorkspaceTerminalState {
     groups: [],
     activeGroupId: null,
     focusedSessionId: null,
+    groupCounter: 0,
     loading: false,
     error: undefined,
   };
@@ -168,10 +171,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }
       set((state) => {
         const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
-        const groups =
-          current.groups.length > 0
-            ? current.groups
-            : sessions.map((s) => makeLeafGroup(s.id));
+        let groups: TerminalGroup[];
+        let groupCounter = current.groupCounter;
+        if (current.groups.length > 0) {
+          groups = current.groups;
+        } else {
+          groups = sessions.map((s) => {
+            groupCounter += 1;
+            return makeLeafGroup(s.id, `Terminal ${groupCounter}`);
+          });
+        }
         const activeGroupId = current.activeGroupId ?? groups[groups.length - 1]?.id ?? null;
         const focusedId = nextFocusedSessionId(groups, activeGroupId, current.focusedSessionId);
         return {
@@ -182,6 +191,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             groups,
             activeGroupId,
             focusedSessionId: focusedId,
+            groupCounter,
             loading: false,
             error: undefined,
           }),
@@ -216,6 +226,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           groups: [],
           activeGroupId: null,
           focusedSessionId: null,
+          groupCounter: 0,
           loading: false,
           error: undefined,
         }),
@@ -315,9 +326,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
     try {
       const created = await ipc.terminalCreateSession(workspaceId, cols, rows);
-      const newGroup = makeLeafGroup(created.id);
       set((state) => {
         const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
+        const nextCounter = current.groupCounter + 1;
+        const newGroup = makeLeafGroup(created.id, `Terminal ${nextCounter}`);
         const sessions = [
           ...current.sessions.filter((session) => session.id !== created.id),
           created,
@@ -331,6 +343,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             groups,
             activeGroupId: newGroup.id,
             focusedSessionId: created.id,
+            groupCounter: nextCounter,
             loading: false,
             error: undefined,
           }),
@@ -398,8 +411,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
         const liveIds = new Set(sessions.map((s) => s.id));
         let groups: TerminalGroup[];
+        let groupCounter = current.groupCounter;
         if (current.groups.length === 0 && hasSessions) {
-          groups = sessions.map((s) => makeLeafGroup(s.id));
+          groups = sessions.map((s) => {
+            groupCounter += 1;
+            return makeLeafGroup(s.id, `Terminal ${groupCounter}`);
+          });
         } else {
           groups = current.groups
             .map((group) => {
@@ -427,6 +444,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             groups,
             activeGroupId,
             focusedSessionId: focusedId,
+            groupCounter,
             ...(hasSessions ? { isOpen: true, layoutMode: restoredMode } : {}),
           }),
         };
@@ -568,6 +586,20 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         if (g.id !== groupId) return g;
         return { ...g, root: updateRatioInTree(g.root, containerId, clamped) };
       });
+      return {
+        workspaces: mergeWorkspaceState(state.workspaces, workspaceId, { groups }),
+      };
+    });
+  },
+
+  renameGroup: (workspaceId, groupId, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    set((state) => {
+      const workspace = state.workspaces[workspaceId] ?? defaultWorkspaceState();
+      const groups = workspace.groups.map((g) =>
+        g.id === groupId ? { ...g, name: trimmed } : g,
+      );
       return {
         workspaces: mergeWorkspaceState(state.workspaces, workspaceId, { groups }),
       };

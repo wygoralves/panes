@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Columns2, Folder, Plus, Rows2, SquareTerminal, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Columns2, Folder, Pencil, Plus, Rows2, SquareTerminal, Trash2, X } from "lucide-react";
+import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -556,6 +557,75 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const setFocusedSession = useTerminalStore((state) => state.setFocusedSession);
   const setActiveGroup = useTerminalStore((state) => state.setActiveGroup);
   const updateGroupRatio = useTerminalStore((state) => state.updateGroupRatio);
+  const renameGroup = useTerminalStore((state) => state.renameGroup);
+
+  const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  // Only one tab can be renamed at a time, so a single ref is safe despite being inside .map()
+  const renameInputRef = useRef<HTMLInputElement>(null);
+
+  const [ctxMenu, setCtxMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
+  const ctxMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (renamingGroupId) {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    }
+  }, [renamingGroupId]);
+
+  useEffect(() => {
+    if (renamingGroupId && !groups.some((g) => g.id === renamingGroupId)) {
+      setRenamingGroupId(null);
+    }
+  }, [groups, renamingGroupId]);
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const handleClose = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent && e.key !== "Escape") return;
+      if (e instanceof MouseEvent && ctxMenuRef.current?.contains(e.target as Node)) return;
+      setCtxMenu(null);
+    };
+    document.addEventListener("mousedown", handleClose);
+    document.addEventListener("keydown", handleClose);
+    return () => {
+      document.removeEventListener("mousedown", handleClose);
+      document.removeEventListener("keydown", handleClose);
+    };
+  }, [ctxMenu]);
+
+  const commitRename = useCallback(
+    (groupId: string) => {
+      const trimmed = renameValue.trim();
+      if (trimmed) {
+        renameGroup(workspaceId, groupId, trimmed);
+      }
+      setRenamingGroupId(null);
+    },
+    [renameValue, renameGroup, workspaceId],
+  );
+
+  const cancelRename = useCallback(() => {
+    setRenamingGroupId(null);
+  }, []);
+
+  const startRenameFromMenu = useCallback((groupId: string) => {
+    const group = groups.find((g) => g.id === groupId);
+    if (!group) return;
+    setCtxMenu(null);
+    setRenamingGroupId(groupId);
+    setRenameValue(group.name);
+  }, [groups]);
+
+  const closeGroupFromMenu = useCallback((groupId: string) => {
+    setCtxMenu(null);
+    const group = groups.find((g) => g.id === groupId);
+    if (!group) return;
+    for (const id of collectSessionIds(group.root)) {
+      void closeSession(workspaceId, id);
+    }
+  }, [groups, closeSession, workspaceId]);
 
   // Component-level refs — only track DOM containers (reset on mount/unmount).
   // Terminal instances live in the module-level cachedTerminals map.
@@ -822,9 +892,38 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                 type="button"
                 className={`terminal-tab ${isActive ? "terminal-tab-active" : ""}`}
                 onClick={() => setActiveGroup(workspaceId, group.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setCtxMenu({ groupId: group.id, x: e.clientX, y: e.clientY });
+                }}
               >
                 <SquareTerminal size={12} />
-                <span className="terminal-tab-label">Terminal {index + 1}</span>
+                {renamingGroupId === group.id ? (
+                  <input
+                    ref={renameInputRef}
+                    type="text"
+                    className="terminal-tab-rename-input"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.preventDefault(); commitRename(group.id); }
+                      if (e.key === "Escape") { e.preventDefault(); cancelRename(); }
+                    }}
+                    onBlur={() => commitRename(group.id)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                ) : (
+                  <span
+                    className="terminal-tab-label"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      setRenamingGroupId(group.id);
+                      setRenameValue(group.name);
+                    }}
+                  >
+                    {group.name}
+                  </span>
+                )}
                 {groupSessionIds.length > 1 && (
                   <span className="terminal-tab-badge">{groupSessionIds.length}</span>
                 )}
@@ -943,6 +1042,32 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
           </div>
         )}
       </div>
+
+      {ctxMenu && createPortal(
+        <div
+          ref={ctxMenuRef}
+          className="dropdown-menu"
+          style={{ position: "fixed", top: ctxMenu.y, left: ctxMenu.x }}
+        >
+          <button
+            type="button"
+            className="dropdown-item"
+            onClick={() => startRenameFromMenu(ctxMenu.groupId)}
+          >
+            <Pencil size={12} />
+            Rename
+          </button>
+          <button
+            type="button"
+            className="dropdown-item"
+            onClick={() => closeGroupFromMenu(ctxMenu.groupId)}
+          >
+            <Trash2 size={12} />
+            Close
+          </button>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }

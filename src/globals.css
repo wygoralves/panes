@@ -1325,6 +1325,22 @@ button, input, textarea, select {
   text-overflow: ellipsis;
 }
 
+.terminal-tab-rename-input {
+  max-width: 120px;
+  min-width: 40px;
+  padding: 0 4px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--border-accent);
+  background: var(--bg-3);
+  color: var(--text-1);
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  outline: none;
+  user-select: text;
+}
+
 .terminal-tab-close {
   display: inline-flex;
   align-items: center;

@@ -330,6 +330,7 @@ export type SplitNode = SplitLeaf | SplitContainer;
 export interface TerminalGroup {
   id: string;
   root: SplitNode;
+  name: string;
 }
 
 // ── Setup / Onboarding ──────────────────────────────────────────────
