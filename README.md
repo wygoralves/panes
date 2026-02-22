@@ -30,7 +30,7 @@
 
 Panes wraps a rich native UI around terminal-based coding agents, giving developers a single pane of glass to orchestrate, review, and approve everything their AI agents do — across multiple repositories.
 
-Coding agents are powerful, but their CLI interfaces are limiting. Panes gives you real-time streaming chat, native git integration, multi-repo management, approval workflows, integrated terminal, and full audit trails — all in a fast, local-first desktop app.
+CLI coding agents are powerful. Panes makes them even more so: real-time streaming chat, native git integration, multi-repo management, approval workflows, an integrated terminal with split panes, and full audit trails — all in a fast, local-first desktop app.
 
 <!-- TODO: Add screenshot here -->
 <!-- <p align="center"><img src="docs/screenshot.png" alt="Panes screenshot" width="800" /></p> -->
@@ -44,7 +44,7 @@ Coding agents are powerful, but their CLI interfaces are limiting. Panes gives y
 - Global message search (FTS5) with keyboard navigation
 
 **Git — First-Class Citizen**
-- Full git panel: status, diff, stage, unstage, commit
+- Full git panel: status, diff, stage, unstage, commit, discard (per-file and bulk with confirmation)
 - Branch management: create, rename, delete, checkout (local + remote)
 - Remote operations: fetch, pull, push with ahead/behind tracking
 - Commit history browser and stash management
@@ -60,14 +60,17 @@ Coding agents are powerful, but their CLI interfaces are limiting. Panes gives y
 
 **Terminal**
 - Integrated native terminal (PTY) with xterm.js + WebGL rendering
-- Multi-session tabs per workspace
+- Multi-session tab groups per workspace, with inline tab renaming (double-click or right-click)
+- Split panes: divide any terminal horizontally or vertically, with draggable resize handles
 - Persistent sessions across navigation — scrollback survives workspace switches
 
 **Desktop Experience**
 - Three-column resizable layout with pin/unpin sidebar
+- Layout mode switcher: chat only, split (chat + terminal), or terminal only — cycled with Cmd+Shift+T, persisted per workspace
 - Virtualized message list and diff rendering for large threads
 - Workspace/thread persistence across sessions
 - Crash recovery for interrupted turns
+- OTA auto-updates via Tauri updater
 
 ## Getting Started
 
@@ -173,16 +176,6 @@ cargo clippy            # Lint
 - **Virtualization** — messages virtualized at 40+ items; diffs at 500+ lines
 - **Engine-agnostic** — all engines emit a unified `EngineEvent` model regardless of native protocol
 - **Local-first** — everything stored locally in SQLite, no cloud dependency
-
-## Project Status
-
-Panes is in **pre-MVP** stage. Core architecture and runtime are fully operational.
-
-**Working:** Codex engine integration, streaming chat with content blocks, full git panel (status/diff/stage/commit/branches/stash/fetch/pull/push), multi-repo management, integrated terminal, FTS search, approval workflows, crash recovery, performance telemetry.
-
-**Working:** OTA auto-updates via Tauri updater + GitHub Pages, CI/CD with automated releases.
-
-**In progress:** Claude sidecar engine, direct API engine, automated tests.
 
 ## Contributing
 
