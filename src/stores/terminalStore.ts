@@ -2,12 +2,23 @@ import { create } from "zustand";
 import { ipc } from "../lib/ipc";
 import type { TerminalSession } from "../types";
 
+export type LayoutMode = "chat" | "terminal" | "split";
+
 const DEFAULT_PANEL_SIZE = 32;
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 36;
 
+const LAYOUT_MODE_STORAGE_KEY = (wsId: string) => `panes:layoutMode:${wsId}`;
+
+function readStoredLayoutMode(workspaceId: string): LayoutMode {
+  const v = localStorage.getItem(LAYOUT_MODE_STORAGE_KEY(workspaceId));
+  if (v === "terminal" || v === "split") return v;
+  return "chat";
+}
+
 interface WorkspaceTerminalState {
   isOpen: boolean;
+  layoutMode: LayoutMode;
   panelSize: number;
   sessions: TerminalSession[];
   activeSessionId: string | null;
@@ -20,6 +31,8 @@ interface TerminalState {
   openTerminal: (workspaceId: string) => Promise<void>;
   closeTerminal: (workspaceId: string) => Promise<void>;
   toggleTerminal: (workspaceId: string) => Promise<void>;
+  setLayoutMode: (workspaceId: string, mode: LayoutMode) => Promise<void>;
+  cycleLayoutMode: (workspaceId: string) => Promise<void>;
   runCommandInTerminal: (workspaceId: string, command: string) => Promise<boolean>;
   createSession: (workspaceId: string, cols?: number, rows?: number) => Promise<string | null>;
   closeSession: (workspaceId: string, sessionId: string) => Promise<void>;
@@ -32,6 +45,7 @@ interface TerminalState {
 function defaultWorkspaceState(): WorkspaceTerminalState {
   return {
     isOpen: false,
+    layoutMode: "chat",
     panelSize: DEFAULT_PANEL_SIZE,
     sessions: [],
     activeSessionId: null,
@@ -114,9 +128,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }));
     try {
       await ipc.terminalCloseWorkspaceSessions(workspaceId);
+      localStorage.setItem(LAYOUT_MODE_STORAGE_KEY(workspaceId), "chat");
       set((state) => ({
         workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
           isOpen: false,
+          layoutMode: "chat",
           sessions: [],
           activeSessionId: null,
           loading: false,
@@ -140,6 +156,33 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return;
     }
     await get().openTerminal(workspaceId);
+  },
+
+  setLayoutMode: async (workspaceId, mode) => {
+    localStorage.setItem(LAYOUT_MODE_STORAGE_KEY(workspaceId), mode);
+
+    if (mode !== "chat") {
+      const workspace = get().workspaces[workspaceId] ?? defaultWorkspaceState();
+      if (workspace.sessions.length === 0) {
+        // openTerminal will create a session and set isOpen
+        await get().openTerminal(workspaceId);
+      }
+    }
+
+    set((state) => ({
+      workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+        layoutMode: mode,
+        isOpen: mode !== "chat" ? true : (state.workspaces[workspaceId]?.isOpen ?? false),
+      }),
+    }));
+  },
+
+  cycleLayoutMode: async (workspaceId) => {
+    const workspace = get().workspaces[workspaceId] ?? defaultWorkspaceState();
+    const order: LayoutMode[] = ["chat", "split", "terminal"];
+    const currentIndex = order.indexOf(workspace.layoutMode);
+    const nextMode = order[(currentIndex + 1) % order.length];
+    await get().setLayoutMode(workspaceId, nextMode);
   },
 
   runCommandInTerminal: async (workspaceId, command) => {
@@ -259,13 +302,18 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   syncSessions: async (workspaceId) => {
     try {
       const sessions = await ipc.terminalListSessions(workspaceId);
+      const storedMode = readStoredLayoutMode(workspaceId);
       set((state) => {
         const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
+        const hasSessions = sessions.length > 0;
+        const restoredMode = hasSessions && (storedMode === "split" || storedMode === "terminal")
+          ? storedMode
+          : current.layoutMode;
         return {
           workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
             sessions,
             activeSessionId: nextActiveSessionId(sessions, current.activeSessionId),
-            ...(sessions.length > 0 ? { isOpen: true } : {}),
+            ...(hasSessions ? { isOpen: true, layoutMode: restoredMode } : {}),
           }),
         };
       });
@@ -282,10 +330,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set((state) => {
       const workspace = state.workspaces[workspaceId] ?? defaultWorkspaceState();
       const sessions = workspace.sessions.filter((session) => session.id !== sessionId);
+      const noSessionsLeft = sessions.length === 0;
+      if (noSessionsLeft) {
+        localStorage.setItem(LAYOUT_MODE_STORAGE_KEY(workspaceId), "chat");
+      }
       return {
         workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
           sessions,
           activeSessionId: nextActiveSessionId(sessions, workspace.activeSessionId === sessionId ? null : workspace.activeSessionId),
+          ...(noSessionsLeft ? { layoutMode: "chat" as LayoutMode } : {}),
         }),
       };
     });

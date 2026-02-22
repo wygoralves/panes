@@ -1188,6 +1188,75 @@ button, input, textarea, select {
   background: rgba(248, 113, 113, 0.1);
 }
 
+/* Chat/Terminal content area */
+.chat-terminal-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Layout mode switcher */
+.layout-mode-switcher {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.layout-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+}
+
+.layout-mode-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-2);
+}
+
+.layout-mode-btn.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.layout-mode-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Split mode resize handle */
+.layout-resize-handle-vertical {
+  height: 1px;
+  background: var(--border);
+  cursor: row-resize;
+  flex-shrink: 0;
+  position: relative;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.layout-resize-handle-vertical::after {
+  content: "";
+  position: absolute;
+  inset: -3px 0;
+}
+
+.layout-resize-handle-vertical:hover,
+.layout-resize-handle-vertical:active {
+  height: 2px;
+  background: var(--accent);
+}
+
 /* Terminal panel */
 .terminal-split-panel {
   height: 100%;

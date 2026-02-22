@@ -7,15 +7,15 @@ import {
   Shield,
   Monitor,
   SquareTerminal,
+  MessageSquare,
 } from "lucide-react";
-import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useChatStore } from "../../stores/chatStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useThreadStore } from "../../stores/threadStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore } from "../../stores/gitStore";
-import { useTerminalStore } from "../../stores/terminalStore";
+import { useTerminalStore, type LayoutMode } from "../../stores/terminalStore";
 import { ipc } from "../../lib/ipc";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { MessageBlocks } from "./MessageBlocks";
@@ -416,8 +416,7 @@ export function ChatPanel() {
   const terminalWorkspaceState = useTerminalStore((s) =>
     activeWorkspaceId ? s.workspaces[activeWorkspaceId] : undefined,
   );
-  const openTerminal = useTerminalStore((s) => s.openTerminal);
-  const closeTerminal = useTerminalStore((s) => s.closeTerminal);
+  const setLayoutMode = useTerminalStore((s) => s.setLayoutMode);
   const setTerminalPanelSize = useTerminalStore((s) => s.setPanelSize);
   const syncTerminalSessions = useTerminalStore((s) => s.syncSessions);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -1196,26 +1195,52 @@ export function ChatPanel() {
   // Compute total diff stats for header display
   const gitFiles = gitStatus?.files ?? [];
   const totalAdded = gitFiles.length;
-  const terminalOpen = activeWorkspaceId
-    ? terminalWorkspaceState?.isOpen ?? false
-    : false;
+  const layoutMode: LayoutMode = activeWorkspaceId
+    ? (terminalWorkspaceState?.layoutMode ?? "chat")
+    : "chat";
   const terminalPanelSize = activeWorkspaceId
     ? terminalWorkspaceState?.panelSize ?? 32
     : 32;
-  const terminalLoading = activeWorkspaceId
-    ? terminalWorkspaceState?.loading ?? false
-    : false;
 
-  const toggleTerminalPanel = useCallback(() => {
-    if (!activeWorkspaceId) {
-      return;
+  const hasTerminalMountedRef = useRef(false);
+  useEffect(() => {
+    if (layoutMode !== "chat" && activeWorkspaceId) {
+      hasTerminalMountedRef.current = true;
     }
-    if (terminalOpen) {
-      void closeTerminal(activeWorkspaceId);
-      return;
-    }
-    void openTerminal(activeWorkspaceId);
-  }, [activeWorkspaceId, closeTerminal, openTerminal, terminalOpen]);
+  }, [layoutMode, activeWorkspaceId]);
+
+  const contentAreaRef = useRef<HTMLDivElement>(null);
+  const terminalPanelSizeRef = useRef(terminalPanelSize);
+  terminalPanelSizeRef.current = terminalPanelSize;
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => resizeCleanupRef.current?.();
+  }, []);
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const container = contentAreaRef.current;
+    if (!container || !activeWorkspaceId) return;
+    const startY = e.clientY;
+    const containerHeight = container.getBoundingClientRect().height;
+    const startTerminalPct = terminalPanelSizeRef.current;
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      const deltaPct = (deltaY / containerHeight) * 100;
+      const newSize = Math.max(15, Math.min(72, startTerminalPct - deltaPct));
+      setTerminalPanelSize(activeWorkspaceId, newSize);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      resizeCleanupRef.current = null;
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    resizeCleanupRef.current = onUp;
+  }, [activeWorkspaceId, setTerminalPanelSize]);
 
   return (
     <div
@@ -1326,31 +1351,35 @@ export function ChatPanel() {
 
         {/* Right-side action buttons */}
         <div className="no-drag" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <button
-            type="button"
-            onClick={toggleTerminalPanel}
-            disabled={!activeWorkspaceId}
-            style={{
-              padding: "4px 8px",
-              borderRadius: "var(--radius-sm)",
-              border: terminalOpen
-                ? "1px solid var(--border-accent)"
-                : "1px solid transparent",
-              background: terminalOpen ? "var(--accent-dim)" : "transparent",
-              color: terminalOpen ? "var(--accent)" : "var(--text-3)",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: 11.5,
-              cursor: activeWorkspaceId ? "pointer" : "default",
-              opacity: activeWorkspaceId ? 1 : 0.55,
-              transition: "all var(--duration-fast) var(--ease-out)",
-            }}
-            title="Toggle terminal"
-          >
-            <SquareTerminal size={12} />
-            <span>{terminalLoading ? "Starting..." : "Terminal"}</span>
-          </button>
+          <div className="layout-mode-switcher">
+            <button
+              type="button"
+              title="Chat only"
+              disabled={!activeWorkspaceId}
+              onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "chat")}
+              className={`layout-mode-btn ${layoutMode === "chat" ? "active" : ""}`}
+            >
+              <MessageSquare size={12} />
+            </button>
+            <button
+              type="button"
+              title="Split view (Cmd+Shift+T)"
+              disabled={!activeWorkspaceId}
+              onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "split")}
+              className={`layout-mode-btn ${layoutMode === "split" ? "active" : ""}`}
+            >
+              <Monitor size={12} />
+            </button>
+            <button
+              type="button"
+              title="Terminal only"
+              disabled={!activeWorkspaceId}
+              onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "terminal")}
+              className={`layout-mode-btn ${layoutMode === "terminal" ? "active" : ""}`}
+            >
+              <SquareTerminal size={12} />
+            </button>
+          </div>
 
           {/* Git stats badge */}
           {totalAdded > 0 && (
@@ -1375,9 +1404,20 @@ export function ChatPanel() {
         </div>
       </div>
 
-      <PanelGroup direction="vertical" style={{ flex: 1 }}>
-        <Panel defaultSize={Math.max(30, 100 - terminalPanelSize)} minSize={28}>
-          <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      <div ref={contentAreaRef} className="chat-terminal-content">
+        {/* Chat section */}
+        <div
+          className="chat-section"
+          style={{
+            flex: layoutMode === "terminal" ? "0 0 0px"
+                 : layoutMode === "chat" ? "1 1 0px"
+                 : `0 0 ${100 - terminalPanelSize}%`,
+            overflow: "hidden",
+            visibility: layoutMode === "terminal" ? "hidden" : "visible",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
             {/* ── Messages ── */}
             <div
               ref={viewportRef}
@@ -2003,41 +2043,48 @@ export function ChatPanel() {
                 </div>
               )}
             </div>
-          </div>
-        </Panel>
+        </div>
 
-        {terminalOpen && activeWorkspaceId && (
-          <>
-            <PanelResizeHandle className="resize-handle-vertical" />
-            <Panel
-              defaultSize={terminalPanelSize}
-              minSize={15}
-              onResize={(size) => setTerminalPanelSize(activeWorkspaceId, size)}
-            >
-              <div className="terminal-split-panel">
-                <Suspense
-                  fallback={
-                    <div
-                      style={{
-                        height: "100%",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 12,
-                        color: "var(--text-3)",
-                      }}
-                    >
-                      Loading terminal...
-                    </div>
-                  }
-                >
-                  <LazyTerminalPanel workspaceId={activeWorkspaceId} />
-                </Suspense>
-              </div>
-            </Panel>
-          </>
+        {/* Resize handle — split mode only */}
+        {layoutMode === "split" && (
+          <div className="layout-resize-handle-vertical" onMouseDown={handleResizeStart} />
         )}
-      </PanelGroup>
+
+        {/* Terminal section */}
+        <div
+          className="terminal-section"
+          style={{
+            flex: layoutMode === "chat" ? "0 0 0px"
+                 : layoutMode === "terminal" ? "1 1 0px"
+                 : `0 0 ${terminalPanelSize}%`,
+            overflow: "hidden",
+            visibility: layoutMode === "chat" ? "hidden" : "visible",
+          }}
+        >
+          {hasTerminalMountedRef.current && activeWorkspaceId && (
+            <div className="terminal-split-panel" style={{ height: "100%" }}>
+              <Suspense
+                fallback={
+                  <div
+                    style={{
+                      height: "100%",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 12,
+                      color: "var(--text-3)",
+                    }}
+                  >
+                    Loading terminal...
+                  </div>
+                }
+              >
+                <LazyTerminalPanel workspaceId={activeWorkspaceId} />
+              </Suspense>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -10,6 +10,7 @@ import { useEngineStore } from "./stores/engineStore";
 import { useUiStore } from "./stores/uiStore";
 import { useThreadStore } from "./stores/threadStore";
 import { useGitStore } from "./stores/gitStore";
+import { useTerminalStore } from "./stores/terminalStore";
 
 export function App() {
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces);
@@ -22,6 +23,8 @@ export function App() {
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   const toggleGitPanel = useUiStore((s) => s.toggleGitPanel);
   const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const cycleLayoutMode = useTerminalStore((s) => s.cycleLayoutMode);
 
   useEffect(() => {
     void loadWorkspaces();
@@ -80,6 +83,12 @@ export function App() {
         return;
       }
 
+      if (event.shiftKey && key === "t") {
+        event.preventDefault();
+        if (activeWorkspaceId) void cycleLayoutMode(activeWorkspaceId);
+        return;
+      }
+
       if (event.shiftKey && key === "b") {
         event.preventDefault();
         toggleGitPanel();
@@ -94,7 +103,7 @@ export function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [setSearchOpen, toggleGitPanel, toggleSidebar]);
+  }, [setSearchOpen, toggleGitPanel, toggleSidebar, activeWorkspaceId, cycleLayoutMode]);
 
   return (
     <div style={{ width: "100%", height: "100vh", position: "relative", zIndex: 1 }}>
