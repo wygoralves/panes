@@ -13,6 +13,7 @@ import { useThreadStore } from "./stores/threadStore";
 import { useGitStore } from "./stores/gitStore";
 import { useTerminalStore } from "./stores/terminalStore";
 import { useFileStore } from "./stores/fileStore";
+import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMirrorEditor";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // Debounce guard: when both the JS keydown handler and the native menu-action
@@ -134,11 +135,46 @@ export function App() {
             fireShortcut("toggle-sidebar", () => useUiStore.getState().toggleSidebar());
           }
           break;
-        case "f":
-          if (!e.shiftKey) return;
+        case "f": {
+          if (!e.shiftKey) {
+            // Cmd+F — editor find (only in editor mode)
+            const wsIdF = useWorkspaceStore.getState().activeWorkspaceId;
+            const wsFState = wsIdF ? useTerminalStore.getState().workspaces[wsIdF] : undefined;
+            if (wsFState?.layoutMode === "editor") {
+              e.preventDefault();
+              const activeTabId = useFileStore.getState().activeTabId;
+              if (activeTabId) {
+                const view = getActiveEditorView(activeTabId);
+                if (view) openSearchPanel(view);
+              }
+            }
+            return;
+          }
+          // Cmd+Shift+F — global search modal
           e.preventDefault();
           fireShortcut("toggle-search", () => useUiStore.getState().setSearchOpen(true));
           break;
+        }
+        case "h": {
+          if (e.shiftKey) return;
+          // Cmd+H — editor find & replace (only in editor mode)
+          const wsIdH = useWorkspaceStore.getState().activeWorkspaceId;
+          const wsHState = wsIdH ? useTerminalStore.getState().workspaces[wsIdH] : undefined;
+          if (wsHState?.layoutMode !== "editor") return;
+          e.preventDefault();
+          const activeTabIdH = useFileStore.getState().activeTabId;
+          if (activeTabIdH) {
+            const view = getActiveEditorView(activeTabIdH);
+            if (view) {
+              openSearchPanel(view);
+              requestAnimationFrame(() => {
+                const replaceInput = view.dom.querySelector<HTMLInputElement>("[name=replace]");
+                replaceInput?.focus();
+              });
+            }
+          }
+          break;
+        }
         case "t":
           e.preventDefault();
           if (e.shiftKey) {

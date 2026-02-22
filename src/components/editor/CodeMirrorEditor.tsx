@@ -3,6 +3,7 @@ import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightAc
 import { EditorState, type Extension } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from "@codemirror/language";
+import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
 import { javascript } from "@codemirror/lang-javascript";
 import { rust } from "@codemirror/lang-rust";
 import { python } from "@codemirror/lang-python";
@@ -66,6 +67,86 @@ const darkVoidTheme = EditorView.theme(
     },
     ".cm-searchMatch.cm-searchMatch-selected": {
       backgroundColor: "rgba(251, 191, 36, 0.35)",
+    },
+    ".cm-panels": {
+      background: "var(--bg-2)",
+      borderTop: "1px solid var(--border)",
+    },
+    ".cm-search": {
+      padding: "6px 10px",
+      display: "flex",
+      flexWrap: "wrap",
+      gap: "6px",
+      alignItems: "center",
+      background: "var(--bg-2)",
+      fontSize: "12px",
+      fontFamily: '"Sora", system-ui, sans-serif',
+    },
+    ".cm-search label": {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: "4px",
+      color: "var(--text-2)",
+      fontSize: "11px",
+      cursor: "pointer",
+      userSelect: "none",
+    },
+    ".cm-search input[type=checkbox]": {
+      accentColor: "var(--accent)",
+      cursor: "pointer",
+    },
+    ".cm-textfield": {
+      padding: "4px 8px",
+      borderRadius: "var(--radius-sm)",
+      border: "1px solid var(--border)",
+      background: "var(--bg-3)",
+      color: "var(--text-1)",
+      fontSize: "12px",
+      fontFamily: '"JetBrains Mono", monospace',
+      minWidth: "140px",
+      outline: "none",
+      transition: "border-color 120ms ease",
+    },
+    ".cm-textfield:focus": {
+      borderColor: "var(--accent)",
+    },
+    ".cm-textfield::placeholder": {
+      color: "var(--text-3)",
+    },
+    ".cm-button": {
+      padding: "4px 10px",
+      borderRadius: "var(--radius-sm)",
+      border: "1px solid var(--border-active)",
+      background: "var(--bg-3)",
+      color: "var(--text-2)",
+      fontSize: "11px",
+      cursor: "pointer",
+      transition: "all 120ms ease",
+      fontFamily: '"Sora", system-ui, sans-serif',
+    },
+    ".cm-button:hover": {
+      background: "var(--bg-4)",
+      color: "var(--text-1)",
+      borderColor: "var(--border-active)",
+    },
+    ".cm-button:active": {
+      background: "var(--bg-5)",
+    },
+    ".cm-panel-close": {
+      padding: "2px 6px",
+      borderRadius: "var(--radius-sm)",
+      border: "none",
+      background: "transparent",
+      color: "var(--text-3)",
+      fontSize: "14px",
+      cursor: "pointer",
+      lineHeight: "1",
+      marginLeft: "auto",
+      transition: "color 120ms ease, background 120ms ease",
+    },
+    ".cm-panel-close:hover": {
+      background: "rgba(255, 255, 255, 0.06)",
+      color: "var(--text-1)",
     },
     "&.cm-focused": {
       outline: "none",
@@ -177,6 +258,12 @@ export function destroyCachedEditor(tabId: string): void {
   }
 }
 
+export function getActiveEditorView(tabId: string): EditorView | undefined {
+  return editorCache.get(tabId)?.view;
+}
+
+export { openSearchPanel } from "@codemirror/search";
+
 export function CodeMirrorEditor({ tabId, content, filePath, onChange, readOnly = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
@@ -225,11 +312,24 @@ export function CodeMirrorEditor({ tabId, content, filePath, onChange, readOnly 
       darkVoidTheme,
       syntaxHighlighting(darkVoidHighlight),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+      search(),
       keymap.of([
         ...defaultKeymap,
         ...historyKeymap,
         ...foldKeymap,
+        ...searchKeymap,
         indentWithTab,
+        {
+          key: "Mod-h",
+          run: (view) => {
+            openSearchPanel(view);
+            requestAnimationFrame(() => {
+              const replaceInput = view.dom.querySelector<HTMLInputElement>("[name=replace]");
+              replaceInput?.focus();
+            });
+            return true;
+          },
+        },
       ]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !externalRef.current) {
