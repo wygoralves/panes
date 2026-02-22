@@ -14,6 +14,11 @@ use db::Database;
 use engines::EngineManager;
 use git::watcher::GitWatcherManager;
 use state::{AppState, TurnManager};
+use tauri::{
+    image::Image,
+    menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, SubmenuBuilder},
+    Emitter,
+};
 use terminal::TerminalManager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -57,6 +62,21 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(app_state)
+        .menu(build_app_menu)
+        .setup(|app| {
+            let handle = app.handle().clone();
+            app.on_menu_event(move |_app, event| {
+                let id = event.id().as_ref();
+                match id {
+                    "toggle-sidebar" | "toggle-git-panel" | "toggle-search"
+                    | "toggle-terminal" => {
+                        let _ = handle.emit("menu-action", id);
+                    }
+                    _ => {}
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::chat::send_message,
             commands::chat::cancel_turn,
@@ -120,4 +140,91 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let app_menu = SubmenuBuilder::new(handle, "Panes")
+        .about(Some(AboutMetadata {
+            name: Some("Panes".to_string()),
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            authors: Some(vec!["Wygor Alves".to_string()]),
+            comments: Some("The open-source cockpit for AI-assisted coding".to_string()),
+            copyright: Some("Copyright © 2026 Wygor Alves".to_string()),
+            license: Some("MIT".to_string()),
+            website: Some("https://github.com/wygoralves/panes".to_string()),
+            website_label: Some("GitHub".to_string()),
+            icon: match Image::from_bytes(include_bytes!("../icons/128x128@2x.png")) {
+                Ok(img) => Some(img),
+                Err(e) => {
+                    log::warn!("failed to load about icon: {e}");
+                    None
+                }
+            },
+            ..Default::default()
+        }))
+        .separator()
+        .item(&PredefinedMenuItem::services(handle, None)?)
+        .separator()
+        .hide()
+        .hide_others()
+        .show_all()
+        .separator()
+        .quit()
+        .build()?;
+
+    let edit_menu = SubmenuBuilder::new(handle, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+
+    let toggle_sidebar = MenuItem::with_id(
+        handle,
+        "toggle-sidebar",
+        "Toggle Sidebar",
+        true,
+        Some("CmdOrCtrl+B"),
+    )?;
+    let toggle_git_panel = MenuItem::with_id(
+        handle,
+        "toggle-git-panel",
+        "Toggle Git Panel",
+        true,
+        Some("CmdOrCtrl+Shift+B"),
+    )?;
+    let toggle_search = MenuItem::with_id(
+        handle,
+        "toggle-search",
+        "Search",
+        true,
+        Some("CmdOrCtrl+Shift+F"),
+    )?;
+    let toggle_terminal = MenuItem::with_id(
+        handle,
+        "toggle-terminal",
+        "Toggle Terminal",
+        true,
+        Some("CmdOrCtrl+Shift+T"),
+    )?;
+    let view_menu = SubmenuBuilder::new(handle, "View")
+        .item(&toggle_sidebar)
+        .item(&toggle_git_panel)
+        .separator()
+        .item(&toggle_search)
+        .separator()
+        .item(&toggle_terminal)
+        .build()?;
+
+    let window_menu = SubmenuBuilder::new(handle, "Window")
+        .minimize()
+        .item(&PredefinedMenuItem::maximize(handle, None)?)
+        .separator()
+        .close_window()
+        .build()?;
+
+    Menu::with_items(handle, &[&app_menu, &edit_menu, &view_menu, &window_menu])
 }

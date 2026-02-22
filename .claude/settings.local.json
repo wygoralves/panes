@@ -28,7 +28,8 @@
       "Bash(grep:*)",
       "Bash(ls:*)",
       "Bash(gh pr:*)",
-      "WebFetch(domain:docs.rs)"
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:tauri.app)"
     ]
   }
 }

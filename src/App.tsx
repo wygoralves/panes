@@ -5,7 +5,7 @@ import { EngineHealthBanner } from "./components/onboarding/EngineHealthBanner";
 import { SetupWizard } from "./components/onboarding/SetupWizard";
 import { ToastContainer } from "./components/shared/ToastContainer";
 import { useUpdateStore } from "./stores/updateStore";
-import { listenThreadUpdated } from "./lib/ipc";
+import { listenThreadUpdated, listenMenuAction } from "./lib/ipc";
 import { useWorkspaceStore } from "./stores/workspaceStore";
 import { useEngineStore } from "./stores/engineStore";
 import { useUiStore } from "./stores/uiStore";
@@ -21,11 +21,7 @@ export function App() {
   const refreshThreads = useThreadStore((s) => s.refreshThreads);
   const searchOpen = useUiStore((s) => s.searchOpen);
   const setSearchOpen = useUiStore((s) => s.setSearchOpen);
-  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
-  const toggleGitPanel = useUiStore((s) => s.toggleGitPanel);
   const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
-  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-  const cycleLayoutMode = useTerminalStore((s) => s.cycleLayoutMode);
 
   useEffect(() => {
     void loadWorkspaces();
@@ -71,40 +67,33 @@ export function App() {
   }, [checkForUpdate]);
 
   useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      const ctrlOrCmd = event.metaKey || event.ctrlKey;
-      if (!ctrlOrCmd) {
-        return;
-      }
+    let unlisten: (() => void) | undefined;
 
-      const key = event.key.toLowerCase();
-      if (event.shiftKey && key === "f") {
-        event.preventDefault();
-        setSearchOpen(true);
-        return;
+    void listenMenuAction((action) => {
+      switch (action) {
+        case "toggle-sidebar":
+          useUiStore.getState().toggleSidebar();
+          break;
+        case "toggle-git-panel":
+          useUiStore.getState().toggleGitPanel();
+          break;
+        case "toggle-search":
+          useUiStore.getState().setSearchOpen(true);
+          break;
+        case "toggle-terminal": {
+          const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+          if (wsId) void useTerminalStore.getState().cycleLayoutMode(wsId);
+          break;
+        }
       }
+    }).then((fn) => {
+      unlisten = fn;
+    });
 
-      if (event.shiftKey && key === "t") {
-        event.preventDefault();
-        if (activeWorkspaceId) void cycleLayoutMode(activeWorkspaceId);
-        return;
-      }
-
-      if (event.shiftKey && key === "b") {
-        event.preventDefault();
-        toggleGitPanel();
-        return;
-      }
-
-      if (!event.shiftKey && key === "b") {
-        event.preventDefault();
-        toggleSidebar();
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [setSearchOpen, toggleGitPanel, toggleSidebar, activeWorkspaceId, cycleLayoutMode]);
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   return (
     <div style={{ width: "100%", height: "100vh", position: "relative", zIndex: 1 }}>

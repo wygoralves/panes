@@ -189,6 +189,12 @@ export async function listenThreadUpdated(
   return listen<ThreadUpdatedEvent>("thread-updated", ({ payload }) => onEvent(payload));
 }
 
+export async function listenMenuAction(
+  onEvent: (action: string) => void
+): Promise<UnlistenFn> {
+  return listen<string>("menu-action", ({ payload }) => onEvent(payload));
+}
+
 export async function listenTerminalOutput(
   workspaceId: string,
   onEvent: (event: TerminalOutputEvent) => void
