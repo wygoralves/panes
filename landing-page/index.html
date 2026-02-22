@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panes — The AI Cockpit for Developers</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+
+  <div class="grid-bg"></div>
+
+  <div class="container">
+    <nav class="nav">
+      <div class="nav-logo">
+        <img src="logo.svg" alt="Panes Logo" class="nav-logo-img">
+        Panes
+      </div>
+      <div class="nav-menu">
+        <a href="#features">Features</a>
+        <a href="#how-it-works">Docs</a>
+        <a href="https://github.com/wygoralves/panes">GitHub</a>
+      </div>
+      <a href="https://github.com/wygoralves/panes/releases/latest" class="btn-download">Download v0.7.0</a>
+    </nav>
+
+    <header class="hero">
+      <div style="margin-bottom: 24px;" class="animate-slide-up">
+        <span class="badge">v0.7.0 Released</span>
+      </div>
+      <h1 class="animate-slide-up animate-delay-100">
+        Command your<br>
+        AI Coding Agents.
+      </h1>
+      <p class="animate-slide-up animate-delay-200">
+        The open-source desktop cockpit. Orchestrate chat, terminal, and git in a single pane of glass.
+      </p>
+      <div class="hero-actions animate-slide-up animate-delay-300">
+        <a href="https://github.com/wygoralves/panes/releases/latest" class="btn-primary">Download for macOS</a>
+        <a href="https://github.com/wygoralves/panes" class="btn-secondary">View Source</a>
+      </div>
+
+      <!-- THE APP MOCKUP -->
+      <div class="app-frame animate-slide-up animate-delay-500">
+        <div class="window-controls">
+          <div class="win-btn win-close"></div>
+          <div class="win-btn win-min"></div>
+          <div class="win-btn win-max"></div>
+        </div>
+
+        <!-- LEFT COLUMN: SIDEBAR -->
+        <div class="sidebar">
+          <div class="sb-section">Projects</div>
+          
+          <!-- Project: panes (Active & Expanded) -->
+          <div class="sb-project active">
+            <div class="sb-project-header">
+              <i data-lucide="chevron-down" class="icon" style="width:12px; opacity:0.5"></i>
+              <i data-lucide="folder-git-2" class="icon" style="color:var(--accent)"></i>
+              <span>panes</span>
+            </div>
+            
+            <div class="sb-thread-list">
+              <div class="sb-thread active">
+                <span>Refactor GitStore</span>
+              </div>
+              <div class="sb-thread">
+                <span>Update README.md</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Project: landing-page -->
+          <div class="sb-project">
+            <div class="sb-project-header">
+              <i data-lucide="chevron-right" class="icon" style="width:12px; opacity:0.5"></i>
+              <i data-lucide="folder-git-2" class="icon"></i>
+              <span>landing-page</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- MIDDLE COLUMN: CHAT (Top) + TERMINAL (Bottom) -->
+        <div class="main-area">
+          <div class="top-bar">
+            <div style="margin-right: auto; font-size: 12px; color: var(--text-2);">
+              agent-workspace / panes
+            </div>
+            <div class="layout-toggles">
+              <i data-lucide="message-square" class="icon" style="opacity: 0.5"></i>
+              <i data-lucide="monitor" class="icon active" style="color:var(--accent)"></i>
+              <i data-lucide="square-terminal" class="icon" style="opacity: 0.5"></i>
+            </div>
+          </div>
+
+          <div class="workspace-split-col">
+            <!-- Chat Panel (Flex 1) -->
+            <div class="chat-panel">
+              <div class="messages">
+                <div class="msg-row user">
+                  <div class="msg-bubble">
+                    Add a method to switch repositories in the GitStore.
+                  </div>
+                </div>
+
+                <div class="msg-row ai">
+                  <div class="ai-header">
+                    <i data-lucide="bot" class="icon" style="width:12px;"></i>
+                    <span>Codex</span>
+                  </div>
+                  <div class="msg-bubble">
+                    I'll add the <span style="font-family:var(--font-mono); background:rgba(255,255,255,0.1); padding:0 4px; border-radius:4px;">switchRepo</span> action to the store.
+
+                    <div class="code-block">
+                      <div class="code-header">src/stores/gitStore.ts</div>
+                      <div style="padding-top:20px;">
+                        <span class="syntax-k">public async</span> <span class="syntax-f">switchRepo</span>(path: <span class="syntax-s">string</span>) {<br>
+                        &nbsp;&nbsp;<span class="syntax-k">this</span>.activeRepo = path;<br>
+                        &nbsp;&nbsp;<span class="syntax-k">await this</span>.refreshStatus();<br>
+                        }
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="chat-input">
+                <div class="input-box">
+                  <span class="input-placeholder">Ask follow-up...</span>
+                  <i data-lucide="arrow-up-circle" class="icon" style="opacity:0.3"></i>
+                </div>
+              </div>
+            </div>
+
+            <!-- Resizer Handle -->
+            <div class="resizer-h"></div>
+
+            <!-- Terminal Panel (Height ~30%) -->
+            <div class="terminal-panel">
+              <div class="term-tabs">
+                <div class="term-tab active">
+                  <i data-lucide="terminal-square" class="icon" style="width:12px;"></i>
+                  <span>panes</span>
+                </div>
+                <div class="term-tab">
+                  <i data-lucide="plus" class="icon" style="width:12px;"></i>
+                </div>
+              </div>
+              <div class="term-content">
+                <div><span class="prompt">~/panes</span> <span class="cmd">git status</span></div>
+                <div style="color:var(--text-2)">On branch <span style="color:var(--accent)">feat/multi-repo</span></div>
+                <div style="margin-top:4px;">Changes not staged for commit:</div>
+                <div style="color:var(--danger)">  modified:   src/stores/gitStore.ts</div>
+                <div style="margin-top:8px;"><span class="prompt">~/panes</span> <span class="cmd">npm run test</span><span class="typing-cursor"></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT COLUMN: GIT PANEL -->
+        <div class="git-panel">
+          <div class="git-header">
+            <i data-lucide="git-branch" class="icon"></i>
+            <span>feat/multi-repo</span>
+            <span class="git-ahead-behind">↑1 ↓0</span>
+          </div>
+          
+          <div class="git-section-header">Unstaged Changes (2)</div>
+          <div class="git-file-row">
+            <i data-lucide="file-code" class="icon" style="width:12px; opacity:0.5"></i>
+            <span>src/stores/gitStore.ts</span>
+            <span class="git-status-m">M</span>
+            <button class="git-action-btn">+</button>
+          </div>
+          <div class="git-file-row">
+            <i data-lucide="file-code" class="icon" style="width:12px; opacity:0.5"></i>
+            <span>src/components/GitPanel.tsx</span>
+            <span class="git-status-m">M</span>
+            <button class="git-action-btn">+</button>
+          </div>
+
+          <div class="git-section-header" style="margin-top:16px;">Staged Changes (0)</div>
+          <div class="git-empty-msg">No staged changes</div>
+
+          <div class="git-commit-area">
+            <textarea class="git-commit-input" placeholder="Commit message..."></textarea>
+            <button class="btn-primary" style="width:100%; padding:6px; font-size:12px; margin-top:8px;">Commit</button>
+          </div>
+        </div>
+
+      </div>
+    </header>
+
+    <section class="features" id="features">
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="icon-box">
+            <i data-lucide="git-branch" style="width:20px;"></i>
+          </div>
+          <h3>Native Git Client</h3>
+          <p>Full GUI for staging, committing, and branch management. Review diffs and discard changes without leaving the app.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon-box">
+            <i data-lucide="terminal" style="width:20px;"></i>
+          </div>
+          <h3>Integrated Terminal</h3>
+          <p>WebGL-powered xterm.js terminal. Split panes, persistent sessions, and full PTY support for running dev servers.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon-box">
+            <i data-lucide="zap" style="width:20px;"></i>
+          </div>
+          <h3>Local & Fast</h3>
+          <p>Built with Rust and Tauri. Panes is a local-first application that feels native, snappy, and respects your data privacy.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon-box">
+            <i data-lucide="cpu" style="width:20px;"></i>
+          </div>
+          <h3>Engine Agnostic</h3>
+          <p>Bring your own intelligence. Connect to OpenAI, Anthropic, or local LLMs. Switch models per-turn.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon-box">
+            <i data-lucide="layout" style="width:20px;"></i>
+          </div>
+          <h3>Multi-Repo Workspaces</h3>
+          <p>Manage complex monorepos or multi-service architectures. Context-aware chat that understands your file structure.</p>
+        </div>
+        <div class="feature-card">
+          <div class="icon-box">
+            <i data-lucide="shield" style="width:20px;"></i>
+          </div>
+          <h3>Approval Workflows</h3>
+          <p>You are in control. Define trust levels for repositories and approve tool executions before they happen.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="footer-links">
+        <a href="#">Privacy</a>
+        <a href="#">Terms</a>
+        <a href="https://github.com/wygoralves/panes">GitHub</a>
+        <a href="https://twitter.com/wygoralves">Twitter</a>
+      </div>
+      <p>&copy; 2026 Panes Open Source. Built with Tauri & Rust.</p>
+    </footer>
+
+  </div>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+</html>
