@@ -328,10 +328,16 @@ impl TerminalSessionHandle {
                 return ExitPayload::default();
             }
         };
-        if let Err(error) = process.child.wait() {
-            log::warn!("failed waiting for terminal process exit: {error}");
+        match process.child.wait() {
+            Ok(status) => ExitPayload {
+                code: Some(status.exit_code() as i32),
+                signal: None,
+            },
+            Err(error) => {
+                log::warn!("failed waiting for terminal process exit: {error}");
+                ExitPayload::default()
+            }
         }
-        ExitPayload::default()
     }
 
     fn kill_and_wait(&self) -> ExitPayload {
@@ -349,10 +355,16 @@ impl TerminalSessionHandle {
         if let Err(error) = process.child.kill() {
             log::warn!("failed killing terminal process: {error}");
         }
-        if let Err(error) = process.child.wait() {
-            log::warn!("failed waiting for terminal process after kill: {error}");
+        match process.child.wait() {
+            Ok(status) => ExitPayload {
+                code: Some(status.exit_code() as i32),
+                signal: None,
+            },
+            Err(error) => {
+                log::warn!("failed waiting for terminal process after kill: {error}");
+                ExitPayload::default()
+            }
         }
-        ExitPayload::default()
     }
 }
 

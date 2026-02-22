@@ -27,7 +27,8 @@
       "Bash(npx tauri:*)",
       "Bash(grep:*)",
       "Bash(ls:*)",
-      "Bash(gh pr:*)"
+      "Bash(gh pr:*)",
+      "WebFetch(domain:docs.rs)"
     ]
   }
 }
