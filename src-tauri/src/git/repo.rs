@@ -479,6 +479,15 @@ pub fn list_git_stashes(repo_path: &str) -> anyhow::Result<Vec<GitStashDto>> {
     Ok(entries)
 }
 
+pub fn push_git_stash(repo_path: &str, message: Option<&str>) -> anyhow::Result<()> {
+    let mut args = vec!["stash", "push"];
+    if let Some(msg) = message.filter(|m| !m.trim().is_empty()) {
+        args.extend(["-m", msg]);
+    }
+    run_git(repo_path, &args).context("failed to create stash")?;
+    Ok(())
+}
+
 pub fn apply_git_stash(repo_path: &str, stash_index: usize) -> anyhow::Result<()> {
     let stash_ref = format!("stash@{{{stash_index}}}");
     run_git(repo_path, &["stash", "apply", stash_ref.as_str()]).context("failed to apply stash")?;
@@ -489,6 +498,14 @@ pub fn pop_git_stash(repo_path: &str, stash_index: usize) -> anyhow::Result<()> 
     let stash_ref = format!("stash@{{{stash_index}}}");
     run_git(repo_path, &["stash", "pop", stash_ref.as_str()]).context("failed to pop stash")?;
     Ok(())
+}
+
+pub fn get_commit_diff(repo_path: &str, commit_hash: &str) -> anyhow::Result<String> {
+    anyhow::ensure!(
+        !commit_hash.is_empty() && commit_hash.chars().all(|c| c.is_ascii_hexdigit()),
+        "invalid commit hash"
+    );
+    run_git(repo_path, &["diff-tree", "-p", commit_hash])
 }
 
 pub fn get_file_tree(repo_path: &str) -> anyhow::Result<Vec<FileTreeEntryDto>> {

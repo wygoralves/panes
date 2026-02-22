@@ -210,6 +210,19 @@ pub async fn list_git_stashes(
 }
 
 #[tauri::command]
+pub async fn push_git_stash(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    message: Option<String>,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        repo::push_git_stash(&repo_path, message.as_deref()).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub async fn apply_git_stash(
     _state: State<'_, AppState>,
     repo_path: String,
@@ -230,6 +243,19 @@ pub async fn pop_git_stash(
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         repo::pop_git_stash(&repo_path, stash_index).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_commit_diff(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    commit_hash: String,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        repo::get_commit_diff(&repo_path, &commit_hash).map_err(err_to_string)
     })
     .await
     .map_err(|error| error.to_string())?

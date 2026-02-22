@@ -25,7 +25,9 @@
       "Bash(git status:*)",
       "Bash(magick:*)",
       "Bash(npx tauri:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "Bash(gh pr:*)"
     ]
   }
 }

@@ -217,6 +217,8 @@ interface GitState {
   commitsHasMore: boolean;
   commitsTotal: number;
   stashes: GitStash[];
+  selectedCommitHash?: string;
+  commitDiff?: string;
   refresh: (repoPath: string, options?: { force?: boolean }) => Promise<void>;
   invalidateRepoCache: (repoPath: string) => void;
   setActiveView: (view: GitPanelView) => void;
@@ -237,8 +239,11 @@ interface GitState {
   loadCommits: (repoPath: string, append?: boolean) => Promise<void>;
   loadMoreCommits: (repoPath: string) => Promise<void>;
   loadStashes: (repoPath: string) => Promise<void>;
+  pushStash: (repoPath: string, message?: string) => Promise<void>;
   applyStash: (repoPath: string, stashIndex: number) => Promise<void>;
   popStash: (repoPath: string, stashIndex: number) => Promise<void>;
+  selectCommit: (repoPath: string, commitHash: string) => Promise<void>;
+  clearCommitSelection: () => void;
   drafts: GitDraftsPayload;
   loadDraftsForWorkspace: (workspaceId: string) => void;
   setCommitMessageDraft: (workspaceId: string, message: string) => void;
@@ -552,6 +557,17 @@ export const useGitStore = create<GitState>((set, get) => ({
       set({ loading: false, error: String(error) });
     }
   },
+  pushStash: async (repoPath, message) => {
+    try {
+      set({ loading: true, error: undefined });
+      await ipc.pushGitStash(repoPath, message);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      throw error;
+    }
+  },
   applyStash: async (repoPath, stashIndex) => {
     try {
       set({ loading: true, error: undefined });
@@ -573,6 +589,27 @@ export const useGitStore = create<GitState>((set, get) => ({
       set({ loading: false, error: String(error) });
       throw error;
     }
+  },
+  selectCommit: async (repoPath, commitHash) => {
+    const current = get().selectedCommitHash;
+    if (current === commitHash) {
+      set({ selectedCommitHash: undefined, commitDiff: undefined });
+      return;
+    }
+    set({ selectedCommitHash: commitHash, commitDiff: undefined });
+    try {
+      const diff = await ipc.getCommitDiff(repoPath, commitHash);
+      if (get().selectedCommitHash === commitHash) {
+        set({ commitDiff: diff });
+      }
+    } catch (error) {
+      if (get().selectedCommitHash === commitHash) {
+        set({ error: String(error), selectedCommitHash: undefined, commitDiff: undefined });
+      }
+    }
+  },
+  clearCommitSelection: () => {
+    set({ selectedCommitHash: undefined, commitDiff: undefined });
   },
   drafts: { ...EMPTY_DRAFTS },
   loadDraftsForWorkspace: (workspaceId) => {

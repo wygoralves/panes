@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { GitCommitHorizontal, Loader2, Search, X } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
+import { DiffPanel } from "./GitChangesView";
 import type { Repo } from "../../types";
 
 interface Props {
@@ -26,6 +27,10 @@ export function GitCommitsView({ repo }: Props) {
     commitsTotal,
     loadCommits,
     loadMoreCommits,
+    selectedCommitHash,
+    commitDiff,
+    selectCommit,
+    clearCommitSelection,
   } = useGitStore();
 
   const [loadingMore, setLoadingMore] = useState(false);
@@ -33,7 +38,8 @@ export function GitCommitsView({ repo }: Props) {
 
   useEffect(() => {
     void loadCommits(repo.path, false);
-  }, [repo.path, loadCommits]);
+    clearCommitSelection();
+  }, [repo.path, loadCommits, clearCommitSelection]);
 
   useEffect(() => {
     setFilterQuery("");
@@ -121,45 +127,92 @@ export function GitCommitsView({ repo }: Props) {
         ) : (
           filteredCommits.length === 0 ? (
             <p className="git-empty-inline">No matching commits</p>
-          ) : filteredCommits.map((entry) => (
-            <div key={entry.hash} className="git-commit-row">
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                <span className="git-commit-hash">
-                  {entry.shortHash}
-                </span>
-                <span
-                  className="git-commit-subject"
-                  title={entry.subject}
+          ) : filteredCommits.map((entry) => {
+            const isSelected = selectedCommitHash === entry.hash;
+            const isLoadingDiff = isSelected && !commitDiff;
+
+            return (
+              <div key={entry.hash}>
+                <div
+                  className={`git-commit-row${isSelected ? " git-commit-row-selected" : ""}`}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => void selectCommit(repo.path, entry.hash)}
                 >
-                  {entry.subject}
-                </span>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <span className="git-commit-hash">
+                      {entry.shortHash}
+                    </span>
+                    <span
+                      className="git-commit-subject"
+                      title={entry.subject}
+                    >
+                      {entry.subject}
+                    </span>
+                  </div>
+                  <div className="git-commit-meta">
+                    <span>{entry.authorName}</span>
+                    <span>{"\u00B7"}</span>
+                    <span>{formatDate(entry.authoredAt)}</span>
+                  </div>
+                  {entry.body && (
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: 11,
+                        color: "var(--text-2)",
+                        whiteSpace: "pre-wrap",
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      {entry.body}
+                    </p>
+                  )}
+                </div>
+                {isSelected && (
+                  <div style={{ borderBottom: "1px solid var(--border)" }}>
+                    {isLoadingDiff ? (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 6,
+                          padding: "12px",
+                          fontSize: 11,
+                          color: "var(--text-3)",
+                        }}
+                      >
+                        <Loader2 size={13} className="git-spin" />
+                        Loading diff...
+                      </div>
+                    ) : commitDiff ? (
+                      <div style={{ maxHeight: 400, overflow: "auto" }}>
+                        <DiffPanel diff={commitDiff} />
+                      </div>
+                    ) : (
+                      <p
+                        style={{
+                          margin: 0,
+                          padding: "12px",
+                          fontSize: 11,
+                          color: "var(--text-3)",
+                          textAlign: "center",
+                        }}
+                      >
+                        No changes in this commit
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="git-commit-meta">
-                <span>{entry.authorName}</span>
-                <span>{"\u00B7"}</span>
-                <span>{formatDate(entry.authoredAt)}</span>
-              </div>
-              {entry.body && (
-                <p
-                  style={{
-                    margin: 0,
-                    fontSize: 11,
-                    color: "var(--text-2)",
-                    whiteSpace: "pre-wrap",
-                    lineHeight: 1.4,
-                  }}
-                >
-                  {entry.body}
-                </p>
-              )}
-            </div>
-          ))
+            );
+          })
         )}
 
         {commitsHasMore && !filterQuery && (

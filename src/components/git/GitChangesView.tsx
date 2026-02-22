@@ -160,7 +160,7 @@ function getStatusClass(status?: string): string {
   return "git-status-untracked";
 }
 
-function DiffPanel({ diff }: { diff: string }) {
+export function DiffPanel({ diff }: { diff: string }) {
   const parsed = useMemo(() => parseDiff(diff), [diff]);
 
   return (

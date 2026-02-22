@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { Archive, Loader2, Search, X } from "lucide-react";
+import { Archive, Loader2, Package, Search, X } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
 import type { Repo } from "../../types";
 
@@ -21,10 +21,11 @@ function formatDate(raw?: string): string {
 }
 
 export function GitStashView({ repo, onError }: Props) {
-  const { stashes, loadStashes, applyStash, popStash } = useGitStore();
+  const { status, stashes, loadStashes, pushStash, applyStash, popStash } = useGitStore();
 
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
+  const [stashMessage, setStashMessage] = useState("");
 
   useEffect(() => {
     void loadStashes(repo.path);
@@ -32,7 +33,10 @@ export function GitStashView({ repo, onError }: Props) {
 
   useEffect(() => {
     setFilterQuery("");
+    setStashMessage("");
   }, [repo.path]);
+
+  const hasChanges = (status?.files.length ?? 0) > 0;
 
   const filteredStashes = useMemo(() => {
     const q = filterQuery.toLowerCase().trim();
@@ -43,6 +47,21 @@ export function GitStashView({ repo, onError }: Props) {
         (s.branchHint && s.branchHint.toLowerCase().includes(q)),
     );
   }, [stashes, filterQuery]);
+
+  async function onPushStash() {
+    if (loadingKey !== null || !hasChanges) return;
+    setLoadingKey("push");
+    try {
+      onError(undefined);
+      const msg = stashMessage.trim() || undefined;
+      await pushStash(repo.path, msg);
+      setStashMessage("");
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setLoadingKey(null);
+    }
+  }
 
   async function onApply(index: number) {
     if (loadingKey !== null) return;
@@ -72,6 +91,49 @@ export function GitStashView({ repo, onError }: Props) {
 
   return (
     <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      <div
+        style={{
+          padding: "8px 12px",
+          borderBottom: "1px solid var(--border)",
+          display: "flex",
+          gap: 6,
+          alignItems: "center",
+        }}
+      >
+        <input
+          type="text"
+          className="git-inline-input"
+          placeholder="Stash message (optional)"
+          value={stashMessage}
+          onChange={(e) => setStashMessage(e.target.value)}
+          disabled={loadingKey !== null}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void onPushStash();
+          }}
+          style={{ flex: 1, padding: "4px 8px", fontSize: 11 }}
+        />
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => void onPushStash()}
+          disabled={loadingKey !== null || !hasChanges}
+          style={{
+            padding: "4px 10px",
+            fontSize: 11,
+            flexShrink: 0,
+            opacity: loadingKey !== null || !hasChanges ? 0.4 : 1,
+            cursor: loadingKey !== null || !hasChanges ? "default" : "pointer",
+          }}
+        >
+          {loadingKey === "push" ? (
+            <Loader2 size={12} className="git-spin" />
+          ) : (
+            <Package size={12} />
+          )}
+          {loadingKey === "push" ? "Stashing..." : "Stash"}
+        </button>
+      </div>
+
       {stashes.length > 0 && (
         <div className="git-filter-bar">
           <Search size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />

@@ -133,8 +133,12 @@ export const ipc = {
       offset: offset ?? null,
       limit: limit ?? null,
     }),
+  getCommitDiff: (repoPath: string, commitHash: string) =>
+    invoke<string>("get_commit_diff", { repoPath, commitHash }),
   listGitStashes: (repoPath: string) =>
     invoke<GitStash[]>("list_git_stashes", { repoPath }),
+  pushGitStash: (repoPath: string, message?: string) =>
+    invoke<void>("push_git_stash", { repoPath, message: message ?? null }),
   applyGitStash: (repoPath: string, stashIndex: number) =>
     invoke<void>("apply_git_stash", { repoPath, stashIndex }),
   popGitStash: (repoPath: string, stashIndex: number) =>

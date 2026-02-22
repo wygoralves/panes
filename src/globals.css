@@ -1092,6 +1092,12 @@ button, input, textarea, select {
   flex-direction: column;
   gap: 2px;
 }
+.git-commit-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.git-commit-row-selected {
+  background: rgba(255, 255, 255, 0.05);
+}
 .git-commit-hash {
   font-family: "JetBrains Mono", monospace;
   font-size: 11px;
