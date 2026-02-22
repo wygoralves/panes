@@ -1,5 +1,28 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.7.0...vnull) (2026-02-22)
+
+### Features
+
+* add keyboard shortcuts for new terminal tabs and splits, and allow reordering of terminal tabs ([9de4ddc](https://github.com/wygoralves/panes/commit/9de4ddcd4b8c245f49cc0a2b772145fa1eb9f709))
+* add native os menu actions support ([c538232](https://github.com/wygoralves/panes/commit/c5382325885d0fe01fece6a23af218480090acb3))
+* add native text editor for quick edits ([efc806e](https://github.com/wygoralves/panes/commit/efc806e8172bd188aa14a5fdf4a9109396ea03a2))
+* add new landing page for panes ([bd49d51](https://github.com/wygoralves/panes/commit/bd49d51ee2c0375e5f3d6a787b5acdf81787635e))
+* add search + replace feature to text editor ([e3269dc](https://github.com/wygoralves/panes/commit/e3269dc392019ef05e16e088cf60d50af522108a))
+* add stash and view commit diffs to git panel ([f5b4489](https://github.com/wygoralves/panes/commit/f5b44890a09b93c40b0d630f14844740f253ec56))
+* improve action feedback with toast messages ([212cb6e](https://github.com/wygoralves/panes/commit/212cb6e705b11a377231c1f5806a1f2eb9f1e1a1))
+* improve confirm ux with native component ([61de358](https://github.com/wygoralves/panes/commit/61de358e38ee5240e7a10d8d28cf93555c2482b0))
+* improve landing page visuals and text ([0dc9911](https://github.com/wygoralves/panes/commit/0dc991154e50c3598651aaf918d9f69ace83e762))
+* update landing page ([e6ff98c](https://github.com/wygoralves/panes/commit/e6ff98c5a06af6f6bc31775391cdd9acd7941dfd))
+
+### Bug Fixes
+
+* correctly extract actual exit code from terminal exit ([809c734](https://github.com/wygoralves/panes/commit/809c73498a1e80c0e2eccb30f2c326bc7c6199c4))
+* fix compressed sidebar line overstepped by macos window controls ([2c5a613](https://github.com/wygoralves/panes/commit/2c5a6130ce55ba95c03c9ff08355774b4a36b159))
+* fix drag and drop terminal tabs visual feedback ([4624bf9](https://github.com/wygoralves/panes/commit/4624bf9cbd04a9590c6f58f037d9f5e5ffb102b0))
+* fix error handling on git operations ([14de42a](https://github.com/wygoralves/panes/commit/14de42aa468a1be812612746bdc9c9d6c04aa8d5))
+* fix some lp card ordering ([9433985](https://github.com/wygoralves/panes/commit/943398589420c97f6b63e30f95322510443c9309))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.6.0...vnull) (2026-02-22)
 
 ### Features
