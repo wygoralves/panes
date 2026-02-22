@@ -680,6 +680,13 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     terminal.unicode.activeVersion = "11";
 
     terminal.open(container);
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type === "keydown" && event.metaKey && event.key === "Backspace") {
+        void ipc.terminalWrite(workspaceId, sessionId, "\x15").catch(() => undefined);
+        return false;
+      }
+      return true;
+    });
     const webglCleanup = setupWebglRenderer(cacheKey, terminal) ?? undefined;
 
     const writeDisposable = terminal.onData((data) => {

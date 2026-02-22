@@ -77,6 +77,8 @@ button, input, textarea, select {
   border: none;
   outline: none;
   background: none;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 /* ── Ambient Background (disabled for pitch black) ── */
