@@ -558,11 +558,15 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const setActiveGroup = useTerminalStore((state) => state.setActiveGroup);
   const updateGroupRatio = useTerminalStore((state) => state.updateGroupRatio);
   const renameGroup = useTerminalStore((state) => state.renameGroup);
+  const reorderGroups = useTerminalStore((state) => state.reorderGroups);
 
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   // Only one tab can be renamed at a time, so a single ref is safe despite being inside .map()
   const renameInputRef = useRef<HTMLInputElement>(null);
+
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ index: number; side: "before" | "after" } | null>(null);
 
   const [ctxMenu, setCtxMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
   const ctxMenuRef = useRef<HTMLDivElement>(null);
@@ -627,6 +631,37 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     }
   }, [groups, closeSession, workspaceId]);
 
+  const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
+    if (renamingGroupId) { e.preventDefault(); return; }
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(index));
+    setDragIndex(index);
+  }, [renamingGroupId]);
+
+  const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragIndex === null || dragIndex === index) { setDropTarget(null); return; }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const side = e.clientX < rect.left + rect.width / 2 ? "before" : "after";
+    setDropTarget({ index, side });
+  }, [dragIndex]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (dragIndex === null || !dropTarget) { setDragIndex(null); setDropTarget(null); return; }
+    let target = dropTarget.side === "after" ? dropTarget.index + 1 : dropTarget.index;
+    if (dragIndex < target) target -= 1;
+    reorderGroups(workspaceId, dragIndex, target);
+    setDragIndex(null);
+    setDropTarget(null);
+  }, [dragIndex, dropTarget, reorderGroups, workspaceId]);
+
+  const handleDragEnd = useCallback(() => {
+    setDragIndex(null);
+    setDropTarget(null);
+  }, []);
+
   // Component-level refs — only track DOM containers (reset on mount/unmount).
   // Terminal instances live in the module-level cachedTerminals map.
   const containerRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -681,10 +716,13 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
     terminal.open(container);
     terminal.attachCustomKeyEventHandler((event) => {
-      if (event.type === "keydown" && event.metaKey && event.key === "Backspace") {
+      if (event.type !== "keydown") return true;
+      if ((event.metaKey || event.ctrlKey) && event.key === "Backspace") {
         void ipc.terminalWrite(workspaceId, sessionId, "\x15").catch(() => undefined);
         return false;
       }
+      const k = event.key.toLowerCase();
+      if ((event.metaKey || event.ctrlKey) && (k === "d" || k === "t")) return false;
       return true;
     });
     const webglCleanup = setupWebglRenderer(cacheKey, terminal) ?? undefined;
@@ -897,12 +935,23 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
               <button
                 key={group.id}
                 type="button"
-                className={`terminal-tab ${isActive ? "terminal-tab-active" : ""}`}
+                className={[
+                  "terminal-tab",
+                  isActive ? "terminal-tab-active" : "",
+                  dragIndex === index ? "terminal-tab-dragging" : "",
+                  dropTarget?.index === index && dropTarget.side === "before" ? "terminal-tab-drop-before" : "",
+                  dropTarget?.index === index && dropTarget.side === "after" ? "terminal-tab-drop-after" : "",
+                ].filter(Boolean).join(" ")}
+                draggable={groups.length > 1}
                 onClick={() => setActiveGroup(workspaceId, group.id)}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setCtxMenu({ groupId: group.id, x: e.clientX, y: e.clientY });
                 }}
+                onDragStart={(e) => handleDragStart(e, index)}
+                onDragOver={(e) => handleDragOver(e, index)}
+                onDrop={handleDrop}
+                onDragEnd={handleDragEnd}
               >
                 <SquareTerminal size={12} />
                 {renamingGroupId === group.id ? (

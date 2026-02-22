@@ -140,11 +140,34 @@ export function App() {
           fireShortcut("toggle-search", () => useUiStore.getState().setSearchOpen(true));
           break;
         case "t":
-          if (!e.shiftKey) return;
           e.preventDefault();
-          fireShortcut("toggle-terminal", () => {
+          if (e.shiftKey) {
+            fireShortcut("toggle-terminal", () => {
+              const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+              if (wsId) void useTerminalStore.getState().cycleLayoutMode(wsId);
+            });
+          } else {
+            fireShortcut("new-terminal-tab", () => {
+              const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+              if (!wsId) return;
+              const ws = useTerminalStore.getState().workspaces[wsId];
+              if (!ws || (ws.layoutMode !== "split" && ws.layoutMode !== "terminal")) return;
+              void useTerminalStore.getState().createSession(wsId);
+            });
+          }
+          break;
+        case "d":
+          e.preventDefault();
+          fireShortcut(e.shiftKey ? "split-horizontal" : "split-vertical", () => {
             const wsId = useWorkspaceStore.getState().activeWorkspaceId;
-            if (wsId) void useTerminalStore.getState().cycleLayoutMode(wsId);
+            if (!wsId) return;
+            const ws = useTerminalStore.getState().workspaces[wsId];
+            if (!ws || (ws.layoutMode !== "split" && ws.layoutMode !== "terminal")) return;
+            const sid = ws.focusedSessionId;
+            if (!sid) return;
+            void useTerminalStore.getState().splitSession(
+              wsId, sid, e.shiftKey ? "horizontal" : "vertical",
+            );
           });
           break;
       }

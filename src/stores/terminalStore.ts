@@ -119,6 +119,7 @@ interface TerminalState {
   setActiveGroup: (workspaceId: string, groupId: string) => void;
   updateGroupRatio: (workspaceId: string, groupId: string, containerId: string, ratio: number) => void;
   renameGroup: (workspaceId: string, groupId: string, name: string) => void;
+  reorderGroups: (workspaceId: string, fromIndex: number, toIndex: number) => void;
 }
 
 function defaultWorkspaceState(): WorkspaceTerminalState {
@@ -612,6 +613,19 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const groups = workspace.groups.map((g) =>
         g.id === groupId ? { ...g, name: trimmed } : g,
       );
+      return {
+        workspaces: mergeWorkspaceState(state.workspaces, workspaceId, { groups }),
+      };
+    });
+  },
+
+  reorderGroups: (workspaceId, fromIndex, toIndex) => {
+    if (fromIndex === toIndex) return;
+    set((state) => {
+      const workspace = state.workspaces[workspaceId] ?? defaultWorkspaceState();
+      const groups = [...workspace.groups];
+      const [moved] = groups.splice(fromIndex, 1);
+      groups.splice(toIndex, 0, moved);
       return {
         workspaces: mergeWorkspaceState(state.workspaces, workspaceId, { groups }),
       };
