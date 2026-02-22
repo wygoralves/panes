@@ -1,5 +1,18 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.6.0...vnull) (2026-02-22)
+
+### Features
+
+* add main view switcher for terminal only, split mode, or chat only ([a1be959](https://github.com/wygoralves/panes/commit/a1be95996f0c83f69da19eafe736ed21b8de71b0))
+* add split feature to the terminal panes ([ef02dfd](https://github.com/wygoralves/panes/commit/ef02dfdf57500dddc8ea8016e44be28912a9463c))
+* add terminal renaming ([3d9004a](https://github.com/wygoralves/panes/commit/3d9004a797ce70f968204a69afda215916f784c4))
+* improve version updater experience ([e25204c](https://github.com/wygoralves/panes/commit/e25204cc8913be50aeb26c18566730e7ee460fc8))
+
+### Bug Fixes
+
+* fix css override disabling selection based editing shortcuts ([c96c9e0](https://github.com/wygoralves/panes/commit/c96c9e058993f61831de89b183df13354a3532b4))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.5.1...vnull) (2026-02-21)
 
 ### Features
