@@ -146,6 +146,18 @@ pub fn set_workspace_active_repos(
     Ok(())
 }
 
+pub fn find_repo_by_path(db: &Database, path: &str) -> anyhow::Result<Option<RepoDto>> {
+    let conn = db.connect()?;
+    conn.query_row(
+        "SELECT id, workspace_id, name, path, default_branch, is_active, trust_level
+     FROM repos WHERE path = ?1 LIMIT 1",
+        params![path],
+        map_repo_row,
+    )
+    .optional()
+    .context("failed to load repo by path")
+}
+
 pub fn find_repo_by_id(db: &Database, repo_id: &str) -> anyhow::Result<Option<RepoDto>> {
     let conn = db.connect()?;
     conn.query_row(

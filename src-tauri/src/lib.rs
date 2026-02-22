@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod db;
 mod engines;
+mod fs_ops;
 mod git;
 mod models;
 mod state;
@@ -69,7 +70,7 @@ pub fn run() {
                 let id = event.id().as_ref();
                 match id {
                     "toggle-sidebar" | "toggle-git-panel" | "toggle-search"
-                    | "toggle-terminal" => {
+                    | "toggle-terminal" | "close-window" => {
                         let _ = handle.emit("menu-action", id);
                     }
                     _ => {}
@@ -116,6 +117,9 @@ pub fn run() {
             commands::git::pop_git_stash,
             commands::git::get_file_tree,
             commands::git::get_file_tree_page,
+            commands::files::list_dir,
+            commands::files::read_file,
+            commands::files::write_file,
             commands::git::watch_git_repo,
             commands::engines::list_engines,
             commands::engines::engine_health,
@@ -219,11 +223,18 @@ fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> 
         .item(&toggle_terminal)
         .build()?;
 
+    let close_window = MenuItem::with_id(
+        handle,
+        "close-window",
+        "Close",
+        true,
+        Some("CmdOrCtrl+W"),
+    )?;
     let window_menu = SubmenuBuilder::new(handle, "Window")
         .minimize()
         .item(&PredefinedMenuItem::maximize(handle, None)?)
         .separator()
-        .close_window()
+        .item(&close_window)
         .build()?;
 
     Menu::with_items(handle, &[&app_menu, &edit_menu, &view_menu, &window_menu])

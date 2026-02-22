@@ -12,6 +12,21 @@ import { useUiStore } from "./stores/uiStore";
 import { useThreadStore } from "./stores/threadStore";
 import { useGitStore } from "./stores/gitStore";
 import { useTerminalStore } from "./stores/terminalStore";
+import { useFileStore } from "./stores/fileStore";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+
+// Debounce guard: when both the JS keydown handler and the native menu-action
+// fire for the same shortcut, only the first one within 100ms takes effect.
+const shortcutLastFired = new Map<string, number>();
+const SHORTCUT_DEBOUNCE_MS = 100;
+
+function fireShortcut(id: string, action: () => void) {
+  const now = Date.now();
+  const last = shortcutLastFired.get(id) ?? 0;
+  if (now - last < SHORTCUT_DEBOUNCE_MS) return;
+  shortcutLastFired.set(id, now);
+  action();
+}
 
 export function App() {
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces);
@@ -66,23 +81,107 @@ export function App() {
     return () => clearTimeout(timer);
   }, [checkForUpdate]);
 
+  // Handle app-level keyboard shortcuts via JavaScript keydown listeners.
+  // On macOS, when a contenteditable element (CodeMirror editor) is focused,
+  // WKWebView claims Cmd+key events for text formatting before they reach
+  // Tauri's native menu accelerators. JavaScript keydown events still fire,
+  // so the JS handler is the primary source of truth for these shortcuts.
+  //
+  // When the native menu accelerator DOES fire (non-contenteditable focus),
+  // both the JS handler and the menu-action listener would toggle the same
+  // state, canceling each other out. A debounce guard (`shortcutLastFired`)
+  // prevents the second handler from re-toggling within 100ms.
+  //
+  // Cmd+E (editor toggle) has no native menu item — JS-only.
+  // Cmd+S always prevents the browser save-page dialog.
+  // Cmd+W is handled solely via the native menu "close-window" action.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+
+      // On macOS/WebKit, e.key is lowercase even when Shift is held with Cmd,
+      // so normalize to lowercase and use e.shiftKey to differentiate.
+      const key = e.key.toLowerCase();
+
+      // Always prevent Cmd+S from opening the browser save dialog
+      if (key === "s" && !e.shiftKey) {
+        e.preventDefault();
+        return;
+      }
+
+      switch (key) {
+        case "e":
+          if (e.shiftKey) return;
+          e.preventDefault();
+          {
+            const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+            if (!wsId) return;
+            const ws = useTerminalStore.getState().workspaces[wsId];
+            const current = ws?.layoutMode ?? "chat";
+            if (current === "editor") {
+              void useTerminalStore.getState().setLayoutMode(wsId, ws?.preEditorLayoutMode ?? "chat");
+            } else {
+              void useTerminalStore.getState().setLayoutMode(wsId, "editor");
+            }
+          }
+          break;
+        case "b":
+          e.preventDefault();
+          if (e.shiftKey) {
+            fireShortcut("toggle-git-panel", () => useUiStore.getState().toggleGitPanel());
+          } else {
+            fireShortcut("toggle-sidebar", () => useUiStore.getState().toggleSidebar());
+          }
+          break;
+        case "f":
+          if (!e.shiftKey) return;
+          e.preventDefault();
+          fireShortcut("toggle-search", () => useUiStore.getState().setSearchOpen(true));
+          break;
+        case "t":
+          if (!e.shiftKey) return;
+          e.preventDefault();
+          fireShortcut("toggle-terminal", () => {
+            const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+            if (wsId) void useTerminalStore.getState().cycleLayoutMode(wsId);
+          });
+          break;
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
     void listenMenuAction((action) => {
       switch (action) {
         case "toggle-sidebar":
-          useUiStore.getState().toggleSidebar();
+          fireShortcut("toggle-sidebar", () => useUiStore.getState().toggleSidebar());
           break;
         case "toggle-git-panel":
-          useUiStore.getState().toggleGitPanel();
+          fireShortcut("toggle-git-panel", () => useUiStore.getState().toggleGitPanel());
           break;
         case "toggle-search":
-          useUiStore.getState().setSearchOpen(true);
+          fireShortcut("toggle-search", () => useUiStore.getState().setSearchOpen(true));
           break;
-        case "toggle-terminal": {
+        case "toggle-terminal":
+          fireShortcut("toggle-terminal", () => {
+            const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+            if (wsId) void useTerminalStore.getState().cycleLayoutMode(wsId);
+          });
+          break;
+        case "close-window": {
           const wsId = useWorkspaceStore.getState().activeWorkspaceId;
-          if (wsId) void useTerminalStore.getState().cycleLayoutMode(wsId);
+          const wsState = wsId ? useTerminalStore.getState().workspaces[wsId] : undefined;
+          const fileState = useFileStore.getState();
+          if (wsState?.layoutMode === "editor" && fileState.activeTabId) {
+            fileState.requestCloseTab(fileState.activeTabId);
+          } else {
+            void getCurrentWindow().close();
+          }
           break;
         }
       }

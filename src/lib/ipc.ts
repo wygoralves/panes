@@ -16,6 +16,7 @@ import type {
   InstallProgressEvent,
   InstallResult,
   Message,
+  ReadFileResult,
   Repo,
   SearchResult,
   StreamEvent,
@@ -103,6 +104,8 @@ export const ipc = {
   getFileTree: (repoPath: string) => invoke<FileTreeEntry[]>("get_file_tree", { repoPath }),
   getFileTreePage: (repoPath: string, offset?: number, limit?: number) =>
     invoke<FileTreePage>("get_file_tree_page", { repoPath, offset: offset ?? null, limit: limit ?? null }),
+  listDir: (repoPath: string, dirPath: string) =>
+    invoke<FileTreeEntry[]>("list_dir", { repoPath, dirPath }),
   stageFiles: (repoPath: string, files: string[]) => invoke<void>("stage_files", { repoPath, files }),
   unstageFiles: (repoPath: string, files: string[]) =>
     invoke<void>("unstage_files", { repoPath, files }),
@@ -143,6 +146,10 @@ export const ipc = {
     invoke<void>("apply_git_stash", { repoPath, stashIndex }),
   popGitStash: (repoPath: string, stashIndex: number) =>
     invoke<void>("pop_git_stash", { repoPath, stashIndex }),
+  readFile: (repoPath: string, filePath: string) =>
+    invoke<ReadFileResult>("read_file", { repoPath, filePath }),
+  writeFile: (repoPath: string, filePath: string, content: string) =>
+    invoke<void>("write_file", { repoPath, filePath, content }),
   watchGitRepo: (repoPath: string) => invoke<void>("watch_git_repo", { repoPath }),
   terminalCreateSession: (workspaceId: string, cols: number, rows: number) =>
     invoke<TerminalSession>("terminal_create_session", { workspaceId, cols, rows }),

@@ -289,6 +289,25 @@ export interface FileTreePage {
   scanTruncated: boolean;
 }
 
+export interface ReadFileResult {
+  content: string;
+  sizeBytes: number;
+  isBinary: boolean;
+}
+
+export interface EditorTab {
+  id: string;
+  repoPath: string;
+  filePath: string;
+  fileName: string;
+  content: string;
+  savedContent: string;
+  isDirty: boolean;
+  isLoading: boolean;
+  isBinary: boolean;
+  loadError?: string;
+}
+
 export interface TerminalSession {
   id: string;
   workspaceId: string;

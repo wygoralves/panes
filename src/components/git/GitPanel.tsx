@@ -8,6 +8,7 @@ import {
   EyeOff,
   X,
   FileDiff,
+  FolderTree,
   GitBranch as GitBranchIcon,
   GitCommitHorizontal,
   Archive,
@@ -23,12 +24,14 @@ import { GitChangesView } from "./GitChangesView";
 import { GitBranchesView } from "./GitBranchesView";
 import { GitCommitsView } from "./GitCommitsView";
 import { GitStashView } from "./GitStashView";
+import { GitFilesView } from "./GitFilesView";
 
 const VIEW_OPTIONS = [
   { value: "changes", label: "Changes", icon: <FileDiff size={13} /> },
   { value: "branches", label: "Branches", icon: <GitBranchIcon size={13} /> },
   { value: "commits", label: "Commits", icon: <GitCommitHorizontal size={13} /> },
   { value: "stash", label: "Stash", icon: <Archive size={13} /> },
+  { value: "files", label: "Files", icon: <FolderTree size={13} /> },
 ];
 const GIT_WATCHER_REFRESH_DEBOUNCE_MS = 550;
 
@@ -376,6 +379,7 @@ export function GitPanel() {
           {activeView === "stash" && (
             <GitStashView repo={activeRepo} onError={setLocalError} />
           )}
+          {activeView === "files" && <GitFilesView repo={activeRepo} />}
         </>
       ) : (
         <div className="git-empty">

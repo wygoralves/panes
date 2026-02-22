@@ -8,6 +8,7 @@ import {
   Monitor,
   SquareTerminal,
   MessageSquare,
+  FilePen,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useEngineStore } from "../../stores/engineStore";
@@ -32,6 +33,11 @@ const MESSAGE_OVERSCAN_PX = 700;
 const LazyTerminalPanel = lazy(() =>
   import("../terminal/TerminalPanel").then((module) => ({
     default: module.TerminalPanel,
+  })),
+);
+const LazyFileEditorPanel = lazy(() =>
+  import("../editor/FileEditorPanel").then((module) => ({
+    default: module.FileEditorPanel,
   })),
 );
 
@@ -1240,9 +1246,13 @@ export function ChatPanel() {
     : 32;
 
   const hasTerminalMountedRef = useRef(false);
+  const hasEditorMountedRef = useRef(false);
   useEffect(() => {
-    if (layoutMode !== "chat" && activeWorkspaceId) {
+    if ((layoutMode === "split" || layoutMode === "terminal") && activeWorkspaceId) {
       hasTerminalMountedRef.current = true;
+    }
+    if (layoutMode === "editor" && activeWorkspaceId) {
+      hasEditorMountedRef.current = true;
     }
   }, [layoutMode, activeWorkspaceId]);
 
@@ -1416,6 +1426,15 @@ export function ChatPanel() {
             >
               <SquareTerminal size={12} />
             </button>
+            <button
+              type="button"
+              title="File editor (Cmd+E)"
+              disabled={!activeWorkspaceId}
+              onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "editor")}
+              className={`layout-mode-btn ${layoutMode === "editor" ? "active" : ""}`}
+            >
+              <FilePen size={12} />
+            </button>
           </div>
 
           {/* Git stats badge */}
@@ -1446,11 +1465,11 @@ export function ChatPanel() {
         <div
           className="chat-section"
           style={{
-            flex: layoutMode === "terminal" ? "0 0 0px"
+            flex: (layoutMode === "terminal" || layoutMode === "editor") ? "0 0 0px"
                  : layoutMode === "chat" ? "1 1 0px"
                  : `0 0 ${100 - terminalPanelSize}%`,
             overflow: "hidden",
-            visibility: layoutMode === "terminal" ? "hidden" : "visible",
+            visibility: (layoutMode === "terminal" || layoutMode === "editor") ? "hidden" : "visible",
             display: "flex",
             flexDirection: "column",
           }}
@@ -2091,11 +2110,11 @@ export function ChatPanel() {
         <div
           className="terminal-section"
           style={{
-            flex: layoutMode === "chat" ? "0 0 0px"
+            flex: (layoutMode === "chat" || layoutMode === "editor") ? "0 0 0px"
                  : layoutMode === "terminal" ? "1 1 0px"
                  : `0 0 ${terminalPanelSize}%`,
             overflow: "hidden",
-            visibility: layoutMode === "chat" ? "hidden" : "visible",
+            visibility: (layoutMode === "chat" || layoutMode === "editor") ? "hidden" : "visible",
           }}
         >
           {hasTerminalMountedRef.current && activeWorkspaceId && (
@@ -2119,6 +2138,37 @@ export function ChatPanel() {
                 <LazyTerminalPanel workspaceId={activeWorkspaceId} />
               </Suspense>
             </div>
+          )}
+        </div>
+
+        {/* Editor section */}
+        <div
+          style={{
+            flex: layoutMode === "editor" ? "1 1 0px" : "0 0 0px",
+            minHeight: 0,
+            overflow: "hidden",
+            visibility: layoutMode === "editor" ? "visible" : "hidden",
+          }}
+        >
+          {hasEditorMountedRef.current && (
+            <Suspense
+              fallback={
+                <div
+                  style={{
+                    height: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 12,
+                    color: "var(--text-3)",
+                  }}
+                >
+                  Loading editor...
+                </div>
+              }
+            >
+              <LazyFileEditorPanel />
+            </Suspense>
           )}
         </div>
       </div>

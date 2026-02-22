@@ -328,6 +328,14 @@ pub struct FileTreePageDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ReadFileResultDto {
+    pub content: String,
+    pub size_bytes: u64,
+    pub is_binary: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TerminalSessionDto {
     pub id: String,
     pub workspace_id: String,

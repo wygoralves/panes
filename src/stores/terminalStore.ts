@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { ipc } from "../lib/ipc";
 import type { TerminalSession, SplitNode, SplitDirection, TerminalGroup } from "../types";
 
-export type LayoutMode = "chat" | "terminal" | "split";
+export type LayoutMode = "chat" | "terminal" | "split" | "editor";
 
 const DEFAULT_PANEL_SIZE = 32;
 const DEFAULT_COLS = 120;
@@ -12,7 +12,7 @@ const LAYOUT_MODE_STORAGE_KEY = (wsId: string) => `panes:layoutMode:${wsId}`;
 
 function readStoredLayoutMode(workspaceId: string): LayoutMode {
   const v = localStorage.getItem(LAYOUT_MODE_STORAGE_KEY(workspaceId));
-  if (v === "terminal" || v === "split") return v;
+  if (v === "terminal" || v === "split" || v === "editor") return v;
   return "chat";
 }
 
@@ -88,6 +88,7 @@ function nextFocusedSessionId(
 interface WorkspaceTerminalState {
   isOpen: boolean;
   layoutMode: LayoutMode;
+  preEditorLayoutMode: LayoutMode;
   panelSize: number;
   sessions: TerminalSession[];
   activeSessionId: string | null;
@@ -124,6 +125,7 @@ function defaultWorkspaceState(): WorkspaceTerminalState {
   return {
     isOpen: false,
     layoutMode: "chat",
+    preEditorLayoutMode: "chat",
     panelSize: DEFAULT_PANEL_SIZE,
     sessions: [],
     activeSessionId: null,
@@ -253,21 +255,30 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   setLayoutMode: async (workspaceId, mode) => {
     localStorage.setItem(LAYOUT_MODE_STORAGE_KEY(workspaceId), mode);
 
-    if (mode !== "chat") {
+    if (mode === "split" || mode === "terminal") {
       const workspace = get().workspaces[workspaceId] ?? defaultWorkspaceState();
       if (workspace.sessions.length === 0) {
         await get().openTerminal(workspaceId);
       }
     }
 
-    set((state) => ({
-      workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
-        layoutMode: mode,
-        isOpen: mode !== "chat" ? true : (state.workspaces[workspaceId]?.isOpen ?? false),
-      }),
-    }));
+    set((state) => {
+      const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
+      const preEditorLayoutMode =
+        mode === "editor" && current.layoutMode !== "editor"
+          ? current.layoutMode
+          : current.preEditorLayoutMode;
+      return {
+        workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+          layoutMode: mode,
+          preEditorLayoutMode,
+          isOpen: (mode === "split" || mode === "terminal") ? true : current.isOpen,
+        }),
+      };
+    });
   },
 
+  // Editor mode is excluded from the cycle — it has its own toggle (Cmd+E)
   cycleLayoutMode: async (workspaceId) => {
     const workspace = get().workspaces[workspaceId] ?? defaultWorkspaceState();
     const order: LayoutMode[] = ["chat", "split", "terminal"];
@@ -471,7 +482,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         .filter((g): g is TerminalGroup => g !== null);
 
       const noSessionsLeft = sessions.length === 0;
-      if (noSessionsLeft) {
+      const isTerminalMode = workspace.layoutMode === "terminal" || workspace.layoutMode === "split";
+      if (noSessionsLeft && isTerminalMode) {
         localStorage.setItem(LAYOUT_MODE_STORAGE_KEY(workspaceId), "chat");
       }
 
@@ -492,7 +504,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           groups,
           activeGroupId,
           focusedSessionId: focusedId,
-          ...(noSessionsLeft ? { layoutMode: "chat" as LayoutMode } : {}),
+          ...(noSessionsLeft && isTerminalMode ? { layoutMode: "chat" as LayoutMode } : {}),
         }),
       };
     });
