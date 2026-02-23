@@ -506,6 +506,17 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
   return next;
 }
 
+export const chatStoreInternals = {
+  resolveApprovalDecision,
+  trimActionOutputChunks,
+  patchActionBlock,
+  ensureAssistantMessage,
+  upsertBlock,
+  normalizeBlocks,
+  normalizeMessages,
+  applyStreamEvent,
+};
+
 export const useChatStore = create<ChatState>((set, get) => ({
   threadId: null,
   messages: [],

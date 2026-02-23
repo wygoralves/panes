@@ -105,6 +105,15 @@ function threadMatchesRequestedModel(thread: Thread, modelId: string): boolean {
   return thread.modelId === modelId || readThreadLastModelId(thread) === modelId;
 }
 
+export const threadStoreInternals = {
+  mergeWorkspaceThreads,
+  flattenThreadsByWorkspace,
+  applyThreadReasoningEffort,
+  applyThreadLastModel,
+  readThreadLastModelId,
+  threadMatchesRequestedModel,
+};
+
 const LAST_THREAD_KEY = "panes:lastActiveThreadId";
 
 export const useThreadStore = create<ThreadState>((set, get) => ({
