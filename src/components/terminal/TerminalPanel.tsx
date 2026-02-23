@@ -77,10 +77,12 @@ interface SessionTerminal {
   terminal: Terminal;
   fitAddon: FitAddon;
   outputQueue: string[];
+  outputQueueChars: number;
   flushInProgress: boolean;
   flushTimer?: ReturnType<typeof window.setTimeout>;
   fitTimer?: ReturnType<typeof window.setTimeout>;
   isAttached: boolean;
+  lastOutputDropWarnAt?: number;
   lastResizeSent?: TerminalSize;
   debugSample: {
     chunks: number;
@@ -97,6 +99,10 @@ const DEFAULT_ROWS = 36;
 const FIT_DEBOUNCE_MS = 80;
 const OUTPUT_FLUSH_DELAY_MS = 4;
 const OUTPUT_BATCH_CHAR_LIMIT = 65536;
+const OUTPUT_QUEUE_MAX_CHARS_ATTACHED = 8 * 1024 * 1024;
+const OUTPUT_QUEUE_MAX_CHARS_DETACHED = 1024 * 1024;
+const PENDING_OUTPUT_MAX_CHARS = 512 * 1024;
+const OUTPUT_DROP_WARN_COOLDOWN_MS = 5000;
 const TERMINAL_DEBUG =
   import.meta.env.DEV && import.meta.env.VITE_TERMINAL_DEBUG === "1";
 const IMAGE_ADDON_OPTIONS: ImageAddonCapabilities = {
@@ -116,7 +122,14 @@ const IMAGE_ADDON_ERROR_PATTERNS = [
 // Module-level cache — xterm instances survive component mount/unmount cycles.
 // This is what preserves terminal scrollback when switching workspaces.
 const cachedTerminals = new Map<string, SessionTerminal>();
-const pendingOutput = new Map<string, string[]>();
+const pendingOutput = new Map<
+  string,
+  {
+    chunks: string[];
+    chars: number;
+    lastDropWarnAt?: number;
+  }
+>();
 const cachedBackendRendererDiagnostics = new Map<string, BackendRendererDiagnosticsEntry>();
 
 function terminalCacheKey(workspaceId: string, sessionId: string): string {
@@ -346,7 +359,82 @@ function sendResizeIfNeeded(
     .catch(() => undefined);
 }
 
-function pullOutputBatch(outputQueue: string[]): string | null {
+function trimOutputQueue(
+  outputQueue: string[],
+  currentChars: number,
+  maxChars: number,
+): { chars: number; droppedChars: number; droppedChunks: number } {
+  if (currentChars <= maxChars) {
+    return { chars: currentChars, droppedChars: 0, droppedChunks: 0 };
+  }
+
+  let droppedChars = 0;
+  let droppedChunks = 0;
+  while (outputQueue.length > 0 && currentChars - droppedChars > maxChars) {
+    const removed = outputQueue.shift();
+    if (!removed) {
+      break;
+    }
+    droppedChars += removed.length;
+    droppedChunks += 1;
+  }
+
+  return {
+    chars: Math.max(0, currentChars - droppedChars),
+    droppedChars,
+    droppedChunks,
+  };
+}
+
+function capSessionOutputQueue(cacheKey: string, session: SessionTerminal) {
+  const maxChars = session.isAttached
+    ? OUTPUT_QUEUE_MAX_CHARS_ATTACHED
+    : OUTPUT_QUEUE_MAX_CHARS_DETACHED;
+  const result = trimOutputQueue(session.outputQueue, session.outputQueueChars, maxChars);
+  session.outputQueueChars = result.chars;
+  if (result.droppedChars <= 0) {
+    return;
+  }
+  const now = Date.now();
+  if (
+    session.lastOutputDropWarnAt !== undefined &&
+    now - session.lastOutputDropWarnAt < OUTPUT_DROP_WARN_COOLDOWN_MS
+  ) {
+    return;
+  }
+  session.lastOutputDropWarnAt = now;
+  logTerminalWarning("terminal-output-trimmed", {
+    cacheKey,
+    droppedChars: result.droppedChars,
+    droppedChunks: result.droppedChunks,
+    attached: session.isAttached,
+    maxChars,
+  });
+}
+
+function capPendingOutput(cacheKey: string, pending: { chunks: string[]; chars: number; lastDropWarnAt?: number }) {
+  const result = trimOutputQueue(pending.chunks, pending.chars, PENDING_OUTPUT_MAX_CHARS);
+  pending.chars = result.chars;
+  if (result.droppedChars <= 0) {
+    return;
+  }
+  const now = Date.now();
+  if (
+    pending.lastDropWarnAt !== undefined &&
+    now - pending.lastDropWarnAt < OUTPUT_DROP_WARN_COOLDOWN_MS
+  ) {
+    return;
+  }
+  pending.lastDropWarnAt = now;
+  logTerminalWarning("terminal-pending-output-trimmed", {
+    cacheKey,
+    droppedChars: result.droppedChars,
+    droppedChunks: result.droppedChunks,
+    maxChars: PENDING_OUTPUT_MAX_CHARS,
+  });
+}
+
+function pullOutputBatch(outputQueue: string[]): { payload: string; charCount: number } | null {
   if (outputQueue.length === 0) {
     return null;
   }
@@ -368,7 +456,15 @@ function pullOutputBatch(outputQueue: string[]): string | null {
     take = 1;
   }
 
-  return outputQueue.splice(0, take).join("");
+  const chunks = outputQueue.splice(0, take);
+  let charCount = 0;
+  for (const chunk of chunks) {
+    charCount += chunk.length;
+  }
+  return {
+    payload: chunks.join(""),
+    charCount,
+  };
 }
 
 function flushOutputQueue(cacheKey: string) {
@@ -380,14 +476,15 @@ function flushOutputQueue(cacheKey: string) {
     return;
   }
 
-  const payload = pullOutputBatch(session.outputQueue);
-  if (!payload) {
+  const batch = pullOutputBatch(session.outputQueue);
+  if (!batch) {
     return;
   }
+  session.outputQueueChars = Math.max(0, session.outputQueueChars - batch.charCount);
 
   session.flushInProgress = true;
   try {
-    session.terminal.write(payload, () => {
+    session.terminal.write(batch.payload, () => {
       const latest = cachedTerminals.get(cacheKey);
       if (!latest) {
         return;
@@ -431,13 +528,17 @@ function scheduleOutputFlush(
 function queueOutput(cacheKey: string, data: string) {
   const session = cachedTerminals.get(cacheKey);
   if (!session) {
-    const current = pendingOutput.get(cacheKey) ?? [];
-    current.push(data);
-    pendingOutput.set(cacheKey, current);
+    const pending = pendingOutput.get(cacheKey) ?? { chunks: [], chars: 0 };
+    pending.chunks.push(data);
+    pending.chars += data.length;
+    capPendingOutput(cacheKey, pending);
+    pendingOutput.set(cacheKey, pending);
     return;
   }
 
   session.outputQueue.push(data);
+  session.outputQueueChars += data.length;
+  capSessionOutputQueue(cacheKey, session);
 
   session.debugSample.chunks += 1;
   session.debugSample.chars += data.length;
@@ -461,10 +562,12 @@ function queueOutput(cacheKey: string, data: string) {
 
 function drainPendingOutput(cacheKey: string, session: SessionTerminal) {
   const buffered = pendingOutput.get(cacheKey);
-  if (!buffered?.length) {
+  if (!buffered?.chunks.length) {
     return;
   }
-  session.outputQueue.push(...buffered);
+  session.outputQueue.push(...buffered.chunks);
+  session.outputQueueChars += buffered.chars;
+  capSessionOutputQueue(cacheKey, session);
   pendingOutput.delete(cacheKey);
   if (session.isAttached) {
     scheduleOutputFlush(cacheKey, session, 0);
@@ -536,6 +639,7 @@ function markWorkspaceTerminalsDetached(workspaceId: string) {
       window.clearTimeout(session.flushTimer);
       session.flushTimer = undefined;
     }
+    capSessionOutputQueue(cacheKey, session);
   }
 }
 
@@ -595,6 +699,7 @@ function SplitPaneView({
               );
               if (cached) {
                 cached.isAttached = false;
+                capSessionOutputQueue(terminalCacheKey(workspaceId, node.sessionId), cached);
                 if (cached.fitTimer !== undefined) {
                   window.clearTimeout(cached.fitTimer);
                   cached.fitTimer = undefined;
@@ -1017,6 +1122,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       terminal,
       fitAddon,
       outputQueue: [],
+      outputQueueChars: 0,
       flushInProgress: false,
       isAttached: true,
       debugSample: {
