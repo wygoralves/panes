@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.11.3...vnull) (2026-02-23)
+
+### Bug Fixes
+
+* add more diagnostics and fallback logic for sandboxing ([fe37a00](https://github.com/wygoralves/panes/commit/fe37a0017e4895e89cdd92963258712d95632aad))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.11.2...vnull) (2026-02-23)
 
 ### Bug Fixes
