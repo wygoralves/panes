@@ -1,5 +1,12 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.11.2...vnull) (2026-02-23)
+
+### Bug Fixes
+
+* add more diagnostics for fixing complex tui rendering and caps for memory consumption ([c26ceaf](https://github.com/wygoralves/panes/commit/c26ceaf727840e96a21704e5f9a63fa113a3204a))
+* cleanup orphan terminal sessions when exiting app ([c0de122](https://github.com/wygoralves/panes/commit/c0de122a4369ee58a16541629289667997c001ab))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.11.1...vnull) (2026-02-23)
 
 ### Bug Fixes
