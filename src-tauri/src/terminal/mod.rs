@@ -212,6 +212,36 @@ impl TerminalManager {
         Ok(())
     }
 
+    pub async fn shutdown(&self) {
+        let workspaces = {
+            let mut guard = self.workspaces.write().await;
+            std::mem::take(&mut *guard)
+        };
+
+        for (workspace_id, sessions) in workspaces {
+            for session in sessions.into_values() {
+                let session_id = session.meta.id.clone();
+                match tokio::task::spawn_blocking(move || session.kill_and_wait()).await {
+                    Ok(_exit) => {
+                        log::info!(
+                            "terminal session closed during app shutdown: workspace_id={}, session_id={}",
+                            workspace_id,
+                            session_id
+                        );
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "failed to close terminal session during app shutdown: workspace_id={}, session_id={}, error={}",
+                            workspace_id,
+                            session_id,
+                            error
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     async fn get_session(
         &self,
         workspace_id: &str,
