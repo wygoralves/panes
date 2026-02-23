@@ -62,9 +62,15 @@ interface RendererDiagnosticsExport {
   capturedAt: string;
   workspaceId: string;
   sessionId: string;
-  backend: TerminalRendererDiagnostics;
+  backend: TerminalRendererDiagnostics | null;
+  backendFetchedAt: string | null;
   frontend: FrontendRendererDiagnostics | null;
   userAgent: string;
+}
+
+interface BackendRendererDiagnosticsEntry {
+  diagnostics: TerminalRendererDiagnostics;
+  fetchedAt: string;
 }
 
 interface SessionTerminal {
@@ -111,6 +117,7 @@ const IMAGE_ADDON_ERROR_PATTERNS = [
 // This is what preserves terminal scrollback when switching workspaces.
 const cachedTerminals = new Map<string, SessionTerminal>();
 const pendingOutput = new Map<string, string[]>();
+const cachedBackendRendererDiagnostics = new Map<string, BackendRendererDiagnosticsEntry>();
 
 function terminalCacheKey(workspaceId: string, sessionId: string): string {
   return `${workspaceId}::${sessionId}`;
@@ -182,6 +189,25 @@ function cloneFrontendDiagnostics(
     imageAddonCapabilities: { ...diagnostics.imageAddonCapabilities },
     lastResize: diagnostics.lastResize ? { ...diagnostics.lastResize } : null,
   };
+}
+
+async function refreshBackendRendererDiagnostics(
+  workspaceId: string,
+  sessionId: string,
+): Promise<void> {
+  const cacheKey = terminalCacheKey(workspaceId, sessionId);
+  try {
+    const diagnostics = await ipc.terminalGetRendererDiagnostics(workspaceId, sessionId);
+    cachedBackendRendererDiagnostics.set(cacheKey, {
+      diagnostics,
+      fetchedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    logTerminalDebug("backend-diagnostics-refresh-failed", {
+      cacheKey,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 function recordImageAddonRuntimeError(
@@ -523,6 +549,7 @@ function destroyCachedTerminal(workspaceId: string, sessionId: string) {
     cachedTerminals.delete(key);
   }
   pendingOutput.delete(key);
+  cachedBackendRendererDiagnostics.delete(key);
 }
 
 // ── Split pane components ───────────────────────────────────────────
@@ -909,6 +936,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       cached.isAttached = true;
       drainPendingOutput(cacheKey, cached);
       scheduleTerminalFit(workspaceId, sessionId, 0);
+      void refreshBackendRendererDiagnostics(workspaceId, sessionId);
       return;
     }
 
@@ -1013,6 +1041,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       },
     };
     cachedTerminals.set(cacheKey, entry);
+    void refreshBackendRendererDiagnostics(workspaceId, sessionId);
 
     // Synchronous fit — ensures PTY gets correct size before first shell output
     fitAddon.fit();
@@ -1246,8 +1275,8 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     }
 
     try {
-      const backend = await ipc.terminalGetRendererDiagnostics(workspaceId, targetSessionId);
       const cacheKey = terminalCacheKey(workspaceId, targetSessionId);
+      const backendEntry = cachedBackendRendererDiagnostics.get(cacheKey);
       const frontend = cloneFrontendDiagnostics(
         cachedTerminals.get(cacheKey)?.rendererDiagnostics,
       );
@@ -1255,12 +1284,17 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         capturedAt: new Date().toISOString(),
         workspaceId,
         sessionId: targetSessionId,
-        backend,
+        backend: backendEntry?.diagnostics ?? null,
+        backendFetchedAt: backendEntry?.fetchedAt ?? null,
         frontend,
         userAgent: navigator.userAgent,
       };
       await copyTextToClipboard(JSON.stringify(payload, null, 2));
       toast.success("Renderer diagnostics copied");
+      if (!backendEntry) {
+        toast.info("Copied diagnostics without backend snapshot; retry in a second.");
+        void refreshBackendRendererDiagnostics(workspaceId, targetSessionId);
+      }
     } catch (error) {
       toast.error(`Failed to copy diagnostics: ${String(error)}`);
     }
