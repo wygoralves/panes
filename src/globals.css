@@ -2552,3 +2552,213 @@ button, input, textarea, select {
 .cm-editor.cm-focused {
   outline: none;
 }
+
+/* ── Chat Attachments ──────────────────────────────────────────────── */
+
+.chat-attachments-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px 0;
+}
+
+.chat-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-2);
+  max-width: 200px;
+  animation: fade-in var(--duration-fast) var(--ease-out) both;
+}
+
+.chat-attachment-chip > svg {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.chat-attachment-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.chat-attachment-chip-size {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-3);
+  font-family: "JetBrains Mono", monospace;
+}
+
+.chat-attachment-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  color: var(--text-3);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.chat-attachment-chip-remove:hover {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--danger);
+}
+
+/* ── Plan Mode ─────────────────────────────────────────────────────── */
+
+.chat-input-box-plan {
+  border-color: rgba(167, 139, 250, 0.25) !important;
+  box-shadow: 0 0 12px rgba(167, 139, 250, 0.08) !important;
+}
+
+.chat-input-box-plan:focus-within {
+  border-color: rgba(167, 139, 250, 0.4) !important;
+  box-shadow: 0 0 16px rgba(167, 139, 250, 0.12) !important;
+}
+
+.chat-plan-mode-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent-2);
+  background: var(--accent-2-dim);
+  border-bottom: 1px solid rgba(167, 139, 250, 0.12);
+}
+
+.chat-plan-mode-banner > svg {
+  flex-shrink: 0;
+}
+
+/* ── Toolbar Buttons ───────────────────────────────────────────────── */
+
+.chat-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  background: transparent;
+  color: var(--text-3);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.chat-toolbar-btn:hover {
+  background: var(--bg-3);
+  border-color: var(--border);
+  color: var(--text-2);
+}
+
+.chat-toolbar-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.chat-toolbar-btn-active {
+  background: var(--accent-2-dim);
+  color: var(--accent-2);
+  border-color: rgba(167, 139, 250, 0.2);
+}
+
+.chat-toolbar-btn-active:hover {
+  background: rgba(167, 139, 250, 0.15);
+  border-color: rgba(167, 139, 250, 0.3);
+  color: var(--accent-2);
+}
+
+.chat-toolbar-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 99px;
+  font-size: 9px;
+  font-weight: 600;
+  background: var(--accent);
+  color: var(--bg-0);
+}
+
+/* ── Context Usage Bar ─────────────────────────────────────────────── */
+
+.chat-context-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  font-size: 10px;
+  color: var(--text-3);
+  flex-wrap: wrap;
+}
+
+.chat-context-section {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.chat-context-section > svg {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.chat-context-progress {
+  width: 40px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--bg-4);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.chat-context-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width var(--duration-normal) var(--ease-out);
+  min-width: 0;
+}
+
+.chat-context-progress-fill-5h {
+  background: var(--info);
+}
+
+.chat-context-progress-fill-weekly {
+  background: var(--accent-2);
+}
+
+.chat-context-percent {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  min-width: 22px;
+  text-align: right;
+}
+
+.chat-context-reset {
+  font-size: 9px;
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.chat-context-divider {
+  opacity: 0.3;
+  font-size: 8px;
+}

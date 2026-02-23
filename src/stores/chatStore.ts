@@ -5,6 +5,7 @@ import type {
   ApprovalResponse,
   ActionBlock,
   ApprovalBlock,
+  ChatAttachment,
   ContentBlock,
   Message,
   StreamEvent,
@@ -26,6 +27,8 @@ interface ChatState {
       modelId?: string | null;
       engineId?: string | null;
       reasoningEffort?: string | null;
+      attachments?: ChatAttachment[];
+      planMode?: boolean;
     },
   ) => Promise<void>;
   cancel: () => Promise<void>;
@@ -603,12 +606,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
       turnReasoningEffort: options?.reasoningEffort ?? null,
     });
 
+    const attachments = options?.attachments ?? [];
+    const planMode = options?.planMode ?? false;
+    const displayContent = planMode ? `[Plan Mode] ${message}` : message;
+
+    const userBlocks: ContentBlock[] = [];
+    if (attachments.length > 0) {
+      for (const attachment of attachments) {
+        userBlocks.push({
+          type: "attachment",
+          fileName: attachment.fileName,
+          filePath: attachment.filePath,
+          sizeBytes: attachment.sizeBytes,
+          mimeType: attachment.mimeType,
+        });
+      }
+    }
+    userBlocks.push({ type: "text", content: displayContent });
+
     const userMessage: Message = {
       id: crypto.randomUUID(),
       threadId,
       role: "user",
-      content: message,
-      blocks: [{ type: "text", content: message }],
+      content: displayContent,
+      blocks: userBlocks,
       status: "completed",
       schemaVersion: 1,
       createdAt: new Date().toISOString()

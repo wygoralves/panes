@@ -9,6 +9,14 @@ import {
   SquareTerminal,
   MessageSquare,
   FilePen,
+  Paperclip,
+  X,
+  FileText,
+  Image,
+  File,
+  MapPin,
+  Clock,
+  Zap,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useEngineStore } from "../../stores/engineStore";
@@ -24,7 +32,7 @@ import { isRequestUserInputApproval, requiresCustomApprovalPayload } from "./too
 import { Dropdown } from "../shared/Dropdown";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
-import type { ApprovalBlock, ApprovalResponse, ContentBlock, Message, TrustLevel } from "../../types";
+import type { ApprovalBlock, ApprovalResponse, ChatAttachment, ContentBlock, Message, TrustLevel } from "../../types";
 
 const MESSAGE_VIRTUALIZATION_THRESHOLD = 40;
 const MESSAGE_ESTIMATED_ROW_HEIGHT = 220;
@@ -249,6 +257,10 @@ function MessageRowView({
       .map((block) => block.content)
       .join("\n");
   }, [message.blocks, message.content]);
+  const userAttachments = useMemo(
+    () => (message.blocks ?? []).filter((b) => b.type === "attachment"),
+    [message.blocks],
+  );
   const hasAssistantContent = !isUser && hasVisibleContent(message.blocks);
 
   return (
@@ -285,6 +297,27 @@ function MessageRowView({
               wordBreak: "break-word",
             }}
           >
+            {userAttachments.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
+                {userAttachments.map((block, i) => {
+                  if (block.type !== "attachment") return null;
+                  const mime = block.mimeType ?? "";
+                  const AttachIcon = mime.startsWith("image/")
+                    ? Image
+                    : mime.startsWith("text/") || mime.includes("json")
+                      ? FileText
+                      : File;
+                  return (
+                    <span key={i} className="chat-attachment-chip">
+                      <AttachIcon size={10} />
+                      <span className="chat-attachment-chip-name" style={{ fontSize: 10 }}>
+                        {block.fileName}
+                      </span>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
             {userContent}
           </div>
           {messageTimestamp && (
@@ -374,11 +407,125 @@ const MessageRow = memo(
     prev.onApproval === next.onApproval,
 );
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getAttachmentIcon(mimeType?: string) {
+  if (!mimeType) return File;
+  if (mimeType.startsWith("image/")) return Image;
+  if (mimeType.startsWith("text/") || mimeType.includes("json") || mimeType.includes("javascript") || mimeType.includes("typescript"))
+    return FileText;
+  return File;
+}
+
+function getFileExtension(fileName: string): string {
+  const lastDot = fileName.lastIndexOf(".");
+  return lastDot >= 0 ? fileName.slice(lastDot + 1).toLowerCase() : "";
+}
+
+function guessMimeType(fileName: string): string | undefined {
+  const ext = getFileExtension(fileName);
+  const mimeMap: Record<string, string> = {
+    txt: "text/plain",
+    md: "text/markdown",
+    json: "application/json",
+    js: "text/javascript",
+    ts: "text/typescript",
+    tsx: "text/typescript",
+    jsx: "text/javascript",
+    py: "text/x-python",
+    rs: "text/x-rust",
+    go: "text/x-go",
+    css: "text/css",
+    html: "text/html",
+    svg: "image/svg+xml",
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    pdf: "application/pdf",
+    yaml: "text/yaml",
+    yml: "text/yaml",
+    toml: "text/toml",
+    xml: "text/xml",
+    sql: "text/x-sql",
+    sh: "text/x-shellscript",
+    csv: "text/csv",
+  };
+  return mimeMap[ext];
+}
+
+function formatResetTime(isoDate: string | null): string {
+  if (!isoDate) return "";
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) return "";
+  const now = new Date();
+  const diffMs = date.getTime() - now.getTime();
+  if (diffMs <= 0) return "now";
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 60) return `${diffMin}m`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ${diffMin % 60}m`;
+  const diffDays = Math.floor(diffHr / 24);
+  return `${diffDays}d ${diffHr % 24}h`;
+}
+
+function computeContextUsage(messages: Message[]) {
+  let totalInput = 0;
+  let totalOutput = 0;
+  for (const msg of messages) {
+    if (msg.tokenUsage) {
+      totalInput += msg.tokenUsage.input;
+      totalOutput += msg.tokenUsage.output;
+    }
+  }
+  const totalTokens = totalInput + totalOutput;
+
+  // Codex context limits (estimates based on typical API limits)
+  const maxContextTokens = 200_000;
+  const fiveHourLimit = 1_000_000;
+  const weeklyLimit = 10_000_000;
+
+  const contextPercent = maxContextTokens > 0
+    ? Math.min(100, Math.round((totalTokens / maxContextTokens) * 100))
+    : 0;
+  const fiveHourPercent = fiveHourLimit > 0
+    ? Math.min(100, Math.round((totalTokens / fiveHourLimit) * 100))
+    : 0;
+  const weeklyPercent = weeklyLimit > 0
+    ? Math.min(100, Math.round((totalTokens / weeklyLimit) * 100))
+    : 0;
+
+  // Estimate reset times
+  const now = new Date();
+  const fiveHourReset = new Date(now.getTime() + 5 * 60 * 60 * 1000);
+  const weeklyReset = new Date(now.getTime());
+  // Reset on next Monday 00:00 UTC
+  const daysUntilMonday = ((8 - weeklyReset.getUTCDay()) % 7) || 7;
+  weeklyReset.setUTCDate(weeklyReset.getUTCDate() + daysUntilMonday);
+  weeklyReset.setUTCHours(0, 0, 0, 0);
+
+  return {
+    totalTokens,
+    contextPercent,
+    fiveHourPercent,
+    weeklyPercent,
+    fiveHourResetLabel: formatResetTime(fiveHourReset.toISOString()),
+    weeklyResetLabel: formatResetTime(weeklyReset.toISOString()),
+  };
+}
+
 export function ChatPanel() {
   const renderStartedAtRef = useRef(performance.now());
   renderStartedAtRef.current = performance.now();
 
   const [input, setInput] = useState("");
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [planMode, setPlanMode] = useState(false);
   const [selectedEngineId, setSelectedEngineId] = useState("codex");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [selectedEffort, setSelectedEffort] = useState("medium");
@@ -985,7 +1132,9 @@ export function ChatPanel() {
     }
 
     const text = input.trim();
+    const currentAttachments = [...attachments];
     setInput("");
+    setAttachments([]);
 
     if (selectedEngineId === "codex" && selectedEffort) {
       await ipc.setThreadReasoningEffort(targetThreadId, selectedEffort, selectedModelId);
@@ -998,6 +1147,8 @@ export function ChatPanel() {
       engineId: selectedEngineId,
       modelId: selectedModelId,
       reasoningEffort: selectedEngineId === "codex" ? selectedEffort : null,
+      attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
+      planMode,
     });
   }
 
@@ -1088,6 +1239,37 @@ export function ChatPanel() {
 
     setEditingThreadTitle(false);
   }
+
+  async function handleAddAttachment() {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({
+        multiple: true,
+        title: "Attach files",
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      const newAttachments: ChatAttachment[] = paths.map((filePath) => {
+        const fileName = filePath.split("/").pop() ?? filePath.split("\\").pop() ?? filePath;
+        return {
+          id: crypto.randomUUID(),
+          fileName,
+          filePath,
+          sizeBytes: 0,
+          mimeType: guessMimeType(fileName),
+        };
+      });
+      setAttachments((prev) => [...prev, ...newAttachments]);
+    } catch {
+      // User cancelled or dialog failed
+    }
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  }
+
+  const contextUsage = useMemo(() => computeContextUsage(messages), [messages]);
 
   const onMessageRowHeightChange = useCallback(
     (messageId: string, height: number) => {
@@ -1848,7 +2030,43 @@ export function ChatPanel() {
           )}
 
           {/* Input container */}
-          <div className="chat-input-box">
+          <div className={`chat-input-box ${planMode ? "chat-input-box-plan" : ""}`}>
+            {/* Plan mode indicator banner */}
+            {planMode && (
+              <div className="chat-plan-mode-banner">
+                <MapPin size={12} />
+                <span>Plan Mode — The agent will plan before executing</span>
+              </div>
+            )}
+
+            {/* Attachment chips */}
+            {attachments.length > 0 && (
+              <div className="chat-attachments-bar">
+                {attachments.map((attachment) => {
+                  const IconComponent = getAttachmentIcon(attachment.mimeType);
+                  return (
+                    <div key={attachment.id} className="chat-attachment-chip">
+                      <IconComponent size={12} />
+                      <span className="chat-attachment-chip-name">{attachment.fileName}</span>
+                      {attachment.sizeBytes > 0 && (
+                        <span className="chat-attachment-chip-size">
+                          {formatFileSize(attachment.sizeBytes)}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        className="chat-attachment-chip-remove"
+                        onClick={() => removeAttachment(attachment.id)}
+                        title="Remove attachment"
+                      >
+                        <X size={10} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             <textarea
               ref={inputRef}
               rows={3}
@@ -1863,7 +2081,7 @@ export function ChatPanel() {
                   void onSubmit(e);
                 }
               }}
-              placeholder="Ask for follow-up changes"
+              placeholder={planMode ? "Describe what you want to plan..." : "Ask for follow-up changes"}
               disabled={!activeWorkspaceId}
               style={{
                 width: "100%",
@@ -1874,7 +2092,7 @@ export function ChatPanel() {
                 lineHeight: 1.6,
                 resize: "none",
                 fontFamily: "inherit",
-                caretColor: "var(--accent)",
+                caretColor: planMode ? "var(--accent-2)" : "var(--accent)",
               }}
             />
 
@@ -1922,6 +2140,34 @@ export function ChatPanel() {
                   }))}
                 />
               )}
+
+              <div className="chat-toolbar-divider" />
+
+              {/* Attach file button */}
+              <button
+                type="button"
+                className="chat-toolbar-btn"
+                onClick={() => void handleAddAttachment()}
+                disabled={!activeWorkspaceId}
+                title="Attach files"
+              >
+                <Paperclip size={12} />
+                {attachments.length > 0 && (
+                  <span className="chat-toolbar-badge">{attachments.length}</span>
+                )}
+              </button>
+
+              {/* Plan mode toggle */}
+              <button
+                type="button"
+                className={`chat-toolbar-btn ${planMode ? "chat-toolbar-btn-active" : ""}`}
+                onClick={() => setPlanMode((prev) => !prev)}
+                disabled={!activeWorkspaceId}
+                title={planMode ? "Disable plan mode" : "Enable plan mode"}
+              >
+                <MapPin size={12} />
+                <span style={{ fontSize: 11 }}>Plan</span>
+              </button>
 
               <div className="chat-toolbar-divider" />
 
@@ -2037,6 +2283,57 @@ export function ChatPanel() {
               )}
             </div>
           </div>
+
+          {/* Context usage bar */}
+          {messages.length > 0 && (
+            <div className="chat-context-bar">
+              <div className="chat-context-section">
+                <Zap size={10} />
+                <span>Context</span>
+                <div className="chat-context-progress">
+                  <div
+                    className="chat-context-progress-fill"
+                    style={{ width: `${contextUsage.contextPercent}%` }}
+                  />
+                </div>
+                <span className="chat-context-percent">{contextUsage.contextPercent}%</span>
+              </div>
+
+              <span className="chat-context-divider">&middot;</span>
+
+              <div className="chat-context-section">
+                <Clock size={10} />
+                <span>5h</span>
+                <div className="chat-context-progress">
+                  <div
+                    className="chat-context-progress-fill chat-context-progress-fill-5h"
+                    style={{ width: `${contextUsage.fiveHourPercent}%` }}
+                  />
+                </div>
+                <span className="chat-context-percent">{contextUsage.fiveHourPercent}%</span>
+                {contextUsage.fiveHourResetLabel && (
+                  <span className="chat-context-reset">resets {contextUsage.fiveHourResetLabel}</span>
+                )}
+              </div>
+
+              <span className="chat-context-divider">&middot;</span>
+
+              <div className="chat-context-section">
+                <Clock size={10} />
+                <span>Weekly</span>
+                <div className="chat-context-progress">
+                  <div
+                    className="chat-context-progress-fill chat-context-progress-fill-weekly"
+                    style={{ width: `${contextUsage.weeklyPercent}%` }}
+                  />
+                </div>
+                <span className="chat-context-percent">{contextUsage.weeklyPercent}%</span>
+                {contextUsage.weeklyResetLabel && (
+                  <span className="chat-context-reset">resets {contextUsage.weeklyResetLabel}</span>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Bottom status bar */}
           <div className="chat-status-bar">
