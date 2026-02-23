@@ -11,11 +11,15 @@ import {
   Loader2,
   XCircle,
   Brain,
+  FileText,
+  Image,
+  File,
 } from "lucide-react";
 import type {
   ActionBlock,
   ApprovalBlock,
   ApprovalResponse,
+  AttachmentBlock,
   ContentBlock,
   DiffBlock,
   MessageStatus,
@@ -1244,6 +1248,27 @@ function MessageBlocksView({ blocks = [], status, onApproval }: Props) {
           const isLastBlock = index === safeBlocks.length - 1;
           const thinkingActive = status === "streaming" && isLastBlock;
           return <ThinkingBlockView key={index} block={block} isStreaming={thinkingActive} />;
+        }
+
+        /* ── Attachment ── */
+        if (block.type === "attachment") {
+          const attachmentBlock = block as AttachmentBlock;
+          const mime = attachmentBlock.mimeType ?? "";
+          const AttachIcon = mime.startsWith("image/")
+            ? Image
+            : mime.startsWith("text/") || mime.includes("json") || mime.includes("javascript")
+              ? FileText
+              : File;
+          return (
+            <div
+              key={index}
+              className="chat-attachment-chip"
+              style={{ margin: "2px 12px", display: "inline-flex" }}
+            >
+              <AttachIcon size={12} />
+              <span className="chat-attachment-chip-name">{attachmentBlock.fileName}</span>
+            </div>
+          );
         }
 
         /* ── Error ── */

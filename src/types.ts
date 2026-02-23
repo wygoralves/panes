@@ -76,6 +76,7 @@ export type ActionType =
 export interface TextBlock {
   type: "text";
   content: string;
+  planMode?: boolean;
 }
 
 export interface CodeBlock {
@@ -160,6 +161,14 @@ export interface ErrorBlock {
   message: string;
 }
 
+export interface AttachmentBlock {
+  type: "attachment";
+  fileName: string;
+  filePath: string;
+  sizeBytes: number;
+  mimeType?: string;
+}
+
 export type ContentBlock =
   | TextBlock
   | CodeBlock
@@ -167,7 +176,8 @@ export type ContentBlock =
   | ActionBlock
   | ApprovalBlock
   | ThinkingBlock
-  | ErrorBlock;
+  | ErrorBlock
+  | AttachmentBlock;
 
 export interface EngineInfo {
   id: string;
@@ -478,6 +488,19 @@ export interface ErrorEvent {
   recoverable: boolean;
 }
 
+export interface UsageLimitsUpdatedEvent {
+  type: "UsageLimitsUpdated";
+  usage: {
+    current_tokens?: number | null;
+    max_context_tokens?: number | null;
+    context_window_percent?: number | null;
+    five_hour_percent?: number | null;
+    weekly_percent?: number | null;
+    five_hour_resets_at?: number | null;
+    weekly_resets_at?: number | null;
+  };
+}
+
 export type StreamEvent =
   | TurnStartedEvent
   | TurnCompletedEvent
@@ -488,4 +511,27 @@ export type StreamEvent =
   | ActionCompletedEvent
   | DiffUpdatedEvent
   | ApprovalRequestedEvent
-  | ErrorEvent;
+  | ErrorEvent
+  | UsageLimitsUpdatedEvent;
+
+// ── Attachments ─────────────────────────────────────────────────────
+
+export interface ChatAttachment {
+  id: string;
+  fileName: string;
+  filePath: string;
+  sizeBytes: number;
+  mimeType?: string;
+}
+
+// ── Context Usage ───────────────────────────────────────────────────
+
+export interface ContextUsage {
+  currentTokens: number | null;
+  maxContextTokens: number | null;
+  contextPercent: number | null;
+  windowFiveHourPercent: number | null;
+  windowWeeklyPercent: number | null;
+  windowFiveHourResetsAt: string | null;
+  windowWeeklyResetsAt: string | null;
+}

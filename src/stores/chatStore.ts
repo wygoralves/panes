@@ -5,7 +5,9 @@ import type {
   ApprovalResponse,
   ActionBlock,
   ApprovalBlock,
+  ChatAttachment,
   ContentBlock,
+  ContextUsage,
   Message,
   StreamEvent,
   ThreadStatus
@@ -16,6 +18,7 @@ interface ChatState {
   messages: Message[];
   status: ThreadStatus;
   streaming: boolean;
+  usageLimits: ContextUsage | null;
   error?: string;
   unlisten?: () => void;
   setActiveThread: (threadId: string | null) => Promise<void>;
@@ -26,8 +29,10 @@ interface ChatState {
       modelId?: string | null;
       engineId?: string | null;
       reasoningEffort?: string | null;
+      attachments?: ChatAttachment[];
+      planMode?: boolean;
     },
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   cancel: () => Promise<void>;
   respondApproval: (approvalId: string, response: ApprovalResponse) => Promise<void>;
 }
@@ -214,7 +219,83 @@ function normalizeMessages(messages: Message[]): Message[] {
   }));
 }
 
+function toIsoTimestamp(value: number | null | undefined): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const normalized = value < 10_000_000_000 ? value * 1000 : value;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toISOString();
+}
+
+function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimitsUpdated" }>): ContextUsage | null {
+  const usage = event.usage ?? {};
+  const currentTokensRaw = usage.current_tokens;
+  const maxContextTokensRaw = usage.max_context_tokens;
+  const contextPercentRaw = usage.context_window_percent;
+  const fiveHourPercentRaw = usage.five_hour_percent;
+  const weeklyPercentRaw = usage.weekly_percent;
+
+  const currentTokens =
+    typeof currentTokensRaw === "number" ? Math.max(0, Math.round(currentTokensRaw)) : null;
+  const maxContextTokens =
+    typeof maxContextTokensRaw === "number" ? Math.max(0, Math.round(maxContextTokensRaw)) : null;
+  const hasContextMetrics = currentTokens !== null || maxContextTokens !== null;
+
+  let contextPercent = typeof contextPercentRaw === "number" ? Math.round(contextPercentRaw) : null;
+  if (contextPercent !== null && !Number.isFinite(contextPercent)) {
+    contextPercent = null;
+  }
+  if (
+    contextPercent === null &&
+    currentTokens !== null &&
+    maxContextTokens !== null &&
+    maxContextTokens > 0
+  ) {
+    contextPercent = Math.round((currentTokens / maxContextTokens) * 100);
+  }
+
+  const hasAnyMetric =
+    hasContextMetrics ||
+    typeof contextPercentRaw === "number" ||
+    typeof fiveHourPercentRaw === "number" ||
+    typeof weeklyPercentRaw === "number";
+  if (!hasAnyMetric) {
+    return null;
+  }
+
+  // Codex reports `usedPercent`; UI shows remaining budget.
+  const toRemainingPercent = (
+    usedPercent: number | null | undefined,
+  ): number | null => {
+    if (typeof usedPercent !== "number" || !Number.isFinite(usedPercent)) {
+      return null;
+    }
+    const used = Math.max(0, Math.min(100, Math.round(usedPercent)));
+    return 100 - used;
+  };
+
+  return {
+    currentTokens,
+    maxContextTokens,
+    contextPercent:
+      contextPercent === null ? null : Math.max(0, Math.min(100, contextPercent)),
+    windowFiveHourPercent: toRemainingPercent(fiveHourPercentRaw),
+    windowWeeklyPercent: toRemainingPercent(weeklyPercentRaw),
+    windowFiveHourResetsAt: toIsoTimestamp(usage.five_hour_resets_at),
+    windowWeeklyResetsAt: toIsoTimestamp(usage.weekly_resets_at),
+  };
+}
+
 function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: string): Message[] {
+  if (event.type === "UsageLimitsUpdated") {
+    return messages;
+  }
+
   let next = ensureAssistantMessage(messages, threadId);
   const currentAssistant = next[next.length - 1];
   const assistant: Message = { ...currentAssistant };
@@ -430,6 +511,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   status: "idle",
   streaming: false,
+  usageLimits: null,
   setActiveThread: async (threadId) => {
     const currentThreadId = get().threadId;
     const currentUnlisten = get().unlisten;
@@ -450,7 +532,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
 
-      set({ threadId: null, messages: [], streaming: false, status: "idle", unlisten: undefined });
+      set({
+        threadId: null,
+        messages: [],
+        streaming: false,
+        status: "idle",
+        usageLimits: null,
+        unlisten: undefined,
+      });
       return;
     }
 
@@ -505,7 +594,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
           let nextMessages = state.messages;
           let nextStreaming = state.streaming;
+          let nextUsageLimits = state.usageLimits;
           for (const queuedEvent of batch) {
+            if (queuedEvent.type === "UsageLimitsUpdated") {
+              nextUsageLimits = mapUsageLimitsFromEvent(queuedEvent);
+              continue;
+            }
             if (queuedEvent.type === "TurnCompleted") {
               pendingTurnMetaByThread.delete(threadId);
             }
@@ -513,7 +607,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             nextStreaming = queuedEvent.type !== "TurnCompleted";
           }
 
-          if (nextMessages === state.messages && nextStreaming === state.streaming) {
+          if (
+            nextMessages === state.messages &&
+            nextStreaming === state.streaming &&
+            nextUsageLimits === state.usageLimits
+          ) {
             return state;
           }
 
@@ -521,6 +619,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...state,
             messages: nextMessages,
             streaming: nextStreaming,
+            usageLimits: nextUsageLimits,
           };
         });
         streamFlushInProgress = false;
@@ -577,25 +676,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
 
-      set({ threadId, messages, unlisten, error: undefined, streaming: false, status: "idle" });
+      set({
+        threadId,
+        messages,
+        unlisten,
+        error: undefined,
+        streaming: false,
+        status: "idle",
+        usageLimits: null,
+      });
     } catch (error) {
       if (bindSeq !== activeThreadBindSeq) {
         return;
       }
-      set({ threadId, messages: [], error: String(error) });
+      set({ threadId, messages: [], usageLimits: null, error: String(error) });
     }
   },
   send: async (message, options) => {
     const state = get();
     if (state.streaming) {
       set({ error: "A turn is already in progress for this thread." });
-      return;
+      return false;
     }
 
     const threadId = options?.threadIdOverride ?? state.threadId;
     if (!threadId) {
       set({ error: "No active thread selected" });
-      return;
+      return false;
     }
     pendingTurnMetaByThread.set(threadId, {
       turnEngineId: options?.engineId ?? null,
@@ -603,12 +710,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
       turnReasoningEffort: options?.reasoningEffort ?? null,
     });
 
+    const attachments = options?.attachments ?? [];
+    const planMode = options?.planMode ?? false;
+    const displayContent = message;
+
+    const userBlocks: ContentBlock[] = [];
+    if (attachments.length > 0) {
+      for (const attachment of attachments) {
+        userBlocks.push({
+          type: "attachment",
+          fileName: attachment.fileName,
+          filePath: attachment.filePath,
+          sizeBytes: attachment.sizeBytes,
+          mimeType: attachment.mimeType,
+        });
+      }
+    }
+    userBlocks.push({ type: "text", content: displayContent, planMode: planMode || undefined });
+
     const userMessage: Message = {
       id: crypto.randomUUID(),
       threadId,
       role: "user",
-      content: message,
-      blocks: [{ type: "text", content: message }],
+      content: displayContent,
+      blocks: userBlocks,
       status: "completed",
       schemaVersion: 1,
       createdAt: new Date().toISOString()
@@ -622,10 +747,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     try {
-      await ipc.sendMessage(threadId, message, options?.modelId ?? null);
+      await ipc.sendMessage(
+        threadId,
+        message,
+        options?.modelId ?? null,
+        attachments.length > 0 ? attachments : null,
+        planMode,
+      );
+      return true;
     } catch (error) {
       pendingTurnMetaByThread.delete(threadId);
       set({ status: "error", streaming: false, error: String(error) });
+      return false;
     }
   },
   cancel: async () => {
