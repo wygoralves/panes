@@ -94,7 +94,7 @@ export function getHarnessIcon(id: string, size = 16): ReactNode {
     case "kilo-code":
       return <span style={style}><KiloCodeLogo size={size} /></span>;
     case "factory-droid":
-      return <span style={style}><FactoryLogo size={size} /></span>;
+      return <span style={style}><FactoryLogo size={Math.round(size * 1.2)} /></span>;
     default:
       return <span style={style}><CodexLogo size={size} /></span>;
   }
