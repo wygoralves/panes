@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::{
     Engine, EngineEvent, EngineThread, ModelInfo, ReasoningEffortOption, SandboxPolicy,
-    ThreadScope, TokenUsage, TurnCompletionStatus,
+    ThreadScope, TokenUsage, TurnCompletionStatus, TurnInput,
 };
 
 #[derive(Default)]
@@ -72,7 +72,7 @@ impl Engine for ClaudeSidecarEngine {
     async fn send_message(
         &self,
         _engine_thread_id: &str,
-        _message: &str,
+        _input: TurnInput,
         event_tx: mpsc::Sender<EngineEvent>,
         _cancellation: CancellationToken,
     ) -> Result<(), anyhow::Error> {

@@ -63,6 +63,21 @@ pub struct EngineThread {
     pub engine_thread_id: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct TurnAttachment {
+    pub file_name: String,
+    pub file_path: String,
+    pub size_bytes: u64,
+    pub mime_type: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TurnInput {
+    pub message: String,
+    pub attachments: Vec<TurnAttachment>,
+    pub plan_mode: bool,
+}
+
 #[async_trait]
 pub trait Engine: Send + Sync {
     fn id(&self) -> &str;
@@ -83,7 +98,7 @@ pub trait Engine: Send + Sync {
     async fn send_message(
         &self,
         engine_thread_id: &str,
-        message: &str,
+        input: TurnInput,
         event_tx: mpsc::Sender<EngineEvent>,
         cancellation: CancellationToken,
     ) -> Result<(), anyhow::Error>;
@@ -202,19 +217,19 @@ impl EngineManager {
         &self,
         thread: &ThreadDto,
         engine_thread_id: &str,
-        message: &str,
+        input: TurnInput,
         event_tx: mpsc::Sender<EngineEvent>,
         cancellation: CancellationToken,
     ) -> anyhow::Result<()> {
         match thread.engine_id.as_str() {
             "codex" => self
                 .codex
-                .send_message(engine_thread_id, message, event_tx, cancellation)
+                .send_message(engine_thread_id, input, event_tx, cancellation)
                 .await
                 .context("codex send_message failed"),
             "claude" => self
                 .claude
-                .send_message(engine_thread_id, message, event_tx, cancellation)
+                .send_message(engine_thread_id, input, event_tx, cancellation)
                 .await
                 .context("claude send_message failed"),
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),

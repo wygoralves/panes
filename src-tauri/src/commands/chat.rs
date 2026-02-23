@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    path::Path,
     time::{Duration, Instant},
 };
 
@@ -11,7 +12,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     db,
-    engines::{EngineEvent, OutputStream, SandboxPolicy, ThreadScope, TurnCompletionStatus},
+    engines::{
+        EngineEvent, OutputStream, SandboxPolicy, ThreadScope, TurnAttachment,
+        TurnCompletionStatus, TurnInput,
+    },
     models::{
         MessageDto, MessageStatusDto, RepoDto, SearchResultDto, ThreadDto, ThreadStatusDto,
         TrustLevelDto,
@@ -23,12 +27,17 @@ const MAX_THREAD_TITLE_CHARS: usize = 72;
 const STREAM_EVENT_COALESCE_MAX_CHARS: usize = 8_192;
 const STREAM_DB_FLUSH_INTERVAL: Duration = Duration::from_millis(180);
 const ACTION_OUTPUT_MAX_CHUNKS: usize = 240;
+const MAX_ATTACHMENTS_PER_TURN: usize = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 enum ContentBlock {
     #[serde(rename = "text")]
-    Text { content: String },
+    Text {
+        content: String,
+        #[serde(rename = "planMode", skip_serializing_if = "Option::is_none")]
+        plan_mode: Option<bool>,
+    },
 
     #[serde(rename = "diff")]
     Diff { diff: String, scope: String },
@@ -68,6 +77,18 @@ enum ContentBlock {
 
     #[serde(rename = "error")]
     Error { message: String },
+
+    #[serde(rename = "attachment")]
+    Attachment {
+        #[serde(rename = "fileName")]
+        file_name: String,
+        #[serde(rename = "filePath")]
+        file_path: String,
+        #[serde(rename = "sizeBytes")]
+        size_bytes: u64,
+        #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,6 +123,17 @@ struct ThreadUpdatedEvent {
     workspace_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatAttachmentPayload {
+    pub file_name: String,
+    pub file_path: String,
+    #[serde(default)]
+    pub size_bytes: u64,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+}
+
 async fn run_db<T, F>(db: crate::db::Database, operation: F) -> Result<T, String>
 where
     T: Send + 'static,
@@ -120,6 +152,8 @@ pub async fn send_message(
     thread_id: String,
     message: String,
     model_id: Option<String>,
+    attachments: Option<Vec<ChatAttachmentPayload>>,
+    plan_mode: Option<bool>,
 ) -> Result<String, String> {
     if state.turns.get(&thread_id).await.is_some() {
         return Err(
@@ -139,6 +173,13 @@ pub async fn send_message(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    let attachments = normalize_attachments(attachments)?;
+    let plan_mode = plan_mode.unwrap_or(false);
+    let turn_input = TurnInput {
+        message: message.clone(),
+        attachments: attachments.clone(),
+        plan_mode,
+    };
     let effective_model_id =
         resolve_turn_model_id(state.inner(), &thread, requested_model_id).await?;
 
@@ -216,14 +257,30 @@ pub async fn send_message(
     let assistant_message = run_db(db.clone(), {
         let thread_id = thread.id.clone();
         let message = message.clone();
+        let attachments = attachments.clone();
+        let plan_mode_enabled = plan_mode;
         let engine_id = thread.engine_id.clone();
         let model_id = effective_model_id.clone();
         let reasoning_effort = reasoning_effort.clone();
         move |db| {
+            let mut user_blocks = Vec::with_capacity(attachments.len().saturating_add(1));
+            for attachment in &attachments {
+                user_blocks.push(ContentBlock::Attachment {
+                    file_name: attachment.file_name.clone(),
+                    file_path: attachment.file_path.clone(),
+                    size_bytes: attachment.size_bytes,
+                    mime_type: attachment.mime_type.clone(),
+                });
+            }
+            user_blocks.push(ContentBlock::Text {
+                content: message.clone(),
+                plan_mode: if plan_mode_enabled { Some(true) } else { None },
+            });
             db::messages::insert_user_message(
                 db,
                 &thread_id,
                 &message,
+                Some(serde_json::to_value(&user_blocks)?),
                 Some(engine_id.as_str()),
                 Some(model_id.as_str()),
                 reasoning_effort.as_deref(),
@@ -293,7 +350,7 @@ pub async fn send_message(
     let state_cloned = state.inner().clone();
     let app_handle = app.clone();
     let assistant_message_id = assistant_message.id.clone();
-    let message_to_send = message.clone();
+    let turn_input_for_task = turn_input.clone();
     let thread_for_task = thread.clone();
 
     tokio::spawn(async move {
@@ -303,13 +360,51 @@ pub async fn send_message(
             thread_for_task,
             engine_thread_id,
             assistant_message_id,
-            message_to_send,
+            turn_input_for_task,
             cancellation,
         )
         .await;
     });
 
     Ok(assistant_message.id)
+}
+
+fn normalize_attachments(
+    attachments: Option<Vec<ChatAttachmentPayload>>,
+) -> Result<Vec<TurnAttachment>, String> {
+    let attachments = attachments.unwrap_or_default();
+    if attachments.len() > MAX_ATTACHMENTS_PER_TURN {
+        return Err(format!(
+            "You can attach at most {MAX_ATTACHMENTS_PER_TURN} files per turn."
+        ));
+    }
+
+    let mut normalized = Vec::with_capacity(attachments.len());
+    for attachment in attachments {
+        let file_path = attachment.file_path.trim().to_string();
+        if file_path.is_empty() {
+            return Err("Attachment path cannot be empty.".to_string());
+        }
+
+        let file_name = if attachment.file_name.trim().is_empty() {
+            Path::new(&file_path)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| file_path.clone())
+        } else {
+            attachment.file_name.trim().to_string()
+        };
+
+        normalized.push(TurnAttachment {
+            file_name,
+            file_path,
+            size_bytes: attachment.size_bytes,
+            mime_type: attachment.mime_type,
+        });
+    }
+
+    Ok(normalized)
 }
 
 #[tauri::command]
@@ -420,7 +515,7 @@ async fn run_turn(
     thread: crate::models::ThreadDto,
     engine_thread_id: String,
     assistant_message_id: String,
-    message: String,
+    turn_input: TurnInput,
     cancellation: CancellationToken,
 ) {
     let max_output_chars = state.config.debug.max_action_output_chars;
@@ -428,7 +523,7 @@ async fn run_turn(
 
     let engines = state.engines.clone();
     let thread_for_engine = thread.clone();
-    let message_for_engine = message.clone();
+    let input_for_engine = turn_input.clone();
     let engine_thread_for_engine = engine_thread_id.clone();
     let cancellation_for_engine = cancellation.clone();
 
@@ -437,7 +532,7 @@ async fn run_turn(
             .send_message(
                 &thread_for_engine,
                 &engine_thread_for_engine,
-                &message_for_engine,
+                input_for_engine,
                 event_tx,
                 cancellation_for_engine,
             )
@@ -734,7 +829,7 @@ async fn run_turn(
         }
     }
 
-    if maybe_update_thread_title(&state, &thread, &engine_thread_id, &message)
+    if maybe_update_thread_title(&state, &thread, &engine_thread_id, &turn_input.message)
         .await
         .is_some()
     {
@@ -1313,6 +1408,7 @@ fn apply_event_to_blocks(
                 progress.force_persist = true;
             }
         }
+        EngineEvent::UsageLimitsUpdated { .. } => {}
     }
 
     progress
@@ -1323,13 +1419,17 @@ fn append_text_delta(blocks: &mut Vec<ContentBlock>, content: &str) -> bool {
         return false;
     }
 
-    if let Some(ContentBlock::Text { content: current }) = blocks.last_mut() {
+    if let Some(ContentBlock::Text {
+        content: current, ..
+    }) = blocks.last_mut()
+    {
         current.push_str(content);
         return true;
     }
 
     blocks.push(ContentBlock::Text {
         content: content.to_string(),
+        plan_mode: None,
     });
     true
 }
