@@ -334,7 +334,13 @@ impl TerminalSessionHandle {
         Ok(())
     }
 
-    fn resize(&self, cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) -> anyhow::Result<()> {
+    fn resize(
+        &self,
+        cols: u16,
+        rows: u16,
+        pixel_width: u16,
+        pixel_height: u16,
+    ) -> anyhow::Result<()> {
         let process = self
             .process
             .lock()

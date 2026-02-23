@@ -69,7 +69,14 @@ pub async fn terminal_resize(
 ) -> Result<(), String> {
     state
         .terminals
-        .resize(&workspace_id, &session_id, cols.max(1), rows.max(1), pixel_width, pixel_height)
+        .resize(
+            &workspace_id,
+            &session_id,
+            cols.max(1),
+            rows.max(1),
+            pixel_width,
+            pixel_height,
+        )
         .await
         .map_err(err_to_string)
 }
