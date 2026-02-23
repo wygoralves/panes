@@ -2286,7 +2286,7 @@ export function ChatPanel() {
 
                   <div className="chat-context-section">
                     <Clock size={10} />
-                    <span>5h</span>
+                    <span>5h left</span>
                     <div className="chat-context-progress">
                       <div
                         className="chat-context-progress-fill chat-context-progress-fill-5h"
@@ -2305,7 +2305,7 @@ export function ChatPanel() {
 
                   <div className="chat-context-section">
                     <Clock size={10} />
-                    <span>Weekly</span>
+                    <span>Weekly left</span>
                     <div className="chat-context-progress">
                       <div
                         className="chat-context-progress-fill chat-context-progress-fill-weekly"

@@ -261,18 +261,21 @@ function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimit
     return null;
   }
 
+  // Codex reports `usedPercent`; UI shows remaining budget.
+  const toRemainingPercent = (usedPercent: number | null | undefined): number => {
+    if (typeof usedPercent !== "number" || !Number.isFinite(usedPercent)) {
+      return 0;
+    }
+    const used = Math.max(0, Math.min(100, Math.round(usedPercent)));
+    return 100 - used;
+  };
+
   return {
     currentTokens,
     maxContextTokens,
     contextPercent: Math.max(0, Math.min(100, contextPercent)),
-    windowFiveHourPercent:
-      typeof fiveHourPercentRaw === "number"
-        ? Math.max(0, Math.min(100, Math.round(fiveHourPercentRaw)))
-        : 0,
-    windowWeeklyPercent:
-      typeof weeklyPercentRaw === "number"
-        ? Math.max(0, Math.min(100, Math.round(weeklyPercentRaw)))
-        : 0,
+    windowFiveHourPercent: toRemainingPercent(fiveHourPercentRaw),
+    windowWeeklyPercent: toRemainingPercent(weeklyPercentRaw),
     windowFiveHourResetsAt: toIsoTimestamp(usage.five_hour_resets_at),
     windowWeeklyResetsAt: toIsoTimestamp(usage.weekly_resets_at),
   };
