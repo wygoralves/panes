@@ -160,6 +160,14 @@ export interface ErrorBlock {
   message: string;
 }
 
+export interface AttachmentBlock {
+  type: "attachment";
+  fileName: string;
+  filePath: string;
+  sizeBytes: number;
+  mimeType?: string;
+}
+
 export type ContentBlock =
   | TextBlock
   | CodeBlock
@@ -167,7 +175,8 @@ export type ContentBlock =
   | ActionBlock
   | ApprovalBlock
   | ThinkingBlock
-  | ErrorBlock;
+  | ErrorBlock
+  | AttachmentBlock;
 
 export interface EngineInfo {
   id: string;
@@ -470,3 +479,24 @@ export type StreamEvent =
   | DiffUpdatedEvent
   | ApprovalRequestedEvent
   | ErrorEvent;
+
+// ── Attachments ─────────────────────────────────────────────────────
+
+export interface ChatAttachment {
+  id: string;
+  fileName: string;
+  filePath: string;
+  sizeBytes: number;
+  mimeType?: string;
+}
+
+// ── Context Usage ───────────────────────────────────────────────────
+
+export interface ContextUsage {
+  currentTokens: number;
+  maxContextTokens: number;
+  windowFiveHourPercent: number;
+  windowWeeklyPercent: number;
+  windowFiveHourResetsAt: string | null;
+  windowWeeklyResetsAt: string | null;
+}
