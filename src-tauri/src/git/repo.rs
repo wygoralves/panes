@@ -445,7 +445,7 @@ pub fn list_git_stashes(repo_path: &str) -> anyhow::Result<Vec<GitStashDto>> {
     let format_arg = format!("--format={format}");
     let output = run_git(
         repo_path,
-        &["stash", "list", "--date=iso-strict", format_arg.as_str()],
+        &["stash", "list", format_arg.as_str()],
     )
     .context("failed to list stashes")?;
 
