@@ -429,11 +429,11 @@ impl Engine for CodexEngine {
                       continue;
                     }
                     let normalized_method = normalize_method(&method);
-                    if normalized_method == "account/chatgptauthtokens/refresh" {
-                      log::warn!(
-                        "codex requested external ChatGPT token refresh, but Panes does not manage chatgptAuthTokens mode"
-                      );
-                      transport
+                    if method_signature(&method) == "accountchatgptauthtokensrefresh" {
+                        log::warn!(
+                            "codex requested external ChatGPT token refresh, but Panes does not manage chatgptAuthTokens mode"
+                        );
+                        transport
                         .respond_error(
                           &raw_id,
                           -32601,
@@ -951,17 +951,22 @@ impl CodexEngine {
             }
         }
 
-        let force_external = detect_macos_sandbox_exec_failure().await;
-        if force_external {
+        let preflight_failed = detect_macos_sandbox_exec_failure().await;
+        if preflight_failed {
             log::warn!(
-                "detected broken macOS sandbox-exec environment; using externalSandbox for codex turns"
+                "detected macOS sandbox-exec preflight failure; deferring externalSandbox fallback until command probe confirms a real sandbox denial"
             );
         }
 
         let mut state = self.state.lock().await;
         if !state.sandbox_probe_completed {
             state.sandbox_probe_completed = true;
-            state.force_external_sandbox = force_external;
+            // Keep the runtime fallback decision optimistic; start_thread will run a real
+            // command probe and force external sandbox mode only on confirmed denial.
+            if state.force_external_sandbox {
+                return true;
+            }
+            state.force_external_sandbox = false;
         }
 
         state.force_external_sandbox
@@ -1915,13 +1920,13 @@ fn normalize_approval_response(
     let Some(method) = method else {
         return response;
     };
-    let normalized_method = normalize_method(method);
+    let method_key = method_signature(method);
     let is_modern = matches!(
-        normalized_method.as_str(),
-        "item/commandexecution/requestapproval" | "item/filechange/requestapproval"
+        method_key.as_str(),
+        "itemcommandexecutionrequestapproval" | "itemfilechangerequestapproval"
     );
     let is_legacy = matches!(
-        normalized_method.as_str(),
+        method_key.as_str(),
         "execcommandapproval" | "applypatchapproval"
     );
 
@@ -2002,7 +2007,23 @@ fn normalize_legacy_approval_decision(value: &str) -> String {
 }
 
 fn normalize_method(method: &str) -> String {
-    method.replace('.', "/").replace('_', "/").to_lowercase()
+    method
+        .replace('.', "/")
+        .to_lowercase()
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            segment
+                .chars()
+                .filter(|ch| *ch != '_' && *ch != '-')
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn method_signature(method: &str) -> String {
+    normalize_method(method).replace('/', "")
 }
 
 fn is_known_codex_notification_method(normalized_method: &str) -> bool {
@@ -2096,5 +2117,22 @@ mod tests {
         let normalized = normalize_approval_response(Some("item/tool/call"), response.clone());
 
         assert_eq!(normalized, response);
+    }
+
+    #[test]
+    fn normalize_modern_snake_case_method_alias() {
+        let response = json!({ "decision": "accept_for_session" });
+        let normalized =
+            normalize_approval_response(Some("item/command_execution/request_approval"), response);
+
+        assert_eq!(normalized, json!({ "decision": "acceptForSession" }));
+    }
+
+    #[test]
+    fn normalize_legacy_snake_case_method_alias() {
+        let response = json!({ "decision": "accept_for_session" });
+        let normalized = normalize_approval_response(Some("exec_command_approval"), response);
+
+        assert_eq!(normalized, json!({ "decision": "approved_for_session" }));
     }
 }

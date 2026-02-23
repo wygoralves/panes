@@ -1,4 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::{
+    env,
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -208,16 +212,14 @@ async fn detect_codex() -> DepStatus {
     let resolution = resolve_codex_executable().await;
 
     if let Some(executable) = &resolution.executable {
-        let version = get_command_version(executable, &["--version"]).await;
-        if let Some(version) = version {
-            return DepStatus {
-                found: true,
-                version: Some(version),
-                path: Some(executable.display().to_string()),
-                can_auto_install: false,
-                install_method: None,
-            };
-        }
+        let version = get_command_version_with_augmented_path(executable, &["--version"]).await;
+        return DepStatus {
+            found: true,
+            version,
+            path: Some(executable.display().to_string()),
+            can_auto_install: false,
+            install_method: None,
+        };
     }
 
     // Not found — check if npm is available for auto-install.
@@ -356,6 +358,45 @@ async fn get_command_version(path: &Path, args: &[&str]) -> Option<String> {
     } else {
         Some(version)
     }
+}
+
+async fn get_command_version_with_augmented_path(path: &Path, args: &[&str]) -> Option<String> {
+    let mut command = Command::new(path);
+    if let Some(augmented_path) = executable_augmented_path(path) {
+        command.env("PATH", augmented_path);
+    }
+    let output = command.args(args).output().await.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if version.is_empty() {
+        None
+    } else {
+        Some(version)
+    }
+}
+
+fn executable_augmented_path(executable: &Path) -> Option<OsString> {
+    let executable_dir = executable.parent()?.to_path_buf();
+    let mut entries = vec![executable_dir.clone()];
+
+    if let Some(current_path) = env::var_os("PATH") {
+        for path in env::split_paths(&current_path) {
+            if path != executable_dir {
+                entries.push(path);
+            }
+        }
+    } else {
+        for fallback in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
+            let fallback_path = PathBuf::from(fallback);
+            if fallback_path != executable_dir {
+                entries.push(fallback_path);
+            }
+        }
+    }
+
+    env::join_paths(entries).ok()
 }
 
 #[cfg(not(target_os = "windows"))]
