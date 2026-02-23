@@ -1720,7 +1720,9 @@ fn is_supported_text_extension(path: &str) -> bool {
     )
 }
 
-async fn read_text_attachment_for_turn_input(attachment: &TurnAttachment) -> anyhow::Result<String> {
+async fn read_text_attachment_for_turn_input(
+    attachment: &TurnAttachment,
+) -> anyhow::Result<String> {
     let bytes = tokio_fs::read(attachment.file_path.trim())
         .await
         .with_context(|| {
