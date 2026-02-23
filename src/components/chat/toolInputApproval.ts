@@ -17,7 +17,13 @@ const REQUEST_USER_INPUT_METHOD = "item/tool/requestuserinput";
 const DYNAMIC_TOOL_CALL_METHOD = "item/tool/call";
 
 function normalizeServerMethod(method: string): string {
-  return method.replace(/[._]/g, "/").toLowerCase();
+  return method
+    .replace(/\./g, "/")
+    .toLowerCase()
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .map((segment) => segment.replace(/[_-]/g, ""))
+    .join("/");
 }
 
 export function getApprovalServerMethod(details?: Record<string, unknown>): string {

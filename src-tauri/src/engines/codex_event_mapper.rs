@@ -25,11 +25,11 @@ pub struct ApprovalRequest {
 
 impl TurnEventMapper {
     pub fn map_notification(&mut self, method: &str, params: &Value) -> Vec<EngineEvent> {
-        let normalized = normalize_method(method);
+        let method_key = method_signature(method);
 
-        match normalized.as_str() {
-            "turn/started" => vec![EngineEvent::TurnStarted],
-            "turn/completed" => {
+        match method_key.as_str() {
+            "turnstarted" => vec![EngineEvent::TurnStarted],
+            "turncompleted" => {
                 let mut events = Vec::new();
                 let token_usage =
                     extract_token_usage(params).or_else(|| self.latest_token_usage.clone());
@@ -62,14 +62,14 @@ impl TurnEventMapper {
                 self.latest_token_usage = None;
                 events
             }
-            "turn/diff/updated" => {
+            "turndiffupdated" => {
                 let diff = extract_any_string(params, &["diff"]).unwrap_or_default();
                 vec![EngineEvent::DiffUpdated {
                     diff,
                     scope: DiffScope::Turn,
                 }]
             }
-            "turn/plan/updated" => {
+            "turnplanupdated" => {
                 let content = render_plan_update(params);
                 if content.is_empty() {
                     Vec::new()
@@ -77,7 +77,7 @@ impl TurnEventMapper {
                     vec![EngineEvent::ThinkingDelta { content }]
                 }
             }
-            "item/agentmessage/delta" => {
+            "itemagentmessagedelta" => {
                 if let Some(item_id) = extract_any_string(params, &["itemId", "item_id", "id"]) {
                     self.streamed_agent_message_items.insert(item_id);
                 }
@@ -89,7 +89,7 @@ impl TurnEventMapper {
                     vec![EngineEvent::TextDelta { content }]
                 }
             }
-            "item/plan/delta" => {
+            "itemplandelta" => {
                 let content =
                     extract_any_string(params, &["delta", "text", "content"]).unwrap_or_default();
                 if content.is_empty() {
@@ -98,7 +98,7 @@ impl TurnEventMapper {
                     vec![EngineEvent::ThinkingDelta { content }]
                 }
             }
-            "item/reasoning/summarytextdelta" | "item/reasoning/textdelta" => {
+            "itemreasoningsummarytextdelta" | "itemreasoningtextdelta" => {
                 let content =
                     extract_any_string(params, &["delta", "text", "content"]).unwrap_or_default();
                 if content.is_empty() {
@@ -107,7 +107,7 @@ impl TurnEventMapper {
                     vec![EngineEvent::ThinkingDelta { content }]
                 }
             }
-            "thread/tokenusage/updated" => {
+            "threadtokenusageupdated" => {
                 self.latest_token_usage = extract_token_usage(params);
                 if let Some(context_update) = extract_context_usage_limits(params) {
                     self.latest_usage_limits.current_tokens = context_update.current_tokens;
@@ -121,7 +121,7 @@ impl TurnEventMapper {
                     Vec::new()
                 }
             }
-            "account/ratelimits/updated" => {
+            "accountratelimitsupdated" => {
                 if merge_rate_limits_snapshot(&mut self.latest_usage_limits, params) {
                     vec![EngineEvent::UsageLimitsUpdated {
                         usage: self.latest_usage_limits.clone(),
@@ -130,9 +130,9 @@ impl TurnEventMapper {
                     Vec::new()
                 }
             }
-            "item/started" => self.map_item_started(params),
-            "item/completed" => self.map_item_completed(params),
-            "item/commandexecution/outputdelta" | "item/filechange/outputdelta" => {
+            "itemstarted" => self.map_item_started(params),
+            "itemcompleted" => self.map_item_completed(params),
+            "itemcommandexecutionoutputdelta" | "itemfilechangeoutputdelta" => {
                 self.map_output_delta(params).into_iter().collect()
             }
             "error" => {
@@ -228,14 +228,15 @@ impl TurnEventMapper {
         params: &Value,
     ) -> Option<ApprovalRequest> {
         let normalized = normalize_method(method);
+        let method_key = method_signature(method);
 
-        let (action_type, summary) = match normalized.as_str() {
-            "item/commandexecution/requestapproval" => (
+        let (action_type, summary) = match method_key.as_str() {
+            "itemcommandexecutionrequestapproval" => (
                 ActionType::Command,
                 extract_any_string(params, &["reason", "command"])
                     .unwrap_or_else(|| "Approval required to run command".to_string()),
             ),
-            "item/filechange/requestapproval" => (
+            "itemfilechangerequestapproval" => (
                 ActionType::FileEdit,
                 extract_any_string(params, &["reason"])
                     .unwrap_or_else(|| "Approval required to apply file changes".to_string()),
@@ -250,12 +251,12 @@ impl TurnEventMapper {
                 extract_any_string(params, &["reason"])
                     .unwrap_or_else(|| "Approval required to apply patch".to_string()),
             ),
-            "item/tool/requestuserinput" | "tool/requestuserinput" => (
+            "itemtoolrequestuserinput" | "toolrequestuserinput" => (
                 ActionType::Other,
                 extract_first_question_text(params)
                     .unwrap_or_else(|| "Codex requested user input".to_string()),
             ),
-            "item/tool/call" => (
+            "itemtoolcall" => (
                 ActionType::Other,
                 extract_any_string(params, &["tool", "name"])
                     .map(|tool| format!("Codex requested dynamic tool call: {tool}"))
@@ -897,7 +898,23 @@ fn extract_nested_string(value: &Value, path: &[&str]) -> Option<String> {
 }
 
 fn normalize_method(method: &str) -> String {
-    method.replace('.', "/").replace('_', "/").to_lowercase()
+    method
+        .replace('.', "/")
+        .to_lowercase()
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            segment
+                .chars()
+                .filter(|ch| *ch != '_' && *ch != '-')
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn method_signature(method: &str) -> String {
+    normalize_method(method).replace('/', "")
 }
 
 fn join_string_array(items: Option<&Vec<Value>>) -> Option<String> {
@@ -990,6 +1007,54 @@ mod tests {
                 assert_eq!(summary, "Qual linguagem usar?");
             }
             _ => panic!("expected approval request event"),
+        }
+    }
+
+    #[test]
+    fn map_server_request_supports_snake_case_method_names() {
+        let mut mapper = TurnEventMapper::default();
+        let params = json!({
+            "threadId": "thr_123",
+            "turnId": "turn_123",
+            "itemId": "item_84",
+            "questions": [
+                {
+                    "id": "lang",
+                    "question": "Preferred language?",
+                    "options": ["Rust"]
+                }
+            ]
+        });
+
+        let approval = mapper
+            .map_server_request("request-3", "item/tool/request_user_input", &params)
+            .expect("expected approval request");
+
+        assert_eq!(approval.approval_id, "item_84");
+        assert_eq!(approval.server_method, "item/tool/requestuserinput");
+    }
+
+    #[test]
+    fn map_notification_supports_snake_case_method_names() {
+        let mut mapper = TurnEventMapper::default();
+        let params = json!({
+            "tokenUsage": {
+                "total": {
+                    "totalTokens": 50000
+                },
+                "modelContextWindow": 200000
+            }
+        });
+
+        let events = mapper.map_notification("thread_token_usage_updated", &params);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            EngineEvent::UsageLimitsUpdated { usage } => {
+                assert_eq!(usage.current_tokens, Some(50000));
+                assert_eq!(usage.max_context_tokens, Some(200000));
+                assert_eq!(usage.context_window_percent, Some(25));
+            }
+            _ => panic!("expected usage limits update"),
         }
     }
 
