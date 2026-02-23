@@ -2670,6 +2670,10 @@ button, input, textarea, select {
   cursor: default;
 }
 
+.chat-toolbar-btn-bordered {
+  border-color: var(--border);
+}
+
 .chat-toolbar-btn-active {
   background: var(--accent-2-dim);
   color: var(--accent-2);
