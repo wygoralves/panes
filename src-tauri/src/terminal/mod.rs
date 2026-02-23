@@ -4,8 +4,12 @@ use std::{
     ffi::OsString,
     io::{Read, Write},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Condvar, Mutex,
+    },
     thread,
+    time::{Duration, Instant},
 };
 
 use anyhow::Context;
@@ -17,9 +21,13 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::models::{
-    TerminalEnvSnapshotDto, TerminalRendererDiagnosticsDto, TerminalResizeSnapshotDto,
-    TerminalSessionDto,
+    TerminalEnvSnapshotDto, TerminalIoCountersDto, TerminalOutputThrottleSnapshotDto,
+    TerminalRendererDiagnosticsDto, TerminalResizeSnapshotDto, TerminalSessionDto,
 };
+
+const TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS: u64 = 16;
+const TERMINAL_OUTPUT_MAX_EMIT_BYTES: usize = 256 * 1024;
+const TERMINAL_OUTPUT_BUFFER_MAX_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Default)]
 pub struct TerminalManager {
@@ -29,14 +37,32 @@ pub struct TerminalManager {
 struct TerminalSessionHandle {
     meta: TerminalSessionDto,
     diagnostics: Mutex<TerminalSessionDiagnosticsState>,
+    io_counters: TerminalSessionIoCounters,
     process: Mutex<TerminalProcess>,
 }
 
-#[derive(Debug, Clone)]
 struct TerminalSessionDiagnosticsState {
     env_snapshot: TerminalEnvSnapshotDto,
     last_resize: Option<TerminalResizeSnapshotDto>,
     last_zero_pixel_warning_at_ms: Option<i64>,
+}
+
+#[derive(Default)]
+struct TerminalSessionIoCounters {
+    stdin_writes: AtomicU64,
+    stdin_bytes: AtomicU64,
+    stdin_ctrl_c: AtomicU64,
+    stdout_reads: AtomicU64,
+    stdout_bytes: AtomicU64,
+    stdout_emits: AtomicU64,
+    stdout_emit_bytes: AtomicU64,
+    stdout_dropped_bytes: AtomicU64,
+    last_stdin_write_at_ms: AtomicU64,
+    last_stdout_read_at_ms: AtomicU64,
+    last_stdout_emit_at_ms: AtomicU64,
+    output_buffer_bytes: AtomicU64,
+    output_buffer_peak_bytes: AtomicU64,
+    output_buffer_trimmed_bytes: AtomicU64,
 }
 
 struct TerminalProcess {
@@ -48,6 +74,54 @@ struct TerminalProcess {
 struct SpawnedSession {
     session: Arc<TerminalSessionHandle>,
     reader: Box<dyn Read + Send>,
+}
+
+struct SharedTerminalOutput {
+    buffer: Mutex<String>,
+    ready: Condvar,
+    done: AtomicBool,
+}
+
+impl SharedTerminalOutput {
+    fn new() -> Self {
+        Self {
+            buffer: Mutex::new(String::new()),
+            ready: Condvar::new(),
+            done: AtomicBool::new(false),
+        }
+    }
+}
+
+fn take_string_head(value: &mut String, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return std::mem::take(value);
+    }
+
+    let mut cut = max_bytes;
+    while cut > 0 && !value.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    if cut == 0 {
+        return std::mem::take(value);
+    }
+
+    let rest = value.split_off(cut);
+    let out = std::mem::take(value);
+    *value = rest;
+    out
+}
+
+fn trim_string_to_tail(value: &mut String, max_bytes: usize) -> usize {
+    if value.len() <= max_bytes {
+        return 0;
+    }
+    let before = value.len();
+    let mut cut = value.len().saturating_sub(max_bytes);
+    while cut < value.len() && !value.is_char_boundary(cut) {
+        cut += 1;
+    }
+    value.drain(..cut);
+    before.saturating_sub(value.len())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,7 +199,7 @@ impl TerminalManager {
                 .insert(created.id.clone(), Arc::clone(&spawned.session));
         }
 
-        self.spawn_reader(app, workspace_id, created.id.clone(), spawned.reader);
+        self.spawn_reader(app, workspace_id, Arc::clone(&spawned.session), spawned.reader);
 
         Ok(created)
     }
@@ -284,21 +358,177 @@ impl TerminalManager {
         self: &Arc<Self>,
         app: AppHandle,
         workspace_id: String,
-        session_id: String,
+        session: Arc<TerminalSessionHandle>,
         mut reader: Box<dyn Read + Send>,
     ) {
         let manager = Arc::clone(self);
         let runtime = tokio::runtime::Handle::current();
         thread::spawn(move || {
-            let mut buf = [0_u8; 8192];
+            let session_id = session.meta.id.clone();
+            // High-frequency TUIs (OpenCode, Kilo Code, vim, etc.) can generate a lot of
+            // output. In release builds the PTY reader can outpace the webview, flooding
+            // IPC and making the terminal feel frozen (including Ctrl+C). We want to:
+            // - Drain the PTY continuously (never sleep in the reader)
+            // - Coalesce and rate-limit IPC emissions (emit at most ~60Hz)
+            //
+            // Implementation: the reader thread appends into a shared buffer; an emitter
+            // thread flushes it on a timer/condvar.
+            let shared = Arc::new(SharedTerminalOutput::new());
+
+            let shared_for_emitter = Arc::clone(&shared);
+            let app_for_emitter = app.clone();
+            let workspace_for_emitter = workspace_id.clone();
+            let session_for_emitter = session_id.clone();
+            let session_handle_for_emitter = Arc::clone(&session);
+            let emitter = thread::spawn(move || {
+                // 60Hz is enough for TUIs while keeping IPC overhead bounded.
+                let min_emit_interval =
+                    Duration::from_millis(TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS);
+                let mut last_emit_at = Instant::now()
+                    .checked_sub(min_emit_interval)
+                    .unwrap_or_else(Instant::now);
+
+                loop {
+                    let mut guard = shared_for_emitter
+                        .buffer
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner());
+
+                    loop {
+                        let done = shared_for_emitter.done.load(Ordering::Relaxed);
+                        if done {
+                            break;
+                        }
+
+                        if guard.is_empty() {
+                            guard = shared_for_emitter
+                                .ready
+                                .wait(guard)
+                                .unwrap_or_else(|poison| poison.into_inner());
+                            continue;
+                        }
+
+                        let elapsed = last_emit_at.elapsed();
+                        if elapsed >= min_emit_interval {
+                            break;
+                        }
+
+                        let timeout = min_emit_interval - elapsed;
+                        let (next_guard, _timeout) = shared_for_emitter
+                            .ready
+                            .wait_timeout(guard, timeout)
+                            .unwrap_or_else(|poison| poison.into_inner());
+                        guard = next_guard;
+                    }
+
+                    let done = shared_for_emitter.done.load(Ordering::Relaxed);
+                    if guard.is_empty() {
+                        if done {
+                            break;
+                        }
+                        drop(guard);
+                        continue;
+                    }
+
+                    let payload = take_string_head(&mut *guard, TERMINAL_OUTPUT_MAX_EMIT_BYTES);
+                    session_handle_for_emitter
+                        .io_counters
+                        .output_buffer_bytes
+                        .store(guard.len() as u64, Ordering::Relaxed);
+                    drop(guard);
+                    if payload.is_empty() {
+                        continue;
+                    }
+                    let payload_len = payload.len() as u64;
+                    emit_output(
+                        &app_for_emitter,
+                        &workspace_for_emitter,
+                        &session_for_emitter,
+                        payload,
+                    );
+                    session_handle_for_emitter
+                        .io_counters
+                        .stdout_emits
+                        .fetch_add(1, Ordering::Relaxed);
+                    session_handle_for_emitter
+                        .io_counters
+                        .stdout_emit_bytes
+                        .fetch_add(payload_len, Ordering::Relaxed);
+                    let now_ms = Utc::now().timestamp_millis();
+                    if now_ms > 0 {
+                        session_handle_for_emitter
+                            .io_counters
+                            .last_stdout_emit_at_ms
+                            .store(now_ms as u64, Ordering::Relaxed);
+                    }
+                    last_emit_at = Instant::now();
+                }
+            });
+
+            let mut buf = [0_u8; 64 * 1024];
             let mut decode_buffer = Vec::new();
+            let mut pending = String::new();
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
-                    Ok(n) => {
+	                    Ok(n) => {
+	                        session
+	                            .io_counters
+	                            .stdout_reads
+	                            .fetch_add(1, Ordering::Relaxed);
+	                        session
+	                            .io_counters
+	                            .stdout_bytes
+	                            .fetch_add(n as u64, Ordering::Relaxed);
+	                        let now_ms = Utc::now().timestamp_millis();
+	                        if now_ms > 0 {
+	                            session
+	                                .io_counters
+	                                .last_stdout_read_at_ms
+	                                .store(now_ms as u64, Ordering::Relaxed);
+	                        }
+
                         decode_buffer.extend_from_slice(&buf[..n]);
                         while let Some(chunk) = take_next_utf8_chunk(&mut decode_buffer) {
-                            emit_output(&app, &workspace_id, &session_id, chunk);
+                            if pending.is_empty() {
+                                pending = chunk;
+                            } else {
+                                pending.push_str(&chunk);
+                            }
+                        }
+
+                        if !pending.is_empty() {
+                            let mut buffer = shared
+                                .buffer
+                                .lock()
+                                .unwrap_or_else(|poison| poison.into_inner());
+                            buffer.push_str(&pending);
+                            let trimmed = trim_string_to_tail(
+                                &mut buffer,
+                                TERMINAL_OUTPUT_BUFFER_MAX_BYTES,
+                            );
+                            if trimmed > 0 {
+                                session
+                                    .io_counters
+                                    .stdout_dropped_bytes
+                                    .fetch_add(trimmed as u64, Ordering::Relaxed);
+                                session
+                                    .io_counters
+                                    .output_buffer_trimmed_bytes
+                                    .fetch_add(trimmed as u64, Ordering::Relaxed);
+                            }
+                            let len = buffer.len() as u64;
+	                            session
+	                                .io_counters
+	                                .output_buffer_bytes
+	                                .store(len, Ordering::Relaxed);
+	                            session
+	                                .io_counters
+	                                .output_buffer_peak_bytes
+	                                .fetch_max(len, Ordering::Relaxed);
+                            pending.clear();
+                            drop(buffer);
+                            shared.ready.notify_one();
                         }
                     }
                     Err(error) => {
@@ -309,12 +539,75 @@ impl TerminalManager {
                     }
                 }
             }
+
+            if !pending.is_empty() {
+                let mut buffer = shared
+                    .buffer
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                buffer.push_str(&pending);
+                let trimmed = trim_string_to_tail(&mut buffer, TERMINAL_OUTPUT_BUFFER_MAX_BYTES);
+                if trimmed > 0 {
+                    session
+                        .io_counters
+                        .stdout_dropped_bytes
+                        .fetch_add(trimmed as u64, Ordering::Relaxed);
+                    session
+                        .io_counters
+                        .output_buffer_trimmed_bytes
+                        .fetch_add(trimmed as u64, Ordering::Relaxed);
+                }
+                let len = buffer.len() as u64;
+	                session
+	                    .io_counters
+	                    .output_buffer_bytes
+	                    .store(len, Ordering::Relaxed);
+	                session
+	                    .io_counters
+	                    .output_buffer_peak_bytes
+	                    .fetch_max(len, Ordering::Relaxed);
+                drop(buffer);
+                shared.ready.notify_one();
+            }
             if !decode_buffer.is_empty() {
                 let trailing = String::from_utf8_lossy(&decode_buffer).to_string();
                 if !trailing.is_empty() {
-                    emit_output(&app, &workspace_id, &session_id, trailing);
+                    let mut buffer = shared
+                        .buffer
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner());
+                    buffer.push_str(&trailing);
+                    let trimmed = trim_string_to_tail(
+                        &mut buffer,
+                        TERMINAL_OUTPUT_BUFFER_MAX_BYTES,
+                    );
+                    if trimmed > 0 {
+                        session
+                            .io_counters
+                            .stdout_dropped_bytes
+                            .fetch_add(trimmed as u64, Ordering::Relaxed);
+                        session
+                            .io_counters
+                            .output_buffer_trimmed_bytes
+                            .fetch_add(trimmed as u64, Ordering::Relaxed);
+                    }
+                    let len = buffer.len() as u64;
+	                    session
+	                        .io_counters
+	                        .output_buffer_bytes
+	                        .store(len, Ordering::Relaxed);
+	                    session
+	                        .io_counters
+	                        .output_buffer_peak_bytes
+	                        .fetch_max(len, Ordering::Relaxed);
+                    drop(buffer);
+                    shared.ready.notify_one();
                 }
             }
+
+            shared.done.store(true, Ordering::Relaxed);
+            shared.ready.notify_one();
+            let _ = emitter.join();
 
             let manager_for_finalize = Arc::clone(&manager);
             let app_for_finalize = app.clone();
@@ -370,12 +663,59 @@ impl TerminalSessionHandle {
             }
         };
 
+	        let last_stdin_write_at = rfc3339_from_unix_ms(
+	            self.io_counters
+	                .last_stdin_write_at_ms
+	                .load(Ordering::Relaxed),
+	        );
+	        let last_stdout_read_at = rfc3339_from_unix_ms(
+	            self.io_counters
+	                .last_stdout_read_at_ms
+	                .load(Ordering::Relaxed),
+	        );
+	        let last_stdout_emit_at = rfc3339_from_unix_ms(
+	            self.io_counters
+	                .last_stdout_emit_at_ms
+	                .load(Ordering::Relaxed),
+	        );
+
+	        let io_counters = TerminalIoCountersDto {
+	            stdin_writes: self.io_counters.stdin_writes.load(Ordering::Relaxed),
+	            stdin_bytes: self.io_counters.stdin_bytes.load(Ordering::Relaxed),
+	            stdin_ctrl_c: self.io_counters.stdin_ctrl_c.load(Ordering::Relaxed),
+	            stdout_reads: self.io_counters.stdout_reads.load(Ordering::Relaxed),
+	            stdout_bytes: self.io_counters.stdout_bytes.load(Ordering::Relaxed),
+	            stdout_emits: self.io_counters.stdout_emits.load(Ordering::Relaxed),
+	            stdout_emit_bytes: self.io_counters.stdout_emit_bytes.load(Ordering::Relaxed),
+	            stdout_dropped_bytes: self.io_counters.stdout_dropped_bytes.load(Ordering::Relaxed),
+	            last_stdin_write_at,
+	            last_stdout_read_at,
+	            last_stdout_emit_at,
+	        };
+
+	        let output_throttle = TerminalOutputThrottleSnapshotDto {
+	            min_emit_interval_ms: TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS,
+	            max_emit_bytes: TERMINAL_OUTPUT_MAX_EMIT_BYTES as u64,
+	            buffer_bytes: self.io_counters.output_buffer_bytes.load(Ordering::Relaxed),
+	            buffer_cap_bytes: TERMINAL_OUTPUT_BUFFER_MAX_BYTES as u64,
+	            buffer_peak_bytes: self
+	                .io_counters
+	                .output_buffer_peak_bytes
+	                .load(Ordering::Relaxed),
+	            buffer_trimmed_bytes: self
+	                .io_counters
+	                .output_buffer_trimmed_bytes
+	                .load(Ordering::Relaxed),
+	        };
+
         TerminalRendererDiagnosticsDto {
             session_id: self.meta.id.clone(),
             shell: self.meta.shell.clone(),
             cwd: self.meta.cwd.clone(),
             env_snapshot,
             last_resize,
+            io_counters,
+            output_throttle,
         }
     }
 
@@ -392,6 +732,23 @@ impl TerminalSessionHandle {
             .writer
             .flush()
             .context("failed flushing terminal stdin")?;
+
+        self.io_counters.stdin_writes.fetch_add(1, Ordering::Relaxed);
+        self.io_counters
+            .stdin_bytes
+            .fetch_add(data.len() as u64, Ordering::Relaxed);
+        let ctrl_c = data.as_bytes().iter().filter(|&&b| b == 3).count() as u64;
+        if ctrl_c > 0 {
+            self.io_counters
+                .stdin_ctrl_c
+                .fetch_add(ctrl_c, Ordering::Relaxed);
+        }
+        let now_ms = Utc::now().timestamp_millis();
+        if now_ms > 0 {
+            self.io_counters
+                .last_stdin_write_at_ms
+                .store(now_ms as u64, Ordering::Relaxed);
+        }
         Ok(())
     }
 
@@ -408,6 +765,23 @@ impl TerminalSessionHandle {
             .writer
             .flush()
             .context("failed flushing terminal stdin")?;
+
+        self.io_counters.stdin_writes.fetch_add(1, Ordering::Relaxed);
+        self.io_counters
+            .stdin_bytes
+            .fetch_add(data.len() as u64, Ordering::Relaxed);
+        let ctrl_c = data.iter().filter(|&&b| b == 3).count() as u64;
+        if ctrl_c > 0 {
+            self.io_counters
+                .stdin_ctrl_c
+                .fetch_add(ctrl_c, Ordering::Relaxed);
+        }
+        let now_ms = Utc::now().timestamp_millis();
+        if now_ms > 0 {
+            self.io_counters
+                .last_stdin_write_at_ms
+                .store(now_ms as u64, Ordering::Relaxed);
+        }
         Ok(())
     }
 
@@ -564,25 +938,26 @@ fn spawn_session(
         .take_writer()
         .context("failed to take terminal writer")?;
 
-    let session = Arc::new(TerminalSessionHandle {
-        meta: TerminalSessionDto {
-            id: Uuid::new_v4().to_string(),
-            workspace_id,
-            shell,
-            cwd,
-            created_at: Utc::now().to_rfc3339(),
-        },
-        diagnostics: Mutex::new(TerminalSessionDiagnosticsState {
-            env_snapshot,
-            last_resize: None,
-            last_zero_pixel_warning_at_ms: None,
-        }),
-        process: Mutex::new(TerminalProcess {
-            master: pair.master,
-            writer,
-            child,
-        }),
-    });
+	    let session = Arc::new(TerminalSessionHandle {
+	        meta: TerminalSessionDto {
+	            id: Uuid::new_v4().to_string(),
+	            workspace_id,
+	            shell,
+	            cwd,
+	            created_at: Utc::now().to_rfc3339(),
+	        },
+	        diagnostics: Mutex::new(TerminalSessionDiagnosticsState {
+	            env_snapshot,
+	            last_resize: None,
+	            last_zero_pixel_warning_at_ms: None,
+	        }),
+	        io_counters: TerminalSessionIoCounters::default(),
+	        process: Mutex::new(TerminalProcess {
+	            master: pair.master,
+	            writer,
+	            child,
+	        }),
+	    });
 
     Ok(SpawnedSession { session, reader })
 }
@@ -753,6 +1128,13 @@ fn read_non_empty_env(key: &str) -> Option<String> {
             Some(value)
         }
     })
+}
+
+fn rfc3339_from_unix_ms(ms: u64) -> Option<String> {
+    if ms == 0 {
+        return None;
+    }
+    chrono::DateTime::<Utc>::from_timestamp_millis(ms as i64).map(|dt| dt.to_rfc3339())
 }
 
 fn emit_output(app: &AppHandle, workspace_id: &str, session_id: &str, data: String) {

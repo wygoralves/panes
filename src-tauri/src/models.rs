@@ -381,6 +381,35 @@ pub struct TerminalRendererDiagnosticsDto {
     pub cwd: String,
     pub env_snapshot: TerminalEnvSnapshotDto,
     pub last_resize: Option<TerminalResizeSnapshotDto>,
+    pub io_counters: TerminalIoCountersDto,
+    pub output_throttle: TerminalOutputThrottleSnapshotDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalIoCountersDto {
+    pub stdin_writes: u64,
+    pub stdin_bytes: u64,
+    pub stdin_ctrl_c: u64,
+    pub stdout_reads: u64,
+    pub stdout_bytes: u64,
+    pub stdout_emits: u64,
+    pub stdout_emit_bytes: u64,
+    pub stdout_dropped_bytes: u64,
+    pub last_stdin_write_at: Option<String>,
+    pub last_stdout_read_at: Option<String>,
+    pub last_stdout_emit_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalOutputThrottleSnapshotDto {
+    pub min_emit_interval_ms: u64,
+    pub max_emit_bytes: u64,
+    pub buffer_bytes: u64,
+    pub buffer_cap_bytes: u64,
+    pub buffer_peak_bytes: u64,
+    pub buffer_trimmed_bytes: u64,
 }
 
 // ── Setup / Onboarding ──────────────────────────────────────────────

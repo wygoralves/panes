@@ -362,12 +362,37 @@ export interface TerminalResizeSnapshot {
   recordedAt: string;
 }
 
+export interface TerminalIoCounters {
+  stdinWrites: number;
+  stdinBytes: number;
+  stdinCtrlC: number;
+  stdoutReads: number;
+  stdoutBytes: number;
+  stdoutEmits: number;
+  stdoutEmitBytes: number;
+  stdoutDroppedBytes: number;
+  lastStdinWriteAt: string | null;
+  lastStdoutReadAt: string | null;
+  lastStdoutEmitAt: string | null;
+}
+
+export interface TerminalOutputThrottleSnapshot {
+  minEmitIntervalMs: number;
+  maxEmitBytes: number;
+  bufferBytes: number;
+  bufferCapBytes: number;
+  bufferPeakBytes: number;
+  bufferTrimmedBytes: number;
+}
+
 export interface TerminalRendererDiagnostics {
   sessionId: string;
   shell: string;
   cwd: string;
   envSnapshot: TerminalEnvSnapshot;
   lastResize: TerminalResizeSnapshot | null;
+  ioCounters: TerminalIoCounters;
+  outputThrottle: TerminalOutputThrottleSnapshot;
 }
 
 // ── Terminal Split Layout ───────────────────────────────────────────
