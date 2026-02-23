@@ -65,8 +65,8 @@ function findGroupForSession(groups: TerminalGroup[], sessionId: string): Termin
   return null;
 }
 
-function makeLeafGroup(sessionId: string, name: string): TerminalGroup {
-  return { id: crypto.randomUUID(), root: { type: "leaf", sessionId }, name };
+function makeLeafGroup(sessionId: string, name: string, harnessId?: string): TerminalGroup {
+  return { id: crypto.randomUUID(), root: { type: "leaf", sessionId }, name, ...(harnessId ? { harnessId } : {}) };
 }
 
 function nextFocusedSessionId(
@@ -108,7 +108,7 @@ interface TerminalState {
   setLayoutMode: (workspaceId: string, mode: LayoutMode) => Promise<void>;
   cycleLayoutMode: (workspaceId: string) => Promise<void>;
   runCommandInTerminal: (workspaceId: string, command: string) => Promise<boolean>;
-  createSession: (workspaceId: string, cols?: number, rows?: number) => Promise<string | null>;
+  createSession: (workspaceId: string, cols?: number, rows?: number, harnessId?: string, harnessName?: string) => Promise<string | null>;
   closeSession: (workspaceId: string, sessionId: string) => Promise<void>;
   setActiveSession: (workspaceId: string, sessionId: string) => void;
   setPanelSize: (workspaceId: string, size: number) => void;
@@ -327,7 +327,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
   },
 
-  createSession: async (workspaceId, cols = DEFAULT_COLS, rows = DEFAULT_ROWS) => {
+  createSession: async (workspaceId, cols = DEFAULT_COLS, rows = DEFAULT_ROWS, harnessId, harnessName) => {
     set((state) => ({
       workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
         isOpen: true,
@@ -341,7 +341,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       set((state) => {
         const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
         const nextCounter = current.groupCounter + 1;
-        const newGroup = makeLeafGroup(created.id, `Terminal ${nextCounter}`);
+
+        let groupName: string;
+        if (harnessId && harnessName) {
+          const existingCount = current.groups.filter((g) => g.harnessId === harnessId).length;
+          groupName = existingCount === 0 ? harnessName : `${harnessName} ${existingCount + 1}`;
+        } else {
+          groupName = `Terminal ${nextCounter}`;
+        }
+
+        const newGroup = makeLeafGroup(created.id, groupName, harnessId);
         const sessions = [
           ...current.sessions.filter((session) => session.id !== created.id),
           created,

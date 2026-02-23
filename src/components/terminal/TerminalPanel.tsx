@@ -1431,11 +1431,12 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       : undefined;
     const cols = active?.terminal.cols ?? DEFAULT_COLS;
     const rows = active?.terminal.rows ?? DEFAULT_ROWS;
-    const sessionId = await createSession(workspaceId, cols, rows);
+    const harness = installedHarnesses.find((h) => h.id === harnessId);
+    const sessionId = await createSession(workspaceId, cols, rows, harnessId, harness?.name);
     if (sessionId) {
       void writeCommandToNewSession(workspaceId, sessionId, command);
     }
-  }, [focusedSessionId, createSession, workspaceId, harnessLaunch]);
+  }, [focusedSessionId, createSession, workspaceId, harnessLaunch, installedHarnesses]);
 
   const handleSplit = useCallback(
     (direction: "horizontal" | "vertical") => {
@@ -1531,7 +1532,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                   setCtxMenu({ groupId: group.id, x: e.clientX, y: e.clientY });
                 }}
               >
-                <SquareTerminal size={12} />
+                {group.harnessId ? getHarnessIcon(group.harnessId, 12) : <SquareTerminal size={12} />}
                 {renamingGroupId === group.id ? (
                   <input
                     ref={renameInputRef}
