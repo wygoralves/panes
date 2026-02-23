@@ -2552,3 +2552,404 @@ button, input, textarea, select {
 .cm-editor.cm-focused {
   outline: none;
 }
+
+/* ── Harness Panel ── */
+
+.harness-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fade-in 0.15s ease-out;
+}
+
+.harness-panel {
+  width: min(580px, 100%);
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
+  animation: slide-up 0.2s ease-out;
+  overflow: hidden;
+}
+
+.harness-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.harness-panel-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.harness-panel-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-accent);
+  background: var(--accent-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.harness-panel-title-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.harness-panel-title {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.3;
+}
+
+.harness-panel-subtitle {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.3;
+}
+
+.harness-panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.harness-refresh-btn,
+.harness-close-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.harness-refresh-btn:hover,
+.harness-close-btn:hover {
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.harness-panel-content {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.harness-scanning {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 36px 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.harness-scanning p {
+  margin: 0;
+}
+
+.harness-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.harness-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  padding: 0 2px;
+}
+
+.harness-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Harness card ── */
+
+.harness-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.harness-card:hover {
+  border-color: var(--border-active);
+  background: var(--bg-3);
+}
+
+.harness-card-status {
+  flex-shrink: 0;
+}
+
+.harness-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.harness-status-installed {
+  background: var(--success);
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.3);
+}
+
+.harness-status-missing {
+  background: var(--bg-4);
+  border: 1.5px solid var(--text-3);
+}
+
+.harness-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.harness-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.harness-card-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-1);
+  white-space: nowrap;
+}
+
+.harness-card-version {
+  font-size: 10.5px;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.harness-card-desc {
+  margin: 1px 0 0;
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.harness-card-path {
+  margin: 2px 0 0;
+  font-size: 10px;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--text-3);
+  opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.harness-card-actions {
+  flex-shrink: 0;
+}
+
+/* ── Harness action buttons ── */
+
+.harness-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.harness-btn-launch {
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid var(--border-accent);
+}
+
+.harness-btn-launch:hover {
+  background: rgba(14, 240, 195, 0.18);
+  box-shadow: var(--accent-glow);
+  transform: translateY(-0.5px);
+}
+
+.harness-btn-install {
+  color: var(--text-1);
+  background: var(--bg-4);
+  border: 1px solid var(--border-active);
+}
+
+.harness-btn-install:hover:not(:disabled) {
+  background: var(--bg-5);
+  transform: translateY(-0.5px);
+}
+
+.harness-btn-install:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.harness-btn-website {
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+
+.harness-btn-website:hover {
+  color: var(--text-1);
+  border-color: var(--border-active);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* ── Install log ── */
+
+.harness-install-log {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  font-family: "JetBrains Mono", monospace;
+  background: var(--code-bg);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  max-height: 200px;
+  overflow: auto;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Error ── */
+
+.harness-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: rgba(248, 113, 113, 0.06);
+  border: 1px solid rgba(248, 113, 113, 0.15);
+}
+
+.harness-error p {
+  margin: 0;
+  flex: 1;
+  font-size: 11.5px;
+  color: var(--danger);
+  line-height: 1.4;
+}
+
+/* ── Footer ── */
+
+.harness-panel-footer {
+  padding: 10px 20px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.harness-panel-footer p {
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+/* ── Sidebar harness quick-launch ── */
+
+.sb-harness-section {
+  padding: 6px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sb-harness-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  padding: 2px 0 4px;
+}
+
+.sb-harness-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sb-harness-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 99px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  white-space: nowrap;
+}
+
+.sb-harness-chip:hover {
+  color: var(--accent);
+  border-color: var(--border-accent);
+  background: var(--accent-dim);
+}
+
+.sb-harness-chip .sb-harness-chip-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+}

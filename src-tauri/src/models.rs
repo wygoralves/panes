@@ -381,3 +381,25 @@ pub struct InstallProgressEvent {
     pub stream: String,
     pub finished: bool,
 }
+
+// ── Harness Management ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessInfo {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub found: bool,
+    pub version: Option<String>,
+    pub path: Option<String>,
+    pub can_auto_install: bool,
+    pub website: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessReport {
+    pub harnesses: Vec<HarnessInfo>,
+    pub npm_available: bool,
+}

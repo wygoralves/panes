@@ -13,6 +13,8 @@ import {
   Settings,
   Pin,
   PinOff,
+  Package,
+  Play,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -20,6 +22,8 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useSetupStore } from "../../stores/setupStore";
 import { useUpdateStore } from "../../stores/updateStore";
+import { useHarnessStore } from "../../stores/harnessStore";
+import { useTerminalStore } from "../../stores/terminalStore";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { UpdateDialog } from "../onboarding/UpdateDialog";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
@@ -93,12 +97,19 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     refreshArchivedThreads,
   } = useThreadStore();
   const openEngineSetup = useSetupStore((state) => state.openSetup);
+  const openHarnessPanel = useHarnessStore((state) => state.openPanel);
+  const installedHarnesses = useHarnessStore((state) => state.harnesses.filter((h) => h.found));
+  const harnessLaunch = useHarnessStore((state) => state.launch);
   const sidebarPinned = useUiStore((state) => state.sidebarPinned);
   const toggleSidebarPin = useUiStore((state) => state.toggleSidebarPin);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
   const updateStatus = useUpdateStore((s) => s.status);
   const updateSnoozed = useUpdateStore((s) => s.snoozed);
   const hasUpdate = updateStatus === "available" && !updateSnoozed;
+  const wsActiveId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const setTermLayoutMode = useTerminalStore((s) => s.setLayoutMode);
+  const createTermSession = useTerminalStore((s) => s.createSession);
+  const termWorkspaces = useTerminalStore((s) => s.workspaces);
 
   const projects = useMemo<ProjectGroup[]>(
     () =>
@@ -569,6 +580,49 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
         </div>
       </div>
 
+      {/* ── Harness quick-launch ── */}
+      {installedHarnesses.length > 0 && (
+        <div className="sb-harness-section">
+          <div className="sb-harness-label">
+            <Package size={9} style={{ opacity: 0.5 }} />
+            Harnesses
+          </div>
+          <div className="sb-harness-list">
+            {installedHarnesses.map((h) => (
+              <button
+                key={h.id}
+                type="button"
+                className="sb-harness-chip"
+                title={`Launch ${h.name}`}
+                onClick={() => {
+                  void (async () => {
+                    const cmd = await harnessLaunch(h.id);
+                    if (!cmd || !wsActiveId) return;
+                    const ws = termWorkspaces[wsActiveId];
+                    if (!ws || (ws.layoutMode !== "terminal" && ws.layoutMode !== "split")) {
+                      await setTermLayoutMode(wsActiveId, "terminal");
+                    }
+                    const sid = await createTermSession(wsActiveId);
+                    if (sid) {
+                      setTimeout(async () => {
+                        try {
+                          const { ipc } = await import("../../lib/ipc");
+                          await ipc.terminalWrite(wsActiveId, sid, cmd + "\r");
+                        } catch { /* ignore */ }
+                      }, 300);
+                    }
+                  })();
+                }}
+              >
+                <span className="sb-harness-chip-dot" />
+                <Play size={9} />
+                {h.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Footer ── */}
       <div className="sb-footer">
         <button
@@ -673,6 +727,18 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               }}
             >
               Engine setup
+            </button>
+            <button
+              type="button"
+              className="git-action-menu-item"
+              style={{ display: "flex", alignItems: "center", gap: 8 }}
+              onClick={() => {
+                closeSettingsMenu();
+                openHarnessPanel();
+              }}
+            >
+              <Package size={12} style={{ opacity: 0.5 }} />
+              <span>Harnesses</span>
             </button>
             <button
               type="button"
