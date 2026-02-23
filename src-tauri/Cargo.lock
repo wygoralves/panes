@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "Panes"
-version = "0.12.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -12,6 +12,7 @@ dependencies = [
  "env_logger",
  "futures",
  "git2",
+ "libc",
  "log",
  "notify",
  "portable-pty",

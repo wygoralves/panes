@@ -45,6 +45,9 @@ git2 = "0.19"
 notify = "6"
 portable-pty = "0.8"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

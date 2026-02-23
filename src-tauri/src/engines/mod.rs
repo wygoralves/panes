@@ -121,7 +121,7 @@ impl EngineManager {
     pub fn new() -> Self {
         Self {
             codex: Arc::new(CodexEngine::default()),
-            claude: Arc::new(ClaudeSidecarEngine),
+            claude: Arc::new(ClaudeSidecarEngine::default()),
         }
     }
 
@@ -169,17 +169,34 @@ impl EngineManager {
             "claude" => {
                 let available = self.claude.is_available().await;
                 let version = self.claude.version().await;
+                let mut warnings = Vec::new();
+                let mut checks = Vec::new();
+                let mut fixes = Vec::new();
+
+                let details = if available {
+                    checks.push("claude CLI found in PATH".to_string());
+                    if let Some(ref v) = version {
+                        Some(format!("Claude Code CLI v{v} is ready"))
+                    } else {
+                        Some("Claude Code CLI is available".to_string())
+                    }
+                } else {
+                    warnings.push("claude CLI not found in PATH".to_string());
+                    fixes.push(
+                        "Install Claude Code: npm install -g @anthropic-ai/claude-code"
+                            .to_string(),
+                    );
+                    Some("Claude Code CLI is not installed".to_string())
+                };
+
                 Ok(EngineHealthDto {
                     id: "claude".to_string(),
                     available,
                     version,
-                    details: Some(
-                        "Claude sidecar scaffold is present; SDK runtime wiring pending"
-                            .to_string(),
-                    ),
-                    warnings: Vec::new(),
-                    checks: Vec::new(),
-                    fixes: Vec::new(),
+                    details,
+                    warnings,
+                    checks,
+                    fixes,
                 })
             }
             _ => anyhow::bail!("unknown engine: {engine_id}"),
