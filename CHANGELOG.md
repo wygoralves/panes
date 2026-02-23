@@ -1,5 +1,21 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.10.0...vnull) (2026-02-23)
+
+### Features
+
+* add chat attachments, plan mode toggle, and context usage display ([e122ce7](https://github.com/wygoralves/panes/commit/e122ce7719fc35676153e0be2ce402a70c33cbc3))
+* add drop to attach and allow txt and image attachments ([bbb82fe](https://github.com/wygoralves/panes/commit/bbb82fe8818b5a6401f90d0d0b35e6dd3cee2473))
+* adjust semantics of the usage metrics ([7ea4d29](https://github.com/wygoralves/panes/commit/7ea4d29d93092ac56f277ba67254ca2bbef7dcdd))
+* improve UI display of plan, attachments and limits ([0e73285](https://github.com/wygoralves/panes/commit/0e732859e6b345b32df6320c7282f0229545645f))
+* properly wire plan, monitoring and attachments to codex app server ([71b41c9](https://github.com/wygoralves/panes/commit/71b41c978ddfe280648184fbb366b18ca3fdb3a4))
+
+### Bug Fixes
+
+* add diagnostics for debugging complex tui rendering ([fb4efb6](https://github.com/wygoralves/panes/commit/fb4efb64c9dd63997c7715b451f4fc3b4cc48162))
+* fix possible sandbox broken fallbacks and codex setup health check ([a09ac19](https://github.com/wygoralves/panes/commit/a09ac197885ccabf9112f35930c3555aba6ab414))
+* fix stash not properly showing in stash tab ([1ffa219](https://github.com/wygoralves/panes/commit/1ffa219195e8bc0d20986362e1a535dca1945f33))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.9.0...vnull) (2026-02-23)
 
 ### Features
