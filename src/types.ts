@@ -508,11 +508,11 @@ export interface ChatAttachment {
 // ── Context Usage ───────────────────────────────────────────────────
 
 export interface ContextUsage {
-  currentTokens: number;
-  maxContextTokens: number;
-  contextPercent: number;
-  windowFiveHourPercent: number;
-  windowWeeklyPercent: number;
+  currentTokens: number | null;
+  maxContextTokens: number | null;
+  contextPercent: number | null;
+  windowFiveHourPercent: number | null;
+  windowWeeklyPercent: number | null;
   windowFiveHourResetsAt: string | null;
   windowWeeklyResetsAt: string | null;
 }

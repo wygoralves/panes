@@ -46,6 +46,7 @@ const TRANSPORT_RESTART_MAX_BACKOFF: Duration = Duration::from_secs(2);
 const CODEX_MISSING_DEFAULT_DETAILS: &str = "`codex` executable not found in PATH";
 const MAX_ATTACHMENTS_PER_TURN: usize = 10;
 const MAX_ATTACHMENT_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_TEXT_ATTACHMENT_CHARS: usize = 40_000;
 const PLAN_MODE_PROMPT_PREFIX: &str =
     "Plan the solution first. Do not execute commands or edit files until the plan is complete.";
 
@@ -1436,7 +1437,7 @@ async fn request_turn_start_with_plan_fallback(
     let runtime_ref = runtime.as_ref();
 
     let primary_params =
-        build_turn_start_params(thread_id, runtime_ref, &input, input.plan_mode, false)?;
+        build_turn_start_params(thread_id, runtime_ref, &input, input.plan_mode, false).await?;
     match request_with_fallback(
         transport,
         TURN_START_METHODS,
@@ -1456,7 +1457,7 @@ async fn request_turn_start_with_plan_fallback(
             );
 
             let fallback_params =
-                build_turn_start_params(thread_id, runtime_ref, &input, false, true)?;
+                build_turn_start_params(thread_id, runtime_ref, &input, false, true).await?;
             request_with_fallback(
                 transport,
                 TURN_START_METHODS,
@@ -1469,7 +1470,7 @@ async fn request_turn_start_with_plan_fallback(
     }
 }
 
-fn build_turn_start_params(
+async fn build_turn_start_params(
     thread_id: &str,
     runtime: Option<&ThreadRuntime>,
     input: &TurnInput,
@@ -1478,7 +1479,7 @@ fn build_turn_start_params(
 ) -> anyhow::Result<serde_json::Value> {
     let mut turn_params = serde_json::json!({
       "threadId": thread_id,
-      "input": build_turn_input_items(input, force_plan_prompt_prefix)?,
+      "input": build_turn_input_items(input, force_plan_prompt_prefix).await?,
     });
 
     if let Some(runtime) = runtime {
@@ -1517,7 +1518,7 @@ fn build_turn_start_params(
     Ok(turn_params)
 }
 
-fn build_turn_input_items(
+async fn build_turn_input_items(
     input: &TurnInput,
     force_plan_prompt_prefix: bool,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
@@ -1535,16 +1536,28 @@ fn build_turn_input_items(
     }));
 
     for attachment in &input.attachments {
-        if !is_supported_image_attachment(attachment) {
-            anyhow::bail!(
-                "Attachment `{}` is not supported by Codex app-server. Only image attachments are currently supported.",
-                attachment.file_name
-            );
+        match attachment_input_kind(attachment) {
+            Some(AttachmentInputKind::Image) => {
+                items.push(serde_json::json!({
+                  "type": "localImage",
+                  "path": attachment.file_path,
+                }));
+            }
+            Some(AttachmentInputKind::Text) => {
+                let text_payload = read_text_attachment_for_turn_input(attachment).await?;
+                items.push(serde_json::json!({
+                  "type": "text",
+                  "text": text_payload,
+                  "text_elements": [],
+                }));
+            }
+            None => {
+                anyhow::bail!(
+                    "Attachment `{}` is not supported by Codex app-server. Only image and text attachments are currently supported.",
+                    attachment.file_name
+                );
+            }
         }
-        items.push(serde_json::json!({
-          "type": "localImage",
-          "path": attachment.file_path,
-        }));
     }
 
     Ok(items)
@@ -1584,9 +1597,9 @@ async fn validate_turn_attachments(attachments: &[TurnAttachment]) -> anyhow::Re
             anyhow::bail!("Attachment path cannot be empty.");
         }
 
-        if !is_supported_image_attachment(attachment) {
+        if attachment_input_kind(attachment).is_none() {
             anyhow::bail!(
-                "Attachment `{}` is not supported by Codex app-server. Only image attachments are currently supported.",
+                "Attachment `{}` is not supported by Codex app-server. Only image and text attachments are currently supported.",
                 attachment.file_name
             );
         }
@@ -1609,15 +1622,36 @@ async fn validate_turn_attachments(attachments: &[TurnAttachment]) -> anyhow::Re
     Ok(())
 }
 
-fn is_supported_image_attachment(attachment: &TurnAttachment) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AttachmentInputKind {
+    Image,
+    Text,
+}
+
+fn attachment_input_kind(attachment: &TurnAttachment) -> Option<AttachmentInputKind> {
     if let Some(mime_type) = attachment.mime_type.as_deref() {
-        if mime_type.to_lowercase().starts_with("image/") {
-            return true;
+        let normalized = mime_type.to_lowercase();
+        if normalized.starts_with("image/") {
+            return Some(AttachmentInputKind::Image);
+        }
+        if is_supported_text_mime_type(&normalized) {
+            return Some(AttachmentInputKind::Text);
         }
     }
 
-    is_supported_image_extension(&attachment.file_name)
+    if is_supported_image_extension(&attachment.file_name)
         || is_supported_image_extension(&attachment.file_path)
+    {
+        return Some(AttachmentInputKind::Image);
+    }
+
+    if is_supported_text_extension(&attachment.file_name)
+        || is_supported_text_extension(&attachment.file_path)
+    {
+        return Some(AttachmentInputKind::Text);
+    }
+
+    None
 }
 
 fn is_supported_image_extension(path: &str) -> bool {
@@ -1638,6 +1672,85 @@ fn is_supported_image_extension(path: &str) -> bool {
             | Some("tiff")
             | Some("svg")
     )
+}
+
+fn is_supported_text_mime_type(mime_type: &str) -> bool {
+    mime_type.starts_with("text/")
+        || mime_type.contains("json")
+        || mime_type.contains("xml")
+        || mime_type.contains("yaml")
+        || mime_type.contains("toml")
+        || mime_type.contains("javascript")
+        || mime_type.contains("typescript")
+        || mime_type.contains("x-rust")
+        || mime_type.contains("x-python")
+        || mime_type.contains("x-go")
+        || mime_type.contains("x-shellscript")
+        || mime_type.contains("sql")
+        || mime_type.contains("csv")
+}
+
+fn is_supported_text_extension(path: &str) -> bool {
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_lowercase());
+
+    matches!(
+        extension.as_deref(),
+        Some("txt")
+            | Some("md")
+            | Some("json")
+            | Some("js")
+            | Some("ts")
+            | Some("tsx")
+            | Some("jsx")
+            | Some("py")
+            | Some("rs")
+            | Some("go")
+            | Some("css")
+            | Some("html")
+            | Some("yaml")
+            | Some("yml")
+            | Some("toml")
+            | Some("xml")
+            | Some("sql")
+            | Some("sh")
+            | Some("csv")
+    )
+}
+
+async fn read_text_attachment_for_turn_input(attachment: &TurnAttachment) -> anyhow::Result<String> {
+    let bytes = tokio_fs::read(attachment.file_path.trim())
+        .await
+        .with_context(|| {
+            format!(
+                "Attachment `{}` could not be read at `{}`",
+                attachment.file_name, attachment.file_path
+            )
+        })?;
+    let raw_text = String::from_utf8_lossy(&bytes);
+    let (truncated_text, was_truncated) =
+        truncate_text_to_max_chars(raw_text.as_ref(), MAX_TEXT_ATTACHMENT_CHARS);
+    let mut payload = format!(
+        "Attached text file: {} ({})\n<attached-file-content>\n{}\n</attached-file-content>",
+        attachment.file_name, attachment.file_path, truncated_text
+    );
+    if was_truncated {
+        payload.push_str(&format!(
+            "\n\n[Attachment content was truncated to {MAX_TEXT_ATTACHMENT_CHARS} characters.]"
+        ));
+    }
+    Ok(payload)
+}
+
+fn truncate_text_to_max_chars(value: &str, max_chars: usize) -> (String, bool) {
+    if value.chars().count() <= max_chars {
+        return (value.to_string(), false);
+    }
+
+    let truncated: String = value.chars().take(max_chars).collect();
+    (truncated, true)
 }
 
 fn is_plan_mode_protocol_error(error: &str) -> bool {

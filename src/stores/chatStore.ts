@@ -32,7 +32,7 @@ interface ChatState {
       attachments?: ChatAttachment[];
       planMode?: boolean;
     },
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   cancel: () => Promise<void>;
   respondApproval: (approvalId: string, response: ApprovalResponse) => Promise<void>;
 }
@@ -240,20 +240,27 @@ function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimit
   const fiveHourPercentRaw = usage.five_hour_percent;
   const weeklyPercentRaw = usage.weekly_percent;
 
-  const currentTokens = typeof currentTokensRaw === "number" ? Math.max(0, Math.round(currentTokensRaw)) : 0;
-  const maxContextTokens = typeof maxContextTokensRaw === "number" ? Math.max(0, Math.round(maxContextTokensRaw)) : 0;
+  const currentTokens =
+    typeof currentTokensRaw === "number" ? Math.max(0, Math.round(currentTokensRaw)) : null;
+  const maxContextTokens =
+    typeof maxContextTokensRaw === "number" ? Math.max(0, Math.round(maxContextTokensRaw)) : null;
+  const hasContextMetrics = currentTokens !== null || maxContextTokens !== null;
 
-  let contextPercent = typeof contextPercentRaw === "number" ? Math.round(contextPercentRaw) : 0;
-  if (!Number.isFinite(contextPercent)) {
-    contextPercent = 0;
+  let contextPercent = typeof contextPercentRaw === "number" ? Math.round(contextPercentRaw) : null;
+  if (contextPercent !== null && !Number.isFinite(contextPercent)) {
+    contextPercent = null;
   }
-  if (contextPercent === 0 && maxContextTokens > 0 && currentTokens > 0) {
+  if (
+    contextPercent === null &&
+    currentTokens !== null &&
+    maxContextTokens !== null &&
+    maxContextTokens > 0
+  ) {
     contextPercent = Math.round((currentTokens / maxContextTokens) * 100);
   }
 
   const hasAnyMetric =
-    maxContextTokens > 0 ||
-    currentTokens > 0 ||
+    hasContextMetrics ||
     typeof contextPercentRaw === "number" ||
     typeof fiveHourPercentRaw === "number" ||
     typeof weeklyPercentRaw === "number";
@@ -262,9 +269,11 @@ function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimit
   }
 
   // Codex reports `usedPercent`; UI shows remaining budget.
-  const toRemainingPercent = (usedPercent: number | null | undefined): number => {
+  const toRemainingPercent = (
+    usedPercent: number | null | undefined,
+  ): number | null => {
     if (typeof usedPercent !== "number" || !Number.isFinite(usedPercent)) {
-      return 0;
+      return null;
     }
     const used = Math.max(0, Math.min(100, Math.round(usedPercent)));
     return 100 - used;
@@ -273,7 +282,8 @@ function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimit
   return {
     currentTokens,
     maxContextTokens,
-    contextPercent: Math.max(0, Math.min(100, contextPercent)),
+    contextPercent:
+      contextPercent === null ? null : Math.max(0, Math.min(100, contextPercent)),
     windowFiveHourPercent: toRemainingPercent(fiveHourPercentRaw),
     windowWeeklyPercent: toRemainingPercent(weeklyPercentRaw),
     windowFiveHourResetsAt: toIsoTimestamp(usage.five_hour_resets_at),
@@ -686,13 +696,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const state = get();
     if (state.streaming) {
       set({ error: "A turn is already in progress for this thread." });
-      return;
+      return false;
     }
 
     const threadId = options?.threadIdOverride ?? state.threadId;
     if (!threadId) {
       set({ error: "No active thread selected" });
-      return;
+      return false;
     }
     pendingTurnMetaByThread.set(threadId, {
       turnEngineId: options?.engineId ?? null,
@@ -744,9 +754,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         attachments.length > 0 ? attachments : null,
         planMode,
       );
+      return true;
     } catch (error) {
       pendingTurnMetaByThread.delete(threadId);
       set({ status: "error", streaming: false, error: String(error) });
+      return false;
     }
   },
   cancel: async () => {

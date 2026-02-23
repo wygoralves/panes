@@ -1,4 +1,5 @@
 import { FormEvent, Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Send,
   Square,
@@ -25,6 +26,7 @@ import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useTerminalStore, type LayoutMode } from "../../stores/terminalStore";
+import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { MessageBlocks } from "./MessageBlocks";
@@ -95,6 +97,41 @@ const REASONING_EFFORT_LABELS: Record<string, string> = {
   high: "High",
   xhigh: "XHigh",
 };
+const IMAGE_ATTACHMENT_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "tif",
+  "tiff",
+  "svg",
+]);
+const TEXT_ATTACHMENT_EXTENSIONS = new Set([
+  "txt",
+  "md",
+  "json",
+  "js",
+  "ts",
+  "tsx",
+  "jsx",
+  "py",
+  "rs",
+  "go",
+  "css",
+  "html",
+  "yaml",
+  "yml",
+  "toml",
+  "xml",
+  "sql",
+  "sh",
+  "csv",
+]);
+const CODEX_ATTACHMENT_EXTENSIONS = Array.from(
+  new Set([...IMAGE_ATTACHMENT_EXTENSIONS, ...TEXT_ATTACHMENT_EXTENSIONS]),
+);
 
 function OpenAiIcon({ size = 12 }: { size?: number }) {
   return (
@@ -439,6 +476,15 @@ function getFileExtension(fileName: string): string {
   return lastDot >= 0 ? fileName.slice(lastDot + 1).toLowerCase() : "";
 }
 
+function fileNameFromPath(filePath: string): string {
+  return filePath.split("/").pop() ?? filePath.split("\\").pop() ?? filePath;
+}
+
+function isSupportedCodexAttachmentName(fileName: string): boolean {
+  const extension = getFileExtension(fileName);
+  return IMAGE_ATTACHMENT_EXTENSIONS.has(extension) || TEXT_ATTACHMENT_EXTENSIONS.has(extension);
+}
+
 function guessMimeType(fileName: string): string | undefined {
   const ext = getFileExtension(fileName);
   const mimeMap: Record<string, string> = {
@@ -487,12 +533,27 @@ function formatResetTime(isoDate: string | null): string {
   return `${diffDays}d ${diffHr % 24}h`;
 }
 
+function formatUsagePercent(percent: number | null): string {
+  if (typeof percent !== "number" || !Number.isFinite(percent)) {
+    return "--";
+  }
+  return `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
+}
+
+function usagePercentToWidth(percent: number | null): string {
+  if (typeof percent !== "number" || !Number.isFinite(percent)) {
+    return "0%";
+  }
+  return `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
+}
+
 export function ChatPanel() {
   const renderStartedAtRef = useRef(performance.now());
   renderStartedAtRef.current = performance.now();
 
   const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [isFileDropOver, setIsFileDropOver] = useState(false);
   const [planMode, setPlanMode] = useState(false);
   const [selectedEngineId, setSelectedEngineId] = useState("codex");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
@@ -543,6 +604,7 @@ export function ChatPanel() {
   const setTerminalPanelSize = useTerminalStore((s) => s.setPanelSize);
   const syncTerminalSessions = useTerminalStore((s) => s.syncSessions);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const chatSectionRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const effortSyncKeyRef = useRef<string | null>(null);
@@ -672,6 +734,65 @@ export function ChatPanel() {
     return approvals;
   }, [messages]);
 
+  const appendAttachmentsFromPaths = useCallback((paths: string[]) => {
+    if (!activeWorkspaceId || paths.length === 0) {
+      return;
+    }
+
+    let nextAttachments: ChatAttachment[] = [];
+    for (const rawPath of paths) {
+      const normalizedPath = rawPath.trim();
+      if (!normalizedPath) {
+        continue;
+      }
+      const fileName = fileNameFromPath(normalizedPath);
+      nextAttachments.push({
+        id: crypto.randomUUID(),
+        fileName,
+        filePath: normalizedPath,
+        sizeBytes: 0,
+        mimeType: guessMimeType(fileName),
+      });
+    }
+
+    if (selectedEngineId === "codex") {
+      const supportedAttachments = nextAttachments.filter((attachment) =>
+        isSupportedCodexAttachmentName(attachment.fileName),
+      );
+      const skippedCount = nextAttachments.length - supportedAttachments.length;
+      if (skippedCount > 0) {
+        toast.warning("Only image and text attachments are supported for Codex turns.");
+      }
+      nextAttachments = supportedAttachments;
+    }
+
+    if (nextAttachments.length === 0) {
+      return;
+    }
+
+    setAttachments((prev) => {
+      const knownPaths = new Set(prev.map((attachment) => attachment.filePath));
+      const merged = [...prev];
+      for (const attachment of nextAttachments) {
+        if (knownPaths.has(attachment.filePath)) {
+          continue;
+        }
+        knownPaths.add(attachment.filePath);
+        merged.push(attachment);
+      }
+      return merged;
+    });
+  }, [activeWorkspaceId, selectedEngineId]);
+
+  const isDropPositionInsideChatSection = useCallback((x: number, y: number): boolean => {
+    const container = chatSectionRef.current;
+    if (!container) {
+      return false;
+    }
+    const rect = container.getBoundingClientRect();
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  }, []);
+
   const scheduleListLayoutVersionBump = useCallback(() => {
     if (layoutVersionRafRef.current !== null) {
       return;
@@ -687,6 +808,68 @@ export function ChatPanel() {
       void syncTerminalSessions(activeWorkspaceId);
     }
   }, [activeWorkspaceId, syncTerminalSessions]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    const bindDropListener = async () => {
+      try {
+        unlisten = await getCurrentWindow().onDragDropEvent((event) => {
+          if (disposed) {
+            return;
+          }
+
+          if (!activeWorkspaceId) {
+            setIsFileDropOver(false);
+            return;
+          }
+
+          if (event.payload.type === "leave") {
+            setIsFileDropOver(false);
+            return;
+          }
+
+          const scale = window.devicePixelRatio || 1;
+          const logicalX = event.payload.position.x / scale;
+          const logicalY = event.payload.position.y / scale;
+          const isInsideDropArea = isDropPositionInsideChatSection(logicalX, logicalY);
+
+          if (event.payload.type === "drop") {
+            setIsFileDropOver(false);
+            if (!isInsideDropArea || event.payload.paths.length === 0) {
+              return;
+            }
+            appendAttachmentsFromPaths(event.payload.paths);
+            return;
+          }
+
+          setIsFileDropOver(isInsideDropArea);
+        });
+      } catch (error) {
+        console.debug("drag-drop listener unavailable", error);
+      }
+    };
+
+    void bindDropListener();
+
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [
+    activeWorkspaceId,
+    appendAttachmentsFromPaths,
+    isDropPositionInsideChatSection,
+  ]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      setIsFileDropOver(false);
+    }
+  }, [activeWorkspaceId]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -1106,8 +1289,6 @@ export function ChatPanel() {
 
     const text = input.trim();
     const currentAttachments = [...attachments];
-    setInput("");
-    setAttachments([]);
 
     if (selectedEngineId === "codex" && selectedEffort) {
       await ipc.setThreadReasoningEffort(targetThreadId, selectedEffort, selectedModelId);
@@ -1115,7 +1296,7 @@ export function ChatPanel() {
     }
     setThreadLastModelLocal(targetThreadId, selectedModelId);
 
-    await send(text, {
+    const sent = await send(text, {
       threadIdOverride: targetThreadId,
       engineId: selectedEngineId,
       modelId: selectedModelId,
@@ -1123,6 +1304,10 @@ export function ChatPanel() {
       attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
       planMode,
     });
+    if (sent) {
+      setInput("");
+      setAttachments([]);
+    }
   }
 
   async function executeWorkspaceOptInSend() {
@@ -1133,16 +1318,13 @@ export function ChatPanel() {
     try {
       await ipc.confirmWorkspaceThread(prompt.threadId, prompt.threadPaths);
 
-      setInput("");
-      setAttachments([]);
-
       if (prompt.engineId === "codex" && prompt.effort) {
         await ipc.setThreadReasoningEffort(prompt.threadId, prompt.effort, prompt.modelId);
         setThreadReasoningEffortLocal(prompt.threadId, prompt.effort);
       }
       setThreadLastModelLocal(prompt.threadId, prompt.modelId);
 
-      await send(prompt.text, {
+      const sent = await send(prompt.text, {
         threadIdOverride: prompt.threadId,
         engineId: prompt.engineId,
         modelId: prompt.modelId,
@@ -1150,6 +1332,14 @@ export function ChatPanel() {
         attachments: prompt.attachments.length > 0 ? prompt.attachments : undefined,
         planMode: prompt.planMode,
       });
+      if (!sent) {
+        setInput(prompt.text);
+        setAttachments(prompt.attachments);
+        return;
+      }
+
+      setInput("");
+      setAttachments([]);
 
       await refreshThreads(prompt.workspaceId);
     } catch {
@@ -1220,23 +1410,30 @@ export function ChatPanel() {
   async function handleAddAttachment() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
+      const codexAttachmentFilter = selectedEngineId === "codex";
       const selected = await open({
         multiple: true,
-        title: "Attach files",
+        title: codexAttachmentFilter ? "Attach files (images and text)" : "Attach files",
+        filters: codexAttachmentFilter
+          ? [
+              {
+                name: "Supported files",
+                extensions: CODEX_ATTACHMENT_EXTENSIONS,
+              },
+              {
+                name: "Images",
+                extensions: [...IMAGE_ATTACHMENT_EXTENSIONS],
+              },
+              {
+                name: "Text files",
+                extensions: [...TEXT_ATTACHMENT_EXTENSIONS],
+              },
+            ]
+          : undefined,
       });
       if (!selected) return;
       const paths = Array.isArray(selected) ? selected : [selected];
-      const newAttachments: ChatAttachment[] = paths.map((filePath) => {
-        const fileName = filePath.split("/").pop() ?? filePath.split("\\").pop() ?? filePath;
-        return {
-          id: crypto.randomUUID(),
-          fileName,
-          filePath,
-          sizeBytes: 0,
-          mimeType: guessMimeType(fileName),
-        };
-      });
-      setAttachments((prev) => [...prev, ...newAttachments]);
+      appendAttachmentsFromPaths(paths);
     } catch {
       // User cancelled or dialog failed
     }
@@ -1620,17 +1817,42 @@ export function ChatPanel() {
       <div ref={contentAreaRef} className="chat-terminal-content">
         {/* Chat section */}
         <div
+          ref={chatSectionRef}
           className="chat-section"
           style={{
             flex: (layoutMode === "terminal" || layoutMode === "editor") ? "0 0 0px"
                  : layoutMode === "chat" ? "1 1 0px"
                  : `0 0 ${100 - terminalPanelSize}%`,
+            position: "relative",
             overflow: "hidden",
             visibility: (layoutMode === "terminal" || layoutMode === "editor") ? "hidden" : "visible",
             display: "flex",
             flexDirection: "column",
+            outline: isFileDropOver ? "2px dashed rgba(96, 165, 250, 0.7)" : "none",
+            outlineOffset: isFileDropOver ? "-8px" : undefined,
           }}
         >
+            {isFileDropOver && (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 12,
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid rgba(96, 165, 250, 0.45)",
+                  background: "rgba(96, 165, 250, 0.08)",
+                  color: "var(--text-1)",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  pointerEvents: "none",
+                  zIndex: 5,
+                }}
+              >
+                Drop files to attach
+              </div>
+            )}
             {/* ── Messages ── */}
             <div
               ref={viewportRef}
@@ -2276,10 +2498,12 @@ export function ChatPanel() {
                     <div className="chat-context-progress">
                       <div
                         className="chat-context-progress-fill"
-                        style={{ width: `${usageLimits.contextPercent}%` }}
+                        style={{ width: usagePercentToWidth(usageLimits.contextPercent) }}
                       />
                     </div>
-                    <span className="chat-context-percent">{usageLimits.contextPercent}%</span>
+                    <span className="chat-context-percent">
+                      {formatUsagePercent(usageLimits.contextPercent)}
+                    </span>
                   </div>
 
                   <span className="chat-context-divider">&middot;</span>
@@ -2290,10 +2514,12 @@ export function ChatPanel() {
                     <div className="chat-context-progress">
                       <div
                         className="chat-context-progress-fill chat-context-progress-fill-5h"
-                        style={{ width: `${usageLimits.windowFiveHourPercent}%` }}
+                        style={{ width: usagePercentToWidth(usageLimits.windowFiveHourPercent) }}
                       />
                     </div>
-                    <span className="chat-context-percent">{usageLimits.windowFiveHourPercent}%</span>
+                    <span className="chat-context-percent">
+                      {formatUsagePercent(usageLimits.windowFiveHourPercent)}
+                    </span>
                     {usageLimits.windowFiveHourResetsAt && (
                       <span className="chat-context-reset">
                         resets {formatResetTime(usageLimits.windowFiveHourResetsAt)}
@@ -2309,10 +2535,12 @@ export function ChatPanel() {
                     <div className="chat-context-progress">
                       <div
                         className="chat-context-progress-fill chat-context-progress-fill-weekly"
-                        style={{ width: `${usageLimits.windowWeeklyPercent}%` }}
+                        style={{ width: usagePercentToWidth(usageLimits.windowWeeklyPercent) }}
                       />
                     </div>
-                    <span className="chat-context-percent">{usageLimits.windowWeeklyPercent}%</span>
+                    <span className="chat-context-percent">
+                      {formatUsagePercent(usageLimits.windowWeeklyPercent)}
+                    </span>
                     {usageLimits.windowWeeklyResetsAt && (
                       <span className="chat-context-reset">
                         resets {formatResetTime(usageLimits.windowWeeklyResetsAt)}
