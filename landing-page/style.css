@@ -948,6 +948,216 @@ img { display: block; max-width: 100%; }
   line-height: 1.7;
 }
 
+/* ── Integrations Section ── */
+.integrations {
+  position: relative;
+  z-index: 2;
+  padding: 40px 0 100px;
+}
+
+.integrations-subtitle {
+  font-size: 16px;
+  color: var(--text-2);
+  margin-top: 16px;
+  max-width: 560px;
+  margin-left: auto;
+  margin-right: auto;
+  line-height: 1.7;
+}
+
+.integrations-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.integration-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 32px 20px 28px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  text-align: center;
+  transition: all 0.3s var(--ease-out-expo);
+  position: relative;
+  overflow: hidden;
+  text-decoration: none;
+  color: inherit;
+}
+
+.integration-card:hover {
+  border-color: var(--border-hover);
+  background: rgba(255, 255, 255, 0.04);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+/* ── Native card (Codex) ── */
+.integration-card-native {
+  grid-column: span 4;
+  flex-direction: row;
+  padding: 28px 36px;
+  gap: 20px;
+  text-align: left;
+  border-color: var(--border-accent);
+  background: rgba(14, 240, 195, 0.03);
+}
+
+.integration-card-native:hover {
+  border-color: rgba(14, 240, 195, 0.4);
+  background: rgba(14, 240, 195, 0.05);
+  box-shadow: 0 0 40px rgba(14, 240, 195, 0.06), 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+.integration-native-glow {
+  position: absolute;
+  top: -60px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 300px;
+  height: 120px;
+  background: radial-gradient(ellipse, rgba(14, 240, 195, 0.08), transparent 70%);
+  pointer-events: none;
+}
+
+.integration-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: var(--bg-4);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-2);
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.integration-card:hover .integration-icon {
+  border-color: var(--border-hover);
+}
+
+.integration-card-native .integration-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  color: var(--accent);
+  border-color: var(--border-accent);
+  background: rgba(14, 240, 195, 0.08);
+}
+
+.integration-card-native:hover .integration-icon {
+  border-color: rgba(14, 240, 195, 0.4);
+  box-shadow: 0 0 16px rgba(14, 240, 195, 0.12);
+}
+
+.integration-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.integration-name-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.integration-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1);
+  letter-spacing: -0.01em;
+}
+
+.integration-card-native .integration-name {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.integration-native-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  background: rgba(14, 240, 195, 0.1);
+  border: 1px solid rgba(14, 240, 195, 0.2);
+}
+
+.integration-desc {
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+.integration-card-native .integration-desc {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.integrations-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 32px;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.integrations-footer a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(14, 240, 195, 0.3);
+  transition: text-decoration-color 0.2s;
+}
+
+.integrations-footer a:hover {
+  text-decoration-color: var(--accent);
+}
+
+/* Integrations responsive */
+@media (max-width: 1024px) {
+  .integrations-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .integration-card-native {
+    grid-column: span 3;
+  }
+}
+
+@media (max-width: 768px) {
+  .integrations-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+  .integration-card-native {
+    grid-column: span 2;
+    flex-direction: column;
+    text-align: center;
+    padding: 24px 20px;
+  }
+  .integration-card-native .integration-info {
+    align-items: center;
+  }
+  .integration-card {
+    padding: 24px 16px 20px;
+  }
+}
+
 /* ── How It Works ── */
 .how-it-works {
   position: relative;

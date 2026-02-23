@@ -46,6 +46,17 @@ const HARNESSES: &[HarnessDef] = &[
         native: false,
     },
     HarnessDef {
+        id: "gemini-cli",
+        name: "Gemini CLI",
+        description: "Google's AI-powered command-line coding agent",
+        command: "gemini",
+        version_flag: "--version",
+        install_command: Some("npm"),
+        install_args: &["install", "-g", "@google/gemini-cli"],
+        website: "https://github.com/google-gemini/gemini-cli",
+        native: false,
+    },
+    HarnessDef {
         id: "kiro",
         name: "Kiro",
         description: "AI-powered development environment by AWS",
