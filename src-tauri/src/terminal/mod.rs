@@ -1,5 +1,7 @@
 use std::{
     collections::HashMap,
+    collections::HashSet,
+    ffi::OsString,
     io::{Read, Write},
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -603,25 +605,23 @@ fn configure_terminal_env(cmd: &mut CommandBuilder) -> TerminalEnvSnapshotDto {
         Some(value) => Some(value.to_string()),
     };
     let colorterm = read_non_empty_env("COLORTERM").or_else(|| Some("truecolor".to_string()));
-
-    // Keep upstream TERM_PROGRAM when available (e.g. iTerm/WezTerm),
-    // otherwise use a broadly-recognized fallback for terminal capability probes.
-    let inherited_term_program = read_non_empty_env("TERM_PROGRAM");
-    let term_program = match inherited_term_program.as_deref() {
-        Some(value) if value.eq_ignore_ascii_case("panes") => Some("vscode".to_string()),
-        Some(value) => Some(value.to_string()),
-        None => Some("vscode".to_string()),
-    };
-    let term_program_version = if matches!(term_program.as_deref(), Some("vscode")) {
-        None
-    } else {
-        read_non_empty_env("TERM_PROGRAM_VERSION")
-            .or_else(|| Some(env!("CARGO_PKG_VERSION").to_string()))
-    };
+    let term_program = read_non_empty_env("TERM_PROGRAM").or_else(|| Some("Panes".to_string()));
+    let term_program_version = read_non_empty_env("TERM_PROGRAM_VERSION")
+        .or_else(|| Some(env!("CARGO_PKG_VERSION").to_string()));
+    let home = read_non_empty_env("HOME");
+    let xdg_config_home = read_non_empty_env("XDG_CONFIG_HOME")
+        .or_else(|| home.as_ref().map(|value| format!("{value}/.config")));
+    let xdg_data_home = read_non_empty_env("XDG_DATA_HOME")
+        .or_else(|| home.as_ref().map(|value| format!("{value}/.local/share")));
+    let xdg_cache_home = read_non_empty_env("XDG_CACHE_HOME")
+        .or_else(|| home.as_ref().map(|value| format!("{value}/.cache")));
+    let xdg_state_home = read_non_empty_env("XDG_STATE_HOME")
+        .or_else(|| home.as_ref().map(|value| format!("{value}/.local/state")));
+    let tmpdir = read_non_empty_env("TMPDIR");
     let lang = read_non_empty_env("LANG").or_else(|| Some("en_US.UTF-8".to_string()));
     let lc_ctype = read_non_empty_env("LC_CTYPE").or_else(|| lang.clone());
     let lc_all = read_non_empty_env("LC_ALL");
-    let path = read_non_empty_env("PATH");
+    let path = build_terminal_path(home.as_deref()).or_else(|| read_non_empty_env("PATH"));
 
     if let Some(value) = term.as_deref() {
         cmd.env("TERM", value);
@@ -637,6 +637,24 @@ fn configure_terminal_env(cmd: &mut CommandBuilder) -> TerminalEnvSnapshotDto {
     }
     cmd.env("PANES_TERM_PROGRAM", "Panes");
     cmd.env("PANES_TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+    if let Some(value) = home.as_deref() {
+        cmd.env("HOME", value);
+    }
+    if let Some(value) = xdg_config_home.as_deref() {
+        cmd.env("XDG_CONFIG_HOME", value);
+    }
+    if let Some(value) = xdg_data_home.as_deref() {
+        cmd.env("XDG_DATA_HOME", value);
+    }
+    if let Some(value) = xdg_cache_home.as_deref() {
+        cmd.env("XDG_CACHE_HOME", value);
+    }
+    if let Some(value) = xdg_state_home.as_deref() {
+        cmd.env("XDG_STATE_HOME", value);
+    }
+    if let Some(value) = tmpdir.as_deref() {
+        cmd.env("TMPDIR", value);
+    }
     if let Some(value) = lang.as_deref() {
         cmd.env("LANG", value);
     }
@@ -646,16 +664,84 @@ fn configure_terminal_env(cmd: &mut CommandBuilder) -> TerminalEnvSnapshotDto {
     if let Some(value) = lc_all.as_deref() {
         cmd.env("LC_ALL", value);
     }
+    if let Some(value) = path.as_deref() {
+        cmd.env("PATH", value);
+    }
+
+    ensure_dir_exists("XDG_CONFIG_HOME", xdg_config_home.as_deref());
+    ensure_dir_exists("XDG_DATA_HOME", xdg_data_home.as_deref());
+    ensure_dir_exists("XDG_CACHE_HOME", xdg_cache_home.as_deref());
+    ensure_dir_exists("XDG_STATE_HOME", xdg_state_home.as_deref());
 
     TerminalEnvSnapshotDto {
         term,
         colorterm,
         term_program,
         term_program_version,
+        home,
+        xdg_config_home,
+        xdg_data_home,
+        xdg_cache_home,
+        xdg_state_home,
+        tmpdir,
         lang,
         lc_all,
         lc_ctype,
         path,
+    }
+}
+
+fn build_terminal_path(home: Option<&str>) -> Option<String> {
+    let mut entries: Vec<PathBuf> = read_non_empty_env("PATH")
+        .map(|raw| std::env::split_paths(&OsString::from(raw)).collect())
+        .unwrap_or_default();
+
+    #[cfg(target_os = "macos")]
+    {
+        entries.push(PathBuf::from("/opt/homebrew/bin"));
+        entries.push(PathBuf::from("/opt/homebrew/sbin"));
+        entries.push(PathBuf::from("/usr/local/bin"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        entries.push(PathBuf::from("/usr/bin"));
+        entries.push(PathBuf::from("/bin"));
+        entries.push(PathBuf::from("/usr/sbin"));
+        entries.push(PathBuf::from("/sbin"));
+    }
+
+    if let Some(home) = home {
+        let home = PathBuf::from(home);
+        entries.push(home.join(".local/bin"));
+        entries.push(home.join(".cargo/bin"));
+        entries.push(home.join(".deno/bin"));
+        entries.push(home.join("Library/pnpm"));
+    }
+
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::with_capacity(entries.len());
+    for entry in entries {
+        if seen.insert(entry.clone()) {
+            deduped.push(entry);
+        }
+    }
+
+    let joined = std::env::join_paths(deduped).ok()?;
+    let rendered = joined.to_string_lossy().to_string();
+    if rendered.trim().is_empty() {
+        None
+    } else {
+        Some(rendered)
+    }
+}
+
+fn ensure_dir_exists(label: &str, path: Option<&str>) {
+    let Some(path) = path else {
+        return;
+    };
+    if let Err(error) = std::fs::create_dir_all(path) {
+        log::warn!("failed to create {label} directory at {path}: {error}");
     }
 }
 

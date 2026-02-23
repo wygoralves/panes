@@ -342,6 +342,12 @@ export interface TerminalEnvSnapshot {
   colorterm: string | null;
   termProgram: string | null;
   termProgramVersion: string | null;
+  home: string | null;
+  xdgConfigHome: string | null;
+  xdgDataHome: string | null;
+  xdgCacheHome: string | null;
+  xdgStateHome: string | null;
+  tmpdir: string | null;
   lang: string | null;
   lcAll: string | null;
   lcCtype: string | null;
