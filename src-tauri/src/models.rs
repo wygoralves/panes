@@ -395,6 +395,7 @@ pub struct HarnessInfo {
     pub path: Option<String>,
     pub can_auto_install: bool,
     pub website: String,
+    pub native: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

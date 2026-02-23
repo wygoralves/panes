@@ -2846,6 +2846,203 @@ button, input, textarea, select {
   background: rgba(255, 255, 255, 0.04);
 }
 
+/* ── Native harness card (featured) ── */
+
+.harness-card-native {
+  position: relative;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-accent);
+  background: var(--bg-2);
+  overflow: hidden;
+  transition: all var(--duration-normal) var(--ease-out);
+}
+
+.harness-card-native:hover {
+  border-color: rgba(14, 240, 195, 0.35);
+  box-shadow: 0 0 20px rgba(14, 240, 195, 0.06);
+}
+
+.harness-native-accent {
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), rgba(14, 240, 195, 0.2));
+}
+
+.harness-native-content {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.harness-native-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.harness-native-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-dim);
+  border: 1px solid var(--border-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.harness-native-title-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.harness-native-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.harness-native-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.harness-native-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 99px;
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid rgba(14, 240, 195, 0.15);
+}
+
+.harness-native-desc {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+
+.harness-native-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.harness-native-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.harness-native-status-ok {
+  color: var(--success);
+}
+
+.harness-native-status-missing {
+  color: var(--warning);
+}
+
+.harness-native-version {
+  font-size: 10.5px;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--text-3);
+}
+
+.harness-native-path {
+  font-size: 10px;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--text-3);
+  opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+.harness-native-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(14, 240, 195, 0.04);
+  border: 1px solid rgba(14, 240, 195, 0.08);
+  font-size: 10.5px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.harness-native-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.harness-btn-launch-native {
+  flex: 1;
+  justify-content: center;
+  color: #0c0d13;
+  background: var(--accent);
+  border: none;
+  font-weight: 600;
+  padding: 7px 14px;
+}
+
+.harness-btn-launch-native:hover {
+  box-shadow: var(--accent-glow);
+  transform: translateY(-0.5px);
+}
+
+.harness-btn-install-native {
+  flex: 1;
+  justify-content: center;
+  color: #0c0d13;
+  background: var(--accent);
+  border: none;
+  font-weight: 600;
+  padding: 7px 14px;
+}
+
+.harness-btn-install-native:hover:not(:disabled) {
+  box-shadow: var(--accent-glow);
+  transform: translateY(-0.5px);
+}
+
+.harness-btn-install-native:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* ── Sidebar native chip ── */
+
+.sb-harness-chip-native {
+  color: var(--accent);
+  border-color: var(--border-accent);
+  background: var(--accent-dim);
+}
+
+.sb-harness-chip-native:hover {
+  background: rgba(14, 240, 195, 0.18);
+  box-shadow: var(--accent-glow);
+}
+
+.sb-harness-chip-native .sb-harness-chip-dot {
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(14, 240, 195, 0.4);
+}
+
 /* ── Install log ── */
 
 .harness-install-log {

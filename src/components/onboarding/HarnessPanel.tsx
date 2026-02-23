@@ -4,10 +4,13 @@ import {
   Download,
   ExternalLink,
   Loader2,
+  MessageSquare,
   Package,
   Play,
   RefreshCw,
+  Star,
   X,
+  Zap,
 } from "lucide-react";
 import { useHarnessStore } from "../../stores/harnessStore";
 import { useTerminalStore } from "../../stores/terminalStore";
@@ -16,6 +19,7 @@ import type { HarnessInfo } from "../../types";
 
 /* ─── Per-harness brand colors ─── */
 const HARNESS_COLORS: Record<string, string> = {
+  codex: "#0ef0c3",
   "claude-code": "#d97706",
   kiro: "#6366f1",
   opencode: "#10b981",
@@ -27,7 +31,123 @@ function getBrandColor(id: string): string {
   return HARNESS_COLORS[id] ?? "var(--accent)";
 }
 
-/* ─── Harness card ─── */
+/* ─── Featured native harness card (Codex) ─── */
+function NativeHarnessCard({
+  harness,
+  installing,
+  npmAvailable,
+  onInstall,
+  onLaunch,
+}: {
+  harness: HarnessInfo;
+  installing: boolean;
+  npmAvailable: boolean;
+  onInstall: () => void;
+  onLaunch: () => void;
+}) {
+  const canInstall = !harness.found && harness.canAutoInstall && npmAvailable;
+
+  return (
+    <div className="harness-card-native">
+      {/* Top accent bar */}
+      <div className="harness-native-accent" />
+
+      <div className="harness-native-content">
+        {/* Badge + title row */}
+        <div className="harness-native-head">
+          <div className="harness-native-icon">
+            <Zap size={16} />
+          </div>
+          <div className="harness-native-title-col">
+            <div className="harness-native-title-row">
+              <span className="harness-native-name">{harness.name}</span>
+              <span className="harness-native-badge">
+                <Star size={9} />
+                Native
+              </span>
+            </div>
+            <p className="harness-native-desc">{harness.description}</p>
+          </div>
+        </div>
+
+        {/* Status row */}
+        <div className="harness-native-status-row">
+          {harness.found ? (
+            <>
+              <div className="harness-native-status harness-native-status-ok">
+                <CheckCircle2 size={11} />
+                Installed
+              </div>
+              {harness.version && (
+                <span className="harness-native-version">{harness.version}</span>
+              )}
+              {harness.path && (
+                <span className="harness-native-path" title={harness.path}>
+                  {harness.path}
+                </span>
+              )}
+            </>
+          ) : (
+            <div className="harness-native-status harness-native-status-missing">
+              Not installed
+            </div>
+          )}
+        </div>
+
+        {/* Chat integration callout */}
+        <div className="harness-native-callout">
+          <MessageSquare size={11} style={{ flexShrink: 0, opacity: 0.7 }} />
+          <span>Powers the Panes chat — messages are routed through this engine</span>
+        </div>
+
+        {/* Action */}
+        <div className="harness-native-actions">
+          {harness.found ? (
+            <button
+              type="button"
+              className="harness-btn harness-btn-launch-native"
+              onClick={onLaunch}
+            >
+              <Play size={12} />
+              Launch in terminal
+            </button>
+          ) : canInstall ? (
+            <button
+              type="button"
+              className="harness-btn harness-btn-install-native"
+              onClick={onInstall}
+              disabled={installing}
+            >
+              {installing ? (
+                <>
+                  <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
+                  Installing...
+                </>
+              ) : (
+                <>
+                  <Download size={12} />
+                  Install now
+                </>
+              )}
+            </button>
+          ) : (
+            <a
+              href={harness.website}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="harness-btn harness-btn-website"
+            >
+              <ExternalLink size={11} />
+              Get it
+            </a>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Regular harness card ─── */
 function HarnessCard({
   harness,
   installing,
@@ -173,6 +293,8 @@ export function HarnessPanel() {
 
   if (!open) return null;
 
+  const nativeHarnesses = harnesses.filter((h) => h.native);
+  const regularHarnesses = harnesses.filter((h) => !h.native);
   const installedCount = harnesses.filter((h) => h.found).length;
 
   async function handleLaunch(harnessId: string) {
@@ -264,15 +386,31 @@ export function HarnessPanel() {
             </div>
           ) : (
             <>
-              {/* Installed section */}
-              {harnesses.some((h) => h.found) && (
+              {/* Native integration section (Codex) */}
+              {nativeHarnesses.length > 0 && (
+                <div className="harness-section">
+                  {nativeHarnesses.map((h) => (
+                    <NativeHarnessCard
+                      key={h.id}
+                      harness={h}
+                      installing={installingId === h.id}
+                      npmAvailable={npmAvailable}
+                      onInstall={() => void install(h.id)}
+                      onLaunch={() => void handleLaunch(h.id)}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* Installed section (non-native) */}
+              {regularHarnesses.some((h) => h.found) && (
                 <div className="harness-section">
                   <div className="harness-section-label">
                     <CheckCircle2 size={11} style={{ color: "var(--success)" }} />
                     Installed
                   </div>
                   <div className="harness-card-list">
-                    {harnesses
+                    {regularHarnesses
                       .filter((h) => h.found)
                       .map((h) => (
                         <HarnessCard
@@ -288,15 +426,15 @@ export function HarnessPanel() {
                 </div>
               )}
 
-              {/* Available section */}
-              {harnesses.some((h) => !h.found) && (
+              {/* Available section (non-native) */}
+              {regularHarnesses.some((h) => !h.found) && (
                 <div className="harness-section">
                   <div className="harness-section-label">
                     <Download size={11} style={{ color: "var(--text-3)" }} />
                     Available
                   </div>
                   <div className="harness-card-list">
-                    {harnesses
+                    {regularHarnesses
                       .filter((h) => !h.found)
                       .map((h) => (
                         <HarnessCard

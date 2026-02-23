@@ -19,9 +19,21 @@ struct HarnessDef {
     install_command: Option<&'static str>,
     install_args: &'static [&'static str],
     website: &'static str,
+    native: bool,
 }
 
 const HARNESSES: &[HarnessDef] = &[
+    HarnessDef {
+        id: "codex",
+        name: "Codex CLI",
+        description: "Natively integrated — powers the Panes chat engine",
+        command: "codex",
+        version_flag: "--version",
+        install_command: Some("npm"),
+        install_args: &["install", "-g", "@openai/codex"],
+        website: "https://github.com/openai/codex",
+        native: true,
+    },
     HarnessDef {
         id: "claude-code",
         name: "Claude Code",
@@ -31,6 +43,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "@anthropic-ai/claude-code"],
         website: "https://docs.anthropic.com/en/docs/claude-code",
+        native: false,
     },
     HarnessDef {
         id: "kiro",
@@ -41,6 +54,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: None,
         install_args: &[],
         website: "https://kiro.dev",
+        native: false,
     },
     HarnessDef {
         id: "opencode",
@@ -51,6 +65,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "opencode"],
         website: "https://opencode.ai",
+        native: false,
     },
     HarnessDef {
         id: "kilo-code",
@@ -61,6 +76,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "kilo-code"],
         website: "https://kilocode.ai",
+        native: false,
     },
     HarnessDef {
         id: "factory-droid",
@@ -71,6 +87,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: None,
         install_args: &[],
         website: "https://factory.ai",
+        native: false,
     },
 ];
 
@@ -158,6 +175,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
                 path: Some(path.display().to_string()),
                 can_auto_install: def.install_command.is_some(),
                 website: def.website.to_string(),
+                native: def.native,
             };
         }
     }
@@ -187,6 +205,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
                     path: Some(path.display().to_string()),
                     can_auto_install: def.install_command.is_some(),
                     website: def.website.to_string(),
+                    native: def.native,
                 };
             }
         }
@@ -203,6 +222,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
             path: Some(path),
             can_auto_install: def.install_command.is_some(),
             website: def.website.to_string(),
+            native: def.native,
         };
     }
 
@@ -215,6 +235,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
         path: None,
         can_auto_install: def.install_command.is_some(),
         website: def.website.to_string(),
+        native: def.native,
     }
 }
 
