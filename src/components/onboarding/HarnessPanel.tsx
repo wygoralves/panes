@@ -21,6 +21,7 @@ import type { HarnessInfo } from "../../types";
 const HARNESS_COLORS: Record<string, string> = {
   codex: "#0ef0c3",
   "claude-code": "#d97706",
+  "gemini-cli": "#4285f4",
   kiro: "#6366f1",
   opencode: "#10b981",
   "kilo-code": "#ec4899",
