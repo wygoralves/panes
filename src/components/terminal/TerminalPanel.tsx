@@ -70,6 +70,9 @@ interface FrontendTerminalRuntimeSnapshot {
   rows: number;
   isAttached: boolean;
   flushInProgress: boolean;
+  flushWatchdogActive: boolean;
+  flushStallCount: number;
+  flushInFlightMs: number | null;
   outputQueueChunks: number;
   outputQueueChars: number;
   flushTimerActive: boolean;
@@ -106,6 +109,10 @@ interface SessionTerminal {
   outputQueue: string[];
   outputQueueChars: number;
   flushInProgress: boolean;
+  flushNonce: number;
+  flushStartedAt?: number;
+  flushWatchdogTimer?: ReturnType<typeof window.setTimeout>;
+  flushStallCount: number;
   flushTimer?: ReturnType<typeof window.setTimeout>;
   fitTimer?: ReturnType<typeof window.setTimeout>;
   isAttached: boolean;
@@ -125,6 +132,7 @@ const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 36;
 const FIT_DEBOUNCE_MS = 80;
 const OUTPUT_FLUSH_DELAY_MS = 4;
+const OUTPUT_FLUSH_STALL_TIMEOUT_MS = 2500;
 const OUTPUT_BATCH_CHAR_LIMIT = 65536;
 const OUTPUT_QUEUE_MAX_CHARS_ATTACHED = 64 * 1024 * 1024;
 const OUTPUT_QUEUE_MAX_CHARS_DETACHED = 1024 * 1024;
@@ -132,10 +140,14 @@ const PENDING_OUTPUT_MAX_CHARS = 512 * 1024;
 const OUTPUT_DROP_WARN_COOLDOWN_MS = 5000;
 const TERMINAL_DEBUG =
   import.meta.env.DEV && import.meta.env.VITE_TERMINAL_DEBUG === "1";
+// NOTE: `@xterm/addon-image`'s iTerm IIP path uses `createImageBitmap(...)` without a timeout.
+// On older WebKit (notably macOS 10.15.x), `createImageBitmap` can hang indefinitely for some
+// blobs, which stalls xterm's write pipeline (write callback never fires) and makes TUIs appear
+// "frozen". Disable IIP support by default; SIXEL remains enabled.
 const IMAGE_ADDON_OPTIONS: ImageAddonCapabilities = {
   enableSizeReports: true,
   sixelSupport: true,
-  iipSupport: true,
+  iipSupport: false,
   storageLimit: 64,
 };
 const IMAGE_ADDON_ERROR_PATTERNS = [
@@ -252,6 +264,11 @@ function snapshotFrontendRuntime(
     rows: session.terminal.rows,
     isAttached: session.isAttached,
     flushInProgress: session.flushInProgress,
+    flushWatchdogActive: session.flushWatchdogTimer !== undefined,
+    flushStallCount: session.flushStallCount,
+    flushInFlightMs: session.flushStartedAt
+      ? Math.max(0, Date.now() - session.flushStartedAt)
+      : null,
     outputQueueChunks: session.outputQueue.length,
     outputQueueChars: session.outputQueueChars,
     flushTimerActive: session.flushTimer !== undefined,
@@ -376,6 +393,10 @@ function clearSessionTimers(session: SessionTerminal) {
   if (session.fitTimer !== undefined) {
     window.clearTimeout(session.fitTimer);
     session.fitTimer = undefined;
+  }
+  if (session.flushWatchdogTimer !== undefined) {
+    window.clearTimeout(session.flushWatchdogTimer);
+    session.flushWatchdogTimer = undefined;
   }
   if (session.flushTimer !== undefined) {
     window.clearTimeout(session.flushTimer);
@@ -563,20 +584,59 @@ function flushOutputQueue(cacheKey: string) {
   }
   session.outputQueueChars = Math.max(0, session.outputQueueChars - batch.charCount);
 
+  const flushNonce = session.flushNonce + 1;
+  session.flushNonce = flushNonce;
+  session.flushStartedAt = Date.now();
   session.flushInProgress = true;
+  if (session.flushWatchdogTimer !== undefined) {
+    window.clearTimeout(session.flushWatchdogTimer);
+    session.flushWatchdogTimer = undefined;
+  }
+  session.flushWatchdogTimer = window.setTimeout(() => {
+    const latest = cachedTerminals.get(cacheKey);
+    if (!latest || !latest.flushInProgress || latest.flushNonce !== flushNonce) {
+      return;
+    }
+    latest.flushWatchdogTimer = undefined;
+    latest.flushInProgress = false;
+    latest.flushStartedAt = undefined;
+    latest.flushStallCount += 1;
+    logTerminalWarning("terminal-write-callback-timeout", {
+      cacheKey,
+      stallCount: latest.flushStallCount,
+      timeoutMs: OUTPUT_FLUSH_STALL_TIMEOUT_MS,
+      queueDepth: latest.outputQueue.length,
+      queueChars: latest.outputQueueChars,
+    });
+    if (latest.outputQueue.length > 0) {
+      scheduleOutputFlush(cacheKey, latest, 0);
+    }
+  }, OUTPUT_FLUSH_STALL_TIMEOUT_MS);
   try {
     session.terminal.write(batch.payload, () => {
       const latest = cachedTerminals.get(cacheKey);
-      if (!latest) {
+      if (!latest || latest.flushNonce !== flushNonce) {
         return;
       }
+      if (latest.flushWatchdogTimer !== undefined) {
+        window.clearTimeout(latest.flushWatchdogTimer);
+        latest.flushWatchdogTimer = undefined;
+      }
       latest.flushInProgress = false;
+      latest.flushStartedAt = undefined;
       if (latest.outputQueue.length > 0) {
         scheduleOutputFlush(cacheKey, latest, 0);
       }
     });
   } catch (error) {
-    session.flushInProgress = false;
+    if (session.flushNonce === flushNonce) {
+      if (session.flushWatchdogTimer !== undefined) {
+        window.clearTimeout(session.flushWatchdogTimer);
+        session.flushWatchdogTimer = undefined;
+      }
+      session.flushInProgress = false;
+      session.flushStartedAt = undefined;
+    }
     if (isLikelyImageAddonError(error)) {
       recordImageAddonRuntimeError(cacheKey, session, "terminal.write", error);
     } else {
@@ -1226,6 +1286,8 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       outputQueue: [],
       outputQueueChars: 0,
       flushInProgress: false,
+      flushNonce: 0,
+      flushStallCount: 0,
       isAttached: true,
       debugSample: {
         chunks: 0,
@@ -1476,35 +1538,40 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     return groupSessionIds[groupSessionIds.length - 1] ?? null;
   }, [activeGroupId, focusedSessionId, groups]);
 
-  const copyRendererDiagnostics = useCallback(async (groupId?: string) => {
+  const copyRendererDiagnostics = useCallback((groupId?: string) => {
     const targetSessionId = resolveSessionIdForDiagnostics(groupId);
     if (!targetSessionId) {
       toast.info("No terminal session available for diagnostics");
       return;
     }
 
-	    try {
-	      const cacheKey = terminalCacheKey(workspaceId, targetSessionId);
-	      const backendEntry = cachedBackendRendererDiagnostics.get(cacheKey);
-	      const session = cachedTerminals.get(cacheKey);
-	      const frontend = cloneFrontendDiagnostics(session?.rendererDiagnostics);
-	      const frontendRuntime = snapshotFrontendRuntime(cacheKey, session);
-	      const payload: RendererDiagnosticsExport = {
-	        capturedAt: new Date().toISOString(),
-	        workspaceId,
-	        sessionId: targetSessionId,
-	        backend: backendEntry?.diagnostics ?? null,
-	        backendFetchedAt: backendEntry?.fetchedAt ?? null,
-	        frontend,
-	        frontendRuntime,
-	        userAgent: navigator.userAgent,
-	      };
-	      await copyTextToClipboard(JSON.stringify(payload, null, 2));
-	      toast.success("Renderer diagnostics copied");
-      if (!backendEntry) {
-        toast.info("Copied diagnostics without backend snapshot; retry in a second.");
-        void refreshBackendRendererDiagnostics(workspaceId, targetSessionId);
-      }
+    try {
+      const cacheKey = terminalCacheKey(workspaceId, targetSessionId);
+      const backendEntry = cachedBackendRendererDiagnostics.get(cacheKey);
+      const backend = backendEntry?.diagnostics ?? null;
+      const backendFetchedAt = backendEntry?.fetchedAt ?? null;
+      const session = cachedTerminals.get(cacheKey);
+      const frontend = cloneFrontendDiagnostics(session?.rendererDiagnostics);
+      const frontendRuntime = snapshotFrontendRuntime(cacheKey, session);
+      const payload: RendererDiagnosticsExport = {
+        capturedAt: new Date().toISOString(),
+        workspaceId,
+        sessionId: targetSessionId,
+        backend,
+        backendFetchedAt,
+        frontend,
+        frontendRuntime,
+        userAgent: navigator.userAgent,
+      };
+      // Keep the clipboard write inside the user gesture call stack.
+      void copyTextToClipboard(JSON.stringify(payload, null, 2))
+        .then(() => toast.success("Renderer diagnostics copied"))
+        .catch((error) => {
+          toast.error(`Failed to copy diagnostics: ${String(error)}`);
+        });
+
+      // Refresh backend snapshot for next time (async; no user gesture requirement).
+      void refreshBackendRendererDiagnostics(workspaceId, targetSessionId);
     } catch (error) {
       toast.error(`Failed to copy diagnostics: ${String(error)}`);
     }
