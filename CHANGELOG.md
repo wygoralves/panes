@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.11.1...vnull) (2026-02-23)
+
+### Bug Fixes
+
+* add more diagnostics to complex tui rendering ([c9c7f20](https://github.com/wygoralves/panes/commit/c9c7f2011c5a6d2bc55cd3ad38111960085841c0))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.11.0...vnull) (2026-02-23)
 
 ### Bug Fixes
