@@ -7,7 +7,6 @@ const INSTALLED_HARNESSES_KEY = "panes:installedHarnesses";
 export type HarnessPhase = "idle" | "scanning" | "installing" | "error";
 
 interface HarnessStore {
-  open: boolean;
   phase: HarnessPhase;
   harnesses: HarnessInfo[];
   npmAvailable: boolean;
@@ -15,8 +14,6 @@ interface HarnessStore {
   installLog: { dep: string; line: string; stream: string }[];
   error: string | null;
 
-  openPanel: () => void;
-  closePanel: () => void;
   scan: () => Promise<void>;
   install: (harnessId: string) => Promise<boolean>;
   launch: (harnessId: string) => Promise<string | null>;
@@ -38,20 +35,12 @@ function loadInstalledIds(): string[] {
 }
 
 export const useHarnessStore = create<HarnessStore>((set, get) => ({
-  open: false,
   phase: "idle",
   harnesses: [],
   npmAvailable: false,
   installingId: null,
   installLog: [],
   error: null,
-
-  openPanel: () => {
-    set({ open: true, phase: "scanning", error: null });
-    void get().scan();
-  },
-
-  closePanel: () => set({ open: false }),
 
   scan: async () => {
     set({ phase: "scanning", error: null });

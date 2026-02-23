@@ -13,9 +13,7 @@ import {
   Settings,
   Pin,
   PinOff,
-  Package,
-  Play,
-  Zap,
+  Terminal,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -23,8 +21,7 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useSetupStore } from "../../stores/setupStore";
 import { useUpdateStore } from "../../stores/updateStore";
-import { useHarnessStore } from "../../stores/harnessStore";
-import { useTerminalStore } from "../../stores/terminalStore";
+
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { UpdateDialog } from "../onboarding/UpdateDialog";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
@@ -98,19 +95,14 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     refreshArchivedThreads,
   } = useThreadStore();
   const openEngineSetup = useSetupStore((state) => state.openSetup);
-  const openHarnessPanel = useHarnessStore((state) => state.openPanel);
-  const installedHarnesses = useHarnessStore((state) => state.harnesses.filter((h) => h.found));
-  const harnessLaunch = useHarnessStore((state) => state.launch);
   const sidebarPinned = useUiStore((state) => state.sidebarPinned);
   const toggleSidebarPin = useUiStore((state) => state.toggleSidebarPin);
+  const activeView = useUiStore((state) => state.activeView);
+  const setActiveView = useUiStore((state) => state.setActiveView);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
   const updateStatus = useUpdateStore((s) => s.status);
   const updateSnoozed = useUpdateStore((s) => s.snoozed);
   const hasUpdate = updateStatus === "available" && !updateSnoozed;
-  const wsActiveId = useWorkspaceStore((s) => s.activeWorkspaceId);
-  const setTermLayoutMode = useTerminalStore((s) => s.setLayoutMode);
-  const createTermSession = useTerminalStore((s) => s.createSession);
-  const termWorkspaces = useTerminalStore((s) => s.workspaces);
 
   const projects = useMemo<ProjectGroup[]>(
     () =>
@@ -216,6 +208,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   }
 
   async function onSelectThread(thread: Thread) {
+    if (activeView !== "chat") setActiveView("chat");
     if (thread.workspaceId !== activeWorkspaceId) {
       await setActiveWorkspace(thread.workspaceId);
     }
@@ -225,6 +218,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   }
 
   async function onSelectProject(wsId: string) {
+    if (activeView !== "chat") setActiveView("chat");
     setCollapsed((prev) => ({ ...prev, [wsId]: false }));
     await setActiveWorkspace(wsId);
   }
@@ -354,10 +348,24 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             type="button"
             className="sb-open-project-btn"
             style={{ margin: 0 }}
-            onClick={() => void onOpenFolder()}
+            onClick={() => {
+              if (activeView !== "chat") setActiveView("chat");
+              void onOpenFolder();
+            }}
           >
             <FolderOpen size={13} strokeWidth={2} />
             Open project
+          </button>
+
+          {/* Agents */}
+          <button
+            type="button"
+            className={`sb-open-project-btn${activeView === "harnesses" ? " sb-btn-active" : ""}`}
+            style={{ margin: 0 }}
+            onClick={() => setActiveView(activeView === "harnesses" ? "chat" : "harnesses")}
+          >
+            <Terminal size={13} strokeWidth={2} />
+            Agents
           </button>
         </div>
       </div>
@@ -581,49 +589,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
         </div>
       </div>
 
-      {/* ── Harness quick-launch ── */}
-      {installedHarnesses.length > 0 && (
-        <div className="sb-harness-section">
-          <div className="sb-harness-label">
-            <Package size={9} style={{ opacity: 0.5 }} />
-            Harnesses
-          </div>
-          <div className="sb-harness-list">
-            {installedHarnesses.map((h) => (
-              <button
-                key={h.id}
-                type="button"
-                className={`sb-harness-chip${h.native ? " sb-harness-chip-native" : ""}`}
-                title={`Launch ${h.name}${h.native ? " (native integration)" : ""}`}
-                onClick={() => {
-                  void (async () => {
-                    const cmd = await harnessLaunch(h.id);
-                    if (!cmd || !wsActiveId) return;
-                    const ws = termWorkspaces[wsActiveId];
-                    if (!ws || (ws.layoutMode !== "terminal" && ws.layoutMode !== "split")) {
-                      await setTermLayoutMode(wsActiveId, "terminal");
-                    }
-                    const sid = await createTermSession(wsActiveId);
-                    if (sid) {
-                      setTimeout(async () => {
-                        try {
-                          const { ipc } = await import("../../lib/ipc");
-                          await ipc.terminalWrite(wsActiveId, sid, cmd + "\r");
-                        } catch { /* ignore */ }
-                      }, 300);
-                    }
-                  })();
-                }}
-              >
-                <span className="sb-harness-chip-dot" />
-                {h.native ? <Zap size={9} /> : <Play size={9} />}
-                {h.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* ── Footer ── */}
       <div className="sb-footer">
         <button
@@ -728,18 +693,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               }}
             >
               Engine setup
-            </button>
-            <button
-              type="button"
-              className="git-action-menu-item"
-              style={{ display: "flex", alignItems: "center", gap: 8 }}
-              onClick={() => {
-                closeSettingsMenu();
-                openHarnessPanel();
-              }}
-            >
-              <Package size={12} style={{ opacity: 0.5 }} />
-              <span>Harnesses</span>
             </button>
             <button
               type="button"
@@ -857,6 +810,8 @@ function CollapsedRail({
   const createThread = useThreadStore((s) => s.createThread);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
   const hasUpdate = useUpdateStore((s) => s.status === "available" && !s.snoozed);
+  const activeView = useUiStore((s) => s.activeView);
+  const setActiveView = useUiStore((s) => s.setActiveView);
 
   async function onNewThread() {
     const activeProject = projects.find((p) => p.id === activeWorkspaceId);
@@ -929,7 +884,7 @@ function CollapsedRail({
               type="button"
               className={`sb-rail-btn ${isActive ? "sb-rail-btn-active" : ""}`}
               title={ws.name || ws.rootPath}
-              onClick={() => void setActiveWorkspace(ws.id)}
+              onClick={() => { if (activeView !== "chat") setActiveView("chat"); void setActiveWorkspace(ws.id); }}
             >
               <span
                 style={{

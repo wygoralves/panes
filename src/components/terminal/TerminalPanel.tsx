@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Columns2, Folder, Pencil, Plus, Rows2, SquareTerminal, Trash2, X } from "lucide-react";
 import { createPortal } from "react-dom";
+import { useHarnessStore } from "../../stores/harnessStore";
+import { getHarnessIcon } from "../shared/HarnessLogos";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -978,6 +980,28 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     [focusedSessionId, sessions],
   );
 
+  const allHarnesses = useHarnessStore((s) => s.harnesses);
+  const installedHarnesses = useMemo(() => allHarnesses.filter((h) => h.found), [allHarnesses]);
+  const harnessLaunch = useHarnessStore((s) => s.launch);
+  const [newTabMenuOpen, setNewTabMenuOpen] = useState(false);
+  const newTabBtnRef = useRef<HTMLButtonElement>(null);
+  const newTabMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!newTabMenuOpen) return;
+    const handleClose = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent && e.key !== "Escape") return;
+      if (e instanceof MouseEvent && (newTabMenuRef.current?.contains(e.target as Node) || newTabBtnRef.current?.contains(e.target as Node))) return;
+      setNewTabMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleClose);
+    document.addEventListener("keydown", handleClose);
+    return () => {
+      document.removeEventListener("mousedown", handleClose);
+      document.removeEventListener("keydown", handleClose);
+    };
+  }, [newTabMenuOpen]);
+
   const spawnNewSession = useCallback(() => {
     const active = focusedSessionId
       ? cachedTerminals.get(terminalCacheKey(workspaceId, focusedSessionId))
@@ -986,6 +1010,27 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     const rows = active?.terminal.rows ?? DEFAULT_ROWS;
     void createSession(workspaceId, cols, rows);
   }, [focusedSessionId, createSession, workspaceId]);
+
+  const spawnHarnessSession = useCallback(async (harnessId: string) => {
+    setNewTabMenuOpen(false);
+    const command = await harnessLaunch(harnessId);
+    if (!command) return;
+    const active = focusedSessionId
+      ? cachedTerminals.get(terminalCacheKey(workspaceId, focusedSessionId))
+      : undefined;
+    const cols = active?.terminal.cols ?? DEFAULT_COLS;
+    const rows = active?.terminal.rows ?? DEFAULT_ROWS;
+    const sessionId = await createSession(workspaceId, cols, rows);
+    if (sessionId) {
+      setTimeout(async () => {
+        try {
+          await ipc.terminalWrite(workspaceId, sessionId, command + "\r");
+        } catch {
+          // Terminal may not be ready yet, ignore
+        }
+      }, 300);
+    }
+  }, [focusedSessionId, createSession, workspaceId, harnessLaunch]);
 
   const handleSplit = useCallback(
     (direction: "horizontal" | "vertical") => {
@@ -1072,9 +1117,16 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
         <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
           <button
+            ref={newTabBtnRef}
             type="button"
             className="terminal-add-btn"
-            onClick={spawnNewSession}
+            onClick={() => {
+              if (installedHarnesses.length > 0) {
+                setNewTabMenuOpen((v) => !v);
+              } else {
+                spawnNewSession();
+              }
+            }}
             title="New terminal"
           >
             <Plus size={13} />
@@ -1190,6 +1242,45 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
             <Trash2 size={12} />
             Close
           </button>
+        </div>,
+        document.body,
+      )}
+
+      {newTabMenuOpen && newTabBtnRef.current && createPortal(
+        <div
+          ref={newTabMenuRef}
+          className="terminal-new-dropdown"
+          style={{
+            position: "fixed",
+            top: newTabBtnRef.current.getBoundingClientRect().bottom + 4,
+            left: newTabBtnRef.current.getBoundingClientRect().left,
+          }}
+        >
+          <button
+            type="button"
+            className="terminal-new-dropdown-item"
+            onClick={() => {
+              setNewTabMenuOpen(false);
+              spawnNewSession();
+            }}
+          >
+            <SquareTerminal size={13} />
+            Terminal
+          </button>
+          {installedHarnesses.length > 0 && (
+            <div className="terminal-new-dropdown-divider" />
+          )}
+          {installedHarnesses.map((h) => (
+            <button
+              key={h.id}
+              type="button"
+              className="terminal-new-dropdown-item"
+              onClick={() => void spawnHarnessSession(h.id)}
+            >
+              {getHarnessIcon(h.id, 13)}
+              {h.name}
+            </button>
+          ))}
         </div>,
         document.body,
       )}
