@@ -13,6 +13,7 @@ import {
   Settings,
   Pin,
   PinOff,
+  Terminal,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -20,6 +21,7 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useSetupStore } from "../../stores/setupStore";
 import { useUpdateStore } from "../../stores/updateStore";
+
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { UpdateDialog } from "../onboarding/UpdateDialog";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
@@ -95,6 +97,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const openEngineSetup = useSetupStore((state) => state.openSetup);
   const sidebarPinned = useUiStore((state) => state.sidebarPinned);
   const toggleSidebarPin = useUiStore((state) => state.toggleSidebarPin);
+  const activeView = useUiStore((state) => state.activeView);
+  const setActiveView = useUiStore((state) => state.setActiveView);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
   const updateStatus = useUpdateStore((s) => s.status);
   const updateSnoozed = useUpdateStore((s) => s.snoozed);
@@ -204,6 +208,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   }
 
   async function onSelectThread(thread: Thread) {
+    if (activeView !== "chat") setActiveView("chat");
     if (thread.workspaceId !== activeWorkspaceId) {
       await setActiveWorkspace(thread.workspaceId);
     }
@@ -213,6 +218,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   }
 
   async function onSelectProject(wsId: string) {
+    if (activeView !== "chat") setActiveView("chat");
     setCollapsed((prev) => ({ ...prev, [wsId]: false }));
     await setActiveWorkspace(wsId);
   }
@@ -342,10 +348,24 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             type="button"
             className="sb-open-project-btn"
             style={{ margin: 0 }}
-            onClick={() => void onOpenFolder()}
+            onClick={() => {
+              if (activeView !== "chat") setActiveView("chat");
+              void onOpenFolder();
+            }}
           >
             <FolderOpen size={13} strokeWidth={2} />
             Open project
+          </button>
+
+          {/* Agents */}
+          <button
+            type="button"
+            className={`sb-open-project-btn${activeView === "harnesses" ? " sb-btn-active" : ""}`}
+            style={{ margin: 0 }}
+            onClick={() => setActiveView(activeView === "harnesses" ? "chat" : "harnesses")}
+          >
+            <Terminal size={13} strokeWidth={2} />
+            Agents
           </button>
         </div>
       </div>
@@ -790,6 +810,8 @@ function CollapsedRail({
   const createThread = useThreadStore((s) => s.createThread);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
   const hasUpdate = useUpdateStore((s) => s.status === "available" && !s.snoozed);
+  const activeView = useUiStore((s) => s.activeView);
+  const setActiveView = useUiStore((s) => s.setActiveView);
 
   async function onNewThread() {
     const activeProject = projects.find((p) => p.id === activeWorkspaceId);
@@ -862,7 +884,7 @@ function CollapsedRail({
               type="button"
               className={`sb-rail-btn ${isActive ? "sb-rail-btn-active" : ""}`}
               title={ws.name || ws.rootPath}
-              onClick={() => void setActiveWorkspace(ws.id)}
+              onClick={() => { if (activeView !== "chat") setActiveView("chat"); void setActiveWorkspace(ws.id); }}
             >
               <span
                 style={{

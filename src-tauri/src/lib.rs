@@ -142,6 +142,9 @@ pub fn run() {
             commands::terminal::terminal_list_sessions,
             commands::setup::check_dependencies,
             commands::setup::install_dependency,
+            commands::harness::check_harnesses,
+            commands::harness::install_harness,
+            commands::harness::launch_harness,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
