@@ -55,7 +55,33 @@ interface FrontendRendererDiagnostics {
   webglUnsupported: boolean;
   webglInitError?: string;
   webglContextLossCount: number;
+  outputChunkCount: number;
+  outputCharCount: number;
+  outputDroppedChunkCount: number;
+  outputDroppedCharCount: number;
+  pendingOutputDroppedChunkCount: number;
+  pendingOutputDroppedCharCount: number;
+  lastOutputDropAt?: string;
   lastResize: FrontendResizeSnapshot | null;
+}
+
+interface FrontendTerminalRuntimeSnapshot {
+  cols: number;
+  rows: number;
+  isAttached: boolean;
+  flushInProgress: boolean;
+  outputQueueChunks: number;
+  outputQueueChars: number;
+  flushTimerActive: boolean;
+  fitTimerActive: boolean;
+  lastResizeSent: TerminalSize | null;
+  pendingOutput: {
+    chunks: number;
+    chars: number;
+    droppedChars: number;
+    droppedChunks: number;
+    lastDropWarnAt: string | null;
+  } | null;
 }
 
 interface RendererDiagnosticsExport {
@@ -65,6 +91,7 @@ interface RendererDiagnosticsExport {
   backend: TerminalRendererDiagnostics | null;
   backendFetchedAt: string | null;
   frontend: FrontendRendererDiagnostics | null;
+  frontendRuntime: FrontendTerminalRuntimeSnapshot | null;
   userAgent: string;
 }
 
@@ -99,7 +126,7 @@ const DEFAULT_ROWS = 36;
 const FIT_DEBOUNCE_MS = 80;
 const OUTPUT_FLUSH_DELAY_MS = 4;
 const OUTPUT_BATCH_CHAR_LIMIT = 65536;
-const OUTPUT_QUEUE_MAX_CHARS_ATTACHED = 8 * 1024 * 1024;
+const OUTPUT_QUEUE_MAX_CHARS_ATTACHED = 64 * 1024 * 1024;
 const OUTPUT_QUEUE_MAX_CHARS_DETACHED = 1024 * 1024;
 const PENDING_OUTPUT_MAX_CHARS = 512 * 1024;
 const OUTPUT_DROP_WARN_COOLDOWN_MS = 5000;
@@ -128,6 +155,8 @@ const pendingOutput = new Map<
     chunks: string[];
     chars: number;
     lastDropWarnAt?: number;
+    droppedChars: number;
+    droppedChunks: number;
   }
 >();
 const cachedBackendRendererDiagnostics = new Map<string, BackendRendererDiagnosticsEntry>();
@@ -187,6 +216,12 @@ function createRendererDiagnostics(): FrontendRendererDiagnostics {
     webglActive: false,
     webglUnsupported: false,
     webglContextLossCount: 0,
+    outputChunkCount: 0,
+    outputCharCount: 0,
+    outputDroppedChunkCount: 0,
+    outputDroppedCharCount: 0,
+    pendingOutputDroppedChunkCount: 0,
+    pendingOutputDroppedCharCount: 0,
     lastResize: null,
   };
 }
@@ -201,6 +236,38 @@ function cloneFrontendDiagnostics(
     ...diagnostics,
     imageAddonCapabilities: { ...diagnostics.imageAddonCapabilities },
     lastResize: diagnostics.lastResize ? { ...diagnostics.lastResize } : null,
+  };
+}
+
+function snapshotFrontendRuntime(
+  cacheKey: string,
+  session: SessionTerminal | undefined,
+): FrontendTerminalRuntimeSnapshot | null {
+  if (!session) {
+    return null;
+  }
+  const pending = pendingOutput.get(cacheKey);
+  return {
+    cols: session.terminal.cols,
+    rows: session.terminal.rows,
+    isAttached: session.isAttached,
+    flushInProgress: session.flushInProgress,
+    outputQueueChunks: session.outputQueue.length,
+    outputQueueChars: session.outputQueueChars,
+    flushTimerActive: session.flushTimer !== undefined,
+    fitTimerActive: session.fitTimer !== undefined,
+    lastResizeSent: session.lastResizeSent ? { ...session.lastResizeSent } : null,
+    pendingOutput: pending
+      ? {
+          chunks: pending.chunks.length,
+          chars: pending.chars,
+          droppedChars: pending.droppedChars,
+          droppedChunks: pending.droppedChunks,
+          lastDropWarnAt: pending.lastDropWarnAt
+            ? new Date(pending.lastDropWarnAt).toISOString()
+            : null,
+        }
+      : null,
   };
 }
 
@@ -395,6 +462,9 @@ function capSessionOutputQueue(cacheKey: string, session: SessionTerminal) {
   if (result.droppedChars <= 0) {
     return;
   }
+  session.rendererDiagnostics.outputDroppedCharCount += result.droppedChars;
+  session.rendererDiagnostics.outputDroppedChunkCount += result.droppedChunks;
+  session.rendererDiagnostics.lastOutputDropAt = new Date().toISOString();
   const now = Date.now();
   if (
     session.lastOutputDropWarnAt !== undefined &&
@@ -412,12 +482,23 @@ function capSessionOutputQueue(cacheKey: string, session: SessionTerminal) {
   });
 }
 
-function capPendingOutput(cacheKey: string, pending: { chunks: string[]; chars: number; lastDropWarnAt?: number }) {
+function capPendingOutput(
+  cacheKey: string,
+  pending: {
+    chunks: string[];
+    chars: number;
+    lastDropWarnAt?: number;
+    droppedChars: number;
+    droppedChunks: number;
+  },
+) {
   const result = trimOutputQueue(pending.chunks, pending.chars, PENDING_OUTPUT_MAX_CHARS);
   pending.chars = result.chars;
   if (result.droppedChars <= 0) {
     return;
   }
+  pending.droppedChars += result.droppedChars;
+  pending.droppedChunks += result.droppedChunks;
   const now = Date.now();
   if (
     pending.lastDropWarnAt !== undefined &&
@@ -528,7 +609,13 @@ function scheduleOutputFlush(
 function queueOutput(cacheKey: string, data: string) {
   const session = cachedTerminals.get(cacheKey);
   if (!session) {
-    const pending = pendingOutput.get(cacheKey) ?? { chunks: [], chars: 0 };
+    const pending =
+      pendingOutput.get(cacheKey) ?? {
+        chunks: [],
+        chars: 0,
+        droppedChars: 0,
+        droppedChunks: 0,
+      };
     pending.chunks.push(data);
     pending.chars += data.length;
     capPendingOutput(cacheKey, pending);
@@ -538,6 +625,8 @@ function queueOutput(cacheKey: string, data: string) {
 
   session.outputQueue.push(data);
   session.outputQueueChars += data.length;
+  session.rendererDiagnostics.outputChunkCount += 1;
+  session.rendererDiagnostics.outputCharCount += data.length;
   capSessionOutputQueue(cacheKey, session);
 
   session.debugSample.chunks += 1;
@@ -563,10 +652,23 @@ function queueOutput(cacheKey: string, data: string) {
 function drainPendingOutput(cacheKey: string, session: SessionTerminal) {
   const buffered = pendingOutput.get(cacheKey);
   if (!buffered?.chunks.length) {
+    if (buffered) {
+      session.rendererDiagnostics.pendingOutputDroppedCharCount += buffered.droppedChars;
+      session.rendererDiagnostics.pendingOutputDroppedChunkCount += buffered.droppedChunks;
+      if (buffered.droppedChars > 0) {
+        session.rendererDiagnostics.lastOutputDropAt = new Date().toISOString();
+      }
+      pendingOutput.delete(cacheKey);
+    }
     return;
   }
   session.outputQueue.push(...buffered.chunks);
   session.outputQueueChars += buffered.chars;
+  session.rendererDiagnostics.pendingOutputDroppedCharCount += buffered.droppedChars;
+  session.rendererDiagnostics.pendingOutputDroppedChunkCount += buffered.droppedChunks;
+  if (buffered.droppedChars > 0) {
+    session.rendererDiagnostics.lastOutputDropAt = new Date().toISOString();
+  }
   capSessionOutputQueue(cacheKey, session);
   pendingOutput.delete(cacheKey);
   if (session.isAttached) {
@@ -1380,23 +1482,24 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       return;
     }
 
-    try {
-      const cacheKey = terminalCacheKey(workspaceId, targetSessionId);
-      const backendEntry = cachedBackendRendererDiagnostics.get(cacheKey);
-      const frontend = cloneFrontendDiagnostics(
-        cachedTerminals.get(cacheKey)?.rendererDiagnostics,
-      );
-      const payload: RendererDiagnosticsExport = {
-        capturedAt: new Date().toISOString(),
-        workspaceId,
-        sessionId: targetSessionId,
-        backend: backendEntry?.diagnostics ?? null,
-        backendFetchedAt: backendEntry?.fetchedAt ?? null,
-        frontend,
-        userAgent: navigator.userAgent,
-      };
-      await copyTextToClipboard(JSON.stringify(payload, null, 2));
-      toast.success("Renderer diagnostics copied");
+	    try {
+	      const cacheKey = terminalCacheKey(workspaceId, targetSessionId);
+	      const backendEntry = cachedBackendRendererDiagnostics.get(cacheKey);
+	      const session = cachedTerminals.get(cacheKey);
+	      const frontend = cloneFrontendDiagnostics(session?.rendererDiagnostics);
+	      const frontendRuntime = snapshotFrontendRuntime(cacheKey, session);
+	      const payload: RendererDiagnosticsExport = {
+	        capturedAt: new Date().toISOString(),
+	        workspaceId,
+	        sessionId: targetSessionId,
+	        backend: backendEntry?.diagnostics ?? null,
+	        backendFetchedAt: backendEntry?.fetchedAt ?? null,
+	        frontend,
+	        frontendRuntime,
+	        userAgent: navigator.userAgent,
+	      };
+	      await copyTextToClipboard(JSON.stringify(payload, null, 2));
+	      toast.success("Renderer diagnostics copied");
       if (!backendEntry) {
         toast.info("Copied diagnostics without backend snapshot; retry in a second.");
         void refreshBackendRendererDiagnostics(workspaceId, targetSessionId);
