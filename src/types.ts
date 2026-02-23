@@ -382,6 +382,25 @@ export interface InstallProgressEvent {
   finished: boolean;
 }
 
+// ── Harness Management ──────────────────────────────────────────────
+
+export interface HarnessInfo {
+  id: string;
+  name: string;
+  description: string;
+  found: boolean;
+  version: string | null;
+  path: string | null;
+  canAutoInstall: boolean;
+  website: string;
+  native: boolean;
+}
+
+export interface HarnessReport {
+  harnesses: HarnessInfo[];
+  npmAvailable: boolean;
+}
+
 // ── Stream Events ───────────────────────────────────────────────────
 
 export type TurnCompletionStatus = "completed" | "interrupted" | "failed";

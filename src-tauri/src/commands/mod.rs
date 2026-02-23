@@ -2,6 +2,7 @@ pub mod chat;
 pub mod engines;
 pub mod files;
 pub mod git;
+pub mod harness;
 pub mod setup;
 pub mod terminal;
 pub mod threads;

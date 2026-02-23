@@ -13,6 +13,7 @@ import type {
   FileTreeEntry,
   FileTreePage,
   GitStatus,
+  HarnessReport,
   InstallProgressEvent,
   InstallResult,
   Message,
@@ -182,6 +183,9 @@ export const ipc = {
   checkDependencies: () => invoke<DependencyReport>("check_dependencies"),
   installDependency: (dependency: string, method: string) =>
     invoke<InstallResult>("install_dependency", { dependency, method }),
+  checkHarnesses: () => invoke<HarnessReport>("check_harnesses"),
+  launchHarness: (harnessId: string) =>
+    invoke<string>("launch_harness", { harnessId }),
 };
 
 export async function listenThreadEvents(
@@ -242,4 +246,53 @@ export async function listenTerminalExit(
     `terminal-exit-${workspaceId}`,
     ({ payload }) => onEvent(payload)
   );
+}
+
+/**
+ * Write a command to a newly created terminal session once the shell is ready.
+ * Waits for terminal output (indicating the shell prompt), then writes.
+ * Falls back to writing after a timeout if no output is detected.
+ */
+export async function writeCommandToNewSession(
+  workspaceId: string,
+  sessionId: string,
+  command: string,
+): Promise<void> {
+  const FALLBACK_TIMEOUT_MS = 3000;
+  const POST_OUTPUT_DELAY_MS = 50;
+
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    let unlisten: (() => void) | undefined;
+
+    const doWrite = () => {
+      if (settled) return;
+      settled = true;
+      unlisten?.();
+      invoke<void>("terminal_write", {
+        workspaceId,
+        sessionId,
+        data: command + "\r",
+      })
+        .catch(() => {})
+        .finally(resolve);
+    };
+
+    const fallbackTimer = setTimeout(doWrite, FALLBACK_TIMEOUT_MS);
+
+    listen<TerminalOutputEvent>(
+      `terminal-output-${workspaceId}`,
+      ({ payload }) => {
+        if (settled || payload.sessionId !== sessionId) return;
+        clearTimeout(fallbackTimer);
+        setTimeout(doWrite, POST_OUTPUT_DELAY_MS);
+      },
+    ).then((fn) => {
+      if (settled) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
+    });
+  });
 }

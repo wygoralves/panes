@@ -8,17 +8,21 @@ interface MessageFocusTarget {
   requestedAt: number;
 }
 
+type ActiveView = "chat" | "harnesses";
+
 interface UiState {
   showSidebar: boolean;
   sidebarPinned: boolean;
   showGitPanel: boolean;
   searchOpen: boolean;
+  activeView: ActiveView;
   messageFocusTarget: MessageFocusTarget | null;
   toggleSidebar: () => void;
   toggleSidebarPin: () => void;
   setSidebarPinned: (pinned: boolean) => void;
   toggleGitPanel: () => void;
   setSearchOpen: (open: boolean) => void;
+  setActiveView: (view: ActiveView) => void;
   setMessageFocusTarget: (target: { threadId: string; messageId: string }) => void;
   clearMessageFocusTarget: () => void;
 }
@@ -30,6 +34,7 @@ export const useUiStore = create<UiState>((set) => ({
   sidebarPinned: savedPinned !== null ? savedPinned === "true" : true,
   showGitPanel: true,
   searchOpen: false,
+  activeView: "chat",
   messageFocusTarget: null,
   toggleSidebar: () => set((state) => ({ showSidebar: !state.showSidebar })),
   toggleSidebarPin: () =>
@@ -44,6 +49,15 @@ export const useUiStore = create<UiState>((set) => ({
   },
   toggleGitPanel: () => set((state) => ({ showGitPanel: !state.showGitPanel })),
   setSearchOpen: (open) => set({ searchOpen: open }),
+  setActiveView: (view) => {
+    set({ activeView: view });
+    if (view === "harnesses") {
+      // Lazy import to avoid circular dependency
+      void import("./harnessStore").then(({ useHarnessStore }) => {
+        void useHarnessStore.getState().scan();
+      });
+    }
+  },
   setMessageFocusTarget: (target) =>
     set({
       messageFocusTarget: {
