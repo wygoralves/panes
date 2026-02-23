@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
 import { SearchModal } from "./components/chat/SearchModal";
 import { EngineHealthBanner } from "./components/onboarding/EngineHealthBanner";
-import { HarnessPanel } from "./components/onboarding/HarnessPanel";
 import { SetupWizard } from "./components/onboarding/SetupWizard";
 import { ToastContainer } from "./components/shared/ToastContainer";
 import { useUpdateStore } from "./stores/updateStore";
@@ -264,7 +263,6 @@ export function App() {
       </div>
       <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
       <SetupWizard />
-      <HarnessPanel />
       <ToastContainer />
     </div>
   );

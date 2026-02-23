@@ -967,10 +967,8 @@ img { display: block; max-width: 100%; }
 
 .integrations-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 16px;
-  max-width: 960px;
-  margin: 0 auto;
 }
 
 .integration-card {
@@ -999,7 +997,7 @@ img { display: block; max-width: 100%; }
 
 /* ── Native card (Codex) ── */
 .integration-card-native {
-  grid-column: span 4;
+  grid-column: span 3;
   flex-direction: row;
   padding: 28px 36px;
   gap: 20px;
@@ -1047,7 +1045,6 @@ img { display: block; max-width: 100%; }
   width: 64px;
   height: 64px;
   border-radius: 16px;
-  color: var(--accent);
   border-color: var(--border-accent);
   background: rgba(14, 240, 195, 0.08);
 }
@@ -1130,15 +1127,6 @@ img { display: block; max-width: 100%; }
 }
 
 /* Integrations responsive */
-@media (max-width: 1024px) {
-  .integrations-grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-  .integration-card-native {
-    grid-column: span 3;
-  }
-}
-
 @media (max-width: 768px) {
   .integrations-grid {
     grid-template-columns: repeat(2, 1fr);
