@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.11.0...vnull) (2026-02-23)
+
+### Bug Fixes
+
+* fix copy diagnostics constraint on prod build ([3fe76d9](https://github.com/wygoralves/panes/commit/3fe76d9e2f52bc59958d329770e74f5d585948d3))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.10.0...vnull) (2026-02-23)
 
 ### Features
