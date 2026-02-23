@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useSetupStore, type SetupPhase } from "../../stores/setupStore";
 import { useEngineStore } from "../../stores/engineStore";
+import { copyTextToClipboard } from "../../lib/clipboard";
 import type { DepStatus } from "../../types";
 
 const SETUP_COMPLETED_KEY = "panes.setup.completed.v2";
@@ -334,7 +335,7 @@ function ManualStep({
       return;
     }
     try {
-      await navigator.clipboard.writeText(command);
+      await copyTextToClipboard(command);
       setCopied(true);
       setTimeout(() => setCopied(false), 1400);
     } catch {

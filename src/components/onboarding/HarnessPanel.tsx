@@ -14,6 +14,7 @@ import { useTerminalStore } from "../../stores/terminalStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { writeCommandToNewSession } from "../../lib/ipc";
+import { copyTextToClipboard } from "../../lib/clipboard";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import type { HarnessInfo } from "../../types";
 
@@ -144,10 +145,17 @@ export function HarnessPanel() {
   function handleCopyCommand(harnessId: string) {
     const cmd = INSTALL_COMMANDS[harnessId];
     if (cmd) {
-      void navigator.clipboard.writeText(cmd);
-      void import("../../stores/toastStore").then(({ toast }) => {
-        toast.success("Copied to clipboard");
-      });
+      void copyTextToClipboard(cmd)
+        .then(() => {
+          void import("../../stores/toastStore").then(({ toast }) => {
+            toast.success("Copied to clipboard");
+          });
+        })
+        .catch(() => {
+          void import("../../stores/toastStore").then(({ toast }) => {
+            toast.error("Failed to copy command");
+          });
+        });
     }
   }
 
