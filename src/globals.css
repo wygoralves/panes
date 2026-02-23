@@ -799,6 +799,9 @@ button, input, textarea, select {
 .git-discard-btn:hover {
   color: var(--danger);
 }
+.git-open-btn:hover {
+  color: var(--accent);
+}
 
 /* Diff viewer */
 .git-diff-viewer {

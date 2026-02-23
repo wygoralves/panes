@@ -30,7 +30,10 @@
       "Bash(gh pr:*)",
       "WebFetch(domain:docs.rs)",
       "WebFetch(domain:tauri.app)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(npm info:*)",
+      "Bash(head:*)",
+      "Bash(sort:*)"
     ]
   }
 }

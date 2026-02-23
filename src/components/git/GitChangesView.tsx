@@ -8,11 +8,14 @@ import {
   RotateCcw,
   Undo2,
   Loader2,
+  Eye,
 } from "lucide-react";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { useFileStore } from "../../stores/fileStore";
+import { useTerminalStore } from "../../stores/terminalStore";
 import { ipc } from "../../lib/ipc";
 import { parseDiff, LINE_CLASS } from "../../lib/parseDiff";
 import type { Repo, GitFileStatus } from "../../types";
@@ -198,6 +201,18 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     pushCommitHistory,
   } = useGitStore();
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const openFile = useFileStore((s) => s.openFile);
+  const setLayoutMode = useTerminalStore((s) => s.setLayoutMode);
+
+  const handleOpenInEditor = useCallback(
+    (filePath: string) => {
+      void openFile(repo.path, filePath);
+      if (activeWorkspaceId) {
+        void setLayoutMode(activeWorkspaceId, "editor");
+      }
+    },
+    [repo.path, openFile, activeWorkspaceId, setLayoutMode],
+  );
 
   const commitMessage = drafts.commitMessage;
   const setCommitMessage = useCallback(
@@ -490,6 +505,17 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
             <Undo2 size={13} />
           </button>
         )}
+        <button
+          type="button"
+          className="git-stage-btn git-open-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleOpenInEditor(row.file.path);
+          }}
+          title="Open in editor"
+        >
+          <Eye size={13} />
+        </button>
         <span className={`git-status ${getStatusClass(fileStatus)}`}>
           {getStatusLabel(fileStatus)}
         </span>
