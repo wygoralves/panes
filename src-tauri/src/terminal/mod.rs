@@ -14,7 +14,10 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::models::TerminalSessionDto;
+use crate::models::{
+    TerminalEnvSnapshotDto, TerminalRendererDiagnosticsDto, TerminalResizeSnapshotDto,
+    TerminalSessionDto,
+};
 
 #[derive(Default)]
 pub struct TerminalManager {
@@ -23,7 +26,15 @@ pub struct TerminalManager {
 
 struct TerminalSessionHandle {
     meta: TerminalSessionDto,
+    diagnostics: Mutex<TerminalSessionDiagnosticsState>,
     process: Mutex<TerminalProcess>,
+}
+
+#[derive(Debug, Clone)]
+struct TerminalSessionDiagnosticsState {
+    env_snapshot: TerminalEnvSnapshotDto,
+    last_resize: Option<TerminalResizeSnapshotDto>,
+    last_zero_pixel_warning_at_ms: Option<i64>,
 }
 
 struct TerminalProcess {
@@ -72,6 +83,18 @@ impl TerminalManager {
             .unwrap_or_default();
         out.sort_by(|a, b| a.created_at.cmp(&b.created_at));
         out
+    }
+
+    pub async fn renderer_diagnostics(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+    ) -> anyhow::Result<TerminalRendererDiagnosticsDto> {
+        let session = self
+            .get_session(workspace_id, session_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("terminal session not found: {session_id}"))?;
+        Ok(session.renderer_diagnostics())
     }
 
     pub async fn create_session(
@@ -302,6 +325,28 @@ impl TerminalManager {
 }
 
 impl TerminalSessionHandle {
+    fn renderer_diagnostics(&self) -> TerminalRendererDiagnosticsDto {
+        let (env_snapshot, last_resize) = match self
+            .diagnostics
+            .lock()
+            .map_err(|_| anyhow::anyhow!("terminal diagnostics lock poisoned"))
+        {
+            Ok(state) => (state.env_snapshot.clone(), state.last_resize.clone()),
+            Err(error) => {
+                log::warn!("failed reading terminal renderer diagnostics: {error}");
+                (TerminalEnvSnapshotDto::default(), None)
+            }
+        };
+
+        TerminalRendererDiagnosticsDto {
+            session_id: self.meta.id.clone(),
+            shell: self.meta.shell.clone(),
+            cwd: self.meta.cwd.clone(),
+            env_snapshot,
+            last_resize,
+        }
+    }
+
     fn write(&self, data: &str) -> anyhow::Result<()> {
         let mut process = self
             .process
@@ -353,7 +398,46 @@ impl TerminalSessionHandle {
                 pixel_width,
                 pixel_height,
             })
-            .context("failed resizing terminal pty")
+            .context("failed resizing terminal pty")?;
+        drop(process);
+
+        match self
+            .diagnostics
+            .lock()
+            .map_err(|_| anyhow::anyhow!("terminal diagnostics lock poisoned"))
+        {
+            Ok(mut state) => {
+                state.last_resize = Some(TerminalResizeSnapshotDto {
+                    cols: cols.max(1),
+                    rows: rows.max(1),
+                    pixel_width,
+                    pixel_height,
+                    recorded_at: Utc::now().to_rfc3339(),
+                });
+                if pixel_width == 0 || pixel_height == 0 {
+                    let now_ms = Utc::now().timestamp_millis();
+                    let should_warn = state
+                        .last_zero_pixel_warning_at_ms
+                        .map(|last| now_ms - last >= 5_000)
+                        .unwrap_or(true);
+                    if should_warn {
+                        log::warn!(
+                            "terminal resize reported zero pixel dimensions: session_id={}, cols={}, rows={}, pixel_width={}, pixel_height={}",
+                            self.meta.id,
+                            cols,
+                            rows,
+                            pixel_width,
+                            pixel_height
+                        );
+                        state.last_zero_pixel_warning_at_ms = Some(now_ms);
+                    }
+                }
+            }
+            Err(error) => {
+                log::warn!("failed updating terminal resize diagnostics: {error}");
+            }
+        }
+        Ok(())
     }
 
     fn wait_for_exit(&self) -> ExitPayload {
@@ -427,10 +511,7 @@ fn spawn_session(
     let shell = default_shell();
     let mut cmd = CommandBuilder::new(shell.clone());
     cmd.cwd(PathBuf::from(&cwd));
-    cmd.env("TERM", "xterm-256color");
-    cmd.env("COLORTERM", "truecolor");
-    cmd.env("TERM_PROGRAM", "Panes");
-    cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+    let env_snapshot = configure_terminal_env(&mut cmd);
     #[cfg(not(target_os = "windows"))]
     {
         cmd.arg("-l");
@@ -459,6 +540,11 @@ fn spawn_session(
             cwd,
             created_at: Utc::now().to_rfc3339(),
         },
+        diagnostics: Mutex::new(TerminalSessionDiagnosticsState {
+            env_snapshot,
+            last_resize: None,
+            last_zero_pixel_warning_at_ms: None,
+        }),
         process: Mutex::new(TerminalProcess {
             master: pair.master,
             writer,
@@ -478,6 +564,60 @@ fn default_shell() -> String {
     {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
     }
+}
+
+fn configure_terminal_env(cmd: &mut CommandBuilder) -> TerminalEnvSnapshotDto {
+    let term = Some("xterm-256color".to_string());
+    let colorterm = Some("truecolor".to_string());
+    let term_program = Some("Panes".to_string());
+    let term_program_version = Some(env!("CARGO_PKG_VERSION").to_string());
+    let lang = read_non_empty_env("LANG").or_else(|| Some("en_US.UTF-8".to_string()));
+    let lc_ctype = read_non_empty_env("LC_CTYPE").or_else(|| lang.clone());
+    let lc_all = read_non_empty_env("LC_ALL");
+    let path = read_non_empty_env("PATH");
+
+    if let Some(value) = term.as_deref() {
+        cmd.env("TERM", value);
+    }
+    if let Some(value) = colorterm.as_deref() {
+        cmd.env("COLORTERM", value);
+    }
+    if let Some(value) = term_program.as_deref() {
+        cmd.env("TERM_PROGRAM", value);
+    }
+    if let Some(value) = term_program_version.as_deref() {
+        cmd.env("TERM_PROGRAM_VERSION", value);
+    }
+    if let Some(value) = lang.as_deref() {
+        cmd.env("LANG", value);
+    }
+    if let Some(value) = lc_ctype.as_deref() {
+        cmd.env("LC_CTYPE", value);
+    }
+    if let Some(value) = lc_all.as_deref() {
+        cmd.env("LC_ALL", value);
+    }
+
+    TerminalEnvSnapshotDto {
+        term,
+        colorterm,
+        term_program,
+        term_program_version,
+        lang,
+        lc_all,
+        lc_ctype,
+        path,
+    }
+}
+
+fn read_non_empty_env(key: &str) -> Option<String> {
+    std::env::var(key).ok().and_then(|value| {
+        if value.trim().is_empty() {
+            None
+        } else {
+            Some(value)
+        }
+    })
 }
 
 fn emit_output(app: &AppHandle, workspace_id: &str, session_id: &str, data: String) {

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Columns2, Folder, Pencil, Plus, Rows2, SquareTerminal, Trash2, X } from "lucide-react";
+import { Columns2, Copy, Folder, Pencil, Plus, Rows2, SquareTerminal, Trash2, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useHarnessStore } from "../../stores/harnessStore";
+import { toast } from "../../stores/toastStore";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -11,7 +12,11 @@ import { ImageAddon } from "@xterm/addon-image";
 import "@xterm/xterm/css/xterm.css";
 import { ipc, listenTerminalExit, listenTerminalOutput, writeCommandToNewSession } from "../../lib/ipc";
 import { useTerminalStore, collectSessionIds } from "../../stores/terminalStore";
-import type { SplitNode, SplitContainer as SplitContainerType } from "../../types";
+import type {
+  SplitNode,
+  SplitContainer as SplitContainerType,
+  TerminalRendererDiagnostics,
+} from "../../types";
 
 interface TerminalPanelProps {
   workspaceId: string;
@@ -20,6 +25,45 @@ interface TerminalPanelProps {
 interface TerminalSize {
   cols: number;
   rows: number;
+}
+
+interface ImageAddonCapabilities {
+  enableSizeReports: boolean;
+  sixelSupport: boolean;
+  iipSupport: boolean;
+  storageLimit: number;
+}
+
+interface FrontendResizeSnapshot {
+  cols: number;
+  rows: number;
+  pixelWidth: number;
+  pixelHeight: number;
+  recordedAt: string;
+}
+
+interface FrontendRendererDiagnostics {
+  imageAddonInitAttempted: boolean;
+  imageAddonInitOk: boolean;
+  imageAddonInitError?: string;
+  imageAddonRuntimeErrorCount: number;
+  imageAddonRuntimeLastError?: string;
+  imageAddonCapabilities: ImageAddonCapabilities;
+  webglRequested: boolean;
+  webglActive: boolean;
+  webglUnsupported: boolean;
+  webglInitError?: string;
+  webglContextLossCount: number;
+  lastResize: FrontendResizeSnapshot | null;
+}
+
+interface RendererDiagnosticsExport {
+  capturedAt: string;
+  workspaceId: string;
+  sessionId: string;
+  backend: TerminalRendererDiagnostics;
+  frontend: FrontendRendererDiagnostics | null;
+  userAgent: string;
 }
 
 interface SessionTerminal {
@@ -36,6 +80,7 @@ interface SessionTerminal {
     chars: number;
     lastLogAt: number;
   };
+  rendererDiagnostics: FrontendRendererDiagnostics;
   webglCleanup?: () => void;
   dispose: () => void;
 }
@@ -47,6 +92,19 @@ const OUTPUT_FLUSH_DELAY_MS = 4;
 const OUTPUT_BATCH_CHAR_LIMIT = 65536;
 const TERMINAL_DEBUG =
   import.meta.env.DEV && import.meta.env.VITE_TERMINAL_DEBUG === "1";
+const IMAGE_ADDON_OPTIONS: ImageAddonCapabilities = {
+  enableSizeReports: true,
+  sixelSupport: true,
+  iipSupport: true,
+  storageLimit: 64,
+};
+const IMAGE_ADDON_ERROR_PATTERNS = [
+  "imageaddon",
+  "sixel",
+  "iip",
+  "image storage",
+  "canvas",
+];
 
 // Module-level cache — xterm instances survive component mount/unmount cycles.
 // This is what preserves terminal scrollback when switching workspaces.
@@ -75,11 +133,83 @@ function logTerminalDebug(
   console.debug(`[terminal] ${message}`);
 }
 
+function logTerminalWarning(
+  message: string,
+  details?: Record<string, string | number | boolean | undefined>,
+) {
+  if (details) {
+    console.warn(`[terminal] ${message}`, details);
+    return;
+  }
+  console.warn(`[terminal] ${message}`);
+}
+
+function errorToMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack ? `${error.message}\n${error.stack}` : error.message;
+  }
+  return String(error);
+}
+
+function isLikelyImageAddonError(error: unknown): boolean {
+  const message = errorToMessage(error).toLowerCase();
+  return IMAGE_ADDON_ERROR_PATTERNS.some((pattern) => message.includes(pattern));
+}
+
+function createRendererDiagnostics(): FrontendRendererDiagnostics {
+  return {
+    imageAddonInitAttempted: false,
+    imageAddonInitOk: false,
+    imageAddonRuntimeErrorCount: 0,
+    imageAddonCapabilities: { ...IMAGE_ADDON_OPTIONS },
+    webglRequested: false,
+    webglActive: false,
+    webglUnsupported: false,
+    webglContextLossCount: 0,
+    lastResize: null,
+  };
+}
+
+function cloneFrontendDiagnostics(
+  diagnostics: FrontendRendererDiagnostics | undefined,
+): FrontendRendererDiagnostics | null {
+  if (!diagnostics) {
+    return null;
+  }
+  return {
+    ...diagnostics,
+    imageAddonCapabilities: { ...diagnostics.imageAddonCapabilities },
+    lastResize: diagnostics.lastResize ? { ...diagnostics.lastResize } : null,
+  };
+}
+
+function recordImageAddonRuntimeError(
+  cacheKey: string,
+  session: SessionTerminal,
+  stage: string,
+  error: unknown,
+) {
+  const message = errorToMessage(error);
+  session.rendererDiagnostics.imageAddonRuntimeErrorCount += 1;
+  session.rendererDiagnostics.imageAddonRuntimeLastError = message;
+  logTerminalWarning("image-addon:runtime:error", {
+    cacheKey,
+    stage,
+    count: session.rendererDiagnostics.imageAddonRuntimeErrorCount,
+    reason: message,
+  });
+}
+
 function setupWebglRenderer(
   cacheKey: string,
-  terminal: Terminal
+  terminal: Terminal,
+  diagnostics: FrontendRendererDiagnostics,
 ): (() => void) | null {
+  diagnostics.webglRequested = true;
   if (typeof WebGL2RenderingContext === "undefined") {
+    diagnostics.webglUnsupported = true;
+    diagnostics.webglActive = false;
+    logTerminalWarning("webgl-unsupported", { cacheKey });
     logTerminalDebug("webgl-unsupported", { cacheKey });
     return null;
   }
@@ -87,17 +217,31 @@ function setupWebglRenderer(
     const webglAddon = new WebglAddon();
     terminal.loadAddon(webglAddon);
     const contextLossDisposable = webglAddon.onContextLoss(() => {
+      diagnostics.webglContextLossCount += 1;
+      diagnostics.webglActive = false;
+      logTerminalWarning("webgl-context-loss", {
+        cacheKey,
+        count: diagnostics.webglContextLossCount,
+      });
       logTerminalDebug("webgl-context-loss", { cacheKey });
     });
+    diagnostics.webglActive = true;
     logTerminalDebug("webgl-enabled", { cacheKey });
     return () => {
       contextLossDisposable.dispose();
       webglAddon.dispose();
+      diagnostics.webglActive = false;
     };
   } catch (error) {
+    diagnostics.webglInitError = errorToMessage(error);
+    diagnostics.webglActive = false;
+    logTerminalWarning("webgl-disabled", {
+      cacheKey,
+      reason: diagnostics.webglInitError,
+    });
     logTerminalDebug("webgl-disabled", {
       cacheKey,
-      reason: error instanceof Error ? error.message : String(error),
+      reason: diagnostics.webglInitError,
     });
     return null;
   }
@@ -156,6 +300,13 @@ function sendResizeIfNeeded(
   }
   session.lastResizeSent = next;
   const { cellWidth, cellHeight } = getCellPixelSize(session.terminal);
+  session.rendererDiagnostics.lastResize = {
+    cols: next.cols,
+    rows: next.rows,
+    pixelWidth: cellWidth * next.cols,
+    pixelHeight: cellHeight * next.rows,
+    recordedAt: new Date().toISOString(),
+  };
   void ipc
     .terminalResize(
       workspaceId,
@@ -208,16 +359,28 @@ function flushOutputQueue(cacheKey: string) {
   }
 
   session.flushInProgress = true;
-  session.terminal.write(payload, () => {
-    const latest = cachedTerminals.get(cacheKey);
-    if (!latest) {
-      return;
+  try {
+    session.terminal.write(payload, () => {
+      const latest = cachedTerminals.get(cacheKey);
+      if (!latest) {
+        return;
+      }
+      latest.flushInProgress = false;
+      if (latest.outputQueue.length > 0) {
+        scheduleOutputFlush(cacheKey, latest, 0);
+      }
+    });
+  } catch (error) {
+    session.flushInProgress = false;
+    if (isLikelyImageAddonError(error)) {
+      recordImageAddonRuntimeError(cacheKey, session, "terminal.write", error);
+    } else {
+      logTerminalWarning("terminal-write-error", {
+        cacheKey,
+        reason: errorToMessage(error),
+      });
     }
-    latest.flushInProgress = false;
-    if (latest.outputQueue.length > 0) {
-      scheduleOutputFlush(cacheKey, latest, 0);
-    }
-  });
+  }
 }
 
 function scheduleOutputFlush(
@@ -772,13 +935,22 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     terminal.loadAddon(unicode11);
     terminal.unicode.activeVersion = "11";
 
-    const imageAddon = new ImageAddon({
-      enableSizeReports: true,
-      sixelSupport: true,
-      iipSupport: true,
-      storageLimit: 64,
-    });
-    terminal.loadAddon(imageAddon);
+    const rendererDiagnostics = createRendererDiagnostics();
+    rendererDiagnostics.imageAddonInitAttempted = true;
+    logTerminalDebug("image-addon:init:start", { cacheKey });
+    try {
+      const imageAddon = new ImageAddon(IMAGE_ADDON_OPTIONS);
+      terminal.loadAddon(imageAddon);
+      rendererDiagnostics.imageAddonInitOk = true;
+      logTerminalDebug("image-addon:init:ok", { cacheKey });
+    } catch (error) {
+      rendererDiagnostics.imageAddonInitOk = false;
+      rendererDiagnostics.imageAddonInitError = errorToMessage(error);
+      logTerminalWarning("image-addon:init:error", {
+        cacheKey,
+        reason: rendererDiagnostics.imageAddonInitError,
+      });
+    }
 
     terminal.open(container);
     terminal.attachCustomKeyEventHandler((event) => {
@@ -792,7 +964,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       if (event.ctrlKey && k === "t") return false;
       return true;
     });
-    const webglCleanup = setupWebglRenderer(cacheKey, terminal) ?? undefined;
+    const webglCleanup = setupWebglRenderer(cacheKey, terminal, rendererDiagnostics) ?? undefined;
 
     const writeDisposable = terminal.onData((data) => {
       void ipc.terminalWrite(workspaceId, sessionId, data).catch(() => undefined);
@@ -823,6 +995,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         chars: 0,
         lastLogAt: Date.now(),
       },
+      rendererDiagnostics,
       webglCleanup,
       dispose: () => {
         if (disposed) {
@@ -1039,6 +1212,64 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     [focusedSessionId, splitSession, workspaceId],
   );
 
+  const resolveSessionIdForDiagnostics = useCallback((groupId?: string): string | null => {
+    if (groupId) {
+      const group = groups.find((g) => g.id === groupId);
+      if (!group) {
+        return focusedSessionId;
+      }
+      const groupSessionIds = collectSessionIds(group.root);
+      if (focusedSessionId && groupSessionIds.includes(focusedSessionId)) {
+        return focusedSessionId;
+      }
+      return groupSessionIds[groupSessionIds.length - 1] ?? null;
+    }
+
+    if (focusedSessionId) {
+      return focusedSessionId;
+    }
+
+    const activeGroup = groups.find((group) => group.id === activeGroupId);
+    if (!activeGroup) {
+      return null;
+    }
+    const groupSessionIds = collectSessionIds(activeGroup.root);
+    return groupSessionIds[groupSessionIds.length - 1] ?? null;
+  }, [activeGroupId, focusedSessionId, groups]);
+
+  const copyRendererDiagnostics = useCallback(async (groupId?: string) => {
+    const targetSessionId = resolveSessionIdForDiagnostics(groupId);
+    if (!targetSessionId) {
+      toast.info("No terminal session available for diagnostics");
+      return;
+    }
+
+    if (typeof navigator.clipboard?.writeText !== "function") {
+      toast.error("Clipboard API is unavailable in this environment");
+      return;
+    }
+
+    try {
+      const backend = await ipc.terminalGetRendererDiagnostics(workspaceId, targetSessionId);
+      const cacheKey = terminalCacheKey(workspaceId, targetSessionId);
+      const frontend = cloneFrontendDiagnostics(
+        cachedTerminals.get(cacheKey)?.rendererDiagnostics,
+      );
+      const payload: RendererDiagnosticsExport = {
+        capturedAt: new Date().toISOString(),
+        workspaceId,
+        sessionId: targetSessionId,
+        backend,
+        frontend,
+        userAgent: navigator.userAgent,
+      };
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      toast.success("Renderer diagnostics copied");
+    } catch (error) {
+      toast.error(`Failed to copy diagnostics: ${String(error)}`);
+    }
+  }, [resolveSessionIdForDiagnostics, workspaceId]);
+
   return (
     <div className="terminal-panel-root">
       <div className="terminal-tabs-bar">
@@ -1143,6 +1374,14 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
               >
                 <Rows2 size={13} />
               </button>
+              <button
+                type="button"
+                className="terminal-add-btn"
+                onClick={() => void copyRendererDiagnostics()}
+                title="Copy renderer diagnostics"
+              >
+                <Copy size={13} />
+              </button>
             </>
           )}
         </div>
@@ -1235,6 +1474,17 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
           >
             <Trash2 size={12} />
             Close
+          </button>
+          <button
+            type="button"
+            className="dropdown-item"
+            onClick={() => {
+              setCtxMenu(null);
+              void copyRendererDiagnostics(ctxMenu.groupId);
+            }}
+          >
+            <Copy size={12} />
+            Copy diagnostics
           </button>
         </div>,
         document.body,

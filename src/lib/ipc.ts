@@ -24,6 +24,7 @@ import type {
   StreamEvent,
   TerminalExitEvent,
   TerminalOutputEvent,
+  TerminalRendererDiagnostics,
   TerminalSession,
   Thread,
   TrustLevel,
@@ -193,6 +194,11 @@ export const ipc = {
     invoke<void>("terminal_close_workspace_sessions", { workspaceId }),
   terminalListSessions: (workspaceId: string) =>
     invoke<TerminalSession[]>("terminal_list_sessions", { workspaceId }),
+  terminalGetRendererDiagnostics: (workspaceId: string, sessionId: string) =>
+    invoke<TerminalRendererDiagnostics>("terminal_get_renderer_diagnostics", {
+      workspaceId,
+      sessionId,
+    }),
   checkDependencies: () => invoke<DependencyReport>("check_dependencies"),
   installDependency: (dependency: string, method: string) =>
     invoke<InstallResult>("install_dependency", { dependency, method }),
