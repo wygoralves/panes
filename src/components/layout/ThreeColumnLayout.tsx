@@ -1,6 +1,7 @@
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { Sidebar } from "../sidebar/Sidebar";
 import { ChatPanel } from "../chat/ChatPanel";
+import { HarnessPanel } from "../onboarding/HarnessPanel";
 import { GitPanel } from "../git/GitPanel";
 import { useUiStore } from "../../stores/uiStore";
 
@@ -8,6 +9,7 @@ export function ThreeColumnLayout() {
   const showSidebar = useUiStore((state) => state.showSidebar);
   const sidebarPinned = useUiStore((state) => state.sidebarPinned);
   const showGitPanel = useUiStore((state) => state.showGitPanel);
+  const activeView = useUiStore((state) => state.activeView);
 
   const sidebarVisible = showSidebar && sidebarPinned;
   const centerDefaultSize = sidebarVisible && showGitPanel ? 56 : sidebarVisible || showGitPanel ? 74 : 100;
@@ -31,7 +33,7 @@ export function ThreeColumnLayout() {
 
         <Panel defaultSize={centerDefaultSize} minSize={35}>
           <div className="panel" style={{ height: "100%" }}>
-            <ChatPanel />
+            {activeView === "harnesses" ? <HarnessPanel /> : <ChatPanel />}
           </div>
         </Panel>
 

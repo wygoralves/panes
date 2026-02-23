@@ -5,6 +5,7 @@ import { EngineHealthBanner } from "./components/onboarding/EngineHealthBanner";
 import { SetupWizard } from "./components/onboarding/SetupWizard";
 import { ToastContainer } from "./components/shared/ToastContainer";
 import { useUpdateStore } from "./stores/updateStore";
+import { useHarnessStore } from "./stores/harnessStore";
 import { listenThreadUpdated, listenMenuAction } from "./lib/ipc";
 import { useWorkspaceStore } from "./stores/workspaceStore";
 import { useEngineStore } from "./stores/engineStore";
@@ -33,6 +34,7 @@ export function App() {
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces);
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const loadEngines = useEngineStore((s) => s.load);
+  const scanHarnesses = useHarnessStore((s) => s.scan);
   const refreshAllThreads = useThreadStore((s) => s.refreshAllThreads);
   const refreshThreads = useThreadStore((s) => s.refreshThreads);
   const searchOpen = useUiStore((s) => s.searchOpen);
@@ -42,7 +44,8 @@ export function App() {
   useEffect(() => {
     void loadWorkspaces();
     void loadEngines();
-  }, [loadWorkspaces, loadEngines]);
+    void scanHarnesses();
+  }, [loadWorkspaces, loadEngines, scanHarnesses]);
 
   useEffect(() => {
     void refreshAllThreads(workspaces.map((workspace) => workspace.id));

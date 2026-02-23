@@ -1,5 +1,19 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.9.0...vnull) (2026-02-23)
+
+### Features
+
+* add Codex as native harness with featured card styling ([e0193f7](https://github.com/wygoralves/panes/commit/e0193f77494998a979633858fa1b99691c422a9a))
+* add Gemini CLI harness and landing page integrations section ([21f2ed8](https://github.com/wygoralves/panes/commit/21f2ed85fc45be3b7fe5b98a223a71f2680b58b3)), closes [#4285f4](https://github.com/wygoralves/panes/issues/4285f4)
+* add harness installation panel for CLI tools ([e09bed7](https://github.com/wygoralves/panes/commit/e09bed73ef84bd811bdbe26fbac91d0d845837fb))
+* polish and conclude agent harnesses experience ([a0b59ca](https://github.com/wygoralves/panes/commit/a0b59ca646b148dc06de589b4c68c13a0280c5cc))
+
+### Bug Fixes
+
+* fix factory droid and kiro places in lp and adjust harness logos ([3c65e68](https://github.com/wygoralves/panes/commit/3c65e681511caeb4f98553010711c08b63c8e0f9))
+* several fixes to the harness scanning and initialization ([f191912](https://github.com/wygoralves/panes/commit/f19191239ab4bd9adc3923b10560cb1c5885e19c))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.8.0...vnull) (2026-02-23)
 
 ### Features
