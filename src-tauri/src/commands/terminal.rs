@@ -1,6 +1,10 @@
 use tauri::State;
 
-use crate::{db, models::TerminalSessionDto, state::AppState};
+use crate::{
+    db,
+    models::{TerminalRendererDiagnosticsDto, TerminalSessionDto},
+    state::AppState,
+};
 
 async fn run_db<T, F>(db: crate::db::Database, operation: F) -> Result<T, String>
 where
@@ -114,6 +118,19 @@ pub async fn terminal_list_sessions(
     workspace_id: String,
 ) -> Result<Vec<TerminalSessionDto>, String> {
     Ok(state.terminals.list_sessions(&workspace_id).await)
+}
+
+#[tauri::command]
+pub async fn terminal_get_renderer_diagnostics(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    session_id: String,
+) -> Result<TerminalRendererDiagnosticsDto, String> {
+    state
+        .terminals
+        .renderer_diagnostics(&workspace_id, &session_id)
+        .await
+        .map_err(err_to_string)
 }
 
 async fn workspace_root_path(state: &AppState, workspace_id: &str) -> Result<String, String> {

@@ -344,6 +344,39 @@ pub struct TerminalSessionDto {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalEnvSnapshotDto {
+    pub term: Option<String>,
+    pub colorterm: Option<String>,
+    pub term_program: Option<String>,
+    pub term_program_version: Option<String>,
+    pub lang: Option<String>,
+    pub lc_all: Option<String>,
+    pub lc_ctype: Option<String>,
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalResizeSnapshotDto {
+    pub cols: u16,
+    pub rows: u16,
+    pub pixel_width: u16,
+    pub pixel_height: u16,
+    pub recorded_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalRendererDiagnosticsDto {
+    pub session_id: String,
+    pub shell: String,
+    pub cwd: String,
+    pub env_snapshot: TerminalEnvSnapshotDto,
+    pub last_resize: Option<TerminalResizeSnapshotDto>,
+}
+
 // ── Setup / Onboarding ──────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

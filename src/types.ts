@@ -337,6 +337,33 @@ export interface TerminalExitEvent {
   signal: number | null;
 }
 
+export interface TerminalEnvSnapshot {
+  term: string | null;
+  colorterm: string | null;
+  termProgram: string | null;
+  termProgramVersion: string | null;
+  lang: string | null;
+  lcAll: string | null;
+  lcCtype: string | null;
+  path: string | null;
+}
+
+export interface TerminalResizeSnapshot {
+  cols: number;
+  rows: number;
+  pixelWidth: number;
+  pixelHeight: number;
+  recordedAt: string;
+}
+
+export interface TerminalRendererDiagnostics {
+  sessionId: string;
+  shell: string;
+  cwd: string;
+  envSnapshot: TerminalEnvSnapshot;
+  lastResize: TerminalResizeSnapshot | null;
+}
+
 // ── Terminal Split Layout ───────────────────────────────────────────
 
 export type SplitDirection = "horizontal" | "vertical";
