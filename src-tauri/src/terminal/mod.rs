@@ -567,10 +567,26 @@ fn default_shell() -> String {
 }
 
 fn configure_terminal_env(cmd: &mut CommandBuilder) -> TerminalEnvSnapshotDto {
-    let term = Some("xterm-256color".to_string());
-    let colorterm = Some("truecolor".to_string());
-    let term_program = Some("Panes".to_string());
-    let term_program_version = Some(env!("CARGO_PKG_VERSION").to_string());
+    let inherited_term = read_non_empty_env("TERM");
+    let term = match inherited_term.as_deref() {
+        Some("dumb") | None => Some("xterm-256color".to_string()),
+        Some(value) => Some(value.to_string()),
+    };
+    let colorterm = read_non_empty_env("COLORTERM").or_else(|| Some("truecolor".to_string()));
+
+    // Keep upstream TERM_PROGRAM when available (e.g. iTerm/WezTerm),
+    // otherwise use a broadly-recognized fallback for terminal capability probes.
+    let inherited_term_program = read_non_empty_env("TERM_PROGRAM");
+    let term_program = match inherited_term_program.as_deref() {
+        Some(value) if value.eq_ignore_ascii_case("panes") => Some("vscode".to_string()),
+        Some(value) => Some(value.to_string()),
+        None => Some("vscode".to_string()),
+    };
+    let term_program_version = if matches!(term_program.as_deref(), Some("vscode")) {
+        None
+    } else {
+        read_non_empty_env("TERM_PROGRAM_VERSION").or_else(|| Some(env!("CARGO_PKG_VERSION").to_string()))
+    };
     let lang = read_non_empty_env("LANG").or_else(|| Some("en_US.UTF-8".to_string()));
     let lc_ctype = read_non_empty_env("LC_CTYPE").or_else(|| lang.clone());
     let lc_all = read_non_empty_env("LC_ALL");
@@ -588,6 +604,8 @@ fn configure_terminal_env(cmd: &mut CommandBuilder) -> TerminalEnvSnapshotDto {
     if let Some(value) = term_program_version.as_deref() {
         cmd.env("TERM_PROGRAM_VERSION", value);
     }
+    cmd.env("PANES_TERM_PROGRAM", "Panes");
+    cmd.env("PANES_TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
     if let Some(value) = lang.as_deref() {
         cmd.env("LANG", value);
     }
