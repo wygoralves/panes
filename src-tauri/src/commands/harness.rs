@@ -130,18 +130,18 @@ pub async fn check_harnesses() -> Result<HarnessReport, String> {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn install_harness(
-    app: AppHandle,
-    harness_id: String,
-) -> Result<InstallResult, String> {
+pub async fn install_harness(app: AppHandle, harness_id: String) -> Result<InstallResult, String> {
     let def = HARNESSES
         .iter()
         .find(|h| h.id == harness_id)
         .ok_or_else(|| format!("unknown harness: {harness_id}"))?;
 
-    let install_cmd = def
-        .install_command
-        .ok_or_else(|| format!("{} must be installed manually from {}", def.name, def.website))?;
+    let install_cmd = def.install_command.ok_or_else(|| {
+        format!(
+            "{} must be installed manually from {}",
+            def.name, def.website
+        )
+    })?;
 
     let npm = if install_cmd == "npm" {
         resolve_npm_path().await
