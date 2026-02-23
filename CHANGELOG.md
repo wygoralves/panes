@@ -1,5 +1,15 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.11.4...vnull) (2026-02-23)
+
+### Features
+
+* add harness identification for terminal tabs ([9b102c5](https://github.com/wygoralves/panes/commit/9b102c5acd7e45778020132378bdeb5d4d17304b))
+
+### Bug Fixes
+
+* add more diagnostics for handling more complex tui aplications ([937e89e](https://github.com/wygoralves/panes/commit/937e89e61d7d6c916af6009a3ea7556c3ec3c900))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.11.3...vnull) (2026-02-23)
 
 ### Bug Fixes
