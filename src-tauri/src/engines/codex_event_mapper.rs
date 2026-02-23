@@ -676,7 +676,7 @@ fn merge_rate_limits_snapshot(target: &mut UsageLimitsSnapshot, payload: &Value)
     changed
 }
 
-fn select_rate_limit_snapshot<'a>(payload: &'a Value) -> Option<&'a Value> {
+fn select_rate_limit_snapshot(payload: &Value) -> Option<&Value> {
     if let Some(by_limit_id) = payload
         .get("rateLimitsByLimitId")
         .and_then(Value::as_object)
@@ -750,7 +750,7 @@ fn select_rate_limit_window(
 }
 
 fn normalize_epoch_millis(value: i64) -> i64 {
-    if value >= 0 && value < 10_000_000_000 {
+    if (0..10_000_000_000).contains(&value) {
         value.saturating_mul(1000)
     } else {
         value
