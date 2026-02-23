@@ -418,6 +418,7 @@ export interface TerminalGroup {
   id: string;
   root: SplitNode;
   name: string;
+  harnessId?: string;
 }
 
 // ── Setup / Onboarding ──────────────────────────────────────────────
