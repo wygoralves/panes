@@ -870,6 +870,7 @@ fn same_output_stream(left: &OutputStream, right: &OutputStream) -> bool {
     )
 }
 
+#[allow(clippy::result_large_err)]
 fn try_coalesce_stream_events(
     previous: EngineEvent,
     next: EngineEvent,

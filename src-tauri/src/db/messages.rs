@@ -205,6 +205,7 @@ pub fn search_messages(
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn insert_message(
     db: &Database,
     thread_id: &str,

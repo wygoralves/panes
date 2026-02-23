@@ -121,7 +121,7 @@ impl EngineManager {
     pub fn new() -> Self {
         Self {
             codex: Arc::new(CodexEngine::default()),
-            claude: Arc::new(ClaudeSidecarEngine::default()),
+            claude: Arc::new(ClaudeSidecarEngine),
         }
     }
 

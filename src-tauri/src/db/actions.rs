@@ -6,6 +6,7 @@ use crate::engines::events::{ActionResult, ActionType};
 
 use super::Database;
 
+#[allow(clippy::too_many_arguments)]
 pub fn insert_action_started(
     db: &Database,
     action_id: &str,
