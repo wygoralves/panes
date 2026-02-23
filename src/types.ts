@@ -382,6 +382,56 @@ export interface InstallProgressEvent {
   finished: boolean;
 }
 
+// ── LLM Context Files ───────────────────────────────────────────────
+
+export type LLMProvider =
+  | "claude"
+  | "codex"
+  | "copilot"
+  | "cursor"
+  | "gemini"
+  | "cline"
+  | "windsurf"
+  | "generic";
+
+export interface LLMContextFile {
+  /** Unique id: repoId + relativePath */
+  id: string;
+  repoId: string;
+  repoName: string;
+  repoPath: string;
+  /** Path relative to the repo root */
+  relativePath: string;
+  fileName: string;
+  provider: LLMProvider;
+  /** Human-readable label, e.g. "Claude Code" */
+  providerLabel: string;
+  /** Whether the file existed on disk when last scanned */
+  exists: boolean;
+  /** File content (loaded lazily) */
+  content?: string;
+  /** Size in bytes, if known */
+  sizeBytes?: number;
+}
+
+// ── Skills ──────────────────────────────────────────────────────────
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  /** The instruction content of the skill */
+  content: string;
+  /** Which workspace IDs this skill is shared with. Empty = all. */
+  workspaceIds: string[];
+  /** If true, the skill applies to all workspaces */
+  global: boolean;
+  /** Optional provider hint for the skill */
+  provider?: LLMProvider;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ── Stream Events ───────────────────────────────────────────────────
 
 export type TurnCompletionStatus = "completed" | "interrupted" | "failed";

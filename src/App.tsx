@@ -4,6 +4,8 @@ import { SearchModal } from "./components/chat/SearchModal";
 import { EngineHealthBanner } from "./components/onboarding/EngineHealthBanner";
 import { SetupWizard } from "./components/onboarding/SetupWizard";
 import { ToastContainer } from "./components/shared/ToastContainer";
+import { LLMContextPanel } from "./components/shared/LLMContextPanel";
+import { SkillsManager } from "./components/shared/SkillsManager";
 import { useUpdateStore } from "./stores/updateStore";
 import { listenThreadUpdated, listenMenuAction } from "./lib/ipc";
 import { useWorkspaceStore } from "./stores/workspaceStore";
@@ -264,6 +266,8 @@ export function App() {
       <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
       <SetupWizard />
       <ToastContainer />
+      <LLMContextPanel />
+      <SkillsManager />
     </div>
   );
 }

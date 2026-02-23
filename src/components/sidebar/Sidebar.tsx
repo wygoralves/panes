@@ -13,6 +13,8 @@ import {
   Settings,
   Pin,
   PinOff,
+  Sparkles,
+  Zap,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -20,6 +22,8 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useSetupStore } from "../../stores/setupStore";
 import { useUpdateStore } from "../../stores/updateStore";
+import { useContextStore } from "../../stores/contextStore";
+import { useSkillStore } from "../../stores/skillStore";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { UpdateDialog } from "../onboarding/UpdateDialog";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
@@ -98,6 +102,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const bindChatThread = useChatStore((s) => s.setActiveThread);
   const updateStatus = useUpdateStore((s) => s.status);
   const updateSnoozed = useUpdateStore((s) => s.snoozed);
+  const openContextPanel = useContextStore((s) => s.openPanel);
+  const openSkillsPanel = useSkillStore((s) => s.openPanel);
   const hasUpdate = updateStatus === "available" && !updateSnoozed;
 
   const projects = useMemo<ProjectGroup[]>(
@@ -674,6 +680,32 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             >
               Engine setup
             </button>
+            <div style={{ height: 1, margin: "4px 0", background: "var(--border)" }} />
+            <button
+              type="button"
+              className="git-action-menu-item"
+              style={{ display: "flex", alignItems: "center", gap: 8 }}
+              onClick={() => {
+                closeSettingsMenu();
+                openContextPanel();
+              }}
+            >
+              <Sparkles size={13} style={{ color: "var(--accent)", opacity: 0.7 }} />
+              <span>LLM Context Files</span>
+            </button>
+            <button
+              type="button"
+              className="git-action-menu-item"
+              style={{ display: "flex", alignItems: "center", gap: 8 }}
+              onClick={() => {
+                closeSettingsMenu();
+                openSkillsPanel();
+              }}
+            >
+              <Zap size={13} style={{ color: "var(--accent)", opacity: 0.7 }} />
+              <span>Skills</span>
+            </button>
+            <div style={{ height: 1, margin: "4px 0", background: "var(--border)" }} />
             <button
               type="button"
               className="git-action-menu-item"
