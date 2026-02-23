@@ -9,12 +9,12 @@ import {
   SquareTerminal,
   MessageSquare,
   FilePen,
-  Paperclip,
+  Plus,
   X,
   FileText,
   Image,
   File,
-  MapPin,
+  ListChecks,
   Clock,
   Zap,
 } from "lucide-react";
@@ -327,7 +327,7 @@ function MessageRowView({
             )}
             {userPlanMode && (
               <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 6, fontSize: 10, color: "var(--text-3)" }}>
-                <MapPin size={10} />
+                <ListChecks size={10} />
                 <span>Plan mode</span>
               </div>
             )}
@@ -2009,7 +2009,7 @@ export function ChatPanel() {
             {/* Plan mode indicator banner */}
             {planMode && (
               <div className="chat-plan-mode-banner">
-                <MapPin size={12} />
+                <ListChecks size={12} />
                 <span>Plan Mode — The agent will plan before executing</span>
               </div>
             )}
@@ -2055,6 +2055,12 @@ export function ChatPanel() {
                   }
                   void onSubmit(e);
                 }
+                if (e.shiftKey && e.key === "Tab") {
+                  e.preventDefault();
+                  if (activeWorkspaceId) {
+                    setPlanMode((prev) => !prev);
+                  }
+                }
               }}
               placeholder={planMode ? "Describe what you want to plan..." : "Ask for follow-up changes"}
               disabled={!activeWorkspaceId}
@@ -2080,6 +2086,34 @@ export function ChatPanel() {
                 gap: 6,
               }}
             >
+              {/* Attach file button */}
+              <button
+                type="button"
+                className="chat-toolbar-btn"
+                onClick={() => void handleAddAttachment()}
+                disabled={!activeWorkspaceId}
+                title="Attach files"
+              >
+                <Plus size={12} />
+                {attachments.length > 0 && (
+                  <span className="chat-toolbar-badge">{attachments.length}</span>
+                )}
+              </button>
+
+              {/* Plan mode toggle */}
+              <button
+                type="button"
+                className={`chat-toolbar-btn chat-toolbar-btn-bordered ${planMode ? "chat-toolbar-btn-active" : ""}`}
+                onClick={() => setPlanMode((prev) => !prev)}
+                disabled={!activeWorkspaceId}
+                title={planMode ? "Disable plan mode (Shift+Tab)" : "Enable plan mode (Shift+Tab)"}
+              >
+                <ListChecks size={12} />
+                <span style={{ fontSize: 11 }}>Plan</span>
+              </button>
+
+              <div className="chat-toolbar-divider" />
+
               {/* Engine + Model selector */}
               <Dropdown
                 value={selectedModelId ?? ""}
@@ -2115,34 +2149,6 @@ export function ChatPanel() {
                   }))}
                 />
               )}
-
-              <div className="chat-toolbar-divider" />
-
-              {/* Attach file button */}
-              <button
-                type="button"
-                className="chat-toolbar-btn"
-                onClick={() => void handleAddAttachment()}
-                disabled={!activeWorkspaceId}
-                title="Attach files"
-              >
-                <Paperclip size={12} />
-                {attachments.length > 0 && (
-                  <span className="chat-toolbar-badge">{attachments.length}</span>
-                )}
-              </button>
-
-              {/* Plan mode toggle */}
-              <button
-                type="button"
-                className={`chat-toolbar-btn ${planMode ? "chat-toolbar-btn-active" : ""}`}
-                onClick={() => setPlanMode((prev) => !prev)}
-                disabled={!activeWorkspaceId}
-                title={planMode ? "Disable plan mode" : "Enable plan mode"}
-              >
-                <MapPin size={12} />
-                <span style={{ fontSize: 11 }}>Plan</span>
-              </button>
 
               <div className="chat-toolbar-divider" />
 
@@ -2259,101 +2265,67 @@ export function ChatPanel() {
             </div>
           </div>
 
-          {/* Context usage bar */}
-          {messages.length > 0 && selectedEngineId === "codex" && (
-            usageLimits ? (
-              <div className="chat-context-bar">
-                <div className="chat-context-section">
-                  <Zap size={10} />
-                  <span>Context</span>
-                  <div className="chat-context-progress">
-                    <div
-                      className="chat-context-progress-fill"
-                      style={{ width: `${usageLimits.contextPercent}%` }}
-                    />
+          {/* Bottom status bar with context usage */}
+          <div className="chat-status-bar">
+            {messages.length > 0 && selectedEngineId === "codex" && (
+              usageLimits ? (
+                <>
+                  <div className="chat-context-section">
+                    <Zap size={10} />
+                    <span>Context</span>
+                    <div className="chat-context-progress">
+                      <div
+                        className="chat-context-progress-fill"
+                        style={{ width: `${usageLimits.contextPercent}%` }}
+                      />
+                    </div>
+                    <span className="chat-context-percent">{usageLimits.contextPercent}%</span>
                   </div>
-                  <span className="chat-context-percent">{usageLimits.contextPercent}%</span>
-                </div>
 
-                <span className="chat-context-divider">&middot;</span>
+                  <span className="chat-context-divider">&middot;</span>
 
-                <div className="chat-context-section">
-                  <Clock size={10} />
-                  <span>5h</span>
-                  <div className="chat-context-progress">
-                    <div
-                      className="chat-context-progress-fill chat-context-progress-fill-5h"
-                      style={{ width: `${usageLimits.windowFiveHourPercent}%` }}
-                    />
+                  <div className="chat-context-section">
+                    <Clock size={10} />
+                    <span>5h</span>
+                    <div className="chat-context-progress">
+                      <div
+                        className="chat-context-progress-fill chat-context-progress-fill-5h"
+                        style={{ width: `${usageLimits.windowFiveHourPercent}%` }}
+                      />
+                    </div>
+                    <span className="chat-context-percent">{usageLimits.windowFiveHourPercent}%</span>
+                    {usageLimits.windowFiveHourResetsAt && (
+                      <span className="chat-context-reset">
+                        resets {formatResetTime(usageLimits.windowFiveHourResetsAt)}
+                      </span>
+                    )}
                   </div>
-                  <span className="chat-context-percent">{usageLimits.windowFiveHourPercent}%</span>
-                  {usageLimits.windowFiveHourResetsAt && (
-                    <span className="chat-context-reset">
-                      resets {formatResetTime(usageLimits.windowFiveHourResetsAt)}
-                    </span>
-                  )}
-                </div>
 
-                <span className="chat-context-divider">&middot;</span>
+                  <span className="chat-context-divider">&middot;</span>
 
-                <div className="chat-context-section">
-                  <Clock size={10} />
-                  <span>Weekly</span>
-                  <div className="chat-context-progress">
-                    <div
-                      className="chat-context-progress-fill chat-context-progress-fill-weekly"
-                      style={{ width: `${usageLimits.windowWeeklyPercent}%` }}
-                    />
+                  <div className="chat-context-section">
+                    <Clock size={10} />
+                    <span>Weekly</span>
+                    <div className="chat-context-progress">
+                      <div
+                        className="chat-context-progress-fill chat-context-progress-fill-weekly"
+                        style={{ width: `${usageLimits.windowWeeklyPercent}%` }}
+                      />
+                    </div>
+                    <span className="chat-context-percent">{usageLimits.windowWeeklyPercent}%</span>
+                    {usageLimits.windowWeeklyResetsAt && (
+                      <span className="chat-context-reset">
+                        resets {formatResetTime(usageLimits.windowWeeklyResetsAt)}
+                      </span>
+                    )}
                   </div>
-                  <span className="chat-context-percent">{usageLimits.windowWeeklyPercent}%</span>
-                  {usageLimits.windowWeeklyResetsAt && (
-                    <span className="chat-context-reset">
-                      resets {formatResetTime(usageLimits.windowWeeklyResetsAt)}
-                    </span>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="chat-context-bar">
+                </>
+              ) : (
                 <div className="chat-context-section">
                   <Clock size={10} />
                   <span>Usage limits unavailable from server</span>
                 </div>
-              </div>
-            )
-          )}
-
-          {/* Bottom status bar */}
-          <div className="chat-status-bar">
-            {/* Local indicator */}
-            <span className="chat-status-item">
-              <Monitor size={11} />
-              Local
-            </span>
-
-            {repos.length > 0 && (
-              <>
-                <span style={{ color: "var(--text-3)", opacity: 0.4 }}>&middot;</span>
-
-                {/* Permissions */}
-                <span
-                  className="chat-status-item"
-                  style={{
-                    color: (activeRepo?.trustLevel ?? workspaceTrustLevel) === "trusted"
-                      ? "var(--success)"
-                      : (activeRepo?.trustLevel ?? workspaceTrustLevel) === "restricted"
-                        ? "var(--danger)"
-                        : undefined,
-                  }}
-                >
-                  <Shield size={11} />
-                  {(activeRepo?.trustLevel ?? workspaceTrustLevel) === "trusted"
-                    ? "Trusted (network on)"
-                    : (activeRepo?.trustLevel ?? workspaceTrustLevel) === "restricted"
-                      ? "Restricted (trusted cmds only)"
-                      : "Ask-on-request (network off)"}
-                </span>
-              </>
+              )
             )}
 
             <div style={{ flex: 1 }} />
