@@ -1,5 +1,12 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.8.0...vnull) (2026-02-23)
+
+### Features
+
+* add view changed files in editor ([91735b6](https://github.com/wygoralves/panes/commit/91735b6819d5419b8584013a2e50f4cfc6fa82ec))
+* widen support for more complex application in the tui ([5d28c20](https://github.com/wygoralves/panes/commit/5d28c204d001222fc871bb3c751d114b5f1a48d0))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.7.0...vnull) (2026-02-22)
 
 ### Features
