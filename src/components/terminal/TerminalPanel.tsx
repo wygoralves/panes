@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { useHarnessStore } from "../../stores/harnessStore";
 import { toast } from "../../stores/toastStore";
 import { getHarnessIcon } from "../shared/HarnessLogos";
+import { copyTextToClipboard } from "../../lib/clipboard";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -1244,11 +1245,6 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       return;
     }
 
-    if (typeof navigator.clipboard?.writeText !== "function") {
-      toast.error("Clipboard API is unavailable in this environment");
-      return;
-    }
-
     try {
       const backend = await ipc.terminalGetRendererDiagnostics(workspaceId, targetSessionId);
       const cacheKey = terminalCacheKey(workspaceId, targetSessionId);
@@ -1263,7 +1259,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         frontend,
         userAgent: navigator.userAgent,
       };
-      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      await copyTextToClipboard(JSON.stringify(payload, null, 2));
       toast.success("Renderer diagnostics copied");
     } catch (error) {
       toast.error(`Failed to copy diagnostics: ${String(error)}`);
