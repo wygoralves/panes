@@ -5,6 +5,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { ImageAddon } from "@xterm/addon-image";
 import "@xterm/xterm/css/xterm.css";
 import { ipc, listenTerminalExit, listenTerminalOutput } from "../../lib/ipc";
 import { useTerminalStore, collectSessionIds } from "../../stores/terminalStore";
@@ -40,7 +41,7 @@ interface SessionTerminal {
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 36;
 const FIT_DEBOUNCE_MS = 80;
-const OUTPUT_FLUSH_DELAY_MS = 16;
+const OUTPUT_FLUSH_DELAY_MS = 4;
 const OUTPUT_BATCH_CHAR_LIMIT = 65536;
 const TERMINAL_DEBUG =
   import.meta.env.DEV && import.meta.env.VITE_TERMINAL_DEBUG === "1";
@@ -129,6 +130,17 @@ function clearSessionTimers(session: SessionTerminal) {
   }
 }
 
+function getCellPixelSize(terminal: Terminal): { cellWidth: number; cellHeight: number } {
+  const screenEl = terminal.element?.querySelector(".xterm-screen");
+  if (screenEl instanceof HTMLElement && terminal.cols > 0 && terminal.rows > 0) {
+    return {
+      cellWidth: Math.floor(screenEl.clientWidth / terminal.cols),
+      cellHeight: Math.floor(screenEl.clientHeight / terminal.rows),
+    };
+  }
+  return { cellWidth: 0, cellHeight: 0 };
+}
+
 function sendResizeIfNeeded(
   workspaceId: string,
   sessionId: string,
@@ -141,8 +153,16 @@ function sendResizeIfNeeded(
     return;
   }
   session.lastResizeSent = next;
+  const { cellWidth, cellHeight } = getCellPixelSize(session.terminal);
   void ipc
-    .terminalResize(workspaceId, sessionId, next.cols, next.rows)
+    .terminalResize(
+      workspaceId,
+      sessionId,
+      next.cols,
+      next.rows,
+      cellWidth * next.cols,
+      cellHeight * next.rows,
+    )
     .catch(() => undefined);
 }
 
@@ -750,6 +770,14 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     terminal.loadAddon(unicode11);
     terminal.unicode.activeVersion = "11";
 
+    const imageAddon = new ImageAddon({
+      enableSizeReports: true,
+      sixelSupport: true,
+      iipSupport: true,
+      storageLimit: 64,
+    });
+    terminal.loadAddon(imageAddon);
+
     terminal.open(container);
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
@@ -758,13 +786,19 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         return false;
       }
       const k = event.key.toLowerCase();
-      if ((event.metaKey || event.ctrlKey) && (k === "d" || k === "t")) return false;
+      if (event.metaKey && (k === "d" || k === "t")) return false;
+      if (event.ctrlKey && k === "t") return false;
       return true;
     });
     const webglCleanup = setupWebglRenderer(cacheKey, terminal) ?? undefined;
 
     const writeDisposable = terminal.onData((data) => {
       void ipc.terminalWrite(workspaceId, sessionId, data).catch(() => undefined);
+    });
+
+    const binaryDisposable = terminal.onBinary((data) => {
+      const bytes = Array.from(data, (c) => c.charCodeAt(0));
+      void ipc.terminalWriteBytes(workspaceId, sessionId, bytes).catch(() => undefined);
     });
 
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
@@ -797,11 +831,17 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         entry.webglCleanup?.();
         entry.webglCleanup = undefined;
         writeDisposable.dispose();
+        binaryDisposable.dispose();
         resizeDisposable.dispose();
         terminal.dispose();
       },
     };
     cachedTerminals.set(cacheKey, entry);
+
+    // Synchronous fit — ensures PTY gets correct size before first shell output
+    fitAddon.fit();
+    sendResizeIfNeeded(workspaceId, sessionId, entry, terminal.cols, terminal.rows);
+
     drainPendingOutput(cacheKey, entry);
     scheduleTerminalFit(workspaceId, sessionId, 0);
   }, [workspaceId]);

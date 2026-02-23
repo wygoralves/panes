@@ -44,16 +44,32 @@ pub async fn terminal_write(
 }
 
 #[tauri::command]
+pub async fn terminal_write_bytes(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    session_id: String,
+    data: Vec<u8>,
+) -> Result<(), String> {
+    state
+        .terminals
+        .write_bytes(&workspace_id, &session_id, data)
+        .await
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
 pub async fn terminal_resize(
     state: State<'_, AppState>,
     workspace_id: String,
     session_id: String,
     cols: u16,
     rows: u16,
+    pixel_width: u16,
+    pixel_height: u16,
 ) -> Result<(), String> {
     state
         .terminals
-        .resize(&workspace_id, &session_id, cols.max(1), rows.max(1))
+        .resize(&workspace_id, &session_id, cols.max(1), rows.max(1), pixel_width, pixel_height)
         .await
         .map_err(err_to_string)
 }

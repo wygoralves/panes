@@ -155,8 +155,24 @@ export const ipc = {
     invoke<TerminalSession>("terminal_create_session", { workspaceId, cols, rows }),
   terminalWrite: (workspaceId: string, sessionId: string, data: string) =>
     invoke<void>("terminal_write", { workspaceId, sessionId, data }),
-  terminalResize: (workspaceId: string, sessionId: string, cols: number, rows: number) =>
-    invoke<void>("terminal_resize", { workspaceId, sessionId, cols, rows }),
+  terminalWriteBytes: (workspaceId: string, sessionId: string, data: number[]) =>
+    invoke<void>("terminal_write_bytes", { workspaceId, sessionId, data }),
+  terminalResize: (
+    workspaceId: string,
+    sessionId: string,
+    cols: number,
+    rows: number,
+    pixelWidth: number = 0,
+    pixelHeight: number = 0,
+  ) =>
+    invoke<void>("terminal_resize", {
+      workspaceId,
+      sessionId,
+      cols,
+      rows,
+      pixelWidth,
+      pixelHeight,
+    }),
   terminalCloseSession: (workspaceId: string, sessionId: string) =>
     invoke<void>("terminal_close_session", { workspaceId, sessionId }),
   terminalCloseWorkspaceSessions: (workspaceId: string) =>

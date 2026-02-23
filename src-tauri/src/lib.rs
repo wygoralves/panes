@@ -135,6 +135,7 @@ pub fn run() {
             commands::threads::delete_thread,
             commands::terminal::terminal_create_session,
             commands::terminal::terminal_write,
+            commands::terminal::terminal_write_bytes,
             commands::terminal::terminal_resize,
             commands::terminal::terminal_close_session,
             commands::terminal::terminal_close_workspace_sessions,

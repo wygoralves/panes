@@ -121,18 +121,36 @@ impl TerminalManager {
         Ok(())
     }
 
+    pub async fn write_bytes(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+        data: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        let session = self
+            .get_session(workspace_id, session_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("terminal session not found: {session_id}"))?;
+        tokio::task::spawn_blocking(move || session.write_raw(&data))
+            .await
+            .context("terminal write_bytes task failed")??;
+        Ok(())
+    }
+
     pub async fn resize(
         &self,
         workspace_id: &str,
         session_id: &str,
         cols: u16,
         rows: u16,
+        pixel_width: u16,
+        pixel_height: u16,
     ) -> anyhow::Result<()> {
         let session = self
             .get_session(workspace_id, session_id)
             .await
             .ok_or_else(|| anyhow::anyhow!("terminal session not found: {session_id}"))?;
-        tokio::task::spawn_blocking(move || session.resize(cols, rows))
+        tokio::task::spawn_blocking(move || session.resize(cols, rows, pixel_width, pixel_height))
             .await
             .context("terminal resize task failed")??;
         Ok(())
@@ -300,7 +318,23 @@ impl TerminalSessionHandle {
         Ok(())
     }
 
-    fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
+    fn write_raw(&self, data: &[u8]) -> anyhow::Result<()> {
+        let mut process = self
+            .process
+            .lock()
+            .map_err(|_| anyhow::anyhow!("terminal process lock poisoned"))?;
+        process
+            .writer
+            .write_all(data)
+            .context("failed writing bytes to terminal stdin")?;
+        process
+            .writer
+            .flush()
+            .context("failed flushing terminal stdin")?;
+        Ok(())
+    }
+
+    fn resize(&self, cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) -> anyhow::Result<()> {
         let process = self
             .process
             .lock()
@@ -310,8 +344,8 @@ impl TerminalSessionHandle {
             .resize(PtySize {
                 rows: rows.max(1),
                 cols: cols.max(1),
-                pixel_width: 0,
-                pixel_height: 0,
+                pixel_width,
+                pixel_height,
             })
             .context("failed resizing terminal pty")
     }
@@ -389,6 +423,8 @@ fn spawn_session(
     cmd.cwd(PathBuf::from(&cwd));
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    cmd.env("TERM_PROGRAM", "Panes");
+    cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
     #[cfg(not(target_os = "windows"))]
     {
         cmd.arg("-l");
