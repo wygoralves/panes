@@ -6,7 +6,7 @@ use crate::{
     git::repo,
     models::{
         FileTreeEntryDto, FileTreePageDto, GitBranchPageDto, GitBranchScopeDto, GitCommitPageDto,
-        GitStashDto, GitStatusDto,
+        GitStashDto, GitStatusDto, GitTagDto,
     },
     state::AppState,
 };
@@ -282,6 +282,116 @@ pub async fn get_file_tree_page(
     let limit = limit.unwrap_or(2000);
     tokio::task::spawn_blocking(move || {
         repo::get_file_tree_page(&repo_path, offset, limit).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn drop_git_stash(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    stash_index: usize,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        repo::drop_git_stash(&repo_path, stash_index).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn merge_branch(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    branch_name: String,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        repo::merge_branch(&repo_path, &branch_name).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn revert_commit(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    commit_hash: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        repo::revert_commit(&repo_path, &commit_hash).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn cherry_pick_commit(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    commit_hash: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        repo::cherry_pick_commit(&repo_path, &commit_hash).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn reset_to_commit(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    commit_hash: String,
+    mode: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        repo::reset_to_commit(&repo_path, &commit_hash, &mode).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn list_git_tags(
+    _state: State<'_, AppState>,
+    repo_path: String,
+) -> Result<Vec<GitTagDto>, String> {
+    tokio::task::spawn_blocking(move || repo::list_git_tags(&repo_path).map_err(err_to_string))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn create_git_tag(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    tag_name: String,
+    commit_hash: Option<String>,
+    message: Option<String>,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        repo::create_git_tag(
+            &repo_path,
+            &tag_name,
+            commit_hash.as_deref(),
+            message.as_deref(),
+        )
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_git_tag(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    tag_name: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        repo::delete_git_tag(&repo_path, &tag_name).map_err(err_to_string)
     })
     .await
     .map_err(|error| error.to_string())?

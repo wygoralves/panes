@@ -1,8 +1,20 @@
-import { useEffect, useState, useMemo } from "react";
-import { GitCommitHorizontal, Loader2, Search, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { createPortal } from "react-dom";
+import {
+  Copy,
+  GitCommitHorizontal,
+  Loader2,
+  MoreHorizontal,
+  RotateCcw,
+  Search,
+  Undo2,
+  X,
+} from "lucide-react";
+import { ConfirmDialog } from "../shared/ConfirmDialog";
+import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import { DiffPanel } from "./GitChangesView";
-import type { Repo } from "../../types";
+import type { GitResetMode, Repo } from "../../types";
 
 interface Props {
   repo: Repo;
@@ -20,6 +32,20 @@ function formatDate(raw?: string): string {
   });
 }
 
+interface CommitActionMenuState {
+  commitHash: string;
+  shortHash: string;
+  subject: string;
+  top: number;
+  left: number;
+}
+
+interface ResetPromptState {
+  commitHash: string;
+  shortHash: string;
+  mode: GitResetMode;
+}
+
 export function GitCommitsView({ repo }: Props) {
   const {
     commits,
@@ -31,10 +57,46 @@ export function GitCommitsView({ repo }: Props) {
     commitDiff,
     selectCommit,
     clearCommitSelection,
+    revertCommit,
+    cherryPickCommit,
+    resetToCommit,
   } = useGitStore();
 
   const [loadingMore, setLoadingMore] = useState(false);
   const [filterQuery, setFilterQuery] = useState("");
+  const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const [actionMenu, setActionMenu] = useState<CommitActionMenuState | null>(null);
+  const [revertPrompt, setRevertPrompt] = useState<{ hash: string; shortHash: string; subject: string } | null>(null);
+  const [cherryPickPrompt, setCherryPickPrompt] = useState<{ hash: string; shortHash: string; subject: string } | null>(null);
+  const [resetPrompt, setResetPrompt] = useState<ResetPromptState | null>(null);
+  const actionMenuRef = useRef<HTMLDivElement>(null);
+  const actionTriggerRef = useRef<HTMLButtonElement>(null);
+
+  const closeMenu = useCallback(() => setActionMenu(null), []);
+
+  useEffect(() => {
+    if (!actionMenu) return;
+
+    function onPointerDown(e: PointerEvent) {
+      const target = e.target as Node;
+      if (
+        actionMenuRef.current?.contains(target) ||
+        actionTriggerRef.current?.contains(target)
+      ) return;
+      closeMenu();
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") closeMenu();
+    }
+
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [actionMenu, closeMenu]);
 
   useEffect(() => {
     void loadCommits(repo.path, false);
@@ -65,6 +127,143 @@ export function GitCommitsView({ repo }: Props) {
       setLoadingMore(false);
     }
   }
+
+  function openCommitMenu(commit: { hash: string; shortHash: string; subject: string }, e: React.MouseEvent<HTMLButtonElement>) {
+    e.stopPropagation();
+    if (actionMenu?.commitHash === commit.hash) {
+      closeMenu();
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    actionTriggerRef.current = e.currentTarget;
+    setActionMenu({
+      commitHash: commit.hash,
+      shortHash: commit.shortHash,
+      subject: commit.subject,
+      top: rect.bottom + 4,
+      left: rect.right - 180,
+    });
+  }
+
+  async function onRevert(hash: string, shortHash: string) {
+    if (loadingAction !== null) return;
+    setRevertPrompt(null);
+    setLoadingAction(`revert:${hash}`);
+    try {
+      await revertCommit(repo.path, hash);
+      toast.success(`Reverted commit ${shortHash}`);
+    } catch {
+      // error is set in store
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function onCherryPick(hash: string, shortHash: string) {
+    if (loadingAction !== null) return;
+    setCherryPickPrompt(null);
+    setLoadingAction(`cherry-pick:${hash}`);
+    try {
+      await cherryPickCommit(repo.path, hash);
+      toast.success(`Cherry-picked commit ${shortHash}`);
+    } catch {
+      // error is set in store
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function onReset(hash: string, shortHash: string, mode: GitResetMode) {
+    if (loadingAction !== null) return;
+    setResetPrompt(null);
+    setLoadingAction(`reset:${hash}`);
+    try {
+      await resetToCommit(repo.path, hash, mode);
+      toast.success(`Reset (${mode}) to ${shortHash}`);
+    } catch {
+      // error is set in store
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  const commitActionMenuPortal = actionMenu
+    ? createPortal(
+        <div
+          ref={actionMenuRef}
+          className="git-action-menu"
+          style={{
+            position: "fixed",
+            top: actionMenu.top,
+            left: actionMenu.left,
+            minWidth: 180,
+          }}
+        >
+          <button
+            type="button"
+            className="git-action-menu-item"
+            disabled={loadingAction !== null}
+            onClick={() => {
+              closeMenu();
+              setRevertPrompt({ hash: actionMenu.commitHash, shortHash: actionMenu.shortHash, subject: actionMenu.subject });
+            }}
+          >
+            <Undo2 size={13} />
+            Revert commit
+          </button>
+          <button
+            type="button"
+            className="git-action-menu-item"
+            disabled={loadingAction !== null}
+            onClick={() => {
+              closeMenu();
+              setCherryPickPrompt({ hash: actionMenu.commitHash, shortHash: actionMenu.shortHash, subject: actionMenu.subject });
+            }}
+          >
+            <Copy size={13} />
+            Cherry-pick
+          </button>
+          <div className="git-action-menu-separator" />
+          <button
+            type="button"
+            className="git-action-menu-item"
+            disabled={loadingAction !== null}
+            onClick={() => {
+              closeMenu();
+              setResetPrompt({ commitHash: actionMenu.commitHash, shortHash: actionMenu.shortHash, mode: "soft" });
+            }}
+          >
+            <RotateCcw size={13} />
+            Reset soft
+          </button>
+          <button
+            type="button"
+            className="git-action-menu-item"
+            disabled={loadingAction !== null}
+            onClick={() => {
+              closeMenu();
+              setResetPrompt({ commitHash: actionMenu.commitHash, shortHash: actionMenu.shortHash, mode: "mixed" });
+            }}
+          >
+            <RotateCcw size={13} />
+            Reset mixed
+          </button>
+          <button
+            type="button"
+            className="git-action-menu-item git-action-menu-item-danger"
+            disabled={loadingAction !== null}
+            onClick={() => {
+              closeMenu();
+              setResetPrompt({ commitHash: actionMenu.commitHash, shortHash: actionMenu.shortHash, mode: "hard" });
+            }}
+          >
+            <RotateCcw size={13} />
+            Reset hard
+          </button>
+        </div>,
+        document.body,
+      )
+    : null;
 
   return (
     <>
@@ -154,6 +353,16 @@ export function GitCommitsView({ repo }: Props) {
                     >
                       {entry.subject}
                     </span>
+                    <div style={{ flex: 1 }} />
+                    <button
+                      type="button"
+                      className="git-toolbar-btn git-commit-action-btn"
+                      style={{ padding: 3, flexShrink: 0 }}
+                      onClick={(e) => openCommitMenu(entry, e)}
+                      title="Commit actions"
+                    >
+                      <MoreHorizontal size={14} />
+                    </button>
                   </div>
                   <div className="git-commit-meta">
                     <span>{entry.authorName}</span>
@@ -237,6 +446,49 @@ export function GitCommitsView({ repo }: Props) {
           </div>
         )}
       </div>
+
+      {commitActionMenuPortal}
+
+      <ConfirmDialog
+        open={revertPrompt !== null}
+        title="Revert commit"
+        message={revertPrompt ? `Create a new commit that undoes the changes from ${revertPrompt.shortHash} "${revertPrompt.subject}"?` : ""}
+        confirmLabel="Revert"
+        onConfirm={() => {
+          if (revertPrompt) void onRevert(revertPrompt.hash, revertPrompt.shortHash);
+        }}
+        onCancel={() => setRevertPrompt(null)}
+      />
+
+      <ConfirmDialog
+        open={cherryPickPrompt !== null}
+        title="Cherry-pick commit"
+        message={cherryPickPrompt ? `Apply changes from ${cherryPickPrompt.shortHash} "${cherryPickPrompt.subject}" to the current branch?` : ""}
+        confirmLabel="Cherry-pick"
+        onConfirm={() => {
+          if (cherryPickPrompt) void onCherryPick(cherryPickPrompt.hash, cherryPickPrompt.shortHash);
+        }}
+        onCancel={() => setCherryPickPrompt(null)}
+      />
+
+      <ConfirmDialog
+        open={resetPrompt !== null}
+        title={`Reset ${resetPrompt?.mode ?? ""}`}
+        message={
+          resetPrompt
+            ? resetPrompt.mode === "hard"
+              ? `Reset to ${resetPrompt.shortHash}? All uncommitted changes will be permanently lost. This cannot be undone.`
+              : resetPrompt.mode === "soft"
+                ? `Soft reset to ${resetPrompt.shortHash}? Changes from later commits will be kept in the staging area.`
+                : `Mixed reset to ${resetPrompt.shortHash}? Changes from later commits will be kept as unstaged changes.`
+            : ""
+        }
+        confirmLabel={resetPrompt?.mode === "hard" ? "Reset hard" : "Reset"}
+        onConfirm={() => {
+          if (resetPrompt) void onReset(resetPrompt.commitHash, resetPrompt.shortHash, resetPrompt.mode);
+        }}
+        onCancel={() => setResetPrompt(null)}
+      />
     </>
   );
 }

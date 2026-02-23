@@ -9,7 +9,7 @@ use git2::{Repository, Status, StatusOptions};
 
 use crate::models::{
     FileTreeEntryDto, FileTreePageDto, GitBranchDto, GitBranchPageDto, GitBranchScopeDto,
-    GitCommitDto, GitCommitPageDto, GitFileStatusDto, GitStashDto, GitStatusDto,
+    GitCommitDto, GitCommitPageDto, GitFileStatusDto, GitStashDto, GitStatusDto, GitTagDto,
 };
 
 use super::cli_fallback::run_git;
@@ -503,6 +503,119 @@ pub fn get_commit_diff(repo_path: &str, commit_hash: &str) -> anyhow::Result<Str
         "invalid commit hash"
     );
     run_git(repo_path, &["diff-tree", "-p", commit_hash])
+}
+
+pub fn drop_git_stash(repo_path: &str, stash_index: usize) -> anyhow::Result<()> {
+    let stash_ref = format!("stash@{{{stash_index}}}");
+    run_git(repo_path, &["stash", "drop", stash_ref.as_str()]).context("failed to drop stash")?;
+    Ok(())
+}
+
+pub fn merge_branch(repo_path: &str, branch_name: &str) -> anyhow::Result<String> {
+    let output = run_git(repo_path, &["merge", branch_name])
+        .context("failed to merge branch")?;
+    Ok(output)
+}
+
+pub fn revert_commit(repo_path: &str, commit_hash: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !commit_hash.is_empty() && commit_hash.chars().all(|c| c.is_ascii_hexdigit()),
+        "invalid commit hash"
+    );
+    run_git(repo_path, &["revert", "--no-edit", commit_hash])
+        .context("failed to revert commit")?;
+    Ok(())
+}
+
+pub fn cherry_pick_commit(repo_path: &str, commit_hash: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !commit_hash.is_empty() && commit_hash.chars().all(|c| c.is_ascii_hexdigit()),
+        "invalid commit hash"
+    );
+    run_git(repo_path, &["cherry-pick", commit_hash])
+        .context("failed to cherry-pick commit")?;
+    Ok(())
+}
+
+pub fn reset_to_commit(repo_path: &str, commit_hash: &str, mode: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !commit_hash.is_empty() && commit_hash.chars().all(|c| c.is_ascii_hexdigit()),
+        "invalid commit hash"
+    );
+    let mode_flag = match mode {
+        "soft" => "--soft",
+        "hard" => "--hard",
+        _ => "--mixed",
+    };
+    run_git(repo_path, &["reset", mode_flag, commit_hash])
+        .context("failed to reset to commit")?;
+    Ok(())
+}
+
+pub fn list_git_tags(repo_path: &str) -> anyhow::Result<Vec<GitTagDto>> {
+    let format = format!(
+        "%(refname:short){f}%(objectname:short){f}%(creatordate:iso-strict){f}%(subject){r}",
+        f = GIT_FIELD_SEPARATOR,
+        r = GIT_RECORD_SEPARATOR
+    );
+    let format_arg = format!("--format={format}");
+    let sort_arg = "--sort=-creatordate";
+    let output = run_git(
+        repo_path,
+        &["tag", "--list", sort_arg, format_arg.as_str()],
+    )
+    .context("failed to list git tags")?;
+
+    let mut entries = Vec::new();
+    for record in output.split(GIT_RECORD_SEPARATOR) {
+        let trimmed = record.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let fields: Vec<&str> = trimmed.split(GIT_FIELD_SEPARATOR).collect();
+        if fields.len() < 4 {
+            continue;
+        }
+
+        let name = fields[0].trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+
+        entries.push(GitTagDto {
+            name,
+            commit_hash: fields[1].trim().to_string(),
+            created_at: non_empty_string(fields[2]),
+            message: non_empty_string(fields[3]),
+        });
+    }
+
+    Ok(entries)
+}
+
+pub fn create_git_tag(
+    repo_path: &str,
+    tag_name: &str,
+    commit_hash: Option<&str>,
+    message: Option<&str>,
+) -> anyhow::Result<()> {
+    let mut args = vec!["tag"];
+    if let Some(msg) = message.filter(|m| !m.trim().is_empty()) {
+        args.extend(["-a", tag_name, "-m", msg]);
+    } else {
+        args.push(tag_name);
+    }
+    if let Some(hash) = commit_hash.filter(|h| !h.trim().is_empty()) {
+        args.push(hash);
+    }
+    run_git(repo_path, &args).context("failed to create git tag")?;
+    Ok(())
+}
+
+pub fn delete_git_tag(repo_path: &str, tag_name: &str) -> anyhow::Result<()> {
+    run_git(repo_path, &["tag", "-d", tag_name]).context("failed to delete git tag")?;
+    Ok(())
 }
 
 pub fn get_file_tree(repo_path: &str) -> anyhow::Result<Vec<FileTreeEntryDto>> {

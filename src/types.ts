@@ -285,6 +285,15 @@ export interface GitStash {
   createdAt?: string;
 }
 
+export interface GitTag {
+  name: string;
+  commitHash: string;
+  createdAt?: string;
+  message?: string;
+}
+
+export type GitResetMode = "soft" | "mixed" | "hard";
+
 export interface FileTreeEntry {
   path: string;
   isDir: boolean;

@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
-import { Archive, Loader2, Package, Search, X } from "lucide-react";
+import { Archive, Loader2, Package, Search, Trash2, X } from "lucide-react";
+import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import type { Repo } from "../../types";
@@ -22,11 +23,12 @@ function formatDate(raw?: string): string {
 }
 
 export function GitStashView({ repo, onError }: Props) {
-  const { status, stashes, loadStashes, pushStash, applyStash, popStash } = useGitStore();
+  const { status, stashes, loadStashes, pushStash, applyStash, popStash, dropStash } = useGitStore();
 
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
   const [stashMessage, setStashMessage] = useState("");
+  const [dropPrompt, setDropPrompt] = useState<{ index: number; name: string } | null>(null);
 
   useEffect(() => {
     void loadStashes(repo.path);
@@ -90,6 +92,21 @@ export function GitStashView({ repo, onError }: Props) {
       onError(String(e));
     } finally {
       setLoadingKey(null);
+    }
+  }
+
+  async function onDrop(index: number) {
+    if (loadingKey !== null) return;
+    setLoadingKey(`drop:${index}`);
+    try {
+      onError(undefined);
+      await dropStash(repo.path, index);
+      toast.success("Stash dropped");
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setLoadingKey(null);
+      setDropPrompt(null);
     }
   }
 
@@ -180,7 +197,7 @@ export function GitStashView({ repo, onError }: Props) {
           <p className="git-empty-inline">No matching stashes</p>
         ) : (
           filteredStashes.map((entry) => {
-            const isLoading = loadingKey === `apply:${entry.index}` || loadingKey === `pop:${entry.index}`;
+            const isLoading = loadingKey === `apply:${entry.index}` || loadingKey === `pop:${entry.index}` || loadingKey === `drop:${entry.index}`;
 
             return (
               <div key={entry.index} className="git-stash-row">
@@ -262,12 +279,37 @@ export function GitStashView({ repo, onError }: Props) {
                       "Pop"
                     )}
                   </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost git-btn-danger"
+                    style={{ padding: "3px 6px", fontSize: 11 }}
+                    disabled={loadingKey !== null}
+                    onClick={() => setDropPrompt({ index: entry.index, name: entry.name })}
+                    title="Drop stash"
+                  >
+                    {loadingKey === `drop:${entry.index}` ? (
+                      <Loader2 size={11} className="git-spin" />
+                    ) : (
+                      <Trash2 size={11} />
+                    )}
+                  </button>
                 </div>
               </div>
             );
           })
         )}
       </div>
+
+      <ConfirmDialog
+        open={dropPrompt !== null}
+        title="Drop stash"
+        message={dropPrompt ? `Drop stash@{${dropPrompt.index}}? This cannot be undone.` : ""}
+        confirmLabel="Drop"
+        onConfirm={() => {
+          if (dropPrompt) void onDrop(dropPrompt.index);
+        }}
+        onCancel={() => setDropPrompt(null)}
+      />
     </div>
   );
 }

@@ -12,6 +12,7 @@ import {
   GitBranch as GitBranchIcon,
   GitCommitHorizontal,
   Archive,
+  Tag,
   MoreHorizontal,
 } from "lucide-react";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -24,6 +25,7 @@ import { GitChangesView } from "./GitChangesView";
 import { GitBranchesView } from "./GitBranchesView";
 import { GitCommitsView } from "./GitCommitsView";
 import { GitStashView } from "./GitStashView";
+import { GitTagsView } from "./GitTagsView";
 import { GitFilesView } from "./GitFilesView";
 
 const VIEW_OPTIONS = [
@@ -31,6 +33,7 @@ const VIEW_OPTIONS = [
   { value: "branches", label: "Branches", icon: <GitBranchIcon size={13} /> },
   { value: "commits", label: "Commits", icon: <GitCommitHorizontal size={13} /> },
   { value: "stash", label: "Stash", icon: <Archive size={13} /> },
+  { value: "tags", label: "Tags", icon: <Tag size={13} /> },
   { value: "files", label: "Files", icon: <FolderTree size={13} /> },
 ];
 const GIT_WATCHER_REFRESH_DEBOUNCE_MS = 550;
@@ -378,6 +381,9 @@ export function GitPanel() {
           {activeView === "commits" && <GitCommitsView repo={activeRepo} />}
           {activeView === "stash" && (
             <GitStashView repo={activeRepo} onError={setLocalError} />
+          )}
+          {activeView === "tags" && (
+            <GitTagsView repo={activeRepo} onError={setLocalError} />
           )}
           {activeView === "files" && <GitFilesView repo={activeRepo} />}
         </>

@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { Plus, X, MoreHorizontal, GitBranch, GitBranchPlus, Pencil, Trash2, Loader2, Search } from "lucide-react";
+import { Plus, X, MoreHorizontal, GitBranch, GitBranchPlus, GitMerge, Pencil, Trash2, Loader2, Search } from "lucide-react";
+import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -34,11 +35,13 @@ export function GitBranchesView({ repo, onError }: Props) {
     branchScope,
     setBranchScope,
     branches,
+    status,
     loadBranches,
     checkoutBranch,
     createBranch,
     renameBranch,
     deleteBranch,
+    mergeBranch,
     drafts,
     setBranchNameDraft,
     pushBranchHistory,
@@ -60,6 +63,7 @@ export function GitBranchesView({ repo, onError }: Props) {
   const [renamingBranch, setRenamingBranch] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+  const [mergePrompt, setMergePrompt] = useState<string | null>(null);
   const [actionMenu, setActionMenu] = useState<ActionMenuState | null>(null);
   const newBranchInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -213,6 +217,21 @@ export function GitBranchesView({ repo, onError }: Props) {
     }
   }
 
+  async function onMergeBranch(branchName: string) {
+    if (loadingKey !== null) return;
+    setMergePrompt(null);
+    setLoadingKey(`merge:${branchName}`);
+    try {
+      onError(undefined);
+      await mergeBranch(repo.path, branchName);
+      toast.success(`Merged ${branchName} into ${status?.branch ?? "current branch"}`);
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setLoadingKey(null);
+    }
+  }
+
   const menuBranch = actionMenu
     ? branches.find((b) => b.name === actionMenu.branchName)
     : null;
@@ -241,6 +260,20 @@ export function GitBranchesView({ repo, onError }: Props) {
               >
                 <GitBranchPlus size={13} />
                 Checkout
+              </button>
+            )}
+            {!menuBranch.isCurrent && (
+              <button
+                type="button"
+                className="git-action-menu-item"
+                disabled={loadingKey !== null}
+                onClick={() => {
+                  closeMenu();
+                  setMergePrompt(menuBranch.name);
+                }}
+              >
+                <GitMerge size={13} />
+                Merge into current
               </button>
             )}
             {!menuBranch.isRemote && renamingBranch !== menuBranch.name && (
@@ -544,6 +577,17 @@ export function GitBranchesView({ repo, onError }: Props) {
       </div>
 
       {actionMenuPortal}
+
+      <ConfirmDialog
+        open={mergePrompt !== null}
+        title="Merge branch"
+        message={mergePrompt ? `Merge "${mergePrompt}" into "${status?.branch ?? "current branch"}"?` : ""}
+        confirmLabel="Merge"
+        onConfirm={() => {
+          if (mergePrompt) void onMergeBranch(mergePrompt);
+        }}
+        onCancel={() => setMergePrompt(null)}
+      />
     </>
   );
 }

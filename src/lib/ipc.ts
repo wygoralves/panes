@@ -8,7 +8,9 @@ import type {
   GitBranchPage,
   GitBranchScope,
   GitCommitPage,
+  GitResetMode,
   GitStash,
+  GitTag,
   EngineHealth,
   EngineInfo,
   FileTreeEntry,
@@ -161,6 +163,22 @@ export const ipc = {
     invoke<void>("apply_git_stash", { repoPath, stashIndex }),
   popGitStash: (repoPath: string, stashIndex: number) =>
     invoke<void>("pop_git_stash", { repoPath, stashIndex }),
+  dropGitStash: (repoPath: string, stashIndex: number) =>
+    invoke<void>("drop_git_stash", { repoPath, stashIndex }),
+  mergeBranch: (repoPath: string, branchName: string) =>
+    invoke<string>("merge_branch", { repoPath, branchName }),
+  revertCommit: (repoPath: string, commitHash: string) =>
+    invoke<void>("revert_commit", { repoPath, commitHash }),
+  cherryPickCommit: (repoPath: string, commitHash: string) =>
+    invoke<void>("cherry_pick_commit", { repoPath, commitHash }),
+  resetToCommit: (repoPath: string, commitHash: string, mode: GitResetMode) =>
+    invoke<void>("reset_to_commit", { repoPath, commitHash, mode }),
+  listGitTags: (repoPath: string) =>
+    invoke<GitTag[]>("list_git_tags", { repoPath }),
+  createGitTag: (repoPath: string, tagName: string, commitHash?: string | null, message?: string | null) =>
+    invoke<void>("create_git_tag", { repoPath, tagName, commitHash: commitHash ?? null, message: message ?? null }),
+  deleteGitTag: (repoPath: string, tagName: string) =>
+    invoke<void>("delete_git_tag", { repoPath, tagName }),
   readFile: (repoPath: string, filePath: string) =>
     invoke<ReadFileResult>("read_file", { repoPath, filePath }),
   writeFile: (repoPath: string, filePath: string, content: string) =>

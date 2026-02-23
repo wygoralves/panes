@@ -1143,6 +1143,48 @@ button, input, textarea, select {
 }
 .git-stash-row:hover .git-stash-actions { opacity: 1; }
 
+/* Tag rows */
+.git-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.git-tag-row:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+.git-tag-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+  flex-shrink: 0;
+}
+.git-tag-row:hover .git-tag-actions { opacity: 1; }
+
+/* Danger button variant */
+.git-btn-danger:hover {
+  color: var(--danger) !important;
+}
+
+/* Commit action button (shown on hover) */
+.git-commit-action-btn {
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.git-commit-row:hover .git-commit-action-btn {
+  opacity: 1;
+}
+
+/* Action menu separator */
+.git-action-menu-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border);
+}
+
 /* Branch action menu */
 .git-action-menu {
   min-width: 140px;

@@ -3,8 +3,10 @@ import type {
   GitBranch,
   GitBranchScope,
   GitCommit,
+  GitResetMode,
   GitStash,
   GitStatus,
+  GitTag,
 } from "../types";
 import { ipc } from "../lib/ipc";
 import { recordPerfMetric } from "../lib/perfTelemetry";
@@ -68,7 +70,7 @@ function addToHistory(history: string[], entry: string): string[] {
   return [trimmed, ...deduped].slice(0, DRAFT_HISTORY_MAX);
 }
 
-export type GitPanelView = "changes" | "branches" | "commits" | "stash" | "files";
+export type GitPanelView = "changes" | "branches" | "commits" | "stash" | "tags" | "files";
 
 interface GitStatusCacheEntry {
   status: GitStatus;
@@ -217,6 +219,7 @@ interface GitState {
   commitsHasMore: boolean;
   commitsTotal: number;
   stashes: GitStash[];
+  tags: GitTag[];
   selectedCommitHash?: string;
   commitDiff?: string;
   refresh: (repoPath: string, options?: { force?: boolean }) => Promise<void>;
@@ -236,12 +239,20 @@ interface GitState {
   createBranch: (repoPath: string, branchName: string, fromRef?: string | null) => Promise<void>;
   renameBranch: (repoPath: string, oldName: string, newName: string) => Promise<void>;
   deleteBranch: (repoPath: string, branchName: string, force: boolean) => Promise<void>;
+  mergeBranch: (repoPath: string, branchName: string) => Promise<void>;
   loadCommits: (repoPath: string, append?: boolean) => Promise<void>;
   loadMoreCommits: (repoPath: string) => Promise<void>;
+  revertCommit: (repoPath: string, commitHash: string) => Promise<void>;
+  cherryPickCommit: (repoPath: string, commitHash: string) => Promise<void>;
+  resetToCommit: (repoPath: string, commitHash: string, mode: GitResetMode) => Promise<void>;
   loadStashes: (repoPath: string) => Promise<void>;
   pushStash: (repoPath: string, message?: string) => Promise<void>;
   applyStash: (repoPath: string, stashIndex: number) => Promise<void>;
   popStash: (repoPath: string, stashIndex: number) => Promise<void>;
+  dropStash: (repoPath: string, stashIndex: number) => Promise<void>;
+  loadTags: (repoPath: string) => Promise<void>;
+  createTag: (repoPath: string, tagName: string, commitHash?: string | null, message?: string | null) => Promise<void>;
+  deleteTag: (repoPath: string, tagName: string) => Promise<void>;
   selectCommit: (repoPath: string, commitHash: string) => Promise<void>;
   clearCommitSelection: () => void;
   clearError: () => void;
@@ -279,6 +290,13 @@ async function refreshActiveView(repoPath: string, state: Pick<GitState, "active
     } satisfies Partial<GitState>;
   }
 
+  if (state.activeView === "tags") {
+    const tags = await ipc.listGitTags(repoPath);
+    return {
+      tags,
+    } satisfies Partial<GitState>;
+  }
+
   return {};
 }
 
@@ -292,6 +310,7 @@ export const useGitStore = create<GitState>((set, get) => ({
   commitsHasMore: false,
   commitsTotal: 0,
   stashes: [],
+  tags: [],
   refresh: async (repoPath, options) => {
     set({ loading: true, error: undefined });
     const startedAt = performance.now();
@@ -584,6 +603,92 @@ export const useGitStore = create<GitState>((set, get) => ({
     try {
       set({ loading: true, error: undefined });
       await ipc.popGitStash(repoPath, stashIndex);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      throw error;
+    }
+  },
+  dropStash: async (repoPath, stashIndex) => {
+    try {
+      set({ loading: true, error: undefined });
+      await ipc.dropGitStash(repoPath, stashIndex);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      throw error;
+    }
+  },
+  mergeBranch: async (repoPath, branchName) => {
+    try {
+      set({ loading: true, error: undefined });
+      await ipc.mergeBranch(repoPath, branchName);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      throw error;
+    }
+  },
+  revertCommit: async (repoPath, commitHash) => {
+    try {
+      set({ loading: true, error: undefined });
+      await ipc.revertCommit(repoPath, commitHash);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      throw error;
+    }
+  },
+  cherryPickCommit: async (repoPath, commitHash) => {
+    try {
+      set({ loading: true, error: undefined });
+      await ipc.cherryPickCommit(repoPath, commitHash);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      throw error;
+    }
+  },
+  resetToCommit: async (repoPath, commitHash, mode) => {
+    try {
+      set({ loading: true, error: undefined });
+      await ipc.resetToCommit(repoPath, commitHash, mode);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      throw error;
+    }
+  },
+  loadTags: async (repoPath) => {
+    set({ loading: true, error: undefined });
+    try {
+      const tags = await ipc.listGitTags(repoPath);
+      set({ tags, loading: false });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+    }
+  },
+  createTag: async (repoPath, tagName, commitHash, message) => {
+    try {
+      set({ loading: true, error: undefined });
+      await ipc.createGitTag(repoPath, tagName, commitHash, message);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      throw error;
+    }
+  },
+  deleteTag: async (repoPath, tagName) => {
+    try {
+      set({ loading: true, error: undefined });
+      await ipc.deleteGitTag(repoPath, tagName);
       get().invalidateRepoCache(repoPath);
       await get().refresh(repoPath, { force: true });
     } catch (error) {
