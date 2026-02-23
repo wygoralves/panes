@@ -12,6 +12,7 @@ use anyhow::Context;
 use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::{
+    fs as tokio_fs,
     process::Command,
     sync::{broadcast, mpsc, Mutex},
 };
@@ -20,7 +21,8 @@ use tokio_util::sync::CancellationToken;
 use super::{
     codex_event_mapper::TurnEventMapper, codex_protocol::IncomingMessage,
     codex_transport::CodexTransport, Engine, EngineEvent, EngineThread, ModelInfo,
-    ReasoningEffortOption, SandboxPolicy, ThreadScope, TurnCompletionStatus,
+    ReasoningEffortOption, SandboxPolicy, ThreadScope, TurnAttachment, TurnCompletionStatus,
+    TurnInput,
 };
 
 const INITIALIZE_METHODS: &[&str] = &["initialize"];
@@ -32,6 +34,7 @@ const TURN_START_METHODS: &[&str] = &["turn/start"];
 const TURN_INTERRUPT_METHODS: &[&str] = &["turn/interrupt"];
 const COMMAND_EXEC_METHODS: &[&str] = &["command/exec"];
 const MODEL_LIST_METHODS: &[&str] = &["model/list", "models/list"];
+const ACCOUNT_RATE_LIMITS_READ_METHODS: &[&str] = &["account/rateLimits/read"];
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const TURN_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
@@ -41,6 +44,11 @@ const TRANSPORT_RESTART_MAX_ATTEMPTS: usize = 3;
 const TRANSPORT_RESTART_BASE_BACKOFF: Duration = Duration::from_millis(250);
 const TRANSPORT_RESTART_MAX_BACKOFF: Duration = Duration::from_secs(2);
 const CODEX_MISSING_DEFAULT_DETAILS: &str = "`codex` executable not found in PATH";
+const MAX_ATTACHMENTS_PER_TURN: usize = 10;
+const MAX_ATTACHMENT_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_TEXT_ATTACHMENT_CHARS: usize = 40_000;
+const PLAN_MODE_PROMPT_PREFIX: &str =
+    "Plan the solution first. Do not execute commands or edit files until the plan is complete.";
 
 #[cfg(not(target_os = "windows"))]
 const LOGIN_SHELL_CLI_PROBES: &[(&str, &[&str])] = &[
@@ -62,6 +70,7 @@ struct PendingApproval {
 #[derive(Debug, Clone)]
 struct ThreadRuntime {
     cwd: String,
+    model_id: String,
     approval_policy: String,
     sandbox_policy: serde_json::Value,
     reasoning_effort: Option<String>,
@@ -220,6 +229,7 @@ impl Engine for CodexEngine {
                         &engine_thread_id,
                         ThreadRuntime {
                             cwd: cwd.clone(),
+                            model_id: model.to_string(),
                             approval_policy: approval_policy.clone(),
                             sandbox_policy: sandbox_policy.clone(),
                             reasoning_effort: sandbox.reasoning_effort.clone(),
@@ -260,6 +270,7 @@ impl Engine for CodexEngine {
             &engine_thread_id,
             ThreadRuntime {
                 cwd,
+                model_id: model.to_string(),
                 approval_policy,
                 sandbox_policy,
                 reasoning_effort: sandbox.reasoning_effort.clone(),
@@ -273,7 +284,7 @@ impl Engine for CodexEngine {
     async fn send_message(
         &self,
         engine_thread_id: &str,
-        message: &str,
+        input: TurnInput,
         event_tx: mpsc::Sender<EngineEvent>,
         cancellation: CancellationToken,
     ) -> Result<(), anyhow::Error> {
@@ -284,36 +295,36 @@ impl Engine for CodexEngine {
         let thread_id = engine_thread_id.to_string();
 
         let runtime = self.thread_runtime(&thread_id).await;
-        let mut turn_params = serde_json::json!({
-          "threadId": engine_thread_id,
-          "input": [{
-            "type": "text",
-            "text": message,
-            "text_elements": [],
-          }],
-        });
+        validate_turn_attachments(&input.attachments).await?;
 
-        if let Some(runtime) = runtime {
-            if let Some(params) = turn_params.as_object_mut() {
-                params.insert("cwd".to_string(), serde_json::Value::String(runtime.cwd));
-                params.insert(
-                    "approvalPolicy".to_string(),
-                    serde_json::Value::String(runtime.approval_policy),
-                );
-                params.insert("sandboxPolicy".to_string(), runtime.sandbox_policy);
-                if let Some(effort) = runtime.reasoning_effort {
-                    params.insert("effort".to_string(), serde_json::Value::String(effort));
+        match request_with_fallback(
+            transport.as_ref(),
+            ACCOUNT_RATE_LIMITS_READ_METHODS,
+            serde_json::Value::Null,
+            Duration::from_secs(5),
+        )
+        .await
+        {
+            Ok(snapshot) => {
+                if let Some(event) = mapper.map_rate_limits_snapshot(&snapshot) {
+                    event_tx.send(event).await.ok();
                 }
+            }
+            Err(error) => {
+                log::debug!("account/rateLimits/read unavailable: {error}");
             }
         }
 
         let transport_for_turn = transport.clone();
+        let thread_id_for_turn = thread_id.clone();
+        let runtime_for_turn = runtime.clone();
+        let input_for_turn = input.clone();
         let turn_task = tokio::spawn(async move {
-            request_with_fallback(
+            request_turn_start_with_plan_fallback(
                 transport_for_turn.as_ref(),
-                TURN_START_METHODS,
-                turn_params,
-                TURN_REQUEST_TIMEOUT,
+                &thread_id_for_turn,
+                runtime_for_turn,
+                input_for_turn,
             )
             .await
         });
@@ -384,7 +395,17 @@ impl Engine for CodexEngine {
                       completion_last_progress_at = Some(Instant::now());
                     }
 
-                    for event in mapper.map_notification(&method, &params) {
+                    let mapped_events = mapper.map_notification(&method, &params);
+                    if mapped_events.is_empty()
+                        && !is_known_codex_notification_method(&normalized_method)
+                    {
+                        log::debug!(
+                            "codex notification not mapped: method={method}, normalized={normalized_method}, params_keys={:?}",
+                            params.as_object().map(|object| object.keys().collect::<Vec<_>>())
+                        );
+                    }
+
+                    for event in mapped_events {
                       if event_indicates_sandbox_denial(&event) {
                         self.force_external_sandbox_for_thread(&thread_id).await;
                       }
@@ -409,11 +430,11 @@ impl Engine for CodexEngine {
                       continue;
                     }
                     let normalized_method = normalize_method(&method);
-                    if normalized_method == "account/chatgptauthtokens/refresh" {
-                      log::warn!(
-                        "codex requested external ChatGPT token refresh, but Panes does not manage chatgptAuthTokens mode"
-                      );
-                      transport
+                    if method_signature(&method) == "accountchatgptauthtokensrefresh" {
+                        log::warn!(
+                            "codex requested external ChatGPT token refresh, but Panes does not manage chatgptAuthTokens mode"
+                        );
+                        transport
                         .respond_error(
                           &raw_id,
                           -32601,
@@ -931,17 +952,22 @@ impl CodexEngine {
             }
         }
 
-        let force_external = detect_macos_sandbox_exec_failure().await;
-        if force_external {
+        let preflight_failed = detect_macos_sandbox_exec_failure().await;
+        if preflight_failed {
             log::warn!(
-                "detected broken macOS sandbox-exec environment; using externalSandbox for codex turns"
+                "detected macOS sandbox-exec preflight failure; deferring externalSandbox fallback until command probe confirms a real sandbox denial"
             );
         }
 
         let mut state = self.state.lock().await;
         if !state.sandbox_probe_completed {
             state.sandbox_probe_completed = true;
-            state.force_external_sandbox = force_external;
+            // Keep the runtime fallback decision optimistic; start_thread will run a real
+            // command probe and force external sandbox mode only on confirmed denial.
+            if state.force_external_sandbox {
+                return true;
+            }
+            state.force_external_sandbox = false;
         }
 
         state.force_external_sandbox
@@ -1402,6 +1428,341 @@ async fn detect_codex_via_login_shell() -> Option<PathBuf> {
     }
 }
 
+async fn request_turn_start_with_plan_fallback(
+    transport: &CodexTransport,
+    thread_id: &str,
+    runtime: Option<ThreadRuntime>,
+    input: TurnInput,
+) -> anyhow::Result<serde_json::Value> {
+    let runtime_ref = runtime.as_ref();
+
+    let primary_params =
+        build_turn_start_params(thread_id, runtime_ref, &input, input.plan_mode, false).await?;
+    match request_with_fallback(
+        transport,
+        TURN_START_METHODS,
+        primary_params,
+        TURN_REQUEST_TIMEOUT,
+    )
+    .await
+    {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            if !input.plan_mode || !is_plan_mode_protocol_error(&error.to_string()) {
+                return Err(error);
+            }
+
+            log::warn!(
+                "plan mode protocol hints rejected by codex app-server; retrying with prompt fallback: {error}"
+            );
+
+            let fallback_params =
+                build_turn_start_params(thread_id, runtime_ref, &input, false, true).await?;
+            request_with_fallback(
+                transport,
+                TURN_START_METHODS,
+                fallback_params,
+                TURN_REQUEST_TIMEOUT,
+            )
+            .await
+            .context("plan mode prompt fallback failed")
+        }
+    }
+}
+
+async fn build_turn_start_params(
+    thread_id: &str,
+    runtime: Option<&ThreadRuntime>,
+    input: &TurnInput,
+    include_plan_protocol_hints: bool,
+    force_plan_prompt_prefix: bool,
+) -> anyhow::Result<serde_json::Value> {
+    let mut turn_params = serde_json::json!({
+      "threadId": thread_id,
+      "input": build_turn_input_items(input, force_plan_prompt_prefix).await?,
+    });
+
+    if let Some(runtime) = runtime {
+        if let Some(params) = turn_params.as_object_mut() {
+            params.insert(
+                "cwd".to_string(),
+                serde_json::Value::String(runtime.cwd.clone()),
+            );
+            params.insert(
+                "approvalPolicy".to_string(),
+                serde_json::Value::String(runtime.approval_policy.clone()),
+            );
+            params.insert("sandboxPolicy".to_string(), runtime.sandbox_policy.clone());
+            params.insert(
+                "model".to_string(),
+                serde_json::Value::String(runtime.model_id.clone()),
+            );
+            if let Some(effort) = runtime.reasoning_effort.as_ref() {
+                params.insert(
+                    "effort".to_string(),
+                    serde_json::Value::String(effort.clone()),
+                );
+            }
+            if include_plan_protocol_hints && input.plan_mode {
+                if let Some(collaboration_mode) = plan_mode_protocol_payload(runtime) {
+                    params.insert("collaborationMode".to_string(), collaboration_mode);
+                }
+                params.insert(
+                    "summary".to_string(),
+                    serde_json::Value::String("detailed".to_string()),
+                );
+            }
+        }
+    }
+
+    Ok(turn_params)
+}
+
+async fn build_turn_input_items(
+    input: &TurnInput,
+    force_plan_prompt_prefix: bool,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let message = if force_plan_prompt_prefix && input.plan_mode {
+        format!("{}\n\n{}", PLAN_MODE_PROMPT_PREFIX, input.message)
+    } else {
+        input.message.clone()
+    };
+
+    let mut items = Vec::with_capacity(1 + input.attachments.len());
+    items.push(serde_json::json!({
+      "type": "text",
+      "text": message,
+      "text_elements": [],
+    }));
+
+    for attachment in &input.attachments {
+        match attachment_input_kind(attachment) {
+            Some(AttachmentInputKind::Image) => {
+                items.push(serde_json::json!({
+                  "type": "localImage",
+                  "path": attachment.file_path,
+                }));
+            }
+            Some(AttachmentInputKind::Text) => {
+                let text_payload = read_text_attachment_for_turn_input(attachment).await?;
+                items.push(serde_json::json!({
+                  "type": "text",
+                  "text": text_payload,
+                  "text_elements": [],
+                }));
+            }
+            None => {
+                anyhow::bail!(
+                    "Attachment `{}` is not supported by Codex app-server. Only image and text attachments are currently supported.",
+                    attachment.file_name
+                );
+            }
+        }
+    }
+
+    Ok(items)
+}
+
+fn plan_mode_protocol_payload(runtime: &ThreadRuntime) -> Option<serde_json::Value> {
+    if runtime.model_id.trim().is_empty() {
+        return None;
+    }
+
+    let mut settings = serde_json::Map::new();
+    settings.insert(
+        "model".to_string(),
+        serde_json::Value::String(runtime.model_id.clone()),
+    );
+    if let Some(effort) = runtime.reasoning_effort.as_ref() {
+        settings.insert(
+            "reasoning_effort".to_string(),
+            serde_json::Value::String(effort.clone()),
+        );
+    }
+
+    Some(serde_json::json!({
+      "mode": "plan",
+      "settings": settings,
+    }))
+}
+
+async fn validate_turn_attachments(attachments: &[TurnAttachment]) -> anyhow::Result<()> {
+    if attachments.len() > MAX_ATTACHMENTS_PER_TURN {
+        anyhow::bail!("You can attach at most {MAX_ATTACHMENTS_PER_TURN} files per turn.");
+    }
+
+    for attachment in attachments {
+        let path = attachment.file_path.trim();
+        if path.is_empty() {
+            anyhow::bail!("Attachment path cannot be empty.");
+        }
+
+        if attachment_input_kind(attachment).is_none() {
+            anyhow::bail!(
+                "Attachment `{}` is not supported by Codex app-server. Only image and text attachments are currently supported.",
+                attachment.file_name
+            );
+        }
+
+        let metadata = tokio_fs::metadata(path).await.with_context(|| {
+            format!(
+                "Attachment `{}` could not be read at `{}`",
+                attachment.file_name, attachment.file_path
+            )
+        })?;
+        let size_bytes = std::cmp::max(metadata.len(), attachment.size_bytes);
+        if size_bytes > MAX_ATTACHMENT_BYTES {
+            anyhow::bail!(
+                "Attachment `{}` exceeds the 10 MB per-file limit.",
+                attachment.file_name
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AttachmentInputKind {
+    Image,
+    Text,
+}
+
+fn attachment_input_kind(attachment: &TurnAttachment) -> Option<AttachmentInputKind> {
+    if let Some(mime_type) = attachment.mime_type.as_deref() {
+        let normalized = mime_type.to_lowercase();
+        if normalized.starts_with("image/") {
+            return Some(AttachmentInputKind::Image);
+        }
+        if is_supported_text_mime_type(&normalized) {
+            return Some(AttachmentInputKind::Text);
+        }
+    }
+
+    if is_supported_image_extension(&attachment.file_name)
+        || is_supported_image_extension(&attachment.file_path)
+    {
+        return Some(AttachmentInputKind::Image);
+    }
+
+    if is_supported_text_extension(&attachment.file_name)
+        || is_supported_text_extension(&attachment.file_path)
+    {
+        return Some(AttachmentInputKind::Text);
+    }
+
+    None
+}
+
+fn is_supported_image_extension(path: &str) -> bool {
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_lowercase());
+
+    matches!(
+        extension.as_deref(),
+        Some("png")
+            | Some("jpg")
+            | Some("jpeg")
+            | Some("gif")
+            | Some("webp")
+            | Some("bmp")
+            | Some("tif")
+            | Some("tiff")
+            | Some("svg")
+    )
+}
+
+fn is_supported_text_mime_type(mime_type: &str) -> bool {
+    mime_type.starts_with("text/")
+        || mime_type.contains("json")
+        || mime_type.contains("xml")
+        || mime_type.contains("yaml")
+        || mime_type.contains("toml")
+        || mime_type.contains("javascript")
+        || mime_type.contains("typescript")
+        || mime_type.contains("x-rust")
+        || mime_type.contains("x-python")
+        || mime_type.contains("x-go")
+        || mime_type.contains("x-shellscript")
+        || mime_type.contains("sql")
+        || mime_type.contains("csv")
+}
+
+fn is_supported_text_extension(path: &str) -> bool {
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_lowercase());
+
+    matches!(
+        extension.as_deref(),
+        Some("txt")
+            | Some("md")
+            | Some("json")
+            | Some("js")
+            | Some("ts")
+            | Some("tsx")
+            | Some("jsx")
+            | Some("py")
+            | Some("rs")
+            | Some("go")
+            | Some("css")
+            | Some("html")
+            | Some("yaml")
+            | Some("yml")
+            | Some("toml")
+            | Some("xml")
+            | Some("sql")
+            | Some("sh")
+            | Some("csv")
+    )
+}
+
+async fn read_text_attachment_for_turn_input(
+    attachment: &TurnAttachment,
+) -> anyhow::Result<String> {
+    let bytes = tokio_fs::read(attachment.file_path.trim())
+        .await
+        .with_context(|| {
+            format!(
+                "Attachment `{}` could not be read at `{}`",
+                attachment.file_name, attachment.file_path
+            )
+        })?;
+    let raw_text = String::from_utf8_lossy(&bytes);
+    let (truncated_text, was_truncated) =
+        truncate_text_to_max_chars(raw_text.as_ref(), MAX_TEXT_ATTACHMENT_CHARS);
+    let mut payload = format!(
+        "Attached text file: {} ({})\n<attached-file-content>\n{}\n</attached-file-content>",
+        attachment.file_name, attachment.file_path, truncated_text
+    );
+    if was_truncated {
+        payload.push_str(&format!(
+            "\n\n[Attachment content was truncated to {MAX_TEXT_ATTACHMENT_CHARS} characters.]"
+        ));
+    }
+    Ok(payload)
+}
+
+fn truncate_text_to_max_chars(value: &str, max_chars: usize) -> (String, bool) {
+    if value.chars().count() <= max_chars {
+        return (value.to_string(), false);
+    }
+
+    let truncated: String = value.chars().take(max_chars).collect();
+    (truncated, true)
+}
+
+fn is_plan_mode_protocol_error(error: &str) -> bool {
+    let value = error.to_lowercase();
+    value.contains("collaborationmode")
+        || value.contains("collaboration_mode")
+        || value.contains("unknown field `collaboration")
+        || (value.contains("unknown field") && value.contains("plan"))
+}
+
 async fn request_with_fallback(
     transport: &CodexTransport,
     methods: &[&str],
@@ -1674,13 +2035,13 @@ fn normalize_approval_response(
     let Some(method) = method else {
         return response;
     };
-    let normalized_method = normalize_method(method);
+    let method_key = method_signature(method);
     let is_modern = matches!(
-        normalized_method.as_str(),
-        "item/commandexecution/requestapproval" | "item/filechange/requestapproval"
+        method_key.as_str(),
+        "itemcommandexecutionrequestapproval" | "itemfilechangerequestapproval"
     );
     let is_legacy = matches!(
-        normalized_method.as_str(),
+        method_key.as_str(),
         "execcommandapproval" | "applypatchapproval"
     );
 
@@ -1761,7 +2122,45 @@ fn normalize_legacy_approval_decision(value: &str) -> String {
 }
 
 fn normalize_method(method: &str) -> String {
-    method.replace('.', "/").replace('_', "/").to_lowercase()
+    method
+        .replace('.', "/")
+        .to_lowercase()
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            segment
+                .chars()
+                .filter(|ch| *ch != '_' && *ch != '-')
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn method_signature(method: &str) -> String {
+    normalize_method(method).replace('/', "")
+}
+
+fn is_known_codex_notification_method(normalized_method: &str) -> bool {
+    matches!(
+        normalized_method,
+        "turn/started"
+            | "turn/completed"
+            | "turn/diff/updated"
+            | "turn/plan/updated"
+            | "thread/tokenusage/updated"
+            | "account/ratelimits/updated"
+            | "account/updated"
+            | "item/started"
+            | "item/completed"
+            | "item/agentmessage/delta"
+            | "item/plan/delta"
+            | "item/reasoning/summarytextdelta"
+            | "item/reasoning/textdelta"
+            | "item/commandexecution/outputdelta"
+            | "item/filechange/outputdelta"
+            | "error"
+    )
 }
 
 #[cfg(test)]
@@ -1833,5 +2232,22 @@ mod tests {
         let normalized = normalize_approval_response(Some("item/tool/call"), response.clone());
 
         assert_eq!(normalized, response);
+    }
+
+    #[test]
+    fn normalize_modern_snake_case_method_alias() {
+        let response = json!({ "decision": "accept_for_session" });
+        let normalized =
+            normalize_approval_response(Some("item/command_execution/request_approval"), response);
+
+        assert_eq!(normalized, json!({ "decision": "acceptForSession" }));
+    }
+
+    #[test]
+    fn normalize_legacy_snake_case_method_alias() {
+        let response = json!({ "decision": "accept_for_session" });
+        let normalized = normalize_approval_response(Some("exec_command_approval"), response);
+
+        assert_eq!(normalized, json!({ "decision": "approved_for_session" }));
     }
 }

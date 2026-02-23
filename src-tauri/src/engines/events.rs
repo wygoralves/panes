@@ -40,6 +40,9 @@ pub enum EngineEvent {
         summary: String,
         details: serde_json::Value,
     },
+    UsageLimitsUpdated {
+        usage: UsageLimitsSnapshot,
+    },
     Error {
         message: String,
         recoverable: bool,
@@ -112,4 +115,15 @@ pub struct ActionResult {
 pub struct TokenUsage {
     pub input: u64,
     pub output: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UsageLimitsSnapshot {
+    pub current_tokens: Option<u64>,
+    pub max_context_tokens: Option<u64>,
+    pub context_window_percent: Option<u8>,
+    pub five_hour_percent: Option<u8>,
+    pub weekly_percent: Option<u8>,
+    pub five_hour_resets_at: Option<i64>,
+    pub weekly_resets_at: Option<i64>,
 }

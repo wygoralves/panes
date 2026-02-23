@@ -1,4 +1,5 @@
 import { FormEvent, Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Send,
   Square,
@@ -9,6 +10,14 @@ import {
   SquareTerminal,
   MessageSquare,
   FilePen,
+  Plus,
+  X,
+  FileText,
+  Image,
+  File,
+  ListChecks,
+  Clock,
+  Zap,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useEngineStore } from "../../stores/engineStore";
@@ -17,6 +26,7 @@ import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useTerminalStore, type LayoutMode } from "../../stores/terminalStore";
+import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { MessageBlocks } from "./MessageBlocks";
@@ -24,7 +34,7 @@ import { isRequestUserInputApproval, requiresCustomApprovalPayload } from "./too
 import { Dropdown } from "../shared/Dropdown";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
-import type { ApprovalBlock, ApprovalResponse, ContentBlock, Message, TrustLevel } from "../../types";
+import type { ApprovalBlock, ApprovalResponse, ChatAttachment, ContentBlock, Message, TrustLevel } from "../../types";
 
 const MESSAGE_VIRTUALIZATION_THRESHOLD = 40;
 const MESSAGE_ESTIMATED_ROW_HEIGHT = 220;
@@ -87,6 +97,41 @@ const REASONING_EFFORT_LABELS: Record<string, string> = {
   high: "High",
   xhigh: "XHigh",
 };
+const IMAGE_ATTACHMENT_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "tif",
+  "tiff",
+  "svg",
+]);
+const TEXT_ATTACHMENT_EXTENSIONS = new Set([
+  "txt",
+  "md",
+  "json",
+  "js",
+  "ts",
+  "tsx",
+  "jsx",
+  "py",
+  "rs",
+  "go",
+  "css",
+  "html",
+  "yaml",
+  "yml",
+  "toml",
+  "xml",
+  "sql",
+  "sh",
+  "csv",
+]);
+const CODEX_ATTACHMENT_EXTENSIONS = Array.from(
+  new Set([...IMAGE_ATTACHMENT_EXTENSIONS, ...TEXT_ATTACHMENT_EXTENSIONS]),
+);
 
 function OpenAiIcon({ size = 12 }: { size?: number }) {
   return (
@@ -249,6 +294,17 @@ function MessageRowView({
       .map((block) => block.content)
       .join("\n");
   }, [message.blocks, message.content]);
+  const userAttachments = useMemo(
+    () => (message.blocks ?? []).filter((b) => b.type === "attachment"),
+    [message.blocks],
+  );
+  const userPlanMode = useMemo(
+    () =>
+      (message.blocks ?? []).some(
+        (block) => block.type === "text" && Boolean(block.planMode),
+      ),
+    [message.blocks],
+  );
   const hasAssistantContent = !isUser && hasVisibleContent(message.blocks);
 
   return (
@@ -285,6 +341,33 @@ function MessageRowView({
               wordBreak: "break-word",
             }}
           >
+            {userAttachments.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
+                {userAttachments.map((block, i) => {
+                  if (block.type !== "attachment") return null;
+                  const mime = block.mimeType ?? "";
+                  const AttachIcon = mime.startsWith("image/")
+                    ? Image
+                    : mime.startsWith("text/") || mime.includes("json")
+                      ? FileText
+                      : File;
+                  return (
+                    <span key={i} className="chat-attachment-chip">
+                      <AttachIcon size={10} />
+                      <span className="chat-attachment-chip-name" style={{ fontSize: 10 }}>
+                        {block.fileName}
+                      </span>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            {userPlanMode && (
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 6, fontSize: 10, color: "var(--text-3)" }}>
+                <ListChecks size={10} />
+                <span>Plan mode</span>
+              </div>
+            )}
             {userContent}
           </div>
           {messageTimestamp && (
@@ -374,11 +457,104 @@ const MessageRow = memo(
     prev.onApproval === next.onApproval,
 );
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getAttachmentIcon(mimeType?: string) {
+  if (!mimeType) return File;
+  if (mimeType.startsWith("image/")) return Image;
+  if (mimeType.startsWith("text/") || mimeType.includes("json") || mimeType.includes("javascript") || mimeType.includes("typescript"))
+    return FileText;
+  return File;
+}
+
+function getFileExtension(fileName: string): string {
+  const lastDot = fileName.lastIndexOf(".");
+  return lastDot >= 0 ? fileName.slice(lastDot + 1).toLowerCase() : "";
+}
+
+function fileNameFromPath(filePath: string): string {
+  return filePath.split("/").pop() ?? filePath.split("\\").pop() ?? filePath;
+}
+
+function isSupportedCodexAttachmentName(fileName: string): boolean {
+  const extension = getFileExtension(fileName);
+  return IMAGE_ATTACHMENT_EXTENSIONS.has(extension) || TEXT_ATTACHMENT_EXTENSIONS.has(extension);
+}
+
+function guessMimeType(fileName: string): string | undefined {
+  const ext = getFileExtension(fileName);
+  const mimeMap: Record<string, string> = {
+    txt: "text/plain",
+    md: "text/markdown",
+    json: "application/json",
+    js: "text/javascript",
+    ts: "text/typescript",
+    tsx: "text/typescript",
+    jsx: "text/javascript",
+    py: "text/x-python",
+    rs: "text/x-rust",
+    go: "text/x-go",
+    css: "text/css",
+    html: "text/html",
+    svg: "image/svg+xml",
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    pdf: "application/pdf",
+    yaml: "text/yaml",
+    yml: "text/yaml",
+    toml: "text/toml",
+    xml: "text/xml",
+    sql: "text/x-sql",
+    sh: "text/x-shellscript",
+    csv: "text/csv",
+  };
+  return mimeMap[ext];
+}
+
+function formatResetTime(isoDate: string | null): string {
+  if (!isoDate) return "";
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) return "";
+  const now = new Date();
+  const diffMs = date.getTime() - now.getTime();
+  if (diffMs <= 0) return "now";
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 60) return `${diffMin}m`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ${diffMin % 60}m`;
+  const diffDays = Math.floor(diffHr / 24);
+  return `${diffDays}d ${diffHr % 24}h`;
+}
+
+function formatUsagePercent(percent: number | null): string {
+  if (typeof percent !== "number" || !Number.isFinite(percent)) {
+    return "--";
+  }
+  return `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
+}
+
+function usagePercentToWidth(percent: number | null): string {
+  if (typeof percent !== "number" || !Number.isFinite(percent)) {
+    return "0%";
+  }
+  return `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
+}
+
 export function ChatPanel() {
   const renderStartedAtRef = useRef(performance.now());
   renderStartedAtRef.current = performance.now();
 
   const [input, setInput] = useState("");
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [isFileDropOver, setIsFileDropOver] = useState(false);
+  const [planMode, setPlanMode] = useState(false);
   const [selectedEngineId, setSelectedEngineId] = useState("codex");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [selectedEffort, setSelectedEffort] = useState("medium");
@@ -393,6 +569,7 @@ export function ChatPanel() {
     cancel,
     respondApproval,
     streaming,
+    usageLimits,
     error,
     setActiveThread: bindChatThread,
     threadId,
@@ -427,6 +604,7 @@ export function ChatPanel() {
   const setTerminalPanelSize = useTerminalStore((s) => s.setPanelSize);
   const syncTerminalSessions = useTerminalStore((s) => s.syncSessions);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const chatSectionRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const effortSyncKeyRef = useRef<string | null>(null);
@@ -444,6 +622,8 @@ export function ChatPanel() {
     threadId: string;
     threadPaths: string[];
     text: string;
+    attachments: ChatAttachment[];
+    planMode: boolean;
     engineId: string;
     modelId: string;
     effort: string | null;
@@ -554,6 +734,65 @@ export function ChatPanel() {
     return approvals;
   }, [messages]);
 
+  const appendAttachmentsFromPaths = useCallback((paths: string[]) => {
+    if (!activeWorkspaceId || paths.length === 0) {
+      return;
+    }
+
+    let nextAttachments: ChatAttachment[] = [];
+    for (const rawPath of paths) {
+      const normalizedPath = rawPath.trim();
+      if (!normalizedPath) {
+        continue;
+      }
+      const fileName = fileNameFromPath(normalizedPath);
+      nextAttachments.push({
+        id: crypto.randomUUID(),
+        fileName,
+        filePath: normalizedPath,
+        sizeBytes: 0,
+        mimeType: guessMimeType(fileName),
+      });
+    }
+
+    if (selectedEngineId === "codex") {
+      const supportedAttachments = nextAttachments.filter((attachment) =>
+        isSupportedCodexAttachmentName(attachment.fileName),
+      );
+      const skippedCount = nextAttachments.length - supportedAttachments.length;
+      if (skippedCount > 0) {
+        toast.warning("Only image and text attachments are supported for Codex turns.");
+      }
+      nextAttachments = supportedAttachments;
+    }
+
+    if (nextAttachments.length === 0) {
+      return;
+    }
+
+    setAttachments((prev) => {
+      const knownPaths = new Set(prev.map((attachment) => attachment.filePath));
+      const merged = [...prev];
+      for (const attachment of nextAttachments) {
+        if (knownPaths.has(attachment.filePath)) {
+          continue;
+        }
+        knownPaths.add(attachment.filePath);
+        merged.push(attachment);
+      }
+      return merged;
+    });
+  }, [activeWorkspaceId, selectedEngineId]);
+
+  const isDropPositionInsideChatSection = useCallback((x: number, y: number): boolean => {
+    const container = chatSectionRef.current;
+    if (!container) {
+      return false;
+    }
+    const rect = container.getBoundingClientRect();
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  }, []);
+
   const scheduleListLayoutVersionBump = useCallback(() => {
     if (layoutVersionRafRef.current !== null) {
       return;
@@ -569,6 +808,68 @@ export function ChatPanel() {
       void syncTerminalSessions(activeWorkspaceId);
     }
   }, [activeWorkspaceId, syncTerminalSessions]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    const bindDropListener = async () => {
+      try {
+        unlisten = await getCurrentWindow().onDragDropEvent((event) => {
+          if (disposed) {
+            return;
+          }
+
+          if (!activeWorkspaceId) {
+            setIsFileDropOver(false);
+            return;
+          }
+
+          if (event.payload.type === "leave") {
+            setIsFileDropOver(false);
+            return;
+          }
+
+          const scale = window.devicePixelRatio || 1;
+          const logicalX = event.payload.position.x / scale;
+          const logicalY = event.payload.position.y / scale;
+          const isInsideDropArea = isDropPositionInsideChatSection(logicalX, logicalY);
+
+          if (event.payload.type === "drop") {
+            setIsFileDropOver(false);
+            if (!isInsideDropArea || event.payload.paths.length === 0) {
+              return;
+            }
+            appendAttachmentsFromPaths(event.payload.paths);
+            return;
+          }
+
+          setIsFileDropOver(isInsideDropArea);
+        });
+      } catch (error) {
+        console.debug("drag-drop listener unavailable", error);
+      }
+    };
+
+    void bindDropListener();
+
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [
+    activeWorkspaceId,
+    appendAttachmentsFromPaths,
+    isDropPositionInsideChatSection,
+  ]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      setIsFileDropOver(false);
+    }
+  }, [activeWorkspaceId]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -976,6 +1277,8 @@ export function ChatPanel() {
           threadId: targetThreadId,
           threadPaths: repos.map((repo) => repo.path),
           text: input.trim(),
+          attachments: [...attachments],
+          planMode,
           engineId: selectedEngineId,
           modelId: selectedModelId!,
           effort: selectedEngineId === "codex" ? selectedEffort : null,
@@ -985,7 +1288,7 @@ export function ChatPanel() {
     }
 
     const text = input.trim();
-    setInput("");
+    const currentAttachments = [...attachments];
 
     if (selectedEngineId === "codex" && selectedEffort) {
       await ipc.setThreadReasoningEffort(targetThreadId, selectedEffort, selectedModelId);
@@ -993,12 +1296,18 @@ export function ChatPanel() {
     }
     setThreadLastModelLocal(targetThreadId, selectedModelId);
 
-    await send(text, {
+    const sent = await send(text, {
       threadIdOverride: targetThreadId,
       engineId: selectedEngineId,
       modelId: selectedModelId,
       reasoningEffort: selectedEngineId === "codex" ? selectedEffort : null,
+      attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
+      planMode,
     });
+    if (sent) {
+      setInput("");
+      setAttachments([]);
+    }
   }
 
   async function executeWorkspaceOptInSend() {
@@ -1009,24 +1318,33 @@ export function ChatPanel() {
     try {
       await ipc.confirmWorkspaceThread(prompt.threadId, prompt.threadPaths);
 
-      setInput("");
-
       if (prompt.engineId === "codex" && prompt.effort) {
         await ipc.setThreadReasoningEffort(prompt.threadId, prompt.effort, prompt.modelId);
         setThreadReasoningEffortLocal(prompt.threadId, prompt.effort);
       }
       setThreadLastModelLocal(prompt.threadId, prompt.modelId);
 
-      await send(prompt.text, {
+      const sent = await send(prompt.text, {
         threadIdOverride: prompt.threadId,
         engineId: prompt.engineId,
         modelId: prompt.modelId,
         reasoningEffort: prompt.effort,
+        attachments: prompt.attachments.length > 0 ? prompt.attachments : undefined,
+        planMode: prompt.planMode,
       });
+      if (!sent) {
+        setInput(prompt.text);
+        setAttachments(prompt.attachments);
+        return;
+      }
+
+      setInput("");
+      setAttachments([]);
 
       await refreshThreads(prompt.workspaceId);
     } catch {
       setInput(prompt.text);
+      setAttachments(prompt.attachments);
     }
   }
 
@@ -1087,6 +1405,42 @@ export function ChatPanel() {
     }
 
     setEditingThreadTitle(false);
+  }
+
+  async function handleAddAttachment() {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const codexAttachmentFilter = selectedEngineId === "codex";
+      const selected = await open({
+        multiple: true,
+        title: codexAttachmentFilter ? "Attach files (images and text)" : "Attach files",
+        filters: codexAttachmentFilter
+          ? [
+              {
+                name: "Supported files",
+                extensions: CODEX_ATTACHMENT_EXTENSIONS,
+              },
+              {
+                name: "Images",
+                extensions: [...IMAGE_ATTACHMENT_EXTENSIONS],
+              },
+              {
+                name: "Text files",
+                extensions: [...TEXT_ATTACHMENT_EXTENSIONS],
+              },
+            ]
+          : undefined,
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      appendAttachmentsFromPaths(paths);
+    } catch {
+      // User cancelled or dialog failed
+    }
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
   }
 
   const onMessageRowHeightChange = useCallback(
@@ -1463,17 +1817,42 @@ export function ChatPanel() {
       <div ref={contentAreaRef} className="chat-terminal-content">
         {/* Chat section */}
         <div
+          ref={chatSectionRef}
           className="chat-section"
           style={{
             flex: (layoutMode === "terminal" || layoutMode === "editor") ? "0 0 0px"
                  : layoutMode === "chat" ? "1 1 0px"
                  : `0 0 ${100 - terminalPanelSize}%`,
+            position: "relative",
             overflow: "hidden",
             visibility: (layoutMode === "terminal" || layoutMode === "editor") ? "hidden" : "visible",
             display: "flex",
             flexDirection: "column",
+            outline: isFileDropOver ? "2px dashed rgba(96, 165, 250, 0.7)" : "none",
+            outlineOffset: isFileDropOver ? "-8px" : undefined,
           }}
         >
+            {isFileDropOver && (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 12,
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid rgba(96, 165, 250, 0.45)",
+                  background: "rgba(96, 165, 250, 0.08)",
+                  color: "var(--text-1)",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  pointerEvents: "none",
+                  zIndex: 5,
+                }}
+              >
+                Drop files to attach
+              </div>
+            )}
             {/* ── Messages ── */}
             <div
               ref={viewportRef}
@@ -1848,7 +2227,43 @@ export function ChatPanel() {
           )}
 
           {/* Input container */}
-          <div className="chat-input-box">
+          <div className={`chat-input-box ${planMode ? "chat-input-box-plan" : ""}`}>
+            {/* Plan mode indicator banner */}
+            {planMode && (
+              <div className="chat-plan-mode-banner">
+                <ListChecks size={12} />
+                <span>Plan Mode — The agent will plan before executing</span>
+              </div>
+            )}
+
+            {/* Attachment chips */}
+            {attachments.length > 0 && (
+              <div className="chat-attachments-bar">
+                {attachments.map((attachment) => {
+                  const IconComponent = getAttachmentIcon(attachment.mimeType);
+                  return (
+                    <div key={attachment.id} className="chat-attachment-chip">
+                      <IconComponent size={12} />
+                      <span className="chat-attachment-chip-name">{attachment.fileName}</span>
+                      {attachment.sizeBytes > 0 && (
+                        <span className="chat-attachment-chip-size">
+                          {formatFileSize(attachment.sizeBytes)}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        className="chat-attachment-chip-remove"
+                        onClick={() => removeAttachment(attachment.id)}
+                        title="Remove attachment"
+                      >
+                        <X size={10} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             <textarea
               ref={inputRef}
               rows={3}
@@ -1862,8 +2277,14 @@ export function ChatPanel() {
                   }
                   void onSubmit(e);
                 }
+                if (e.shiftKey && e.key === "Tab") {
+                  e.preventDefault();
+                  if (activeWorkspaceId) {
+                    setPlanMode((prev) => !prev);
+                  }
+                }
               }}
-              placeholder="Ask for follow-up changes"
+              placeholder={planMode ? "Describe what you want to plan..." : "Ask for follow-up changes"}
               disabled={!activeWorkspaceId}
               style={{
                 width: "100%",
@@ -1874,7 +2295,7 @@ export function ChatPanel() {
                 lineHeight: 1.6,
                 resize: "none",
                 fontFamily: "inherit",
-                caretColor: "var(--accent)",
+                caretColor: planMode ? "var(--accent-2)" : "var(--accent)",
               }}
             />
 
@@ -1887,6 +2308,34 @@ export function ChatPanel() {
                 gap: 6,
               }}
             >
+              {/* Attach file button */}
+              <button
+                type="button"
+                className="chat-toolbar-btn"
+                onClick={() => void handleAddAttachment()}
+                disabled={!activeWorkspaceId}
+                title="Attach files"
+              >
+                <Plus size={12} />
+                {attachments.length > 0 && (
+                  <span className="chat-toolbar-badge">{attachments.length}</span>
+                )}
+              </button>
+
+              {/* Plan mode toggle */}
+              <button
+                type="button"
+                className={`chat-toolbar-btn chat-toolbar-btn-bordered ${planMode ? "chat-toolbar-btn-active" : ""}`}
+                onClick={() => setPlanMode((prev) => !prev)}
+                disabled={!activeWorkspaceId}
+                title={planMode ? "Disable plan mode (Shift+Tab)" : "Enable plan mode (Shift+Tab)"}
+              >
+                <ListChecks size={12} />
+                <span style={{ fontSize: 11 }}>Plan</span>
+              </button>
+
+              <div className="chat-toolbar-divider" />
+
               {/* Engine + Model selector */}
               <Dropdown
                 value={selectedModelId ?? ""}
@@ -2038,37 +2487,73 @@ export function ChatPanel() {
             </div>
           </div>
 
-          {/* Bottom status bar */}
+          {/* Bottom status bar with context usage */}
           <div className="chat-status-bar">
-            {/* Local indicator */}
-            <span className="chat-status-item">
-              <Monitor size={11} />
-              Local
-            </span>
+            {messages.length > 0 && selectedEngineId === "codex" && (
+              usageLimits ? (
+                <>
+                  <div className="chat-context-section">
+                    <Zap size={10} />
+                    <span>Context</span>
+                    <div className="chat-context-progress">
+                      <div
+                        className="chat-context-progress-fill"
+                        style={{ width: usagePercentToWidth(usageLimits.contextPercent) }}
+                      />
+                    </div>
+                    <span className="chat-context-percent">
+                      {formatUsagePercent(usageLimits.contextPercent)}
+                    </span>
+                  </div>
 
-            {repos.length > 0 && (
-              <>
-                <span style={{ color: "var(--text-3)", opacity: 0.4 }}>&middot;</span>
+                  <span className="chat-context-divider">&middot;</span>
 
-                {/* Permissions */}
-                <span
-                  className="chat-status-item"
-                  style={{
-                    color: (activeRepo?.trustLevel ?? workspaceTrustLevel) === "trusted"
-                      ? "var(--success)"
-                      : (activeRepo?.trustLevel ?? workspaceTrustLevel) === "restricted"
-                        ? "var(--danger)"
-                        : undefined,
-                  }}
-                >
-                  <Shield size={11} />
-                  {(activeRepo?.trustLevel ?? workspaceTrustLevel) === "trusted"
-                    ? "Trusted (network on)"
-                    : (activeRepo?.trustLevel ?? workspaceTrustLevel) === "restricted"
-                      ? "Restricted (trusted cmds only)"
-                      : "Ask-on-request (network off)"}
-                </span>
-              </>
+                  <div className="chat-context-section">
+                    <Clock size={10} />
+                    <span>5h left</span>
+                    <div className="chat-context-progress">
+                      <div
+                        className="chat-context-progress-fill chat-context-progress-fill-5h"
+                        style={{ width: usagePercentToWidth(usageLimits.windowFiveHourPercent) }}
+                      />
+                    </div>
+                    <span className="chat-context-percent">
+                      {formatUsagePercent(usageLimits.windowFiveHourPercent)}
+                    </span>
+                    {usageLimits.windowFiveHourResetsAt && (
+                      <span className="chat-context-reset">
+                        resets {formatResetTime(usageLimits.windowFiveHourResetsAt)}
+                      </span>
+                    )}
+                  </div>
+
+                  <span className="chat-context-divider">&middot;</span>
+
+                  <div className="chat-context-section">
+                    <Clock size={10} />
+                    <span>Weekly left</span>
+                    <div className="chat-context-progress">
+                      <div
+                        className="chat-context-progress-fill chat-context-progress-fill-weekly"
+                        style={{ width: usagePercentToWidth(usageLimits.windowWeeklyPercent) }}
+                      />
+                    </div>
+                    <span className="chat-context-percent">
+                      {formatUsagePercent(usageLimits.windowWeeklyPercent)}
+                    </span>
+                    {usageLimits.windowWeeklyResetsAt && (
+                      <span className="chat-context-reset">
+                        resets {formatResetTime(usageLimits.windowWeeklyResetsAt)}
+                      </span>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="chat-context-section">
+                  <Clock size={10} />
+                  <span>Usage limits unavailable from server</span>
+                </div>
+              )
             )}
 
             <div style={{ flex: 1 }} />

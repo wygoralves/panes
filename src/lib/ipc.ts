@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   ApprovalResponse,
+  ChatAttachment,
   DependencyReport,
   EngineCheckResult,
   GitBranchPage,
@@ -87,8 +88,20 @@ export const ipc = {
   engineHealth: (engineId: string) => invoke<EngineHealth>("engine_health", { engineId }),
   runEngineCheck: (engineId: string, command: string) =>
     invoke<EngineCheckResult>("run_engine_check", { engineId, command }),
-  sendMessage: (threadId: string, message: string, modelId?: string | null) =>
-    invoke<string>("send_message", { threadId, message, modelId: modelId ?? null }),
+  sendMessage: (
+    threadId: string,
+    message: string,
+    modelId?: string | null,
+    attachments?: ChatAttachment[] | null,
+    planMode?: boolean | null,
+  ) =>
+    invoke<string>("send_message", {
+      threadId,
+      message,
+      modelId: modelId ?? null,
+      attachments: attachments ?? null,
+      planMode: planMode ?? null,
+    }),
   cancelTurn: (threadId: string) => invoke<void>("cancel_turn", { threadId }),
   respondApproval: (threadId: string, approvalId: string, response: ApprovalResponse) =>
     invoke<void>("respond_to_approval", { threadId, approvalId, response }),
