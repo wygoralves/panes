@@ -261,6 +261,13 @@ function MessageRowView({
     () => (message.blocks ?? []).filter((b) => b.type === "attachment"),
     [message.blocks],
   );
+  const userPlanMode = useMemo(
+    () =>
+      (message.blocks ?? []).some(
+        (block) => block.type === "text" && Boolean(block.planMode),
+      ),
+    [message.blocks],
+  );
   const hasAssistantContent = !isUser && hasVisibleContent(message.blocks);
 
   return (
@@ -316,6 +323,12 @@ function MessageRowView({
                     </span>
                   );
                 })}
+              </div>
+            )}
+            {userPlanMode && (
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 6, fontSize: 10, color: "var(--text-3)" }}>
+                <MapPin size={10} />
+                <span>Plan mode</span>
               </div>
             )}
             {userContent}
@@ -474,51 +487,6 @@ function formatResetTime(isoDate: string | null): string {
   return `${diffDays}d ${diffHr % 24}h`;
 }
 
-function computeContextUsage(messages: Message[]) {
-  let totalInput = 0;
-  let totalOutput = 0;
-  for (const msg of messages) {
-    if (msg.tokenUsage) {
-      totalInput += msg.tokenUsage.input;
-      totalOutput += msg.tokenUsage.output;
-    }
-  }
-  const totalTokens = totalInput + totalOutput;
-
-  // Codex context limits (estimates based on typical API limits)
-  const maxContextTokens = 200_000;
-  const fiveHourLimit = 1_000_000;
-  const weeklyLimit = 10_000_000;
-
-  const contextPercent = maxContextTokens > 0
-    ? Math.min(100, Math.round((totalTokens / maxContextTokens) * 100))
-    : 0;
-  const fiveHourPercent = fiveHourLimit > 0
-    ? Math.min(100, Math.round((totalTokens / fiveHourLimit) * 100))
-    : 0;
-  const weeklyPercent = weeklyLimit > 0
-    ? Math.min(100, Math.round((totalTokens / weeklyLimit) * 100))
-    : 0;
-
-  // Estimate reset times
-  const now = new Date();
-  const fiveHourReset = new Date(now.getTime() + 5 * 60 * 60 * 1000);
-  const weeklyReset = new Date(now.getTime());
-  // Reset on next Monday 00:00 UTC
-  const daysUntilMonday = ((8 - weeklyReset.getUTCDay()) % 7) || 7;
-  weeklyReset.setUTCDate(weeklyReset.getUTCDate() + daysUntilMonday);
-  weeklyReset.setUTCHours(0, 0, 0, 0);
-
-  return {
-    totalTokens,
-    contextPercent,
-    fiveHourPercent,
-    weeklyPercent,
-    fiveHourResetLabel: formatResetTime(fiveHourReset.toISOString()),
-    weeklyResetLabel: formatResetTime(weeklyReset.toISOString()),
-  };
-}
-
 export function ChatPanel() {
   const renderStartedAtRef = useRef(performance.now());
   renderStartedAtRef.current = performance.now();
@@ -540,6 +508,7 @@ export function ChatPanel() {
     cancel,
     respondApproval,
     streaming,
+    usageLimits,
     error,
     setActiveThread: bindChatThread,
     threadId,
@@ -591,6 +560,8 @@ export function ChatPanel() {
     threadId: string;
     threadPaths: string[];
     text: string;
+    attachments: ChatAttachment[];
+    planMode: boolean;
     engineId: string;
     modelId: string;
     effort: string | null;
@@ -1123,6 +1094,8 @@ export function ChatPanel() {
           threadId: targetThreadId,
           threadPaths: repos.map((repo) => repo.path),
           text: input.trim(),
+          attachments: [...attachments],
+          planMode,
           engineId: selectedEngineId,
           modelId: selectedModelId!,
           effort: selectedEngineId === "codex" ? selectedEffort : null,
@@ -1161,6 +1134,7 @@ export function ChatPanel() {
       await ipc.confirmWorkspaceThread(prompt.threadId, prompt.threadPaths);
 
       setInput("");
+      setAttachments([]);
 
       if (prompt.engineId === "codex" && prompt.effort) {
         await ipc.setThreadReasoningEffort(prompt.threadId, prompt.effort, prompt.modelId);
@@ -1173,11 +1147,14 @@ export function ChatPanel() {
         engineId: prompt.engineId,
         modelId: prompt.modelId,
         reasoningEffort: prompt.effort,
+        attachments: prompt.attachments.length > 0 ? prompt.attachments : undefined,
+        planMode: prompt.planMode,
       });
 
       await refreshThreads(prompt.workspaceId);
     } catch {
       setInput(prompt.text);
+      setAttachments(prompt.attachments);
     }
   }
 
@@ -1268,8 +1245,6 @@ export function ChatPanel() {
   function removeAttachment(id: string) {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
   }
-
-  const contextUsage = useMemo(() => computeContextUsage(messages), [messages]);
 
   const onMessageRowHeightChange = useCallback(
     (messageId: string, height: number) => {
@@ -2285,54 +2260,67 @@ export function ChatPanel() {
           </div>
 
           {/* Context usage bar */}
-          {messages.length > 0 && (
-            <div className="chat-context-bar">
-              <div className="chat-context-section">
-                <Zap size={10} />
-                <span>Context</span>
-                <div className="chat-context-progress">
-                  <div
-                    className="chat-context-progress-fill"
-                    style={{ width: `${contextUsage.contextPercent}%` }}
-                  />
+          {messages.length > 0 && selectedEngineId === "codex" && (
+            usageLimits ? (
+              <div className="chat-context-bar">
+                <div className="chat-context-section">
+                  <Zap size={10} />
+                  <span>Context</span>
+                  <div className="chat-context-progress">
+                    <div
+                      className="chat-context-progress-fill"
+                      style={{ width: `${usageLimits.contextPercent}%` }}
+                    />
+                  </div>
+                  <span className="chat-context-percent">{usageLimits.contextPercent}%</span>
                 </div>
-                <span className="chat-context-percent">{contextUsage.contextPercent}%</span>
-              </div>
 
-              <span className="chat-context-divider">&middot;</span>
+                <span className="chat-context-divider">&middot;</span>
 
-              <div className="chat-context-section">
-                <Clock size={10} />
-                <span>5h</span>
-                <div className="chat-context-progress">
-                  <div
-                    className="chat-context-progress-fill chat-context-progress-fill-5h"
-                    style={{ width: `${contextUsage.fiveHourPercent}%` }}
-                  />
+                <div className="chat-context-section">
+                  <Clock size={10} />
+                  <span>5h</span>
+                  <div className="chat-context-progress">
+                    <div
+                      className="chat-context-progress-fill chat-context-progress-fill-5h"
+                      style={{ width: `${usageLimits.windowFiveHourPercent}%` }}
+                    />
+                  </div>
+                  <span className="chat-context-percent">{usageLimits.windowFiveHourPercent}%</span>
+                  {usageLimits.windowFiveHourResetsAt && (
+                    <span className="chat-context-reset">
+                      resets {formatResetTime(usageLimits.windowFiveHourResetsAt)}
+                    </span>
+                  )}
                 </div>
-                <span className="chat-context-percent">{contextUsage.fiveHourPercent}%</span>
-                {contextUsage.fiveHourResetLabel && (
-                  <span className="chat-context-reset">resets {contextUsage.fiveHourResetLabel}</span>
-                )}
-              </div>
 
-              <span className="chat-context-divider">&middot;</span>
+                <span className="chat-context-divider">&middot;</span>
 
-              <div className="chat-context-section">
-                <Clock size={10} />
-                <span>Weekly</span>
-                <div className="chat-context-progress">
-                  <div
-                    className="chat-context-progress-fill chat-context-progress-fill-weekly"
-                    style={{ width: `${contextUsage.weeklyPercent}%` }}
-                  />
+                <div className="chat-context-section">
+                  <Clock size={10} />
+                  <span>Weekly</span>
+                  <div className="chat-context-progress">
+                    <div
+                      className="chat-context-progress-fill chat-context-progress-fill-weekly"
+                      style={{ width: `${usageLimits.windowWeeklyPercent}%` }}
+                    />
+                  </div>
+                  <span className="chat-context-percent">{usageLimits.windowWeeklyPercent}%</span>
+                  {usageLimits.windowWeeklyResetsAt && (
+                    <span className="chat-context-reset">
+                      resets {formatResetTime(usageLimits.windowWeeklyResetsAt)}
+                    </span>
+                  )}
                 </div>
-                <span className="chat-context-percent">{contextUsage.weeklyPercent}%</span>
-                {contextUsage.weeklyResetLabel && (
-                  <span className="chat-context-reset">resets {contextUsage.weeklyResetLabel}</span>
-                )}
               </div>
-            </div>
+            ) : (
+              <div className="chat-context-bar">
+                <div className="chat-context-section">
+                  <Clock size={10} />
+                  <span>Usage limits unavailable from server</span>
+                </div>
+              </div>
+            )
           )}
 
           {/* Bottom status bar */}

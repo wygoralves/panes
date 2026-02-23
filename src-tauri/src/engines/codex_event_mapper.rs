@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::{
     ActionResult, ActionType, DiffScope, EngineEvent, OutputStream, TokenUsage,
-    TurnCompletionStatus,
+    TurnCompletionStatus, UsageLimitsSnapshot,
 };
 
 #[derive(Default)]
@@ -13,6 +13,7 @@ pub struct TurnEventMapper {
     engine_action_to_internal: HashMap<String, String>,
     pending_actions_without_engine_id: Vec<String>,
     latest_token_usage: Option<TokenUsage>,
+    latest_usage_limits: UsageLimitsSnapshot,
     streamed_agent_message_items: HashSet<String>,
 }
 
@@ -33,6 +34,15 @@ impl TurnEventMapper {
                 let token_usage =
                     extract_token_usage(params).or_else(|| self.latest_token_usage.clone());
                 let status = extract_turn_completion_status(params);
+                if let Some(context_update) = extract_context_usage_limits(params) {
+                    self.latest_usage_limits.current_tokens = context_update.current_tokens;
+                    self.latest_usage_limits.max_context_tokens = context_update.max_context_tokens;
+                    self.latest_usage_limits.context_window_percent =
+                        context_update.context_window_percent;
+                    events.push(EngineEvent::UsageLimitsUpdated {
+                        usage: self.latest_usage_limits.clone(),
+                    });
+                }
 
                 if status == TurnCompletionStatus::Failed {
                     let message = extract_nested_string(params, &["turn", "error", "message"])
@@ -99,7 +109,26 @@ impl TurnEventMapper {
             }
             "thread/tokenusage/updated" => {
                 self.latest_token_usage = extract_token_usage(params);
-                Vec::new()
+                if let Some(context_update) = extract_context_usage_limits(params) {
+                    self.latest_usage_limits.current_tokens = context_update.current_tokens;
+                    self.latest_usage_limits.max_context_tokens = context_update.max_context_tokens;
+                    self.latest_usage_limits.context_window_percent =
+                        context_update.context_window_percent;
+                    vec![EngineEvent::UsageLimitsUpdated {
+                        usage: self.latest_usage_limits.clone(),
+                    }]
+                } else {
+                    Vec::new()
+                }
+            }
+            "account/ratelimits/updated" => {
+                if merge_rate_limits_snapshot(&mut self.latest_usage_limits, params) {
+                    vec![EngineEvent::UsageLimitsUpdated {
+                        usage: self.latest_usage_limits.clone(),
+                    }]
+                } else {
+                    Vec::new()
+                }
             }
             "item/started" => self.map_item_started(params),
             "item/completed" => self.map_item_completed(params),
@@ -120,6 +149,16 @@ impl TurnEventMapper {
                 }]
             }
             _ => Vec::new(),
+        }
+    }
+
+    pub fn map_rate_limits_snapshot(&mut self, payload: &Value) -> Option<EngineEvent> {
+        if merge_rate_limits_snapshot(&mut self.latest_usage_limits, payload) {
+            Some(EngineEvent::UsageLimitsUpdated {
+                usage: self.latest_usage_limits.clone(),
+            })
+        } else {
+            None
         }
     }
 
@@ -162,6 +201,21 @@ impl TurnEventMapper {
                     }
                 }
             }
+        }
+
+        if let Some(context_update) = extract_context_usage_limits(result) {
+            self.latest_usage_limits.current_tokens = context_update.current_tokens;
+            self.latest_usage_limits.max_context_tokens = context_update.max_context_tokens;
+            self.latest_usage_limits.context_window_percent = context_update.context_window_percent;
+            out.push(EngineEvent::UsageLimitsUpdated {
+                usage: self.latest_usage_limits.clone(),
+            });
+        }
+
+        if merge_rate_limits_snapshot(&mut self.latest_usage_limits, result) {
+            out.push(EngineEvent::UsageLimitsUpdated {
+                usage: self.latest_usage_limits.clone(),
+            });
         }
 
         out
@@ -534,6 +588,174 @@ fn extract_first_question_text(params: &Value) -> Option<String> {
     extract_any_string(first, &["question", "header"])
 }
 
+#[derive(Debug, Clone)]
+struct RateLimitWindowInfo {
+    used_percent: u8,
+    resets_at: Option<i64>,
+    window_duration_mins: Option<i64>,
+}
+
+fn extract_context_usage_limits(value: &Value) -> Option<UsageLimitsSnapshot> {
+    let token_usage = value
+        .get("tokenUsage")
+        .or_else(|| value.get("turn").and_then(|turn| turn.get("tokenUsage")))?;
+
+    let total_tokens = token_usage
+        .get("total")
+        .and_then(|total| {
+            extract_any_u64(total, &["totalTokens", "total_tokens"])
+                .or_else(|| extract_any_u64(total, &["inputTokens", "input_tokens"]))
+        })
+        .or_else(|| extract_any_u64(token_usage, &["totalTokens", "total_tokens"]));
+
+    let max_context_tokens =
+        extract_any_u64(token_usage, &["modelContextWindow", "model_context_window"]);
+
+    let context_window_percent = match (total_tokens, max_context_tokens) {
+        (Some(total), Some(limit)) if limit > 0 => {
+            let percent = ((total as f64 / limit as f64) * 100.0).round() as i64;
+            Some(percent.clamp(0, 100) as u8)
+        }
+        _ => None,
+    };
+
+    if total_tokens.is_none() && max_context_tokens.is_none() {
+        return None;
+    }
+
+    Some(UsageLimitsSnapshot {
+        current_tokens: total_tokens,
+        max_context_tokens,
+        context_window_percent,
+        ..UsageLimitsSnapshot::default()
+    })
+}
+
+fn merge_rate_limits_snapshot(target: &mut UsageLimitsSnapshot, payload: &Value) -> bool {
+    let Some(snapshot) = select_rate_limit_snapshot(payload) else {
+        return false;
+    };
+
+    let windows = [
+        parse_rate_limit_window(snapshot.get("primary")),
+        parse_rate_limit_window(snapshot.get("secondary")),
+    ];
+
+    let five_hour_window = select_rate_limit_window(&windows, 300, true);
+    let weekly_window = select_rate_limit_window(&windows, 10_080, false);
+
+    let mut changed = false;
+
+    let five_hour_percent = five_hour_window.as_ref().map(|window| window.used_percent);
+    if target.five_hour_percent != five_hour_percent {
+        target.five_hour_percent = five_hour_percent;
+        changed = true;
+    }
+
+    let five_hour_resets_at = five_hour_window
+        .as_ref()
+        .and_then(|window| window.resets_at);
+    if target.five_hour_resets_at != five_hour_resets_at {
+        target.five_hour_resets_at = five_hour_resets_at;
+        changed = true;
+    }
+
+    let weekly_percent = weekly_window.as_ref().map(|window| window.used_percent);
+    if target.weekly_percent != weekly_percent {
+        target.weekly_percent = weekly_percent;
+        changed = true;
+    }
+
+    let weekly_resets_at = weekly_window.as_ref().and_then(|window| window.resets_at);
+    if target.weekly_resets_at != weekly_resets_at {
+        target.weekly_resets_at = weekly_resets_at;
+        changed = true;
+    }
+
+    changed
+}
+
+fn select_rate_limit_snapshot<'a>(payload: &'a Value) -> Option<&'a Value> {
+    if let Some(by_limit_id) = payload
+        .get("rateLimitsByLimitId")
+        .and_then(Value::as_object)
+    {
+        if let Some(codex_snapshot) = by_limit_id.get("codex") {
+            return Some(codex_snapshot);
+        }
+        if let Some(first_snapshot) = by_limit_id.values().find(|value| value.is_object()) {
+            return Some(first_snapshot);
+        }
+    }
+
+    if let Some(snapshot) = payload.get("rateLimits") {
+        return Some(snapshot);
+    }
+
+    if payload.get("primary").is_some() || payload.get("secondary").is_some() {
+        return Some(payload);
+    }
+
+    None
+}
+
+fn parse_rate_limit_window(value: Option<&Value>) -> Option<RateLimitWindowInfo> {
+    let value = value?;
+    if value.is_null() {
+        return None;
+    }
+
+    let used_percent = extract_any_u64(value, &["usedPercent", "used_percent"])
+        .map(|value| value.min(100) as u8)?;
+    let resets_at = extract_any_i64(value, &["resetsAt", "resets_at"]).map(normalize_epoch_millis);
+    let window_duration_mins =
+        extract_any_i64(value, &["windowDurationMins", "window_duration_mins"]);
+
+    Some(RateLimitWindowInfo {
+        used_percent,
+        resets_at,
+        window_duration_mins,
+    })
+}
+
+fn select_rate_limit_window(
+    windows: &[Option<RateLimitWindowInfo>],
+    target_duration_mins: i64,
+    prefer_shorter_when_unknown: bool,
+) -> Option<RateLimitWindowInfo> {
+    let candidates: Vec<RateLimitWindowInfo> = windows.iter().flatten().cloned().collect();
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let with_durations: Vec<RateLimitWindowInfo> = candidates
+        .iter()
+        .filter(|window| window.window_duration_mins.is_some())
+        .cloned()
+        .collect();
+
+    if !with_durations.is_empty() {
+        return with_durations.into_iter().min_by_key(|window| {
+            (window.window_duration_mins.unwrap_or(target_duration_mins) - target_duration_mins)
+                .abs()
+        });
+    }
+
+    if prefer_shorter_when_unknown {
+        candidates.into_iter().next()
+    } else {
+        candidates.into_iter().last()
+    }
+}
+
+fn normalize_epoch_millis(value: i64) -> i64 {
+    if value >= 0 && value < 10_000_000_000 {
+        value.saturating_mul(1000)
+    } else {
+        value
+    }
+}
+
 fn extract_token_usage(value: &Value) -> Option<TokenUsage> {
     let mut candidates: Vec<&Value> = vec![value];
 
@@ -647,6 +869,25 @@ fn extract_any_u64(value: &Value, keys: &[&str]) -> Option<u64> {
     None
 }
 
+fn extract_any_i64(value: &Value, keys: &[&str]) -> Option<i64> {
+    for key in keys {
+        if let Some(found) = value.get(*key) {
+            if let Some(number) = found.as_i64() {
+                return Some(number);
+            }
+            if let Some(number) = found.as_u64() {
+                if number <= i64::MAX as u64 {
+                    return Some(number as i64);
+                }
+            }
+            if let Some(number) = found.as_str().and_then(|value| value.parse::<i64>().ok()) {
+                return Some(number);
+            }
+        }
+    }
+    None
+}
+
 fn extract_nested_string(value: &Value, path: &[&str]) -> Option<String> {
     let mut current = value;
     for segment in path {
@@ -749,6 +990,66 @@ mod tests {
                 assert_eq!(summary, "Qual linguagem usar?");
             }
             _ => panic!("expected approval request event"),
+        }
+    }
+
+    #[test]
+    fn map_notification_emits_context_usage_from_thread_token_usage() {
+        let mut mapper = TurnEventMapper::default();
+        let params = json!({
+            "threadId": "thr_123",
+            "turnId": "turn_123",
+            "tokenUsage": {
+                "total": {
+                    "totalTokens": 50000
+                },
+                "modelContextWindow": 200000
+            }
+        });
+
+        let events = mapper.map_notification("thread/tokenUsage/updated", &params);
+        assert_eq!(events.len(), 1);
+
+        match &events[0] {
+            EngineEvent::UsageLimitsUpdated { usage } => {
+                assert_eq!(usage.current_tokens, Some(50000));
+                assert_eq!(usage.max_context_tokens, Some(200000));
+                assert_eq!(usage.context_window_percent, Some(25));
+            }
+            _ => panic!("expected usage limits update"),
+        }
+    }
+
+    #[test]
+    fn map_rate_limits_snapshot_maps_five_hour_and_weekly_windows() {
+        let mut mapper = TurnEventMapper::default();
+        let payload = json!({
+            "rateLimits": {
+                "primary": {
+                    "usedPercent": 17,
+                    "windowDurationMins": 300,
+                    "resetsAt": 1735689600
+                },
+                "secondary": {
+                    "usedPercent": 42,
+                    "windowDurationMins": 10080,
+                    "resetsAt": 1736294400000i64
+                }
+            }
+        });
+
+        let event = mapper
+            .map_rate_limits_snapshot(&payload)
+            .expect("expected usage limits update");
+
+        match event {
+            EngineEvent::UsageLimitsUpdated { usage } => {
+                assert_eq!(usage.five_hour_percent, Some(17));
+                assert_eq!(usage.weekly_percent, Some(42));
+                assert_eq!(usage.five_hour_resets_at, Some(1735689600 * 1000));
+                assert_eq!(usage.weekly_resets_at, Some(1736294400000));
+            }
+            _ => panic!("expected usage limits update"),
         }
     }
 }

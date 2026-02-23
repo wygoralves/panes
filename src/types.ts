@@ -76,6 +76,7 @@ export type ActionType =
 export interface TextBlock {
   type: "text";
   content: string;
+  planMode?: boolean;
 }
 
 export interface CodeBlock {
@@ -468,6 +469,19 @@ export interface ErrorEvent {
   recoverable: boolean;
 }
 
+export interface UsageLimitsUpdatedEvent {
+  type: "UsageLimitsUpdated";
+  usage: {
+    current_tokens?: number | null;
+    max_context_tokens?: number | null;
+    context_window_percent?: number | null;
+    five_hour_percent?: number | null;
+    weekly_percent?: number | null;
+    five_hour_resets_at?: number | null;
+    weekly_resets_at?: number | null;
+  };
+}
+
 export type StreamEvent =
   | TurnStartedEvent
   | TurnCompletedEvent
@@ -478,7 +492,8 @@ export type StreamEvent =
   | ActionCompletedEvent
   | DiffUpdatedEvent
   | ApprovalRequestedEvent
-  | ErrorEvent;
+  | ErrorEvent
+  | UsageLimitsUpdatedEvent;
 
 // ── Attachments ─────────────────────────────────────────────────────
 
@@ -495,6 +510,7 @@ export interface ChatAttachment {
 export interface ContextUsage {
   currentTokens: number;
   maxContextTokens: number;
+  contextPercent: number;
   windowFiveHourPercent: number;
   windowWeeklyPercent: number;
   windowFiveHourResetsAt: string | null;
