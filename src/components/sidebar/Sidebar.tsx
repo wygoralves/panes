@@ -15,6 +15,7 @@ import {
   PinOff,
   Package,
   Play,
+  Zap,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -592,8 +593,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               <button
                 key={h.id}
                 type="button"
-                className="sb-harness-chip"
-                title={`Launch ${h.name}`}
+                className={`sb-harness-chip${h.native ? " sb-harness-chip-native" : ""}`}
+                title={`Launch ${h.name}${h.native ? " (native integration)" : ""}`}
                 onClick={() => {
                   void (async () => {
                     const cmd = await harnessLaunch(h.id);
@@ -615,7 +616,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 }}
               >
                 <span className="sb-harness-chip-dot" />
-                <Play size={9} />
+                {h.native ? <Zap size={9} /> : <Play size={9} />}
                 {h.name}
               </button>
             ))}

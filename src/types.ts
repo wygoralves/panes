@@ -393,6 +393,7 @@ export interface HarnessInfo {
   path: string | null;
   canAutoInstall: boolean;
   website: string;
+  native: boolean;
 }
 
 export interface HarnessReport {
