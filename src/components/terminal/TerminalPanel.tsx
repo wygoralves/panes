@@ -9,7 +9,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { ImageAddon } from "@xterm/addon-image";
 import "@xterm/xterm/css/xterm.css";
-import { ipc, listenTerminalExit, listenTerminalOutput } from "../../lib/ipc";
+import { ipc, listenTerminalExit, listenTerminalOutput, writeCommandToNewSession } from "../../lib/ipc";
 import { useTerminalStore, collectSessionIds } from "../../stores/terminalStore";
 import type { SplitNode, SplitContainer as SplitContainerType } from "../../types";
 
@@ -1022,13 +1022,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     const rows = active?.terminal.rows ?? DEFAULT_ROWS;
     const sessionId = await createSession(workspaceId, cols, rows);
     if (sessionId) {
-      setTimeout(async () => {
-        try {
-          await ipc.terminalWrite(workspaceId, sessionId, command + "\r");
-        } catch {
-          // Terminal may not be ready yet, ignore
-        }
-      }, 300);
+      void writeCommandToNewSession(workspaceId, sessionId, command);
     }
   }, [focusedSessionId, createSession, workspaceId, harnessLaunch]);
 
@@ -1253,7 +1247,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
           style={{
             position: "fixed",
             top: newTabBtnRef.current.getBoundingClientRect().bottom + 4,
-            left: newTabBtnRef.current.getBoundingClientRect().left,
+            right: window.innerWidth - newTabBtnRef.current.getBoundingClientRect().right,
           }}
         >
           <button
