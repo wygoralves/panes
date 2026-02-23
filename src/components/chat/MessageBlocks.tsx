@@ -1,4 +1,4 @@
-import { Suspense, lazy, memo, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Circle,
@@ -14,6 +14,9 @@ import {
   FileText,
   Image,
   File,
+  Copy,
+  Check,
+  Play,
 } from "lucide-react";
 import type {
   ActionBlock,
@@ -345,6 +348,7 @@ interface Props {
   blocks?: ContentBlock[];
   status?: MessageStatus;
   onApproval: (approvalId: string, response: ApprovalResponse) => void;
+  workspaceId?: string;
 }
 
 function isBlockLike(value: unknown): value is { type: string } {
@@ -864,25 +868,31 @@ function ApprovalCard({
       {!isToolInputRequest && (command || reason || commandActionCount > 0 || hasRemainingDetails) && (
         <div style={{ padding: "0 14px 10px" }}>
           {command && (
-            <pre
-              style={{
-                margin: 0,
-                padding: "8px 10px",
-                borderRadius: "var(--radius-sm)",
-                background: "var(--code-bg)",
-                border: "1px solid var(--border)",
-                fontFamily: '"JetBrains Mono", monospace',
-                fontSize: 11.5,
-                lineHeight: 1.5,
-                color: "var(--text-2)",
-                maxHeight: 80,
-                overflowY: "auto",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-all",
-              }}
-            >
-              {command}
-            </pre>
+            <div style={{ position: "relative" }}>
+              <pre
+                style={{
+                  margin: 0,
+                  padding: "8px 10px",
+                  paddingRight: 36,
+                  borderRadius: "var(--radius-sm)",
+                  background: "var(--code-bg)",
+                  border: "1px solid var(--border)",
+                  fontFamily: '"JetBrains Mono", monospace',
+                  fontSize: 11.5,
+                  lineHeight: 1.5,
+                  color: "var(--text-2)",
+                  maxHeight: 80,
+                  overflowY: "auto",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-all",
+                }}
+              >
+                {command}
+              </pre>
+              <div style={{ position: "absolute", top: 4, right: 4 }}>
+                <CopyButton text={command} />
+              </div>
+            </div>
           )}
           {!command && reason && (
             <p style={{ margin: 0, fontSize: 12, color: "var(--text-2)" }}>
@@ -1115,9 +1125,116 @@ function ApprovalCard({
   );
 }
 
+/* ── Copy / Run Buttons ── */
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  const handleCopy = useCallback(() => {
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setCopied(false), 1500);
+    });
+  }, [text]);
+
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title="Copy"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 26,
+        height: 26,
+        borderRadius: "var(--radius-sm)",
+        background: "transparent",
+        border: "none",
+        color: copied ? "var(--success)" : "var(--text-3)",
+        cursor: "pointer",
+        transition: "all 120ms ease-out",
+        padding: 0,
+      }}
+      onMouseEnter={(e) => {
+        if (!copied) (e.currentTarget as HTMLElement).style.color = "var(--text-1)";
+        (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.06)";
+      }}
+      onMouseLeave={(e) => {
+        if (!copied) (e.currentTarget as HTMLElement).style.color = "var(--text-3)";
+        (e.currentTarget as HTMLElement).style.background = "transparent";
+      }}
+    >
+      {copied ? <Check size={13} /> : <Copy size={13} />}
+    </button>
+  );
+}
+
+function RunInTerminalButton({
+  command,
+  workspaceId,
+}: {
+  command: string;
+  workspaceId: string;
+}) {
+  const handleRun = useCallback(async () => {
+    const { useTerminalStore } = await import("../../stores/terminalStore");
+    const store = useTerminalStore.getState();
+
+    // Ensure terminal is visible in split mode
+    const ws = store.workspaces[workspaceId];
+    if (!ws || ws.layoutMode === "chat") {
+      await store.setLayoutMode(workspaceId, "split");
+    }
+
+    await store.runCommandInTerminal(workspaceId, command);
+  }, [command, workspaceId]);
+
+  return (
+    <button
+      type="button"
+      onClick={handleRun}
+      title="Run in Terminal"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 26,
+        height: 26,
+        borderRadius: "var(--radius-sm)",
+        background: "transparent",
+        border: "none",
+        color: "var(--text-3)",
+        cursor: "pointer",
+        transition: "all 120ms ease-out",
+        padding: 0,
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLElement).style.color = "var(--accent)";
+        (e.currentTarget as HTMLElement).style.background = "var(--accent-dim)";
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLElement).style.color = "var(--text-3)";
+        (e.currentTarget as HTMLElement).style.background = "transparent";
+      }}
+    >
+      <Play size={13} />
+    </button>
+  );
+}
+
+const RUNNABLE_LANGUAGES = new Set([
+  "bash", "sh", "zsh", "shell", "console", "terminal",
+  "powershell", "ps1", "cmd", "bat",
+]);
+
 /* ── Main Component ── */
 
-function MessageBlocksView({ blocks = [], status, onApproval }: Props) {
+function MessageBlocksView({ blocks = [], status, onApproval, workspaceId }: Props) {
   const safeBlocks = Array.isArray(blocks) ? blocks : [];
 
   const lastDiffIndex = useMemo(() => {
@@ -1184,6 +1301,8 @@ function MessageBlocksView({ blocks = [], status, onApproval }: Props) {
         /* ── Code ── */
         if (block.type === "code") {
           const lang = String(block.language ?? "text");
+          const codeContent = String(block.content ?? "");
+          const isRunnable = RUNNABLE_LANGUAGES.has(lang.toLowerCase());
           return (
             <div
               key={index}
@@ -1199,7 +1318,7 @@ function MessageBlocksView({ blocks = [], status, onApproval }: Props) {
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
-                  padding: "6px 12px",
+                  padding: "4px 6px 4px 12px",
                   borderBottom: "1px solid var(--border)",
                   fontSize: 11,
                   color: "var(--text-3)",
@@ -1207,7 +1326,11 @@ function MessageBlocksView({ blocks = [], status, onApproval }: Props) {
                 }}
               >
                 <FileCode2 size={12} style={{ opacity: 0.5 }} />
-                {block.filename || lang}
+                <span style={{ flex: 1 }}>{block.filename || lang}</span>
+                <CopyButton text={codeContent} />
+                {isRunnable && workspaceId && (
+                  <RunInTerminalButton command={codeContent} workspaceId={workspaceId} />
+                )}
               </div>
               <pre
                 style={{
@@ -1222,7 +1345,7 @@ function MessageBlocksView({ blocks = [], status, onApproval }: Props) {
                   maxHeight: 400,
                 }}
               >
-                <code className={`language-${lang}`}>{String(block.content ?? "")}</code>
+                <code className={`language-${lang}`}>{codeContent}</code>
               </pre>
             </div>
           );
@@ -1305,5 +1428,6 @@ export const MessageBlocks = memo(
   (prev, next) =>
     prev.blocks === next.blocks &&
     prev.status === next.status &&
-    prev.onApproval === next.onApproval,
+    prev.onApproval === next.onApproval &&
+    prev.workspaceId === next.workspaceId,
 );

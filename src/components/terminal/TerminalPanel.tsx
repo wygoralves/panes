@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Columns2, Copy, Folder, Pencil, Plus, Rows2, SquareTerminal, Trash2, X } from "lucide-react";
+import { Columns2, Copy, Folder, Pencil, Plus, Rows2, Search, SquareTerminal, Trash2, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useHarnessStore } from "../../stores/harnessStore";
 import { toast } from "../../stores/toastStore";
@@ -7,6 +7,8 @@ import { getHarnessIcon } from "../shared/HarnessLogos";
 import { copyTextToClipboard } from "../../lib/clipboard";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { ImageAddon } from "@xterm/addon-image";
@@ -106,6 +108,7 @@ interface BackendRendererDiagnosticsEntry {
 interface SessionTerminal {
   terminal: Terminal;
   fitAddon: FitAddon;
+  searchAddon: SearchAddon;
   outputQueue: string[];
   outputQueueChars: number;
   flushInProgress: boolean;
@@ -130,6 +133,9 @@ interface SessionTerminal {
 
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 36;
+const DEFAULT_FONT_SIZE = 12;
+const MIN_FONT_SIZE = 8;
+const MAX_FONT_SIZE = 24;
 const FIT_DEBOUNCE_MS = 80;
 const OUTPUT_FLUSH_DELAY_MS = 4;
 const OUTPUT_FLUSH_STALL_TIMEOUT_MS = 2500;
@@ -154,6 +160,8 @@ const IMAGE_ADDON_ERROR_PATTERNS = [
   "image storage",
   "canvas",
 ];
+
+let globalTerminalFontSize = DEFAULT_FONT_SIZE;
 
 // Module-level cache — xterm instances survive component mount/unmount cycles.
 // This is what preserves terminal scrollback when switching workspaces.
@@ -815,6 +823,34 @@ function destroyCachedTerminal(workspaceId: string, sessionId: string) {
   cachedBackendRendererDiagnostics.delete(key);
 }
 
+// ── Font size zoom ──────────────────────────────────────────────────
+
+function adjustAllTerminalFontSize(workspaceId: string, delta: number) {
+  const next = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, globalTerminalFontSize + delta));
+  if (next === globalTerminalFontSize) return;
+  globalTerminalFontSize = next;
+  applyFontSizeToAll(workspaceId);
+}
+
+function resetAllTerminalFontSize(workspaceId: string) {
+  if (globalTerminalFontSize === DEFAULT_FONT_SIZE) return;
+  globalTerminalFontSize = DEFAULT_FONT_SIZE;
+  applyFontSizeToAll(workspaceId);
+}
+
+function applyFontSizeToAll(workspaceId: string) {
+  const prefix = terminalWorkspacePrefix(workspaceId);
+  for (const [key, session] of cachedTerminals) {
+    if (!key.startsWith(prefix)) continue;
+    session.terminal.options.fontSize = globalTerminalFontSize;
+    session.fitAddon.fit();
+    const sessionId = key.slice(prefix.length);
+    sendResizeIfNeeded(workspaceId, sessionId, session, session.terminal.cols, session.terminal.rows);
+  }
+  // Dispatch event so the UI can update
+  window.dispatchEvent(new CustomEvent("panes:terminal-fontsize-changed", { detail: { fontSize: globalTerminalFontSize } }));
+}
+
 // ── Split pane components ───────────────────────────────────────────
 
 interface SplitPaneViewProps {
@@ -1050,6 +1086,12 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const [ctxMenu, setCtxMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
   const ctxMenuRef = useRef<HTMLDivElement>(null);
 
+  // Search bar
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [terminalFontSize, setTerminalFontSize] = useState(globalTerminalFontSize);
+
   useEffect(() => {
     if (renamingGroupId) {
       renameInputRef.current?.focus();
@@ -1077,6 +1119,72 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       document.removeEventListener("keydown", handleClose);
     };
   }, [ctxMenu]);
+
+  // Listen for search toggle from keyboard shortcut
+  useEffect(() => {
+    const handler = () => {
+      setSearchOpen((prev) => {
+        if (!prev) {
+          // Opening: focus input on next tick
+          requestAnimationFrame(() => searchInputRef.current?.focus());
+          return true;
+        }
+        // Closing: clear search highlights
+        if (focusedSessionId) {
+          const cached = cachedTerminals.get(terminalCacheKey(workspaceId, focusedSessionId));
+          if (cached) cached.searchAddon.clearDecorations();
+        }
+        setSearchQuery("");
+        return false;
+      });
+    };
+    window.addEventListener("panes:terminal-search-toggle", handler);
+    return () => window.removeEventListener("panes:terminal-search-toggle", handler);
+  }, [focusedSessionId, workspaceId]);
+
+  // Listen for font size changes
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.fontSize != null) setTerminalFontSize(detail.fontSize);
+    };
+    window.addEventListener("panes:terminal-fontsize-changed", handler);
+    return () => window.removeEventListener("panes:terminal-fontsize-changed", handler);
+  }, []);
+
+  // Search helpers
+  const handleSearchChange = useCallback((query: string) => {
+    setSearchQuery(query);
+    if (!focusedSessionId) return;
+    const cached = cachedTerminals.get(terminalCacheKey(workspaceId, focusedSessionId));
+    if (!cached) return;
+    if (query) {
+      cached.searchAddon.findNext(query, { decorations: { activeMatchColorOverviewRuler: "#0ef0c3", matchOverviewRuler: "#0ef0c350" } });
+    } else {
+      cached.searchAddon.clearDecorations();
+    }
+  }, [focusedSessionId, workspaceId]);
+
+  const handleSearchNext = useCallback(() => {
+    if (!focusedSessionId || !searchQuery) return;
+    const cached = cachedTerminals.get(terminalCacheKey(workspaceId, focusedSessionId));
+    cached?.searchAddon.findNext(searchQuery);
+  }, [focusedSessionId, searchQuery, workspaceId]);
+
+  const handleSearchPrev = useCallback(() => {
+    if (!focusedSessionId || !searchQuery) return;
+    const cached = cachedTerminals.get(terminalCacheKey(workspaceId, focusedSessionId));
+    cached?.searchAddon.findPrevious(searchQuery);
+  }, [focusedSessionId, searchQuery, workspaceId]);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    if (focusedSessionId) {
+      const cached = cachedTerminals.get(terminalCacheKey(workspaceId, focusedSessionId));
+      cached?.searchAddon.clearDecorations();
+    }
+  }, [focusedSessionId, workspaceId]);
 
   const commitRename = useCallback(
     (groupId: string) => {
@@ -1210,7 +1318,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       convertEol: false,
       cursorBlink: true,
       fontFamily: '"JetBrains Mono", monospace',
-      fontSize: 12,
+      fontSize: globalTerminalFontSize,
       lineHeight: 1.3,
       scrollback: 5000,
       theme: {
@@ -1223,6 +1331,14 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
+
+    const searchAddon = new SearchAddon();
+    terminal.loadAddon(searchAddon);
+
+    const webLinksAddon = new WebLinksAddon((_event, uri) => {
+      void window.open(uri, "_blank");
+    });
+    terminal.loadAddon(webLinksAddon);
 
     const unicode11 = new Unicode11Addon();
     terminal.loadAddon(unicode11);
@@ -1255,6 +1371,29 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       const k = event.key.toLowerCase();
       if (event.metaKey && (k === "d" || k === "t")) return false;
       if (event.ctrlKey && k === "t") return false;
+
+      // Font size zoom: Ctrl+= / Ctrl+- / Ctrl+0
+      if (event.ctrlKey && (k === "=" || k === "+" || k === "-" || k === "0")) {
+        if (k === "=" || k === "+") {
+          adjustAllTerminalFontSize(workspaceId, 1);
+        } else if (k === "-") {
+          adjustAllTerminalFontSize(workspaceId, -1);
+        } else if (k === "0") {
+          resetAllTerminalFontSize(workspaceId);
+        }
+        return false;
+      }
+
+      // Open search: Ctrl+Shift+F
+      if (event.ctrlKey && event.shiftKey && k === "f") {
+        const cached = cachedTerminals.get(terminalCacheKey(workspaceId, sessionId));
+        if (cached) {
+          // Dispatch custom event for the React component to handle
+          window.dispatchEvent(new CustomEvent("panes:terminal-search-toggle", { detail: { sessionId } }));
+        }
+        return false;
+      }
+
       return true;
     });
     const webglCleanup = setupWebglRenderer(cacheKey, terminal, rendererDiagnostics) ?? undefined;
@@ -1280,6 +1419,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     const entry: SessionTerminal = {
       terminal,
       fitAddon,
+      searchAddon,
       outputQueue: [],
       outputQueueChars: 0,
       flushInProgress: false,
@@ -1746,6 +1886,115 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
           </div>
         )}
 
+        {/* Search bar */}
+        {searchOpen && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "4px 8px",
+              borderTop: "1px solid var(--border)",
+              background: "var(--bg-2)",
+              flexShrink: 0,
+              animation: "fade-in 120ms ease-out",
+            }}
+          >
+            <Search size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (e.shiftKey) handleSearchPrev();
+                  else handleSearchNext();
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  closeSearch();
+                }
+              }}
+              placeholder="Search terminal..."
+              style={{
+                flex: 1,
+                minWidth: 0,
+                padding: "3px 6px",
+                borderRadius: "var(--radius-sm)",
+                background: "var(--bg-3)",
+                border: "1px solid var(--border)",
+                color: "var(--text-1)",
+                fontSize: 11,
+                fontFamily: '"JetBrains Mono", monospace',
+              }}
+            />
+            <button
+              type="button"
+              onClick={handleSearchPrev}
+              title="Previous (Shift+Enter)"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 22,
+                height: 22,
+                borderRadius: "var(--radius-sm)",
+                background: "transparent",
+                border: "none",
+                color: "var(--text-3)",
+                cursor: "pointer",
+                fontSize: 13,
+                padding: 0,
+              }}
+            >
+              &uarr;
+            </button>
+            <button
+              type="button"
+              onClick={handleSearchNext}
+              title="Next (Enter)"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 22,
+                height: 22,
+                borderRadius: "var(--radius-sm)",
+                background: "transparent",
+                border: "none",
+                color: "var(--text-3)",
+                cursor: "pointer",
+                fontSize: 13,
+                padding: 0,
+              }}
+            >
+              &darr;
+            </button>
+            <button
+              type="button"
+              onClick={closeSearch}
+              title="Close (Esc)"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 22,
+                height: 22,
+                borderRadius: "var(--radius-sm)",
+                background: "transparent",
+                border: "none",
+                color: "var(--text-3)",
+                cursor: "pointer",
+                padding: 0,
+              }}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+
         {error && (
           <div className="terminal-error-banner">
             {error}
@@ -1755,6 +2004,32 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
           <div className="terminal-meta-bar" title={focusedTerminal.cwd}>
             <Folder size={10} style={{ opacity: 0.5, flexShrink: 0 }} />
             <span className="terminal-meta-bar-path">{focusedTerminal.cwd}</span>
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+              {terminalFontSize !== DEFAULT_FONT_SIZE && (
+                <span style={{ fontSize: 10, color: "var(--text-3)" }}>{terminalFontSize}px</span>
+              )}
+              <button
+                type="button"
+                onClick={() => setSearchOpen((v) => !v)}
+                title="Search (Ctrl+Shift+F)"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 20,
+                  height: 20,
+                  borderRadius: "var(--radius-sm)",
+                  background: searchOpen ? "var(--accent-dim)" : "transparent",
+                  border: "none",
+                  color: searchOpen ? "var(--accent)" : "var(--text-3)",
+                  cursor: "pointer",
+                  padding: 0,
+                  transition: "all 120ms ease-out",
+                }}
+              >
+                <Search size={10} />
+              </button>
+            </div>
           </div>
         )}
       </div>

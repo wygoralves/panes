@@ -270,6 +270,7 @@ interface MessageRowProps {
   assistantLabel: string;
   assistantIsCodex: boolean;
   onApproval: (approvalId: string, response: ApprovalResponse) => void;
+  workspaceId?: string;
 }
 
 function MessageRowView({
@@ -279,6 +280,7 @@ function MessageRowView({
   assistantLabel,
   assistantIsCodex,
   onApproval,
+  workspaceId,
 }: MessageRowProps) {
   const isUser = message.role === "user";
   const messageTimestamp = useMemo(
@@ -426,6 +428,7 @@ function MessageRowView({
               blocks={message.blocks}
               status={message.status}
               onApproval={onApproval}
+              workspaceId={workspaceId}
             />
           </div>
           {messageTimestamp && (
@@ -454,7 +457,8 @@ const MessageRow = memo(
     prev.isHighlighted === next.isHighlighted &&
     prev.assistantLabel === next.assistantLabel &&
     prev.assistantIsCodex === next.assistantIsCodex &&
-    prev.onApproval === next.onApproval,
+    prev.onApproval === next.onApproval &&
+    prev.workspaceId === next.workspaceId,
 );
 
 function formatFileSize(bytes: number): string {
@@ -1925,6 +1929,7 @@ export function ChatPanel() {
                         assistantLabel={assistantIdentity?.label ?? ""}
                         assistantIsCodex={assistantIdentity?.isCodex ?? false}
                         onApproval={handleApproval}
+                        workspaceId={activeWorkspaceId ?? undefined}
                       />
                     </MeasuredMessageRow>
                   );
@@ -1950,6 +1955,7 @@ export function ChatPanel() {
                   assistantLabel={assistantIdentity?.label ?? ""}
                   assistantIsCodex={assistantIdentity?.isCodex ?? false}
                   onApproval={handleApproval}
+                  workspaceId={activeWorkspaceId ?? undefined}
                 />
               );
             })}
@@ -2620,7 +2626,7 @@ export function ChatPanel() {
                   </div>
                 }
               >
-                <LazyTerminalPanel workspaceId={activeWorkspaceId} />
+                <LazyTerminalPanel workspaceId={activeWorkspaceId ?? undefined} />
               </Suspense>
             </div>
           )}
