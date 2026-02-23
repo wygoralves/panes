@@ -18,7 +18,7 @@ use state::{AppState, TurnManager};
 use tauri::{
     image::Image,
     menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, SubmenuBuilder},
-    Emitter,
+    Emitter, Manager, RunEvent,
 };
 use terminal::TerminalManager;
 
@@ -55,7 +55,7 @@ pub fn run() {
         turns: Arc::new(TurnManager::default()),
     };
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -147,8 +147,18 @@ pub fn run() {
             commands::harness::install_harness,
             commands::harness::launch_harness,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| match event {
+        RunEvent::ExitRequested { .. } | RunEvent::Exit => {
+            let terminals = app_handle.state::<AppState>().terminals.clone();
+            tauri::async_runtime::block_on(async move {
+                terminals.shutdown().await;
+            });
+        }
+        _ => {}
+    });
 }
 
 fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
