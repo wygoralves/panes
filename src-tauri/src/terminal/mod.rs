@@ -199,7 +199,12 @@ impl TerminalManager {
                 .insert(created.id.clone(), Arc::clone(&spawned.session));
         }
 
-        self.spawn_reader(app, workspace_id, Arc::clone(&spawned.session), spawned.reader);
+        self.spawn_reader(
+            app,
+            workspace_id,
+            Arc::clone(&spawned.session),
+            spawned.reader,
+        );
 
         Ok(created)
     }
@@ -382,8 +387,7 @@ impl TerminalManager {
             let session_handle_for_emitter = Arc::clone(&session);
             let emitter = thread::spawn(move || {
                 // 60Hz is enough for TUIs while keeping IPC overhead bounded.
-                let min_emit_interval =
-                    Duration::from_millis(TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS);
+                let min_emit_interval = Duration::from_millis(TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS);
                 let mut last_emit_at = Instant::now()
                     .checked_sub(min_emit_interval)
                     .unwrap_or_else(Instant::now);
@@ -471,22 +475,22 @@ impl TerminalManager {
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
-	                    Ok(n) => {
-	                        session
-	                            .io_counters
-	                            .stdout_reads
-	                            .fetch_add(1, Ordering::Relaxed);
-	                        session
-	                            .io_counters
-	                            .stdout_bytes
-	                            .fetch_add(n as u64, Ordering::Relaxed);
-	                        let now_ms = Utc::now().timestamp_millis();
-	                        if now_ms > 0 {
-	                            session
-	                                .io_counters
-	                                .last_stdout_read_at_ms
-	                                .store(now_ms as u64, Ordering::Relaxed);
-	                        }
+                    Ok(n) => {
+                        session
+                            .io_counters
+                            .stdout_reads
+                            .fetch_add(1, Ordering::Relaxed);
+                        session
+                            .io_counters
+                            .stdout_bytes
+                            .fetch_add(n as u64, Ordering::Relaxed);
+                        let now_ms = Utc::now().timestamp_millis();
+                        if now_ms > 0 {
+                            session
+                                .io_counters
+                                .last_stdout_read_at_ms
+                                .store(now_ms as u64, Ordering::Relaxed);
+                        }
 
                         decode_buffer.extend_from_slice(&buf[..n]);
                         while let Some(chunk) = take_next_utf8_chunk(&mut decode_buffer) {
@@ -503,10 +507,8 @@ impl TerminalManager {
                                 .lock()
                                 .unwrap_or_else(|poison| poison.into_inner());
                             buffer.push_str(&pending);
-                            let trimmed = trim_string_to_tail(
-                                &mut buffer,
-                                TERMINAL_OUTPUT_BUFFER_MAX_BYTES,
-                            );
+                            let trimmed =
+                                trim_string_to_tail(&mut buffer, TERMINAL_OUTPUT_BUFFER_MAX_BYTES);
                             if trimmed > 0 {
                                 session
                                     .io_counters
@@ -518,14 +520,14 @@ impl TerminalManager {
                                     .fetch_add(trimmed as u64, Ordering::Relaxed);
                             }
                             let len = buffer.len() as u64;
-	                            session
-	                                .io_counters
-	                                .output_buffer_bytes
-	                                .store(len, Ordering::Relaxed);
-	                            session
-	                                .io_counters
-	                                .output_buffer_peak_bytes
-	                                .fetch_max(len, Ordering::Relaxed);
+                            session
+                                .io_counters
+                                .output_buffer_bytes
+                                .store(len, Ordering::Relaxed);
+                            session
+                                .io_counters
+                                .output_buffer_peak_bytes
+                                .fetch_max(len, Ordering::Relaxed);
                             pending.clear();
                             drop(buffer);
                             shared.ready.notify_one();
@@ -558,14 +560,14 @@ impl TerminalManager {
                         .fetch_add(trimmed as u64, Ordering::Relaxed);
                 }
                 let len = buffer.len() as u64;
-	                session
-	                    .io_counters
-	                    .output_buffer_bytes
-	                    .store(len, Ordering::Relaxed);
-	                session
-	                    .io_counters
-	                    .output_buffer_peak_bytes
-	                    .fetch_max(len, Ordering::Relaxed);
+                session
+                    .io_counters
+                    .output_buffer_bytes
+                    .store(len, Ordering::Relaxed);
+                session
+                    .io_counters
+                    .output_buffer_peak_bytes
+                    .fetch_max(len, Ordering::Relaxed);
                 drop(buffer);
                 shared.ready.notify_one();
             }
@@ -577,10 +579,8 @@ impl TerminalManager {
                         .lock()
                         .unwrap_or_else(|poison| poison.into_inner());
                     buffer.push_str(&trailing);
-                    let trimmed = trim_string_to_tail(
-                        &mut buffer,
-                        TERMINAL_OUTPUT_BUFFER_MAX_BYTES,
-                    );
+                    let trimmed =
+                        trim_string_to_tail(&mut buffer, TERMINAL_OUTPUT_BUFFER_MAX_BYTES);
                     if trimmed > 0 {
                         session
                             .io_counters
@@ -592,14 +592,14 @@ impl TerminalManager {
                             .fetch_add(trimmed as u64, Ordering::Relaxed);
                     }
                     let len = buffer.len() as u64;
-	                    session
-	                        .io_counters
-	                        .output_buffer_bytes
-	                        .store(len, Ordering::Relaxed);
-	                    session
-	                        .io_counters
-	                        .output_buffer_peak_bytes
-	                        .fetch_max(len, Ordering::Relaxed);
+                    session
+                        .io_counters
+                        .output_buffer_bytes
+                        .store(len, Ordering::Relaxed);
+                    session
+                        .io_counters
+                        .output_buffer_peak_bytes
+                        .fetch_max(len, Ordering::Relaxed);
                     drop(buffer);
                     shared.ready.notify_one();
                 }
@@ -663,50 +663,53 @@ impl TerminalSessionHandle {
             }
         };
 
-	        let last_stdin_write_at = rfc3339_from_unix_ms(
-	            self.io_counters
-	                .last_stdin_write_at_ms
-	                .load(Ordering::Relaxed),
-	        );
-	        let last_stdout_read_at = rfc3339_from_unix_ms(
-	            self.io_counters
-	                .last_stdout_read_at_ms
-	                .load(Ordering::Relaxed),
-	        );
-	        let last_stdout_emit_at = rfc3339_from_unix_ms(
-	            self.io_counters
-	                .last_stdout_emit_at_ms
-	                .load(Ordering::Relaxed),
-	        );
+        let last_stdin_write_at = rfc3339_from_unix_ms(
+            self.io_counters
+                .last_stdin_write_at_ms
+                .load(Ordering::Relaxed),
+        );
+        let last_stdout_read_at = rfc3339_from_unix_ms(
+            self.io_counters
+                .last_stdout_read_at_ms
+                .load(Ordering::Relaxed),
+        );
+        let last_stdout_emit_at = rfc3339_from_unix_ms(
+            self.io_counters
+                .last_stdout_emit_at_ms
+                .load(Ordering::Relaxed),
+        );
 
-	        let io_counters = TerminalIoCountersDto {
-	            stdin_writes: self.io_counters.stdin_writes.load(Ordering::Relaxed),
-	            stdin_bytes: self.io_counters.stdin_bytes.load(Ordering::Relaxed),
-	            stdin_ctrl_c: self.io_counters.stdin_ctrl_c.load(Ordering::Relaxed),
-	            stdout_reads: self.io_counters.stdout_reads.load(Ordering::Relaxed),
-	            stdout_bytes: self.io_counters.stdout_bytes.load(Ordering::Relaxed),
-	            stdout_emits: self.io_counters.stdout_emits.load(Ordering::Relaxed),
-	            stdout_emit_bytes: self.io_counters.stdout_emit_bytes.load(Ordering::Relaxed),
-	            stdout_dropped_bytes: self.io_counters.stdout_dropped_bytes.load(Ordering::Relaxed),
-	            last_stdin_write_at,
-	            last_stdout_read_at,
-	            last_stdout_emit_at,
-	        };
+        let io_counters = TerminalIoCountersDto {
+            stdin_writes: self.io_counters.stdin_writes.load(Ordering::Relaxed),
+            stdin_bytes: self.io_counters.stdin_bytes.load(Ordering::Relaxed),
+            stdin_ctrl_c: self.io_counters.stdin_ctrl_c.load(Ordering::Relaxed),
+            stdout_reads: self.io_counters.stdout_reads.load(Ordering::Relaxed),
+            stdout_bytes: self.io_counters.stdout_bytes.load(Ordering::Relaxed),
+            stdout_emits: self.io_counters.stdout_emits.load(Ordering::Relaxed),
+            stdout_emit_bytes: self.io_counters.stdout_emit_bytes.load(Ordering::Relaxed),
+            stdout_dropped_bytes: self
+                .io_counters
+                .stdout_dropped_bytes
+                .load(Ordering::Relaxed),
+            last_stdin_write_at,
+            last_stdout_read_at,
+            last_stdout_emit_at,
+        };
 
-	        let output_throttle = TerminalOutputThrottleSnapshotDto {
-	            min_emit_interval_ms: TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS,
-	            max_emit_bytes: TERMINAL_OUTPUT_MAX_EMIT_BYTES as u64,
-	            buffer_bytes: self.io_counters.output_buffer_bytes.load(Ordering::Relaxed),
-	            buffer_cap_bytes: TERMINAL_OUTPUT_BUFFER_MAX_BYTES as u64,
-	            buffer_peak_bytes: self
-	                .io_counters
-	                .output_buffer_peak_bytes
-	                .load(Ordering::Relaxed),
-	            buffer_trimmed_bytes: self
-	                .io_counters
-	                .output_buffer_trimmed_bytes
-	                .load(Ordering::Relaxed),
-	        };
+        let output_throttle = TerminalOutputThrottleSnapshotDto {
+            min_emit_interval_ms: TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS,
+            max_emit_bytes: TERMINAL_OUTPUT_MAX_EMIT_BYTES as u64,
+            buffer_bytes: self.io_counters.output_buffer_bytes.load(Ordering::Relaxed),
+            buffer_cap_bytes: TERMINAL_OUTPUT_BUFFER_MAX_BYTES as u64,
+            buffer_peak_bytes: self
+                .io_counters
+                .output_buffer_peak_bytes
+                .load(Ordering::Relaxed),
+            buffer_trimmed_bytes: self
+                .io_counters
+                .output_buffer_trimmed_bytes
+                .load(Ordering::Relaxed),
+        };
 
         TerminalRendererDiagnosticsDto {
             session_id: self.meta.id.clone(),
@@ -733,7 +736,9 @@ impl TerminalSessionHandle {
             .flush()
             .context("failed flushing terminal stdin")?;
 
-        self.io_counters.stdin_writes.fetch_add(1, Ordering::Relaxed);
+        self.io_counters
+            .stdin_writes
+            .fetch_add(1, Ordering::Relaxed);
         self.io_counters
             .stdin_bytes
             .fetch_add(data.len() as u64, Ordering::Relaxed);
@@ -766,7 +771,9 @@ impl TerminalSessionHandle {
             .flush()
             .context("failed flushing terminal stdin")?;
 
-        self.io_counters.stdin_writes.fetch_add(1, Ordering::Relaxed);
+        self.io_counters
+            .stdin_writes
+            .fetch_add(1, Ordering::Relaxed);
         self.io_counters
             .stdin_bytes
             .fetch_add(data.len() as u64, Ordering::Relaxed);
@@ -938,26 +945,26 @@ fn spawn_session(
         .take_writer()
         .context("failed to take terminal writer")?;
 
-	    let session = Arc::new(TerminalSessionHandle {
-	        meta: TerminalSessionDto {
-	            id: Uuid::new_v4().to_string(),
-	            workspace_id,
-	            shell,
-	            cwd,
-	            created_at: Utc::now().to_rfc3339(),
-	        },
-	        diagnostics: Mutex::new(TerminalSessionDiagnosticsState {
-	            env_snapshot,
-	            last_resize: None,
-	            last_zero_pixel_warning_at_ms: None,
-	        }),
-	        io_counters: TerminalSessionIoCounters::default(),
-	        process: Mutex::new(TerminalProcess {
-	            master: pair.master,
-	            writer,
-	            child,
-	        }),
-	    });
+    let session = Arc::new(TerminalSessionHandle {
+        meta: TerminalSessionDto {
+            id: Uuid::new_v4().to_string(),
+            workspace_id,
+            shell,
+            cwd,
+            created_at: Utc::now().to_rfc3339(),
+        },
+        diagnostics: Mutex::new(TerminalSessionDiagnosticsState {
+            env_snapshot,
+            last_resize: None,
+            last_zero_pixel_warning_at_ms: None,
+        }),
+        io_counters: TerminalSessionIoCounters::default(),
+        process: Mutex::new(TerminalProcess {
+            master: pair.master,
+            writer,
+            child,
+        }),
+    });
 
     Ok(SpawnedSession { session, reader })
 }
