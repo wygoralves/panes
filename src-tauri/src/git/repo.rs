@@ -443,11 +443,8 @@ pub fn list_git_stashes(repo_path: &str) -> anyhow::Result<Vec<GitStashDto>> {
         r = GIT_RECORD_SEPARATOR
     );
     let format_arg = format!("--format={format}");
-    let output = run_git(
-        repo_path,
-        &["stash", "list", format_arg.as_str()],
-    )
-    .context("failed to list stashes")?;
+    let output = run_git(repo_path, &["stash", "list", format_arg.as_str()])
+        .context("failed to list stashes")?;
 
     let mut entries = Vec::new();
     for record in output.split(GIT_RECORD_SEPARATOR) {
