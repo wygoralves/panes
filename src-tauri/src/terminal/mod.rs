@@ -585,7 +585,8 @@ fn configure_terminal_env(cmd: &mut CommandBuilder) -> TerminalEnvSnapshotDto {
     let term_program_version = if matches!(term_program.as_deref(), Some("vscode")) {
         None
     } else {
-        read_non_empty_env("TERM_PROGRAM_VERSION").or_else(|| Some(env!("CARGO_PKG_VERSION").to_string()))
+        read_non_empty_env("TERM_PROGRAM_VERSION")
+            .or_else(|| Some(env!("CARGO_PKG_VERSION").to_string()))
     };
     let lang = read_non_empty_env("LANG").or_else(|| Some("en_US.UTF-8".to_string()));
     let lc_ctype = read_non_empty_env("LC_CTYPE").or_else(|| lang.clone());
