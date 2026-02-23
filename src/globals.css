@@ -2801,6 +2801,12 @@ button, input, textarea, select {
   opacity: 1;
 }
 
+@media (hover: none) {
+  .hp-tile-action {
+    opacity: 1;
+  }
+}
+
 .hp-tile-action-group {
   display: flex;
   gap: 4px;

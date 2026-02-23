@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useCallback } from "react";
 import {
   ArrowRight,
   CheckCircle2,
@@ -13,6 +13,7 @@ import { useHarnessStore } from "../../stores/harnessStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
+import { writeCommandToNewSession } from "../../lib/ipc";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import type { HarnessInfo } from "../../types";
 
@@ -30,13 +31,11 @@ const INSTALL_COMMANDS: Record<string, string> = {
 /* ─── Harness tile ─── */
 function HarnessTile({
   harness,
-  installing,
   onInstallInTerminal,
   onCopyCommand,
   onLaunch,
 }: {
   harness: HarnessInfo;
-  installing: boolean;
   onInstallInTerminal: () => void;
   onCopyCommand: () => void;
   onLaunch: () => void;
@@ -86,19 +85,9 @@ function HarnessTile({
               type="button"
               className="hp-btn hp-btn-install"
               onClick={onInstallInTerminal}
-              disabled={installing}
             >
-              {installing ? (
-                <>
-                  <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />
-                  Installing
-                </>
-              ) : (
-                <>
-                  <Download size={11} />
-                  Install
-                </>
-              )}
+              <Download size={11} />
+              Install
             </button>
           </div>
         ) : null}
@@ -107,45 +96,10 @@ function HarnessTile({
   );
 }
 
-/* ─── Install log ─── */
-function InstallLog({ log }: { log: { dep: string; line: string; stream: string }[] }) {
-  const ref = useRef<HTMLPreElement>(null);
-
-  useEffect(() => {
-    if (ref.current) {
-      ref.current.scrollTop = ref.current.scrollHeight;
-    }
-  }, [log.length]);
-
-  return (
-    <pre ref={ref} className="hp-install-log">
-      {log.length === 0
-        ? "Waiting..."
-        : log.map((entry, i) => (
-            <div
-              key={i}
-              style={{
-                color:
-                  entry.stream === "stderr"
-                    ? "var(--warning)"
-                    : entry.stream === "status"
-                      ? "var(--accent)"
-                      : "var(--text-2)",
-              }}
-            >
-              {entry.line}
-            </div>
-          ))}
-    </pre>
-  );
-}
-
 /* ─── Main panel (full page) ─── */
 export function HarnessPanel() {
   const phase = useHarnessStore((s) => s.phase);
   const harnesses = useHarnessStore((s) => s.harnesses);
-  const installingId = useHarnessStore((s) => s.installingId);
-  const installLog = useHarnessStore((s) => s.installLog);
   const error = useHarnessStore((s) => s.error);
   const scan = useHarnessStore((s) => s.scan);
   const launch = useHarnessStore((s) => s.launch);
@@ -169,14 +123,7 @@ export function HarnessPanel() {
 
       const sessionId = await createSession(activeWorkspaceId);
       if (sessionId) {
-        setTimeout(async () => {
-          try {
-            const { ipc } = await import("../../lib/ipc");
-            await ipc.terminalWrite(activeWorkspaceId, sessionId, command + "\r");
-          } catch {
-            // Terminal may not be ready yet
-          }
-        }, 300);
+        void writeCommandToNewSession(activeWorkspaceId, sessionId, command);
       }
 
       setActiveView("chat");
@@ -252,26 +199,11 @@ export function HarnessPanel() {
                 <HarnessTile
                   key={h.id}
                   harness={h}
-                  installing={installingId === h.id}
                   onInstallInTerminal={() => handleInstallInTerminal(h.id)}
                   onCopyCommand={() => handleCopyCommand(h.id)}
                   onLaunch={() => void handleLaunch(h.id)}
                 />
               ))}
-            </div>
-          )}
-
-          {/* Install log */}
-          {phase === "installing" && installLog.length > 0 && (
-            <div className="hp-log-section">
-              <div className="hp-log-label">
-                <Loader2
-                  size={11}
-                  style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }}
-                />
-                Installation log
-              </div>
-              <InstallLog log={installLog} />
             </div>
           )}
 
