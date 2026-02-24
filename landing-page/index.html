@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Panes — The AI Cockpit for Developers</title>
-  <meta name="description" content="Open-source desktop cockpit for AI coding agents. Orchestrate chat, terminal, and git in one pane of glass. Built with Rust.">
-  <meta property="og:title" content="Panes — The AI Cockpit for Developers">
-  <meta property="og:description" content="Open-source desktop cockpit for AI coding agents. Built with Rust and Tauri.">
+  <title>Panes — The Agent Development Environment</title>
+  <meta name="description" content="Panes is the open-source ADE. Orchestrate any AI coding agent, native terminal, and git workflow in one hyper-fast desktop cockpit. Built with Rust.">
+  <meta property="og:title" content="Panes — The Agent Development Environment">
+  <meta property="og:description" content="The open-source ADE for developers. Orchestrate AI agents, git, and terminal in one cockpit. Built with Rust and Tauri.">
   <meta property="og:type" content="website">
   <link rel="icon" href="logo.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -51,18 +51,12 @@
   <!-- ════════════ Hero ════════════ -->
   <section class="hero">
     <div class="container hero-container">
-      <div class="hero-badge anim-hero" style="--d:0">
-        <span class="badge-dot"></span>
-        Open Source &middot; v0.7.0
-      </div>
-
       <h1 class="hero-title anim-hero" style="--d:1">
-        Command your<br>
-        <span class="gradient-text">AI Coding Agents.</span>
+        The Agent <span class="gradient-text">Development Environment.</span>
       </h1>
 
       <p class="hero-subtitle anim-hero" style="--d:3">
-        The ultimate open source cockpit for Agentic Engineering.
+        Say goodbye to the IDE. Orchestrate any AI agent, native terminal, and git workflow in a single hyper-fast open-source desktop cockpit.
       </p>
 
       <div class="hero-actions anim-hero" style="--d:5">
@@ -182,7 +176,7 @@
                 </div>
                 <div class="term-content">
                   <div class="term-line"><span class="term-prompt">~/panes</span> <span class="term-cmd">cargo check</span></div>
-                  <div class="term-line" style="color:var(--text-3);">&nbsp;&nbsp;&nbsp;Compiling panes v0.7.0</div>
+                  <div class="term-line" style="color:var(--text-3);">&nbsp;&nbsp;&nbsp;Compiling panes-core</div>
                   <div class="term-line"><span class="term-success">&nbsp;&nbsp;&nbsp;Finished</span> dev [unoptimized + debuginfo]</div>
                   <div class="term-line">&nbsp;</div>
                   <div class="term-line"><span class="term-prompt">~/panes</span> <span class="typing-cursor"></span></div>
@@ -232,131 +226,77 @@
     </div>
   </section>
 
-  <!-- ════════════ Stats Strip ════════════ -->
-  <section class="stats">
-    <div class="container">
-      <div class="stats-inner reveal">
-        <div class="stat">
-          <i data-lucide="heart" class="stat-icon"></i>
-          <span><strong>Open Source</strong> &mdash; MIT Licensed</span>
-        </div>
-        <div class="stat">
-          <i data-lucide="zap" class="stat-icon"></i>
-          <span><strong>Built with Rust</strong> &mdash; Native speed</span>
-        </div>
-        <div class="stat">
-          <i data-lucide="shield-check" class="stat-icon"></i>
-          <span><strong>Privacy First</strong> &mdash; Local only</span>
-        </div>
-        <div class="stat">
-          <i data-lucide="puzzle" class="stat-icon"></i>
-          <span><strong>Engine Agnostic</strong> &mdash; Any LLM</span>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ════════════ Integrations ════════════ -->
+  <!-- ════════════ Integration Strip ════════════ -->
   <section class="integrations" id="integrations">
     <div class="container">
-      <div class="section-header reveal">
-        <div class="section-label">Integrations</div>
-        <h2 class="section-title">One cockpit for every agent.</h2>
-        <p class="integrations-subtitle">Panes works with the best AI coding tools out of the box. Launch, manage, and orchestrate them all from a single interface.</p>
-      </div>
+      <div class="integrations-strip-wrapper reveal">
+        <div class="strip-label">Works with every agent</div>
+        <div class="strip">
 
-      <div class="integrations-grid reveal">
-        <!-- Codex — native -->
-        <a href="https://github.com/openai/codex" target="_blank" rel="noopener" class="integration-card integration-card-native">
-          <div class="integration-native-glow"></div>
-          <div class="integration-icon">
-            <!-- OpenAI logomark -->
-            <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855l-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023l-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135l-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.795.795 0 0 0-.393.681zm1.097-2.365l2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z"/></svg>
-          </div>
-          <div class="integration-info">
-            <div class="integration-name-row">
-              <span class="integration-name">Codex CLI</span>
-              <span class="integration-native-badge">Native</span>
+          <a href="https://github.com/openai/codex" target="_blank" rel="noopener" class="strip-item strip-item-native">
+            <div class="strip-item-icon">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855l-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023l-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135l-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.795.795 0 0 0-.393.681zm1.097-2.365l2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z"/></svg>
             </div>
-            <span class="integration-desc">Powers the Panes chat engine</span>
-          </div>
-        </a>
+            <span>Codex CLI</span>
+            <span class="strip-native-dot"></span>
+          </a>
 
-        <!-- Claude Code -->
-        <a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank" rel="noopener" class="integration-card">
-          <div class="integration-icon">
-            <!-- Anthropic logomark -->
-            <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><path d="M13.827 3.52h3.603L24 20.48h-3.603l-6.57-16.96zm-7.258 0h3.767L16.906 20.48h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm1.94 5.027-2.2 5.698h4.404l-2.203-5.698z"/></svg>
-          </div>
-          <div class="integration-info">
-            <span class="integration-name">Claude Code</span>
-            <span class="integration-desc">Anthropic's agentic coding tool</span>
-          </div>
-        </a>
+          <div class="strip-divider"></div>
 
-        <!-- Gemini CLI -->
-        <a href="https://github.com/google-gemini/gemini-cli" target="_blank" rel="noopener" class="integration-card">
-          <div class="integration-icon">
-            <!-- Gemini sparkle -->
-            <svg viewBox="0 0 100 100" width="28" height="28" fill="currentColor"><path d="M50 0C50 25 75 50 100 50C75 50 50 75 50 100C50 75 25 50 0 50C25 50 50 25 50 0Z"/></svg>
-          </div>
-          <div class="integration-info">
-            <span class="integration-name">Gemini CLI</span>
-            <span class="integration-desc">Google's AI coding agent</span>
-          </div>
-        </a>
+          <a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank" rel="noopener" class="strip-item">
+            <div class="strip-item-icon">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13.827 3.52h3.603L24 20.48h-3.603l-6.57-16.96zm-7.258 0h3.767L16.906 20.48h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm1.94 5.027-2.2 5.698h4.404l-2.203-5.698z"/></svg>
+            </div>
+            <span>Claude Code</span>
+          </a>
 
-        <!-- Factory Droid -->
-        <a href="https://factory.ai" target="_blank" rel="noopener" class="integration-card">
-          <div class="integration-icon">
-            <!-- Factory pinwheel -->
-            <svg viewBox="0 0 200 200" width="32" height="32" fill="currentColor"><g transform="translate(0,200) scale(0.1,-0.1)"><path d="M730 1667c-13-7-36-30-52-52-30-45-89-193-108-273-6-28-15-54-19-57-5-2-32 5-61 16-73 28-129 23-150-13-13-25-13-34 3-95 9-38 43-120 75-183 31-63 57-118 57-123 0-5-27-23-59-40-77-41-102-73-85-110 23-50 128-106 283-151 47-14 90-27 95-31 6-3 2-29-10-62-22-64-25-123-7-141 18-18 98-14 163 8 32 11 100 42 153 70 52 27 100 50 106 50 7 0 17-15 24-34 7-18 26-52 42-75 73-100 147-24 229 234 18 55 35 103 39 107 4 4 36-2 71-12 34-11 73-20 86-20 88 0 67 153-49 359-20 34-36 68-36 75 0 7 22 23 49 35 177 84 123 167-169 262-63 20-115 40-115 45 0 5 9 39 19 76 11 38 16 78 12 93-17 66-120 52-306-42-68-35-127-63-130-63-3 0-19 27-34 61-25 52-66 99-85 99-3 0-17-6-31-13zm448-145c2-12-4-46-13-75-30-94-138-337-149-337-6 0-34 78-63 173-42 141-49 174-38 185 7 8 50 29 96 48 101 41 162 43 167 6zm-390-64c40-68 155-354 147-368-4-6-35 6-78 30-40 23-112 61-161 86-88 45-88 46-83 79 7 45 70 178 96 204 31 31 44 26 79-31zm543-87c77-26 130-55 158-85 20-22 22-28 11-42-32-37-395-193-412-176-5 5 7 37 30 78 21 38 60 108 86 157 26 48 53 87 60 87 7 0 37-8 67-19zm-715-227c140-52 269-112 269-125 0-7-74-34-174-64l-174-52-39 83c-43 93-60 180-37 195 17 10 42 5 155-37zm879-115c38-80 61-168 51-194-10-27-77-13-224 46-162 66-227 98-216 109 5 4 63 24 129 44 66 19 138 42 160 50 22 8 46 15 53 15 7 1 28-31 47-70zm-583-95c4-3-11-36-31-72-21-37-60-109-87-159-27-51-55-93-62-93-7 0-48 14-91 30-89 34-158 87-148 113 8 20 116 76 272 138 122 49 137 53 147 43zm318-100c88-48 160-90 160-94 0-16-39-119-63-167-28-54-61-85-82-77-19 8-69 107-130 259-52 128-63 165-50 165 3 0 78-39 165-86zm-221 4c8-29 31-106 51-171 32-99 36-120 24-131-21-21-158-76-207-82-79-11-80 22-2 215 63 159 94 221 108 221 8 0 19-22 26-52z"/></g></svg>
-          </div>
-          <div class="integration-info">
-            <span class="integration-name">Factory Droid</span>
-            <span class="integration-desc">Autonomous coding agent</span>
-          </div>
-        </a>
+          <div class="strip-divider"></div>
 
-        <!-- OpenCode -->
-        <a href="https://opencode.ai" target="_blank" rel="noopener" class="integration-card">
-          <div class="integration-icon">
-            <svg viewBox="0 0 240 300" width="28" height="35" fill="currentColor"><path d="M180 240H60V120H180V240Z" opacity="0.4"/><path d="M180 60H60V240H180V60ZM240 300H0V0H240V300Z"/></svg>
-          </div>
-          <div class="integration-info">
-            <span class="integration-name">OpenCode</span>
-            <span class="integration-desc">Open-source AI coding assistant</span>
-          </div>
-        </a>
+          <a href="https://github.com/google-gemini/gemini-cli" target="_blank" rel="noopener" class="strip-item">
+            <div class="strip-item-icon">
+              <svg viewBox="0 0 100 100" width="16" height="16" fill="currentColor"><path d="M50 0C50 25 75 50 100 50C75 50 50 75 50 100C50 75 25 50 0 50C25 50 50 25 50 0Z"/></svg>
+            </div>
+            <span>Gemini CLI</span>
+          </a>
 
-        <!-- Kilo Code -->
-        <a href="https://kilocode.ai" target="_blank" rel="noopener" class="integration-card">
-          <div class="integration-icon">
-            <svg viewBox="0 0 32 32" width="28" height="28" fill="currentColor"><path d="M23,26v-2h3v-5l-2-2h-4v2h-3v5l2,2h4ZM20,20h3v3h-3v-3Z"/><rect x="12" y="17" width="3" height="3"/><polygon points="26 12 23 12 23 9 20 6 17 6 17 9 20 9 20 12 17 12 17 15 26 15 26 12"/><path d="M0,0v32h32V0H0ZM29,29H3V3h26v26Z"/><polygon points="15 26 15 23 9 23 9 17 6 17 6 23.1875 8.8125 26 15 26"/><rect x="12" y="6" width="3" height="3"/><polygon points="9 12 12 12 12 15 15 15 15 12 12 9 9 9 9 6 6 6 6 15 9 15 9 12"/></svg>
-          </div>
-          <div class="integration-info">
-            <span class="integration-name">Kilo Code</span>
-            <span class="integration-desc">AI-powered code assistant</span>
-          </div>
-        </a>
+          <div class="strip-divider"></div>
 
-        <!-- Kiro -->
-        <a href="https://kiro.dev" target="_blank" rel="noopener" class="integration-card">
-          <div class="integration-icon">
-            <!-- Kiro logomark -->
-            <svg viewBox="0 0 20 24" width="28" height="34" fill="currentColor"><path d="M3.80081 18.5661C1.32306 24.0572 6.59904 25.434 10.4904 22.2205C11.6339 25.8242 15.926 23.1361 17.4652 20.3445C20.8578 14.1915 19.4877 7.91459 19.1361 6.61988C16.7244 -2.20972 4.67055 -2.21852 2.59581 6.6649C2.11136 8.21946 2.10284 9.98752 1.82846 11.8233C1.69011 12.749 1.59258 13.3398 1.23436 14.3135C1.02841 14.8733 0.745043 15.3704 0.299833 16.2082C-0.391594 17.5095 -0.0998802 20.021 3.46397 18.7186V18.7195L3.80081 18.5661Z"/><path d="M10.9614 10.4413C9.97202 10.4413 9.82422 9.25893 9.82422 8.55407C9.82422 7.91791 9.93824 7.4124 10.1542 7.09197C10.3441 6.81003 10.6158 6.66699 10.9614 6.66699C11.3071 6.66699 11.6036 6.81228 11.8128 7.09892C12.0511 7.42554 12.177 7.92861 12.177 8.55407C12.177 9.73591 11.7226 10.4413 10.9616 10.4413H10.9614Z" fill="black"/><path d="M15.0318 10.4413C14.0423 10.4413 13.8945 9.25893 13.8945 8.55407C13.8945 7.91791 14.0086 7.4124 14.2245 7.09197C14.4144 6.81003 14.6861 6.66699 15.0318 6.66699C15.3774 6.66699 15.6739 6.81228 15.8831 7.09892C16.1214 7.42554 16.2474 7.92861 16.2474 8.55407C16.2474 9.73591 15.793 10.4413 15.0319 10.4413H15.0318Z" fill="black"/></svg>
-          </div>
-          <div class="integration-info">
-            <span class="integration-name">Kiro</span>
-            <span class="integration-desc">AI dev environment by AWS</span>
-          </div>
-        </a>
+          <a href="https://factory.ai" target="_blank" rel="noopener" class="strip-item">
+            <div class="strip-item-icon">
+              <svg viewBox="0 0 200 200" width="18" height="18" fill="currentColor"><g transform="translate(0,200) scale(0.1,-0.1)"><path d="M730 1667c-13-7-36-30-52-52-30-45-89-193-108-273-6-28-15-54-19-57-5-2-32 5-61 16-73 28-129 23-150-13-13-25-13-34 3-95 9-38 43-120 75-183 31-63 57-118 57-123 0-5-27-23-59-40-77-41-102-73-85-110 23-50 128-106 283-151 47-14 90-27 95-31 6-3 2-29-10-62-22-64-25-123-7-141 18-18 98-14 163 8 32 11 100 42 153 70 52 27 100 50 106 50 7 0 17-15 24-34 7-18 26-52 42-75 73-100 147-24 229 234 18 55 35 103 39 107 4 4 36-2 71-12 34-11 73-20 86-20 88 0 67 153-49 359-20 34-36 68-36 75 0 7 22 23 49 35 177 84 123 167-169 262-63 20-115 40-115 45 0 5 9 39 19 76 11 38 16 78 12 93-17 66-120 52-306-42-68-35-127-63-130-63-3 0-19 27-34 61-25 52-66 99-85 99-3 0-17-6-31-13zm448-145c2-12-4-46-13-75-30-94-138-337-149-337-6 0-34 78-63 173-42 141-49 174-38 185 7 8 50 29 96 48 101 41 162 43 167 6zm-390-64c40-68 155-354 147-368-4-6-35 6-78 30-40 23-112 61-161 86-88 45-88 46-83 79 7 45 70 178 96 204 31 31 44 26 79-31zm543-87c77-26 130-55 158-85 20-22 22-28 11-42-32-37-395-193-412-176-5 5 7 37 30 78 21 38 60 108 86 157 26 48 53 87 60 87 7 0 37-8 67-19zm-715-227c140-52 269-112 269-125 0-7-74-34-174-64l-174-52-39 83c-43 93-60 180-37 195 17 10 42 5 155-37zm879-115c38-80 61-168 51-194-10-27-77-13-224 46-162 66-227 98-216 109 5 4 63 24 129 44 66 19 138 42 160 50 22 8 46 15 53 15 7 1 28-31 47-70zm-583-95c4-3-11-36-31-72-21-37-60-109-87-159-27-51-55-93-62-93-7 0-48 14-91 30-89 34-158 87-148 113 8 20 116 76 272 138 122 49 137 53 147 43zm318-100c88-48 160-90 160-94 0-16-39-119-63-167-28-54-61-85-82-77-19 8-69 107-130 259-52 128-63 165-50 165 3 0 78-39 165-86zm-221 4c8-29 31-106 51-171 32-99 36-120 24-131-21-21-158-76-207-82-79-11-80 22-2 215 63 159 94 221 108 221 8 0 19-22 26-52z"/></g></svg>
+            </div>
+            <span>Factory Droid</span>
+          </a>
+
+          <div class="strip-divider"></div>
+
+          <a href="https://opencode.ai" target="_blank" rel="noopener" class="strip-item">
+            <div class="strip-item-icon">
+              <svg viewBox="0 0 240 300" width="14" height="18" fill="currentColor"><path d="M180 240H60V120H180V240Z" opacity="0.4"/><path d="M180 60H60V240H180V60ZM240 300H0V0H240V300Z"/></svg>
+            </div>
+            <span>OpenCode</span>
+          </a>
+
+          <div class="strip-divider"></div>
+
+          <a href="https://kilocode.ai" target="_blank" rel="noopener" class="strip-item">
+            <div class="strip-item-icon">
+              <svg viewBox="0 0 32 32" width="16" height="16" fill="currentColor"><path d="M23,26v-2h3v-5l-2-2h-4v2h-3v5l2,2h4ZM20,20h3v3h-3v-3Z"/><rect x="12" y="17" width="3" height="3"/><polygon points="26 12 23 12 23 9 20 6 17 6 17 9 20 9 20 12 17 12 17 15 26 15 26 12"/><path d="M0,0v32h32V0H0ZM29,29H3V3h26v26Z"/><polygon points="15 26 15 23 9 23 9 17 6 17 6 23.1875 8.8125 26 15 26"/><rect x="12" y="6" width="3" height="3"/><polygon points="9 12 12 12 12 15 15 15 15 12 12 9 9 9 9 6 6 6 6 15 9 15 9 12"/></svg>
+            </div>
+            <span>Kilo Code</span>
+          </a>
+
+          <div class="strip-divider"></div>
+
+          <a href="https://kiro.dev" target="_blank" rel="noopener" class="strip-item">
+            <div class="strip-item-icon">
+              <svg viewBox="0 0 20 24" width="14" height="17" fill="currentColor"><path d="M3.80081 18.5661C1.32306 24.0572 6.59904 25.434 10.4904 22.2205C11.6339 25.8242 15.926 23.1361 17.4652 20.3445C20.8578 14.1915 19.4877 7.91459 19.1361 6.61988C16.7244 -2.20972 4.67055 -2.21852 2.59581 6.6649C2.11136 8.21946 2.10284 9.98752 1.82846 11.8233C1.69011 12.749 1.59258 13.3398 1.23436 14.3135C1.02841 14.8733 0.745043 15.3704 0.299833 16.2082C-0.391594 17.5095 -0.0998802 20.021 3.46397 18.7186V18.7195L3.80081 18.5661Z"/><path d="M10.9614 10.4413C9.97202 10.4413 9.82422 9.25893 9.82422 8.55407C9.82422 7.91791 9.93824 7.4124 10.1542 7.09197C10.3441 6.81003 10.6158 6.66699 10.9614 6.66699C11.3071 6.66699 11.6036 6.81228 11.8128 7.09892C12.0511 7.42554 12.177 7.92861 12.177 8.55407C12.177 9.73591 11.7226 10.4413 10.9616 10.4413H10.9614Z" fill="black"/><path d="M15.0318 10.4413C14.0423 10.4413 13.8945 9.25893 13.8945 8.55407C13.8945 7.91791 14.0086 7.4124 14.2245 7.09197C14.4144 6.81003 14.6861 6.66699 15.0318 6.66699C15.3774 6.66699 15.6739 6.81228 15.8831 7.09892C16.1214 7.42554 16.2474 7.92861 16.2474 8.55407C16.2474 9.73591 15.793 10.4413 15.0319 10.4413H15.0318Z" fill="black"/></svg>
+            </div>
+            <span>Kiro</span>
+          </a>
+
+        </div>
       </div>
-
-      <p class="integrations-footer reveal">
-        <i data-lucide="plus-circle" style="width:14px;height:14px;opacity:0.4;"></i>
-        <span>More integrations coming soon — <a href="https://github.com/wygoralves/panes" target="_blank" rel="noopener">request one on GitHub</a></span>
-      </p>
     </div>
   </section>
 
@@ -364,36 +304,72 @@
   <section class="features" id="features">
     <div class="container">
       <div class="section-header reveal">
-        <div class="section-label">Features</div>
-        <h2 class="section-title">Everything you need.<br><span class="dim">Nothing you don't.</span></h2>
+        <div class="section-label">Built for the ADE era</div>
+        <h2 class="section-title">Everything your agents need.<br><span class="dim">Nothing they don't.</span></h2>
       </div>
 
-      <div class="feature-grid">
+      <div class="feature-bento">
+
+        <!-- ROW 1: Git (2col) + Built with Rust (1col) -->
+        <div class="feature-card bento-wide reveal reveal-delay-1">
+          <div class="feature-content">
+            <div class="feature-icon">
+              <i data-lucide="git-branch" class="icon"></i>
+            </div>
+            <h3>Native Git Client</h3>
+            <p>Review diffs, stage changes, and commit directly from the agent's output. Agents can branch, stash, and push without you ever leaving the chat interface.</p>
+          </div>
+          <div class="feature-card-visual feature-visual-git">
+            <div class="fv-git-row"><span class="fv-git-status fv-modified">M</span><span>src/git/repo.rs</span></div>
+            <div class="fv-git-row"><span class="fv-git-status fv-modified">M</span><span>src/commands/git.rs</span></div>
+            <div class="fv-git-row fv-staged"><span class="fv-git-status fv-added">A</span><span>src/lib.rs</span></div>
+            <div class="fv-git-commit">feat: add push retry with backoff</div>
+          </div>
+        </div>
+
+        <div class="feature-card bento-narrow reveal reveal-delay-2">
+          <div class="feature-icon">
+            <i data-lucide="zap" class="icon"></i>
+          </div>
+          <h3>Built with Rust</h3>
+          <p>Native speed via Rust and Tauri. Zero web latency, native filesystem access, and ultra-low memory footprint.</p>
+        </div>
+
+        <!-- ROW 2: Harness Agnostic (1col) + Terminal (2col) -->
+        <div class="feature-card bento-narrow reveal reveal-delay-1">
+          <div class="feature-icon">
+            <i data-lucide="cpu" class="icon"></i>
+          </div>
+          <h3>Harness Agnostic</h3>
+          <p>Easily swap between Claude Code, Codex, Gemini CLI, or any coding agent depending on the task complexity.</p>
+        </div>
+
+        <div class="feature-card bento-wide reveal reveal-delay-2">
+          <div class="feature-content">
+            <div class="feature-icon">
+              <i data-lucide="terminal" class="icon"></i>
+            </div>
+            <h3>Integrated WebGL Terminal</h3>
+            <p>A high-performance xterm.js terminal with native PTY. Watch agents run dev servers, execute tests, and fix compilation errors autonomously.</p>
+          </div>
+          <div class="feature-card-visual feature-visual-term">
+            <div class="fv-term-line"><span class="fv-term-prompt">~/panes</span> cargo test</div>
+            <div class="fv-term-line fv-term-dim">&nbsp;&nbsp;&nbsp;running 42 tests</div>
+            <div class="fv-term-line fv-term-ok">&nbsp;&nbsp;&nbsp;test result: ok. 42 passed</div>
+            <div class="fv-term-line"><span class="fv-term-prompt">~/panes</span> <span class="fv-term-cursor"></span></div>
+          </div>
+        </div>
+
+        <!-- ROW 3: Three equal cards -->
         <div class="feature-card reveal reveal-delay-1">
-          <div class="feature-icon">
-            <i data-lucide="git-branch" class="icon"></i>
-          </div>
-          <h3>Native Git Client</h3>
-          <p>Full GUI for staging, committing, branching, and reviewing diffs. Manage your entire git workflow without leaving the cockpit.</p>
-        </div>
-
-        <div class="feature-card reveal reveal-delay-2">
-          <div class="feature-icon">
-            <i data-lucide="terminal" class="icon"></i>
-          </div>
-          <h3>Integrated Terminal</h3>
-          <p>WebGL-powered xterm.js with persistent sessions, multi-tab support, and native PTY. Run dev servers, tests, anything.</p>
-        </div>
-
-        <div class="feature-card reveal reveal-delay-3">
           <div class="feature-icon">
             <svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M14.949 6.547a3.94 3.94 0 0 0-.348-3.273 4.11 4.11 0 0 0-4.4-1.934A4.1 4.1 0 0 0 8.423.2 4.15 4.15 0 0 0 6.305.086a4.1 4.1 0 0 0-1.891.948 4.04 4.04 0 0 0-1.158 1.753 4.1 4.1 0 0 0-1.563.679A4 4 0 0 0 .554 4.72a3.99 3.99 0 0 0 .502 4.731 3.94 3.94 0 0 0 .346 3.274 4.11 4.11 0 0 0 4.402 1.933c.382.425.852.764 1.377.995.526.231 1.095.35 1.67.346 1.78.002 3.358-1.132 3.901-2.804a4.1 4.1 0 0 0 1.563-.68 4 4 0 0 0 1.14-1.253 3.99 3.99 0 0 0-.506-4.716m-6.097 8.406a3.05 3.05 0 0 1-1.945-.694l.096-.054 3.23-1.838a.53.53 0 0 0 .265-.455v-4.49l1.366.778q.02.011.025.035v3.722c-.003 1.653-1.361 2.992-3.037 2.996m-6.53-2.75a2.95 2.95 0 0 1-.36-2.01l.095.057L5.29 12.09a.53.53 0 0 0 .527 0l3.949-2.246v1.555a.05.05 0 0 1-.022.041L6.473 13.3c-1.454.826-3.311.335-4.15-1.098m-.85-6.94A3.02 3.02 0 0 1 3.07 3.949v3.785a.51.51 0 0 0 .262.451l3.93 2.237-1.366.779a.05.05 0 0 1-.048 0L2.585 9.342a2.98 2.98 0 0 1-1.113-4.094zm11.216 2.571L8.747 5.576l1.362-.776a.05.05 0 0 1 .048 0l3.265 1.86a3 3 0 0 1 1.173 1.207 2.96 2.96 0 0 1-.27 3.2 3.05 3.05 0 0 1-1.36.997V8.279a.52.52 0 0 0-.276-.445m1.36-2.015-.097-.057-3.226-1.855a.53.53 0 0 0-.53 0L6.249 6.153V4.598a.04.04 0 0 1 .019-.04L9.533 2.7a3.07 3.07 0 0 1 3.257.139c.474.325.843.778 1.066 1.303.223.526.289 1.103.191 1.664zM5.503 8.575 4.139 7.8a.05.05 0 0 1-.026-.037V4.049c0-.57.166-1.127.476-1.607s.752-.864 1.275-1.105a3.08 3.08 0 0 1 3.234.41l-.096.054-3.23 1.838a.53.53 0 0 0-.265.455zm.742-1.577 1.758-1 1.762 1v2l-1.755 1-1.762-1z"/></svg>
           </div>
           <h3>Native Codex Integration</h3>
-          <p>First-class support for OpenAI Codex via app-server protocol. Streaming chat, sandbox detection, model discovery, and approval flows — all built in.</p>
+          <p>First-class Codex support via app-server protocol. Streaming chat, sandbox detection, model discovery, and approval flows.</p>
         </div>
 
-        <div class="feature-card reveal reveal-delay-1">
+        <div class="feature-card reveal reveal-delay-2">
           <div class="feature-icon">
             <i data-lucide="layout" class="icon"></i>
           </div>
@@ -401,20 +377,55 @@
           <p>Open any folder, auto-detect nested repos. Manage monorepos and multi-service architectures with context-aware chat.</p>
         </div>
 
-        <div class="feature-card reveal reveal-delay-2">
-          <div class="feature-icon">
-            <i data-lucide="gauge" class="icon"></i>
-          </div>
-          <h3>Local &amp; Fast</h3>
-          <p>Built with Rust and Tauri. Panes is a local-first application that starts instantly and respects your data privacy.</p>
-        </div>
-
         <div class="feature-card reveal reveal-delay-3">
           <div class="feature-icon">
-            <i data-lucide="cpu" class="icon"></i>
+            <i data-lucide="heart" class="icon"></i>
           </div>
-          <h3>Engine Agnostic</h3>
-          <p>Bring your own intelligence. Connect OpenAI, Anthropic, local models, or any coding agent. Switch models per conversation.</p>
+          <h3>Open Source</h3>
+          <p>MIT licensed, forever. No vendor lock-in, no telemetry, no strings attached. Fork it, extend it, make it yours.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════ ADE Context ════════════ -->
+  <section class="ade-context" id="ade">
+    <div class="container">
+      <div class="ade-context-inner reveal">
+        <div class="ade-context-text">
+          <div class="section-label">The shift</div>
+          <h2 class="ade-context-title">The IDE is dead.<br><span class="ade-dim">Long live the ADE.</span></h2>
+          <p class="ade-context-body">
+            The IDE was built for a world where you wrote every line. That world is gone. Today, agents write the code &mdash; and you orchestrate, review, and approve. Panes is built for this new reality: a cockpit designed around AI-first workflows, not bolted onto an editor.
+          </p>
+        </div>
+        <div class="ade-context-visual">
+          <div class="ade-shift-diagram">
+            <div class="ade-shift-box ade-shift-old">
+              <span class="ade-shift-label">Before</span>
+              <span class="ade-shift-name">IDE + scattered tools</span>
+              <div class="ade-shift-items">
+                <span>Editor</span>
+                <span>Terminal app</span>
+                <span>Git GUI</span>
+                <span>Chat tab</span>
+              </div>
+            </div>
+            <div class="ade-shift-arrow">
+              <i data-lucide="arrow-right" style="width:20px;height:20px;color:var(--accent);"></i>
+            </div>
+            <div class="ade-shift-box ade-shift-new">
+              <span class="ade-shift-label">Now</span>
+              <span class="ade-shift-name">Panes ADE</span>
+              <div class="ade-shift-items">
+                <span>Agent chat</span>
+                <span>Git panel</span>
+                <span>Terminal</span>
+                <span>Approvals</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -456,7 +467,7 @@
     <div class="container">
       <div class="cta-content reveal">
         <h2 class="cta-title">Ready to take command?</h2>
-        <p class="cta-subtitle">Join developers who are shipping faster with AI agents. Free, open-source, forever.</p>
+        <p class="cta-subtitle">Join developers shifting from IDEs to ADEs. Free, open-source, forever.</p>
         <div class="cta-actions">
           <a href="https://github.com/wygoralves/panes/releases/latest" class="btn-primary" id="cta-download">
             <svg class="os-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
@@ -480,7 +491,7 @@
             <img src="logo.svg" alt="Panes">
             <span>Panes</span>
           </div>
-          <p>The open-source AI cockpit for developers. Built with Rust, Tauri, and a lot of coffee.</p>
+          <p>The open-source Agent Development Environment. Built with Rust, Tauri, and a lot of coffee.</p>
         </div>
 
         <div class="footer-links-group">

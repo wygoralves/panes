@@ -33,7 +33,8 @@
       "Bash(cat:*)",
       "Bash(npm info:*)",
       "Bash(head:*)",
-      "Bash(sort:*)"
+      "Bash(sort:*)",
+      "Bash(git:*)"
     ]
   }
 }
