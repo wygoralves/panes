@@ -1,4 +1,4 @@
-import { Suspense, lazy, memo, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Circle,
@@ -345,6 +345,7 @@ interface Props {
   blocks?: ContentBlock[];
   status?: MessageStatus;
   onApproval: (approvalId: string, response: ApprovalResponse) => void;
+  onLoadActionOutput?: (actionId: string) => Promise<void>;
 }
 
 function isBlockLike(value: unknown): value is { type: string } {
@@ -585,8 +586,15 @@ function ActionStatusBadge({ status }: { status: string }) {
   );
 }
 
-function ActionBlockView({ block }: { block: ActionBlock }) {
+function ActionBlockView({
+  block,
+  onLoadDeferredOutput,
+}: {
+  block: ActionBlock;
+  onLoadDeferredOutput?: () => Promise<void>;
+}) {
   const outputChunks = Array.isArray(block.outputChunks) ? block.outputChunks : [];
+  const outputDeferred = block.outputDeferred === true;
   const outputText = useMemo(
     () => {
       if (outputChunks.length === 0) {
@@ -603,12 +611,46 @@ function ActionBlockView({ block }: { block: ActionBlock }) {
   const Icon = actionIcons[block.actionType] ?? Terminal;
   const isRunning = block.status === "running";
   const isPending = block.status === "pending";
-  const hasBody = outputChunks.length > 0 || Boolean(block.result?.error);
+  const hasBody = outputChunks.length > 0 || Boolean(block.result?.error) || outputDeferred;
   const actionDetails = (block.details ?? {}) as Record<string, unknown>;
   const outputTruncated =
     "outputTruncated" in actionDetails && actionDetails.outputTruncated === true;
   const [expanded, setExpanded] = useState(isRunning || isPending);
+  const [loadingDeferredOutput, setLoadingDeferredOutput] = useState(false);
+  const [deferredOutputError, setDeferredOutputError] = useState<string | null>(null);
+  const deferredOutputRequestedRef = useRef(false);
   const canToggle = hasBody;
+
+  const requestDeferredOutput = useCallback(() => {
+    if (!onLoadDeferredOutput || deferredOutputRequestedRef.current) {
+      return;
+    }
+
+    deferredOutputRequestedRef.current = true;
+    setLoadingDeferredOutput(true);
+    setDeferredOutputError(null);
+    onLoadDeferredOutput()
+      .catch((error) => {
+        deferredOutputRequestedRef.current = false;
+        setDeferredOutputError(String(error));
+      })
+      .finally(() => {
+        setLoadingDeferredOutput(false);
+      });
+  }, [onLoadDeferredOutput]);
+
+  useEffect(() => {
+    if (!expanded || !outputDeferred || outputChunks.length > 0) {
+      return;
+    }
+    requestDeferredOutput();
+  }, [expanded, outputDeferred, outputChunks.length, requestDeferredOutput]);
+
+  useEffect(() => {
+    if (!outputDeferred || outputChunks.length > 0) {
+      deferredOutputRequestedRef.current = false;
+    }
+  }, [outputDeferred, outputChunks.length]);
 
   return (
     <div>
@@ -630,13 +672,62 @@ function ActionBlockView({ block }: { block: ActionBlock }) {
         <ActionStatusBadge status={block.status} />
       </div>
 
-      {expanded && (outputChunks.length > 0 || block.result?.error) && (
+      {expanded && (outputChunks.length > 0 || block.result?.error || outputDeferred) && (
         <div style={{
           margin: "2px 12px 4px",
           borderRadius: "var(--radius-sm)",
           border: "1px solid var(--border)",
           overflow: "hidden",
         }}>
+          {outputDeferred && outputChunks.length === 0 && (
+            <div
+              style={{
+                margin: 0,
+                padding: "8px 12px",
+                background: "var(--code-bg)",
+                fontSize: 11.5,
+                lineHeight: 1.5,
+                color: "var(--text-3)",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                justifyContent: "space-between",
+              }}
+            >
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                {loadingDeferredOutput && (
+                  <Loader2 size={12} style={{ animation: "pulse-soft 1s ease-in-out infinite" }} />
+                )}
+                {loadingDeferredOutput
+                  ? "Loading full action output..."
+                  : deferredOutputError
+                    ? "Failed to load action output."
+                    : "Loading action output..."}
+              </span>
+              {!loadingDeferredOutput && deferredOutputError && onLoadDeferredOutput && (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    deferredOutputRequestedRef.current = false;
+                    requestDeferredOutput();
+                  }}
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--radius-xs)",
+                    padding: "3px 8px",
+                    background: "var(--bg-2)",
+                    color: "var(--text-2)",
+                    fontSize: 10.5,
+                    cursor: "pointer",
+                  }}
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+          )}
+
           {outputChunks.length > 0 && (
             <pre
               style={{
@@ -1117,7 +1208,7 @@ function ApprovalCard({
 
 /* ── Main Component ── */
 
-function MessageBlocksView({ blocks = [], status, onApproval }: Props) {
+function MessageBlocksView({ blocks = [], status, onApproval, onLoadActionOutput }: Props) {
   const safeBlocks = Array.isArray(blocks) ? blocks : [];
 
   const lastDiffIndex = useMemo(() => {
@@ -1235,7 +1326,15 @@ function MessageBlocksView({ blocks = [], status, onApproval }: Props) {
 
         /* ── Action ── */
         if (block.type === "action") {
-          return <ActionBlockView key={index} block={block} />;
+          return (
+            <ActionBlockView
+              key={block.actionId}
+              block={block}
+              onLoadDeferredOutput={
+                onLoadActionOutput ? () => onLoadActionOutput(block.actionId) : undefined
+              }
+            />
+          );
         }
 
         /* ── Approval ── */
@@ -1305,5 +1404,6 @@ export const MessageBlocks = memo(
   (prev, next) =>
     prev.blocks === next.blocks &&
     prev.status === next.status &&
-    prev.onApproval === next.onApproval,
+    prev.onApproval === next.onApproval &&
+    prev.onLoadActionOutput === next.onLoadActionOutput,
 );

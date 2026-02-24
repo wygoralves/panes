@@ -17,8 +17,8 @@ use crate::{
         TurnCompletionStatus, TurnInput,
     },
     models::{
-        MessageDto, MessageStatusDto, RepoDto, SearchResultDto, ThreadDto, ThreadStatusDto,
-        TrustLevelDto,
+        ActionOutputDto, MessageDto, MessageStatusDto, MessageWindowCursorDto, MessageWindowDto,
+        RepoDto, SearchResultDto, ThreadDto, ThreadStatusDto, TrustLevelDto,
     },
     state::AppState,
 };
@@ -28,6 +28,8 @@ const STREAM_EVENT_COALESCE_MAX_CHARS: usize = 8_192;
 const STREAM_DB_FLUSH_INTERVAL: Duration = Duration::from_millis(180);
 const ACTION_OUTPUT_MAX_CHUNKS: usize = 240;
 const MAX_ATTACHMENTS_PER_TURN: usize = 10;
+const MESSAGE_WINDOW_DEFAULT_LIMIT: usize = 120;
+const MESSAGE_WINDOW_MAX_LIMIT: usize = 400;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -498,6 +500,45 @@ pub async fn get_thread_messages(
 }
 
 #[tauri::command]
+pub async fn get_thread_messages_window(
+    state: State<'_, AppState>,
+    thread_id: String,
+    cursor: Option<MessageWindowCursorDto>,
+    limit: Option<usize>,
+) -> Result<MessageWindowDto, String> {
+    let requested_limit = limit.unwrap_or(MESSAGE_WINDOW_DEFAULT_LIMIT);
+    let clamped_limit = requested_limit.clamp(1, MESSAGE_WINDOW_MAX_LIMIT);
+
+    run_db(state.db.clone(), move |db| {
+        db::messages::get_thread_messages_window(db, &thread_id, cursor.as_ref(), clamped_limit)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_message_blocks(
+    state: State<'_, AppState>,
+    message_id: String,
+) -> Result<Option<Value>, String> {
+    run_db(state.db.clone(), move |db| {
+        db::messages::get_message_blocks(db, &message_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_action_output(
+    state: State<'_, AppState>,
+    message_id: String,
+    action_id: String,
+) -> Result<ActionOutputDto, String> {
+    run_db(state.db.clone(), move |db| {
+        db::messages::get_action_output(db, &message_id, &action_id)
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn search_messages(
     state: State<'_, AppState>,
     workspace_id: String,
@@ -946,13 +987,18 @@ async fn process_stream_event(
     approval_index: &mut HashMap<String, usize>,
     max_output_chars: usize,
 ) -> EventProgress {
-    let _ = app.emit(stream_event_topic, event);
-    if matches!(event, EngineEvent::ApprovalRequested { .. }) {
-        let _ = app.emit(approval_event_topic, event);
+    let mut normalized_event = event.clone();
+    if let EngineEvent::ActionCompleted { result, .. } = &mut normalized_event {
+        truncate_action_result_output(result, max_output_chars);
+    }
+
+    let _ = app.emit(stream_event_topic, &normalized_event);
+    if matches!(&normalized_event, EngineEvent::ApprovalRequested { .. }) {
+        let _ = app.emit(approval_event_topic, &normalized_event);
     }
 
     if state.config.debug.persist_engine_event_logs {
-        if let Ok(value) = serde_json::to_value(event) {
+        if let Ok(value) = serde_json::to_value(&normalized_event) {
             if let Err(error) = run_db(state.db.clone(), {
                 let thread_id = thread.id.clone();
                 let assistant_message_id = assistant_message_id.to_string();
@@ -968,7 +1014,7 @@ async fn process_stream_event(
         }
     }
 
-    match event {
+    match &normalized_event {
         EngineEvent::ActionStarted {
             action_id,
             engine_action_id,
@@ -1050,7 +1096,7 @@ async fn process_stream_event(
         blocks,
         action_index,
         approval_index,
-        event,
+        &normalized_event,
         max_output_chars,
     )
 }
@@ -1549,6 +1595,20 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     let mut output = value.chars().take(max_chars).collect::<String>();
     output.push_str("\n... [truncated]");
     output
+}
+
+fn truncate_action_result_output(
+    result: &mut crate::engines::events::ActionResult,
+    max_chars: usize,
+) {
+    let Some(output) = result.output.as_ref() else {
+        return;
+    };
+
+    let truncated = truncate_chars(output, max_chars.max(1));
+    if truncated != *output {
+        result.output = Some(truncated);
+    }
 }
 
 fn workspace_write_opt_in_enabled(metadata: Option<&Value>) -> bool {

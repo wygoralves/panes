@@ -61,6 +61,19 @@ export interface Message {
   schemaVersion: number;
   tokenUsage?: { input: number; output: number };
   createdAt: string;
+  hydration?: "full" | "summary";
+  hasDeferredContent?: boolean;
+}
+
+export interface MessageWindowCursor {
+  createdAt: string;
+  id: string;
+  rowId?: number;
+}
+
+export interface MessageWindow {
+  messages: Message[];
+  nextCursor: MessageWindowCursor | null;
 }
 
 export type ActionType =
@@ -100,6 +113,8 @@ export interface ActionBlock {
   summary: string;
   details: Record<string, unknown>;
   outputChunks: Array<{ stream: "stdout" | "stderr"; content: string }>;
+  outputDeferred?: boolean;
+  outputDeferredLoaded?: boolean;
   status: "pending" | "running" | "done" | "error";
   result?: {
     success: boolean;
@@ -108,6 +123,12 @@ export interface ActionBlock {
     diff?: string;
     durationMs: number;
   };
+}
+
+export interface ActionOutputPayload {
+  found: boolean;
+  outputChunks: Array<{ stream: "stdout" | "stderr"; content: string }>;
+  truncated: boolean;
 }
 
 export interface ApprovalBlock {

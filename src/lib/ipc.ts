@@ -2,7 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   ApprovalResponse,
+  ActionOutputPayload,
   ChatAttachment,
+  ContentBlock,
   DependencyReport,
   EngineCheckResult,
   GitBranchPage,
@@ -18,6 +20,8 @@ import type {
   InstallProgressEvent,
   InstallResult,
   Message,
+  MessageWindow,
+  MessageWindowCursor,
   ReadFileResult,
   Repo,
   SearchResult,
@@ -108,6 +112,20 @@ export const ipc = {
     invoke<void>("respond_to_approval", { threadId, approvalId, response }),
   getThreadMessages: (threadId: string) =>
     invoke<Message[]>("get_thread_messages", { threadId }),
+  getThreadMessagesWindow: (
+    threadId: string,
+    cursor?: MessageWindowCursor | null,
+    limit?: number | null,
+  ) =>
+    invoke<MessageWindow>("get_thread_messages_window", {
+      threadId,
+      cursor: cursor ?? null,
+      limit: limit ?? null,
+    }),
+  getMessageBlocks: (messageId: string) =>
+    invoke<ContentBlock[] | null>("get_message_blocks", { messageId }),
+  getActionOutput: (messageId: string, actionId: string) =>
+    invoke<ActionOutputPayload>("get_action_output", { messageId, actionId }),
   searchMessages: (workspaceId: string, query: string) =>
     invoke<SearchResult[]>("search_messages", {
       workspaceId,

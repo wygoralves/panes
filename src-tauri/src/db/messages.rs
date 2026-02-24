@@ -1,11 +1,14 @@
 use anyhow::Context;
 use std::collections::HashMap;
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, OptionalExtension, Row};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::models::{MessageDto, MessageStatusDto, SearchResultDto, TokenUsageDto};
+use crate::models::{
+    ActionOutputChunkDto, ActionOutputDto, MessageDto, MessageStatusDto, MessageWindowCursorDto,
+    MessageWindowDto, SearchResultDto, TokenUsageDto,
+};
 
 use super::Database;
 
@@ -98,33 +101,7 @@ pub fn get_thread_messages(db: &Database, thread_id: &str) -> anyhow::Result<Vec
      ORDER BY created_at ASC",
     )?;
 
-    let rows = stmt.query_map(params![thread_id], |row| {
-        let blocks_raw: Option<String> = row.get(4)?;
-        let token_input: i64 = row.get(7)?;
-        let token_output: i64 = row.get(8)?;
-
-        Ok(MessageDto {
-            id: row.get(0)?,
-            thread_id: row.get(1)?,
-            role: row.get(2)?,
-            content: row.get(3)?,
-            blocks: blocks_raw.and_then(|raw| serde_json::from_str(&raw).ok()),
-            turn_engine_id: row.get(9)?,
-            turn_model_id: row.get(10)?,
-            turn_reasoning_effort: row.get(11)?,
-            schema_version: row.get(5)?,
-            status: MessageStatusDto::from_str(&row.get::<_, String>(6)?),
-            token_usage: if token_input > 0 || token_output > 0 {
-                Some(TokenUsageDto {
-                    input: token_input as u64,
-                    output: token_output as u64,
-                })
-            } else {
-                None
-            },
-            created_at: row.get(12)?,
-        })
-    })?;
+    let rows = stmt.query_map(params![thread_id], map_message_row)?;
 
     let mut out = Vec::new();
     for row in rows {
@@ -132,6 +109,195 @@ pub fn get_thread_messages(db: &Database, thread_id: &str) -> anyhow::Result<Vec
     }
 
     Ok(out)
+}
+
+pub fn get_thread_messages_window(
+    db: &Database,
+    thread_id: &str,
+    cursor: Option<&MessageWindowCursorDto>,
+    limit: usize,
+) -> anyhow::Result<MessageWindowDto> {
+    let conn = db.connect()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, thread_id, role, content, blocks_json, schema_version, status,
+            token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at, rowid
+     FROM messages
+     WHERE thread_id = ?1
+       AND (
+         ?2 IS NULL
+         OR created_at < ?2
+         OR (
+           created_at = ?2
+           AND (
+             (?3 IS NOT NULL AND rowid < ?3)
+             OR (?3 IS NULL AND ?4 IS NOT NULL AND id < ?4)
+           )
+         )
+       )
+     ORDER BY created_at DESC, rowid DESC
+     LIMIT ?5",
+    )?;
+
+    let cursor_created_at = cursor.map(|value| value.created_at.as_str());
+    let cursor_row_id = cursor.and_then(|value| value.row_id);
+    let cursor_id = cursor.map(|value| value.id.as_str());
+    let query_limit = limit.max(1).saturating_add(1) as i64;
+    let rows = stmt.query_map(
+        params![
+            thread_id,
+            cursor_created_at,
+            cursor_row_id,
+            cursor_id,
+            query_limit
+        ],
+        |row| {
+            let message = map_message_row(row)?;
+            let row_id: i64 = row.get(13)?;
+            Ok((message, row_id))
+        },
+    )?;
+
+    let mut messages_desc: Vec<(MessageDto, i64)> = Vec::new();
+    for row in rows {
+        messages_desc.push(row?);
+    }
+
+    let page_limit = limit.max(1);
+    let has_more = messages_desc.len() > page_limit;
+    if has_more {
+        messages_desc.pop();
+    }
+
+    let next_cursor = if has_more {
+        messages_desc
+            .last()
+            .map(|(message, row_id)| MessageWindowCursorDto {
+                created_at: message.created_at.clone(),
+                id: message.id.clone(),
+                row_id: Some(*row_id),
+            })
+    } else {
+        None
+    };
+
+    messages_desc.reverse();
+    let messages = messages_desc
+        .into_iter()
+        .map(|(message, _)| message)
+        .collect();
+    Ok(MessageWindowDto {
+        messages,
+        next_cursor,
+    })
+}
+
+pub fn get_message_blocks(db: &Database, message_id: &str) -> anyhow::Result<Option<Value>> {
+    let conn = db.connect()?;
+    let raw_blocks: Option<Option<String>> = conn
+        .query_row(
+            "SELECT blocks_json FROM messages WHERE id = ?1",
+            params![message_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("failed to load message blocks")?;
+
+    let Some(raw_blocks) = raw_blocks else {
+        return Ok(None);
+    };
+
+    let blocks = raw_blocks
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_else(|| serde_json::json!([]));
+    Ok(Some(blocks))
+}
+
+pub fn get_action_output(
+    db: &Database,
+    message_id: &str,
+    action_id: &str,
+) -> anyhow::Result<ActionOutputDto> {
+    let Some(blocks) = get_message_blocks(db, message_id)? else {
+        return Ok(ActionOutputDto {
+            found: false,
+            output_chunks: Vec::new(),
+            truncated: false,
+        });
+    };
+
+    let Some(items) = blocks.as_array() else {
+        return Ok(ActionOutputDto {
+            found: false,
+            output_chunks: Vec::new(),
+            truncated: false,
+        });
+    };
+
+    for block in items {
+        let Some(object) = block.as_object() else {
+            continue;
+        };
+
+        if object.get("type").and_then(Value::as_str) != Some("action") {
+            continue;
+        }
+
+        let candidate_id = object
+            .get("actionId")
+            .and_then(Value::as_str)
+            .or_else(|| object.get("action_id").and_then(Value::as_str));
+        if candidate_id != Some(action_id) {
+            continue;
+        }
+
+        let output_chunks = object
+            .get("outputChunks")
+            .or_else(|| object.get("output_chunks"))
+            .and_then(Value::as_array)
+            .map(|chunks| {
+                chunks
+                    .iter()
+                    .filter_map(|chunk| {
+                        let object = chunk.as_object()?;
+                        let stream = object
+                            .get("stream")
+                            .and_then(Value::as_str)
+                            .unwrap_or("stdout")
+                            .to_string();
+                        let content = match object.get("content") {
+                            Some(Value::String(value)) => value.to_string(),
+                            Some(value) => value.to_string(),
+                            None => String::new(),
+                        };
+                        Some(ActionOutputChunkDto { stream, content })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        let truncated = object
+            .get("details")
+            .and_then(Value::as_object)
+            .and_then(|details| {
+                details
+                    .get("outputTruncated")
+                    .or_else(|| details.get("output_truncated"))
+                    .and_then(Value::as_bool)
+            })
+            .unwrap_or(false);
+
+        return Ok(ActionOutputDto {
+            found: true,
+            output_chunks,
+            truncated,
+        });
+    }
+
+    Ok(ActionOutputDto {
+        found: false,
+        output_chunks: Vec::new(),
+        truncated: false,
+    })
 }
 
 pub fn mark_approval_block_answered(
@@ -245,25 +411,36 @@ fn insert_message(
      FROM messages
      WHERE id = ?1",
         params![id],
-        |row| {
-            let blocks_raw: Option<String> = row.get(4)?;
-            Ok(MessageDto {
-                id: row.get(0)?,
-                thread_id: row.get(1)?,
-                role: row.get(2)?,
-                content: row.get(3)?,
-                blocks: blocks_raw.and_then(|raw| serde_json::from_str(&raw).ok()),
-                turn_engine_id: row.get(9)?,
-                turn_model_id: row.get(10)?,
-                turn_reasoning_effort: row.get(11)?,
-                schema_version: row.get(5)?,
-                status: MessageStatusDto::from_str(&row.get::<_, String>(6)?),
-                token_usage: None,
-                created_at: row.get(12)?,
-            })
-        },
+        map_message_row,
     )
     .context("failed to load inserted message")
+}
+
+fn map_message_row(row: &Row<'_>) -> rusqlite::Result<MessageDto> {
+    let blocks_raw: Option<String> = row.get(4)?;
+    let token_input: i64 = row.get(7)?;
+    let token_output: i64 = row.get(8)?;
+    Ok(MessageDto {
+        id: row.get(0)?,
+        thread_id: row.get(1)?,
+        role: row.get(2)?,
+        content: row.get(3)?,
+        blocks: blocks_raw.and_then(|raw| serde_json::from_str(&raw).ok()),
+        turn_engine_id: row.get(9)?,
+        turn_model_id: row.get(10)?,
+        turn_reasoning_effort: row.get(11)?,
+        schema_version: row.get(5)?,
+        status: MessageStatusDto::from_str(&row.get::<_, String>(6)?),
+        token_usage: if token_input > 0 || token_output > 0 {
+            Some(TokenUsageDto {
+                input: token_input as u64,
+                output: token_output as u64,
+            })
+        } else {
+            None
+        },
+        created_at: row.get(12)?,
+    })
 }
 
 fn apply_answered_approvals_to_blocks(

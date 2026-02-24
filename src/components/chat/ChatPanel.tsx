@@ -270,6 +270,7 @@ interface MessageRowProps {
   assistantLabel: string;
   assistantIsCodex: boolean;
   onApproval: (approvalId: string, response: ApprovalResponse) => void;
+  onLoadActionOutput: (messageId: string, actionId: string) => Promise<void>;
 }
 
 function MessageRowView({
@@ -279,6 +280,7 @@ function MessageRowView({
   assistantLabel,
   assistantIsCodex,
   onApproval,
+  onLoadActionOutput,
 }: MessageRowProps) {
   const isUser = message.role === "user";
   const messageTimestamp = useMemo(
@@ -426,6 +428,7 @@ function MessageRowView({
               blocks={message.blocks}
               status={message.status}
               onApproval={onApproval}
+              onLoadActionOutput={(actionId) => onLoadActionOutput(message.id, actionId)}
             />
           </div>
           {messageTimestamp && (
@@ -454,7 +457,8 @@ const MessageRow = memo(
     prev.isHighlighted === next.isHighlighted &&
     prev.assistantLabel === next.assistantLabel &&
     prev.assistantIsCodex === next.assistantIsCodex &&
-    prev.onApproval === next.onApproval,
+    prev.onApproval === next.onApproval &&
+    prev.onLoadActionOutput === next.onLoadActionOutput,
 );
 
 function formatFileSize(bytes: number): string {
@@ -568,6 +572,7 @@ export function ChatPanel() {
     send,
     cancel,
     respondApproval,
+    hydrateActionOutput,
     streaming,
     usageLimits,
     error,
@@ -1479,6 +1484,11 @@ export function ChatPanel() {
     [respondApproval],
   );
 
+  const handleLoadActionOutput = useCallback(
+    (messageId: string, actionId: string) => hydrateActionOutput(messageId, actionId),
+    [hydrateActionOutput],
+  );
+
   const assistantIdentityByMessageId = useMemo(() => {
     const identityByMessageId = new Map<string, { label: string; isCodex: boolean }>();
     for (const message of messages) {
@@ -1925,6 +1935,7 @@ export function ChatPanel() {
                         assistantLabel={assistantIdentity?.label ?? ""}
                         assistantIsCodex={assistantIdentity?.isCodex ?? false}
                         onApproval={handleApproval}
+                        onLoadActionOutput={handleLoadActionOutput}
                       />
                     </MeasuredMessageRow>
                   );
@@ -1950,6 +1961,7 @@ export function ChatPanel() {
                   assistantLabel={assistantIdentity?.label ?? ""}
                   assistantIsCodex={assistantIdentity?.isCodex ?? false}
                   onApproval={handleApproval}
+                  onLoadActionOutput={handleLoadActionOutput}
                 />
               );
             })}
@@ -2036,7 +2048,7 @@ export function ChatPanel() {
                       color: "var(--success)",
                       cursor: "pointer",
                     }}
-                    title="Set trusted policy for this repo (ask-on-request with network enabled)"
+                    title="Set trusted policy for this repo (on-request approvals, network requested enabled)"
                   >
                     Trust repo
                   </button>
@@ -2055,7 +2067,7 @@ export function ChatPanel() {
                       color: "var(--success)",
                       cursor: "pointer",
                     }}
-                    title="Set trusted policy for all repositories (ask-on-request with network enabled)"
+                    title="Set trusted policy for all repositories (on-request approvals, network requested enabled)"
                   >
                     Trust workspace
                   </button>
@@ -2381,9 +2393,9 @@ export function ChatPanel() {
                   onChange={(v) => void onRepoTrustLevelChange(v as TrustLevel)}
                   title="Execution policy"
                   options={[
-                    { value: "trusted", label: "trusted (network on)" },
-                    { value: "standard", label: "ask-on-request (network off)" },
-                    { value: "restricted", label: "restricted (trusted cmds only)" },
+                    { value: "trusted", label: "trusted (on-request, net requested on)" },
+                    { value: "standard", label: "standard (on-request, net requested off)" },
+                    { value: "restricted", label: "restricted (untrusted: safe cmds only)" },
                   ]}
                   triggerStyle={
                     activeRepo.trustLevel === "trusted"
@@ -2408,9 +2420,9 @@ export function ChatPanel() {
                   onChange={(v) => void onWorkspaceTrustLevelChange(v as TrustLevel)}
                   title="Workspace execution policy"
                   options={[
-                    { value: "trusted", label: "trusted (network on)" },
-                    { value: "standard", label: "ask-on-request (network off)" },
-                    { value: "restricted", label: "restricted (trusted cmds only)" },
+                    { value: "trusted", label: "trusted (on-request, net requested on)" },
+                    { value: "standard", label: "standard (on-request, net requested off)" },
+                    { value: "restricted", label: "restricted (untrusted: safe cmds only)" },
                   ]}
                   triggerStyle={
                     workspaceTrustLevel === "trusted"
