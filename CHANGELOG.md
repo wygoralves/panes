@@ -1,5 +1,15 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.12.2...vnull) (2026-02-24)
+
+### Features
+
+* improve message load on front and backend and improve stability of codex in sandboxed environments ([79673de](https://github.com/wygoralves/panes/commit/79673de49814eb67a018a3123e8747c8e358e872))
+
+### Bug Fixes
+
+* fix restrictions getting in the way of codex calling tools ([3a87dad](https://github.com/wygoralves/panes/commit/3a87dad7ae0cb9d09e12ceb288f3e3d815656464))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.12.1...vnull) (2026-02-24)
 
 ### Bug Fixes
