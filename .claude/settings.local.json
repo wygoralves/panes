@@ -34,7 +34,8 @@
       "Bash(npm info:*)",
       "Bash(head:*)",
       "Bash(sort:*)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Bash(which iconutil:*)"
     ]
   }
 }

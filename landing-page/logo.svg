@@ -1,20 +1,6 @@
-<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="1024" height="1024" rx="230" fill="#09090B"/>
-  <rect x="8" y="8" width="1008" height="1008" rx="222" stroke="#27272A" stroke-width="16"/>
-
-  <defs>
-    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#73F8D6"/>
-      <stop offset="100%" stop-color="#12EFC3"/>
-    </linearGradient>
-  </defs>
-
-  <rect x="192" y="192" width="208" height="640" rx="40" fill="#FFFFFF"/>
-
-  <rect x="464" y="192" width="368" height="368" rx="40" fill="url(#accentGrad)"/>
-
-  <rect x="464" y="624" width="368" height="208" rx="40" fill="#18181B" stroke="#27272A" stroke-width="12"/>
-
-  <path d="M 528 696 L 568 728 L 528 760" stroke="#12EFC3" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
-  <line x1="600" y1="760" x2="664" y2="760" stroke="#12EFC3" stroke-width="24" stroke-linecap="round"/>
+<svg viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="10" y="36" width="94" height="94" stroke="white" stroke-width="6"/>
+  <rect x="36" y="10" width="94" height="94" stroke="white" stroke-width="6"/>
+  <rect x="23" y="23" width="94" height="94" stroke="white" stroke-width="6"/>
+  <rect x="50" y="50" width="40" height="40" fill="#48F3CD"/>
 </svg>
