@@ -1255,6 +1255,29 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       const k = event.key.toLowerCase();
       if (event.metaKey && (k === "d" || k === "t")) return false;
       if (event.ctrlKey && k === "t") return false;
+      // Cmd+Arrow (macOS) / Home/End (Linux/Windows) → line navigation
+      const isMac = navigator.platform.startsWith("Mac");
+      if (isMac && event.metaKey) {
+        switch (event.key) {
+          case "ArrowLeft":
+            // Beginning of line (Ctrl+A)
+            void ipc.terminalWrite(workspaceId, sessionId, "\x01").catch(() => undefined);
+            return false;
+          case "ArrowRight":
+            // End of line (Ctrl+E)
+            void ipc.terminalWrite(workspaceId, sessionId, "\x05").catch(() => undefined);
+            return false;
+          case "ArrowUp":
+            // Scroll to top (Ctrl+Home)
+            void ipc.terminalWrite(workspaceId, sessionId, "\x1b[1;5H").catch(() => undefined);
+            return false;
+          case "ArrowDown":
+            // Scroll to bottom (Ctrl+End)
+            void ipc.terminalWrite(workspaceId, sessionId, "\x1b[1;5F").catch(() => undefined);
+            return false;
+        }
+      }
+      // Home/End keys work natively on Linux/Windows — no extra mapping needed
       return true;
     });
     const webglCleanup = setupWebglRenderer(cacheKey, terminal, rendererDiagnostics) ?? undefined;

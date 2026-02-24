@@ -1677,23 +1677,22 @@ export function ChatPanel() {
           flexShrink: 0,
         }}
       >
-        {/* Workspace badge + Thread title */}
-        <div className="no-drag" style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+        {/* Breadcrumb: workspace / thread title / +N files */}
+        <div className="no-drag" style={{ flex: 1, display: "flex", alignItems: "center", gap: 0, minWidth: 0 }}>
           {workspaceName && (
-            <span
-              style={{
-                fontSize: 10.5,
-                fontWeight: 500,
-                color: "var(--text-3)",
-                padding: "2px 8px",
-                borderRadius: 99,
-                background: "var(--bg-3)",
-                border: "1px solid var(--border)",
-                flexShrink: 0,
-              }}
-            >
-              {workspaceName}
-            </span>
+            <>
+              <span
+                style={{
+                  fontSize: 12,
+                  color: "var(--text-3)",
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
+                }}
+              >
+                {workspaceName}
+              </span>
+              <span style={{ fontSize: 12, color: "var(--border)", margin: "0 6px", flexShrink: 0 }}>/</span>
+            </>
           )}
           {editingThreadTitle && activeThread ? (
             <input
@@ -1755,8 +1754,29 @@ export function ChatPanel() {
                 e.currentTarget.style.background = "transparent";
               }}
             >
-              {activeThread?.title || "Panes"}
+              {activeThread?.title || (
+                layoutMode === "terminal" ? "Terminal"
+                : layoutMode === "editor" ? "File Editor"
+                : layoutMode === "split" ? "New Chat"
+                : "New Chat"
+              )}
             </button>
+          )}
+          {totalAdded > 0 && (
+            <>
+              <span style={{ fontSize: 12, color: "var(--border)", margin: "0 6px", flexShrink: 0 }}>/</span>
+              <span
+                style={{
+                  fontSize: 11,
+                  fontFamily: '"JetBrains Mono", monospace',
+                  color: "var(--warning)",
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
+                }}
+              >
+                +{totalAdded} files
+              </span>
+            </>
           )}
         </div>
 
@@ -1800,27 +1820,6 @@ export function ChatPanel() {
               <FilePen size={12} />
             </button>
           </div>
-
-          {/* Git stats badge */}
-          {totalAdded > 0 && (
-            <span
-              style={{
-                fontSize: 11,
-                fontFamily: '"JetBrains Mono", monospace',
-                color: "var(--warning)",
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-                padding: "3px 8px",
-                borderRadius: 99,
-                background: "rgba(251, 191, 36, 0.06)",
-                border: "1px solid rgba(251, 191, 36, 0.15)",
-              }}
-            >
-              <span style={{ color: "var(--warning)" }}>+{totalAdded}</span>
-              <span style={{ color: "var(--text-3)" }}>files</span>
-            </span>
-          )}
         </div>
       </div>
 
