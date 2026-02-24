@@ -140,14 +140,11 @@ const PENDING_OUTPUT_MAX_CHARS = 512 * 1024;
 const OUTPUT_DROP_WARN_COOLDOWN_MS = 5000;
 const TERMINAL_DEBUG =
   import.meta.env.DEV && import.meta.env.VITE_TERMINAL_DEBUG === "1";
-// NOTE: `@xterm/addon-image`'s iTerm IIP path uses `createImageBitmap(...)` without a timeout.
-// On older WebKit (notably macOS 10.15.x), `createImageBitmap` can hang indefinitely for some
-// blobs, which stalls xterm's write pipeline (write callback never fires) and makes TUIs appear
-// "frozen". Disable IIP support by default; SIXEL remains enabled.
+const SHOW_TERMINAL_DIAGNOSTICS_UI = import.meta.env.DEV;
 const IMAGE_ADDON_OPTIONS: ImageAddonCapabilities = {
   enableSizeReports: true,
   sixelSupport: true,
-  iipSupport: false,
+  iipSupport: true,
   storageLimit: 64,
 };
 const IMAGE_ADDON_ERROR_PATTERNS = [
@@ -1681,14 +1678,16 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
               >
                 <Rows2 size={13} />
               </button>
-              <button
-                type="button"
-                className="terminal-add-btn"
-                onClick={() => void copyRendererDiagnostics()}
-                title="Copy renderer diagnostics"
-              >
-                <Copy size={13} />
-              </button>
+              {SHOW_TERMINAL_DIAGNOSTICS_UI && (
+                <button
+                  type="button"
+                  className="terminal-add-btn"
+                  onClick={() => void copyRendererDiagnostics()}
+                  title="Copy renderer diagnostics"
+                >
+                  <Copy size={13} />
+                </button>
+              )}
             </>
           )}
         </div>
@@ -1782,17 +1781,19 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
             <Trash2 size={12} />
             Close
           </button>
-          <button
-            type="button"
-            className="dropdown-item"
-            onClick={() => {
-              setCtxMenu(null);
-              void copyRendererDiagnostics(ctxMenu.groupId);
-            }}
-          >
-            <Copy size={12} />
-            Copy diagnostics
-          </button>
+          {SHOW_TERMINAL_DIAGNOSTICS_UI && (
+            <button
+              type="button"
+              className="dropdown-item"
+              onClick={() => {
+                setCtxMenu(null);
+                void copyRendererDiagnostics(ctxMenu.groupId);
+              }}
+            >
+              <Copy size={12} />
+              Copy diagnostics
+            </button>
+          )}
         </div>,
         document.body,
       )}
