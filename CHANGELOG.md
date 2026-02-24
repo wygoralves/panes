@@ -1,5 +1,12 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.12.1...vnull) (2026-02-24)
+
+### Bug Fixes
+
+* cleanup unwanted diagnostics and ship fix to more complex tui not rendering correctly ([45af7b2](https://github.com/wygoralves/panes/commit/45af7b2a4f4b6918c0318953e9bc6dcd96902ece))
+* fix stale data from git internals not showing in the git panel ([64af6ba](https://github.com/wygoralves/panes/commit/64af6bacd88e0d754ba1bb65632572b044d1e625))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.12.0...vnull) (2026-02-24)
 
 ### Bug Fixes
