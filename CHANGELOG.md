@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.13.0...vnull) (2026-02-24)
+
+### Bug Fixes
+
+* fix alignment and update logo on rail sidebar ([3dda97c](https://github.com/wygoralves/panes/commit/3dda97ca12e2879a1aafc990a41f746188cab0e0))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.12.2...vnull) (2026-02-24)
 
 ### Features
