@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.13.1...vnull) (2026-02-24)
+
+### Features
+
+* improve overall UI of header and sidebar ([a3e0f5c](https://github.com/wygoralves/panes/commit/a3e0f5cf0a187876f15cb0b9e1e9df42efd6b504))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.13.0...vnull) (2026-02-24)
 
 ### Bug Fixes
