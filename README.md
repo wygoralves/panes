@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="app-icon.png" alt="Panes" width="128" height="128" />
+  <img src="app-icon.svg" alt="Panes" width="128" height="128" />
 </p>
 
 <h1 align="center">Panes</h1>

@@ -21,17 +21,22 @@
       <stop offset="80%" stop-color="rgba(0, 0, 0, 0)" />
       <stop offset="100%" stop-color="rgba(0, 0, 0, 0.8)" />
     </linearGradient>
+    <clipPath id="squircle">
+      <rect x="32" y="32" width="448" height="448" rx="100"/>
+    </clipPath>
   </defs>
 
-  <rect x="32" y="32" width="448" height="448" rx="100" fill="url(#bgGrad)" />
-  <rect x="32" y="32" width="448" height="448" rx="100" filter="url(#noise)" style="pointer-events: none;" />
-  <rect x="33" y="33" width="446" height="446" rx="99" fill="none" stroke="url(#rimLight)" stroke-width="2" />
+  <g clip-path="url(#squircle)">
+    <rect x="32" y="32" width="448" height="448" rx="100" fill="url(#bgGrad)" />
+    <rect x="32" y="32" width="448" height="448" rx="100" filter="url(#noise)" style="pointer-events: none;" />
+    <rect x="33" y="33" width="446" height="446" rx="99" fill="none" stroke="url(#rimLight)" stroke-width="2" />
 
-  <circle cx="256" cy="256" r="140" fill="#48F3CD" filter="blur(64px)" opacity="0.1" />
+    <circle cx="256" cy="256" r="140" fill="#48F3CD" filter="blur(64px)" opacity="0.1" />
 
-  <rect x="106" y="170" width="236" height="236" fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linejoin="miter" />
-  <rect x="170" y="106" width="236" height="236" fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linejoin="miter" />
-  <rect x="138" y="138" width="236" height="236" fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linejoin="miter" />
+    <rect x="106" y="170" width="236" height="236" fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linejoin="miter" />
+    <rect x="170" y="106" width="236" height="236" fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linejoin="miter" />
+    <rect x="138" y="138" width="236" height="236" fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linejoin="miter" />
 
-  <rect x="206" y="206" width="100" height="100" fill="#48F3CD" filter="url(#coreGlow)"/>
+    <rect x="206" y="206" width="100" height="100" fill="#48F3CD" filter="url(#coreGlow)"/>
+  </g>
 </svg>

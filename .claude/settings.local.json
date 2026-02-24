@@ -35,7 +35,8 @@
       "Bash(head:*)",
       "Bash(sort:*)",
       "Bash(git:*)",
-      "Bash(which iconutil:*)"
+      "Bash(which iconutil:*)",
+      "Bash(mkdir:*)"
     ]
   }
 }
