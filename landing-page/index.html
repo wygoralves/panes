@@ -335,13 +335,13 @@
           <p>Native speed via Rust and Tauri. Zero web latency, native filesystem access, and ultra-low memory footprint.</p>
         </div>
 
-        <!-- ROW 2: Harness Agnostic (1col) + Terminal (2col) -->
+        <!-- ROW 2: Codex (1col) + Integrated Terminal (2col) -->
         <div class="feature-card bento-narrow reveal reveal-delay-1">
           <div class="feature-icon">
-            <i data-lucide="cpu" class="icon"></i>
+            <svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M14.949 6.547a3.94 3.94 0 0 0-.348-3.273 4.11 4.11 0 0 0-4.4-1.934A4.1 4.1 0 0 0 8.423.2 4.15 4.15 0 0 0 6.305.086a4.1 4.1 0 0 0-1.891.948 4.04 4.04 0 0 0-1.158 1.753 4.1 4.1 0 0 0-1.563.679A4 4 0 0 0 .554 4.72a3.99 3.99 0 0 0 .502 4.731 3.94 3.94 0 0 0 .346 3.274 4.11 4.11 0 0 0 4.402 1.933c.382.425.852.764 1.377.995.526.231 1.095.35 1.67.346 1.78.002 3.358-1.132 3.901-2.804a4.1 4.1 0 0 0 1.563-.68 4 4 0 0 0 1.14-1.253 3.99 3.99 0 0 0-.506-4.716m-6.097 8.406a3.05 3.05 0 0 1-1.945-.694l.096-.054 3.23-1.838a.53.53 0 0 0 .265-.455v-4.49l1.366.778q.02.011.025.035v3.722c-.003 1.653-1.361 2.992-3.037 2.996m-6.53-2.75a2.95 2.95 0 0 1-.36-2.01l.095.057L5.29 12.09a.53.53 0 0 0 .527 0l3.949-2.246v1.555a.05.05 0 0 1-.022.041L6.473 13.3c-1.454.826-3.311.335-4.15-1.098m-.85-6.94A3.02 3.02 0 0 1 3.07 3.949v3.785a.51.51 0 0 0 .262.451l3.93 2.237-1.366.779a.05.05 0 0 1-.048 0L2.585 9.342a2.98 2.98 0 0 1-1.113-4.094zm11.216 2.571L8.747 5.576l1.362-.776a.05.05 0 0 1 .048 0l3.265 1.86a3 3 0 0 1 1.173 1.207 2.96 2.96 0 0 1-.27 3.2 3.05 3.05 0 0 1-1.36.997V8.279a.52.52 0 0 0-.276-.445m1.36-2.015-.097-.057-3.226-1.855a.53.53 0 0 0-.53 0L6.249 6.153V4.598a.04.04 0 0 1 .019-.04L9.533 2.7a3.07 3.07 0 0 1 3.257.139c.474.325.843.778 1.066 1.303.223.526.289 1.103.191 1.664zM5.503 8.575 4.139 7.8a.05.05 0 0 1-.026-.037V4.049c0-.57.166-1.127.476-1.607s.752-.864 1.275-1.105a3.08 3.08 0 0 1 3.234.41l-.096.054-3.23 1.838a.53.53 0 0 0-.265.455zm.742-1.577 1.758-1 1.762 1v2l-1.755 1-1.762-1z"/></svg>
           </div>
-          <h3>Harness Agnostic</h3>
-          <p>Easily swap between Claude Code, Codex, Gemini CLI, or any coding agent depending on the task complexity.</p>
+          <h3>Native Codex Integration</h3>
+          <p>First-class Codex support via app-server protocol. Streaming chat, sandbox detection, and approval flows.</p>
         </div>
 
         <div class="feature-card bento-wide reveal reveal-delay-2">
@@ -349,8 +349,8 @@
             <div class="feature-icon">
               <i data-lucide="terminal" class="icon"></i>
             </div>
-            <h3>Integrated WebGL Terminal</h3>
-            <p>A high-performance xterm.js terminal with native PTY. Watch agents run dev servers, execute tests, and fix compilation errors autonomously.</p>
+            <h3>Integrated Terminal</h3>
+            <p>A high-performance GPU-accelerated terminal with native PTY. Watch agents run dev servers, execute tests, and fix compilation errors autonomously.</p>
           </div>
           <div class="feature-card-visual feature-visual-term">
             <div class="fv-term-line"><span class="fv-term-prompt">~/panes</span> cargo test</div>
@@ -360,29 +360,76 @@
           </div>
         </div>
 
-        <!-- ROW 3: Three equal cards -->
-        <div class="feature-card reveal reveal-delay-1">
-          <div class="feature-icon">
-            <svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M14.949 6.547a3.94 3.94 0 0 0-.348-3.273 4.11 4.11 0 0 0-4.4-1.934A4.1 4.1 0 0 0 8.423.2 4.15 4.15 0 0 0 6.305.086a4.1 4.1 0 0 0-1.891.948 4.04 4.04 0 0 0-1.158 1.753 4.1 4.1 0 0 0-1.563.679A4 4 0 0 0 .554 4.72a3.99 3.99 0 0 0 .502 4.731 3.94 3.94 0 0 0 .346 3.274 4.11 4.11 0 0 0 4.402 1.933c.382.425.852.764 1.377.995.526.231 1.095.35 1.67.346 1.78.002 3.358-1.132 3.901-2.804a4.1 4.1 0 0 0 1.563-.68 4 4 0 0 0 1.14-1.253 3.99 3.99 0 0 0-.506-4.716m-6.097 8.406a3.05 3.05 0 0 1-1.945-.694l.096-.054 3.23-1.838a.53.53 0 0 0 .265-.455v-4.49l1.366.778q.02.011.025.035v3.722c-.003 1.653-1.361 2.992-3.037 2.996m-6.53-2.75a2.95 2.95 0 0 1-.36-2.01l.095.057L5.29 12.09a.53.53 0 0 0 .527 0l3.949-2.246v1.555a.05.05 0 0 1-.022.041L6.473 13.3c-1.454.826-3.311.335-4.15-1.098m-.85-6.94A3.02 3.02 0 0 1 3.07 3.949v3.785a.51.51 0 0 0 .262.451l3.93 2.237-1.366.779a.05.05 0 0 1-.048 0L2.585 9.342a2.98 2.98 0 0 1-1.113-4.094zm11.216 2.571L8.747 5.576l1.362-.776a.05.05 0 0 1 .048 0l3.265 1.86a3 3 0 0 1 1.173 1.207 2.96 2.96 0 0 1-.27 3.2 3.05 3.05 0 0 1-1.36.997V8.279a.52.52 0 0 0-.276-.445m1.36-2.015-.097-.057-3.226-1.855a.53.53 0 0 0-.53 0L6.249 6.153V4.598a.04.04 0 0 1 .019-.04L9.533 2.7a3.07 3.07 0 0 1 3.257.139c.474.325.843.778 1.066 1.303.223.526.289 1.103.191 1.664zM5.503 8.575 4.139 7.8a.05.05 0 0 1-.026-.037V4.049c0-.57.166-1.127.476-1.607s.752-.864 1.275-1.105a3.08 3.08 0 0 1 3.234.41l-.096.054-3.23 1.838a.53.53 0 0 0-.265.455zm.742-1.577 1.758-1 1.762 1v2l-1.755 1-1.762-1z"/></svg>
+        <!-- ROW 3: Bring Your Own Harness (2col) + Open Source (1col) -->
+        <div class="feature-card bento-wide reveal reveal-delay-1">
+          <div class="feature-content">
+            <div class="feature-icon">
+              <i data-lucide="cpu" class="icon"></i>
+            </div>
+            <h3>Bring Your Own Harness</h3>
+            <p>Easily swap between Claude Code, Codex, Gemini CLI, or any coding agent depending on the task complexity.</p>
           </div>
-          <h3>Native Codex Integration</h3>
-          <p>First-class Codex support via app-server protocol. Streaming chat, sandbox detection, model discovery, and approval flows.</p>
+          <div class="feature-card-visual feature-visual-harness">
+            <div class="fv-harness-switcher">
+              <div class="fv-harness-agent fv-harness-active" style="--hi:0">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073z"/></svg>
+                <span>Codex CLI</span>
+              </div>
+              <div class="fv-harness-agent" style="--hi:1">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13.827 3.52h3.603L24 20.48h-3.603l-6.57-16.96zm-7.258 0h3.767L16.906 20.48h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522z"/></svg>
+                <span>Claude Code</span>
+              </div>
+              <div class="fv-harness-agent" style="--hi:2">
+                <svg viewBox="0 0 100 100" width="16" height="16" fill="currentColor"><path d="M50 0C50 25 75 50 100 50C75 50 50 75 50 100C50 75 25 50 0 50C25 50 50 25 50 0Z"/></svg>
+                <span>Gemini CLI</span>
+              </div>
+              <div class="fv-harness-agent" style="--hi:3">
+                <svg viewBox="0 0 20 24" width="14" height="17" fill="currentColor"><path d="M3.80081 18.5661C1.32306 24.0572 6.59904 25.434 10.4904 22.2205C11.6339 25.8242 15.926 23.1361 17.4652 20.3445C20.8578 14.1915 19.4877 7.91459 19.1361 6.61988C16.7244 -2.20972 4.67055 -2.21852 2.59581 6.6649C2.11136 8.21946 2.10284 9.98752 1.82846 11.8233C1.69011 12.749 1.59258 13.3398 1.23436 14.3135C1.02841 14.8733 0.745043 15.3704 0.299833 16.2082C-0.391594 17.5095 -0.0998802 20.021 3.46397 18.7186V18.7195L3.80081 18.5661Z"/></svg>
+                <span>Kiro</span>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div class="feature-card reveal reveal-delay-2">
-          <div class="feature-icon">
-            <i data-lucide="layout" class="icon"></i>
-          </div>
-          <h3>Multi-Repo Workspaces</h3>
-          <p>Open any folder, auto-detect nested repos. Manage monorepos and multi-service architectures with context-aware chat.</p>
-        </div>
-
-        <div class="feature-card reveal reveal-delay-3">
+        <div class="feature-card bento-narrow reveal reveal-delay-2">
           <div class="feature-icon">
             <i data-lucide="heart" class="icon"></i>
           </div>
           <h3>Open Source</h3>
           <p>MIT licensed, forever. No vendor lock-in, no telemetry, no strings attached. Fork it, extend it, make it yours.</p>
+        </div>
+
+        <!-- ROW 4: Multi-Repo (full width) -->
+        <div class="feature-card bento-full reveal reveal-delay-1">
+          <div class="feature-content">
+            <div class="feature-icon">
+              <i data-lucide="layout" class="icon"></i>
+            </div>
+            <h3>Multi-Repo Workspaces</h3>
+            <p>Open any folder, auto-detect nested repos. Manage monorepos and multi-service architectures with context-aware chat.</p>
+          </div>
+          <div class="feature-card-visual feature-visual-repos">
+            <div class="fv-repo-tree">
+              <div class="fv-repo-folder">
+                <i data-lucide="chevron-down" style="width:11px;height:11px;opacity:0.4;"></i>
+                <i data-lucide="folder-git-2" style="width:13px;height:13px;color:var(--accent);"></i>
+                <span>panes</span>
+                <span class="fv-repo-branch">main</span>
+              </div>
+              <div class="fv-repo-folder fv-repo-nested">
+                <i data-lucide="chevron-down" style="width:11px;height:11px;opacity:0.4;"></i>
+                <i data-lucide="folder-git-2" style="width:13px;height:13px;color:var(--accent);"></i>
+                <span>api-service</span>
+                <span class="fv-repo-branch">feat/auth</span>
+              </div>
+              <div class="fv-repo-folder fv-repo-nested">
+                <i data-lucide="chevron-right" style="width:11px;height:11px;opacity:0.4;"></i>
+                <i data-lucide="folder-git-2" style="width:13px;height:13px;"></i>
+                <span>web-client</span>
+                <span class="fv-repo-branch">develop</span>
+              </div>
+            </div>
+          </div>
         </div>
 
       </div>
