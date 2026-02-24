@@ -219,7 +219,9 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
 
   async function onSelectProject(wsId: string) {
     if (activeView !== "chat") setActiveView("chat");
-    setCollapsed((prev) => ({ ...prev, [wsId]: false }));
+    setCollapsed(
+      Object.fromEntries(projects.map((p) => [p.workspace.id, p.workspace.id !== wsId]))
+    );
     await setActiveWorkspace(wsId);
   }
 
@@ -343,20 +345,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             New thread
           </button>
 
-          {/* Open project */}
-          <button
-            type="button"
-            className="sb-open-project-btn"
-            style={{ margin: 0 }}
-            onClick={() => {
-              if (activeView !== "chat") setActiveView("chat");
-              void onOpenFolder();
-            }}
-          >
-            <FolderOpen size={13} strokeWidth={2} />
-            Open project
-          </button>
-
           {/* Agents */}
           <button
             type="button"
@@ -374,6 +362,17 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       <div style={{ flex: 1, overflow: "auto", paddingBottom: 4 }}>
         <div className="sb-section-label">
           <span>Projects</span>
+          <button
+            type="button"
+            className="sb-add-project-btn"
+            title="Open project"
+            onClick={() => {
+              if (activeView !== "chat") setActiveView("chat");
+              void onOpenFolder();
+            }}
+          >
+            <Plus size={12} strokeWidth={2.2} />
+          </button>
         </div>
 
         {projects.length === 0 ? (

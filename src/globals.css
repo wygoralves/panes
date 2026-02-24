@@ -1762,6 +1762,27 @@ button, input, textarea, select {
   justify-content: space-between;
 }
 
+.sb-add-project-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out),
+              background var(--duration-fast) var(--ease-out);
+  flex-shrink: 0;
+}
+
+.sb-add-project-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-1);
+}
+
 /* Project row */
 .sb-project {
   width: 100%;
