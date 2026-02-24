@@ -152,7 +152,7 @@ img { display: block; max-width: 100%; }
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 17px;
+  font-size: 19px;
   font-weight: 700;
   letter-spacing: -0.02em;
   transition: opacity 0.2s;
@@ -160,9 +160,8 @@ img { display: block; max-width: 100%; }
 .nav-logo:hover { opacity: 0.8; }
 
 .nav-logo-img {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
+  width: 22px;
+  height: 22px;
 }
 
 .nav-links {

@@ -1,0 +1,37 @@
+<svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="noise">
+      <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="4" stitchTiles="stitch"/>
+      <feColorMatrix type="matrix" values="1 0 0 0 0, 0 1 0 0 0, 0 0 1 0 0, 0 0 0 0.05 0" />
+    </filter>
+
+    <filter id="coreGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.8"/>
+      <feDropShadow dx="0" dy="0" stdDeviation="24" flood-color="#48F3CD" flood-opacity="0.5"/>
+    </filter>
+
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#181818" />
+      <stop offset="100%" stop-color="#050505" />
+    </linearGradient>
+
+    <linearGradient id="rimLight" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(255, 255, 255, 0.25)" />
+      <stop offset="15%" stop-color="rgba(255, 255, 255, 0.03)" />
+      <stop offset="80%" stop-color="rgba(0, 0, 0, 0)" />
+      <stop offset="100%" stop-color="rgba(0, 0, 0, 0.8)" />
+    </linearGradient>
+  </defs>
+
+  <rect x="32" y="32" width="448" height="448" rx="100" fill="url(#bgGrad)" />
+  <rect x="32" y="32" width="448" height="448" rx="100" filter="url(#noise)" style="pointer-events: none;" />
+  <rect x="33" y="33" width="446" height="446" rx="99" fill="none" stroke="url(#rimLight)" stroke-width="2" />
+
+  <circle cx="256" cy="256" r="140" fill="#48F3CD" filter="blur(64px)" opacity="0.1" />
+
+  <rect x="106" y="170" width="236" height="236" fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linejoin="miter" />
+  <rect x="170" y="106" width="236" height="236" fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linejoin="miter" />
+  <rect x="138" y="138" width="236" height="236" fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linejoin="miter" />
+
+  <rect x="206" y="206" width="100" height="100" fill="#48F3CD" filter="url(#coreGlow)"/>
+</svg>
