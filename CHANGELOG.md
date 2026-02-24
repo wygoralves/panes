@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.12.0...vnull) (2026-02-24)
+
+### Bug Fixes
+
+* add more diagnostics for terminal frontend hanging ([2bfb19d](https://github.com/wygoralves/panes/commit/2bfb19dfc7f9a75a7ad7767fb53c57224f806b6c))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.11.4...vnull) (2026-02-23)
 
 ### Features
