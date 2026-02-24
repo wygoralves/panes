@@ -901,7 +901,7 @@ img { display: block; max-width: 100%; }
 .ade-context {
   position: relative;
   z-index: 2;
-  padding: 80px 0 100px;
+  padding: 100px 0;
 }
 
 .ade-context-inner {
@@ -1049,7 +1049,7 @@ img { display: block; max-width: 100%; }
 .features {
   position: relative;
   z-index: 2;
-  padding: 40px 0 100px;
+  padding: 100px 0;
 }
 
 .feature-bento {
@@ -1327,7 +1327,7 @@ img { display: block; max-width: 100%; }
 .how-it-works {
   position: relative;
   z-index: 2;
-  padding: 40px 0 120px;
+  padding: 100px 0;
 }
 
 .steps {
