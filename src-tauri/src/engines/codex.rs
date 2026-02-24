@@ -224,18 +224,16 @@ impl Engine for CodexEngine {
                 Ok(result) => {
                     let engine_thread_id = extract_thread_id(&result)
                         .unwrap_or_else(|| existing_thread_id.to_string());
+                    let runtime = thread_runtime_from_start_response(
+                        &result,
+                        &cwd,
+                        model,
+                        &approval_policy,
+                        &sandbox_policy,
+                        sandbox.reasoning_effort.clone(),
+                    );
 
-                    self.store_thread_runtime(
-                        &engine_thread_id,
-                        ThreadRuntime {
-                            cwd: cwd.clone(),
-                            model_id: model.to_string(),
-                            approval_policy: approval_policy.clone(),
-                            sandbox_policy: sandbox_policy.clone(),
-                            reasoning_effort: sandbox.reasoning_effort.clone(),
-                        },
-                    )
-                    .await;
+                    self.store_thread_runtime(&engine_thread_id, runtime).await;
 
                     return Ok(EngineThread { engine_thread_id });
                 }
@@ -265,18 +263,16 @@ impl Engine for CodexEngine {
 
         let engine_thread_id = extract_thread_id(&result)
             .ok_or_else(|| anyhow::anyhow!("missing thread id in thread/start response"))?;
+        let runtime = thread_runtime_from_start_response(
+            &result,
+            &cwd,
+            model,
+            &approval_policy,
+            &sandbox_policy,
+            sandbox.reasoning_effort.clone(),
+        );
 
-        self.store_thread_runtime(
-            &engine_thread_id,
-            ThreadRuntime {
-                cwd,
-                model_id: model.to_string(),
-                approval_policy,
-                sandbox_policy,
-                reasoning_effort: sandbox.reasoning_effort.clone(),
-            },
-        )
-        .await;
+        self.store_thread_runtime(&engine_thread_id, runtime).await;
 
         Ok(EngineThread { engine_thread_id })
     }
@@ -2119,6 +2115,35 @@ fn extract_thread_preview(value: &serde_json::Value) -> Option<String> {
     None
 }
 
+fn thread_runtime_from_start_response(
+    response: &serde_json::Value,
+    fallback_cwd: &str,
+    fallback_model: &str,
+    fallback_approval_policy: &str,
+    fallback_sandbox_policy: &serde_json::Value,
+    fallback_reasoning_effort: Option<String>,
+) -> ThreadRuntime {
+    let mut runtime = ThreadRuntime {
+        cwd: extract_any_string(response, &["cwd"]).unwrap_or_else(|| fallback_cwd.to_string()),
+        model_id: extract_any_string(response, &["model"])
+            .unwrap_or_else(|| fallback_model.to_string()),
+        approval_policy: extract_any_string(response, &["approvalPolicy", "approval_policy"])
+            .unwrap_or_else(|| fallback_approval_policy.to_string()),
+        sandbox_policy: response
+            .get("sandbox")
+            .cloned()
+            .filter(|value| !value.is_null())
+            .unwrap_or_else(|| fallback_sandbox_policy.clone()),
+        reasoning_effort: extract_any_string(response, &["reasoningEffort", "reasoning_effort"]),
+    };
+
+    if runtime.reasoning_effort.is_none() {
+        runtime.reasoning_effort = fallback_reasoning_effort;
+    }
+
+    runtime
+}
+
 fn extract_any_string(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
     for key in keys {
         if let Some(found) = value.get(*key) {
@@ -2496,5 +2521,62 @@ mod tests {
         });
 
         assert!(!workspace_probe_result_indicates_failure(&payload));
+    }
+
+    #[test]
+    fn thread_runtime_uses_effective_values_from_start_response() {
+        let response = json!({
+            "cwd": "/tmp/effective",
+            "model": "gpt-5.3-codex",
+            "approvalPolicy": "untrusted",
+            "sandbox": {
+                "type": "externalSandbox",
+                "networkAccess": "restricted"
+            },
+            "reasoningEffort": "high"
+        });
+
+        let runtime = thread_runtime_from_start_response(
+            &response,
+            "/tmp/fallback",
+            "gpt-5",
+            "on-request",
+            &json!({"type":"workspaceWrite"}),
+            Some("medium".to_string()),
+        );
+
+        assert_eq!(runtime.cwd, "/tmp/effective");
+        assert_eq!(runtime.model_id, "gpt-5.3-codex");
+        assert_eq!(runtime.approval_policy, "untrusted");
+        assert_eq!(
+            runtime.sandbox_policy,
+            json!({
+                "type": "externalSandbox",
+                "networkAccess": "restricted"
+            })
+        );
+        assert_eq!(runtime.reasoning_effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn thread_runtime_falls_back_when_response_omits_fields() {
+        let response = json!({});
+        let runtime = thread_runtime_from_start_response(
+            &response,
+            "/tmp/fallback",
+            "gpt-5",
+            "on-request",
+            &json!({"type":"workspaceWrite","networkAccess":false}),
+            Some("medium".to_string()),
+        );
+
+        assert_eq!(runtime.cwd, "/tmp/fallback");
+        assert_eq!(runtime.model_id, "gpt-5");
+        assert_eq!(runtime.approval_policy, "on-request");
+        assert_eq!(
+            runtime.sandbox_policy,
+            json!({"type":"workspaceWrite","networkAccess":false})
+        );
+        assert_eq!(runtime.reasoning_effort.as_deref(), Some("medium"));
     }
 }

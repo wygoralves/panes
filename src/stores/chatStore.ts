@@ -35,10 +35,14 @@ interface ChatState {
   ) => Promise<boolean>;
   cancel: () => Promise<void>;
   respondApproval: (approvalId: string, response: ApprovalResponse) => Promise<void>;
+  hydrateActionOutput: (messageId: string, actionId: string) => Promise<void>;
 }
 
 let activeThreadBindSeq = 0;
 const STREAM_EVENT_BATCH_WINDOW_MS = 16;
+const MESSAGE_WINDOW_INITIAL_LIMIT = 120;
+const MESSAGE_WINDOW_MAX_PAGES = 1000;
+const MAX_FULLY_HYDRATED_MESSAGES = 80;
 const ACTION_OUTPUT_MAX_CHARS = 180_000;
 const ACTION_OUTPUT_TRIM_TARGET_CHARS = 120_000;
 const ACTION_OUTPUT_MAX_CHUNKS = 240;
@@ -50,6 +54,7 @@ const pendingTurnMetaByThread = new Map<
     turnReasoningEffort?: string | null;
   }
 >();
+const inflightActionOutputHydration = new Map<string, Promise<void>>();
 
 function resolveApprovalDecision(response: ApprovalResponse): ApprovalBlock["decision"] {
   if ("decision" in response && typeof response.decision === "string") {
@@ -153,7 +158,9 @@ function ensureAssistantMessage(messages: Message[], threadId: string): Message[
       status: "streaming",
       schemaVersion: 1,
       blocks: [],
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      hydration: "full",
+      hasDeferredContent: false,
     }
   ];
 }
@@ -212,11 +219,136 @@ function normalizeBlocks(blocks?: ContentBlock[]): ContentBlock[] | undefined {
   return normalized;
 }
 
-function normalizeMessages(messages: Message[]): Message[] {
-  return messages.map((message) => ({
+function hasDeferredActionOutput(blocks?: ContentBlock[]): boolean {
+  if (!Array.isArray(blocks)) {
+    return false;
+  }
+  return blocks.some((block) => block.type === "action" && block.outputDeferred === true);
+}
+
+function markMessageAsFullyHydrated(message: Message): Message {
+  const hasDeferredContent = hasDeferredActionOutput(message.blocks);
+  if (message.hydration === "full" && message.hasDeferredContent === hasDeferredContent) {
+    return message;
+  }
+
+  return {
     ...message,
-    blocks: normalizeBlocks(message.blocks)
-  }));
+    hydration: "full",
+    hasDeferredContent,
+  };
+}
+
+function summarizeActionBlockForMemory(block: ActionBlock): ActionBlock {
+  const hasOutput =
+    block.outputChunks.length > 0 ||
+    (typeof block.result?.output === "string" && block.result.output.length > 0) ||
+    block.outputDeferred === true;
+  if (!hasOutput) {
+    return block;
+  }
+
+  let nextResult = block.result;
+  if (block.result && typeof block.result.output === "string") {
+    nextResult = {
+      ...block.result,
+      output: undefined,
+    };
+  }
+
+  if (
+    block.outputDeferred === true &&
+    block.outputDeferredLoaded === false &&
+    block.outputChunks.length === 0 &&
+    nextResult === block.result
+  ) {
+    return block;
+  }
+
+  return {
+    ...block,
+    outputChunks: [],
+    outputDeferred: true,
+    outputDeferredLoaded: false,
+    result: nextResult,
+  };
+}
+
+function summarizeMessageForMemory(message: Message): Message {
+  const sourceBlocks = message.blocks;
+  let nextBlocks = sourceBlocks;
+
+  if (Array.isArray(sourceBlocks) && sourceBlocks.length > 0) {
+    for (let index = 0; index < sourceBlocks.length; index += 1) {
+      const block = sourceBlocks[index];
+      if (block.type !== "action") {
+        continue;
+      }
+
+      const summarizedBlock = summarizeActionBlockForMemory(block);
+      if (summarizedBlock === block) {
+        continue;
+      }
+
+      if (nextBlocks === sourceBlocks) {
+        nextBlocks = [...sourceBlocks];
+      }
+      (nextBlocks as ContentBlock[])[index] = summarizedBlock;
+    }
+  }
+
+  const hasDeferredContent = hasDeferredActionOutput(nextBlocks);
+  if (
+    nextBlocks === sourceBlocks &&
+    message.hydration === "summary" &&
+    message.hasDeferredContent === hasDeferredContent
+  ) {
+    return message;
+  }
+
+  return {
+    ...message,
+    hydration: "summary",
+    hasDeferredContent,
+    blocks: nextBlocks,
+  };
+}
+
+function applyHydrationWindow(messages: Message[]): Message[] {
+  if (messages.length === 0) {
+    return messages;
+  }
+
+  const summarizeUntil = Math.max(0, messages.length - MAX_FULLY_HYDRATED_MESSAGES);
+  let changed = false;
+  const nextMessages = messages.map((message, index) => {
+    const nextMessage =
+      index < summarizeUntil
+        ? summarizeMessageForMemory(message)
+        : message.hydration === "summary"
+          ? message
+          : markMessageAsFullyHydrated(message);
+    if (nextMessage !== message) {
+      changed = true;
+    }
+    return nextMessage;
+  });
+
+  return changed ? nextMessages : messages;
+}
+
+function normalizeMessages(messages: Message[]): Message[] {
+  return messages.map((message) => {
+    const normalizedBlocks = normalizeBlocks(message.blocks);
+    return markMessageAsFullyHydrated({
+      ...message,
+      content:
+        message.role === "user" && normalizedBlocks && typeof message.content === "string"
+          ? undefined
+          : message.content,
+      blocks: normalizedBlocks,
+    });
+  });
 }
 
 function toIsoTimestamp(value: number | null | undefined): string | null {
@@ -352,6 +484,8 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
       summary: String(event.summary ?? ""),
       details: (event.details as Record<string, unknown>) ?? {},
       outputChunks: [],
+      outputDeferred: false,
+      outputDeferredLoaded: true,
       status: "running"
     });
   }
@@ -400,6 +534,8 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
           ...block,
           outputChunks: nextOutputChunks,
           details: nextDetails,
+          outputDeferred: false,
+          outputDeferredLoaded: true,
         };
       });
     }
@@ -491,12 +627,17 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     }
   }
 
+  assistant.hydration = "full";
+  assistant.hasDeferredContent = hasDeferredActionOutput(assistant.blocks);
+
   const blocksChanged = assistant.blocks !== existingBlocks;
   const statusChanged = assistant.status !== currentAssistant.status;
   const metadataChanged =
     assistant.turnEngineId !== currentAssistant.turnEngineId ||
     assistant.turnModelId !== currentAssistant.turnModelId ||
-    assistant.turnReasoningEffort !== currentAssistant.turnReasoningEffort;
+    assistant.turnReasoningEffort !== currentAssistant.turnReasoningEffort ||
+    assistant.hydration !== currentAssistant.hydration ||
+    assistant.hasDeferredContent !== currentAssistant.hasDeferredContent;
 
   if (!blocksChanged && !statusChanged && !metadataChanged) {
     return next;
@@ -544,7 +685,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     try {
-      const messages = normalizeMessages(await ipc.getThreadMessages(threadId));
+      const messageWindow = await ipc.getThreadMessagesWindow(
+        threadId,
+        null,
+        MESSAGE_WINDOW_INITIAL_LIMIT,
+      );
+      let messages = normalizeMessages(messageWindow.messages);
+      let cursor = messageWindow.nextCursor;
+      let loadedPages = 1;
+      while (cursor && loadedPages < MESSAGE_WINDOW_MAX_PAGES) {
+        if (bindSeq !== activeThreadBindSeq) {
+          return;
+        }
+        const olderWindow = await ipc.getThreadMessagesWindow(
+          threadId,
+          cursor,
+          MESSAGE_WINDOW_INITIAL_LIMIT,
+        );
+        const olderMessages = normalizeMessages(olderWindow.messages).map((message) =>
+          summarizeMessageForMemory(message),
+        );
+        messages = [...olderMessages, ...messages];
+        cursor = olderWindow.nextCursor;
+        loadedPages += 1;
+      }
+      messages = applyHydrationWindow(messages);
       if (bindSeq !== activeThreadBindSeq) {
         return;
       }
@@ -606,6 +771,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             nextMessages = applyStreamEvent(nextMessages, queuedEvent, state.threadId);
             nextStreaming = queuedEvent.type !== "TurnCompleted";
           }
+          nextMessages = applyHydrationWindow(nextMessages);
 
           if (
             nextMessages === state.messages &&
@@ -736,11 +902,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       blocks: userBlocks,
       status: "completed",
       schemaVersion: 1,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      hydration: "full",
+      hasDeferredContent: false,
     };
 
     set((state) => ({
-      messages: [...state.messages, userMessage],
+      messages: applyHydrationWindow([...state.messages, userMessage]),
       status: "streaming",
       streaming: true,
       error: undefined
@@ -825,5 +993,92 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       return state;
     });
-  }
+  },
+  hydrateActionOutput: async (messageId, actionId) => {
+    const requestKey = `${messageId}::${actionId}`;
+    const existingRequest = inflightActionOutputHydration.get(requestKey);
+    if (existingRequest) {
+      await existingRequest;
+      return;
+    }
+
+    const request = (async () => {
+      const payload = await ipc.getActionOutput(messageId, actionId);
+      if (!payload.found) {
+        throw new Error("Action output not found.");
+      }
+
+      const normalizedChunks: ActionBlock["outputChunks"] = payload.outputChunks.map((chunk) => ({
+        stream: chunk.stream === "stderr" ? "stderr" : "stdout",
+        content: String(chunk.content ?? ""),
+      }));
+      const { chunks: trimmedChunks, truncated: trimmedByFrontend } =
+        trimActionOutputChunks(normalizedChunks);
+
+      set((state) => {
+        const messageIndex = state.messages.findIndex((message) => message.id === messageId);
+        if (messageIndex < 0) {
+          return state;
+        }
+
+        const message = state.messages[messageIndex];
+        const blocks = message.blocks;
+        if (!blocks || blocks.length === 0) {
+          return state;
+        }
+
+        const nextBlocks = patchActionBlock(blocks, actionId, (block) => {
+          if (
+            block.outputDeferred !== true &&
+            block.outputDeferredLoaded === true &&
+            block.outputChunks.length > 0
+          ) {
+            return block;
+          }
+
+          const details = (block.details ?? {}) as Record<string, unknown>;
+          const shouldMarkTruncated =
+            (payload.truncated || trimmedByFrontend) &&
+            !("outputTruncated" in details && details.outputTruncated === true);
+          const nextDetails = shouldMarkTruncated
+            ? {
+                ...details,
+                outputTruncated: true,
+              }
+            : details;
+
+          return {
+            ...block,
+            details: nextDetails,
+            outputChunks: trimmedChunks,
+            outputDeferred: false,
+            outputDeferredLoaded: true,
+          };
+        });
+
+        if (nextBlocks === blocks) {
+          return state;
+        }
+
+        const nextMessages = [...state.messages];
+        nextMessages[messageIndex] = {
+          ...message,
+          blocks: nextBlocks,
+          hasDeferredContent: hasDeferredActionOutput(nextBlocks),
+        };
+
+        return {
+          ...state,
+          messages: nextMessages,
+        };
+      });
+    })();
+
+    inflightActionOutputHydration.set(requestKey, request);
+    try {
+      await request;
+    } finally {
+      inflightActionOutputHydration.delete(requestKey);
+    }
+  },
 }));

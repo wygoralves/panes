@@ -123,6 +123,36 @@ pub struct MessageDto {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageWindowCursorDto {
+    pub created_at: String,
+    pub id: String,
+    pub row_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageWindowDto {
+    pub messages: Vec<MessageDto>,
+    pub next_cursor: Option<MessageWindowCursorDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionOutputChunkDto {
+    pub stream: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionOutputDto {
+    pub found: bool,
+    pub output_chunks: Vec<ActionOutputChunkDto>,
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageStatusDto {
