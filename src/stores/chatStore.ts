@@ -515,6 +515,8 @@ export const chatStoreInternals = {
   normalizeBlocks,
   normalizeMessages,
   applyStreamEvent,
+  toIsoTimestamp,
+  mapUsageLimitsFromEvent,
 };
 
 export const useChatStore = create<ChatState>((set, get) => ({

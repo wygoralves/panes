@@ -6,6 +6,7 @@ import type {
   ContentBlock,
   Message,
   StreamEvent,
+  UsageLimitsUpdatedEvent,
 } from "../src/types";
 
 const {
@@ -17,6 +18,8 @@ const {
   normalizeBlocks,
   normalizeMessages,
   applyStreamEvent,
+  toIsoTimestamp,
+  mapUsageLimitsFromEvent,
 } = chatStoreInternals;
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -552,5 +555,146 @@ describe("applyStreamEvent", () => {
     const updatedAction = assistant.blocks![0] as ActionBlock;
     expect(updatedAction.outputChunks).toHaveLength(2);
     expect(updatedAction.outputChunks[1]).toEqual({ stream: "stderr", content: "err" });
+  });
+
+  it("returns messages unchanged for UsageLimitsUpdated event", () => {
+    const msg = makeMessage({ blocks: [{ type: "text", content: "hello" }] });
+    const messages = [msg];
+    const event: StreamEvent = {
+      type: "UsageLimitsUpdated",
+      usage: { current_tokens: 1000, max_context_tokens: 10000 },
+    };
+    const result = applyStreamEvent(messages, event, "thread-1");
+    expect(result).toBe(messages);
+  });
+});
+
+// ── toIsoTimestamp ──────────────────────────────────────────────────
+
+describe("toIsoTimestamp", () => {
+  it("converts seconds-based timestamp to ISO string", () => {
+    const result = toIsoTimestamp(1700000000);
+    expect(result).toBe(new Date(1700000000 * 1000).toISOString());
+  });
+
+  it("converts milliseconds-based timestamp to ISO string", () => {
+    const ms = 1700000000000;
+    const result = toIsoTimestamp(ms);
+    expect(result).toBe(new Date(ms).toISOString());
+  });
+
+  it("returns null for null input", () => {
+    expect(toIsoTimestamp(null)).toBeNull();
+  });
+
+  it("returns null for undefined input", () => {
+    expect(toIsoTimestamp(undefined)).toBeNull();
+  });
+
+  it("returns null for non-finite numbers", () => {
+    expect(toIsoTimestamp(Infinity)).toBeNull();
+    expect(toIsoTimestamp(NaN)).toBeNull();
+    expect(toIsoTimestamp(-Infinity)).toBeNull();
+  });
+});
+
+// ── mapUsageLimitsFromEvent ────────────────────────────────────────
+
+describe("mapUsageLimitsFromEvent", () => {
+  function makeUsageEvent(
+    usage: UsageLimitsUpdatedEvent["usage"] = {},
+  ): UsageLimitsUpdatedEvent {
+    return { type: "UsageLimitsUpdated", usage };
+  }
+
+  it("maps basic token metrics", () => {
+    const result = mapUsageLimitsFromEvent(
+      makeUsageEvent({ current_tokens: 5000, max_context_tokens: 200000 }),
+    );
+    expect(result).not.toBeNull();
+    expect(result!.currentTokens).toBe(5000);
+    expect(result!.maxContextTokens).toBe(200000);
+  });
+
+  it("computes contextPercent from token counts when not provided", () => {
+    const result = mapUsageLimitsFromEvent(
+      makeUsageEvent({ current_tokens: 50000, max_context_tokens: 200000 }),
+    );
+    expect(result!.contextPercent).toBe(25);
+  });
+
+  it("uses explicit contextPercent when provided", () => {
+    const result = mapUsageLimitsFromEvent(
+      makeUsageEvent({
+        current_tokens: 50000,
+        max_context_tokens: 200000,
+        context_window_percent: 30,
+      }),
+    );
+    expect(result!.contextPercent).toBe(30);
+  });
+
+  it("converts five_hour_percent to remaining budget", () => {
+    const result = mapUsageLimitsFromEvent(
+      makeUsageEvent({ five_hour_percent: 40 }),
+    );
+    expect(result!.windowFiveHourPercent).toBe(60);
+  });
+
+  it("converts weekly_percent to remaining budget", () => {
+    const result = mapUsageLimitsFromEvent(
+      makeUsageEvent({ weekly_percent: 75 }),
+    );
+    expect(result!.windowWeeklyPercent).toBe(25);
+  });
+
+  it("returns null when no metrics are present", () => {
+    const result = mapUsageLimitsFromEvent(makeUsageEvent({}));
+    expect(result).toBeNull();
+  });
+
+  it("rounds fractional token counts", () => {
+    const result = mapUsageLimitsFromEvent(
+      makeUsageEvent({ current_tokens: 1234.7, max_context_tokens: 5000.3 }),
+    );
+    expect(result!.currentTokens).toBe(1235);
+    expect(result!.maxContextTokens).toBe(5000);
+  });
+
+  it("clamps negative token counts to 0", () => {
+    const result = mapUsageLimitsFromEvent(
+      makeUsageEvent({ current_tokens: -100 }),
+    );
+    expect(result!.currentTokens).toBe(0);
+  });
+
+  it("clamps contextPercent to 0-100 range", () => {
+    const result = mapUsageLimitsFromEvent(
+      makeUsageEvent({ context_window_percent: 150 }),
+    );
+    expect(result!.contextPercent).toBe(100);
+  });
+
+  it("maps reset timestamps via toIsoTimestamp", () => {
+    const result = mapUsageLimitsFromEvent(
+      makeUsageEvent({
+        current_tokens: 100,
+        five_hour_resets_at: 1700000000,
+        weekly_resets_at: 1700100000,
+      }),
+    );
+    expect(result!.windowFiveHourResetsAt).toBe(
+      new Date(1700000000 * 1000).toISOString(),
+    );
+    expect(result!.windowWeeklyResetsAt).toBe(
+      new Date(1700100000 * 1000).toISOString(),
+    );
+  });
+
+  it("handles null remaining percent for non-finite values", () => {
+    const result = mapUsageLimitsFromEvent(
+      makeUsageEvent({ five_hour_percent: Infinity, current_tokens: 1 }),
+    );
+    expect(result!.windowFiveHourPercent).toBeNull();
   });
 });

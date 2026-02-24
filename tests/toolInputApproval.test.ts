@@ -11,16 +11,22 @@ import {
 } from "../src/components/chat/toolInputApproval";
 
 describe("getApprovalServerMethod", () => {
-  it("normalizes dots and underscores to slashes and lowercases", () => {
+  it("normalizes dots to slashes and lowercases", () => {
     expect(
       getApprovalServerMethod({ _serverMethod: "Item.Tool.RequestUserInput" }),
     ).toBe("item/tool/requestuserinput");
   });
 
-  it("normalizes underscored variant", () => {
+  it("strips underscores within segments", () => {
     expect(
       getApprovalServerMethod({ _serverMethod: "item_tool_call" }),
-    ).toBe("item/tool/call");
+    ).toBe("itemtoolcall");
+  });
+
+  it("normalizes dot-separated underscored segments", () => {
+    expect(
+      getApprovalServerMethod({ _serverMethod: "item.tool_call.request" }),
+    ).toBe("item/toolcall/request");
   });
 
   it("returns empty string when _serverMethod is missing", () => {

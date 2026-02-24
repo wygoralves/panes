@@ -641,3 +641,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     });
   },
 }));
+
+export const terminalStoreInternals = {
+  collectSessionIds,
+  replaceLeafInTree,
+  removeLeafFromTree,
+  updateRatioInTree,
+  nextFocusedSessionId,
+};
