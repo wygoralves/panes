@@ -1275,7 +1275,17 @@ fn detect_foreground_process(shell_pid: u32) -> Option<(u32, String)> {
 fn is_interpreter(comm: &str) -> bool {
     matches!(
         comm,
-        "node" | "nodejs" | "python" | "python3" | "ruby" | "perl" | "deno" | "bun" | "tsx" | "ts-node" | "npx"
+        "node"
+            | "nodejs"
+            | "python"
+            | "python3"
+            | "ruby"
+            | "perl"
+            | "deno"
+            | "bun"
+            | "tsx"
+            | "ts-node"
+            | "npx"
     )
 }
 
