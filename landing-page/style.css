@@ -901,7 +901,7 @@ img { display: block; max-width: 100%; }
 .ade-context {
   position: relative;
   z-index: 2;
-  padding: 100px 0;
+  padding: 80px 0 100px;
 }
 
 .ade-context-inner {
@@ -911,11 +911,6 @@ img { display: block; max-width: 100%; }
   align-items: center;
 }
 
-.ade-context-text .section-label {
-  display: block;
-  text-align: left;
-  margin-bottom: 20px;
-}
 
 .ade-context-title {
   font-size: clamp(28px, 3vw, 42px);
@@ -1054,7 +1049,7 @@ img { display: block; max-width: 100%; }
 .features {
   position: relative;
   z-index: 2;
-  padding: 40px 0 120px;
+  padding: 40px 0 100px;
 }
 
 .feature-bento {
