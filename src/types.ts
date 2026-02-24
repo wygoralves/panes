@@ -358,6 +358,12 @@ export interface TerminalExitEvent {
   signal: number | null;
 }
 
+export interface TerminalForegroundChangedEvent {
+  sessionId: string;
+  pid: number | null;
+  name: string | null;
+}
+
 export interface TerminalEnvSnapshot {
   term: string | null;
   colorterm: string | null;
@@ -440,6 +446,7 @@ export interface TerminalGroup {
   root: SplitNode;
   name: string;
   harnessId?: string;
+  autoDetectedHarness?: boolean;
 }
 
 // ── Setup / Onboarding ──────────────────────────────────────────────
@@ -478,6 +485,7 @@ export interface HarnessInfo {
   id: string;
   name: string;
   description: string;
+  command: string;
   found: boolean;
   version: string | null;
   path: string | null;

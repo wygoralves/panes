@@ -36,6 +36,7 @@ pub struct TerminalManager {
 
 struct TerminalSessionHandle {
     meta: TerminalSessionDto,
+    shell_pid: Option<u32>,
     diagnostics: Mutex<TerminalSessionDiagnosticsState>,
     io_counters: TerminalSessionIoCounters,
     process: Mutex<TerminalProcess>,
@@ -137,6 +138,14 @@ struct TerminalExitEvent {
     session_id: String,
     code: Option<i32>,
     signal: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalForegroundChangedEvent {
+    session_id: String,
+    pid: Option<u32>,
+    name: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -385,12 +394,21 @@ impl TerminalManager {
             let workspace_for_emitter = workspace_id.clone();
             let session_for_emitter = session_id.clone();
             let session_handle_for_emitter = Arc::clone(&session);
+            let emitter_shell_pid = session.shell_pid;
             let emitter = thread::spawn(move || {
                 // 60Hz is enough for TUIs while keeping IPC overhead bounded.
                 let min_emit_interval = Duration::from_millis(TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS);
                 let mut last_emit_at = Instant::now()
                     .checked_sub(min_emit_interval)
                     .unwrap_or_else(Instant::now);
+
+                // Foreground process detection state — only active on Unix with a known shell PID.
+                #[cfg(not(target_os = "windows"))]
+                let fg_check_interval = Duration::from_millis(1500);
+                #[cfg(not(target_os = "windows"))]
+                let mut last_fg_check_at: Option<Instant> = None;
+                #[cfg(not(target_os = "windows"))]
+                let mut last_fg_process: Option<(u32, String)> = None;
 
                 loop {
                     let mut guard = shared_for_emitter
@@ -466,6 +484,27 @@ impl TerminalManager {
                             .store(now_ms as u64, Ordering::Relaxed);
                     }
                     last_emit_at = Instant::now();
+
+                    // Check foreground process reactively after output, debounced to 1.5s.
+                    #[cfg(not(target_os = "windows"))]
+                    if let Some(shell_pid) = emitter_shell_pid {
+                        let should_check = last_fg_check_at
+                            .map(|t| t.elapsed() >= fg_check_interval)
+                            .unwrap_or(true);
+                        if should_check {
+                            let current = detect_foreground_process(shell_pid);
+                            if current != last_fg_process {
+                                emit_foreground_changed(
+                                    &app_for_emitter,
+                                    &workspace_for_emitter,
+                                    &session_for_emitter,
+                                    current.clone(),
+                                );
+                                last_fg_process = current;
+                            }
+                            last_fg_check_at = Some(Instant::now());
+                        }
+                    }
                 }
             });
 
@@ -934,6 +973,9 @@ fn spawn_session(
         .slave
         .spawn_command(cmd)
         .context("failed spawning terminal shell process")?;
+    // process_id() returns None on platforms where the PID is unavailable;
+    // in that case terminal_foreground_process will gracefully return None.
+    let shell_pid = child.process_id();
     drop(pair.slave);
 
     let reader = pair
@@ -953,6 +995,7 @@ fn spawn_session(
             cwd,
             created_at: Utc::now().to_rfc3339(),
         },
+        shell_pid,
         diagnostics: Mutex::new(TerminalSessionDiagnosticsState {
             env_snapshot,
             last_resize: None,
@@ -1161,6 +1204,117 @@ fn emit_exit(app: &AppHandle, workspace_id: &str, session_id: &str, exit: ExitPa
         signal: exit.signal,
     };
     let _ = app.emit(&event_name, payload);
+}
+
+fn emit_foreground_changed(
+    app: &AppHandle,
+    workspace_id: &str,
+    session_id: &str,
+    fg: Option<(u32, String)>,
+) {
+    let event_name = format!("terminal-fg-changed-{workspace_id}");
+    let payload = TerminalForegroundChangedEvent {
+        session_id: session_id.to_string(),
+        pid: fg.as_ref().map(|(pid, _)| *pid),
+        name: fg.map(|(_, name)| name),
+    };
+    let _ = app.emit(&event_name, payload);
+}
+
+/// Detect the foreground child process of the given shell PID.
+/// Returns `Some((pid, name))` if a child is running, `None` otherwise.
+/// Note: the pgrep→ps sequence is not atomic — the child could exit between calls.
+#[cfg(not(target_os = "windows"))]
+fn detect_foreground_process(shell_pid: u32) -> Option<(u32, String)> {
+    let output = std::process::Command::new("pgrep")
+        .args(["-P", &shell_pid.to_string()])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Take the last child PID (most recently spawned).
+    // This heuristic may miss the true foreground process when background
+    // jobs are present; a more robust approach would use tcgetpgrp() on
+    // the PTY master fd.
+    let child_pid_str = stdout.lines().rfind(|l| !l.trim().is_empty())?;
+    let child_pid: u32 = child_pid_str.trim().parse().ok()?;
+
+    // Get both the binary name (comm) and full command line (args).
+    // For native binaries (e.g. claude), comm is sufficient.
+    // For interpreter-based tools (e.g. node running codex), we need
+    // to parse args to find the actual tool name.
+    let ps_output = std::process::Command::new("ps")
+        .args(["-o", "comm=", "-p", &child_pid.to_string()])
+        .output()
+        .ok()?;
+    if !ps_output.status.success() {
+        return None;
+    }
+    let comm = String::from_utf8_lossy(&ps_output.stdout)
+        .trim()
+        .to_string();
+    if comm.is_empty() {
+        return None;
+    }
+    let short_comm = comm.rsplit('/').next().unwrap_or(&comm).to_string();
+
+    // If comm is a known interpreter, parse args to find the actual tool name.
+    if is_interpreter(&short_comm) {
+        if let Some(tool_name) = extract_tool_name_from_args(child_pid) {
+            return Some((child_pid, tool_name));
+        }
+    }
+
+    Some((child_pid, short_comm))
+}
+
+/// Returns true if the binary name is a known script interpreter.
+#[cfg(not(target_os = "windows"))]
+fn is_interpreter(comm: &str) -> bool {
+    matches!(
+        comm,
+        "node" | "nodejs" | "python" | "python3" | "ruby" | "perl" | "deno" | "bun" | "tsx" | "ts-node" | "npx"
+    )
+}
+
+/// Extract the tool name from process args (e.g. "node /path/to/codex.js" → "codex").
+#[cfg(not(target_os = "windows"))]
+fn extract_tool_name_from_args(pid: u32) -> Option<String> {
+    let output = std::process::Command::new("ps")
+        .args(["-o", "args=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let args_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    // Split into argv, skip the interpreter and any flags (starting with -)
+    // to find the first path-like argument (the script being run).
+    let script = args_str
+        .split_whitespace()
+        .skip(1) // skip the interpreter itself
+        .find(|arg| !arg.starts_with('-'))?;
+
+    // Extract basename and strip common extensions
+    let basename = script.rsplit('/').next().unwrap_or(script);
+    let name = basename
+        .strip_suffix(".js")
+        .or_else(|| basename.strip_suffix(".mjs"))
+        .or_else(|| basename.strip_suffix(".cjs"))
+        .or_else(|| basename.strip_suffix(".ts"))
+        .or_else(|| basename.strip_suffix(".mts"))
+        .or_else(|| basename.strip_suffix(".py"))
+        .or_else(|| basename.strip_suffix(".rb"))
+        .or_else(|| basename.strip_suffix(".pl"))
+        .unwrap_or(basename);
+
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.to_string())
 }
 
 fn take_next_utf8_chunk(buffer: &mut Vec<u8>) -> Option<String> {

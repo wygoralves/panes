@@ -65,8 +65,39 @@ function findGroupForSession(groups: TerminalGroup[], sessionId: string): Termin
   return null;
 }
 
-function makeLeafGroup(sessionId: string, name: string, harnessId?: string): TerminalGroup {
-  return { id: crypto.randomUUID(), root: { type: "leaf", sessionId }, name, ...(harnessId ? { harnessId } : {}) };
+function makeLeafGroup(sessionId: string, name: string, harnessId?: string, autoDetectedHarness?: boolean): TerminalGroup {
+  return {
+    id: crypto.randomUUID(),
+    root: { type: "leaf", sessionId },
+    name,
+    ...(harnessId ? { harnessId } : {}),
+    ...(autoDetectedHarness !== undefined ? { autoDetectedHarness } : {}),
+  };
+}
+
+export function nextTerminalNumber(groups: TerminalGroup[]): number {
+  const used = new Set<number>();
+  for (const g of groups) {
+    const match = /^Terminal (\d+)$/.exec(g.name);
+    if (match) used.add(Number(match[1]));
+  }
+  let n = 1;
+  while (used.has(n)) n++;
+  return n;
+}
+
+function nextHarnessName(baseName: string, harnessId: string, excludeGroupId: string, groups: TerminalGroup[]): string {
+  const used = new Set<number>();
+  for (const g of groups) {
+    if (g.id === excludeGroupId || g.harnessId !== harnessId) continue;
+    if (g.name === baseName) { used.add(1); continue; }
+    const match = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} (\\d+)$`).exec(g.name);
+    if (match) used.add(Number(match[1]));
+  }
+  if (used.size === 0) return baseName;
+  let n = 1;
+  while (used.has(n)) n++;
+  return n === 1 ? baseName : `${baseName} ${n}`;
 }
 
 function nextFocusedSessionId(
@@ -95,7 +126,6 @@ interface WorkspaceTerminalState {
   groups: TerminalGroup[];
   activeGroupId: string | null;
   focusedSessionId: string | null;
-  groupCounter: number;
   loading: boolean;
   error?: string;
 }
@@ -120,6 +150,7 @@ interface TerminalState {
   updateGroupRatio: (workspaceId: string, groupId: string, containerId: string, ratio: number) => void;
   renameGroup: (workspaceId: string, groupId: string, name: string) => void;
   reorderGroups: (workspaceId: string, fromIndex: number, toIndex: number) => void;
+  updateGroupHarness: (workspaceId: string, groupId: string, harnessId: string | null, harnessName: string | null, autoDetected: boolean) => void;
 }
 
 function defaultWorkspaceState(): WorkspaceTerminalState {
@@ -133,7 +164,6 @@ function defaultWorkspaceState(): WorkspaceTerminalState {
     groups: [],
     activeGroupId: null,
     focusedSessionId: null,
-    groupCounter: 0,
     loading: false,
     error: undefined,
   };
@@ -175,14 +205,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       set((state) => {
         const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
         let groups: TerminalGroup[];
-        let groupCounter = current.groupCounter;
         if (current.groups.length > 0) {
           groups = current.groups;
         } else {
-          groups = sessions.map((s) => {
-            groupCounter += 1;
-            return makeLeafGroup(s.id, `Terminal ${groupCounter}`);
-          });
+          groups = [];
+          for (const s of sessions) {
+            const n = nextTerminalNumber(groups);
+            groups.push(makeLeafGroup(s.id, `Terminal ${n}`));
+          }
         }
         const activeGroupId = current.activeGroupId ?? groups[groups.length - 1]?.id ?? null;
         const focusedId = nextFocusedSessionId(groups, activeGroupId, current.focusedSessionId);
@@ -194,7 +224,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             groups,
             activeGroupId,
             focusedSessionId: focusedId,
-            groupCounter,
             loading: false,
             error: undefined,
           }),
@@ -229,7 +258,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           groups: [],
           activeGroupId: null,
           focusedSessionId: null,
-          groupCounter: 0,
           loading: false,
           error: undefined,
         }),
@@ -340,17 +368,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const created = await ipc.terminalCreateSession(workspaceId, cols, rows);
       set((state) => {
         const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
-        const nextCounter = current.groupCounter + 1;
 
         let groupName: string;
+        // Use a temporary id for exclusion since the group doesn't exist yet
+        const tempId = "__new__";
         if (harnessId && harnessName) {
-          const existingCount = current.groups.filter((g) => g.harnessId === harnessId).length;
-          groupName = existingCount === 0 ? harnessName : `${harnessName} ${existingCount + 1}`;
+          groupName = nextHarnessName(harnessName, harnessId, tempId, current.groups);
         } else {
-          groupName = `Terminal ${nextCounter}`;
+          groupName = `Terminal ${nextTerminalNumber(current.groups)}`;
         }
 
-        const newGroup = makeLeafGroup(created.id, groupName, harnessId);
+        const newGroup = makeLeafGroup(created.id, groupName, harnessId, harnessId ? false : undefined);
         const sessions = [
           ...current.sessions.filter((session) => session.id !== created.id),
           created,
@@ -364,7 +392,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             groups,
             activeGroupId: newGroup.id,
             focusedSessionId: created.id,
-            groupCounter: nextCounter,
             loading: false,
             error: undefined,
           }),
@@ -432,12 +459,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
         const liveIds = new Set(sessions.map((s) => s.id));
         let groups: TerminalGroup[];
-        let groupCounter = current.groupCounter;
         if (current.groups.length === 0 && hasSessions) {
-          groups = sessions.map((s) => {
-            groupCounter += 1;
-            return makeLeafGroup(s.id, `Terminal ${groupCounter}`);
-          });
+          groups = [];
+          for (const s of sessions) {
+            const n = nextTerminalNumber(groups);
+            groups.push(makeLeafGroup(s.id, `Terminal ${n}`));
+          }
         } else {
           groups = current.groups
             .map((group) => {
@@ -465,7 +492,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             groups,
             activeGroupId,
             focusedSessionId: focusedId,
-            groupCounter,
             ...(hasSessions ? { isOpen: true, layoutMode: restoredMode } : {}),
           }),
         };
@@ -635,6 +661,29 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const groups = [...workspace.groups];
       const [moved] = groups.splice(fromIndex, 1);
       groups.splice(toIndex, 0, moved);
+      return {
+        workspaces: mergeWorkspaceState(state.workspaces, workspaceId, { groups }),
+      };
+    });
+  },
+
+  updateGroupHarness: (workspaceId, groupId, harnessId, harnessName, autoDetected) => {
+    set((state) => {
+      const workspace = state.workspaces[workspaceId] ?? defaultWorkspaceState();
+      const groups = workspace.groups.map((g) => {
+        if (g.id !== groupId) return g;
+        if (harnessId && harnessName) {
+          const name = nextHarnessName(harnessName, harnessId, g.id, workspace.groups);
+          return { ...g, harnessId, name, autoDetectedHarness: autoDetected };
+        }
+        // Revert only if it was auto-detected
+        if (g.autoDetectedHarness) {
+          const n = nextTerminalNumber(workspace.groups.filter((other) => other.id !== g.id));
+          const { harnessId: _h, autoDetectedHarness: _a, ...rest } = g;
+          return { ...rest, name: `Terminal ${n}` };
+        }
+        return g;
+      });
       return {
         workspaces: mergeWorkspaceState(state.workspaces, workspaceId, { groups }),
       };
