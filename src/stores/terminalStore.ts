@@ -188,6 +188,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   workspaces: {},
 
   openTerminal: async (workspaceId) => {
+    // Only mark the terminal as open. Session creation is deferred to
+    // syncSessions which runs after the TerminalPanel mounts and registers
+    // its output event listeners, so the initial shell prompt is never lost.
     set((state) => ({
       workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
         isOpen: true,
@@ -195,48 +198,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         error: undefined,
       }),
     }));
-
-    try {
-      let sessions = await ipc.terminalListSessions(workspaceId);
-      if (sessions.length === 0) {
-        const created = await ipc.terminalCreateSession(workspaceId, DEFAULT_COLS, DEFAULT_ROWS);
-        sessions = [created];
-      }
-      set((state) => {
-        const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
-        let groups: TerminalGroup[];
-        if (current.groups.length > 0) {
-          groups = current.groups;
-        } else {
-          groups = [];
-          for (const s of sessions) {
-            const n = nextTerminalNumber(groups);
-            groups.push(makeLeafGroup(s.id, `Terminal ${n}`));
-          }
-        }
-        const activeGroupId = current.activeGroupId ?? groups[groups.length - 1]?.id ?? null;
-        const focusedId = nextFocusedSessionId(groups, activeGroupId, current.focusedSessionId);
-        return {
-          workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
-            isOpen: true,
-            sessions,
-            activeSessionId: focusedId,
-            groups,
-            activeGroupId,
-            focusedSessionId: focusedId,
-            loading: false,
-            error: undefined,
-          }),
-        };
-      });
-    } catch (error) {
-      set((state) => ({
-        workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
-          loading: false,
-          error: String(error),
-        }),
-      }));
-    }
   },
 
   closeTerminal: async (workspaceId) => {
