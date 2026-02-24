@@ -27,6 +27,7 @@ import type {
   SearchResult,
   StreamEvent,
   TerminalExitEvent,
+  TerminalForegroundChangedEvent,
   TerminalOutputEvent,
   TerminalRendererDiagnostics,
   TerminalSession,
@@ -281,6 +282,16 @@ export async function listenTerminalExit(
 ): Promise<UnlistenFn> {
   return listen<TerminalExitEvent>(
     `terminal-exit-${workspaceId}`,
+    ({ payload }) => onEvent(payload)
+  );
+}
+
+export async function listenTerminalForegroundChanged(
+  workspaceId: string,
+  onEvent: (event: TerminalForegroundChangedEvent) => void
+): Promise<UnlistenFn> {
+  return listen<TerminalForegroundChangedEvent>(
+    `terminal-fg-changed-${workspaceId}`,
     ({ payload }) => onEvent(payload)
   );
 }

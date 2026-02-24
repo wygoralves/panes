@@ -488,6 +488,7 @@ pub struct HarnessInfo {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub command: String,
     pub found: bool,
     pub version: Option<String>,
     pub path: Option<String>,

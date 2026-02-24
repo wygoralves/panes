@@ -11,7 +11,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { ImageAddon } from "@xterm/addon-image";
 import "@xterm/xterm/css/xterm.css";
-import { ipc, listenTerminalExit, listenTerminalOutput, writeCommandToNewSession } from "../../lib/ipc";
+import { ipc, listenTerminalExit, listenTerminalForegroundChanged, listenTerminalOutput, writeCommandToNewSession } from "../../lib/ipc";
 import { useTerminalStore, collectSessionIds } from "../../stores/terminalStore";
 import type {
   SplitNode,
@@ -111,10 +111,10 @@ interface SessionTerminal {
   flushInProgress: boolean;
   flushNonce: number;
   flushStartedAt?: number;
-  flushWatchdogTimer?: ReturnType<typeof window.setTimeout>;
+  flushWatchdogTimer?: number;
   flushStallCount: number;
-  flushTimer?: ReturnType<typeof window.setTimeout>;
-  fitTimer?: ReturnType<typeof window.setTimeout>;
+  flushTimer?: number;
+  fitTimer?: number;
   isAttached: boolean;
   lastOutputDropWarnAt?: number;
   lastResizeSent?: TerminalSize;
@@ -1077,6 +1077,38 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       document.removeEventListener("keydown", handleClose);
     };
   }, [ctxMenu]);
+
+  // ── Auto-detect harness in terminal tabs ──────────────────────────
+  const updateGroupHarness = useTerminalStore((state) => state.updateGroupHarness);
+  const allHarnessesForDetect = useHarnessStore((s) => s.harnesses);
+
+  useEffect(() => {
+    // Build command → harness mapping from installed harnesses
+    const commandMap = new Map<string, { id: string; name: string }>();
+    for (const h of allHarnessesForDetect) {
+      if (h.found && h.command) {
+        commandMap.set(h.command, { id: h.id, name: h.name });
+      }
+    }
+    if (commandMap.size === 0) return;
+
+    let unlisten: (() => void) | null = null;
+
+    listenTerminalForegroundChanged(workspaceId, (event) => {
+      const groups = useTerminalStore.getState().workspaces[workspaceId]?.groups ?? [];
+      const group = groups.find((g) => collectSessionIds(g.root).includes(event.sessionId));
+      if (!group) return;
+
+      const match = event.name ? commandMap.get(event.name) : null;
+      if (match && group.harnessId !== match.id) {
+        updateGroupHarness(workspaceId, group.id, match.id, match.name, true);
+      } else if (!match && group.autoDetectedHarness && group.harnessId) {
+        updateGroupHarness(workspaceId, group.id, null, null, true);
+      }
+    }).then((fn) => { unlisten = fn; });
+
+    return () => { unlisten?.(); };
+  }, [workspaceId, allHarnessesForDetect, updateGroupHarness]);
 
   const commitRename = useCallback(
     (groupId: string) => {
