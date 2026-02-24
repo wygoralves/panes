@@ -2,10 +2,16 @@ import { useMemo } from "react";
 import { AlertTriangle } from "lucide-react";
 import { useEngineStore } from "../../stores/engineStore";
 
+function isInformationalCodexWarning(warning: string): boolean {
+  const normalized = warning.toLowerCase();
+  return normalized.includes("forcing codex external sandbox mode on macos");
+}
+
 export function EngineHealthBanner() {
   const { health, error } = useEngineStore();
   const codexState = useMemo(() => health.codex, [health]);
-  const codexWarning = codexState?.warnings?.[0];
+  const codexWarnings = codexState?.warnings ?? [];
+  const codexWarning = codexWarnings.find((warning) => !isInformationalCodexWarning(warning));
 
   if (!codexState && !error) {
     return null;

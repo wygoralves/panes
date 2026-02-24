@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     codex_event_mapper::TurnEventMapper, codex_protocol::IncomingMessage,
-    codex_transport::CodexTransport, Engine, EngineEvent, EngineThread, ModelInfo,
+    codex_transport::CodexTransport, ActionResult, Engine, EngineEvent, EngineThread, ModelInfo,
     ReasoningEffortOption, SandboxPolicy, ThreadScope, TurnAttachment, TurnCompletionStatus,
     TurnInput,
 };
@@ -659,12 +659,19 @@ impl CodexEngine {
     }
 
     pub async fn sandbox_preflight_warning(&self) -> Option<String> {
-        if self.resolve_external_sandbox_mode().await {
+        if !self.resolve_external_sandbox_mode().await {
+            return None;
+        }
+
+        if prefer_external_sandbox_by_default() {
+            Some(
+                "Panes is forcing Codex external sandbox mode on macOS to avoid opaque tool-call failures in local workspace-write mode. Set `PANES_CODEX_PREFER_WORKSPACE_WRITE=1` only for diagnostics."
+                    .to_string(),
+            )
+        } else {
             Some(
                 "macOS denied Codex local sandbox (`sandbox-exec`). Commands may fail unless Panes uses external sandbox mode. This is an OS/policy restriction, not a promptable permission.".to_string(),
             )
-        } else {
-            None
         }
     }
 
@@ -952,22 +959,27 @@ impl CodexEngine {
             }
         }
 
+        let prefer_external_default = prefer_external_sandbox_by_default();
+        if prefer_external_default {
+            log::warn!(
+                "forcing Codex externalSandbox mode by default on macOS; local workspace-write mode can fail tool calls without diagnostics"
+            );
+        }
+
         let preflight_failed = detect_macos_sandbox_exec_failure().await;
         if preflight_failed {
             log::warn!(
-                "detected macOS sandbox-exec preflight failure; deferring externalSandbox fallback until command probe confirms a real sandbox denial"
+                "detected macOS sandbox-exec preflight failure; forcing externalSandbox mode"
             );
         }
 
         let mut state = self.state.lock().await;
         if !state.sandbox_probe_completed {
             state.sandbox_probe_completed = true;
-            // Keep the runtime fallback decision optimistic; start_thread will run a real
-            // command probe and force external sandbox mode only on confirmed denial.
             if state.force_external_sandbox {
                 return true;
             }
-            state.force_external_sandbox = false;
+            state.force_external_sandbox = prefer_external_default || preflight_failed;
         }
 
         state.force_external_sandbox
@@ -987,32 +999,55 @@ impl CodexEngine {
     ) -> bool {
         #[cfg(target_os = "macos")]
         {
-            let probe_params = serde_json::json!({
-              "command": ["/usr/bin/true"],
-              "cwd": cwd,
-              "timeoutMs": 5000,
-              "sandboxPolicy": sandbox_policy_to_json(sandbox, false),
-            });
+            let probe_commands: &[&[&str]] = &[&["/usr/bin/true"], &["/bin/zsh", "-lc", "pwd"]];
 
-            match request_with_fallback(
-                transport,
-                COMMAND_EXEC_METHODS,
-                probe_params,
-                Duration::from_secs(5),
-            )
-            .await
-            {
-                Ok(_) => false,
-                Err(error) => {
-                    let error_text = error.to_string();
-                    if is_sandbox_denied_error(&error_text) {
-                        log::warn!("workspaceWrite command probe detected sandbox denial: {error}");
-                        true
-                    } else {
-                        false
+            for command in probe_commands {
+                let probe_params = serde_json::json!({
+                  "command": command,
+                  "cwd": cwd,
+                  "timeoutMs": 5000,
+                  "sandboxPolicy": sandbox_policy_to_json(sandbox, false),
+                });
+
+                match request_with_fallback(
+                    transport,
+                    COMMAND_EXEC_METHODS,
+                    probe_params,
+                    Duration::from_secs(5),
+                )
+                .await
+                {
+                    Ok(result) => {
+                        if workspace_probe_result_indicates_failure(&result) {
+                            log::warn!(
+                                "workspaceWrite command probe returned a failed result payload; forcing externalSandbox fallback (result={result})"
+                            );
+                            return true;
+                        }
+                    }
+                    Err(error) => {
+                        let error_text = error.to_string();
+                        if is_sandbox_denied_error(&error_text) {
+                            log::warn!(
+                                "workspaceWrite command probe detected sandbox denial: {error}"
+                            );
+                            return true;
+                        }
+                        if is_opaque_workspace_probe_failure(&error_text) {
+                            log::warn!(
+                                "workspaceWrite command probe failed without explicit sandbox signature; forcing externalSandbox fallback (probe_error={error_text})"
+                            );
+                            return true;
+                        }
+                        log::warn!(
+                            "workspaceWrite command probe failed due transport/protocol error; skipping externalSandbox fallback (probe_error={error_text})"
+                        );
+                        return false;
                     }
                 }
             }
+
+            false
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -1876,6 +1911,25 @@ async fn detect_macos_sandbox_exec_failure() -> bool {
     }
 }
 
+fn prefer_external_sandbox_by_default() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let override_workspace_write = env::var("PANES_CODEX_PREFER_WORKSPACE_WRITE")
+            .ok()
+            .map(|value| {
+                let normalized = value.trim().to_lowercase();
+                normalized == "1" || normalized == "true" || normalized == "yes"
+            })
+            .unwrap_or(false);
+        !override_workspace_write
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
 fn is_sandbox_denied_error(error: &str) -> bool {
     let value = error.to_lowercase();
     value.contains("sandbox")
@@ -1883,6 +1937,103 @@ fn is_sandbox_denied_error(error: &str) -> bool {
             || value.contains("sandbox denied")
             || value.contains("sandbox_apply")
             || value.contains("sandbox error"))
+}
+
+fn workspace_probe_result_indicates_failure(result: &serde_json::Value) -> bool {
+    if result.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
+        return true;
+    }
+
+    if let Some(exit_code) = extract_any_i64(result, &["exitCode", "exit_code"]) {
+        if exit_code != 0 {
+            return true;
+        }
+    }
+
+    if let Some(status) = extract_any_string(result, &["status", "state"]) {
+        let normalized = status.trim().to_lowercase();
+        if !normalized.is_empty()
+            && normalized != "completed"
+            && normalized != "success"
+            && normalized != "ok"
+        {
+            return true;
+        }
+    }
+
+    if result
+        .get("error")
+        .map(|error| {
+            let value = if let Some(text) = error.as_str() {
+                text.to_string()
+            } else {
+                error.to_string()
+            };
+            !value.trim().is_empty() && is_sandbox_denied_error(&value)
+        })
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    for key in ["stderr", "output"] {
+        if let Some(text) = extract_any_string(result, &[key]) {
+            if !text.trim().is_empty() && is_sandbox_denied_error(&text) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn is_opaque_workspace_probe_failure(error: &str) -> bool {
+    let value = error.to_lowercase();
+    if value.trim().is_empty() {
+        return true;
+    }
+
+    !is_transport_or_protocol_error(&value)
+}
+
+fn is_transport_or_protocol_error(value: &str) -> bool {
+    value.contains("timed out")
+        || value.contains("timeout")
+        || value.contains("transport")
+        || value.contains("parse error")
+        || value.contains("read error")
+        || value.contains("eof")
+        || value.contains("exited with status")
+        || value.contains("codex app-server exited")
+        || value.contains("broken pipe")
+        || value.contains("connection reset")
+        || value.contains("connection refused")
+        || value.contains("not connected")
+        || value.contains("unknown method")
+        || value.contains("method not found")
+        || value.contains("invalid params")
+        || value.contains("invalid request")
+}
+
+fn is_opaque_action_failure(result: &ActionResult) -> bool {
+    let has_output = result
+        .output
+        .as_deref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    if has_output {
+        return false;
+    }
+
+    match result.error.as_deref() {
+        None => true,
+        Some(error) => {
+            let normalized = error.trim().to_lowercase();
+            normalized == "action failed with status `failed`"
+                || normalized == "action failed with status 'failed'"
+                || normalized == "action failed with status failed"
+        }
+    }
 }
 
 fn sandbox_policy_network_enabled(policy: &serde_json::Value) -> bool {
@@ -1896,7 +2047,7 @@ fn sandbox_policy_network_enabled(policy: &serde_json::Value) -> bool {
 fn event_indicates_sandbox_denial(event: &EngineEvent) -> bool {
     match event {
         EngineEvent::ActionCompleted { result, .. } if !result.success => {
-            result
+            let explicit_denial = result
                 .error
                 .as_deref()
                 .map(is_sandbox_denied_error)
@@ -1905,7 +2056,17 @@ fn event_indicates_sandbox_denial(event: &EngineEvent) -> bool {
                     .output
                     .as_deref()
                     .map(is_sandbox_denied_error)
-                    .unwrap_or(false)
+                    .unwrap_or(false);
+            if explicit_denial {
+                return true;
+            }
+            if is_opaque_action_failure(result) {
+                log::warn!(
+                    "forcing externalSandbox fallback after opaque failed action (no diagnostic payload)"
+                );
+                return true;
+            }
+            false
         }
         EngineEvent::Error { message, .. } => is_sandbox_denied_error(message),
         _ => false,
@@ -1966,6 +2127,22 @@ fn extract_any_string(value: &serde_json::Value, keys: &[&str]) -> Option<String
             }
             if found.is_number() || found.is_boolean() {
                 return Some(found.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn extract_any_i64(value: &serde_json::Value, keys: &[&str]) -> Option<i64> {
+    for key in keys {
+        if let Some(found) = value.get(*key) {
+            if let Some(number) = found.as_i64() {
+                return Some(number);
+            }
+            if let Some(text) = found.as_str() {
+                if let Ok(parsed) = text.trim().parse::<i64>() {
+                    return Some(parsed);
+                }
             }
         }
     }
@@ -2249,5 +2426,75 @@ mod tests {
         let normalized = normalize_approval_response(Some("exec_command_approval"), response);
 
         assert_eq!(normalized, json!({ "decision": "approved_for_session" }));
+    }
+
+    #[test]
+    fn opaque_action_failure_detects_generic_failed_status() {
+        let result = ActionResult {
+            success: false,
+            output: None,
+            error: Some("Action failed with status `failed`".to_string()),
+            diff: None,
+            duration_ms: 52,
+        };
+
+        assert!(is_opaque_action_failure(&result));
+    }
+
+    #[test]
+    fn opaque_action_failure_ignores_failures_with_output() {
+        let result = ActionResult {
+            success: false,
+            output: Some("zsh:1: command not found: pnpm\n".to_string()),
+            error: Some("Action failed with status `failed`".to_string()),
+            diff: None,
+            duration_ms: 52,
+        };
+
+        assert!(!is_opaque_action_failure(&result));
+    }
+
+    #[test]
+    fn opaque_workspace_probe_error_excludes_transport_failures() {
+        assert!(!is_opaque_workspace_probe_failure(
+            "all rpc methods failed: command/exec: timed out waiting for response"
+        ));
+        assert!(is_opaque_workspace_probe_failure(
+            "all rpc methods failed: command/exec: failed"
+        ));
+    }
+
+    #[test]
+    fn workspace_probe_result_detects_failed_status_payload() {
+        let payload = json!({
+            "status": "failed",
+            "exitCode": null,
+            "stderr": ""
+        });
+
+        assert!(workspace_probe_result_indicates_failure(&payload));
+    }
+
+    #[test]
+    fn workspace_probe_result_detects_non_zero_exit_code() {
+        let payload = json!({
+            "status": "completed",
+            "exitCode": 137,
+            "stderr": "sandbox error: command was killed by a signal"
+        });
+
+        assert!(workspace_probe_result_indicates_failure(&payload));
+    }
+
+    #[test]
+    fn workspace_probe_result_accepts_successful_payload() {
+        let payload = json!({
+            "status": "completed",
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": ""
+        });
+
+        assert!(!workspace_probe_result_indicates_failure(&payload));
     }
 }
