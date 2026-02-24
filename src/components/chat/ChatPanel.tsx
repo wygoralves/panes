@@ -1611,14 +1611,14 @@ export function ChatPanel() {
 
   const hasTerminalMountedRef = useRef(false);
   const hasEditorMountedRef = useRef(false);
-  useEffect(() => {
-    if ((layoutMode === "split" || layoutMode === "terminal") && activeWorkspaceId) {
-      hasTerminalMountedRef.current = true;
-    }
-    if (layoutMode === "editor" && activeWorkspaceId) {
-      hasEditorMountedRef.current = true;
-    }
-  }, [layoutMode, activeWorkspaceId]);
+  // Set refs during render (not in an effect) so the conditional mount below
+  // sees the updated value in the same render pass that triggers it.
+  if ((layoutMode === "split" || layoutMode === "terminal") && activeWorkspaceId) {
+    hasTerminalMountedRef.current = true;
+  }
+  if (layoutMode === "editor" && activeWorkspaceId) {
+    hasEditorMountedRef.current = true;
+  }
 
   const contentAreaRef = useRef<HTMLDivElement>(null);
   const terminalPanelSizeRef = useRef(terminalPanelSize);
