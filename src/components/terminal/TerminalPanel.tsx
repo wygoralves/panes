@@ -1387,9 +1387,51 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     }
   }, [workspaceId]);
 
+  // Register event listeners BEFORE syncing sessions so the initial shell
+  // prompt output is never missed (the PTY starts emitting immediately).
   useEffect(() => {
-    void syncSessions(workspaceId);
-  }, [workspaceId, syncSessions]);
+    let unlistenOutput: (() => void) | undefined;
+    let unlistenExit: (() => void) | undefined;
+    let disposed = false;
+
+    (async () => {
+      const [outputUn, exitUn] = await Promise.all([
+        listenTerminalOutput(workspaceId, (event) => {
+          const cacheKey = terminalCacheKey(workspaceId, event.sessionId);
+          queueOutput(cacheKey, event.data);
+        }),
+        listenTerminalExit(workspaceId, (event) => {
+          destroyCachedTerminal(workspaceId, event.sessionId);
+          handleSessionExit(workspaceId, event.sessionId);
+        }),
+      ]);
+      if (disposed) {
+        outputUn();
+        exitUn();
+        return;
+      }
+      unlistenOutput = outputUn;
+      unlistenExit = exitUn;
+
+      // Now that listeners are ready, sync existing sessions.
+      await syncSessions(workspaceId);
+      if (disposed) return;
+
+      // Create the initial session if the terminal is open but has no sessions
+      // yet (e.g. first open). We check fresh state to avoid racing with other
+      // callers (like HarnessPanel) that may have already created a session.
+      const ws = useTerminalStore.getState().workspaces[workspaceId];
+      if (ws?.isOpen && ws.sessions.length === 0) {
+        void createSession(workspaceId);
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      unlistenOutput?.();
+      unlistenExit?.();
+    };
+  }, [createSession, handleSessionExit, syncSessions, workspaceId]);
 
   useEffect(() => {
     for (const session of sessions) {
@@ -1453,44 +1495,6 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     // sessions.length triggers re-subscribe when panes are added/removed
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeGroupId, sessions.length, workspaceId, fitActiveGroup]);
-
-  useEffect(() => {
-    let unlistenOutput: (() => void) | undefined;
-    let unlistenExit: (() => void) | undefined;
-    let disposed = false;
-
-    void listenTerminalOutput(workspaceId, (event) => {
-      const cacheKey = terminalCacheKey(workspaceId, event.sessionId);
-      queueOutput(cacheKey, event.data);
-    }).then((fn) => {
-      if (disposed) {
-        fn();
-        return;
-      }
-      unlistenOutput = fn;
-    });
-
-    void listenTerminalExit(workspaceId, (event) => {
-      destroyCachedTerminal(workspaceId, event.sessionId);
-      handleSessionExit(workspaceId, event.sessionId);
-    }).then((fn) => {
-      if (disposed) {
-        fn();
-        return;
-      }
-      unlistenExit = fn;
-    });
-
-    return () => {
-      disposed = true;
-      if (unlistenOutput) {
-        unlistenOutput();
-      }
-      if (unlistenExit) {
-        unlistenExit();
-      }
-    };
-  }, [handleSessionExit, workspaceId]);
 
   // On unmount/workspace swap: mark cache entries detached but keep the session alive.
   useEffect(() => {
