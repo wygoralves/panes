@@ -836,32 +836,42 @@ function CollapsedRail({
         transition: "opacity 150ms var(--ease-out)",
       }}
     >
-      {/* Drag region for traffic lights */}
+      {/* Drag region + logo — total 74px to align with chat header */}
       <div
         onMouseDown={handleDragMouseDown}
         onDoubleClick={handleDragDoubleClick}
-        style={{ height: 42, width: "100%", flexShrink: 0 }}
-      />
-
-      {/* New thread button */}
-      <button
-        type="button"
-        className="sb-rail-btn"
-        onClick={() => void onNewThread()}
-        disabled={!activeWorkspaceId}
-        title="New thread"
         style={{
-          marginBottom: 4,
-          color: activeWorkspaceId ? "var(--accent)" : "var(--text-3)",
-          opacity: activeWorkspaceId ? 1 : 0.45,
-          border: "1px solid var(--border-accent)",
-          background: "var(--accent-dim)",
+          height: 74,
+          width: "100%",
+          flexShrink: 0,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          paddingBottom: 4,
+          borderBottom: "1px solid var(--border)",
         }}
       >
-        <Plus size={16} strokeWidth={2.2} />
-      </button>
-
-      <div className="sb-rail-divider" />
+        <button
+          type="button"
+          className="sb-rail-btn no-drag"
+          onClick={() => void onNewThread()}
+          disabled={!activeWorkspaceId}
+          title="New thread"
+          style={{
+            opacity: activeWorkspaceId ? 1 : 0.45,
+            border: "none",
+            background: "transparent",
+          }}
+        >
+          <svg viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+            <rect x="10" y="36" width="94" height="94" stroke="white" strokeWidth="6"/>
+            <rect x="36" y="10" width="94" height="94" stroke="white" strokeWidth="6"/>
+            <rect x="23" y="23" width="94" height="94" stroke="white" strokeWidth="6"/>
+            <rect x="50" y="50" width="40" height="40" fill="#48F3CD"/>
+          </svg>
+        </button>
+      </div>
 
       {/* Project icons */}
       <div
