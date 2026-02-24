@@ -1336,7 +1336,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     terminal.loadAddon(searchAddon);
 
     const webLinksAddon = new WebLinksAddon((_event, uri) => {
-      void window.open(uri, "_blank");
+      void import("@tauri-apps/plugin-shell").then((shell) => shell.open(uri));
     });
     terminal.loadAddon(webLinksAddon);
 
@@ -2010,7 +2010,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
               )}
               <button
                 type="button"
-                onClick={() => setSearchOpen((v) => !v)}
+                onClick={() => { if (searchOpen) closeSearch(); else { setSearchOpen(true); requestAnimationFrame(() => searchInputRef.current?.focus()); } }}
                 title="Search (Ctrl+Shift+F)"
                 style={{
                   display: "inline-flex",
