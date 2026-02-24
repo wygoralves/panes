@@ -8,6 +8,8 @@ import type {
   GitBranchPage,
   GitBranchScope,
   GitCommitPage,
+  GitMergeStrategy,
+  GitRepoState,
   GitResetMode,
   GitStash,
   GitTag,
@@ -165,8 +167,18 @@ export const ipc = {
     invoke<void>("pop_git_stash", { repoPath, stashIndex }),
   dropGitStash: (repoPath: string, stashIndex: number) =>
     invoke<void>("drop_git_stash", { repoPath, stashIndex }),
-  mergeBranch: (repoPath: string, branchName: string) =>
-    invoke<string>("merge_branch", { repoPath, branchName }),
+  mergeBranch: (repoPath: string, branchName: string, strategy?: GitMergeStrategy | null) =>
+    invoke<string>("merge_branch", { repoPath, branchName, strategy: strategy === "ff" ? null : (strategy ?? null) }),
+  mergeAbort: (repoPath: string) =>
+    invoke<void>("merge_abort", { repoPath }),
+  continueMerge: (repoPath: string) =>
+    invoke<void>("continue_merge", { repoPath }),
+  getRepoState: (repoPath: string) =>
+    invoke<GitRepoState>("get_repo_state", { repoPath }),
+  getGithubPrUrl: (repoPath: string) =>
+    invoke<string | null>("get_github_pr_url", { repoPath }),
+  getGithubRepoUrl: (repoPath: string) =>
+    invoke<string | null>("get_github_repo_url", { repoPath }),
   revertCommit: (repoPath: string, commitHash: string) =>
     invoke<void>("revert_commit", { repoPath, commitHash }),
   cherryPickCommit: (repoPath: string, commitHash: string) =>

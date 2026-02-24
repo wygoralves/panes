@@ -5,7 +5,7 @@ import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
-import type { Repo, GitBranchScope } from "../../types";
+import type { Repo, GitBranchScope, GitMergeStrategy } from "../../types";
 
 interface Props {
   repo: Repo;
@@ -64,6 +64,7 @@ export function GitBranchesView({ repo, onError }: Props) {
   const [renameValue, setRenameValue] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [mergePrompt, setMergePrompt] = useState<string | null>(null);
+  const [mergeStrategy, setMergeStrategy] = useState<GitMergeStrategy>("ff");
   const [actionMenu, setActionMenu] = useState<ActionMenuState | null>(null);
   const newBranchInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -217,14 +218,15 @@ export function GitBranchesView({ repo, onError }: Props) {
     }
   }
 
-  async function onMergeBranch(branchName: string) {
+  async function onMergeBranch(branchName: string, strategy: GitMergeStrategy) {
     if (loadingKey !== null) return;
     setMergePrompt(null);
     setLoadingKey(`merge:${branchName}`);
     try {
       onError(undefined);
-      await mergeBranch(repo.path, branchName);
-      toast.success(`Merged ${branchName} into ${status?.branch ?? "current branch"}`);
+      await mergeBranch(repo.path, branchName, strategy);
+      const label = strategy === "squash" ? "Squash-merged" : "Merged";
+      toast.success(`${label} ${branchName} into ${status?.branch ?? "current branch"}`);
     } catch (e) {
       onError(String(e));
     } finally {
@@ -578,16 +580,61 @@ export function GitBranchesView({ repo, onError }: Props) {
 
       {actionMenuPortal}
 
-      <ConfirmDialog
-        open={mergePrompt !== null}
-        title="Merge branch"
-        message={mergePrompt ? `Merge "${mergePrompt}" into "${status?.branch ?? "current branch"}"?` : ""}
-        confirmLabel="Merge"
-        onConfirm={() => {
-          if (mergePrompt) void onMergeBranch(mergePrompt);
-        }}
-        onCancel={() => setMergePrompt(null)}
-      />
+      {mergePrompt !== null && (
+        <div className="confirm-dialog-backdrop" onMouseDown={() => setMergePrompt(null)}>
+          <div
+            className="confirm-dialog-card"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="confirm-dialog-icon">
+              <GitMerge size={22} />
+            </div>
+            <h3 className="confirm-dialog-title">Merge branch</h3>
+            <p className="confirm-dialog-message">
+              Merge &ldquo;{mergePrompt}&rdquo; into &ldquo;{status?.branch ?? "current branch"}&rdquo;
+            </p>
+            <div className="git-merge-strategy-picker">
+              {(
+                [
+                  { value: "ff", label: "Default (fast-forward when possible)" },
+                  { value: "no-ff", label: "Create merge commit (no-ff)" },
+                  { value: "squash", label: "Squash commits" },
+                  { value: "ff-only", label: "Fast-forward only" },
+                ] as { value: GitMergeStrategy; label: string }[]
+              ).map((opt) => (
+                <label key={opt.value} className="git-merge-strategy-option">
+                  <input
+                    type="radio"
+                    name="merge-strategy"
+                    checked={mergeStrategy === opt.value}
+                    onChange={() => setMergeStrategy(opt.value)}
+                  />
+                  <span>{opt.label}</span>
+                </label>
+              ))}
+            </div>
+            <div className="confirm-dialog-actions">
+              <button
+                type="button"
+                className="btn btn-ghost confirm-dialog-btn-cancel"
+                onClick={() => setMergePrompt(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ padding: "6px 16px", fontSize: 12 }}
+                onClick={() => {
+                  if (mergePrompt) void onMergeBranch(mergePrompt, mergeStrategy);
+                }}
+              >
+                {mergeStrategy === "squash" ? "Squash & Merge" : "Merge"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

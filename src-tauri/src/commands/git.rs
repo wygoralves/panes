@@ -6,7 +6,7 @@ use crate::{
     git::repo,
     models::{
         FileTreeEntryDto, FileTreePageDto, GitBranchPageDto, GitBranchScopeDto, GitCommitPageDto,
-        GitStashDto, GitStatusDto, GitTagDto,
+        GitRepoStateDto, GitStashDto, GitStatusDto, GitTagDto,
     },
     state::AppState,
 };
@@ -305,9 +305,64 @@ pub async fn merge_branch(
     _state: State<'_, AppState>,
     repo_path: String,
     branch_name: String,
+    strategy: Option<String>,
 ) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        repo::merge_branch(&repo_path, &branch_name).map_err(err_to_string)
+        repo::merge_branch(&repo_path, &branch_name, strategy.as_deref()).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn merge_abort(
+    _state: State<'_, AppState>,
+    repo_path: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || repo::merge_abort(&repo_path).map_err(err_to_string))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn continue_merge(
+    _state: State<'_, AppState>,
+    repo_path: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || repo::continue_merge(&repo_path).map_err(err_to_string))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_repo_state(
+    _state: State<'_, AppState>,
+    repo_path: String,
+) -> Result<GitRepoStateDto, String> {
+    tokio::task::spawn_blocking(move || repo::get_repo_state(&repo_path).map_err(err_to_string))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_github_pr_url(
+    _state: State<'_, AppState>,
+    repo_path: String,
+) -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        repo::build_github_pr_url(&repo_path).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_github_repo_url(
+    _state: State<'_, AppState>,
+    repo_path: String,
+) -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        repo::build_github_repo_url(&repo_path).map_err(err_to_string)
     })
     .await
     .map_err(|error| error.to_string())?

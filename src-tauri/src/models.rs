@@ -310,6 +310,17 @@ pub struct GitStashDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GitRepoStateDto {
+    pub merging: bool,
+    pub cherry_picking: bool,
+    pub reverting: bool,
+    pub rebasing: bool,
+    pub merge_head: Option<String>,
+    pub merge_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitTagDto {
     pub name: String,
     pub commit_hash: String,

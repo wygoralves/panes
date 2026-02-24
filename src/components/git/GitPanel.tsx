@@ -6,6 +6,9 @@ import {
   ArrowUp,
   Eye,
   EyeOff,
+  ExternalLink,
+  GitPullRequest,
+  Github,
   X,
   FileDiff,
   FolderTree,
@@ -15,6 +18,7 @@ import {
   Tag,
   MoreHorizontal,
 } from "lucide-react";
+import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore, type GitPanelView } from "../../stores/gitStore";
 import { ipc, listenGitRepoChanged } from "../../lib/ipc";
@@ -454,6 +458,53 @@ export function GitPanel() {
                 {showDiff ? "Hide diff preview" : "Show diff preview"}
               </button>
             )}
+            <div className="git-action-menu-separator" />
+            <button
+              type="button"
+              className="git-action-menu-item"
+              onClick={async () => {
+                closeMoreMenu();
+                if (!activeRepo) return;
+                try {
+                  const url = await ipc.getGithubPrUrl(activeRepo.path);
+                  if (url) {
+                    await shellOpen(url);
+                  } else {
+                    toast.error("Could not determine GitHub PR URL. Make sure the remote points to GitHub.");
+                  }
+                } catch {
+                  toast.error("Failed to open PR URL");
+                }
+              }}
+              disabled={!activeRepo}
+            >
+              <GitPullRequest size={13} />
+              Create pull request
+              <ExternalLink size={10} style={{ marginLeft: "auto", opacity: 0.5 }} />
+            </button>
+            <button
+              type="button"
+              className="git-action-menu-item"
+              onClick={async () => {
+                closeMoreMenu();
+                if (!activeRepo) return;
+                try {
+                  const url = await ipc.getGithubRepoUrl(activeRepo.path);
+                  if (url) {
+                    await shellOpen(url);
+                  } else {
+                    toast.error("Could not determine GitHub URL. Make sure the remote points to GitHub.");
+                  }
+                } catch {
+                  toast.error("Failed to open GitHub URL");
+                }
+              }}
+              disabled={!activeRepo}
+            >
+              <Github size={13} />
+              Open on GitHub
+              <ExternalLink size={10} style={{ marginLeft: "auto", opacity: 0.5 }} />
+            </button>
           </div>,
           document.body,
         )}

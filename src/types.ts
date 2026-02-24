@@ -294,6 +294,17 @@ export interface GitTag {
 
 export type GitResetMode = "soft" | "mixed" | "hard";
 
+export type GitMergeStrategy = "ff" | "no-ff" | "squash" | "ff-only";
+
+export interface GitRepoState {
+  merging: boolean;
+  cherryPicking: boolean;
+  reverting: boolean;
+  rebasing: boolean;
+  mergeHead?: string;
+  mergeMessage?: string;
+}
+
 export interface FileTreeEntry {
   path: string;
   isDir: boolean;

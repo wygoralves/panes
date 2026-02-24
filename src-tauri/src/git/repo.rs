@@ -511,10 +511,136 @@ pub fn drop_git_stash(repo_path: &str, stash_index: usize) -> anyhow::Result<()>
     Ok(())
 }
 
-pub fn merge_branch(repo_path: &str, branch_name: &str) -> anyhow::Result<String> {
-    let output = run_git(repo_path, &["merge", branch_name])
-        .context("failed to merge branch")?;
+pub fn merge_branch(
+    repo_path: &str,
+    branch_name: &str,
+    strategy: Option<&str>,
+) -> anyhow::Result<String> {
+    let mut args = vec!["merge"];
+    match strategy {
+        Some("no-ff") => args.push("--no-ff"),
+        Some("squash") => args.push("--squash"),
+        Some("ff-only") => args.push("--ff-only"),
+        _ => {}
+    }
+    args.push(branch_name);
+    let output = run_git(repo_path, &args).context("failed to merge branch")?;
     Ok(output)
+}
+
+pub fn merge_abort(repo_path: &str) -> anyhow::Result<()> {
+    run_git(repo_path, &["merge", "--abort"]).context("failed to abort merge")?;
+    Ok(())
+}
+
+pub fn continue_merge(repo_path: &str) -> anyhow::Result<()> {
+    run_git(repo_path, &["commit", "--no-edit"]).context("failed to continue merge")?;
+    Ok(())
+}
+
+/// Check if the repository is in a special state (merging, cherry-picking, reverting, rebasing).
+pub fn get_repo_state(repo_path: &str) -> anyhow::Result<crate::models::GitRepoStateDto> {
+    let git_dir = std::path::Path::new(repo_path).join(".git");
+    let merging = git_dir.join("MERGE_HEAD").exists();
+    let cherry_picking = git_dir.join("CHERRY_PICK_HEAD").exists();
+    let reverting = git_dir.join("REVERT_HEAD").exists();
+    let rebasing = git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists();
+
+    let merge_head = if merging {
+        fs::read_to_string(git_dir.join("MERGE_HEAD"))
+            .ok()
+            .map(|s| s.trim().to_string())
+    } else {
+        None
+    };
+
+    let merge_message = if merging {
+        fs::read_to_string(git_dir.join("MERGE_MSG"))
+            .ok()
+            .map(|s| s.trim().to_string())
+    } else {
+        None
+    };
+
+    Ok(crate::models::GitRepoStateDto {
+        merging,
+        cherry_picking,
+        reverting,
+        rebasing,
+        merge_head,
+        merge_message,
+    })
+}
+
+/// Get the remote URL for the default remote (usually "origin").
+pub fn get_remote_url(repo_path: &str) -> anyhow::Result<Option<String>> {
+    let repo = Repository::open(repo_path).context("failed to open repository")?;
+    let remote_name = default_remote_name(&repo);
+    let Some(name) = remote_name else {
+        return Ok(None);
+    };
+    let remote = repo.find_remote(&name).ok();
+    Ok(remote.and_then(|r| r.url().map(ToOwned::to_owned)))
+}
+
+/// Parse a Git remote URL into a GitHub-compatible "owner/repo" pair.
+/// Supports SSH (git@github.com:owner/repo.git) and HTTPS (https://github.com/owner/repo.git).
+pub fn parse_github_remote(url: &str) -> Option<(String, String)> {
+    let url = url.trim();
+
+    // SSH format: git@github.com:owner/repo.git
+    if let Some(rest) = url.strip_prefix("git@github.com:") {
+        let rest = rest.strip_suffix(".git").unwrap_or(rest);
+        let parts: Vec<&str> = rest.splitn(2, '/').collect();
+        if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+            return Some((parts[0].to_string(), parts[1].to_string()));
+        }
+    }
+
+    // HTTPS format: https://github.com/owner/repo.git
+    for prefix in &["https://github.com/", "http://github.com/"] {
+        if let Some(rest) = url.strip_prefix(prefix) {
+            let rest = rest.strip_suffix(".git").unwrap_or(rest);
+            let rest = rest.trim_end_matches('/');
+            let parts: Vec<&str> = rest.splitn(2, '/').collect();
+            if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+                return Some((parts[0].to_string(), parts[1].to_string()));
+            }
+        }
+    }
+
+    None
+}
+
+/// Build the GitHub "Create PR" URL for the current branch.
+pub fn build_github_pr_url(repo_path: &str) -> anyhow::Result<Option<String>> {
+    let remote_url = get_remote_url(repo_path)?;
+    let Some(url) = remote_url else {
+        return Ok(None);
+    };
+    let Some((owner, repo)) = parse_github_remote(&url) else {
+        return Ok(None);
+    };
+    let git_repo = Repository::open(repo_path).context("failed to open repository")?;
+    let branch = current_branch_name(&git_repo);
+    let Some(branch_name) = branch else {
+        return Ok(None);
+    };
+    Ok(Some(format!(
+        "https://github.com/{owner}/{repo}/compare/{branch_name}?expand=1"
+    )))
+}
+
+/// Build the GitHub URL for viewing the current branch.
+pub fn build_github_repo_url(repo_path: &str) -> anyhow::Result<Option<String>> {
+    let remote_url = get_remote_url(repo_path)?;
+    let Some(url) = remote_url else {
+        return Ok(None);
+    };
+    let Some((owner, repo)) = parse_github_remote(&url) else {
+        return Ok(None);
+    };
+    Ok(Some(format!("https://github.com/{owner}/{repo}")))
 }
 
 pub fn revert_commit(repo_path: &str, commit_hash: &str) -> anyhow::Result<()> {

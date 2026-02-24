@@ -3,6 +3,8 @@ import type {
   GitBranch,
   GitBranchScope,
   GitCommit,
+  GitMergeStrategy,
+  GitRepoState,
   GitResetMode,
   GitStash,
   GitStatus,
@@ -206,6 +208,7 @@ async function getGitDiffCached(
 
 interface GitState {
   status?: GitStatus;
+  repoState?: GitRepoState;
   selectedFile?: string;
   selectedFileStaged?: boolean;
   diff?: string;
@@ -239,7 +242,9 @@ interface GitState {
   createBranch: (repoPath: string, branchName: string, fromRef?: string | null) => Promise<void>;
   renameBranch: (repoPath: string, oldName: string, newName: string) => Promise<void>;
   deleteBranch: (repoPath: string, branchName: string, force: boolean) => Promise<void>;
-  mergeBranch: (repoPath: string, branchName: string) => Promise<void>;
+  mergeBranch: (repoPath: string, branchName: string, strategy?: GitMergeStrategy) => Promise<void>;
+  mergeAbort: (repoPath: string) => Promise<void>;
+  continueMerge: (repoPath: string) => Promise<void>;
   loadCommits: (repoPath: string, append?: boolean) => Promise<void>;
   loadMoreCommits: (repoPath: string) => Promise<void>;
   revertCommit: (repoPath: string, commitHash: string) => Promise<void>;
@@ -354,14 +359,18 @@ export const useGitStore = create<GitState>((set, get) => ({
         }
       }
 
-      const viewState = await refreshActiveView(repoPath, {
-        activeView: currentState.activeView,
-        branchScope: currentState.branchScope,
-      });
+      const [viewState, repoState] = await Promise.all([
+        refreshActiveView(repoPath, {
+          activeView: currentState.activeView,
+          branchScope: currentState.branchScope,
+        }),
+        ipc.getRepoState(repoPath).catch(() => undefined),
+      ]);
 
       set({
         ...viewState,
         status,
+        repoState,
         selectedFile: nextSelectedFile,
         selectedFileStaged: nextSelectedFileStaged,
         diff: selectedDiff,
@@ -621,10 +630,32 @@ export const useGitStore = create<GitState>((set, get) => ({
       throw error;
     }
   },
-  mergeBranch: async (repoPath, branchName) => {
+  mergeBranch: async (repoPath, branchName, strategy) => {
     try {
       set({ loading: true, error: undefined });
-      await ipc.mergeBranch(repoPath, branchName);
+      await ipc.mergeBranch(repoPath, branchName, strategy);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      throw error;
+    }
+  },
+  mergeAbort: async (repoPath) => {
+    try {
+      set({ loading: true, error: undefined });
+      await ipc.mergeAbort(repoPath);
+      get().invalidateRepoCache(repoPath);
+      await get().refresh(repoPath, { force: true });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      throw error;
+    }
+  },
+  continueMerge: async (repoPath) => {
+    try {
+      set({ loading: true, error: undefined });
+      await ipc.continueMerge(repoPath);
       get().invalidateRepoCache(repoPath);
       await get().refresh(repoPath, { force: true });
     } catch (error) {

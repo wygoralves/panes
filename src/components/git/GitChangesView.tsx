@@ -1,7 +1,9 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   ChevronDown,
   ChevronRight,
+  GitMerge,
   Plus,
   Minus,
   Check,
@@ -9,6 +11,7 @@ import {
   Undo2,
   Loader2,
   Eye,
+  XCircle,
 } from "lucide-react";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { toast } from "../../stores/toastStore";
@@ -187,6 +190,7 @@ export function DiffPanel({ diff }: { diff: string }) {
 export function GitChangesView({ repo, showDiff, onError }: Props) {
   const {
     status,
+    repoState,
     diff,
     selectedFile,
     selectedFileStaged,
@@ -196,6 +200,8 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     discardFiles,
     commit,
     refresh,
+    mergeAbort,
+    continueMerge,
     drafts,
     setCommitMessageDraft,
     pushCommitHistory,
@@ -266,6 +272,39 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
 
   const hasStagedFiles = stagedFiles.length > 0;
   const noChanges = unstagedFiles.length === 0 && !hasStagedFiles;
+  const hasConflicts = useMemo(
+    () => status?.files.some((f) => f.indexStatus === "conflicted" || f.worktreeStatus === "conflicted") ?? false,
+    [status],
+  );
+  const isInSpecialState = repoState?.merging || repoState?.cherryPicking || repoState?.reverting || repoState?.rebasing;
+
+  async function onMergeAbort() {
+    if (loadingKey !== null) return;
+    setLoadingKey("merge-abort");
+    try {
+      onError(undefined);
+      await mergeAbort(repo.path);
+      toast.success("Merge aborted");
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setLoadingKey(null);
+    }
+  }
+
+  async function onContinueMerge() {
+    if (loadingKey !== null) return;
+    setLoadingKey("merge-continue");
+    try {
+      onError(undefined);
+      await continueMerge(repo.path);
+      toast.success("Merge completed");
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setLoadingKey(null);
+    }
+  }
 
   async function onCommit() {
     if (!commitMessage.trim() || loadingKey !== null) return;
@@ -649,8 +688,77 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     );
   }
 
+  const specialStateLabel = repoState?.merging
+    ? "Merging"
+    : repoState?.cherryPicking
+      ? "Cherry-picking"
+      : repoState?.reverting
+        ? "Reverting"
+        : repoState?.rebasing
+          ? "Rebasing"
+          : null;
+
   return (
     <>
+      {isInSpecialState && (
+        <div className="git-merge-banner">
+          <div className="git-merge-banner-info">
+            {hasConflicts ? (
+              <AlertTriangle size={14} className="git-merge-banner-icon-warn" />
+            ) : (
+              <GitMerge size={14} className="git-merge-banner-icon" />
+            )}
+            <div className="git-merge-banner-text">
+              <span className="git-merge-banner-title">
+                {specialStateLabel} in progress
+              </span>
+              {hasConflicts && (
+                <span className="git-merge-banner-sub">
+                  Resolve conflicts then stage files to continue
+                </span>
+              )}
+              {!hasConflicts && repoState?.merging && (
+                <span className="git-merge-banner-sub">
+                  All conflicts resolved — commit to finish the merge
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="git-merge-banner-actions">
+            {!hasConflicts && repoState?.merging && hasStagedFiles && (
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ padding: "3px 10px", fontSize: 11 }}
+                disabled={loadingKey !== null}
+                onClick={() => void onContinueMerge()}
+              >
+                {loadingKey === "merge-continue" ? (
+                  <Loader2 size={11} className="git-spin" />
+                ) : (
+                  <Check size={11} />
+                )}
+                {loadingKey === "merge-continue" ? "Finishing..." : "Finish merge"}
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn-ghost git-btn-danger"
+              style={{ padding: "3px 10px", fontSize: 11 }}
+              disabled={loadingKey !== null}
+              onClick={() => void onMergeAbort()}
+            >
+              {loadingKey === "merge-abort" ? (
+                <Loader2 size={11} className="git-spin" />
+              ) : (
+                <XCircle size={11} />
+              )}
+              {loadingKey === "merge-abort" ? "Aborting..." : "Abort"}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={{ overflow: "auto", flexShrink: 0, maxHeight: "50%" }}>
         {noChanges ? (
           <div className="git-empty">

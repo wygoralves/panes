@@ -1241,6 +1241,91 @@ button, input, textarea, select {
   background: rgba(248, 113, 113, 0.1);
 }
 
+/* ── Git Merge Banner ─────────────────────────────── */
+
+.git-merge-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.git-merge-banner-info {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  flex: 1;
+  min-width: 0;
+}
+
+.git-merge-banner-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.git-merge-banner-icon-warn {
+  color: var(--danger);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.git-merge-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.git-merge-banner-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.git-merge-banner-sub {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.git-merge-banner-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* ── Git Merge Strategy Picker ────────────────────── */
+
+.git-merge-strategy-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.git-merge-strategy-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.git-merge-strategy-option input[type="radio"] {
+  accent-color: var(--accent);
+  margin: 0;
+}
+
+.git-merge-strategy-option:hover {
+  color: var(--text-1);
+}
+
 /* Chat/Terminal content area */
 .chat-terminal-content {
   flex: 1;
