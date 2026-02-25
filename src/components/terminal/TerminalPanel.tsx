@@ -5,6 +5,7 @@ import { useHarnessStore } from "../../stores/harnessStore";
 import { toast } from "../../stores/toastStore";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import { copyTextToClipboard } from "../../lib/clipboard";
+import { shouldCreateInitialTerminalSession } from "../../lib/terminalBootstrap";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -1019,6 +1020,8 @@ function SplitContainerView({
 
 export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const workspaceState = useTerminalStore((state) => state.workspaces[workspaceId]);
+  const isOpen = workspaceState?.isOpen ?? false;
+  const layoutMode = workspaceState?.layoutMode ?? "chat";
   const sessions = workspaceState?.sessions ?? [];
   const loading = workspaceState?.loading ?? false;
   const error = workspaceState?.error;
@@ -1029,6 +1032,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const createSession = useTerminalStore((state) => state.createSession);
   const closeSession = useTerminalStore((state) => state.closeSession);
   const handleSessionExit = useTerminalStore((state) => state.handleSessionExit);
+  const setWorkspaceStatus = useTerminalStore((state) => state.setWorkspaceStatus);
   const syncSessions = useTerminalStore((state) => state.syncSessions);
   const splitSession = useTerminalStore((state) => state.splitSession);
   const setFocusedSession = useTerminalStore((state) => state.setFocusedSession);
@@ -1049,6 +1053,8 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
   const [ctxMenu, setCtxMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
   const ctxMenuRef = useRef<HTMLDivElement>(null);
+  const [listenersReadyWorkspaceId, setListenersReadyWorkspaceId] = useState<string | null>(null);
+  const bootstrapCreateInFlightWorkspaceRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (renamingGroupId) {
@@ -1393,36 +1399,37 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     let unlistenOutput: (() => void) | undefined;
     let unlistenExit: (() => void) | undefined;
     let disposed = false;
+    setListenersReadyWorkspaceId(null);
 
     (async () => {
-      const [outputUn, exitUn] = await Promise.all([
-        listenTerminalOutput(workspaceId, (event) => {
-          const cacheKey = terminalCacheKey(workspaceId, event.sessionId);
-          queueOutput(cacheKey, event.data);
-        }),
-        listenTerminalExit(workspaceId, (event) => {
-          destroyCachedTerminal(workspaceId, event.sessionId);
-          handleSessionExit(workspaceId, event.sessionId);
-        }),
-      ]);
-      if (disposed) {
-        outputUn();
-        exitUn();
-        return;
-      }
-      unlistenOutput = outputUn;
-      unlistenExit = exitUn;
+      try {
+        const [outputUn, exitUn] = await Promise.all([
+          listenTerminalOutput(workspaceId, (event) => {
+            const cacheKey = terminalCacheKey(workspaceId, event.sessionId);
+            queueOutput(cacheKey, event.data);
+          }),
+          listenTerminalExit(workspaceId, (event) => {
+            destroyCachedTerminal(workspaceId, event.sessionId);
+            handleSessionExit(workspaceId, event.sessionId);
+          }),
+        ]);
+        if (disposed) {
+          outputUn();
+          exitUn();
+          return;
+        }
+        unlistenOutput = outputUn;
+        unlistenExit = exitUn;
 
-      // Now that listeners are ready, sync existing sessions.
-      await syncSessions(workspaceId);
-      if (disposed) return;
-
-      // Create the initial session if the terminal is open but has no sessions
-      // yet (e.g. first open). We check fresh state to avoid racing with other
-      // callers (like HarnessPanel) that may have already created a session.
-      const ws = useTerminalStore.getState().workspaces[workspaceId];
-      if (ws?.isOpen && ws.sessions.length === 0) {
-        void createSession(workspaceId);
+        // Now that listeners are ready, sync existing sessions.
+        await syncSessions(workspaceId);
+        if (disposed) return;
+        setListenersReadyWorkspaceId(workspaceId);
+      } catch (listenerError) {
+        if (disposed) {
+          return;
+        }
+        setWorkspaceStatus(workspaceId, false, String(listenerError));
       }
     })();
 
@@ -1431,7 +1438,28 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       unlistenOutput?.();
       unlistenExit?.();
     };
-  }, [createSession, handleSessionExit, syncSessions, workspaceId]);
+  }, [handleSessionExit, setWorkspaceStatus, syncSessions, workspaceId]);
+
+  useEffect(() => {
+    const listenersReady = listenersReadyWorkspaceId === workspaceId;
+    if (!shouldCreateInitialTerminalSession({
+      listenersReady,
+      isOpen,
+      layoutMode,
+      sessionCount: sessions.length,
+      workspaceId,
+      createInFlightWorkspaceId: bootstrapCreateInFlightWorkspaceRef.current,
+    })) {
+      return;
+    }
+
+    bootstrapCreateInFlightWorkspaceRef.current = workspaceId;
+    void createSession(workspaceId).finally(() => {
+      if (bootstrapCreateInFlightWorkspaceRef.current === workspaceId) {
+        bootstrapCreateInFlightWorkspaceRef.current = null;
+      }
+    });
+  }, [createSession, isOpen, layoutMode, listenersReadyWorkspaceId, sessions.length, workspaceId]);
 
   useEffect(() => {
     for (const session of sessions) {
