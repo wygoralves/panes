@@ -145,6 +145,7 @@ pub fn run() {
             commands::terminal::terminal_close_workspace_sessions,
             commands::terminal::terminal_list_sessions,
             commands::terminal::terminal_get_renderer_diagnostics,
+            commands::terminal::terminal_resume_session,
             commands::setup::check_dependencies,
             commands::setup::install_dependency,
             commands::harness::check_harnesses,

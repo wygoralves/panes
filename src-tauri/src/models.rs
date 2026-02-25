@@ -374,6 +374,23 @@ pub struct TerminalSessionDto {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalReplayChunkDto {
+    pub seq: u64,
+    pub ts: String,
+    pub data: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalResumeSessionDto {
+    pub latest_seq: u64,
+    pub oldest_available_seq: Option<u64>,
+    pub gap: bool,
+    pub chunks: Vec<TerminalReplayChunkDto>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalEnvSnapshotDto {

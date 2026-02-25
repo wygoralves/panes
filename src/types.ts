@@ -349,7 +349,22 @@ export interface TerminalSession {
 
 export interface TerminalOutputEvent {
   sessionId: string;
+  seq: number;
+  ts: string;
   data: string;
+}
+
+export interface TerminalReplayChunk {
+  seq: number;
+  ts: string;
+  data: string;
+}
+
+export interface TerminalResumeSession {
+  latestSeq: number;
+  oldestAvailableSeq: number | null;
+  gap: boolean;
+  chunks: TerminalReplayChunk[];
 }
 
 export interface TerminalExitEvent {

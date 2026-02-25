@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::{
     db,
-    models::{TerminalRendererDiagnosticsDto, TerminalSessionDto},
+    models::{TerminalRendererDiagnosticsDto, TerminalResumeSessionDto, TerminalSessionDto},
     state::AppState,
 };
 
@@ -129,6 +129,20 @@ pub async fn terminal_get_renderer_diagnostics(
     state
         .terminals
         .renderer_diagnostics(&workspace_id, &session_id)
+        .await
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn terminal_resume_session(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    session_id: String,
+    from_seq: Option<u64>,
+) -> Result<TerminalResumeSessionDto, String> {
+    state
+        .terminals
+        .resume_session(&workspace_id, &session_id, from_seq)
         .await
         .map_err(err_to_string)
 }
