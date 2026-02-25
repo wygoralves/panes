@@ -118,7 +118,11 @@ export function SearchModal({ open, onClose }: Props) {
       threadId: targetThread.id,
       messageId: result.messageId,
     });
-    setActiveRepo(targetThread.repoId ?? null);
+    if (targetThread.repoId) {
+      setActiveRepo(targetThread.repoId);
+    } else {
+      setActiveRepo(null, { remember: false });
+    }
     setActiveThread(targetThread.id);
     await bindChatThread(targetThread.id);
     onClose();

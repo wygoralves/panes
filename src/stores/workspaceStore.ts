@@ -3,6 +3,10 @@ import type { Repo, TrustLevel, Workspace } from "../types";
 import { ipc } from "../lib/ipc";
 import { useGitStore } from "./gitStore";
 
+interface SetActiveRepoOptions {
+  remember?: boolean;
+}
+
 interface WorkspaceState {
   workspaces: Workspace[];
   archivedWorkspaces: Workspace[];
@@ -18,7 +22,7 @@ interface WorkspaceState {
   restoreWorkspace: (workspaceId: string) => Promise<void>;
   loadRepos: (workspaceId: string) => Promise<void>;
   setActiveWorkspace: (workspaceId: string) => Promise<void>;
-  setActiveRepo: (repoId: string | null) => void;
+  setActiveRepo: (repoId: string | null, options?: SetActiveRepoOptions) => void;
   setRepoGitActive: (repoId: string, isActive: boolean) => Promise<void>;
   setWorkspaceGitActiveRepos: (workspaceId: string, repoIds: string[]) => Promise<void>;
   hasWorkspaceGitSelection: (workspaceId: string) => Promise<boolean>;
@@ -27,6 +31,76 @@ interface WorkspaceState {
 }
 
 const LAST_WORKSPACE_KEY = "panes:lastActiveWorkspaceId";
+const LAST_REPO_BY_WORKSPACE_KEY = "panes:lastActiveRepoByWorkspace";
+
+type LastRepoByWorkspace = Record<string, string>;
+
+function readLastRepoByWorkspace(): LastRepoByWorkspace {
+  try {
+    const raw = localStorage.getItem(LAST_REPO_BY_WORKSPACE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+
+    const next: LastRepoByWorkspace = {};
+    for (const [workspaceId, repoId] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof workspaceId !== "string" || typeof repoId !== "string") {
+        continue;
+      }
+      const normalizedRepoId = repoId.trim();
+      if (!normalizedRepoId) {
+        continue;
+      }
+      next[workspaceId] = normalizedRepoId;
+    }
+    return next;
+  } catch {
+    return {};
+  }
+}
+
+function writeLastRepoByWorkspace(next: LastRepoByWorkspace): void {
+  try {
+    localStorage.setItem(LAST_REPO_BY_WORKSPACE_KEY, JSON.stringify(next));
+  } catch {
+    // localStorage unavailable or full; ignore persistence failure.
+  }
+}
+
+function rememberLastRepo(workspaceId: string, repoId: string): void {
+  const current = readLastRepoByWorkspace();
+  if (current[workspaceId] === repoId) {
+    return;
+  }
+  current[workspaceId] = repoId;
+  writeLastRepoByWorkspace(current);
+}
+
+function resolveActiveRepoId(
+  workspaceId: string,
+  repos: Repo[],
+  currentActiveRepoId: string | null,
+): string | null {
+  if (!repos.length) {
+    return null;
+  }
+
+  if (currentActiveRepoId && repos.some((repo) => repo.id === currentActiveRepoId)) {
+    return currentActiveRepoId;
+  }
+
+  const persisted = readLastRepoByWorkspace()[workspaceId];
+  if (persisted && repos.some((repo) => repo.id === persisted && repo.isActive)) {
+    return persisted;
+  }
+
+  return repos.find((repo) => repo.isActive)?.id ?? repos[0]?.id ?? null;
+}
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],
@@ -139,15 +213,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   loadRepos: async (workspaceId) => {
     try {
       const repos = await ipc.getRepos(workspaceId);
-      const currentActiveRepoId = get().activeRepoId;
-      const activeStillExists = currentActiveRepoId
-        ? repos.some((repo) => repo.id === currentActiveRepoId)
-        : false;
-      const fallbackActiveRepoId =
-        repos.find((repo) => repo.isActive)?.id ?? repos[0]?.id ?? null;
+      const fallbackActiveRepoId = resolveActiveRepoId(
+        workspaceId,
+        repos,
+        get().activeRepoId,
+      );
+      if (fallbackActiveRepoId) {
+        rememberLastRepo(workspaceId, fallbackActiveRepoId);
+      }
       set({
         repos,
-        activeRepoId: activeStillExists ? currentActiveRepoId : fallbackActiveRepoId,
+        activeRepoId: fallbackActiveRepoId,
       });
     } catch (error) {
       set({ error: String(error) });
@@ -163,7 +239,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     await get().loadRepos(workspaceId);
     useGitStore.getState().loadDraftsForWorkspace(workspaceId);
   },
-  setActiveRepo: (repoId) => set({ activeRepoId: repoId }),
+  setActiveRepo: (repoId, options) => {
+    set({ activeRepoId: repoId });
+
+    if (options?.remember === false || !repoId) {
+      return;
+    }
+
+    const workspaceId = get().activeWorkspaceId;
+    if (!workspaceId) {
+      return;
+    }
+
+    const repoExistsInWorkspace = get().repos.some(
+      (repo) => repo.id === repoId && repo.workspaceId === workspaceId,
+    );
+    if (!repoExistsInWorkspace) {
+      return;
+    }
+
+    rememberLastRepo(workspaceId, repoId);
+  },
   setRepoGitActive: async (repoId, isActive) => {
     try {
       await ipc.setRepoGitActive(repoId, isActive);
