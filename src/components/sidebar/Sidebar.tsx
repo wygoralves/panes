@@ -212,7 +212,11 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     if (thread.workspaceId !== activeWorkspaceId) {
       await setActiveWorkspace(thread.workspaceId);
     }
-    setActiveRepo(thread.repoId ?? null);
+    if (thread.repoId) {
+      setActiveRepo(thread.repoId);
+    } else {
+      setActiveRepo(null, { remember: false });
+    }
     setActiveThread(thread.id);
     await bindChatThread(thread.id);
   }
@@ -229,7 +233,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     if (project.id !== activeWorkspaceId) {
       await setActiveWorkspace(project.id);
     }
-    setActiveRepo(null);
+    setActiveRepo(null, { remember: false });
     const createdThreadId = await createThread({
       workspaceId: project.id,
       repoId: null,
@@ -815,7 +819,7 @@ function CollapsedRail({
   async function onNewThread() {
     const activeProject = projects.find((p) => p.id === activeWorkspaceId);
     if (!activeProject) return;
-    setActiveRepo(null);
+    setActiveRepo(null, { remember: false });
     const createdThreadId = await createThread({
       workspaceId: activeProject.id,
       repoId: null,

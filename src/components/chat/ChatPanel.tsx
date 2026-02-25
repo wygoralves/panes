@@ -1060,29 +1060,23 @@ export function ChatPanel() {
       return;
     }
 
-    const activeRepoScopeId = activeRepo?.id ?? null;
-    const activeThreadInCurrentScope =
+    const activeThreadInCurrentWorkspace =
       activeThread &&
-      activeThread.workspaceId === activeWorkspaceId &&
-      activeThread.repoId === activeRepoScopeId;
+      activeThread.workspaceId === activeWorkspaceId;
 
-    const targetThreadId = activeThreadInCurrentScope ? activeThread.id : null;
+    const targetThreadId = activeThreadInCurrentWorkspace ? activeThread.id : null;
     if (targetThreadId === threadId) {
       return;
     }
 
-    if (!activeThreadInCurrentScope) {
+    if (!activeThreadInCurrentWorkspace) {
       setActiveThreadInStore(null);
     }
     void bindChatThread(targetThreadId);
   }, [
     activeWorkspaceId,
-    activeRepo?.id,
     activeThread?.id,
     activeThread?.workspaceId,
-    activeThread?.repoId,
-    activeThread?.engineId,
-    activeThread?.modelId,
     threadId,
     bindChatThread,
     setActiveThreadInStore,
