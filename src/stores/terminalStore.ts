@@ -132,6 +132,7 @@ interface WorkspaceTerminalState {
 
 interface TerminalState {
   workspaces: Record<string, WorkspaceTerminalState>;
+  setWorkspaceStatus: (workspaceId: string, loading: boolean, error?: string) => void;
   openTerminal: (workspaceId: string) => Promise<void>;
   closeTerminal: (workspaceId: string) => Promise<void>;
   toggleTerminal: (workspaceId: string) => Promise<void>;
@@ -186,6 +187,15 @@ function mergeWorkspaceState(
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   workspaces: {},
+
+  setWorkspaceStatus: (workspaceId, loading, error) => {
+    set((state) => ({
+      workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+        loading,
+        error,
+      }),
+    }));
+  },
 
   openTerminal: async (workspaceId) => {
     // Only mark the terminal as open. Session creation is deferred to
@@ -453,6 +463,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             groups,
             activeGroupId,
             focusedSessionId: focusedId,
+            loading: false,
+            error: undefined,
             ...(hasSessions ? { isOpen: true, layoutMode: restoredMode } : {}),
           }),
         };
@@ -460,6 +472,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     } catch (error) {
       set((state) => ({
         workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+          loading: false,
           error: String(error),
         }),
       }));
