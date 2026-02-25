@@ -30,6 +30,7 @@ import type {
   TerminalForegroundChangedEvent,
   TerminalOutputEvent,
   TerminalRendererDiagnostics,
+  TerminalResumeSession,
   TerminalSession,
   Thread,
   TrustLevel,
@@ -219,6 +220,16 @@ export const ipc = {
     invoke<TerminalRendererDiagnostics>("terminal_get_renderer_diagnostics", {
       workspaceId,
       sessionId,
+    }),
+  terminalResumeSession: (
+    workspaceId: string,
+    sessionId: string,
+    fromSeq?: number | null,
+  ) =>
+    invoke<TerminalResumeSession>("terminal_resume_session", {
+      workspaceId,
+      sessionId,
+      fromSeq: fromSeq ?? null,
     }),
   checkDependencies: () => invoke<DependencyReport>("check_dependencies"),
   installDependency: (dependency: string, method: string) =>

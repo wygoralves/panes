@@ -1,6 +1,5 @@
 use std::{
-    collections::HashMap,
-    collections::HashSet,
+    collections::{HashMap, HashSet, VecDeque},
     ffi::OsString,
     io::{Read, Write},
     path::PathBuf,
@@ -22,12 +21,15 @@ use uuid::Uuid;
 
 use crate::models::{
     TerminalEnvSnapshotDto, TerminalIoCountersDto, TerminalOutputThrottleSnapshotDto,
-    TerminalRendererDiagnosticsDto, TerminalResizeSnapshotDto, TerminalSessionDto,
+    TerminalRendererDiagnosticsDto, TerminalReplayChunkDto, TerminalResizeSnapshotDto,
+    TerminalResumeSessionDto, TerminalSessionDto,
 };
 
 const TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS: u64 = 16;
 const TERMINAL_OUTPUT_MAX_EMIT_BYTES: usize = 256 * 1024;
 const TERMINAL_OUTPUT_BUFFER_MAX_BYTES: usize = 8 * 1024 * 1024;
+const TERMINAL_REPLAY_MAX_CHUNKS: usize = 4096;
+const TERMINAL_REPLAY_MAX_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Default)]
 pub struct TerminalManager {
@@ -39,7 +41,15 @@ struct TerminalSessionHandle {
     shell_pid: Option<u32>,
     diagnostics: Mutex<TerminalSessionDiagnosticsState>,
     io_counters: TerminalSessionIoCounters,
+    replay_seq: AtomicU64,
+    replay_state: Mutex<TerminalReplayState>,
     process: Mutex<TerminalProcess>,
+}
+
+#[derive(Default)]
+struct TerminalReplayState {
+    entries: VecDeque<TerminalReplayChunkDto>,
+    total_bytes: usize,
 }
 
 struct TerminalSessionDiagnosticsState {
@@ -129,6 +139,8 @@ fn trim_string_to_tail(value: &mut String, max_bytes: usize) -> usize {
 #[serde(rename_all = "camelCase")]
 struct TerminalOutputEvent {
     session_id: String,
+    seq: u64,
+    ts: String,
     data: String,
 }
 
@@ -180,6 +192,19 @@ impl TerminalManager {
             .await
             .ok_or_else(|| anyhow::anyhow!("terminal session not found: {session_id}"))?;
         Ok(session.renderer_diagnostics())
+    }
+
+    pub async fn resume_session(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+        from_seq: Option<u64>,
+    ) -> anyhow::Result<TerminalResumeSessionDto> {
+        let session = self
+            .get_session(workspace_id, session_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("terminal session not found: {session_id}"))?;
+        Ok(session.replay_since(from_seq))
     }
 
     pub async fn create_session(
@@ -461,12 +486,13 @@ impl TerminalManager {
                     if payload.is_empty() {
                         continue;
                     }
-                    let payload_len = payload.len() as u64;
+                    let replay_chunk = session_handle_for_emitter.record_replay_chunk(payload);
+                    let payload_len = replay_chunk.data.len() as u64;
                     emit_output(
                         &app_for_emitter,
                         &workspace_for_emitter,
                         &session_for_emitter,
-                        payload,
+                        replay_chunk,
                     );
                     session_handle_for_emitter
                         .io_counters
@@ -761,6 +787,82 @@ impl TerminalSessionHandle {
         }
     }
 
+    fn record_replay_chunk(&self, data: String) -> TerminalReplayChunkDto {
+        let seq = self
+            .replay_seq
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        let chunk = TerminalReplayChunkDto {
+            seq,
+            ts: Utc::now().to_rfc3339(),
+            data,
+        };
+        let chunk_bytes = chunk.data.len();
+
+        match self
+            .replay_state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("terminal replay lock poisoned"))
+        {
+            Ok(mut state) => {
+                state.total_bytes += chunk_bytes;
+                state.entries.push_back(chunk.clone());
+                while state.entries.len() > TERMINAL_REPLAY_MAX_CHUNKS
+                    || state.total_bytes > TERMINAL_REPLAY_MAX_BYTES
+                {
+                    let Some(removed) = state.entries.pop_front() else {
+                        break;
+                    };
+                    state.total_bytes = state.total_bytes.saturating_sub(removed.data.len());
+                }
+            }
+            Err(error) => {
+                log::warn!("failed storing terminal replay chunk: {error}");
+            }
+        }
+
+        chunk
+    }
+
+    fn replay_since(&self, from_seq: Option<u64>) -> TerminalResumeSessionDto {
+        let latest_seq = self.replay_seq.load(Ordering::Relaxed);
+        match self
+            .replay_state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("terminal replay lock poisoned"))
+        {
+            Ok(state) => {
+                let oldest_available_seq = state.entries.front().map(|chunk| chunk.seq);
+                let gap = match (from_seq, oldest_available_seq) {
+                    (Some(from), Some(oldest)) => from.saturating_add(1) < oldest,
+                    _ => false,
+                };
+                let chunks = state
+                    .entries
+                    .iter()
+                    .filter(|chunk| from_seq.map(|value| chunk.seq > value).unwrap_or(true))
+                    .cloned()
+                    .collect();
+
+                TerminalResumeSessionDto {
+                    latest_seq,
+                    oldest_available_seq,
+                    gap,
+                    chunks,
+                }
+            }
+            Err(error) => {
+                log::warn!("failed reading terminal replay chunk: {error}");
+                TerminalResumeSessionDto {
+                    latest_seq,
+                    oldest_available_seq: None,
+                    gap: false,
+                    chunks: Vec::new(),
+                }
+            }
+        }
+    }
+
     fn write(&self, data: &str) -> anyhow::Result<()> {
         let mut process = self
             .process
@@ -1002,6 +1104,8 @@ fn spawn_session(
             last_zero_pixel_warning_at_ms: None,
         }),
         io_counters: TerminalSessionIoCounters::default(),
+        replay_seq: AtomicU64::new(0),
+        replay_state: Mutex::new(TerminalReplayState::default()),
         process: Mutex::new(TerminalProcess {
             master: pair.master,
             writer,
@@ -1187,11 +1291,18 @@ fn rfc3339_from_unix_ms(ms: u64) -> Option<String> {
     chrono::DateTime::<Utc>::from_timestamp_millis(ms as i64).map(|dt| dt.to_rfc3339())
 }
 
-fn emit_output(app: &AppHandle, workspace_id: &str, session_id: &str, data: String) {
+fn emit_output(
+    app: &AppHandle,
+    workspace_id: &str,
+    session_id: &str,
+    chunk: TerminalReplayChunkDto,
+) {
     let event_name = format!("terminal-output-{workspace_id}");
     let payload = TerminalOutputEvent {
         session_id: session_id.to_string(),
-        data,
+        seq: chunk.seq,
+        ts: chunk.ts,
+        data: chunk.data,
     };
     let _ = app.emit(&event_name, payload);
 }

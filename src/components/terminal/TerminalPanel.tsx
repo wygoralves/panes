@@ -70,6 +70,10 @@ interface FrontendTerminalRuntimeSnapshot {
   cols: number;
   rows: number;
   isAttached: boolean;
+  lastAppliedSeq: number;
+  resumeInFlight: boolean;
+  rendererMode: "webgl" | "canvas";
+  rendererDegradedReason: string | null;
   flushInProgress: boolean;
   flushWatchdogActive: boolean;
   flushStallCount: number;
@@ -104,11 +108,25 @@ interface BackendRendererDiagnosticsEntry {
   fetchedAt: string;
 }
 
+interface SequencedOutputChunk {
+  seq: number;
+  ts: string;
+  data: string;
+}
+
 interface SessionTerminal {
   terminal: Terminal;
   fitAddon: FitAddon;
   outputQueue: string[];
   outputQueueChars: number;
+  lastAppliedSeq: number;
+  resumeInFlight: boolean;
+  resumeRetryAttempts: number;
+  resumeRetryTimer?: number;
+  rendererMode: "webgl" | "canvas";
+  rendererDegradedReason?: string;
+  flushTimeoutWindowStartedAt?: number;
+  flushTimeoutWindowCount: number;
   flushInProgress: boolean;
   flushNonce: number;
   flushStartedAt?: number;
@@ -139,6 +157,10 @@ const OUTPUT_QUEUE_MAX_CHARS_ATTACHED = 64 * 1024 * 1024;
 const OUTPUT_QUEUE_MAX_CHARS_DETACHED = 1024 * 1024;
 const PENDING_OUTPUT_MAX_CHARS = 512 * 1024;
 const OUTPUT_DROP_WARN_COOLDOWN_MS = 5000;
+const OUTPUT_FLUSH_STALL_FALLBACK_WINDOW_MS = 30000;
+const OUTPUT_FLUSH_STALL_FALLBACK_THRESHOLD = 3;
+const OUTPUT_RESUME_RETRY_BASE_MS = 125;
+const OUTPUT_RESUME_RETRY_MAX_MS = 2000;
 const TERMINAL_DEBUG =
   import.meta.env.DEV && import.meta.env.VITE_TERMINAL_DEBUG === "1";
 const SHOW_TERMINAL_DIAGNOSTICS_UI = import.meta.env.DEV;
@@ -162,7 +184,7 @@ const cachedTerminals = new Map<string, SessionTerminal>();
 const pendingOutput = new Map<
   string,
   {
-    chunks: string[];
+    chunks: SequencedOutputChunk[];
     chars: number;
     lastDropWarnAt?: number;
     droppedChars: number;
@@ -177,6 +199,19 @@ function terminalCacheKey(workspaceId: string, sessionId: string): string {
 
 function terminalWorkspacePrefix(workspaceId: string): string {
   return `${workspaceId}::`;
+}
+
+function parseTerminalCacheKey(
+  cacheKey: string,
+): { workspaceId: string; sessionId: string } | null {
+  const delimiter = cacheKey.indexOf("::");
+  if (delimiter <= 0 || delimiter === cacheKey.length - 2) {
+    return null;
+  }
+  return {
+    workspaceId: cacheKey.slice(0, delimiter),
+    sessionId: cacheKey.slice(delimiter + 2),
+  };
 }
 
 function logTerminalDebug(
@@ -261,6 +296,10 @@ function snapshotFrontendRuntime(
     cols: session.terminal.cols,
     rows: session.terminal.rows,
     isAttached: session.isAttached,
+    lastAppliedSeq: session.lastAppliedSeq,
+    resumeInFlight: session.resumeInFlight,
+    rendererMode: session.rendererMode,
+    rendererDegradedReason: session.rendererDegradedReason ?? null,
     flushInProgress: session.flushInProgress,
     flushWatchdogActive: session.flushWatchdogTimer !== undefined,
     flushStallCount: session.flushStallCount,
@@ -326,6 +365,7 @@ function setupWebglRenderer(
   cacheKey: string,
   terminal: Terminal,
   diagnostics: FrontendRendererDiagnostics,
+  onContextLoss: () => void,
 ): (() => void) | null {
   diagnostics.webglRequested = true;
   if (typeof WebGL2RenderingContext === "undefined") {
@@ -346,6 +386,7 @@ function setupWebglRenderer(
         count: diagnostics.webglContextLossCount,
       });
       logTerminalDebug("webgl-context-loss", { cacheKey });
+      onContextLoss();
     });
     diagnostics.webglActive = true;
     logTerminalDebug("webgl-enabled", { cacheKey });
@@ -367,6 +408,81 @@ function setupWebglRenderer(
     });
     return null;
   }
+}
+
+function degradeRendererToCanvas(
+  cacheKey: string,
+  session: SessionTerminal,
+  reason: string,
+) {
+  if (session.rendererMode === "canvas") {
+    return;
+  }
+  session.webglCleanup?.();
+  session.webglCleanup = undefined;
+  session.rendererMode = "canvas";
+  session.rendererDegradedReason = reason;
+  session.rendererDiagnostics.webglActive = false;
+  logTerminalWarning("terminal-renderer-degraded", {
+    cacheKey,
+    reason,
+  });
+}
+
+function registerFlushStall(cacheKey: string, session: SessionTerminal) {
+  const now = Date.now();
+  if (
+    session.flushTimeoutWindowStartedAt === undefined ||
+    now - session.flushTimeoutWindowStartedAt > OUTPUT_FLUSH_STALL_FALLBACK_WINDOW_MS
+  ) {
+    session.flushTimeoutWindowStartedAt = now;
+    session.flushTimeoutWindowCount = 1;
+  } else {
+    session.flushTimeoutWindowCount += 1;
+  }
+  if (session.flushTimeoutWindowCount >= OUTPUT_FLUSH_STALL_FALLBACK_THRESHOLD) {
+    degradeRendererToCanvas(cacheKey, session, "write-callback-stall");
+  }
+}
+
+function resetResumeRetry(session: SessionTerminal) {
+  session.resumeRetryAttempts = 0;
+  if (session.resumeRetryTimer !== undefined) {
+    window.clearTimeout(session.resumeRetryTimer);
+    session.resumeRetryTimer = undefined;
+  }
+}
+
+function scheduleResumeRetry(
+  workspaceId: string,
+  sessionId: string,
+  session: SessionTerminal,
+  reason: "attach" | "live-gap",
+) {
+  if (session.resumeRetryTimer !== undefined) {
+    return;
+  }
+  const exponent = Math.min(session.resumeRetryAttempts, 4);
+  const delayMs = Math.min(
+    OUTPUT_RESUME_RETRY_BASE_MS * (2 ** exponent),
+    OUTPUT_RESUME_RETRY_MAX_MS,
+  );
+  session.resumeRetryAttempts += 1;
+  const cacheKey = terminalCacheKey(workspaceId, sessionId);
+  logTerminalWarning("terminal-replay-resume-retry-scheduled", {
+    cacheKey,
+    reason,
+    delayMs,
+    attempt: session.resumeRetryAttempts,
+  });
+  session.resumeRetryTimer = window.setTimeout(() => {
+    const latest = cachedTerminals.get(cacheKey);
+    if (!latest) {
+      return;
+    }
+    latest.resumeRetryTimer = undefined;
+    void resumeSessionOutput(workspaceId, sessionId, reason);
+  }, delayMs);
 }
 
 function normalizeSize(cols: number, rows: number): TerminalSize {
@@ -391,6 +507,10 @@ function clearSessionTimers(session: SessionTerminal) {
   if (session.fitTimer !== undefined) {
     window.clearTimeout(session.fitTimer);
     session.fitTimer = undefined;
+  }
+  if (session.resumeRetryTimer !== undefined) {
+    window.clearTimeout(session.resumeRetryTimer);
+    session.resumeRetryTimer = undefined;
   }
   if (session.flushWatchdogTimer !== undefined) {
     window.clearTimeout(session.flushWatchdogTimer);
@@ -472,6 +592,33 @@ function trimOutputQueue(
   };
 }
 
+function trimSequencedOutputQueue(
+  outputQueue: SequencedOutputChunk[],
+  currentChars: number,
+  maxChars: number,
+): { chars: number; droppedChars: number; droppedChunks: number } {
+  if (currentChars <= maxChars) {
+    return { chars: currentChars, droppedChars: 0, droppedChunks: 0 };
+  }
+
+  let droppedChars = 0;
+  let droppedChunks = 0;
+  while (outputQueue.length > 0 && currentChars - droppedChars > maxChars) {
+    const removed = outputQueue.shift();
+    if (!removed) {
+      break;
+    }
+    droppedChars += removed.data.length;
+    droppedChunks += 1;
+  }
+
+  return {
+    chars: Math.max(0, currentChars - droppedChars),
+    droppedChars,
+    droppedChunks,
+  };
+}
+
 function capSessionOutputQueue(cacheKey: string, session: SessionTerminal) {
   const maxChars = session.isAttached
     ? OUTPUT_QUEUE_MAX_CHARS_ATTACHED
@@ -504,14 +651,18 @@ function capSessionOutputQueue(cacheKey: string, session: SessionTerminal) {
 function capPendingOutput(
   cacheKey: string,
   pending: {
-    chunks: string[];
+    chunks: SequencedOutputChunk[];
     chars: number;
     lastDropWarnAt?: number;
     droppedChars: number;
     droppedChunks: number;
   },
 ) {
-  const result = trimOutputQueue(pending.chunks, pending.chars, PENDING_OUTPUT_MAX_CHARS);
+  const result = trimSequencedOutputQueue(
+    pending.chunks,
+    pending.chars,
+    PENDING_OUTPUT_MAX_CHARS,
+  );
   pending.chars = result.chars;
   if (result.droppedChars <= 0) {
     return;
@@ -599,6 +750,7 @@ function flushOutputQueue(cacheKey: string) {
     latest.flushInProgress = false;
     latest.flushStartedAt = undefined;
     latest.flushStallCount += 1;
+    registerFlushStall(cacheKey, latest);
     logTerminalWarning("terminal-write-callback-timeout", {
       cacheKey,
       stallCount: latest.flushStallCount,
@@ -664,31 +816,41 @@ function scheduleOutputFlush(
   }, delayMs);
 }
 
-function queueOutput(cacheKey: string, data: string) {
-  const session = cachedTerminals.get(cacheKey);
-  if (!session) {
-    const pending =
-      pendingOutput.get(cacheKey) ?? {
-        chunks: [],
-        chars: 0,
-        droppedChars: 0,
-        droppedChunks: 0,
-      };
-    pending.chunks.push(data);
-    pending.chars += data.length;
-    capPendingOutput(cacheKey, pending);
-    pendingOutput.set(cacheKey, pending);
-    return;
+function addPendingOutputChunk(cacheKey: string, chunk: SequencedOutputChunk) {
+  const pending =
+    pendingOutput.get(cacheKey) ?? {
+      chunks: [],
+      chars: 0,
+      droppedChars: 0,
+      droppedChunks: 0,
+    };
+  pending.chunks.push(chunk);
+  pending.chars += chunk.data.length;
+  capPendingOutput(cacheKey, pending);
+  pendingOutput.set(cacheKey, pending);
+}
+
+function enqueueOutputChunk(
+  cacheKey: string,
+  session: SessionTerminal,
+  chunk: SequencedOutputChunk,
+): "applied" | "duplicate" | "gap" {
+  if (chunk.seq <= session.lastAppliedSeq) {
+    return "duplicate";
+  }
+  if (session.lastAppliedSeq > 0 && chunk.seq > session.lastAppliedSeq + 1) {
+    return "gap";
   }
 
-  session.outputQueue.push(data);
-  session.outputQueueChars += data.length;
+  session.lastAppliedSeq = chunk.seq;
+  session.outputQueue.push(chunk.data);
+  session.outputQueueChars += chunk.data.length;
   session.rendererDiagnostics.outputChunkCount += 1;
-  session.rendererDiagnostics.outputCharCount += data.length;
+  session.rendererDiagnostics.outputCharCount += chunk.data.length;
   capSessionOutputQueue(cacheKey, session);
 
   session.debugSample.chunks += 1;
-  session.debugSample.chars += data.length;
+  session.debugSample.chars += chunk.data.length;
   const now = Date.now();
   if (TERMINAL_DEBUG && now - session.debugSample.lastLogAt >= 1000) {
     logTerminalDebug("output-sample", {
@@ -700,6 +862,102 @@ function queueOutput(cacheKey: string, data: string) {
     session.debugSample.lastLogAt = now;
     session.debugSample.chunks = 0;
     session.debugSample.chars = 0;
+  }
+
+  return "applied";
+}
+
+async function resumeSessionOutput(
+  workspaceId: string,
+  sessionId: string,
+  reason: "attach" | "live-gap",
+) {
+  const cacheKey = terminalCacheKey(workspaceId, sessionId);
+  const session = cachedTerminals.get(cacheKey);
+  if (!session || session.resumeInFlight) {
+    return;
+  }
+  session.resumeInFlight = true;
+
+  try {
+    const fromSeq = session.lastAppliedSeq > 0 ? session.lastAppliedSeq : null;
+    const resume = await ipc.terminalResumeSession(workspaceId, sessionId, fromSeq);
+    const latest = cachedTerminals.get(cacheKey);
+    if (!latest) {
+      return;
+    }
+    resetResumeRetry(latest);
+
+    if (resume.gap && resume.chunks.length > 0 && latest.lastAppliedSeq > 0) {
+      latest.lastAppliedSeq = Math.max(0, resume.chunks[0].seq - 1);
+      logTerminalWarning("terminal-replay-gap", {
+        cacheKey,
+        reason,
+        fromSeq: fromSeq ?? undefined,
+        oldestAvailableSeq: resume.oldestAvailableSeq ?? undefined,
+      });
+    }
+
+    for (const chunk of resume.chunks) {
+      const current = cachedTerminals.get(cacheKey);
+      if (!current) {
+        return;
+      }
+      const result = enqueueOutputChunk(cacheKey, current, chunk);
+      if (result === "gap") {
+        addPendingOutputChunk(cacheKey, chunk);
+        logTerminalWarning("terminal-replay-gap-during-apply", {
+          cacheKey,
+          reason,
+          chunkSeq: chunk.seq,
+          lastAppliedSeq: current.lastAppliedSeq,
+        });
+        break;
+      }
+    }
+  } catch (error) {
+    const latest = cachedTerminals.get(cacheKey);
+    const hasPendingReplayChunks =
+      (pendingOutput.get(cacheKey)?.chunks.length ?? 0) > 0;
+    if (latest && (reason === "live-gap" || hasPendingReplayChunks)) {
+      scheduleResumeRetry(workspaceId, sessionId, latest, reason);
+    }
+    logTerminalWarning("terminal-replay-resume-failed", {
+      cacheKey,
+      reason,
+      details: errorToMessage(error),
+    });
+  } finally {
+    const latest = cachedTerminals.get(cacheKey);
+    if (!latest) {
+      return;
+    }
+    latest.resumeInFlight = false;
+    drainPendingOutput(cacheKey, latest);
+    if (latest.isAttached && latest.outputQueue.length > 0) {
+      scheduleOutputFlush(cacheKey, latest, 0);
+    }
+  }
+}
+
+function queueOutput(workspaceId: string, sessionId: string, chunk: SequencedOutputChunk) {
+  const cacheKey = terminalCacheKey(workspaceId, sessionId);
+  const session = cachedTerminals.get(cacheKey);
+  if (!session || session.resumeInFlight) {
+    addPendingOutputChunk(cacheKey, chunk);
+    return;
+  }
+
+  const result = enqueueOutputChunk(cacheKey, session, chunk);
+  if (result === "duplicate") {
+    return;
+  }
+  if (result === "gap") {
+    addPendingOutputChunk(cacheKey, chunk);
+    if (session.resumeRetryTimer === undefined) {
+      void resumeSessionOutput(workspaceId, sessionId, "live-gap");
+    }
+    return;
   }
 
   if (session.isAttached) {
@@ -720,15 +978,43 @@ function drainPendingOutput(cacheKey: string, session: SessionTerminal) {
     }
     return;
   }
-  session.outputQueue.push(...buffered.chunks);
-  session.outputQueueChars += buffered.chars;
+
+  pendingOutput.delete(cacheKey);
   session.rendererDiagnostics.pendingOutputDroppedCharCount += buffered.droppedChars;
   session.rendererDiagnostics.pendingOutputDroppedChunkCount += buffered.droppedChunks;
   if (buffered.droppedChars > 0) {
     session.rendererDiagnostics.lastOutputDropAt = new Date().toISOString();
   }
-  capSessionOutputQueue(cacheKey, session);
-  pendingOutput.delete(cacheKey);
+
+  const ordered = [...buffered.chunks].sort((left, right) => left.seq - right.seq);
+  let gapIndex = -1;
+  for (let index = 0; index < ordered.length; index += 1) {
+    const result = enqueueOutputChunk(cacheKey, session, ordered[index]);
+    if (result === "duplicate") {
+      continue;
+    }
+    if (result === "gap") {
+      gapIndex = index;
+      break;
+    }
+  }
+
+  if (gapIndex >= 0) {
+    const remaining = ordered.slice(gapIndex);
+    const remainingChars = remaining.reduce((total, chunk) => total + chunk.data.length, 0);
+    pendingOutput.set(cacheKey, {
+      chunks: remaining,
+      chars: remainingChars,
+      droppedChars: 0,
+      droppedChunks: 0,
+    });
+    const parsed = parseTerminalCacheKey(cacheKey);
+    if (parsed && !session.resumeInFlight && session.resumeRetryTimer === undefined) {
+      void resumeSessionOutput(parsed.workspaceId, parsed.sessionId, "live-gap");
+    }
+    return;
+  }
+
   if (session.isAttached) {
     scheduleOutputFlush(cacheKey, session, 0);
   }
@@ -1236,8 +1522,8 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         container.appendChild(el);
       }
       cached.isAttached = true;
-      drainPendingOutput(cacheKey, cached);
       scheduleTerminalFit(workspaceId, sessionId, 0);
+      void resumeSessionOutput(workspaceId, sessionId, "attach");
       void refreshBackendRendererDiagnostics(workspaceId, sessionId);
       return;
     }
@@ -1318,8 +1604,6 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       // Home/End keys work natively on Linux/Windows — no extra mapping needed
       return true;
     });
-    const webglCleanup = setupWebglRenderer(cacheKey, terminal, rendererDiagnostics) ?? undefined;
-
     const writeDisposable = terminal.onData((data) => {
       void ipc.terminalWrite(workspaceId, sessionId, data).catch(() => undefined);
     });
@@ -1343,9 +1627,14 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       fitAddon,
       outputQueue: [],
       outputQueueChars: 0,
+      lastAppliedSeq: 0,
+      resumeInFlight: false,
+      resumeRetryAttempts: 0,
+      rendererMode: "canvas",
       flushInProgress: false,
       flushNonce: 0,
       flushStallCount: 0,
+      flushTimeoutWindowCount: 0,
       isAttached: true,
       debugSample: {
         chunks: 0,
@@ -1353,7 +1642,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         lastLogAt: Date.now(),
       },
       rendererDiagnostics,
-      webglCleanup,
+      webglCleanup: undefined,
       dispose: () => {
         if (disposed) {
           return;
@@ -1369,13 +1658,30 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       },
     };
     cachedTerminals.set(cacheKey, entry);
+    const webglCleanup = setupWebglRenderer(
+      cacheKey,
+      terminal,
+      rendererDiagnostics,
+      () => {
+        const latest = cachedTerminals.get(cacheKey);
+        if (!latest) {
+          return;
+        }
+        degradeRendererToCanvas(cacheKey, latest, "webgl-context-loss");
+      },
+    );
+    if (webglCleanup) {
+      entry.webglCleanup = webglCleanup;
+      entry.rendererMode = "webgl";
+      entry.rendererDegradedReason = undefined;
+    }
     void refreshBackendRendererDiagnostics(workspaceId, sessionId);
 
     // Synchronous fit — ensures PTY gets correct size before first shell output
     fitAddon.fit();
     sendResizeIfNeeded(workspaceId, sessionId, entry, terminal.cols, terminal.rows);
 
-    drainPendingOutput(cacheKey, entry);
+    void resumeSessionOutput(workspaceId, sessionId, "attach");
     scheduleTerminalFit(workspaceId, sessionId, 0);
   }, [workspaceId]);
 
@@ -1405,8 +1711,11 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       try {
         const [outputUn, exitUn] = await Promise.all([
           listenTerminalOutput(workspaceId, (event) => {
-            const cacheKey = terminalCacheKey(workspaceId, event.sessionId);
-            queueOutput(cacheKey, event.data);
+            queueOutput(workspaceId, event.sessionId, {
+              seq: event.seq,
+              ts: event.ts,
+              data: event.data,
+            });
           }),
           listenTerminalExit(workspaceId, (event) => {
             destroyCachedTerminal(workspaceId, event.sessionId);
