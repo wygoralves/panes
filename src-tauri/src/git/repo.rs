@@ -153,6 +153,12 @@ pub fn commit(repo_path: &str, message: &str) -> anyhow::Result<String> {
     Ok(hash.trim().to_string())
 }
 
+pub fn soft_reset_last_commit(repo_path: &str) -> anyhow::Result<()> {
+    run_git(repo_path, &["reset", "--soft", "HEAD~1"])
+        .context("failed to soft reset last commit")?;
+    Ok(())
+}
+
 pub fn fetch_repo(repo_path: &str) -> anyhow::Result<()> {
     run_git(repo_path, &["fetch", "--all", "--prune"]).context("failed to fetch from remotes")?;
     Ok(())

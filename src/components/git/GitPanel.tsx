@@ -4,9 +4,8 @@ import {
   RefreshCw,
   ArrowDown,
   ArrowUp,
-  Eye,
-  EyeOff,
   X,
+  Undo2,
   FileDiff,
   FolderTree,
   GitBranch as GitBranchIcon,
@@ -20,6 +19,7 @@ import { ipc, listenGitRepoChanged } from "../../lib/ipc";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { toast } from "../../stores/toastStore";
 import { Dropdown } from "../shared/Dropdown";
+import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { GitChangesView } from "./GitChangesView";
 import { GitBranchesView } from "./GitBranchesView";
 import { GitCommitsView } from "./GitCommitsView";
@@ -54,12 +54,13 @@ export function GitPanel() {
     fetchRemote,
     pullRemote,
     pushRemote,
+    softResetLastCommit,
     flushDrafts,
     clearError,
   } = useGitStore();
 
-  const [showDiff, setShowDiff] = useState(true);
   const [localError, setLocalError] = useState<string | undefined>();
+  const [softResetConfirmOpen, setSoftResetConfirmOpen] = useState(false);
   const [syncingAction, setSyncingAction] = useState<"fetch" | "pull" | "push" | null>(null);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -165,6 +166,21 @@ export function GitPanel() {
       setSyncingAction(null);
     }
   }, [activeRepo, syncDisabled, invalidateRepoCache, refresh, fetchRemote]);
+
+  const onSoftResetLastCommit = useCallback(async () => {
+    if (!activeRepo || syncDisabled) {
+      setSoftResetConfirmOpen(false);
+      return;
+    }
+    setSoftResetConfirmOpen(false);
+    setLocalError(undefined);
+    try {
+      await softResetLastCommit(activeRepo.path);
+      toast.success("Soft reset completed");
+    } catch (e) {
+      setLocalError(String(e));
+    }
+  }, [activeRepo, syncDisabled, softResetLastCommit]);
 
   // Auto-activate all repos when none are active
   useEffect(() => {
@@ -368,7 +384,7 @@ export function GitPanel() {
           {activeView === "changes" && (
             <GitChangesView
               repo={activeRepo}
-              showDiff={showDiff}
+              showDiff
               onError={setLocalError}
             />
           )}
@@ -404,6 +420,15 @@ export function GitPanel() {
         </div>
       )}
 
+      <ConfirmDialog
+        open={softResetConfirmOpen}
+        title="Soft reset last commit"
+        message="This will undo the latest commit and keep all its changes staged. This cannot be undone from Panes."
+        confirmLabel="Soft reset"
+        onConfirm={() => void onSoftResetLastCommit()}
+        onCancel={() => setSoftResetConfirmOpen(false)}
+      />
+
       {moreMenuOpen &&
         createPortal(
           <div
@@ -435,19 +460,18 @@ export function GitPanel() {
               <span style={{ flex: 1 }}>Push</span>
               <span className="git-sync-counter">↑{pushCount}</span>
             </button>
-            {activeView === "changes" && (
-              <button
-                type="button"
-                className="git-action-menu-item"
-                onClick={() => {
-                  closeMoreMenu();
-                  setShowDiff((v) => !v);
-                }}
-              >
-                {showDiff ? <EyeOff size={13} /> : <Eye size={13} />}
-                {showDiff ? "Hide diff preview" : "Show diff preview"}
-              </button>
-            )}
+            <button
+              type="button"
+              className="git-action-menu-item git-action-menu-item-danger-hover"
+              onClick={() => {
+                closeMoreMenu();
+                setSoftResetConfirmOpen(true);
+              }}
+              disabled={syncDisabled}
+            >
+              <Undo2 size={13} />
+              <span style={{ flex: 1 }}>Soft reset last commit</span>
+            </button>
           </div>,
           document.body,
         )}

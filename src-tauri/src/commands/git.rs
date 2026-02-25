@@ -86,6 +86,18 @@ pub async fn commit(
 }
 
 #[tauri::command]
+pub async fn soft_reset_last_commit(
+    _state: State<'_, AppState>,
+    repo_path: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        repo::soft_reset_last_commit(&repo_path).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub async fn fetch_git(_state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || repo::fetch_repo(&repo_path).map_err(err_to_string))
         .await

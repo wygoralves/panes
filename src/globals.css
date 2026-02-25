@@ -1199,6 +1199,11 @@ button, input, textarea, select {
   background: rgba(248, 113, 113, 0.1);
 }
 
+.git-action-menu-item-danger-hover:not(:disabled):hover {
+  color: var(--danger);
+  background: rgba(248, 113, 113, 0.1);
+}
+
 /* Chat/Terminal content area */
 .chat-terminal-content {
   flex: 1;
