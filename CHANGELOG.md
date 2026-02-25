@@ -1,5 +1,17 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.15.0...vnull) (2026-02-25)
+
+### Features
+
+* add soft reset to git panel ([e729fda](https://github.com/wygoralves/panes/commit/e729fda780b5b8a998c3b1e4dbe9168a3b853bac))
+* improve terminal persistance stability between workspaces ([30fd0c1](https://github.com/wygoralves/panes/commit/30fd0c18f3d60e11b113d5b9cf4f421e554e912a))
+* preserve selected repo when moving across workspaces ([ef32c1f](https://github.com/wygoralves/panes/commit/ef32c1f1b16a3aa4d6374e85b1d10a15ec8f0291))
+
+### Bug Fixes
+
+* stabilize terminal bootstrap across workspace switches ([b0966bc](https://github.com/wygoralves/panes/commit/b0966bc28c63be4b81dbd7876d05e427a3182d05))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.14.0...vnull) (2026-02-25)
 
 ### Features
