@@ -104,6 +104,7 @@ pub fn run() {
             commands::git::unstage_files,
             commands::git::discard_files,
             commands::git::commit,
+            commands::git::soft_reset_last_commit,
             commands::git::fetch_git,
             commands::git::pull_git,
             commands::git::push_git,
