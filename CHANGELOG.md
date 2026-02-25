@@ -1,5 +1,17 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.14.0...vnull) (2026-02-25)
+
+### Features
+
+* improve terminal tab naming logic for native harnesses ([cc5830f](https://github.com/wygoralves/panes/commit/cc5830f8cd9cdeab97f48832b385d5b896b9f551))
+* improve UI of opening new projects ([a492ba2](https://github.com/wygoralves/panes/commit/a492ba2b99bed67e753d62c63c206a2086fe89d6))
+
+### Bug Fixes
+
+* fix race conditions for terminal and editor views not triggering on some cases ([1b2bcb7](https://github.com/wygoralves/panes/commit/1b2bcb74c968b6a22b6c56c962f1343b4e0a9788))
+* fix terminal initialization sync on app opening ([7abcb5c](https://github.com/wygoralves/panes/commit/7abcb5cc3ad0b5d695a2ab671fdb083a62b42043))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.13.1...vnull) (2026-02-24)
 
 ### Features
