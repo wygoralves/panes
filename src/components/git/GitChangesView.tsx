@@ -16,7 +16,6 @@ import { useGitStore } from "../../stores/gitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useFileStore } from "../../stores/fileStore";
 import { useTerminalStore } from "../../stores/terminalStore";
-import { ipc } from "../../lib/ipc";
 import { parseDiff, LINE_CLASS } from "../../lib/parseDiff";
 import type { Repo, GitFileStatus } from "../../types";
 
@@ -192,10 +191,11 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     selectedFileStaged,
     selectFile,
     stage,
+    stageMany,
     unstage,
+    unstageMany,
     discardFiles,
     commit,
-    refresh,
     drafts,
     setCommitMessageDraft,
     pushCommitHistory,
@@ -290,11 +290,10 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     setLoadingKey("stage-all");
     try {
       onError(undefined);
-      await ipc.stageFiles(
+      await stageMany(
         repo.path,
         unstagedFiles.map((f) => f.path),
       );
-      await refresh(repo.path);
     } catch (e) {
       onError(String(e));
     } finally {
@@ -307,11 +306,10 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     setLoadingKey("unstage-all");
     try {
       onError(undefined);
-      await ipc.unstageFiles(
+      await unstageMany(
         repo.path,
         stagedFiles.map((f) => f.path),
       );
-      await refresh(repo.path);
     } catch (e) {
       onError(String(e));
     } finally {
@@ -330,11 +328,10 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     try {
       onError(undefined);
       if (staged) {
-        await ipc.unstageFiles(repo.path, directoryFiles);
+        await unstageMany(repo.path, directoryFiles);
       } else {
-        await ipc.stageFiles(repo.path, directoryFiles);
+        await stageMany(repo.path, directoryFiles);
       }
-      await refresh(repo.path);
     } catch (e) {
       onError(String(e));
     } finally {

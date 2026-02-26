@@ -49,6 +49,9 @@ export function GitPanel() {
     invalidateRepoCache,
     loading,
     error,
+    remoteSyncAction,
+    remoteSyncRepoPath,
+    setActiveRepoPath,
     activeView,
     setActiveView,
     fetchRemote,
@@ -61,7 +64,6 @@ export function GitPanel() {
 
   const [localError, setLocalError] = useState<string | undefined>();
   const [softResetConfirmOpen, setSoftResetConfirmOpen] = useState(false);
-  const [syncingAction, setSyncingAction] = useState<"fetch" | "pull" | "push" | null>(null);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const moreTriggerRef = useRef<HTMLButtonElement>(null);
@@ -113,17 +115,21 @@ export function GitPanel() {
 
   const activeRepoPath = activeRepo?.path ?? null;
   const effectiveError = localError ?? error;
-  const syncDisabled = !activeRepo || loading || syncingAction !== null;
+  const isActiveRepoSyncing = Boolean(
+    activeRepoPath &&
+    remoteSyncAction &&
+    remoteSyncRepoPath === activeRepoPath,
+  );
+  const syncDisabled = !activeRepo || loading || isActiveRepoSyncing;
   const pushCount = status?.ahead ?? 0;
   const pullCount = status?.behind ?? 0;
 
   const runSyncAction = useCallback(async (action: "fetch" | "pull" | "push") => {
-    if (!activeRepo) {
+    if (!activeRepo || isActiveRepoSyncing) {
       return;
     }
 
     setLocalError(undefined);
-    setSyncingAction(action);
     try {
       if (action === "fetch") {
         await fetchRemote(activeRepo.path);
@@ -139,10 +145,8 @@ export function GitPanel() {
       toast.success("Pushed to remote");
     } catch (syncError) {
       setLocalError(String(syncError));
-    } finally {
-      setSyncingAction(null);
     }
-  }, [activeRepo, fetchRemote, pullRemote, pushRemote]);
+  }, [activeRepo, fetchRemote, isActiveRepoSyncing, pullRemote, pushRemote]);
 
   const runSyncActionFromMore = useCallback((action: "fetch" | "pull" | "push") => {
     closeMoreMenu();
@@ -151,21 +155,14 @@ export function GitPanel() {
 
   const onSyncClick = useCallback(async () => {
     if (!activeRepo || syncDisabled) return;
-    setSyncingAction("fetch");
     try {
       setLocalError(undefined);
-      invalidateRepoCache(activeRepo.path);
-      await Promise.all([
-        refresh(activeRepo.path, { force: true }),
-        fetchRemote(activeRepo.path),
-      ]);
+      await fetchRemote(activeRepo.path);
       toast.success("Refreshed");
     } catch (e) {
       setLocalError(String(e));
-    } finally {
-      setSyncingAction(null);
     }
-  }, [activeRepo, syncDisabled, invalidateRepoCache, refresh, fetchRemote]);
+  }, [activeRepo, syncDisabled, fetchRemote]);
 
   const onSoftResetLastCommit = useCallback(async () => {
     if (!activeRepo || syncDisabled) {
@@ -195,11 +192,12 @@ export function GitPanel() {
   }, [activeWorkspaceId, repos, setWorkspaceGitActiveRepos, setActiveRepo]);
 
   useEffect(() => {
+    setActiveRepoPath(activeRepoPath);
     if (!activeRepoPath) {
       return;
     }
     void refresh(activeRepoPath);
-  }, [activeRepoPath, refresh]);
+  }, [activeRepoPath, refresh, setActiveRepoPath]);
 
   useEffect(() => {
     if (!activeRepoPath) return;
@@ -220,6 +218,15 @@ export function GitPanel() {
 
     async function flushRefresh() {
       if (disposed) {
+        return;
+      }
+
+      const syncState = useGitStore.getState();
+      const syncInProgressForRepo =
+        syncState.remoteSyncRepoPath === repoPath &&
+        syncState.remoteSyncAction !== null;
+      if (syncInProgressForRepo) {
+        watcherRefreshQueuedRef.current = true;
         return;
       }
 
@@ -274,6 +281,26 @@ export function GitPanel() {
       unlisten?.();
     };
   }, [activeRepoPath, invalidateRepoCache, refresh]);
+
+  useEffect(() => {
+    if (!activeRepoPath || isActiveRepoSyncing) {
+      return;
+    }
+    if (!watcherRefreshQueuedRef.current || watcherRefreshInFlightRef.current) {
+      return;
+    }
+
+    watcherRefreshQueuedRef.current = false;
+    watcherRefreshInFlightRef.current = true;
+    void (async () => {
+      try {
+        invalidateRepoCache(activeRepoPath);
+        await refresh(activeRepoPath, { force: true });
+      } finally {
+        watcherRefreshInFlightRef.current = false;
+      }
+    })();
+  }, [activeRepoPath, invalidateRepoCache, isActiveRepoSyncing, refresh]);
 
   const repoOptions = useMemo(
     () => repos.map((repo) => ({ value: repo.id, label: repo.name })),
@@ -332,10 +359,10 @@ export function GitPanel() {
           type="button"
           className="git-toolbar-btn no-drag"
           disabled={syncDisabled}
-          title={loading || syncingAction !== null ? "Syncing..." : "Refresh & fetch"}
+          title={isActiveRepoSyncing ? "Syncing..." : "Refresh & fetch"}
           onClick={() => void onSyncClick()}
         >
-          <RefreshCw size={14} className={loading || syncingAction !== null ? "git-spin" : ""} />
+          <RefreshCw size={14} className={isActiveRepoSyncing ? "git-spin" : ""} />
         </button>
 
         <button
@@ -446,7 +473,7 @@ export function GitPanel() {
               onClick={() => runSyncActionFromMore("pull")}
               disabled={syncDisabled}
             >
-              <ArrowDown size={13} className={syncingAction === "pull" ? "git-spin" : ""} />
+              <ArrowDown size={13} className={isActiveRepoSyncing && remoteSyncAction === "pull" ? "git-spin" : ""} />
               <span style={{ flex: 1 }}>Pull</span>
               <span className="git-sync-counter">↓{pullCount}</span>
             </button>
@@ -456,7 +483,7 @@ export function GitPanel() {
               onClick={() => runSyncActionFromMore("push")}
               disabled={syncDisabled}
             >
-              <ArrowUp size={13} className={syncingAction === "push" ? "git-spin" : ""} />
+              <ArrowUp size={13} className={isActiveRepoSyncing && remoteSyncAction === "push" ? "git-spin" : ""} />
               <span style={{ flex: 1 }}>Push</span>
               <span className="git-sync-counter">↑{pushCount}</span>
             </button>
