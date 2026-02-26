@@ -2251,6 +2251,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
             ref={newTabBtnRef}
             type="button"
             className="terminal-add-btn"
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               if (installedHarnesses.length > 0) {
                 setNewTabMenuOpen((v) => !v);
