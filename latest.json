@@ -1,0 +1,15 @@
+{
+  "version": "0.17.0",
+  "notes": "## [](https://github.com/wygoralves/panes/compare/v0.16.0...vnull) (2026-02-26)\n\n### Features\n\n* improve focus logic on split panes on tui ([13c8c39](https://github.com/wygoralves/panes/commit/13c8c39e8f91827238c0cb0e5455b7db545d73cd))",
+  "pub_date": "2026-02-26T01:19:30Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cXBzV1lhQ2E4cTJxMU5pb25Jb2crVnBzd25lUVIxMklQRjI3VVU2akNOWnA2RStBOUZMWGNzSS9mUy9sSlFTV242VnR2YlZkcENWRWljYjhNYzlveVFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcyMDY5MjY0CWZpbGU6UGFuZXMuYXBwLnRhci5negpXcFk0aVVTdkw0Ty96K3J2cHJpOUN6UnJ1UFBKSFFOYiszNzM0cHhyZzZvQmhYcFBnQmtNdGtBR3RQUC9kbDRuZW5ZR3dnVFJwUnJwbVViQitEYlRBQT09Cg==",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.17.0/Panes.app.tar.gz"
+    },
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWhIRDhSUTdheHdPWEc5U3VvL0oxMkdjaU9TWnQ2d0tiTE5JSGFLaDBOdzQwTXMwRFIzdkhWVWNBRTNTZHdCQnlIWWJFaUNLS0NHVmc1NHFSZS80b3dJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcyMDY5Mjk1CWZpbGU6UGFuZXNfMC4xNy4wX2FtZDY0LkFwcEltYWdlCnh1eEJLYmJFbzdocU1TbWFzWUZYVVJQeGx6NVRTOTZkNDJkMXlPV0YrOUo5UW5WQTk5eEhwSGdJMFN3ZFdUam5nQ0I1c1E3dGI5SnhWVFVCKytwaURBPT0K",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.17.0/Panes_0.17.0_amd64.AppImage"
+    }
+  }
+}
