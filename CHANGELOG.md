@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.16.0...vnull) (2026-02-26)
+
+### Features
+
+* improve focus logic on split panes on tui ([13c8c39](https://github.com/wygoralves/panes/commit/13c8c39e8f91827238c0cb0e5455b7db545d73cd))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.15.0...vnull) (2026-02-25)
 
 ### Features
