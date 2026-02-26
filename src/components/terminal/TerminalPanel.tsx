@@ -147,6 +147,19 @@ interface SessionTerminal {
   dispose: () => void;
 }
 
+interface InternalCoreBrowserService {
+  _isFocused?: boolean;
+  _cachedIsFocused?: boolean;
+}
+
+interface InternalTerminalCore {
+  _coreBrowserService?: InternalCoreBrowserService;
+}
+
+interface InternalTerminal {
+  _core?: InternalTerminalCore;
+}
+
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 36;
 const FIT_DEBOUNCE_MS = 80;
@@ -201,6 +214,20 @@ function terminalWorkspacePrefix(workspaceId: string): string {
   return `${workspaceId}::`;
 }
 
+function forEachWorkspaceCachedTerminal(
+  workspaceId: string,
+  callback: (sessionId: string, session: SessionTerminal) => void,
+) {
+  const workspacePrefix = terminalWorkspacePrefix(workspaceId);
+  for (const [cacheKey, session] of cachedTerminals.entries()) {
+    if (!cacheKey.startsWith(workspacePrefix)) {
+      continue;
+    }
+    const sessionId = cacheKey.slice(workspacePrefix.length);
+    callback(sessionId, session);
+  }
+}
+
 function parseTerminalCacheKey(
   cacheKey: string,
 ): { workspaceId: string; sessionId: string } | null {
@@ -212,6 +239,25 @@ function parseTerminalCacheKey(
     workspaceId: cacheKey.slice(0, delimiter),
     sessionId: cacheKey.slice(delimiter + 2),
   };
+}
+
+function refreshTerminalCursor(session: SessionTerminal) {
+  const lastRow = session.terminal.rows - 1;
+  if (lastRow < 0) {
+    return;
+  }
+  session.terminal.refresh(0, lastRow);
+}
+
+function setTerminalFocusState(session: SessionTerminal, focused: boolean) {
+  session.terminal.element?.classList.toggle("focus", focused);
+
+  const internal = session.terminal as unknown as InternalTerminal;
+  const coreBrowserService = internal._core?._coreBrowserService;
+  if (coreBrowserService) {
+    coreBrowserService._isFocused = focused;
+    coreBrowserService._cachedIsFocused = undefined;
+  }
 }
 
 function logTerminalDebug(
@@ -1108,33 +1154,53 @@ interface SplitPaneViewProps {
   node: SplitNode;
   workspaceId: string;
   groupId: string;
-  focusedSessionId: string | null;
+  activeIndicatorSessionId: string | null;
   containerRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
   onFocus: (sessionId: string) => void;
+  onTerminalFocus: (sessionId: string) => void;
+  onTerminalBlur: (sessionId: string) => void;
   onClose: (sessionId: string) => void;
   onRatioChange: (containerId: string, ratio: number) => void;
   ensureTerminal: (sessionId: string) => void;
   showCloseButton: boolean;
 }
 
+function isXtermFocusTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && target.classList.contains("xterm-helper-textarea");
+}
+
 function SplitPaneView({
   node,
   workspaceId,
   groupId,
-  focusedSessionId,
+  activeIndicatorSessionId,
   containerRefs,
   onFocus,
+  onTerminalFocus,
+  onTerminalBlur,
   onClose,
   onRatioChange,
   ensureTerminal,
   showCloseButton,
 }: SplitPaneViewProps) {
   if (node.type === "leaf") {
-    const isFocused = node.sessionId === focusedSessionId;
+    const isFocused = node.sessionId === activeIndicatorSessionId;
     return (
       <div
         className={`terminal-leaf-pane${isFocused ? " terminal-leaf-pane-focused" : ""}`}
         onMouseDown={() => onFocus(node.sessionId)}
+        onFocusCapture={(event) => {
+          if (!isXtermFocusTarget(event.target)) {
+            return;
+          }
+          onTerminalFocus(node.sessionId);
+        }}
+        onBlurCapture={(event) => {
+          if (!isXtermFocusTarget(event.target)) {
+            return;
+          }
+          onTerminalBlur(node.sessionId);
+        }}
       >
         <div
           ref={(el) => {
@@ -1181,9 +1247,11 @@ function SplitPaneView({
       container={node}
       workspaceId={workspaceId}
       groupId={groupId}
-      focusedSessionId={focusedSessionId}
+      activeIndicatorSessionId={activeIndicatorSessionId}
       containerRefs={containerRefs}
       onFocus={onFocus}
+      onTerminalFocus={onTerminalFocus}
+      onTerminalBlur={onTerminalBlur}
       onClose={onClose}
       onRatioChange={onRatioChange}
       ensureTerminal={ensureTerminal}
@@ -1195,9 +1263,11 @@ interface SplitContainerViewProps {
   container: SplitContainerType;
   workspaceId: string;
   groupId: string;
-  focusedSessionId: string | null;
+  activeIndicatorSessionId: string | null;
   containerRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
   onFocus: (sessionId: string) => void;
+  onTerminalFocus: (sessionId: string) => void;
+  onTerminalBlur: (sessionId: string) => void;
   onClose: (sessionId: string) => void;
   onRatioChange: (containerId: string, ratio: number) => void;
   ensureTerminal: (sessionId: string) => void;
@@ -1207,9 +1277,11 @@ function SplitContainerView({
   container,
   workspaceId,
   groupId,
-  focusedSessionId,
+  activeIndicatorSessionId,
   containerRefs,
   onFocus,
+  onTerminalFocus,
+  onTerminalBlur,
   onClose,
   onRatioChange,
   ensureTerminal,
@@ -1274,9 +1346,11 @@ function SplitContainerView({
           node={container.children[0]}
           workspaceId={workspaceId}
           groupId={groupId}
-          focusedSessionId={focusedSessionId}
+          activeIndicatorSessionId={activeIndicatorSessionId}
           containerRefs={containerRefs}
           onFocus={onFocus}
+          onTerminalFocus={onTerminalFocus}
+          onTerminalBlur={onTerminalBlur}
           onClose={onClose}
           onRatioChange={onRatioChange}
           ensureTerminal={ensureTerminal}
@@ -1289,9 +1363,11 @@ function SplitContainerView({
           node={container.children[1]}
           workspaceId={workspaceId}
           groupId={groupId}
-          focusedSessionId={focusedSessionId}
+          activeIndicatorSessionId={activeIndicatorSessionId}
           containerRefs={containerRefs}
           onFocus={onFocus}
+          onTerminalFocus={onTerminalFocus}
+          onTerminalBlur={onTerminalBlur}
           onClose={onClose}
           onRatioChange={onRatioChange}
           ensureTerminal={ensureTerminal}
@@ -1341,6 +1417,22 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const ctxMenuRef = useRef<HTMLDivElement>(null);
   const [listenersReadyWorkspaceId, setListenersReadyWorkspaceId] = useState<string | null>(null);
   const bootstrapCreateInFlightWorkspaceRef = useRef<string | null>(null);
+  const [domFocusedSessionId, setDomFocusedSessionId] = useState<string | null>(null);
+  const focusRetryTimerRef = useRef<number | null>(null);
+
+  const clearFocusRetryTimer = useCallback(() => {
+    if (focusRetryTimerRef.current !== null) {
+      window.clearTimeout(focusRetryTimerRef.current);
+      focusRetryTimerRef.current = null;
+    }
+  }, []);
+
+  const syncCursorIndicator = useCallback(() => {
+    forEachWorkspaceCachedTerminal(workspaceId, (_sessionId, session) => {
+      session.terminal.options.cursorInactiveStyle = "none";
+      session.terminal.options.cursorBlink = true;
+    });
+  }, [workspaceId]);
 
   useEffect(() => {
     if (renamingGroupId) {
@@ -1369,6 +1461,37 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       document.removeEventListener("keydown", handleClose);
     };
   }, [ctxMenu]);
+
+  useEffect(() => {
+    setDomFocusedSessionId(null);
+  }, [workspaceId]);
+
+  useEffect(() => {
+    syncCursorIndicator();
+  }, [sessions.length, syncCursorIndicator]);
+
+  useEffect(() => {
+    if (!domFocusedSessionId) return;
+    if (sessions.some((session) => session.id === domFocusedSessionId)) {
+      return;
+    }
+    setDomFocusedSessionId(null);
+  }, [domFocusedSessionId, sessions]);
+
+  useEffect(() => {
+    const handleWindowBlur = () => {
+      forEachWorkspaceCachedTerminal(workspaceId, (_sessionId, session) => {
+        session.terminal.blur();
+        setTerminalFocusState(session, false);
+        refreshTerminalCursor(session);
+      });
+      setDomFocusedSessionId(null);
+    };
+    window.addEventListener("blur", handleWindowBlur);
+    return () => window.removeEventListener("blur", handleWindowBlur);
+  }, [workspaceId]);
+
+  useEffect(() => () => clearFocusRetryTimer(), [clearFocusRetryTimer]);
 
   // ── Auto-detect harness in terminal tabs ──────────────────────────
   const updateGroupHarness = useTerminalStore((state) => state.updateGroupHarness);
@@ -1503,6 +1626,76 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   // Terminal instances live in the module-level cachedTerminals map.
   const containerRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
+  const focusTerminalSession = useCallback((sessionId: string | null) => {
+    clearFocusRetryTimer();
+    if (!sessionId) {
+      return;
+    }
+    forEachWorkspaceCachedTerminal(workspaceId, (currentSessionId, session) => {
+      if (currentSessionId !== sessionId) {
+        session.terminal.blur();
+        setTerminalFocusState(session, false);
+        refreshTerminalCursor(session);
+      }
+    });
+
+    let attempts = 0;
+    const maxAttempts = 12;
+    const tryFocus = () => {
+      const cacheKey = terminalCacheKey(workspaceId, sessionId);
+      const cached = cachedTerminals.get(cacheKey);
+      if (cached?.isAttached) {
+        focusRetryTimerRef.current = null;
+        cached.terminal.focus();
+        setTerminalFocusState(cached, true);
+        refreshTerminalCursor(cached);
+        return;
+      }
+      if (attempts >= maxAttempts) {
+        focusRetryTimerRef.current = null;
+        return;
+      }
+      attempts += 1;
+      focusRetryTimerRef.current = window.setTimeout(tryFocus, 16);
+    };
+
+    tryFocus();
+  }, [clearFocusRetryTimer, workspaceId]);
+
+  const setTerminalSessionFocus = useCallback((sessionId: string) => {
+    setFocusedSession(workspaceId, sessionId);
+    focusTerminalSession(sessionId);
+  }, [focusTerminalSession, setFocusedSession, workspaceId]);
+
+  const handleTerminalDomFocus = useCallback((sessionId: string) => {
+    setDomFocusedSessionId(sessionId);
+    const currentFocusedSessionId =
+      useTerminalStore.getState().workspaces[workspaceId]?.focusedSessionId ?? null;
+    if (currentFocusedSessionId !== sessionId) {
+      setFocusedSession(workspaceId, sessionId);
+    }
+    forEachWorkspaceCachedTerminal(workspaceId, (currentSessionId, session) => {
+      if (currentSessionId !== sessionId) {
+        setTerminalFocusState(session, false);
+        refreshTerminalCursor(session);
+      }
+    });
+    const cached = cachedTerminals.get(terminalCacheKey(workspaceId, sessionId));
+    if (cached) {
+      setTerminalFocusState(cached, true);
+      refreshTerminalCursor(cached);
+    }
+  }, [setFocusedSession, workspaceId]);
+
+  const handleTerminalDomBlur = useCallback((sessionId: string) => {
+    setDomFocusedSessionId((current) => (current === sessionId ? null : current));
+    const cached = cachedTerminals.get(terminalCacheKey(workspaceId, sessionId));
+    if (cached) {
+      setTerminalFocusState(cached, false);
+      refreshTerminalCursor(cached);
+    }
+  }, [workspaceId]);
+
   const ensureTerminal = useCallback((sessionId: string) => {
     const container = containerRefs.current.get(sessionId);
     if (!container) {
@@ -1513,6 +1706,8 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     // Check module-level cache first — re-attach if the instance already exists
     const cached = cachedTerminals.get(cacheKey);
     if (cached) {
+      cached.terminal.options.cursorInactiveStyle = "none";
+      cached.terminal.options.cursorBlink = true;
       const el = cached.terminal.element;
       if (el && el.parentElement !== container) {
         // Move xterm DOM element to the new container (preserves scrollback)
@@ -1533,6 +1728,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       allowProposedApi: true,
       convertEol: false,
       cursorBlink: true,
+      cursorInactiveStyle: "none",
       fontFamily: '"JetBrains Mono", monospace',
       fontSize: 12,
       lineHeight: 1.3,
@@ -1789,6 +1985,16 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     }
   }, [sessions, ensureTerminal, workspaceId]);
 
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    if (layoutMode !== "split" && layoutMode !== "terminal") {
+      return;
+    }
+    focusTerminalSession(focusedSessionId);
+  }, [activeGroupId, focusTerminalSession, focusedSessionId, isOpen, layoutMode, sessions.length]);
+
   // Fit when active group changes
   useEffect(() => {
     fitActiveGroup();
@@ -1895,15 +2101,15 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
   const handleSplit = useCallback(
     (direction: "horizontal" | "vertical") => {
-      if (!focusedSessionId) return;
+      if (!domFocusedSessionId) return;
       const active = cachedTerminals.get(
-        terminalCacheKey(workspaceId, focusedSessionId),
+        terminalCacheKey(workspaceId, domFocusedSessionId),
       );
       const cols = active?.terminal.cols ?? DEFAULT_COLS;
       const rows = active?.terminal.rows ?? DEFAULT_ROWS;
-      void splitSession(workspaceId, focusedSessionId, direction, cols, rows);
+      void splitSession(workspaceId, domFocusedSessionId, direction, cols, rows);
     },
-    [focusedSessionId, splitSession, workspaceId],
+    [domFocusedSessionId, splitSession, workspaceId],
   );
 
   const resolveSessionIdForDiagnostics = useCallback((groupId?: string): string | null => {
@@ -2056,11 +2262,12 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
           >
             <Plus size={13} />
           </button>
-          {focusedSessionId && (
+          {domFocusedSessionId && (
             <>
               <button
                 type="button"
                 className="terminal-add-btn"
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => handleSplit("vertical")}
                 title="Split right"
               >
@@ -2069,6 +2276,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
               <button
                 type="button"
                 className="terminal-add-btn"
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => handleSplit("horizontal")}
                 title="Split down"
               >
@@ -2127,9 +2335,11 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                   node={group.root}
                   workspaceId={workspaceId}
                   groupId={group.id}
-                  focusedSessionId={focusedSessionId}
+                  activeIndicatorSessionId={domFocusedSessionId}
                   containerRefs={containerRefs}
-                  onFocus={(id) => setFocusedSession(workspaceId, id)}
+                  onFocus={setTerminalSessionFocus}
+                  onTerminalFocus={handleTerminalDomFocus}
+                  onTerminalBlur={handleTerminalDomBlur}
                   onClose={(id) => void closeSession(workspaceId, id)}
                   onRatioChange={(containerId, ratio) =>
                     updateGroupRatio(workspaceId, group.id, containerId, ratio)
