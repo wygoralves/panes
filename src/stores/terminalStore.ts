@@ -23,6 +23,41 @@ export function collectSessionIds(node: SplitNode): string[] {
   return [...collectSessionIds(node.children[0]), ...collectSessionIds(node.children[1])];
 }
 
+// Build a balanced binary SplitNode tree for N sessions.
+// 1 → leaf, 2–3 → vertical columns, 4+ → horizontal rows of vertical columns (2×2 grid for 4).
+// Direction semantics: "vertical" → side-by-side (row), "horizontal" → stacked (column).
+export function buildGridSplitTree(sessionIds: string[]): SplitNode {
+  if (sessionIds.length === 0) throw new Error("buildGridSplitTree requires at least 1 session");
+  if (sessionIds.length === 1) return { type: "leaf", sessionId: sessionIds[0] };
+  if (sessionIds.length <= 3) return buildVerticalColumn(sessionIds);
+
+  // 4+ sessions: split into two rows (horizontal), each row is a vertical column
+  const topCount = Math.ceil(sessionIds.length / 2);
+  const top = sessionIds.slice(0, topCount);
+  const bottom = sessionIds.slice(topCount);
+  return {
+    type: "split",
+    id: crypto.randomUUID(),
+    direction: "horizontal",
+    ratio: top.length / sessionIds.length,
+    children: [buildVerticalColumn(top), buildVerticalColumn(bottom)],
+  };
+}
+
+function buildVerticalColumn(sessionIds: string[]): SplitNode {
+  if (sessionIds.length === 1) return { type: "leaf", sessionId: sessionIds[0] };
+  return {
+    type: "split",
+    id: crypto.randomUUID(),
+    direction: "vertical",
+    ratio: 1 / sessionIds.length,
+    children: [
+      { type: "leaf", sessionId: sessionIds[0] },
+      buildVerticalColumn(sessionIds.slice(1)),
+    ],
+  };
+}
+
 function replaceLeafInTree(node: SplitNode, targetId: string, replacement: SplitNode): SplitNode {
   if (node.type === "leaf") return node.sessionId === targetId ? replacement : node;
   return {
@@ -126,6 +161,7 @@ interface WorkspaceTerminalState {
   groups: TerminalGroup[];
   activeGroupId: string | null;
   focusedSessionId: string | null;
+  broadcastGroupId: string | null;
   loading: boolean;
   error?: string;
 }
@@ -152,6 +188,13 @@ interface TerminalState {
   renameGroup: (workspaceId: string, groupId: string, name: string) => void;
   reorderGroups: (workspaceId: string, fromIndex: number, toIndex: number) => void;
   updateGroupHarness: (workspaceId: string, groupId: string, harnessId: string | null, harnessName: string | null, autoDetected: boolean) => void;
+  toggleBroadcast: (workspaceId: string, groupId: string) => void;
+  createMultiSessionGroup: (
+    workspaceId: string,
+    harnesses: Array<{ harnessId: string; name: string }>,
+    cols?: number,
+    rows?: number,
+  ) => Promise<{ groupId: string; sessionIds: string[] } | null>;
 }
 
 function defaultWorkspaceState(): WorkspaceTerminalState {
@@ -165,6 +208,7 @@ function defaultWorkspaceState(): WorkspaceTerminalState {
     groups: [],
     activeGroupId: null,
     focusedSessionId: null,
+    broadcastGroupId: null,
     loading: false,
     error: undefined,
   };
@@ -507,6 +551,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         workspace.focusedSessionId === sessionId ? null : workspace.focusedSessionId,
       );
 
+      const broadcastGroupId =
+        workspace.broadcastGroupId && groups.some((g) => g.id === workspace.broadcastGroupId)
+          ? workspace.broadcastGroupId
+          : null;
+
       return {
         workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
           sessions,
@@ -514,6 +563,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           groups,
           activeGroupId,
           focusedSessionId: focusedId,
+          broadcastGroupId,
           ...(noSessionsLeft && isTerminalMode ? { layoutMode: "chat" as LayoutMode } : {}),
         }),
       };
@@ -662,5 +712,93 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         workspaces: mergeWorkspaceState(state.workspaces, workspaceId, { groups }),
       };
     });
+  },
+
+  toggleBroadcast: (workspaceId, groupId) => {
+    set((state) => {
+      const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
+      const next = current.broadcastGroupId === groupId ? null : groupId;
+      return {
+        workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+          broadcastGroupId: next,
+        }),
+      };
+    });
+  },
+
+  createMultiSessionGroup: async (workspaceId, harnesses, cols = DEFAULT_COLS, rows = DEFAULT_ROWS) => {
+    if (harnesses.length === 0) return null;
+
+    set((state) => ({
+      workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+        isOpen: true,
+        loading: true,
+        error: undefined,
+      }),
+    }));
+
+    try {
+      const creationResults = await Promise.allSettled(
+        harnesses.map(() => ipc.terminalCreateSession(workspaceId, cols, rows)),
+      );
+      const created = creationResults
+        .filter((result): result is PromiseFulfilledResult<TerminalSession> => result.status === "fulfilled")
+        .map((result) => result.value);
+      const firstFailure = creationResults.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (firstFailure) {
+        await Promise.allSettled(
+          created.map((session) => ipc.terminalCloseSession(workspaceId, session.id)),
+        );
+        throw firstFailure.reason;
+      }
+
+      const sessionIds = created.map((s) => s.id);
+      const root = buildGridSplitTree(sessionIds);
+
+      const groupId = crypto.randomUUID();
+
+      set((state) => {
+        const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
+        const groupName = harnesses.length === 1
+          ? nextHarnessName(harnesses[0].name, harnesses[0].harnessId, groupId, current.groups)
+          : `${harnesses.length} agents`;
+        const newGroup: TerminalGroup = {
+          id: groupId,
+          root,
+          name: groupName,
+          harnessId: harnesses[0].harnessId,
+          autoDetectedHarness: false,
+        };
+        const sessions = [
+          ...current.sessions.filter((s) => !sessionIds.includes(s.id)),
+          ...created,
+        ];
+        const groups = [...current.groups, newGroup];
+        return {
+          workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+            isOpen: true,
+            sessions,
+            groups,
+            activeGroupId: groupId,
+            activeSessionId: sessionIds[0],
+            focusedSessionId: sessionIds[0],
+            loading: false,
+            error: undefined,
+          }),
+        };
+      });
+
+      return { groupId, sessionIds };
+    } catch (error) {
+      set((state) => ({
+        workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+          loading: false,
+          error: String(error),
+        }),
+      }));
+      return null;
+    }
   },
 }));

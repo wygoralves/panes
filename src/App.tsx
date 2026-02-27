@@ -12,7 +12,7 @@ import { useEngineStore } from "./stores/engineStore";
 import { useUiStore } from "./stores/uiStore";
 import { useThreadStore } from "./stores/threadStore";
 import { useGitStore } from "./stores/gitStore";
-import { useTerminalStore } from "./stores/terminalStore";
+import { useTerminalStore, collectSessionIds } from "./stores/terminalStore";
 import { useFileStore } from "./stores/fileStore";
 import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMirrorEditor";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -194,6 +194,23 @@ export function App() {
               void useTerminalStore.getState().createSession(wsId);
             });
           }
+          break;
+        case "i":
+          if (!e.shiftKey) return;
+          e.preventDefault();
+          fireShortcut("toggle-broadcast", () => {
+            const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+            if (!wsId) return;
+            const ws = useTerminalStore.getState().workspaces[wsId];
+            if (!ws || (ws.layoutMode !== "split" && ws.layoutMode !== "terminal")) return;
+            const activeGroupId = ws.activeGroupId;
+            if (!activeGroupId) return;
+            const activeGroup = ws.groups.find((g) => g.id === activeGroupId);
+            if (!activeGroup) return;
+            const isBroadcastingActiveGroup = ws.broadcastGroupId === activeGroupId;
+            if (!isBroadcastingActiveGroup && collectSessionIds(activeGroup.root).length < 2) return;
+            useTerminalStore.getState().toggleBroadcast(wsId, activeGroupId);
+          });
           break;
         case "d":
           e.preventDefault();

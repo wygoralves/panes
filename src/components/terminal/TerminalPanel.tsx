@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Columns2, Copy, Folder, Pencil, Plus, Rows2, SquareTerminal, Trash2, X } from "lucide-react";
+import { Columns2, Copy, Folder, Minus, Pencil, Plus, Radio, Rows2, SquareTerminal, Trash2, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useHarnessStore } from "../../stores/harnessStore";
 import { toast } from "../../stores/toastStore";
@@ -152,8 +152,14 @@ interface InternalCoreBrowserService {
   _cachedIsFocused?: boolean;
 }
 
+interface InternalRenderService {
+  handleFocus(): void;
+  handleBlur(): void;
+}
+
 interface InternalTerminalCore {
   _coreBrowserService?: InternalCoreBrowserService;
+  _renderService?: InternalRenderService;
 }
 
 interface InternalTerminal {
@@ -258,6 +264,68 @@ function setTerminalFocusState(session: SessionTerminal, focused: boolean) {
     coreBrowserService._isFocused = focused;
     coreBrowserService._cachedIsFocused = undefined;
   }
+}
+
+// Lock/unlock a terminal so xterm.js renders an active blinking cursor
+// regardless of real DOM focus.  Two things fight us:
+//
+// 1. CoreBrowserService.isFocused — a getter that checks the DOM every frame.
+//    Fix: override the getter via Object.defineProperty to always return true.
+//
+// 2. RenderService.handleBlur() — called from the terminal's onBlur event,
+//    pauses the cursor blink timer.  Fix: replace handleBlur with a no-op and
+//    force handleFocus to keep the blink timer running.
+const broadcastFocusLocked = new WeakSet<object>();
+const savedHandleBlur = new WeakMap<object, () => void>();
+
+function lockTerminalFocus(session: SessionTerminal) {
+  const core = (session.terminal as unknown as InternalTerminal)._core;
+  const svc = core?._coreBrowserService;
+  const rs = core?._renderService;
+  if (!svc || broadcastFocusLocked.has(svc)) return;
+  broadcastFocusLocked.add(svc);
+
+  // 1. Override isFocused getter → always true
+  Object.defineProperty(svc, "isFocused", {
+    get: () => true,
+    configurable: true,
+  });
+
+  // 2. Neuter handleBlur on the render service so the blink timer never pauses
+  if (rs) {
+    savedHandleBlur.set(rs, rs.handleBlur.bind(rs));
+    rs.handleBlur = () => {};
+    // Force the blink timer to start/resume now
+    rs.handleFocus();
+  }
+
+  session.terminal.element?.classList.add("focus");
+  refreshTerminalCursor(session);
+}
+
+function unlockTerminalFocus(session: SessionTerminal) {
+  const core = (session.terminal as unknown as InternalTerminal)._core;
+  const svc = core?._coreBrowserService;
+  const rs = core?._renderService;
+  if (!svc || !broadcastFocusLocked.has(svc)) return;
+  broadcastFocusLocked.delete(svc);
+
+  // Restore the original isFocused getter from the prototype
+  delete (svc as Record<string, unknown>).isFocused;
+
+  // Restore handleBlur
+  if (rs) {
+    const original = savedHandleBlur.get(rs);
+    if (original) {
+      rs.handleBlur = original;
+      savedHandleBlur.delete(rs);
+    }
+    // Trigger a blur so the cursor stops blinking on this unfocused terminal
+    rs.handleBlur();
+  }
+
+  session.terminal.element?.classList.remove("focus");
+  refreshTerminalCursor(session);
 }
 
 function logTerminalDebug(
@@ -1155,6 +1223,7 @@ interface SplitPaneViewProps {
   workspaceId: string;
   groupId: string;
   activeIndicatorSessionId: string | null;
+  isBroadcasting: boolean;
   containerRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
   onFocus: (sessionId: string) => void;
   onTerminalFocus: (sessionId: string) => void;
@@ -1174,6 +1243,7 @@ function SplitPaneView({
   workspaceId,
   groupId,
   activeIndicatorSessionId,
+  isBroadcasting,
   containerRefs,
   onFocus,
   onTerminalFocus,
@@ -1184,10 +1254,10 @@ function SplitPaneView({
   showCloseButton,
 }: SplitPaneViewProps) {
   if (node.type === "leaf") {
-    const isFocused = node.sessionId === activeIndicatorSessionId;
+    const isFocused = node.sessionId === activeIndicatorSessionId || isBroadcasting;
     return (
       <div
-        className={`terminal-leaf-pane${isFocused ? " terminal-leaf-pane-focused" : ""}`}
+        className={`terminal-leaf-pane${isFocused ? " terminal-leaf-pane-focused" : ""}${isBroadcasting ? " terminal-leaf-pane-broadcasting" : ""}`}
         onMouseDown={() => onFocus(node.sessionId)}
         onFocusCapture={(event) => {
           if (!isXtermFocusTarget(event.target)) {
@@ -1248,6 +1318,7 @@ function SplitPaneView({
       workspaceId={workspaceId}
       groupId={groupId}
       activeIndicatorSessionId={activeIndicatorSessionId}
+      isBroadcasting={isBroadcasting}
       containerRefs={containerRefs}
       onFocus={onFocus}
       onTerminalFocus={onTerminalFocus}
@@ -1264,6 +1335,7 @@ interface SplitContainerViewProps {
   workspaceId: string;
   groupId: string;
   activeIndicatorSessionId: string | null;
+  isBroadcasting: boolean;
   containerRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
   onFocus: (sessionId: string) => void;
   onTerminalFocus: (sessionId: string) => void;
@@ -1273,11 +1345,41 @@ interface SplitContainerViewProps {
   ensureTerminal: (sessionId: string) => void;
 }
 
+interface SplitRatioUpdate {
+  containerId: string;
+  ratio: number;
+}
+
+function countLeafNodes(node: SplitNode): number {
+  if (node.type === "leaf") {
+    return 1;
+  }
+  return countLeafNodes(node.children[0]) + countLeafNodes(node.children[1]);
+}
+
+function collectEqualSplitRatios(node: SplitNode, updates: SplitRatioUpdate[]) {
+  if (node.type === "leaf") {
+    return;
+  }
+  const leftLeafCount = countLeafNodes(node.children[0]);
+  const rightLeafCount = countLeafNodes(node.children[1]);
+  const totalLeafCount = leftLeafCount + rightLeafCount;
+  if (totalLeafCount > 0) {
+    updates.push({
+      containerId: node.id,
+      ratio: leftLeafCount / totalLeafCount,
+    });
+  }
+  collectEqualSplitRatios(node.children[0], updates);
+  collectEqualSplitRatios(node.children[1], updates);
+}
+
 function SplitContainerView({
   container,
   workspaceId,
   groupId,
   activeIndicatorSessionId,
+  isBroadcasting,
   containerRefs,
   onFocus,
   onTerminalFocus,
@@ -1347,6 +1449,7 @@ function SplitContainerView({
           workspaceId={workspaceId}
           groupId={groupId}
           activeIndicatorSessionId={activeIndicatorSessionId}
+          isBroadcasting={isBroadcasting}
           containerRefs={containerRefs}
           onFocus={onFocus}
           onTerminalFocus={onTerminalFocus}
@@ -1364,6 +1467,7 @@ function SplitContainerView({
           workspaceId={workspaceId}
           groupId={groupId}
           activeIndicatorSessionId={activeIndicatorSessionId}
+          isBroadcasting={isBroadcasting}
           containerRefs={containerRefs}
           onFocus={onFocus}
           onTerminalFocus={onTerminalFocus}
@@ -1374,6 +1478,202 @@ function SplitContainerView({
           showCloseButton
         />
       </div>
+    </div>
+  );
+}
+
+// ── Grid Preview ────────────────────────────────────────────────────
+
+function GridPreview({ count }: { count: number }) {
+  if (count <= 3) {
+    return (
+      <div className="grid-preview-row">
+        {Array.from({ length: count }, (_, i) => (
+          <div key={i} className="grid-preview-cell" />
+        ))}
+      </div>
+    );
+  }
+  const topCount = Math.ceil(count / 2);
+  const bottomCount = count - topCount;
+  return (
+    <div className="grid-preview-col">
+      <div className="grid-preview-row">
+        {Array.from({ length: topCount }, (_, i) => (
+          <div key={i} className="grid-preview-cell" />
+        ))}
+      </div>
+      <div className="grid-preview-row">
+        {Array.from({ length: bottomCount }, (_, i) => (
+          <div key={i} className="grid-preview-cell" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── New Tab Dropdown ─────────────────────────────────────────────────
+
+const MAX_PER_HARNESS = 8;
+
+interface NewTabDropdownProps {
+  menuRef: React.RefObject<HTMLDivElement | null>;
+  anchorRect: DOMRect;
+  harnesses: { id: string; name: string }[];
+  onNewTerminal: () => void;
+  onLaunchHarness: (id: string) => void;
+  onMultiLaunch: (ids: string[], broadcast: boolean) => void;
+}
+
+function NewTabDropdown({
+  menuRef,
+  anchorRect,
+  harnesses,
+  onNewTerminal,
+  onLaunchHarness,
+  onMultiLaunch,
+}: NewTabDropdownProps) {
+  const [mode, setMode] = useState<"default" | "multi">("default");
+  const [quantities, setQuantities] = useState<Map<string, number>>(() => new Map());
+  const [withBroadcast, setWithBroadcast] = useState(true);
+
+  const totalCount = useMemo(() => {
+    let sum = 0;
+    for (const n of quantities.values()) sum += n;
+    return sum;
+  }, [quantities]);
+
+  const expandedIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const [id, qty] of quantities) {
+      for (let i = 0; i < qty; i++) ids.push(id);
+    }
+    return ids;
+  }, [quantities]);
+
+  const setQty = (id: string, qty: number) => {
+    setQuantities((prev) => {
+      const next = new Map(prev);
+      const clamped = Math.max(0, Math.min(MAX_PER_HARNESS, qty));
+      if (clamped === 0) next.delete(id);
+      else next.set(id, clamped);
+      return next;
+    });
+  };
+
+  return (
+    <div
+      ref={menuRef}
+      className="terminal-new-dropdown"
+      style={{
+        position: "fixed",
+        top: anchorRect.bottom + 4,
+        right: window.innerWidth - anchorRect.right,
+      }}
+    >
+      {mode === "default" ? (
+        <>
+          <button type="button" className="terminal-new-dropdown-item" onClick={onNewTerminal}>
+            <SquareTerminal size={13} />
+            Terminal
+          </button>
+          {harnesses.length > 0 && <div className="terminal-new-dropdown-divider" />}
+          {harnesses.map((h) => (
+            <button
+              key={h.id}
+              type="button"
+              className="terminal-new-dropdown-item"
+              onClick={() => onLaunchHarness(h.id)}
+            >
+              {getHarnessIcon(h.id, 13)}
+              {h.name}
+            </button>
+          ))}
+          {harnesses.length >= 1 && (
+            <>
+              <div className="terminal-new-dropdown-divider" />
+              <button
+                type="button"
+                className="terminal-new-dropdown-item tnd-multi-entry"
+                onClick={() => setMode("multi")}
+              >
+                <Rows2 size={13} />
+                Multi-launch...
+              </button>
+            </>
+          )}
+        </>
+      ) : (
+        <>
+          {/* Multi-launch mode: steppers per harness */}
+          <div className="tnd-multi-header">
+            <button type="button" className="tnd-back-btn" onClick={() => { setMode("default"); setQuantities(new Map()); }}>
+              <X size={11} />
+            </button>
+            <span className="tnd-multi-title">Multi-launch</span>
+          </div>
+          <div className="terminal-new-dropdown-divider" />
+          {harnesses.map((h) => {
+            const qty = quantities.get(h.id) ?? 0;
+            return (
+              <div key={h.id} className="tnd-harness-row">
+                <div className="tnd-harness-label">
+                  {getHarnessIcon(h.id, 13)}
+                  <span className="tnd-harness-name">{h.name}</span>
+                </div>
+                <div className="tnd-stepper">
+                  <button
+                    type="button"
+                    className="tnd-stepper-btn"
+                    onClick={() => setQty(h.id, qty - 1)}
+                    disabled={qty <= 0}
+                  >
+                    <Minus size={9} />
+                  </button>
+                  <span className={`tnd-stepper-val${qty > 0 ? " tnd-stepper-val-active" : ""}`}>{qty}</span>
+                  <button
+                    type="button"
+                    className="tnd-stepper-btn"
+                    onClick={() => setQty(h.id, qty + 1)}
+                    disabled={qty >= MAX_PER_HARNESS}
+                  >
+                    <Plus size={9} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+
+          {totalCount >= 2 && (
+            <>
+              <div className="terminal-new-dropdown-divider" />
+              <div className="tnd-multi-footer">
+                <div className="tnd-multi-preview">
+                  <GridPreview count={totalCount} />
+                </div>
+                <div className="tnd-multi-controls">
+                  <label className="tnd-broadcast-label">
+                    <input
+                      type="checkbox"
+                      checked={withBroadcast}
+                      onChange={(e) => setWithBroadcast(e.target.checked)}
+                    />
+                    <Radio size={10} />
+                    <span>Broadcast</span>
+                  </label>
+                </div>
+                <button
+                  type="button"
+                  className="tnd-launch-btn"
+                  onClick={() => onMultiLaunch(expandedIds, withBroadcast)}
+                >
+                  Launch {totalCount}
+                </button>
+              </div>
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -1402,6 +1702,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const updateGroupRatio = useTerminalStore((state) => state.updateGroupRatio);
   const renameGroup = useTerminalStore((state) => state.renameGroup);
   const reorderGroups = useTerminalStore((state) => state.reorderGroups);
+  const createMultiSessionGroup = useTerminalStore((state) => state.createMultiSessionGroup);
 
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -1667,18 +1968,43 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     focusTerminalSession(sessionId);
   }, [focusTerminalSession, setFocusedSession, workspaceId]);
 
+  // When broadcast mode toggles, lock/unlock the isFocused getter on peer
+  // terminals so xterm.js renders an active blinking cursor on all of them.
+  const broadcastGroupId = workspaceState?.broadcastGroupId ?? null;
+  const broadcastSessionIdsKey = useMemo(() => {
+    if (!broadcastGroupId) return "";
+    const group = groups.find((g) => g.id === broadcastGroupId);
+    if (!group) return "";
+    return collectSessionIds(group.root).join(",");
+  }, [broadcastGroupId, groups]);
+
+  useEffect(() => {
+    const broadcastGroup = broadcastGroupId
+      ? groups.find((g) => g.id === broadcastGroupId)
+      : null;
+    const broadcastIds = broadcastGroup ? new Set(collectSessionIds(broadcastGroup.root)) : null;
+
+    forEachWorkspaceCachedTerminal(workspaceId, (sid, session) => {
+      if (broadcastIds?.has(sid)) {
+        lockTerminalFocus(session);
+      } else {
+        unlockTerminalFocus(session);
+      }
+    });
+  }, [broadcastGroupId, broadcastSessionIdsKey, groups, workspaceId]);
+
   const handleTerminalDomFocus = useCallback((sessionId: string) => {
     setDomFocusedSessionId(sessionId);
-    const currentFocusedSessionId =
-      useTerminalStore.getState().workspaces[workspaceId]?.focusedSessionId ?? null;
+    const ws = useTerminalStore.getState().workspaces[workspaceId];
+    const currentFocusedSessionId = ws?.focusedSessionId ?? null;
     if (currentFocusedSessionId !== sessionId) {
       setFocusedSession(workspaceId, sessionId);
     }
+
     forEachWorkspaceCachedTerminal(workspaceId, (currentSessionId, session) => {
-      if (currentSessionId !== sessionId) {
-        setTerminalFocusState(session, false);
-        refreshTerminalCursor(session);
-      }
+      if (currentSessionId === sessionId) return;
+      setTerminalFocusState(session, false);
+      refreshTerminalCursor(session);
     });
     const cached = cachedTerminals.get(terminalCacheKey(workspaceId, sessionId));
     if (cached) {
@@ -1766,10 +2092,59 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     }
 
     terminal.open(container);
+
+    // xterm.js fires onData for BOTH user keystrokes AND auto-generated
+    // terminal protocol responses (DA1/DA2 device attributes, cursor position
+    // reports, OSC color query responses, focus in/out events). These responses
+    // must NOT be broadcast to other terminals — they would appear as garbage.
+    const RE_TERMINAL_RESPONSE = /^\x1b(\[\?[\d;]*c|\[>[\d;]*c|\[\d+;\d+R|\]\d+;|\[I\b|\[O\b)/;
+    function isTerminalResponse(data: string): boolean {
+      return data.length >= 3 && data.charCodeAt(0) === 0x1b && RE_TERMINAL_RESPONSE.test(data);
+    }
+
+    // Broadcast-aware write: only fan out when the broadcasting group is
+    // currently active. This prevents cross-tab input leakage.
+    function getBroadcastTargetSessionIds(): string[] | null {
+      const ws = useTerminalStore.getState().workspaces[workspaceId];
+      const bgId = ws?.broadcastGroupId;
+      if (!bgId || ws.activeGroupId !== bgId) {
+        return null;
+      }
+      const group = ws.groups.find((g) => g.id === bgId);
+      if (!group) {
+        return null;
+      }
+      return collectSessionIds(group.root);
+    }
+
+    function broadcastWrite(data: string) {
+      const targetSessionIds = getBroadcastTargetSessionIds();
+      if (targetSessionIds) {
+        for (const id of targetSessionIds) {
+          void ipc.terminalWrite(workspaceId, id, data).catch(() => undefined);
+        }
+        return;
+      }
+      void ipc.terminalWrite(workspaceId, sessionId, data).catch(() => undefined);
+    }
+
+    function broadcastWriteBytes(bytes: number[]) {
+      const targetSessionIds = getBroadcastTargetSessionIds();
+      if (targetSessionIds) {
+        for (const id of targetSessionIds) {
+          void ipc.terminalWriteBytes(workspaceId, id, bytes).catch(() => undefined);
+        }
+        return;
+      }
+      void ipc.terminalWriteBytes(workspaceId, sessionId, bytes).catch(() => undefined);
+    }
+
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
+      // Block broadcast shortcut from reaching the shell
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i") return false;
       if ((event.metaKey || event.ctrlKey) && event.key === "Backspace") {
-        void ipc.terminalWrite(workspaceId, sessionId, "\x15").catch(() => undefined);
+        broadcastWrite("\x15");
         return false;
       }
       const k = event.key.toLowerCase();
@@ -1781,19 +2156,19 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         switch (event.key) {
           case "ArrowLeft":
             // Beginning of line (Ctrl+A)
-            void ipc.terminalWrite(workspaceId, sessionId, "\x01").catch(() => undefined);
+            broadcastWrite("\x01");
             return false;
           case "ArrowRight":
             // End of line (Ctrl+E)
-            void ipc.terminalWrite(workspaceId, sessionId, "\x05").catch(() => undefined);
+            broadcastWrite("\x05");
             return false;
           case "ArrowUp":
             // Scroll to top (Ctrl+Home)
-            void ipc.terminalWrite(workspaceId, sessionId, "\x1b[1;5H").catch(() => undefined);
+            broadcastWrite("\x1b[1;5H");
             return false;
           case "ArrowDown":
             // Scroll to bottom (Ctrl+End)
-            void ipc.terminalWrite(workspaceId, sessionId, "\x1b[1;5F").catch(() => undefined);
+            broadcastWrite("\x1b[1;5F");
             return false;
         }
       }
@@ -1801,12 +2176,17 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       return true;
     });
     const writeDisposable = terminal.onData((data) => {
-      void ipc.terminalWrite(workspaceId, sessionId, data).catch(() => undefined);
+      if (isTerminalResponse(data)) {
+        // Terminal protocol responses go only to the originating session
+        void ipc.terminalWrite(workspaceId, sessionId, data).catch(() => undefined);
+        return;
+      }
+      broadcastWrite(data);
     });
 
     const binaryDisposable = terminal.onBinary((data) => {
       const bytes = Array.from(data, (c) => c.charCodeAt(0));
-      void ipc.terminalWriteBytes(workspaceId, sessionId, bytes).catch(() => undefined);
+      broadcastWriteBytes(bytes);
     });
 
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
@@ -2099,6 +2479,64 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     }
   }, [focusedSessionId, createSession, workspaceId, harnessLaunch, installedHarnesses]);
 
+  const spawnMultiHarnessGroup = useCallback(async (harnessIds: string[], withBroadcast: boolean) => {
+    if (harnessIds.length === 0) return;
+
+    const active = focusedSessionId
+      ? cachedTerminals.get(terminalCacheKey(workspaceId, focusedSessionId))
+      : undefined;
+    const cols = active?.terminal.cols ?? DEFAULT_COLS;
+    const rows = active?.terminal.rows ?? DEFAULT_ROWS;
+
+    // Resolve commands for all selected harnesses (cache per unique ID)
+    const commandCache = new Map<string, string>();
+    const harnessMeta: { harnessId: string; command: string; name: string }[] = [];
+    for (const harnessId of harnessIds) {
+      let command = commandCache.get(harnessId);
+      if (command === undefined) {
+        command = await harnessLaunch(harnessId) ?? "";
+        commandCache.set(harnessId, command);
+      }
+      const harness = installedHarnesses.find((h) => h.id === harnessId);
+      if (command && harness) harnessMeta.push({ harnessId, command, name: harness.name });
+    }
+    if (harnessMeta.length === 0) return;
+
+    // Create all sessions with correct grid layout in one shot
+    const result = await createMultiSessionGroup(
+      workspaceId,
+      harnessMeta.map(({ harnessId, name }) => ({ harnessId, name })),
+      cols,
+      rows,
+    );
+    if (!result) return;
+
+    // Write harness commands to each session concurrently
+    await Promise.all(
+      result.sessionIds.map((sessionId, i) => {
+        const meta = harnessMeta[i];
+        if (meta) return writeCommandToNewSession(workspaceId, sessionId, meta.command);
+      }),
+    );
+
+    // Enable broadcast on the new group
+    if (withBroadcast) {
+      useTerminalStore.getState().toggleBroadcast(workspaceId, result.groupId);
+    }
+
+    // Keep keyboard input usable immediately after creating the group
+    requestAnimationFrame(() => {
+      setTerminalSessionFocus(result.sessionIds[0]);
+    });
+  }, [
+    focusedSessionId,
+    createMultiSessionGroup,
+    workspaceId,
+    harnessLaunch,
+    installedHarnesses,
+    setTerminalSessionFocus,
+  ]);
+
   const handleSplit = useCallback(
     (direction: "horizontal" | "vertical") => {
       if (!domFocusedSessionId) return;
@@ -2283,6 +2721,27 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
               >
                 <Rows2 size={13} />
               </button>
+              {(() => {
+                const activeGroup = groups.find((g) => g.id === activeGroupId);
+                const hasManyPanes = activeGroup && collectSessionIds(activeGroup.root).length > 1;
+                if (!hasManyPanes) return null;
+                const isBroadcasting = workspaceState?.broadcastGroupId === activeGroupId;
+                return (
+                  <button
+                    type="button"
+                    className={`terminal-add-btn${isBroadcasting ? " terminal-broadcast-btn-active" : ""}`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      if (activeGroupId) {
+                        useTerminalStore.getState().toggleBroadcast(workspaceId, activeGroupId);
+                      }
+                    }}
+                    title={isBroadcasting ? "Broadcast ON — click to disable (Cmd+Shift+I)" : "Broadcast to all panes (Cmd+Shift+I)"}
+                  >
+                    <Radio size={13} />
+                  </button>
+                );
+              })()}
               {SHOW_TERMINAL_DIAGNOSTICS_UI && (
                 <button
                   type="button"
@@ -2299,6 +2758,23 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       </div>
 
       <div className="terminal-body">
+        {workspaceState?.broadcastGroupId === activeGroupId && workspaceState?.broadcastGroupId != null && (
+          <div className="terminal-broadcast-banner">
+            <Radio size={10} />
+            Broadcasting to all panes
+            <button
+              type="button"
+              className="terminal-broadcast-banner-close"
+              onClick={() => {
+                if (activeGroupId) {
+                  useTerminalStore.getState().toggleBroadcast(workspaceId, activeGroupId);
+                }
+              }}
+            >
+              <X size={10} />
+            </button>
+          </div>
+        )}
         {sessions.length === 0 ? (
           <div className="terminal-empty-state animate-fade-in">
             <div className="terminal-empty-state-icon-box">
@@ -2337,6 +2813,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                   workspaceId={workspaceId}
                   groupId={group.id}
                   activeIndicatorSessionId={domFocusedSessionId}
+                  isBroadcasting={workspaceState?.broadcastGroupId === group.id}
                   containerRefs={containerRefs}
                   onFocus={setTerminalSessionFocus}
                   onTerminalFocus={handleTerminalDomFocus}
@@ -2406,41 +2883,14 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       )}
 
       {newTabMenuOpen && newTabBtnRef.current && createPortal(
-        <div
-          ref={newTabMenuRef}
-          className="terminal-new-dropdown"
-          style={{
-            position: "fixed",
-            top: newTabBtnRef.current.getBoundingClientRect().bottom + 4,
-            right: window.innerWidth - newTabBtnRef.current.getBoundingClientRect().right,
-          }}
-        >
-          <button
-            type="button"
-            className="terminal-new-dropdown-item"
-            onClick={() => {
-              setNewTabMenuOpen(false);
-              spawnNewSession();
-            }}
-          >
-            <SquareTerminal size={13} />
-            Terminal
-          </button>
-          {installedHarnesses.length > 0 && (
-            <div className="terminal-new-dropdown-divider" />
-          )}
-          {installedHarnesses.map((h) => (
-            <button
-              key={h.id}
-              type="button"
-              className="terminal-new-dropdown-item"
-              onClick={() => void spawnHarnessSession(h.id)}
-            >
-              {getHarnessIcon(h.id, 13)}
-              {h.name}
-            </button>
-          ))}
-        </div>,
+        <NewTabDropdown
+          menuRef={newTabMenuRef}
+          anchorRect={newTabBtnRef.current.getBoundingClientRect()}
+          harnesses={installedHarnesses}
+          onNewTerminal={() => { setNewTabMenuOpen(false); spawnNewSession(); }}
+          onLaunchHarness={(id) => { setNewTabMenuOpen(false); void spawnHarnessSession(id); }}
+          onMultiLaunch={(ids, broadcast) => { setNewTabMenuOpen(false); void spawnMultiHarnessGroup(ids, broadcast); }}
+        />,
         document.body,
       )}
     </div>
