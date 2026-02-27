@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { ipc } from "../lib/ipc";
-import type { TerminalSession, SplitNode, SplitDirection, TerminalGroup } from "../types";
+import type { TerminalSession, SplitNode, SplitDirection, TerminalGroup, WorktreeSessionInfo } from "../types";
 
 export type LayoutMode = "chat" | "terminal" | "split" | "editor";
 
@@ -192,9 +192,16 @@ interface TerminalState {
   createMultiSessionGroup: (
     workspaceId: string,
     harnesses: Array<{ harnessId: string; name: string }>,
+    worktreeConfig?: {
+      repoPath: string;
+      baseBranch: string;
+      baseDir: string;
+    } | null,
     cols?: number,
     rows?: number,
   ) => Promise<{ groupId: string; sessionIds: string[] } | null>;
+  getGroupWorktrees: (workspaceId: string, groupId: string) => WorktreeSessionInfo[];
+  removeGroupWorktrees: (workspaceId: string, worktrees: WorktreeSessionInfo[]) => Promise<void>;
 }
 
 function defaultWorkspaceState(): WorkspaceTerminalState {
@@ -227,6 +234,24 @@ function mergeWorkspaceState(
       ...next,
     },
   };
+}
+
+async function removeWorktreesSequential(worktrees: WorktreeSessionInfo[]): Promise<string[]> {
+  const failures: string[] = [];
+  for (const worktree of worktrees) {
+    try {
+      await ipc.removeGitWorktree(
+        worktree.repoPath,
+        worktree.worktreePath,
+        true,
+        worktree.branch,
+        true,
+      );
+    } catch (error) {
+      failures.push(`${worktree.branch || worktree.worktreePath}: ${String(error)}`);
+    }
+  }
+  return failures;
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
@@ -726,7 +751,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     });
   },
 
-  createMultiSessionGroup: async (workspaceId, harnesses, cols = DEFAULT_COLS, rows = DEFAULT_ROWS) => {
+  createMultiSessionGroup: async (workspaceId, harnesses, worktreeConfig, cols = DEFAULT_COLS, rows = DEFAULT_ROWS) => {
     if (harnesses.length === 0) return null;
 
     set((state) => ({
@@ -737,9 +762,32 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }),
     }));
 
+    // Track created worktrees for cleanup on failure
+    const createdWorktrees: WorktreeSessionInfo[] = [];
+
     try {
+      // Phase 1: Create worktrees sequentially if configured (git locks prevent parallelism)
+      const worktreeRunId = worktreeConfig ? crypto.randomUUID().slice(0, 8) : null;
+      if (worktreeConfig && worktreeRunId) {
+        for (let i = 0; i < harnesses.length; i++) {
+          const branch = `panes/${worktreeRunId}/agent-${i + 1}`;
+          const worktreePath = `${worktreeConfig.baseDir}/${worktreeRunId}/agent-${i + 1}`;
+          await ipc.addGitWorktree(
+            worktreeConfig.repoPath,
+            worktreePath,
+            branch,
+            worktreeConfig.baseBranch,
+          );
+          createdWorktrees.push({ repoPath: worktreeConfig.repoPath, worktreePath, branch });
+        }
+      }
+
+      // Phase 2: Create terminal sessions (with CWD override if worktrees are active)
       const creationResults = await Promise.allSettled(
-        harnesses.map(() => ipc.terminalCreateSession(workspaceId, cols, rows)),
+        harnesses.map((_h, i) => {
+          const cwd = createdWorktrees[i]?.worktreePath ?? undefined;
+          return ipc.terminalCreateSession(workspaceId, cols, rows, cwd);
+        }),
       );
       const created = creationResults
         .filter((result): result is PromiseFulfilledResult<TerminalSession> => result.status === "fulfilled")
@@ -759,6 +807,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
       const groupId = crypto.randomUUID();
 
+      // Build worktree map keyed by session ID
+      let worktreeMap: Record<string, WorktreeSessionInfo> | undefined;
+      if (createdWorktrees.length > 0) {
+        worktreeMap = {};
+        sessionIds.forEach((sid, i) => {
+          const wt = createdWorktrees[i];
+          if (wt) worktreeMap![sid] = wt;
+        });
+      }
+
       set((state) => {
         const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
         const groupName = harnesses.length === 1
@@ -770,6 +828,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           name: groupName,
           harnessId: harnesses[0].harnessId,
           autoDetectedHarness: false,
+          ...(worktreeMap ? { worktrees: worktreeMap } : {}),
         };
         const sessions = [
           ...current.sessions.filter((s) => !sessionIds.includes(s.id)),
@@ -792,13 +851,43 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
       return { groupId, sessionIds };
     } catch (error) {
+      let message = String(error);
+
+      // Clean up any worktrees created before the failure
+      if (createdWorktrees.length > 0) {
+        const cleanupFailures = await removeWorktreesSequential(createdWorktrees);
+        if (cleanupFailures.length > 0) {
+          message = `${message}. Cleanup failed for ${cleanupFailures.length} worktree(s): ${cleanupFailures.join("; ")}`;
+        }
+      }
       set((state) => ({
         workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
           loading: false,
-          error: String(error),
+          error: message,
         }),
       }));
       return null;
     }
+  },
+
+  getGroupWorktrees: (workspaceId, groupId) => {
+    const workspace = get().workspaces[workspaceId] ?? defaultWorkspaceState();
+    const group = workspace.groups.find((item) => item.id === groupId);
+    return Object.values(group?.worktrees ?? {});
+  },
+
+  removeGroupWorktrees: async (workspaceId, worktrees) => {
+    if (worktrees.length === 0) return;
+
+    const failures = await removeWorktreesSequential(worktrees);
+    if (failures.length === 0) return;
+
+    const message = `Failed to remove ${failures.length} worktree(s): ${failures.join("; ")}`;
+    set((state) => ({
+      workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+        error: message,
+      }),
+    }));
+    throw new Error(message);
   },
 }));

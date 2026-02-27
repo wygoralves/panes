@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Columns2, Copy, Folder, Minus, Pencil, Plus, Radio, Rows2, SquareTerminal, Trash2, X } from "lucide-react";
+import { Columns2, Copy, Folder, GitBranch as GitBranchIcon, Minus, Pencil, Plus, Radio, Rows2, SquareTerminal, Trash2, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useHarnessStore } from "../../stores/harnessStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { toast } from "../../stores/toastStore";
+import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import { copyTextToClipboard } from "../../lib/clipboard";
 import { shouldCreateInitialTerminalSession } from "../../lib/terminalBootstrap";
@@ -1520,15 +1522,17 @@ interface NewTabDropdownProps {
   menuRef: React.RefObject<HTMLDivElement | null>;
   anchorRect: DOMRect;
   harnesses: { id: string; name: string }[];
+  repos: Array<{ path: string; name: string; defaultBranch: string }>;
   onNewTerminal: () => void;
   onLaunchHarness: (id: string) => void;
-  onMultiLaunch: (ids: string[], broadcast: boolean) => void;
+  onMultiLaunch: (ids: string[], broadcast: boolean, worktreeRepoPath?: string | null) => void;
 }
 
 function NewTabDropdown({
   menuRef,
   anchorRect,
   harnesses,
+  repos,
   onNewTerminal,
   onLaunchHarness,
   onMultiLaunch,
@@ -1536,6 +1540,17 @@ function NewTabDropdown({
   const [mode, setMode] = useState<"default" | "multi">("default");
   const [quantities, setQuantities] = useState<Map<string, number>>(() => new Map());
   const [withBroadcast, setWithBroadcast] = useState(true);
+  const [useWorktrees, setUseWorktrees] = useState(false);
+  const [selectedRepoPath, setSelectedRepoPath] = useState<string | null>(repos[0]?.path ?? null);
+
+  useEffect(() => {
+    setSelectedRepoPath((current) => {
+      if (current && repos.some((repo) => repo.path === current)) {
+        return current;
+      }
+      return repos[0]?.path ?? null;
+    });
+  }, [repos]);
 
   const totalCount = useMemo(() => {
     let sum = 0;
@@ -1550,6 +1565,14 @@ function NewTabDropdown({
     }
     return ids;
   }, [quantities]);
+
+  const selectedWorktreeRepoPath = useMemo(() => {
+    if (!useWorktrees) return null;
+    if (selectedRepoPath && repos.some((repo) => repo.path === selectedRepoPath)) {
+      return selectedRepoPath;
+    }
+    return repos[0]?.path ?? null;
+  }, [useWorktrees, selectedRepoPath, repos]);
 
   const setQty = (id: string, qty: number) => {
     setQuantities((prev) => {
@@ -1651,21 +1674,62 @@ function NewTabDropdown({
                 <div className="tnd-multi-preview">
                   <GridPreview count={totalCount} />
                 </div>
-                <div className="tnd-multi-controls">
-                  <label className="tnd-broadcast-label">
-                    <input
-                      type="checkbox"
-                      checked={withBroadcast}
-                      onChange={(e) => setWithBroadcast(e.target.checked)}
-                    />
-                    <Radio size={10} />
-                    <span>Broadcast</span>
-                  </label>
+
+                <div className="tnd-options">
+                  <button
+                    type="button"
+                    className={`tnd-option-card${withBroadcast ? " tnd-option-card-active" : ""}`}
+                    onClick={() => setWithBroadcast(!withBroadcast)}
+                  >
+                    <div className="tnd-option-icon">
+                      <Radio size={13} />
+                    </div>
+                    <div className="tnd-option-text">
+                      <span className="tnd-option-title">Broadcast input</span>
+                      <span className="tnd-option-desc">Type once, send to all panes</span>
+                    </div>
+                    <div className={`tnd-option-toggle${withBroadcast ? " tnd-option-toggle-on" : ""}`}>
+                      <div className="tnd-option-toggle-dot" />
+                    </div>
+                  </button>
+
+                  {repos.length > 0 && (
+                    <div>
+                      <button
+                        type="button"
+                        className={`tnd-option-card${useWorktrees ? " tnd-option-card-active" : ""}`}
+                        onClick={() => setUseWorktrees(!useWorktrees)}
+                      >
+                        <div className="tnd-option-icon">
+                          <GitBranchIcon size={13} />
+                        </div>
+                        <div className="tnd-option-text">
+                          <span className="tnd-option-title">Git worktrees</span>
+                          <span className="tnd-option-desc">Each agent gets its own branch</span>
+                        </div>
+                        <div className={`tnd-option-toggle${useWorktrees ? " tnd-option-toggle-on" : ""}`}>
+                          <div className="tnd-option-toggle-dot" />
+                        </div>
+                      </button>
+                      {useWorktrees && repos.length > 1 && (
+                        <select
+                          className="tnd-worktree-repo-select"
+                          value={selectedWorktreeRepoPath ?? ""}
+                          onChange={(e) => setSelectedRepoPath(e.target.value || null)}
+                        >
+                          {repos.map((r) => (
+                            <option key={r.path} value={r.path}>{r.name}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
                 </div>
+
                 <button
                   type="button"
                   className="tnd-launch-btn"
-                  onClick={() => onMultiLaunch(expandedIds, withBroadcast)}
+                  onClick={() => onMultiLaunch(expandedIds, withBroadcast, selectedWorktreeRepoPath)}
                 >
                   Launch {totalCount}
                 </button>
@@ -1703,7 +1767,11 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const renameGroup = useTerminalStore((state) => state.renameGroup);
   const reorderGroups = useTerminalStore((state) => state.reorderGroups);
   const createMultiSessionGroup = useTerminalStore((state) => state.createMultiSessionGroup);
+  const getGroupWorktrees = useTerminalStore((state) => state.getGroupWorktrees);
+  const removeGroupWorktrees = useTerminalStore((state) => state.removeGroupWorktrees);
+  const repos = useWorkspaceStore((state) => state.repos);
 
+  const [worktreeCloseGroupId, setWorktreeCloseGroupId] = useState<string | null>(null);
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   // Only one tab can be renamed at a time, so a single ref is safe despite being inside .map()
@@ -1853,10 +1921,62 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     setCtxMenu(null);
     const group = groups.find((g) => g.id === groupId);
     if (!group) return;
+    // If group has worktrees, ask user whether to keep or remove them
+    if (group.worktrees && Object.keys(group.worktrees).length > 0) {
+      setWorktreeCloseGroupId(groupId);
+      return;
+    }
     for (const id of collectSessionIds(group.root)) {
       void closeSession(workspaceId, id);
     }
   }, [groups, closeSession, workspaceId]);
+
+  const handleWorktreeCloseConfirm = useCallback(async () => {
+    if (!worktreeCloseGroupId) return;
+    const group = groups.find((g) => g.id === worktreeCloseGroupId);
+    if (group) {
+      const worktrees = getGroupWorktrees(workspaceId, group.id);
+      const sessionIds = collectSessionIds(group.root);
+      await Promise.all(sessionIds.map((id) => closeSession(workspaceId, id)));
+
+      const remainingSessions = useTerminalStore.getState().workspaces[workspaceId]?.sessions ?? [];
+      const stillOpen = sessionIds.filter((id) => remainingSessions.some((session) => session.id === id));
+      if (stillOpen.length > 0) {
+        toast.error(`Failed to close ${stillOpen.length} terminal session(s); worktrees were kept`);
+        setWorktreeCloseGroupId(null);
+        return;
+      }
+
+      if (worktrees.length > 0) {
+        try {
+          await removeGroupWorktrees(workspaceId, worktrees);
+        } catch (error) {
+          toast.error(String(error));
+        }
+      }
+    }
+    setWorktreeCloseGroupId(null);
+  }, [worktreeCloseGroupId, groups, getGroupWorktrees, removeGroupWorktrees, closeSession, workspaceId]);
+
+  const handleWorktreeCloseCancel = useCallback(async () => {
+    if (!worktreeCloseGroupId) return;
+    const group = groups.find((g) => g.id === worktreeCloseGroupId);
+    if (group) {
+      const sessionIds = collectSessionIds(group.root);
+      await Promise.all(sessionIds.map((id) => closeSession(workspaceId, id)));
+
+      const remainingSessions = useTerminalStore.getState().workspaces[workspaceId]?.sessions ?? [];
+      const stillOpen = sessionIds.filter((id) => remainingSessions.some((session) => session.id === id));
+      if (stillOpen.length > 0) {
+        toast.error(`Failed to close ${stillOpen.length} terminal session(s)`);
+      }
+    }
+    setWorktreeCloseGroupId(null);
+  }, [worktreeCloseGroupId, groups, closeSession, workspaceId]);
+
+  const dismissWorktreeCloseDialog = useCallback(() => {
+    setWorktreeCloseGroupId(null);
+  }, []);
 
   const handleTabPointerDown = useCallback((e: React.PointerEvent, groupId: string) => {
     if (renamingGroupId || groups.length <= 1 || e.button !== 0) return;
@@ -2434,6 +2554,12 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
   const allHarnesses = useHarnessStore((s) => s.harnesses);
   const installedHarnesses = useMemo(() => allHarnesses.filter((h) => h.found), [allHarnesses]);
+  const activeRepos = useMemo(
+    () => repos
+      .filter((repo) => repo.isActive)
+      .map((repo) => ({ path: repo.path, name: repo.name, defaultBranch: repo.defaultBranch })),
+    [repos],
+  );
   const harnessLaunch = useHarnessStore((s) => s.launch);
   const [newTabMenuOpen, setNewTabMenuOpen] = useState(false);
   const newTabBtnRef = useRef<HTMLButtonElement>(null);
@@ -2479,7 +2605,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     }
   }, [focusedSessionId, createSession, workspaceId, harnessLaunch, installedHarnesses]);
 
-  const spawnMultiHarnessGroup = useCallback(async (harnessIds: string[], withBroadcast: boolean) => {
+  const spawnMultiHarnessGroup = useCallback(async (harnessIds: string[], withBroadcast: boolean, worktreeRepoPath?: string | null) => {
     if (harnessIds.length === 0) return;
 
     const active = focusedSessionId
@@ -2502,10 +2628,24 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     }
     if (harnessMeta.length === 0) return;
 
+    // Build worktree config if a repo was selected
+    let worktreeConfig: { repoPath: string; baseBranch: string; baseDir: string } | null = null;
+    if (worktreeRepoPath) {
+      const repo = repos.find((r) => r.path === worktreeRepoPath);
+      if (repo) {
+        worktreeConfig = {
+          repoPath: repo.path,
+          baseBranch: repo.defaultBranch,
+          baseDir: `${repo.path}/.panes/worktrees`,
+        };
+      }
+    }
+
     // Create all sessions with correct grid layout in one shot
     const result = await createMultiSessionGroup(
       workspaceId,
       harnessMeta.map(({ harnessId, name }) => ({ harnessId, name })),
+      worktreeConfig,
       cols,
       rows,
     );
@@ -2532,6 +2672,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     focusedSessionId,
     createMultiSessionGroup,
     workspaceId,
+    repos,
     harnessLaunch,
     installedHarnesses,
     setTerminalSessionFocus,
@@ -2663,6 +2804,11 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                     {group.name}
                   </span>
                 )}
+                {group.worktrees && Object.keys(group.worktrees).length > 0 && (
+                  <span className="terminal-worktree-badge" title={Object.values(group.worktrees).map((w) => w.branch).join(", ")}>
+                    <GitBranchIcon size={10} />
+                  </span>
+                )}
                 {groupSessionIds.length > 1 && (
                   <span className="terminal-tab-badge">{groupSessionIds.length}</span>
                 )}
@@ -2672,9 +2818,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    for (const id of groupSessionIds) {
-                      void closeSession(workspaceId, id);
-                    }
+                    closeGroupFromMenu(group.id);
                   }}
                 >
                   <X size={10} />
@@ -2887,12 +3031,24 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
           menuRef={newTabMenuRef}
           anchorRect={newTabBtnRef.current.getBoundingClientRect()}
           harnesses={installedHarnesses}
+          repos={activeRepos}
           onNewTerminal={() => { setNewTabMenuOpen(false); spawnNewSession(); }}
           onLaunchHarness={(id) => { setNewTabMenuOpen(false); void spawnHarnessSession(id); }}
-          onMultiLaunch={(ids, broadcast) => { setNewTabMenuOpen(false); void spawnMultiHarnessGroup(ids, broadcast); }}
+          onMultiLaunch={(ids, broadcast, worktreeRepoPath) => { setNewTabMenuOpen(false); void spawnMultiHarnessGroup(ids, broadcast, worktreeRepoPath); }}
         />,
         document.body,
       )}
+
+      <ConfirmDialog
+        open={worktreeCloseGroupId !== null}
+        title="Close agent group"
+        message="This group has git worktrees. Remove the worktree directories and branches, or keep them for later?"
+        confirmLabel="Remove worktrees"
+        cancelLabel="Keep worktrees"
+        onConfirm={handleWorktreeCloseConfirm}
+        onCancel={handleWorktreeCloseCancel}
+        onDismiss={dismissWorktreeCloseDialog}
+      />
     </div>
   );
 }

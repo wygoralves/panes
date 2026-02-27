@@ -340,6 +340,17 @@ pub struct GitStashDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GitWorktreeDto {
+    pub path: String,
+    pub head_sha: Option<String>,
+    pub branch: Option<String>,
+    pub is_main: bool,
+    pub is_locked: bool,
+    pub is_prunable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileTreeEntryDto {
     pub path: String,
     pub is_dir: bool,

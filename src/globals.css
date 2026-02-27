@@ -1777,7 +1777,7 @@ button, input, textarea, select {
 .tnd-multi-footer {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   padding: 8px 8px 6px;
 }
 
@@ -1785,35 +1785,135 @@ button, input, textarea, select {
   padding: 0 2px;
 }
 
-.tnd-multi-controls {
+/* ── Option toggle cards ───────────────────────────────────── */
+
+.tnd-options {
   display: flex;
-  align-items: center;
-  padding: 0 2px;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.tnd-broadcast-label {
+.tnd-option-card {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 10.5px;
-  color: var(--text-3);
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: var(--bg-2);
   cursor: pointer;
-  user-select: none;
-  transition: color var(--duration-fast) var(--ease-out);
+  font-family: inherit;
+  text-align: left;
+  transition: all var(--duration-fast) var(--ease-out);
 }
-.tnd-broadcast-label:has(input:checked) {
+.tnd-option-card:hover {
+  background: var(--bg-3);
+}
+.tnd-option-card-active {
+  border-color: var(--border-accent);
+  background: var(--accent-dim);
+}
+.tnd-option-card-active:hover {
+  background: rgba(14, 240, 195, 0.14);
+}
+
+.tnd-option-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  background: var(--bg-3);
+  color: var(--text-3);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+.tnd-option-card-active .tnd-option-icon {
+  background: rgba(14, 240, 195, 0.15);
   color: var(--accent);
 }
-.tnd-broadcast-label input[type="checkbox"] {
-  accent-color: var(--accent);
-  width: 11px;
-  height: 11px;
-  cursor: pointer;
+
+.tnd-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
 }
+.tnd-option-title {
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--text-2);
+  line-height: 1.2;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+.tnd-option-card-active .tnd-option-title {
+  color: var(--text-1);
+}
+.tnd-option-desc {
+  font-size: 9.5px;
+  color: var(--text-3);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Mini toggle switch */
+.tnd-option-toggle {
+  flex-shrink: 0;
+  width: 24px;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--bg-4);
+  position: relative;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.tnd-option-toggle-on {
+  background: var(--accent);
+}
+.tnd-option-toggle-dot {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+.tnd-option-toggle-on .tnd-option-toggle-dot {
+  left: 12px;
+  background: var(--bg-0);
+}
+
+/* ── Repo selector under worktree card ─────────────────────── */
+
+.tnd-worktree-repo-select {
+  width: 100%;
+  padding: 5px 8px;
+  margin-top: 4px;
+  font-size: 10.5px;
+  font-family: inherit;
+  background: var(--bg-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.tnd-worktree-repo-select:focus {
+  border-color: var(--border-accent);
+}
+
+/* ── Launch button ─────────────────────────────────────────── */
 
 .tnd-launch-btn {
   width: 100%;
-  padding: 7px 12px;
+  padding: 8px 12px;
   border-radius: var(--radius-sm);
   background: var(--accent);
   color: #0c0d13;
@@ -1830,6 +1930,16 @@ button, input, textarea, select {
 .tnd-launch-btn:hover {
   box-shadow: var(--accent-glow);
   transform: translateY(-0.5px);
+}
+
+/* ── Worktree badge on tab bar ─────────────────────────────── */
+
+.terminal-worktree-badge {
+  display: flex;
+  align-items: center;
+  color: var(--accent);
+  opacity: 0.8;
+  flex-shrink: 0;
 }
 
 /* Grid preview (shared) */

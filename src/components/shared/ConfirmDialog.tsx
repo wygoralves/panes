@@ -9,6 +9,7 @@ interface Props {
   cancelLabel?: string;
   onConfirm: () => void;
   onCancel: () => void;
+  onDismiss?: () => void;
 }
 
 export function ConfirmDialog({
@@ -19,8 +20,10 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   onConfirm,
   onCancel,
+  onDismiss,
 }: Props) {
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const handleDismiss = onDismiss ?? onCancel;
 
   useEffect(() => {
     if (!open) return;
@@ -33,17 +36,17 @@ export function ConfirmDialog({
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.stopPropagation();
-        onCancel();
+        handleDismiss();
       }
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, onCancel]);
+  }, [open, handleDismiss]);
 
   if (!open) return null;
 
   return (
-    <div className="confirm-dialog-backdrop" onMouseDown={onCancel}>
+    <div className="confirm-dialog-backdrop" onMouseDown={handleDismiss}>
       <div
         className="confirm-dialog-card"
         onMouseDown={(e) => e.stopPropagation()}

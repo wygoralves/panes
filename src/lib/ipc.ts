@@ -11,6 +11,7 @@ import type {
   GitBranchScope,
   GitCommitPage,
   GitStash,
+  GitWorktree,
   EngineHealth,
   EngineInfo,
   FileTreeEntry,
@@ -188,8 +189,28 @@ export const ipc = {
   writeFile: (repoPath: string, filePath: string, content: string) =>
     invoke<void>("write_file", { repoPath, filePath, content }),
   watchGitRepo: (repoPath: string) => invoke<void>("watch_git_repo", { repoPath }),
-  terminalCreateSession: (workspaceId: string, cols: number, rows: number) =>
-    invoke<TerminalSession>("terminal_create_session", { workspaceId, cols, rows }),
+  addGitWorktree: (repoPath: string, worktreePath: string, branchName: string, baseRef?: string | null) =>
+    invoke<GitWorktree>("add_git_worktree", { repoPath, worktreePath, branchName, baseRef: baseRef ?? null }),
+  listGitWorktrees: (repoPath: string) =>
+    invoke<GitWorktree[]>("list_git_worktrees", { repoPath }),
+  removeGitWorktree: (
+    repoPath: string,
+    worktreePath: string,
+    force: boolean,
+    branchName?: string | null,
+    deleteBranch?: boolean,
+  ) =>
+    invoke<void>("remove_git_worktree", {
+      repoPath,
+      worktreePath,
+      force,
+      branchName: branchName ?? null,
+      deleteBranch: deleteBranch ?? false,
+    }),
+  pruneGitWorktrees: (repoPath: string) =>
+    invoke<void>("prune_git_worktrees", { repoPath }),
+  terminalCreateSession: (workspaceId: string, cols: number, rows: number, cwd?: string | null) =>
+    invoke<TerminalSession>("terminal_create_session", { workspaceId, cols, rows, cwd: cwd ?? null }),
   terminalWrite: (workspaceId: string, sessionId: string, data: string) =>
     invoke<void>("terminal_write", { workspaceId, sessionId, data }),
   terminalWriteBytes: (workspaceId: string, sessionId: string, data: number[]) =>

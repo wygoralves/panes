@@ -306,6 +306,21 @@ export interface GitStash {
   createdAt?: string;
 }
 
+export interface GitWorktree {
+  path: string;
+  headSha: string | null;
+  branch: string | null;
+  isMain: boolean;
+  isLocked: boolean;
+  isPrunable: boolean;
+}
+
+export interface WorktreeSessionInfo {
+  repoPath: string;
+  worktreePath: string;
+  branch: string;
+}
+
 export interface FileTreeEntry {
   path: string;
   isDir: boolean;
@@ -462,6 +477,7 @@ export interface TerminalGroup {
   name: string;
   harnessId?: string;
   autoDetectedHarness?: boolean;
+  worktrees?: Record<string, WorktreeSessionInfo>;
 }
 
 // ── Setup / Onboarding ──────────────────────────────────────────────

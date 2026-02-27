@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use tauri::State;
 
 use crate::{
@@ -24,13 +25,38 @@ pub async fn terminal_create_session(
     workspace_id: String,
     cols: u16,
     rows: u16,
+    cwd: Option<String>,
 ) -> Result<TerminalSessionDto, String> {
-    let cwd = workspace_root_path(state.inner(), &workspace_id).await?;
+    let workspace_root = workspace_root_path(state.inner(), &workspace_id).await?;
+    let workspace_root_canonical =
+        canonicalize_existing_dir(&workspace_root, "workspace root directory")?;
+    let resolved_cwd = match cwd {
+        Some(path) => {
+            let cwd_canonical = canonicalize_existing_dir(&path, "cwd")?;
+            if !cwd_canonical.starts_with(&workspace_root_canonical) {
+                return Err(format!(
+                    "cwd must be inside workspace root: {}",
+                    workspace_root_canonical.to_string_lossy()
+                ));
+            }
+            cwd_canonical.to_string_lossy().to_string()
+        }
+        None => workspace_root_canonical.to_string_lossy().to_string(),
+    };
     state
         .terminals
-        .create_session(app, workspace_id, cwd, cols.max(1), rows.max(1))
+        .create_session(app, workspace_id, resolved_cwd, cols.max(1), rows.max(1))
         .await
         .map_err(err_to_string)
+}
+
+fn canonicalize_existing_dir(path: &str, label: &str) -> Result<PathBuf, String> {
+    let dir = Path::new(path);
+    if !dir.is_dir() {
+        return Err(format!("{label} does not exist: {path}"));
+    }
+
+    std::fs::canonicalize(dir).map_err(|error| format!("failed to resolve {label}: {error}"))
 }
 
 #[tauri::command]
