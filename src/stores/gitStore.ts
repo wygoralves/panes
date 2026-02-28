@@ -5,6 +5,7 @@ import type {
   GitCommit,
   GitStash,
   GitStatus,
+  GitWorktree,
 } from "../types";
 import { ipc } from "../lib/ipc";
 import { recordPerfMetric } from "../lib/perfTelemetry";
@@ -68,7 +69,7 @@ function addToHistory(history: string[], entry: string): string[] {
   return [trimmed, ...deduped].slice(0, DRAFT_HISTORY_MAX);
 }
 
-export type GitPanelView = "changes" | "branches" | "commits" | "stash" | "files";
+export type GitPanelView = "changes" | "branches" | "commits" | "stash" | "files" | "worktrees";
 export type GitRemoteSyncAction = "fetch" | "pull" | "push";
 
 interface GitStatusCacheEntry {
@@ -221,6 +222,8 @@ interface GitState {
   commitsHasMore: boolean;
   commitsTotal: number;
   stashes: GitStash[];
+  worktrees: GitWorktree[];
+  mainRepoPath: string | null;
   selectedCommitHash?: string;
   commitDiff?: string;
   setActiveRepoPath: (repoPath: string | null) => void;
@@ -246,6 +249,11 @@ interface GitState {
   deleteBranch: (repoPath: string, branchName: string, force: boolean) => Promise<void>;
   loadCommits: (repoPath: string, append?: boolean) => Promise<void>;
   loadMoreCommits: (repoPath: string) => Promise<void>;
+  setMainRepoPath: (path: string | null) => void;
+  loadWorktrees: (repoPath: string) => Promise<void>;
+  addWorktree: (repoPath: string, worktreePath: string, branchName: string, baseRef?: string | null) => Promise<GitWorktree>;
+  removeWorktree: (repoPath: string, worktreePath: string, force: boolean, branchName?: string | null, deleteBranch?: boolean) => Promise<void>;
+  pruneWorktrees: (repoPath: string) => Promise<void>;
   loadStashes: (repoPath: string) => Promise<void>;
   pushStash: (repoPath: string, message?: string) => Promise<void>;
   applyStash: (repoPath: string, stashIndex: number) => Promise<void>;
@@ -287,6 +295,13 @@ async function refreshActiveView(repoPath: string, state: Pick<GitState, "active
     } satisfies Partial<GitState>;
   }
 
+  if (state.activeView === "worktrees") {
+    const worktrees = await ipc.listGitWorktrees(repoPath);
+    return {
+      worktrees,
+    } satisfies Partial<GitState>;
+  }
+
   return {};
 }
 
@@ -297,11 +312,28 @@ export const useGitStore = create<GitState>((set, get) => {
   let branchesSeq = 0;
   let commitsSeq = 0;
   let stashesSeq = 0;
+  let worktreesSeq = 0;
   let commitDiffSeq = 0;
 
   const isRepoActive = (repoPath: string): boolean => {
     const activeRepoPath = get().activeRepoPath;
     return activeRepoPath === null || activeRepoPath === repoPath;
+  };
+
+  const isRepoInWorktreeContext = (repoPath: string): boolean => {
+    const { activeRepoPath, mainRepoPath } = get();
+    if (activeRepoPath === null) {
+      return true;
+    }
+    return activeRepoPath === repoPath || mainRepoPath === repoPath;
+  };
+
+  const resolveRefreshRepoPathForWorktreeMutation = (repoPath: string): string => {
+    const { activeRepoPath, mainRepoPath } = get();
+    if (mainRepoPath && mainRepoPath === repoPath && activeRepoPath) {
+      return activeRepoPath;
+    }
+    return repoPath;
   };
 
   const beginLoading = () => {
@@ -440,6 +472,8 @@ export const useGitStore = create<GitState>((set, get) => {
     commitsHasMore: false,
     commitsTotal: 0,
     stashes: [],
+    worktrees: [],
+    mainRepoPath: null,
     setActiveRepoPath: (repoPath) => {
       if (get().activeRepoPath === repoPath) {
         return;
@@ -447,6 +481,7 @@ export const useGitStore = create<GitState>((set, get) => {
 
       set({
         activeRepoPath: repoPath,
+        mainRepoPath: null,
         status: undefined,
         selectedFile: undefined,
         selectedFileStaged: undefined,
@@ -457,6 +492,7 @@ export const useGitStore = create<GitState>((set, get) => {
         commitsHasMore: false,
         commitsTotal: 0,
         stashes: [],
+        worktrees: [],
         selectedCommitHash: undefined,
         commitDiff: undefined,
         error: undefined,
@@ -610,6 +646,68 @@ export const useGitStore = create<GitState>((set, get) => {
         return;
       }
       await get().loadCommits(repoPath, true);
+    },
+    setMainRepoPath: (path) => {
+      set({ mainRepoPath: path });
+    },
+    loadWorktrees: async (repoPath) => {
+      const requestSeq = ++worktreesSeq;
+      beginLoading();
+      set({ error: undefined });
+      try {
+        const worktrees = await ipc.listGitWorktrees(repoPath);
+        if (requestSeq === worktreesSeq && isRepoInWorktreeContext(repoPath)) {
+          set({ worktrees });
+        }
+      } catch (error) {
+        if (requestSeq === worktreesSeq && isRepoInWorktreeContext(repoPath)) {
+          set({ error: String(error) });
+        }
+      } finally {
+        endLoading();
+      }
+    },
+    addWorktree: async (repoPath, worktreePath, branchName, baseRef) => {
+      const refreshRepoPath = resolveRefreshRepoPathForWorktreeMutation(repoPath);
+      return runRepoMutationWithRefresh(refreshRepoPath, () =>
+        ipc.addGitWorktree(repoPath, worktreePath, branchName, baseRef),
+      );
+    },
+    removeWorktree: async (repoPath, worktreePath, force, branchName, deleteBranch) => {
+      const { activeRepoPath, mainRepoPath } = get();
+      const removingActiveWorktree =
+        activeRepoPath !== null &&
+        activeRepoPath === worktreePath &&
+        mainRepoPath === repoPath;
+
+      if (removingActiveWorktree) {
+        beginLoading();
+        set({ error: undefined });
+        try {
+          await ipc.removeGitWorktree(repoPath, worktreePath, force, branchName, deleteBranch);
+          get().setActiveRepoPath(repoPath);
+          set({ mainRepoPath: null });
+          get().invalidateRepoCache(repoPath);
+          await runRefresh(repoPath, { force: true });
+        } catch (error) {
+          if (isRepoInWorktreeContext(repoPath)) {
+            set({ error: String(error) });
+          }
+          throw error;
+        } finally {
+          endLoading();
+        }
+        return;
+      }
+
+      const refreshRepoPath = resolveRefreshRepoPathForWorktreeMutation(repoPath);
+      await runRepoMutationWithRefresh(refreshRepoPath, () =>
+        ipc.removeGitWorktree(repoPath, worktreePath, force, branchName, deleteBranch),
+      );
+    },
+    pruneWorktrees: async (repoPath) => {
+      const refreshRepoPath = resolveRefreshRepoPathForWorktreeMutation(repoPath);
+      await runRepoMutationWithRefresh(refreshRepoPath, () => ipc.pruneGitWorktrees(repoPath));
     },
     loadStashes: async (repoPath) => {
       const requestSeq = ++stashesSeq;
