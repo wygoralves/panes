@@ -10,8 +10,10 @@ import {
   FolderTree,
   GitBranch as GitBranchIcon,
   GitCommitHorizontal,
+  GitFork,
   Archive,
   MoreHorizontal,
+  CornerUpLeft,
 } from "lucide-react";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore, type GitPanelView } from "../../stores/gitStore";
@@ -25,6 +27,7 @@ import { GitBranchesView } from "./GitBranchesView";
 import { GitCommitsView } from "./GitCommitsView";
 import { GitStashView } from "./GitStashView";
 import { GitFilesView } from "./GitFilesView";
+import { GitWorktreesView } from "./GitWorktreesView";
 
 const VIEW_OPTIONS = [
   { value: "changes", label: "Changes", icon: <FileDiff size={13} /> },
@@ -32,6 +35,7 @@ const VIEW_OPTIONS = [
   { value: "commits", label: "Commits", icon: <GitCommitHorizontal size={13} /> },
   { value: "stash", label: "Stash", icon: <Archive size={13} /> },
   { value: "files", label: "Files", icon: <FolderTree size={13} /> },
+  { value: "worktrees", label: "Worktrees", icon: <GitFork size={13} /> },
 ];
 const GIT_WATCHER_REFRESH_DEBOUNCE_MS = 550;
 
@@ -51,13 +55,18 @@ export function GitPanel() {
     error,
     remoteSyncAction,
     remoteSyncRepoPath,
+    activeRepoPath: storeActiveRepoPath,
+    worktrees,
     setActiveRepoPath,
+    mainRepoPath,
+    setMainRepoPath,
     activeView,
     setActiveView,
     fetchRemote,
     pullRemote,
     pushRemote,
     softResetLastCommit,
+    loadWorktrees,
     flushDrafts,
     clearError,
   } = useGitStore();
@@ -113,40 +122,50 @@ export function GitPanel() {
     );
   }, [controlledRepos, activeRepoId]);
 
-  const activeRepoPath = activeRepo?.path ?? null;
+  const baseRepoPath = activeRepo?.path ?? null;
+  const effectiveRepoPath = storeActiveRepoPath ?? baseRepoPath;
+  const effectiveRepo = useMemo(() => {
+    if (!activeRepo || !effectiveRepoPath || effectiveRepoPath === activeRepo.path) {
+      return activeRepo;
+    }
+    return {
+      ...activeRepo,
+      path: effectiveRepoPath,
+    };
+  }, [activeRepo, effectiveRepoPath]);
   const effectiveError = localError ?? error;
   const isActiveRepoSyncing = Boolean(
-    activeRepoPath &&
+    effectiveRepoPath &&
     remoteSyncAction &&
-    remoteSyncRepoPath === activeRepoPath,
+    remoteSyncRepoPath === effectiveRepoPath,
   );
-  const syncDisabled = !activeRepo || loading || isActiveRepoSyncing;
+  const syncDisabled = !effectiveRepoPath || loading || isActiveRepoSyncing;
   const pushCount = status?.ahead ?? 0;
   const pullCount = status?.behind ?? 0;
 
   const runSyncAction = useCallback(async (action: "fetch" | "pull" | "push") => {
-    if (!activeRepo || isActiveRepoSyncing) {
+    if (!effectiveRepoPath || isActiveRepoSyncing) {
       return;
     }
 
     setLocalError(undefined);
     try {
       if (action === "fetch") {
-        await fetchRemote(activeRepo.path);
+        await fetchRemote(effectiveRepoPath);
         toast.success("Fetched from remote");
         return;
       }
       if (action === "pull") {
-        await pullRemote(activeRepo.path);
+        await pullRemote(effectiveRepoPath);
         toast.success("Pulled from remote");
         return;
       }
-      await pushRemote(activeRepo.path);
+      await pushRemote(effectiveRepoPath);
       toast.success("Pushed to remote");
     } catch (syncError) {
       setLocalError(String(syncError));
     }
-  }, [activeRepo, fetchRemote, isActiveRepoSyncing, pullRemote, pushRemote]);
+  }, [effectiveRepoPath, fetchRemote, isActiveRepoSyncing, pullRemote, pushRemote]);
 
   const runSyncActionFromMore = useCallback((action: "fetch" | "pull" | "push") => {
     closeMoreMenu();
@@ -154,30 +173,30 @@ export function GitPanel() {
   }, [closeMoreMenu, runSyncAction]);
 
   const onSyncClick = useCallback(async () => {
-    if (!activeRepo || syncDisabled) return;
+    if (!effectiveRepoPath || syncDisabled) return;
     try {
       setLocalError(undefined);
-      await fetchRemote(activeRepo.path);
+      await fetchRemote(effectiveRepoPath);
       toast.success("Refreshed");
     } catch (e) {
       setLocalError(String(e));
     }
-  }, [activeRepo, syncDisabled, fetchRemote]);
+  }, [effectiveRepoPath, syncDisabled, fetchRemote]);
 
   const onSoftResetLastCommit = useCallback(async () => {
-    if (!activeRepo || syncDisabled) {
+    if (!effectiveRepoPath || syncDisabled) {
       setSoftResetConfirmOpen(false);
       return;
     }
     setSoftResetConfirmOpen(false);
     setLocalError(undefined);
     try {
-      await softResetLastCommit(activeRepo.path);
+      await softResetLastCommit(effectiveRepoPath);
       toast.success("Soft reset completed");
     } catch (e) {
       setLocalError(String(e));
     }
-  }, [activeRepo, syncDisabled, softResetLastCommit]);
+  }, [effectiveRepoPath, syncDisabled, softResetLastCommit]);
 
   // Auto-activate all repos when none are active
   useEffect(() => {
@@ -192,19 +211,47 @@ export function GitPanel() {
   }, [activeWorkspaceId, repos, setWorkspaceGitActiveRepos, setActiveRepo]);
 
   useEffect(() => {
-    setActiveRepoPath(activeRepoPath);
-    if (!activeRepoPath) {
+    if (!baseRepoPath) {
+      setActiveRepoPath(null);
+      setMainRepoPath(null);
       return;
     }
-    void refresh(activeRepoPath);
-  }, [activeRepoPath, refresh, setActiveRepoPath]);
+
+    if (mainRepoPath && mainRepoPath !== baseRepoPath) {
+      setMainRepoPath(null);
+      setActiveRepoPath(baseRepoPath);
+      return;
+    }
+
+    if (!storeActiveRepoPath) {
+      setActiveRepoPath(baseRepoPath);
+      return;
+    }
+
+    if (!mainRepoPath && storeActiveRepoPath !== baseRepoPath) {
+      setActiveRepoPath(baseRepoPath);
+    }
+  }, [
+    baseRepoPath,
+    mainRepoPath,
+    setActiveRepoPath,
+    setMainRepoPath,
+    storeActiveRepoPath,
+  ]);
 
   useEffect(() => {
-    if (!activeRepoPath) return;
+    if (!effectiveRepoPath) {
+      return;
+    }
+    void refresh(effectiveRepoPath);
+  }, [effectiveRepoPath, refresh]);
+
+  useEffect(() => {
+    if (!effectiveRepoPath) return;
 
     let unlisten: (() => void) | null = null;
     let disposed = false;
-    const repoPath = activeRepoPath;
+    const repoPath = effectiveRepoPath;
 
     function scheduleRefresh() {
       if (watcherRefreshTimerRef.current !== null) {
@@ -280,10 +327,10 @@ export function GitPanel() {
       watcherRefreshQueuedRef.current = false;
       unlisten?.();
     };
-  }, [activeRepoPath, invalidateRepoCache, refresh]);
+  }, [effectiveRepoPath, invalidateRepoCache, refresh]);
 
   useEffect(() => {
-    if (!activeRepoPath || isActiveRepoSyncing) {
+    if (!effectiveRepoPath || isActiveRepoSyncing) {
       return;
     }
     if (!watcherRefreshQueuedRef.current || watcherRefreshInFlightRef.current) {
@@ -294,18 +341,43 @@ export function GitPanel() {
     watcherRefreshInFlightRef.current = true;
     void (async () => {
       try {
-        invalidateRepoCache(activeRepoPath);
-        await refresh(activeRepoPath, { force: true });
+        invalidateRepoCache(effectiveRepoPath);
+        await refresh(effectiveRepoPath, { force: true });
       } finally {
         watcherRefreshInFlightRef.current = false;
       }
     })();
-  }, [activeRepoPath, invalidateRepoCache, isActiveRepoSyncing, refresh]);
+  }, [effectiveRepoPath, invalidateRepoCache, isActiveRepoSyncing, refresh]);
 
-  const repoOptions = useMemo(
-    () => repos.map((repo) => ({ value: repo.id, label: repo.name })),
-    [repos],
-  );
+  useEffect(() => {
+    const worktreeRootPath = mainRepoPath ?? baseRepoPath;
+    if (!worktreeRootPath) {
+      return;
+    }
+    void loadWorktrees(worktreeRootPath);
+  }, [baseRepoPath, mainRepoPath, loadWorktrees]);
+
+  const repoOptions = useMemo(() => {
+    const options: { value: string; label: string }[] = [];
+    for (const repo of repos) {
+      options.push({ value: repo.id, label: repo.name });
+      if (repo.id === activeRepo?.id) {
+        const nonMain = worktrees.filter((wt) => !wt.isMain);
+        for (const wt of nonMain) {
+          options.push({
+            value: `wt::${wt.path}`,
+            label: `  \u2514 ${wt.branch ?? wt.path}`,
+          });
+        }
+      }
+    }
+    return options;
+  }, [repos, activeRepo?.id, worktrees]);
+
+  const showRepoPicker =
+    repos.length > 1 ||
+    worktrees.some((wt) => !wt.isMain) ||
+    Boolean(mainRepoPath);
 
   return (
     <div className="git-panel">
@@ -338,8 +410,8 @@ export function GitPanel() {
 
         <div style={{ flex: 1 }} />
 
-        {activeRepo && (
-          <span className="git-branch-meta" title={activeRepo.path}>
+        {effectiveRepo && (
+          <span className="git-branch-meta" title={effectiveRepo.path}>
             <GitBranchIcon size={11} />
             <span>{status?.branch ?? "detached"}</span>
             {((status?.ahead ?? 0) > 0 || (status?.behind ?? 0) > 0) && (
@@ -386,12 +458,23 @@ export function GitPanel() {
         </button>
       </div>
 
-      {repos.length > 1 && (
+      {showRepoPicker && (
         <div className="git-repo-bar no-drag">
           <Dropdown
             options={repoOptions}
-            value={activeRepo?.id ?? ""}
-            onChange={(repoId) => setActiveRepo(repoId)}
+            value={mainRepoPath ? `wt::${effectiveRepoPath ?? ""}` : (activeRepo?.id ?? "")}
+            onChange={(value) => {
+              if (value.startsWith("wt::")) {
+                const wtPath = value.slice(4);
+                setActiveRepoPath(wtPath);
+                if (activeRepo) setMainRepoPath(activeRepo.path);
+              } else {
+                const selectedRepo = repos.find((repo) => repo.id === value);
+                setActiveRepo(value);
+                setMainRepoPath(null);
+                setActiveRepoPath(selectedRepo?.path ?? null);
+              }
+            }}
             triggerStyle={{
               background: "none",
               border: "none",
@@ -403,26 +486,46 @@ export function GitPanel() {
               gap: 4,
             }}
           />
+          {mainRepoPath && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ padding: "2px 6px", fontSize: 11, marginLeft: 4 }}
+              title="Back to main repo"
+              onClick={() => {
+                if (activeRepo) {
+                  setActiveRepoPath(activeRepo.path);
+                }
+                setMainRepoPath(null);
+              }}
+            >
+              <CornerUpLeft size={11} />
+              Main repo
+            </button>
+          )}
         </div>
       )}
 
-      {activeRepo ? (
+      {effectiveRepo ? (
         <>
           {activeView === "changes" && (
             <GitChangesView
-              repo={activeRepo}
+              repo={effectiveRepo}
               showDiff
               onError={setLocalError}
             />
           )}
           {activeView === "branches" && (
-            <GitBranchesView repo={activeRepo} onError={setLocalError} />
+            <GitBranchesView repo={effectiveRepo} onError={setLocalError} />
           )}
-          {activeView === "commits" && <GitCommitsView repo={activeRepo} />}
+          {activeView === "commits" && <GitCommitsView repo={effectiveRepo} />}
           {activeView === "stash" && (
-            <GitStashView repo={activeRepo} onError={setLocalError} />
+            <GitStashView repo={effectiveRepo} onError={setLocalError} />
           )}
-          {activeView === "files" && <GitFilesView repo={activeRepo} />}
+          {activeView === "files" && <GitFilesView repo={effectiveRepo} />}
+          {activeView === "worktrees" && activeRepo && (
+            <GitWorktreesView repo={activeRepo} onError={setLocalError} />
+          )}
         </>
       ) : (
         <div className="git-empty">

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GitStatus } from "../types";
+import type { GitStatus, GitWorktree } from "../types";
 
 const mockIpc = vi.hoisted(() => ({
   getGitStatus: vi.fn(),
@@ -22,6 +22,10 @@ const mockIpc = vi.hoisted(() => ({
   pushGitStash: vi.fn(),
   applyGitStash: vi.fn(),
   popGitStash: vi.fn(),
+  addGitWorktree: vi.fn(),
+  listGitWorktrees: vi.fn(),
+  removeGitWorktree: vi.fn(),
+  pruneGitWorktrees: vi.fn(),
   getCommitDiff: vi.fn(),
 }));
 
@@ -84,6 +88,17 @@ describe("gitStore", () => {
     mockIpc.pushGitStash.mockResolvedValue(undefined);
     mockIpc.applyGitStash.mockResolvedValue(undefined);
     mockIpc.popGitStash.mockResolvedValue(undefined);
+    mockIpc.addGitWorktree.mockResolvedValue({
+      path: "/repo/.panes/worktrees/feature",
+      headSha: null,
+      branch: "feature",
+      isMain: false,
+      isLocked: false,
+      isPrunable: false,
+    } satisfies GitWorktree);
+    mockIpc.listGitWorktrees.mockResolvedValue([]);
+    mockIpc.removeGitWorktree.mockResolvedValue(undefined);
+    mockIpc.pruneGitWorktrees.mockResolvedValue(undefined);
     mockIpc.getCommitDiff.mockResolvedValue("");
 
     useGitStore.setState({
@@ -104,6 +119,8 @@ describe("gitStore", () => {
       commitsHasMore: false,
       commitsTotal: 0,
       stashes: [],
+      worktrees: [],
+      mainRepoPath: null,
       selectedCommitHash: undefined,
       commitDiff: undefined,
     });
@@ -180,5 +197,44 @@ describe("gitStore", () => {
     expect(mockIpc.stageFiles).toHaveBeenCalledWith(repoPath, ["a.ts"]);
     expect(useGitStore.getState().status?.files).toHaveLength(1);
     expect(useGitStore.getState().status?.files[0]?.path).toBe("a.ts");
+  });
+
+  it("falls back to the main repo after removing the active worktree", async () => {
+    const mainRepoPath = "/repo-main";
+    const worktreePath = "/repo-main/.panes/worktrees/feature";
+    const remainingWorktrees: GitWorktree[] = [
+      {
+        path: mainRepoPath,
+        headSha: null,
+        branch: "main",
+        isMain: true,
+        isLocked: false,
+        isPrunable: false,
+      },
+    ];
+
+    mockIpc.listGitWorktrees.mockResolvedValue(remainingWorktrees);
+    mockIpc.getGitStatus.mockResolvedValue(makeStatus("main"));
+
+    useGitStore.setState({
+      activeRepoPath: worktreePath,
+      mainRepoPath,
+      activeView: "worktrees",
+    });
+
+    await useGitStore
+      .getState()
+      .removeWorktree(mainRepoPath, worktreePath, false, "feature", false);
+
+    expect(mockIpc.removeGitWorktree).toHaveBeenCalledWith(
+      mainRepoPath,
+      worktreePath,
+      false,
+      "feature",
+      false,
+    );
+    expect(useGitStore.getState().activeRepoPath).toBe(mainRepoPath);
+    expect(useGitStore.getState().mainRepoPath).toBeNull();
+    expect(mockIpc.getGitStatus).toHaveBeenLastCalledWith(mainRepoPath);
   });
 });
