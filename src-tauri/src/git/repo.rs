@@ -211,6 +211,7 @@ pub fn list_git_branches(
     scope: GitBranchScopeDto,
     offset: usize,
     limit: usize,
+    search: Option<&str>,
 ) -> anyhow::Result<GitBranchPageDto> {
     let limit = limit.clamp(1, GIT_BRANCH_MAX_PAGE_SIZE);
     let branch_ref = match scope {
@@ -287,6 +288,17 @@ pub fn list_git_branches(
         (false, true) => std::cmp::Ordering::Greater,
         _ => a.name.cmp(&b.name),
     });
+
+    let entries: Vec<GitBranchDto> =
+        if let Some(q) = search.filter(|s| !s.trim().is_empty()) {
+            let q_lower = q.to_lowercase();
+            entries
+                .into_iter()
+                .filter(|b| b.name.to_lowercase().contains(&q_lower))
+                .collect()
+        } else {
+            entries
+        };
 
     let total = entries.len();
     let offset = offset.min(total);

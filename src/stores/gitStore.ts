@@ -217,6 +217,10 @@ interface GitState {
   activeView: GitPanelView;
   branchScope: GitBranchScope;
   branches: GitBranch[];
+  branchesTotal: number;
+  branchesHasMore: boolean;
+  branchesOffset: number;
+  branchSearch: string;
   commits: GitCommit[];
   commitsOffset: number;
   commitsHasMore: boolean;
@@ -242,7 +246,9 @@ interface GitState {
   fetchRemote: (repoPath: string) => Promise<void>;
   pullRemote: (repoPath: string) => Promise<void>;
   pushRemote: (repoPath: string) => Promise<void>;
-  loadBranches: (repoPath: string, scope?: GitBranchScope) => Promise<void>;
+  loadBranches: (repoPath: string, scope?: GitBranchScope, search?: string) => Promise<void>;
+  loadMoreBranches: (repoPath: string) => Promise<void>;
+  setBranchSearch: (repoPath: string, query: string) => Promise<void>;
   checkoutBranch: (repoPath: string, branchName: string, isRemote: boolean) => Promise<void>;
   createBranch: (repoPath: string, branchName: string, fromRef?: string | null) => Promise<void>;
   renameBranch: (repoPath: string, oldName: string, newName: string) => Promise<void>;
@@ -270,11 +276,20 @@ interface GitState {
   flushDrafts: (workspaceId: string) => void;
 }
 
-async function refreshActiveView(repoPath: string, state: Pick<GitState, "activeView" | "branchScope">) {
+async function refreshActiveView(repoPath: string, state: Pick<GitState, "activeView" | "branchScope" | "branchSearch">) {
   if (state.activeView === "branches") {
-    const branchesPage = await ipc.listGitBranches(repoPath, state.branchScope, 0, BRANCH_PAGE_SIZE);
+    const branchesPage = await ipc.listGitBranches(
+      repoPath,
+      state.branchScope,
+      0,
+      BRANCH_PAGE_SIZE,
+      state.branchSearch || undefined,
+    );
     return {
       branches: branchesPage.entries,
+      branchesTotal: branchesPage.total,
+      branchesHasMore: branchesPage.hasMore,
+      branchesOffset: branchesPage.offset + branchesPage.entries.length,
     } satisfies Partial<GitState>;
   }
 
@@ -396,6 +411,7 @@ export const useGitStore = create<GitState>((set, get) => {
       const viewState = await refreshActiveView(repoPath, {
         activeView: currentState.activeView,
         branchScope: currentState.branchScope,
+        branchSearch: currentState.branchSearch,
       });
 
       if (requestSeq === refreshSeq && isRepoActive(repoPath)) {
@@ -467,6 +483,10 @@ export const useGitStore = create<GitState>((set, get) => {
     activeView: "changes",
     branchScope: "local",
     branches: [],
+    branchesTotal: 0,
+    branchesHasMore: false,
+    branchesOffset: 0,
+    branchSearch: "",
     commits: [],
     commitsOffset: 0,
     commitsHasMore: false,
@@ -487,6 +507,10 @@ export const useGitStore = create<GitState>((set, get) => {
         selectedFileStaged: undefined,
         diff: undefined,
         branches: [],
+        branchesTotal: 0,
+        branchesHasMore: false,
+        branchesOffset: 0,
+        branchSearch: "",
         commits: [],
         commitsOffset: 0,
         commitsHasMore: false,
@@ -579,16 +603,22 @@ export const useGitStore = create<GitState>((set, get) => {
         remoteSyncAction: "push",
       });
     },
-    loadBranches: async (repoPath, scope) => {
+    loadBranches: async (repoPath, scope, search) => {
       const requestSeq = ++branchesSeq;
       const nextScope = scope ?? get().branchScope;
+      const searchQuery = search !== undefined ? search : get().branchSearch;
       beginLoading();
-      set({ error: undefined, branchScope: nextScope });
+      set({ error: undefined, branchScope: nextScope, branchSearch: searchQuery });
 
       try {
-        const page = await ipc.listGitBranches(repoPath, nextScope, 0, BRANCH_PAGE_SIZE);
+        const page = await ipc.listGitBranches(repoPath, nextScope, 0, BRANCH_PAGE_SIZE, searchQuery || undefined);
         if (requestSeq === branchesSeq && isRepoActive(repoPath)) {
-          set({ branches: page.entries });
+          set({
+            branches: page.entries,
+            branchesTotal: page.total,
+            branchesHasMore: page.hasMore,
+            branchesOffset: page.offset + page.entries.length,
+          });
         }
       } catch (error) {
         if (requestSeq === branchesSeq && isRepoActive(repoPath)) {
@@ -597,6 +627,41 @@ export const useGitStore = create<GitState>((set, get) => {
       } finally {
         endLoading();
       }
+    },
+    loadMoreBranches: async (repoPath) => {
+      if (!get().branchesHasMore) return;
+      const requestSeq = ++branchesSeq;
+      const { branchScope, branchSearch, branchesOffset, branches } = get();
+
+      beginLoading();
+      set({ error: undefined });
+
+      try {
+        const page = await ipc.listGitBranches(
+          repoPath,
+          branchScope,
+          branchesOffset,
+          BRANCH_PAGE_SIZE,
+          branchSearch || undefined,
+        );
+        if (requestSeq === branchesSeq && isRepoActive(repoPath)) {
+          set({
+            branches: [...branches, ...page.entries],
+            branchesTotal: page.total,
+            branchesHasMore: page.hasMore,
+            branchesOffset: page.offset + page.entries.length,
+          });
+        }
+      } catch (error) {
+        if (requestSeq === branchesSeq && isRepoActive(repoPath)) {
+          set({ error: String(error) });
+        }
+      } finally {
+        endLoading();
+      }
+    },
+    setBranchSearch: async (repoPath, query) => {
+      await get().loadBranches(repoPath, undefined, query);
     },
     checkoutBranch: async (repoPath, branchName, isRemote) => {
       await runRepoMutationWithRefresh(repoPath, () => ipc.checkoutGitBranch(repoPath, branchName, isRemote));

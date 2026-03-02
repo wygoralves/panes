@@ -125,13 +125,15 @@ pub async fn list_git_branches(
     scope: String,
     offset: Option<usize>,
     limit: Option<usize>,
+    search: Option<String>,
 ) -> Result<GitBranchPageDto, String> {
     let offset = offset.unwrap_or(0);
     let limit = limit.unwrap_or(200);
     let scope = GitBranchScopeDto::from_str(&scope);
 
     tokio::task::spawn_blocking(move || {
-        repo::list_git_branches(&repo_path, scope, offset, limit).map_err(err_to_string)
+        repo::list_git_branches(&repo_path, scope, offset, limit, search.as_deref())
+            .map_err(err_to_string)
     })
     .await
     .map_err(|error| error.to_string())?

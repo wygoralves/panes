@@ -153,12 +153,13 @@ export const ipc = {
   fetchGit: (repoPath: string) => invoke<void>("fetch_git", { repoPath }),
   pullGit: (repoPath: string) => invoke<void>("pull_git", { repoPath }),
   pushGit: (repoPath: string) => invoke<void>("push_git", { repoPath }),
-  listGitBranches: (repoPath: string, scope: GitBranchScope, offset?: number, limit?: number) =>
+  listGitBranches: (repoPath: string, scope: GitBranchScope, offset?: number, limit?: number, search?: string) =>
     invoke<GitBranchPage>("list_git_branches", {
       repoPath,
       scope,
       offset: offset ?? null,
       limit: limit ?? null,
+      search: search ?? null,
     }),
   checkoutGitBranch: (repoPath: string, branchName: string, isRemote: boolean) =>
     invoke<void>("checkout_git_branch", { repoPath, branchName, isRemote }),

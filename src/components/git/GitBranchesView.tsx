@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Plus, X, MoreHorizontal, GitBranch, GitBranchPlus, Pencil, Trash2, Loader2, Search } from "lucide-react";
 import { toast } from "../../stores/toastStore";
@@ -34,7 +34,12 @@ export function GitBranchesView({ repo, onError }: Props) {
     branchScope,
     setBranchScope,
     branches,
+    branchesTotal,
+    branchesHasMore,
+    branchSearch,
     loadBranches,
+    loadMoreBranches,
+    setBranchSearch,
     checkoutBranch,
     createBranch,
     renameBranch,
@@ -46,7 +51,9 @@ export function GitBranchesView({ repo, onError }: Props) {
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
-  const [filterQuery, setFilterQuery] = useState("");
+  const [localSearch, setLocalSearch] = useState(branchSearch);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showNewBranch, setShowNewBranch] = useState(false);
   const newBranchName = drafts.branchName;
   const setNewBranchName = useCallback(
@@ -67,18 +74,28 @@ export function GitBranchesView({ repo, onError }: Props) {
   const actionTriggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    void loadBranches(repo.path, branchScope);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    setLocalSearch("");
+    void loadBranches(repo.path, branchScope, "");
   }, [repo.path, branchScope, loadBranches]);
 
-  useEffect(() => {
-    setFilterQuery("");
-  }, [repo.path, branchScope]);
+  const onSearchChange = useCallback(
+    (value: string) => {
+      setLocalSearch(value);
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = setTimeout(() => {
+        void setBranchSearch(repo.path, value);
+      }, 300);
+    },
+    [repo.path, setBranchSearch],
+  );
 
-  const filteredBranches = useMemo(() => {
-    const q = filterQuery.toLowerCase().trim();
-    if (!q) return branches;
-    return branches.filter((b) => b.name.toLowerCase().includes(q));
-  }, [branches, filterQuery]);
+  useEffect(
+    () => () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (showNewBranch) newBranchInputRef.current?.focus();
@@ -384,37 +401,37 @@ export function GitBranchesView({ repo, onError }: Props) {
         </div>
       )}
 
-      {branches.length > 0 && (
+      {(branchesTotal > 0 || localSearch) && (
         <div className="git-filter-bar">
           <Search size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
           <input
             type="text"
             className="git-inline-input"
-            placeholder="Filter branches..."
-            value={filterQuery}
-            onChange={(e) => setFilterQuery(e.target.value)}
+            placeholder="Search branches..."
+            value={localSearch}
+            onChange={(e) => onSearchChange(e.target.value)}
             style={{ padding: "3px 8px", fontSize: 11 }}
           />
-          {filterQuery && (
+          {localSearch && (
             <button
               type="button"
               className="git-toolbar-btn"
               style={{ padding: 2 }}
-              onClick={() => setFilterQuery("")}
+              onClick={() => onSearchChange("")}
             >
               <X size={12} />
             </button>
           )}
-          {filterQuery && (
+          {localSearch && (
             <span style={{ fontSize: 10, color: "var(--text-3)", flexShrink: 0 }}>
-              {filteredBranches.length}/{branches.length}
+              {branches.length}/{branchesTotal}
             </span>
           )}
         </div>
       )}
 
       <div style={{ flex: 1, overflow: "auto" }}>
-        {branches.length === 0 ? (
+        {branches.length === 0 && !localSearch ? (
           <div className="git-empty">
             <div className="git-empty-icon-box">
               <GitBranch size={20} />
@@ -422,10 +439,10 @@ export function GitBranchesView({ repo, onError }: Props) {
             <p className="git-empty-title">No branches found</p>
             <p className="git-empty-sub">Create a branch to get started</p>
           </div>
-        ) : filteredBranches.length === 0 ? (
+        ) : branches.length === 0 ? (
           <p className="git-empty-inline">No matching branches</p>
         ) : (
-          filteredBranches.map((branch) => {
+          branches.map((branch) => {
             const isRenaming = renamingBranch === branch.name;
             const remoteName = branch.upstream
               ? branch.upstream.split("/")[0]
@@ -540,6 +557,24 @@ export function GitBranchesView({ repo, onError }: Props) {
               </div>
             );
           })
+        )}
+        {branchesHasMore && (
+          <div style={{ padding: "10px 12px" }}>
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => {
+                if (loadingMore) return;
+                setLoadingMore(true);
+                void loadMoreBranches(repo.path).finally(() => setLoadingMore(false));
+              }}
+              disabled={loadingMore}
+              style={{ width: "100%", justifyContent: "center", fontSize: 12, opacity: loadingMore ? 0.6 : 1 }}
+            >
+              {loadingMore ? <Loader2 size={13} className="git-spin" /> : null}
+              {loadingMore ? "Loading..." : `Load more (${branches.length}/${branchesTotal})`}
+            </button>
+          </div>
         )}
       </div>
 

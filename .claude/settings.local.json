@@ -36,7 +36,8 @@
       "Bash(sort:*)",
       "Bash(git:*)",
       "Bash(which iconutil:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Skill(reviewcdx)"
     ]
   }
 }
