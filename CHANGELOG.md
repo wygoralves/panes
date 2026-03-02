@@ -1,5 +1,17 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.17.0...vnull) (2026-03-02)
+
+### Features
+
+* add git worktrees management in git panel ([b136128](https://github.com/wygoralves/panes/commit/b136128f31e5a25f354bccbd332ca15a8f6b1e70))
+* add git worktrees to multi-agent launching ([e3ecd99](https://github.com/wygoralves/panes/commit/e3ecd99099e2393cd3c7575924dfb0ddded8f6cd))
+* add multiagent launching and broadcast mode ([f45d0fe](https://github.com/wygoralves/panes/commit/f45d0feefd051491506998ad25fd3b0f27c630d5))
+
+### Bug Fixes
+
+* fix plus button losing dom focus on terminal pane ([a6c5529](https://github.com/wygoralves/panes/commit/a6c552971a19d8a4037f16cdb7cdc90cac82dc5d))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.16.0...vnull) (2026-02-26)
 
 ### Features
