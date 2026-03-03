@@ -57,7 +57,7 @@
       </h1>
 
       <p class="hero-subtitle anim-hero" style="--d:3">
-        Manage your AI agents with terminal, git, and file editor across multiple workspaces. Built with Rust for speed, open-source forever.
+        Manage your AI agents with chat, terminal, git, and file editor across multiple workspaces. Built with Rust for speed, fully open-source.
       </p>
 
       <div class="hero-actions anim-hero" style="--d:5">
@@ -109,14 +109,16 @@
             </div>
           </div>
 
-          <!-- MAIN AREA -->
+          <!-- CONTENT CARD (main + git) -->
+          <div class="content-card">
           <div class="main-area">
             <div class="top-bar">
               <span class="top-bar-path">panes / feat/error-handling</span>
-              <div class="layout-toggles">
-                <i data-lucide="message-square" class="icon"></i>
-                <i data-lucide="monitor" class="icon active"></i>
-                <i data-lucide="square-terminal" class="icon"></i>
+              <div class="layout-mode-pill">
+                <div class="lm-btn"><i data-lucide="message-square" class="icon"></i></div>
+                <div class="lm-btn lm-active"><i data-lucide="monitor" class="icon"></i></div>
+                <div class="lm-btn"><i data-lucide="square-terminal" class="icon"></i></div>
+                <div class="lm-btn"><i data-lucide="file-pen" class="icon"></i></div>
               </div>
             </div>
 
@@ -155,9 +157,44 @@
                   </div>
                 </div>
                 <div class="chat-input">
-                  <div class="input-box">
-                    <span class="input-placeholder">Ask follow-up...</span>
-                    <i data-lucide="arrow-up-circle" class="icon" style="opacity:0.25;"></i>
+                  <div class="input-card">
+                    <div class="input-text-row">
+                      <span class="input-placeholder">Ask follow-up<span class="input-cursor"></span></span>
+                    </div>
+                    <div class="input-toolbar-row">
+                      <div class="input-tool-btn"><i data-lucide="plus" class="icon"></i></div>
+                      <div class="input-pill-btn"><i data-lucide="list-checks" class="icon"></i><span>Plan</span></div>
+                      <div class="input-toolbar-dot"></div>
+                      <div class="input-pill-btn">
+                        <svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" style="opacity:0.7;"><path d="M14.949 6.547a3.94 3.94 0 0 0-.348-3.273 4.11 4.11 0 0 0-4.4-1.934A4.1 4.1 0 0 0 8.423.2 4.15 4.15 0 0 0 6.305.086a4.1 4.1 0 0 0-1.891.948 4.04 4.04 0 0 0-1.158 1.753 4.1 4.1 0 0 0-1.563.679A4 4 0 0 0 .554 4.72a3.99 3.99 0 0 0 .502 4.731 3.94 3.94 0 0 0 .346 3.274 4.11 4.11 0 0 0 4.402 1.933c.382.425.852.764 1.377.995.526.231 1.095.35 1.67.346 1.78.002 3.358-1.132 3.901-2.804a4.1 4.1 0 0 0 1.563-.68 4 4 0 0 0 1.14-1.253 3.99 3.99 0 0 0-.506-4.716z"/></svg>
+                        <span>Codex &middot; 5.3</span>
+                        <i data-lucide="chevron-down" class="icon" style="width:9px;height:9px;opacity:0.4;"></i>
+                      </div>
+                      <div class="input-pill-btn input-pill-effort">
+                        <span>XHigh</span>
+                        <i data-lucide="chevron-down" class="icon" style="width:9px;height:9px;opacity:0.4;"></i>
+                      </div>
+                      <div class="input-toolbar-dot"></div>
+                      <div class="input-pill-btn input-pill-neutral">
+                        <i data-lucide="shield" class="icon"></i>
+                        <span>Standard</span>
+                        <i data-lucide="chevron-down" class="icon" style="width:9px;height:9px;opacity:0.4;"></i>
+                      </div>
+                      <div style="flex:1;"></div>
+                      <div class="input-send-btn"><i data-lucide="arrow-up" class="icon" style="width:12px;height:12px;"></i></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="chat-status-bar-mock">
+                  <div class="csb-item">
+                    <i data-lucide="zap" class="icon" style="width:10px;height:10px;color:var(--accent);"></i>
+                    <span>42%</span>
+                    <div class="csb-usage-bar"><div class="csb-usage-fill" style="width:42%;"></div></div>
+                  </div>
+                  <div style="flex:1;"></div>
+                  <div class="csb-item csb-branch">
+                    <i data-lucide="git-branch" class="icon" style="width:10px;height:10px;"></i>
+                    <span>feat/error-handling</span>
                   </div>
                 </div>
               </div>
@@ -189,23 +226,29 @@
           <!-- GIT PANEL -->
           <div class="git-panel">
             <div class="git-header">
-              <i data-lucide="git-branch" class="icon" style="width:14px;"></i>
-              <span>feat/error-handling</span>
-              <span class="git-badge">&uarr;1 &darr;0</span>
+              <i data-lucide="git-branch" class="icon" style="width:12px;color:var(--text-3);"></i>
+              <span class="git-branch-name">feat/error-handling</span>
+              <span class="git-badge">&uarr;1</span>
             </div>
 
             <div class="git-section-label">Unstaged (2)</div>
-            <div class="git-file-row">
-              <i data-lucide="file-code" class="icon" style="width:12px;opacity:0.4;"></i>
-              <span>src/git/repo.rs</span>
-              <span class="git-file-status modified">M</span>
-              <span class="git-file-action">+</span>
-            </div>
-            <div class="git-file-row">
-              <i data-lucide="file-code" class="icon" style="width:12px;opacity:0.4;"></i>
-              <span>src/commands/git.rs</span>
-              <span class="git-file-status modified">M</span>
-              <span class="git-file-action">+</span>
+            <div class="git-dir-group">
+              <div class="git-dir-label">
+                <i data-lucide="chevron-down" class="icon" style="width:10px;opacity:0.35;"></i>
+                <span>src/</span>
+              </div>
+              <div class="git-file-row git-file-indented">
+                <i data-lucide="file-code" class="icon" style="width:12px;opacity:0.4;"></i>
+                <span>git/repo.rs</span>
+                <span class="git-file-status modified">M</span>
+                <span class="git-file-action">+</span>
+              </div>
+              <div class="git-file-row git-file-indented">
+                <i data-lucide="file-code" class="icon" style="width:12px;opacity:0.4;"></i>
+                <span>commands/git.rs</span>
+                <span class="git-file-status modified">M</span>
+                <span class="git-file-action">+</span>
+              </div>
             </div>
 
             <div class="git-section-label">Staged (1)</div>
@@ -220,6 +263,7 @@
               <div class="git-commit-btn">Commit</div>
             </div>
           </div>
+          </div><!-- /content-card -->
         </div>
 
         <div class="mockup-reflection"></div>

@@ -385,8 +385,7 @@ img { display: block; max-width: 100%; }
 /* ── Mockup: Sidebar ── */
 .sidebar {
   width: 220px;
-  background: var(--bg-1);
-  border-right: 1px solid var(--border);
+  background: transparent;
   padding-top: 48px;
   display: flex;
   flex-direction: column;
@@ -441,23 +440,35 @@ img { display: block; max-width: 100%; }
   box-shadow: 0 0 6px var(--accent-glow);
 }
 
-/* ── Mockup: Main Area ── */
+/* ── Mockup: Floating Content Card ── */
+.content-card {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  background: #111111;
+  border-radius: 10px 10px 0 0;
+  margin-top: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: none;
+  box-shadow: 0 -2px 20px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
 .main-area {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: var(--bg-1);
 }
 
 .top-bar {
-  height: 48px;
+  height: 46px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   padding: 0 16px;
   gap: 12px;
-  background: var(--bg-1);
+  background: transparent;
 }
 
 .top-bar-path {
@@ -467,13 +478,44 @@ img { display: block; max-width: 100%; }
   font-family: var(--font-mono);
 }
 
-.layout-toggles {
-  display: flex;
-  gap: 6px;
+/* Layout mode pill — 4-button group */
+.layout-mode-pill {
+  display: inline-flex;
   align-items: center;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  gap: 0;
 }
-.layout-toggles .icon { opacity: 0.3; }
-.layout-toggles .icon.active { opacity: 1; color: var(--accent); }
+
+.lm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  cursor: default;
+  color: var(--text-3);
+  transition: background 0.15s, color 0.15s;
+}
+
+.lm-btn .icon { width: 12px; height: 12px; }
+
+.lm-btn:not(:last-child) {
+  border-right: 1px solid var(--border);
+}
+
+.lm-active {
+  background: var(--accent-dim);
+  color: var(--accent);
+  animation: lm-pulse 3s ease-in-out infinite;
+}
+
+@keyframes lm-pulse {
+  0%, 100% { background: var(--accent-dim); }
+  50%       { background: rgba(14, 240, 195, 0.16); }
+}
 
 .workspace-split-col {
   flex: 1;
@@ -595,18 +637,142 @@ img { display: block; max-width: 100%; }
   border-top: 1px solid var(--border);
 }
 
-.input-box {
+/* ── Mockup: Rich Chat Input ── */
+.input-card {
   background: var(--bg-3);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-md);
-  padding: 10px 14px;
+  overflow: hidden;
+}
+
+.input-text-row {
+  padding: 10px 14px 6px;
+  min-height: 34px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.input-placeholder {
+  color: var(--text-3);
   font-size: 12px;
 }
 
-.input-placeholder { color: var(--text-3); font-size: 12px; }
+.input-cursor {
+  display: inline-block;
+  width: 1px;
+  height: 12px;
+  background: var(--text-3);
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  animation: blink-cursor 1s step-end infinite;
+}
+
+.input-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px 6px;
+  border-top: 1px solid var(--border);
+}
+
+.input-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  color: var(--text-3);
+  cursor: default;
+}
+
+.input-tool-btn .icon { width: 11px; height: 11px; }
+
+.input-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: 100px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-3);
+  cursor: default;
+  white-space: nowrap;
+}
+
+.input-pill-btn .icon { width: 10px; height: 10px; }
+
+.input-pill-effort {
+  color: var(--accent);
+  border-color: rgba(14, 240, 195, 0.2);
+  background: rgba(14, 240, 195, 0.06);
+}
+
+.input-pill-neutral {
+  color: var(--text-2);
+}
+
+.input-toolbar-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+  margin: 0 2px;
+}
+
+.input-send-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #050505;
+  flex-shrink: 0;
+  cursor: default;
+  animation: send-glow 3s ease-in-out infinite;
+}
+
+@keyframes send-glow {
+  0%, 100% { box-shadow: 0 0 6px rgba(14, 240, 195, 0.3); }
+  50%       { box-shadow: 0 0 14px rgba(14, 240, 195, 0.55); }
+}
+
+/* ── Mockup: Status Bar ── */
+.chat-status-bar-mock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 16px 8px;
+}
+
+.csb-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+}
+
+.csb-usage-bar {
+  width: 28px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 100px;
+  overflow: hidden;
+}
+
+.csb-usage-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 100px;
+  opacity: 0.6;
+}
 
 /* ── Mockup: Resizer ── */
 .resizer-h {
@@ -650,6 +816,10 @@ img { display: block; max-width: 100%; }
   cursor: default;
 }
 
+.term-tab:not(.active) {
+  opacity: 0.55;
+}
+
 .term-tab.active {
   height: 28px;
   color: var(--text-2);
@@ -691,7 +861,7 @@ img { display: block; max-width: 100%; }
 /* ── Mockup: Git Panel ── */
 .git-panel {
   width: 240px;
-  background: var(--bg-1);
+  background: transparent;
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -699,22 +869,28 @@ img { display: block; max-width: 100%; }
 }
 
 .git-header {
-  height: 48px;
+  height: 46px;
   padding: 0 14px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-1);
+  gap: 6px;
   border-bottom: 1px solid var(--border);
+}
+
+.git-branch-name {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-2);
 }
 
 .git-badge {
   margin-left: auto;
   font-family: var(--font-mono);
   font-size: 10px;
-  color: var(--text-3);
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 1px 5px;
+  border-radius: 100px;
 }
 
 .git-section-label {
@@ -756,6 +932,25 @@ img { display: block; max-width: 100%; }
   border-radius: 3px;
 }
 .git-file-row:hover .git-file-action { opacity: 1; }
+
+.git-dir-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.git-dir-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 14px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+
+.git-file-indented {
+  padding-left: 28px;
+}
 
 .git-empty {
   padding: 12px 14px;
@@ -1558,15 +1753,13 @@ img { display: block; max-width: 100%; }
 
 /* ── Mockup Boot Sequence ── */
 .app-frame .sidebar,
-.app-frame .main-area,
-.app-frame .git-panel {
+.app-frame .content-card {
   opacity: 0;
   animation: panel-in 0.7s var(--ease-out-expo) forwards;
 }
 
-.app-frame .sidebar   { animation-delay: 1.0s; transform: translateX(-12px); }
-.app-frame .main-area { animation-delay: 1.2s; transform: translateY(8px); }
-.app-frame .git-panel { animation-delay: 1.4s; transform: translateX(12px); }
+.app-frame .sidebar      { animation-delay: 0.5s; transform: translateX(-12px); }
+.app-frame .content-card { animation-delay: 0.6s; transform: translateY(8px); }
 
 @keyframes panel-in {
   to {
@@ -1580,8 +1773,8 @@ img { display: block; max-width: 100%; }
   opacity: 0;
   animation: msg-in 0.5s var(--ease-out-expo) forwards;
 }
-.messages .msg-row:nth-child(1) { animation-delay: 1.6s; }
-.messages .msg-row:nth-child(2) { animation-delay: 2.0s; }
+.messages .msg-row:nth-child(1) { animation-delay: 0.8s; }
+.messages .msg-row:nth-child(2) { animation-delay: 1.0s; }
 
 @keyframes msg-in {
   from { opacity: 0; transform: translateY(8px); }
@@ -1593,11 +1786,11 @@ img { display: block; max-width: 100%; }
   opacity: 0;
   animation: term-in 0.3s var(--ease-out-expo) forwards;
 }
-.term-line:nth-child(1) { animation-delay: 2.4s; }
-.term-line:nth-child(2) { animation-delay: 2.6s; }
-.term-line:nth-child(3) { animation-delay: 2.8s; }
-.term-line:nth-child(4) { animation-delay: 3.1s; }
-.term-line:nth-child(5) { animation-delay: 3.4s; }
+.term-line:nth-child(1) { animation-delay: 1.2s; }
+.term-line:nth-child(2) { animation-delay: 1.3s; }
+.term-line:nth-child(3) { animation-delay: 1.4s; }
+.term-line:nth-child(4) { animation-delay: 1.55s; }
+.term-line:nth-child(5) { animation-delay: 1.7s; }
 
 @keyframes term-in {
   from { opacity: 0; }
@@ -1608,17 +1801,28 @@ img { display: block; max-width: 100%; }
 .git-file-row,
 .git-section-label,
 .git-empty,
-.git-commit-area {
+.git-commit-area,
+.git-dir-group {
   opacity: 0;
   animation: git-in 0.4s var(--ease-out-expo) forwards;
 }
-.git-panel .git-header          { opacity: 0; animation: git-in 0.4s var(--ease-out-expo) 1.5s forwards; }
-.git-panel .git-section-label:nth-of-type(1) { animation-delay: 2.8s; }
-.git-panel .git-file-row:nth-of-type(1)      { animation-delay: 2.9s; }
-.git-panel .git-file-row:nth-of-type(2)      { animation-delay: 3.0s; }
-.git-panel .git-section-label:nth-of-type(2) { animation-delay: 3.1s; }
-.git-panel .git-file-row:nth-of-type(3)      { animation-delay: 3.2s; }
-.git-panel .git-commit-area                   { animation-delay: 3.4s; }
+.git-panel .git-header { opacity: 0; animation: git-in 0.4s var(--ease-out-expo) 0.7s forwards; }
+.git-panel .git-section-label:nth-of-type(1) { animation-delay: 1.3s; }
+.git-panel .git-dir-group                     { animation-delay: 1.35s; }
+.git-panel .git-section-label:nth-of-type(2) { animation-delay: 1.5s; }
+.git-panel .git-file-row:not(.git-file-indented) { animation-delay: 1.55s; }
+.git-panel .git-commit-area                   { animation-delay: 1.7s; }
+
+/* New mockup elements boot sequence */
+.input-card {
+  opacity: 0;
+  animation: msg-in 0.5s var(--ease-out-expo) 0.75s forwards;
+}
+
+.chat-status-bar-mock {
+  opacity: 0;
+  animation: msg-in 0.5s var(--ease-out-expo) 1.05s forwards;
+}
 
 @keyframes git-in {
   from { opacity: 0; transform: translateY(4px); }
