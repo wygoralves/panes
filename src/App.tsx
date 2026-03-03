@@ -229,12 +229,24 @@ export function App() {
             );
           });
           break;
-        case "k":
+        case "p":
           if (e.shiftKey) return;
           e.preventDefault();
-          fireShortcut("toggle-command-palette", () =>
-            useUiStore.getState().openCommandPalette()
+          fireShortcut("open-command-palette-files", () =>
+            useUiStore.getState().openCommandPaletteWithQuery("%")
           );
+          break;
+        case "k":
+          e.preventDefault();
+          if (e.shiftKey) {
+            fireShortcut("open-command-palette-threads", () =>
+              useUiStore.getState().openCommandPaletteWithQuery("@")
+            );
+          } else {
+            fireShortcut("toggle-command-palette", () =>
+              useUiStore.getState().openCommandPalette()
+            );
+          }
           break;
       }
     }

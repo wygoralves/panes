@@ -92,7 +92,7 @@ function fuzzyFilter<T>(
 /*  Mode detection                                                     */
 /* ------------------------------------------------------------------ */
 
-type PaletteMode = "default" | "command" | "thread" | "workspace" | "auto";
+type PaletteMode = "default" | "command" | "thread" | "workspace" | "file" | "auto";
 
 function detectMode(query: string): { mode: PaletteMode; term: string } {
   if (query === "") return { mode: "default", term: "" };
@@ -104,6 +104,9 @@ function detectMode(query: string): { mode: PaletteMode; term: string } {
   }
   if (query.startsWith("#")) {
     return { mode: "workspace", term: query.slice(1) };
+  }
+  if (query.startsWith("%")) {
+    return { mode: "file", term: query.slice(1) };
   }
   return { mode: "auto", term: query };
 }
@@ -797,6 +800,8 @@ export function CommandPalette({ open, onClose }: Props) {
   const [subFlow, setSubFlow] = useState<SubFlow | null>(null);
   const [fileEntries, setFileEntries] = useState<FileTreeEntry[]>([]);
   const [fileLoading, setFileLoading] = useState(false);
+  const [showFilesInAuto, setShowFilesInAuto] = useState(false);
+  const [showThreadsInAuto, setShowThreadsInAuto] = useState(false);
 
   const fileCacheRef = useRef<Map<string, FileTreeEntry[]>>(new Map());
 
@@ -858,7 +863,14 @@ export function CommandPalette({ open, onClose }: Props) {
       setFileEntries([]);
       setFileLoading(false);
       fileCacheRef.current.clear();
+      setShowFilesInAuto(false);
+      setShowThreadsInAuto(false);
       return;
+    }
+    // Seed query from external shortcuts (e.g. Cmd+P → "%", Cmd+Shift+K → "@")
+    const initial = useUiStore.getState().commandPaletteInitialQuery;
+    if (initial !== null) {
+      setQuery(initial);
     }
     const timer = window.setTimeout(() => inputRef.current?.focus(), 30);
     return () => window.clearTimeout(timer);
@@ -866,10 +878,13 @@ export function CommandPalette({ open, onClose }: Props) {
 
   /* ---- File search (lazy, debounced, progressive) ---- */
   useEffect(() => {
-    if (!open || mode !== "auto" || term.length < 2 || !activeRepoPath) {
-      if (mode !== "auto") setFileEntries([]);
+    const isFileMode = mode === "auto" || mode === "file";
+    if (!open || !isFileMode || !activeRepoPath) {
+      if (!isFileMode) setFileEntries([]);
       return;
     }
+    // In auto mode, require 2+ chars before loading; in file mode, load immediately
+    if (mode === "auto" && term.length < 2) return;
 
     const cached = fileCacheRef.current.get(activeRepoPath);
     if (cached) {
@@ -1221,6 +1236,25 @@ export function CommandPalette({ open, onClose }: Props) {
       }];
     }
 
+    if (mode === "file") {
+      if (!activeRepoPath) {
+        return [{ label: "Files", items: [{ type: "sub-action", label: "No active repo" }] }];
+      }
+      if (fileLoading && fileEntries.length === 0) {
+        return [{ label: "Files", items: [{ type: "sub-action", label: "Loading files\u2026" }] }];
+      }
+      const filteredFiles = term.length > 0
+        ? fuzzyFilter(fileEntries, term, (f) => f.path, 20)
+        : fileEntries.slice(0, 20);
+      if (filteredFiles.length === 0) {
+        return [{ label: "Files", items: [{ type: "sub-action", label: fileLoading ? "Loading files\u2026" : "No files found" }] }];
+      }
+      return [{
+        label: fileLoading ? "Files (loading\u2026)" : "Files",
+        items: filteredFiles.map((f) => ({ type: "file", entry: f })),
+      }];
+    }
+
     // Auto mode
     const result: ResultGroup[] = [];
 
@@ -1233,7 +1267,7 @@ export function CommandPalette({ open, onClose }: Props) {
     }
 
     // Files
-    if (fileEntries.length > 0 && term.length >= 2) {
+    if (showFilesInAuto && fileEntries.length > 0 && term.length >= 2) {
       const filteredFiles = fuzzyFilter(fileEntries, term, (f) => f.path, 10);
       if (filteredFiles.length > 0) {
         result.push({
@@ -1253,12 +1287,14 @@ export function CommandPalette({ open, onClose }: Props) {
     }
 
     // Threads
-    const filteredThreads = fuzzyFilter(workspaceThreads, term, (t) => t.title, 5);
-    if (filteredThreads.length > 0) {
-      result.push({
-        label: "Threads",
-        items: filteredThreads.map((t) => ({ type: "thread", entry: t })),
-      });
+    if (showThreadsInAuto) {
+      const filteredThreads = fuzzyFilter(workspaceThreads, term, (t) => t.title, 5);
+      if (filteredThreads.length > 0) {
+        result.push({
+          label: "Threads",
+          items: filteredThreads.map((t) => ({ type: "thread", entry: t })),
+        });
+      }
     }
 
     // Harnesses
@@ -1276,6 +1312,7 @@ export function CommandPalette({ open, onClose }: Props) {
   }, [
     mode, term, subFlow, availableCommands, workspaceThreads, workspaces,
     installedHarnesses, fileEntries, fileLoading, activeThread, gitStatus, repos,
+    showFilesInAuto, showThreadsInAuto, activeRepoPath,
   ]);
 
   // Flat items for keyboard navigation
@@ -1529,7 +1566,7 @@ export function CommandPalette({ open, onClose }: Props) {
         if (subFlow) return;
         // Cycle through mode prefixes
         const currentPrefix = query.length > 0 && [">", "@", "#"].includes(query[0]) ? query[0] : "";
-        const prefixes = [">", "@", "#", ""];
+        const prefixes = [">", "@", "#", "%", ""];
         const currentIdx = prefixes.indexOf(currentPrefix);
         const nextIdx = (currentIdx + 1) % prefixes.length;
         setQuery(prefixes[nextIdx]);
@@ -1597,6 +1634,7 @@ export function CommandPalette({ open, onClose }: Props) {
       if (subFlow.type === "pop-stash") return "Search stashes\u2026";
       if (subFlow.type === "switch-repo") return "Search repos\u2026";
     }
+    if (mode === "file") return "Search files\u2026";
     return "Search files, commands, threads\u2026";
   };
 
@@ -1617,6 +1655,7 @@ export function CommandPalette({ open, onClose }: Props) {
     if (mode === "command") return <span style={STYLES.modeBadge}>&gt;</span>;
     if (mode === "thread") return <span style={STYLES.modeBadge}>@</span>;
     if (mode === "workspace") return <span style={STYLES.modeBadge}>#</span>;
+    if (mode === "file") return <span style={STYLES.modeBadge}>%</span>;
     return null;
   };
 
@@ -1860,6 +1899,58 @@ export function CommandPalette({ open, onClose }: Props) {
 
         {/* Results */}
         <div ref={resultsRef} style={STYLES.results}>
+          {/* Filter chips — auto mode only */}
+          {mode === "auto" && term.length >= 1 && !subFlow && (
+            <div style={{
+              display: "flex",
+              gap: 6,
+              padding: "6px 14px",
+              borderBottom: "1px solid var(--border)",
+            }}>
+              <button
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "2px 8px",
+                  borderRadius: "var(--radius-sm, 4px)",
+                  fontSize: 11,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  border: "none",
+                  fontFamily: "inherit",
+                  background: showFilesInAuto ? "var(--accent-dim)" : "var(--bg-4)",
+                  color: showFilesInAuto ? "var(--accent)" : "var(--text-3)",
+                  transition: "background 60ms ease, color 60ms ease",
+                }}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { setShowFilesInAuto((v) => !v); setActiveIndex(0); }}
+              >
+                <File size={11} /> Files
+              </button>
+              <button
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "2px 8px",
+                  borderRadius: "var(--radius-sm, 4px)",
+                  fontSize: 11,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  border: "none",
+                  fontFamily: "inherit",
+                  background: showThreadsInAuto ? "var(--accent-dim)" : "var(--bg-4)",
+                  color: showThreadsInAuto ? "var(--accent)" : "var(--text-3)",
+                  transition: "background 60ms ease, color 60ms ease",
+                }}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { setShowThreadsInAuto((v) => !v); setActiveIndex(0); }}
+              >
+                <MessageSquare size={11} /> Threads
+              </button>
+            </div>
+          )}
           {flatItems.length === 0 && (
             <p style={STYLES.emptyState}>
               {!activeWorkspaceId ? "No active workspace" : "No results"}

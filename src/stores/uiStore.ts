@@ -17,8 +17,10 @@ interface UiState {
   searchOpen: boolean;
   activeView: ActiveView;
   commandPaletteOpen: boolean;
+  commandPaletteInitialQuery: string | null;
   messageFocusTarget: MessageFocusTarget | null;
   openCommandPalette: () => void;
+  openCommandPaletteWithQuery: (query: string) => void;
   closeCommandPalette: () => void;
   toggleSidebar: () => void;
   toggleSidebarPin: () => void;
@@ -38,10 +40,12 @@ export const useUiStore = create<UiState>((set) => ({
   showGitPanel: true,
   searchOpen: false,
   commandPaletteOpen: false,
+  commandPaletteInitialQuery: null,
   activeView: "chat",
   messageFocusTarget: null,
-  openCommandPalette: () => set({ commandPaletteOpen: true }),
-  closeCommandPalette: () => set({ commandPaletteOpen: false }),
+  openCommandPalette: () => set({ commandPaletteOpen: true, commandPaletteInitialQuery: null }),
+  openCommandPaletteWithQuery: (query) => set({ commandPaletteOpen: true, commandPaletteInitialQuery: query }),
+  closeCommandPalette: () => set({ commandPaletteOpen: false, commandPaletteInitialQuery: null }),
   toggleSidebar: () => set((state) => ({ showSidebar: !state.showSidebar })),
   toggleSidebarPin: () =>
     set((state) => {
