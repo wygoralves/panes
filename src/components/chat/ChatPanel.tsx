@@ -581,6 +581,7 @@ export function ChatPanel() {
   } = useChatStore();
   const messageFocusTarget = useUiStore((s) => s.messageFocusTarget);
   const clearMessageFocusTarget = useUiStore((s) => s.clearMessageFocusTarget);
+  const showSidebar = useUiStore((s) => s.showSidebar);
   const engines = useEngineStore((s) => s.engines);
   const {
     repos,
@@ -1653,7 +1654,7 @@ export function ChatPanel() {
         height: "100%",
         display: "flex",
         flexDirection: "column",
-        background: "var(--bg-1)",
+        background: "var(--content-bg)",
       }}
     >
       {/* ── Top Header Bar ── */}
@@ -1661,9 +1662,9 @@ export function ChatPanel() {
         onMouseDown={handleDragMouseDown}
         onDoubleClick={handleDragDoubleClick}
         style={{
-          height: 74,
-          padding: "8px 16px",
-          paddingTop: 38,
+          height: 46,
+          padding: "0 16px",
+          paddingLeft: showSidebar ? 16 : 80,
           display: "flex",
           alignItems: "center",
           gap: 8,

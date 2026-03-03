@@ -839,7 +839,7 @@ function CollapsedRail({
         transition: "opacity 150ms var(--ease-out)",
       }}
     >
-      {/* Drag region + logo — total 74px to align with chat header */}
+      {/* Drag region + logo — 74px to clear macOS traffic lights */}
       <div
         onMouseDown={handleDragMouseDown}
         onDoubleClick={handleDragDoubleClick}

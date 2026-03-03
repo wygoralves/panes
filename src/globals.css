@@ -47,6 +47,13 @@
   --radius-lg: 14px;
   --radius-xl: 20px;
 
+  /* Linear-style layout */
+  --sidebar-bg: #0a0a0a;
+  --content-bg: #111111;
+  --content-top-margin: 8px;
+  --content-radius: 10px;
+  --content-border: rgba(255, 255, 255, 0.08);
+
   /* Transitions */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -60,7 +67,7 @@
 
 html, body, #root {
   width: 100%; height: 100%; margin: 0;
-  background: var(--bg-0);
+  background: var(--sidebar-bg);
   color: var(--text-1);
   font-family: "Sora", system-ui, -apple-system, sans-serif;
   font-size: 13px;
@@ -168,6 +175,58 @@ button, input, textarea, select {
   height: 2px;
   background: var(--accent);
   box-shadow: var(--accent-glow);
+}
+
+/* ── Linear-style Layout ── */
+.layout-root {
+  height: 100%;
+  display: flex;
+  background: var(--sidebar-bg);
+  overflow: hidden;
+}
+
+.layout-sidebar {
+  flex-shrink: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-resize-handle {
+  width: 6px;
+  margin-left: -3px;
+  margin-right: -3px;
+  align-self: stretch;
+  flex-shrink: 0;
+  cursor: col-resize;
+  position: relative;
+  z-index: 2;
+  background: transparent;
+}
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle.dragging {
+  background: var(--accent);
+  box-shadow: var(--accent-glow);
+}
+
+.content-card {
+  flex: 1;
+  min-width: 0;
+  margin-top: var(--content-top-margin);
+  background: var(--content-bg);
+  border-radius: var(--content-radius) var(--content-radius) 0 0;
+  border: 1px solid var(--content-border);
+  border-bottom: none;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.content-panel {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  background: var(--content-bg);
 }
 
 /* ── Buttons ── */
@@ -553,13 +612,12 @@ button, input, textarea, select {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--bg-1);
+  background: var(--content-bg);
 }
 
 .git-header {
-  height: 74px;
-  padding: 8px 14px;
-  padding-top: 38px;
+  height: 46px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
@@ -1997,25 +2055,19 @@ button, input, textarea, select {
 
 /* Collapsed rail — the thin icon strip */
 .sb-rail {
-  width: 52px;
+  width: 80px;
   height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  background: var(--bg-1);
+  background: var(--sidebar-bg);
   position: relative;
   z-index: 2;
   flex-shrink: 0;
 }
 
 .sb-rail::after {
-  content: "";
-  position: absolute;
-  top: 75px;
-  right: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--border);
+  display: none;
 }
 
 .sb-rail-btn {
@@ -2071,7 +2123,7 @@ button, input, textarea, select {
 .sb-flyout {
   width: 260px;
   height: 100%;
-  background: var(--bg-2);
+  background: var(--sidebar-bg);
   border-right: 1px solid var(--border);
   box-shadow: 8px 0 32px rgba(0, 0, 0, 0.4), 2px 0 8px rgba(0, 0, 0, 0.2);
   transform: translateX(-100%);
