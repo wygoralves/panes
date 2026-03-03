@@ -745,7 +745,6 @@ button, input, textarea, select {
 
 /* Sections */
 .git-section {
-  border-bottom: 1px solid var(--border);
 }
 .git-section-header {
   display: flex;
@@ -869,7 +868,7 @@ button, input, textarea, select {
 
 /* Diff viewer */
 .git-diff-viewer {
-  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
   background: var(--code-bg);
   display: flex;
   flex-direction: column;
