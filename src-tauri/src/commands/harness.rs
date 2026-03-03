@@ -18,6 +18,9 @@ struct HarnessDef {
     version_flag: &'static str,
     install_command: Option<&'static str>,
     install_args: &'static [&'static str],
+    /// Raw shell script for install (used for curl-pipe installers).
+    /// Takes precedence over `install_command` when set.
+    install_script: Option<&'static str>,
     website: &'static str,
     native: bool,
 }
@@ -31,6 +34,7 @@ const HARNESSES: &[HarnessDef] = &[
         version_flag: "--version",
         install_command: Some("npm"),
         install_args: &["install", "-g", "@openai/codex"],
+        install_script: None,
         website: "https://github.com/openai/codex",
         native: true,
     },
@@ -42,6 +46,7 @@ const HARNESSES: &[HarnessDef] = &[
         version_flag: "--version",
         install_command: Some("npm"),
         install_args: &["install", "-g", "@anthropic-ai/claude-code"],
+        install_script: None,
         website: "https://docs.anthropic.com/en/docs/claude-code",
         native: false,
     },
@@ -53,17 +58,19 @@ const HARNESSES: &[HarnessDef] = &[
         version_flag: "--version",
         install_command: Some("npm"),
         install_args: &["install", "-g", "@google/gemini-cli"],
+        install_script: None,
         website: "https://github.com/google-gemini/gemini-cli",
         native: false,
     },
     HarnessDef {
         id: "kiro",
         name: "Kiro",
-        description: "AI-powered development environment by AWS",
-        command: "kiro",
+        description: "AI-powered CLI coding agent by AWS",
+        command: "kiro-cli",
         version_flag: "--version",
         install_command: None,
         install_args: &[],
+        install_script: Some("curl -fsSL https://cli.kiro.dev/install | bash"),
         website: "https://kiro.dev",
         native: false,
     },
@@ -75,6 +82,7 @@ const HARNESSES: &[HarnessDef] = &[
         version_flag: "--version",
         install_command: Some("npm"),
         install_args: &["install", "-g", "opencode"],
+        install_script: None,
         website: "https://opencode.ai",
         native: false,
     },
@@ -86,6 +94,7 @@ const HARNESSES: &[HarnessDef] = &[
         version_flag: "--version",
         install_command: Some("npm"),
         install_args: &["install", "-g", "kilo-code"],
+        install_script: None,
         website: "https://kilocode.ai",
         native: false,
     },
@@ -97,6 +106,7 @@ const HARNESSES: &[HarnessDef] = &[
         version_flag: "--version",
         install_command: None,
         install_args: &[],
+        install_script: Some("curl -fsSL https://app.factory.ai/cli | sh"),
         website: "https://factory.ai",
         native: false,
     },
@@ -135,6 +145,11 @@ pub async fn install_harness(app: AppHandle, harness_id: String) -> Result<Insta
         .iter()
         .find(|h| h.id == harness_id)
         .ok_or_else(|| format!("unknown harness: {harness_id}"))?;
+
+    // Prefer install_script (curl-pipe installers) over install_command (npm)
+    if let Some(script) = def.install_script {
+        return run_harness_install_script(&app, &harness_id, script).await;
+    }
 
     let install_cmd = def.install_command.ok_or_else(|| {
         format!(
@@ -185,7 +200,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
                 found: true,
                 version: Some(version),
                 path: Some(path.display().to_string()),
-                can_auto_install: def.install_command.is_some(),
+                can_auto_install: def.install_command.is_some() || def.install_script.is_some(),
                 website: def.website.to_string(),
                 native: def.native,
             };
@@ -216,7 +231,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
                     found: true,
                     version: Some(version),
                     path: Some(path.display().to_string()),
-                    can_auto_install: def.install_command.is_some(),
+                    can_auto_install: def.install_command.is_some() || def.install_script.is_some(),
                     website: def.website.to_string(),
                     native: def.native,
                 };
@@ -234,7 +249,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
             found: true,
             version: Some(version),
             path: Some(path),
-            can_auto_install: def.install_command.is_some(),
+            can_auto_install: def.install_command.is_some() || def.install_script.is_some(),
             website: def.website.to_string(),
             native: def.native,
         };
@@ -248,7 +263,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
         found: false,
         version: None,
         path: None,
-        can_auto_install: def.install_command.is_some(),
+        can_auto_install: def.install_command.is_some() || def.install_script.is_some(),
         website: def.website.to_string(),
         native: def.native,
     }
@@ -338,6 +353,111 @@ async fn run_harness_install(
         .wait()
         .await
         .map_err(|e| format!("failed to wait for {program}: {e}"))?;
+
+    let success = status.success();
+    let message = if success {
+        format!("{harness_id} installed successfully")
+    } else {
+        format!(
+            "{harness_id} installation failed (exit code {})",
+            status.code().unwrap_or(-1)
+        )
+    };
+
+    emit(message.clone(), "status".to_string(), true);
+
+    Ok(InstallResult { success, message })
+}
+
+// ---------------------------------------------------------------------------
+// Script-based install runner (curl-pipe installers)
+// ---------------------------------------------------------------------------
+
+async fn run_harness_install_script(
+    app: &AppHandle,
+    harness_id: &str,
+    script: &str,
+) -> Result<InstallResult, String> {
+    let emit = |line: String, stream: String, finished: bool| {
+        let event = InstallProgressEvent {
+            dependency: harness_id.to_string(),
+            line,
+            stream,
+            finished,
+        };
+        let _ = app.emit("setup-install-progress", &event);
+    };
+
+    emit(format!("$ {script}"), "status".to_string(), false);
+
+    let shell = if Path::new("/bin/zsh").exists() {
+        "/bin/zsh"
+    } else if Path::new("/bin/bash").exists() {
+        "/bin/bash"
+    } else {
+        "/bin/sh"
+    };
+
+    let mut child = Command::new(shell)
+        .arg("-lc")
+        .arg(script)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn install script: {e}"))?;
+
+    let dep = harness_id.to_string();
+    let app_clone = app.clone();
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let dep_stdout = dep.clone();
+    let app_stdout = app_clone.clone();
+    let stdout_task = tokio::spawn(async move {
+        if let Some(stdout) = stdout {
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let _ = app_stdout.emit(
+                    "setup-install-progress",
+                    &InstallProgressEvent {
+                        dependency: dep_stdout.clone(),
+                        line,
+                        stream: "stdout".to_string(),
+                        finished: false,
+                    },
+                );
+            }
+        }
+    });
+
+    let dep_stderr = dep.clone();
+    let app_stderr = app_clone.clone();
+    let stderr_task = tokio::spawn(async move {
+        if let Some(stderr) = stderr {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let _ = app_stderr.emit(
+                    "setup-install-progress",
+                    &InstallProgressEvent {
+                        dependency: dep_stderr.clone(),
+                        line,
+                        stream: "stderr".to_string(),
+                        finished: false,
+                    },
+                );
+            }
+        }
+    });
+
+    let _ = tokio::join!(stdout_task, stderr_task);
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("failed to wait for install script: {e}"))?;
 
     let success = status.success();
     let message = if success {
