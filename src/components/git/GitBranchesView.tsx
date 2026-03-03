@@ -302,8 +302,7 @@ export function GitBranchesView({ repo, onError }: Props) {
     <>
       <div
         style={{
-          height: 34,
-          padding: "0 12px",
+          padding: "8px 12px",
           display: "flex",
           alignItems: "center",
           gap: 8,
