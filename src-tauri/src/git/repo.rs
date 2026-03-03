@@ -56,7 +56,12 @@ impl FileTreeCache {
         Some((Arc::clone(&entry.entries), entry.truncated))
     }
 
-    fn insert(&self, repo_path: &str, entries: Vec<FileTreeEntryDto>, truncated: bool) -> Arc<Vec<FileTreeEntryDto>> {
+    fn insert(
+        &self,
+        repo_path: &str,
+        entries: Vec<FileTreeEntryDto>,
+        truncated: bool,
+    ) -> Arc<Vec<FileTreeEntryDto>> {
         let arc = Arc::new(entries);
         let mut map = self.inner.lock().unwrap();
         map.insert(
@@ -340,16 +345,15 @@ pub fn list_git_branches(
         _ => a.name.cmp(&b.name),
     });
 
-    let entries: Vec<GitBranchDto> =
-        if let Some(q) = search.filter(|s| !s.trim().is_empty()) {
-            let q_lower = q.to_lowercase();
-            entries
-                .into_iter()
-                .filter(|b| b.name.to_lowercase().contains(&q_lower))
-                .collect()
-        } else {
-            entries
-        };
+    let entries: Vec<GitBranchDto> = if let Some(q) = search.filter(|s| !s.trim().is_empty()) {
+        let q_lower = q.to_lowercase();
+        entries
+            .into_iter()
+            .filter(|b| b.name.to_lowercase().contains(&q_lower))
+            .collect()
+    } else {
+        entries
+    };
 
     let total = entries.len();
     let offset = offset.min(total);
@@ -574,7 +578,10 @@ pub fn get_commit_diff(repo_path: &str, commit_hash: &str) -> anyhow::Result<Str
     run_git(repo_path, &["diff-tree", "-p", commit_hash])
 }
 
-pub fn get_file_tree(repo_path: &str, cache: &FileTreeCache) -> anyhow::Result<Vec<FileTreeEntryDto>> {
+pub fn get_file_tree(
+    repo_path: &str,
+    cache: &FileTreeCache,
+) -> anyhow::Result<Vec<FileTreeEntryDto>> {
     if let Some((entries, _)) = cache.get(repo_path) {
         return Ok((*entries).clone());
     }
