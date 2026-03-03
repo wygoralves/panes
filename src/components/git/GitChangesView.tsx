@@ -10,6 +10,7 @@ import {
   Loader2,
   Eye,
 } from "lucide-react";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
@@ -167,7 +168,7 @@ export function DiffPanel({ diff }: { diff: string }) {
   const parsed = useMemo(() => parseDiff(diff), [diff]);
 
   return (
-    <div className="git-diff-viewer" style={{ flex: 1, minHeight: 0 }}>
+    <div className="git-diff-viewer" style={{ height: "100%", minHeight: 0 }}>
       <div className="git-diff-scroll">
         <pre style={{ margin: 0, padding: "4px 0" }}>
           {parsed.map((line, idx) => (
@@ -266,6 +267,8 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
 
   const hasStagedFiles = stagedFiles.length > 0;
   const noChanges = unstagedFiles.length === 0 && !hasStagedFiles;
+  const showDiffPanel = Boolean(selectedFile && diff && showDiff);
+  const hasBottomContent = showDiffPanel || hasStagedFiles;
 
   async function onCommit() {
     if (!commitMessage.trim() || loadingKey !== null) return;
@@ -646,41 +649,58 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     );
   }
 
+  const changesContent = noChanges ? (
+    <div className="git-empty">
+      <div className="git-empty-icon-box">
+        <Check size={20} />
+      </div>
+      <p className="git-empty-title">Working tree clean</p>
+      <p className="git-empty-sub">No uncommitted changes</p>
+    </div>
+  ) : (
+    <>
+      {unstagedFiles.length > 0 &&
+        renderSection(
+          "changes",
+          "Changes",
+          unstagedRows,
+          unstagedFiles,
+          false,
+        )}
+      {hasStagedFiles &&
+        renderSection(
+          "staged",
+          "Staged",
+          stagedRows,
+          stagedFiles,
+          true,
+        )}
+    </>
+  );
+
   return (
     <>
-      <div style={{ overflow: "auto", flexShrink: 0, maxHeight: "50%" }}>
-        {noChanges ? (
-          <div className="git-empty">
-            <div className="git-empty-icon-box">
-              <Check size={20} />
+      {showDiffPanel ? (
+        <PanelGroup direction="vertical" style={{ flex: 1, minHeight: 0 }}>
+          <Panel defaultSize={50} minSize={15}>
+            <div style={{ height: "100%", overflow: "auto" }}>
+              {changesContent}
             </div>
-            <p className="git-empty-title">Working tree clean</p>
-            <p className="git-empty-sub">No uncommitted changes</p>
-          </div>
-        ) : (
-          <>
-            {unstagedFiles.length > 0 &&
-              renderSection(
-                "changes",
-                "Changes",
-                unstagedRows,
-                unstagedFiles,
-                false,
-              )}
-            {hasStagedFiles &&
-              renderSection(
-                "staged",
-                "Staged",
-                stagedRows,
-                stagedFiles,
-                true,
-              )}
-          </>
-        )}
-      </div>
-
-      {selectedFile && diff && showDiff && (
-        <DiffPanel diff={diff} />
+          </Panel>
+          <PanelResizeHandle className="resize-handle-vertical" />
+          <Panel defaultSize={50} minSize={15}>
+            <DiffPanel diff={diff!} />
+          </Panel>
+        </PanelGroup>
+      ) : (
+        <div style={{
+          overflow: "auto",
+          ...(hasStagedFiles
+            ? { flexShrink: 0, maxHeight: "50%" }
+            : { flex: 1, minHeight: 0 }),
+        }}>
+          {changesContent}
+        </div>
       )}
 
       <ConfirmDialog

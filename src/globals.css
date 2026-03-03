@@ -868,7 +868,6 @@ button, input, textarea, select {
 
 /* Diff viewer */
 .git-diff-viewer {
-  border-top: 1px solid var(--border);
   background: var(--code-bg);
   display: flex;
   flex-direction: column;
