@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
 import { SearchModal } from "./components/chat/SearchModal";
+import { CommandPalette } from "./components/shared/CommandPalette";
 import { EngineHealthBanner } from "./components/onboarding/EngineHealthBanner";
 import { SetupWizard } from "./components/onboarding/SetupWizard";
 import { ToastContainer } from "./components/shared/ToastContainer";
@@ -39,6 +40,8 @@ export function App() {
   const refreshThreads = useThreadStore((s) => s.refreshThreads);
   const searchOpen = useUiStore((s) => s.searchOpen);
   const setSearchOpen = useUiStore((s) => s.setSearchOpen);
+  const commandPaletteOpen = useUiStore((s) => s.commandPaletteOpen);
+  const closeCommandPalette = useUiStore((s) => s.closeCommandPalette);
   const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
 
   useEffect(() => {
@@ -226,6 +229,13 @@ export function App() {
             );
           });
           break;
+        case "k":
+          if (e.shiftKey) return;
+          e.preventDefault();
+          fireShortcut("toggle-command-palette", () =>
+            useUiStore.getState().openCommandPalette()
+          );
+          break;
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -282,6 +292,7 @@ export function App() {
         </div>
       </div>
       <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <CommandPalette open={commandPaletteOpen} onClose={closeCommandPalette} />
       <SetupWizard />
       <ToastContainer />
     </div>

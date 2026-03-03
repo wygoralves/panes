@@ -16,7 +16,10 @@ interface UiState {
   showGitPanel: boolean;
   searchOpen: boolean;
   activeView: ActiveView;
+  commandPaletteOpen: boolean;
   messageFocusTarget: MessageFocusTarget | null;
+  openCommandPalette: () => void;
+  closeCommandPalette: () => void;
   toggleSidebar: () => void;
   toggleSidebarPin: () => void;
   setSidebarPinned: (pinned: boolean) => void;
@@ -34,8 +37,11 @@ export const useUiStore = create<UiState>((set) => ({
   sidebarPinned: savedPinned !== null ? savedPinned === "true" : true,
   showGitPanel: true,
   searchOpen: false,
+  commandPaletteOpen: false,
   activeView: "chat",
   messageFocusTarget: null,
+  openCommandPalette: () => set({ commandPaletteOpen: true }),
+  closeCommandPalette: () => set({ commandPaletteOpen: false }),
   toggleSidebar: () => set((state) => ({ showSidebar: !state.showSidebar })),
   toggleSidebarPin: () =>
     set((state) => {
