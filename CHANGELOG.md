@@ -1,5 +1,15 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.21.0...vnull) (2026-03-03)
+
+### Features
+
+* automatically checkout when creating new branch ([1e2c10c](https://github.com/wygoralves/panes/commit/1e2c10c380401cbb1a8bcdcdc233daedee13c00a))
+
+### Bug Fixes
+
+* fix lp logo not refreshing ([8375a19](https://github.com/wygoralves/panes/commit/8375a19d64c529acae982e1e6928784655ae68e9))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.20.0...vnull) (2026-03-03)
 
 ### Features
