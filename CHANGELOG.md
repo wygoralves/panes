@@ -1,5 +1,15 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.19.0...vnull) (2026-03-03)
+
+### Features
+
+* apply layout redesign ([35c0f15](https://github.com/wygoralves/panes/commit/35c0f1560bc09991a1aae61325832a3f4b41f77e))
+
+### Bug Fixes
+
+* adjust layout when rail sidebar is hidden ([d6de219](https://github.com/wygoralves/panes/commit/d6de219782b4b70138857127ebe1db50873c3436))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.18.0...vnull) (2026-03-03)
 
 ### Features
