@@ -1,5 +1,12 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.22.0...vnull) (2026-03-03)
+
+### Features
+
+* add resize handle for diff component on the git panel ([d0e3593](https://github.com/wygoralves/panes/commit/d0e359348c0f8afb6dd514e98b22209b1ef271af))
+* disable files and threads search by default ([9f4d9c1](https://github.com/wygoralves/panes/commit/9f4d9c17c8bb5ce3c9f4625ce254c7a80a93e4f8))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.21.0...vnull) (2026-03-03)
 
 ### Features
