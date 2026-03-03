@@ -83,7 +83,7 @@ export function ThreeColumnLayout() {
       )}
 
       {/* Floating content card */}
-      <div className="content-card">
+      <div className={`content-card ${!showSidebar ? "content-card-full" : ""}`}>
         <PanelGroup
           key={`${showGitPanel}`}
           direction="horizontal"

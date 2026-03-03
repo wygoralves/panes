@@ -222,6 +222,12 @@ button, input, textarea, select {
   flex-direction: column;
 }
 
+.content-card-full {
+  margin-top: 0;
+  border-radius: 0;
+  border: none;
+}
+
 .content-panel {
   position: relative;
   height: 100%;
