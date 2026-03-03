@@ -1,5 +1,17 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.18.0...vnull) (2026-03-03)
+
+### Features
+
+* add file tree cache and progressive palette search ([8150139](https://github.com/wygoralves/panes/commit/8150139f428ea8f4a9966be890f27250d6eda790))
+* add new command palette feature ([fad0b3e](https://github.com/wygoralves/panes/commit/fad0b3edf0455182359a74d95e1835c95e7792a3))
+* add server-side branch search and load-more pagination ([35a178a](https://github.com/wygoralves/panes/commit/35a178aea19500b780f2ee39181ae84691ad7adb))
+
+### Bug Fixes
+
+* fix incorrect harness commands for kiro and droid ([bcafbe3](https://github.com/wygoralves/panes/commit/bcafbe368a59965a0aeb3959c021bc4ec820fed8))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.17.0...vnull) (2026-03-02)
 
 ### Features
