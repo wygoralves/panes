@@ -23,5 +23,8 @@ PERFORMANCE_PLANO.md
 # Local plans and docs
 plans-and-docs/
 
+# Agent reference docs (local, not versioned)
+agents_docs/
+
 # Nested repos
 remotion/
