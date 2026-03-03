@@ -404,10 +404,11 @@ pub fn create_git_branch(
     from_ref: Option<&str>,
 ) -> anyhow::Result<()> {
     if let Some(reference) = from_ref.map(str::trim).filter(|value| !value.is_empty()) {
-        run_git(repo_path, &["branch", branch_name, reference])
+        run_git(repo_path, &["checkout", "-b", branch_name, reference])
             .context("failed to create git branch")?;
     } else {
-        run_git(repo_path, &["branch", branch_name]).context("failed to create git branch")?;
+        run_git(repo_path, &["checkout", "-b", branch_name])
+            .context("failed to create git branch")?;
     }
     Ok(())
 }

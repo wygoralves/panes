@@ -1449,7 +1449,7 @@ export function CommandPalette({ open, onClose }: Props) {
       onClose();
       try {
         await useGitStore.getState().createBranch(activeRepoPath, subFlow.value);
-        toast.success(`Branch "${subFlow.value}" created`);
+        toast.success(`Created and switched to branch: ${subFlow.value}`);
       } catch {
         toast.error("Failed to create branch");
       }

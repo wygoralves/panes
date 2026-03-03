@@ -178,7 +178,7 @@ export function GitBranchesView({ repo, onError }: Props) {
       branchHistCursorRef.current = -1;
       branchLiveDraftRef.current = "";
       setShowNewBranch(false);
-      toast.success(`Created branch: ${name}`);
+      toast.success(`Created and switched to branch: ${name}`);
     } catch (e) {
       onError(String(e));
     } finally {
