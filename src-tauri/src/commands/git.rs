@@ -277,25 +277,29 @@ pub async fn get_commit_diff(
 
 #[tauri::command]
 pub async fn get_file_tree(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     repo_path: String,
 ) -> Result<Vec<FileTreeEntryDto>, String> {
-    tokio::task::spawn_blocking(move || repo::get_file_tree(&repo_path).map_err(err_to_string))
-        .await
-        .map_err(|error| error.to_string())?
+    let cache = state.file_tree_cache.clone();
+    tokio::task::spawn_blocking(move || {
+        repo::get_file_tree(&repo_path, &cache).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 pub async fn get_file_tree_page(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     repo_path: String,
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> Result<FileTreePageDto, String> {
     let offset = offset.unwrap_or(0);
     let limit = limit.unwrap_or(2000);
+    let cache = state.file_tree_cache.clone();
     tokio::task::spawn_blocking(move || {
-        repo::get_file_tree_page(&repo_path, offset, limit).map_err(err_to_string)
+        repo::get_file_tree_page(&repo_path, offset, limit, &cache).map_err(err_to_string)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -313,7 +317,9 @@ pub async fn watch_git_repo(
     state: State<'_, AppState>,
     repo_path: String,
 ) -> Result<(), String> {
+    let cache = state.file_tree_cache.clone();
     let callback = std::sync::Arc::new(move |changed_repo_path: String| {
+        cache.invalidate(&changed_repo_path);
         let payload = GitRepoChangedEvent {
             repo_path: changed_repo_path,
         };

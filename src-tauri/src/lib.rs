@@ -13,6 +13,7 @@ use std::sync::Arc;
 use config::app_config::AppConfig;
 use db::Database;
 use engines::EngineManager;
+use git::repo::FileTreeCache;
 use git::watcher::GitWatcherManager;
 use state::{AppState, TurnManager};
 use tauri::{
@@ -53,6 +54,7 @@ pub fn run() {
         git_watchers: Arc::new(GitWatcherManager::default()),
         terminals: Arc::new(TerminalManager::default()),
         turns: Arc::new(TurnManager::default()),
+        file_tree_cache: Arc::new(FileTreeCache::new()),
     };
 
     let app = tauri::Builder::default()

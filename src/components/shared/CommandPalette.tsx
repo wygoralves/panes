@@ -26,6 +26,10 @@ import {
   ListTree,
   History,
   Layers,
+  Trash2,
+  ListChecks,
+  ListX,
+  FolderGit2,
 } from "lucide-react";
 import { ipc, writeCommandToNewSession } from "../../lib/ipc";
 import { useUiStore } from "../../stores/uiStore";
@@ -37,7 +41,11 @@ import { useTerminalStore } from "../../stores/terminalStore";
 import { useFileStore } from "../../stores/fileStore";
 import { useHarnessStore } from "../../stores/harnessStore";
 import { toast } from "../../stores/toastStore";
-import type { FileTreeEntry, GitBranch, HarnessInfo, Thread, Workspace } from "../../types";
+import type { FileTreeEntry, GitBranch, GitStash, HarnessInfo, Repo, Thread, Workspace } from "../../types";
+
+const FILE_SEARCH_PAGE_SIZE = 500;
+const FILE_SEARCH_MAX_PAGES = 20; // 10,000 files ceiling
+const FILE_SEARCH_PAGE_DELAY_MS = 80;
 
 /* ------------------------------------------------------------------ */
 /*  Fuzzy search                                                       */
@@ -108,7 +116,11 @@ type SubFlow =
   | { type: "checkout-branch"; query: string; branches: GitBranch[]; loading: boolean }
   | { type: "create-branch"; value: string }
   | { type: "commit"; value: string }
-  | { type: "stash"; value: string };
+  | { type: "stash"; value: string }
+  | { type: "delete-branch"; query: string; branches: GitBranch[]; loading: boolean }
+  | { type: "apply-stash"; query: string; stashes: GitStash[]; loading: boolean }
+  | { type: "pop-stash"; query: string; stashes: GitStash[]; loading: boolean }
+  | { type: "switch-repo"; query: string };
 
 /* ------------------------------------------------------------------ */
 /*  Command registry types                                             */
@@ -119,6 +131,7 @@ type CommandGroup = "layout" | "git" | "harness" | "navigation" | "view";
 interface CommandContext {
   activeWorkspaceId: string | null;
   activeRepoPath: string | null;
+  repos: Repo[];
   close: () => void;
   openSubFlow: (flow: SubFlow) => void;
 }
@@ -146,6 +159,8 @@ type ResultItem =
   | { type: "workspace"; entry: Workspace }
   | { type: "harness"; entry: HarnessInfo }
   | { type: "branch"; entry: GitBranch }
+  | { type: "stash"; entry: GitStash }
+  | { type: "repo"; entry: Repo }
   | { type: "send-message"; query: string }
   | { type: "sub-action"; label: string; description?: string };
 
@@ -341,6 +356,100 @@ const STATIC_COMMANDS: CommandEntry[] = [
     },
   },
   {
+    id: "git-stage-all",
+    label: "Stage All Files",
+    icon: ListChecks,
+    group: "git",
+    keywords: ["stage", "add", "all"],
+    isAvailable: (ctx) => !!ctx.activeRepoPath,
+    action: async ({ activeRepoPath, close }) => {
+      if (!activeRepoPath) return;
+      const status = useGitStore.getState().status;
+      const unstaged = status?.files.filter((f) => f.worktreeStatus) ?? [];
+      if (unstaged.length === 0) {
+        toast.warning("No unstaged files");
+        return;
+      }
+      close();
+      try {
+        await useGitStore.getState().stageMany(activeRepoPath, unstaged.map((f) => f.path));
+        toast.success(`Staged ${unstaged.length} file${unstaged.length === 1 ? "" : "s"}`);
+      } catch {
+        toast.error("Stage failed");
+      }
+    },
+  },
+  {
+    id: "git-unstage-all",
+    label: "Unstage All Files",
+    icon: ListX,
+    group: "git",
+    keywords: ["unstage", "remove", "all"],
+    isAvailable: (ctx) => !!ctx.activeRepoPath,
+    action: async ({ activeRepoPath, close }) => {
+      if (!activeRepoPath) return;
+      const status = useGitStore.getState().status;
+      const staged = status?.files.filter((f) => f.indexStatus) ?? [];
+      if (staged.length === 0) {
+        toast.warning("No staged files");
+        return;
+      }
+      close();
+      try {
+        await useGitStore.getState().unstageMany(activeRepoPath, staged.map((f) => f.path));
+        toast.success(`Unstaged ${staged.length} file${staged.length === 1 ? "" : "s"}`);
+      } catch {
+        toast.error("Unstage failed");
+      }
+    },
+  },
+  {
+    id: "git-discard-all",
+    label: "Discard All Changes",
+    icon: Trash2,
+    group: "git",
+    keywords: ["discard", "revert", "clean", "all"],
+    isAvailable: (ctx) => !!ctx.activeRepoPath,
+    action: ({ close }) => {
+      useGitStore.getState().setActiveView("changes");
+      if (!useUiStore.getState().showGitPanel) useUiStore.getState().toggleGitPanel();
+      close();
+    },
+  },
+  {
+    id: "git-apply-stash",
+    label: "Apply Stash\u2026",
+    icon: Layers,
+    group: "git",
+    keywords: ["stash", "apply", "restore"],
+    isAvailable: (ctx) => !!ctx.activeRepoPath,
+    action: ({ openSubFlow }) => {
+      openSubFlow({ type: "apply-stash", query: "", stashes: [], loading: true });
+    },
+  },
+  {
+    id: "git-pop-stash",
+    label: "Pop Stash\u2026",
+    icon: Layers,
+    group: "git",
+    keywords: ["stash", "pop", "restore", "drop"],
+    isAvailable: (ctx) => !!ctx.activeRepoPath,
+    action: ({ openSubFlow }) => {
+      openSubFlow({ type: "pop-stash", query: "", stashes: [], loading: true });
+    },
+  },
+  {
+    id: "git-delete-branch",
+    label: "Delete Branch\u2026",
+    icon: Trash2,
+    group: "git",
+    keywords: ["delete", "remove", "branch"],
+    isAvailable: (ctx) => !!ctx.activeRepoPath,
+    action: ({ openSubFlow }) => {
+      openSubFlow({ type: "delete-branch", query: "", branches: [], loading: true });
+    },
+  },
+  {
     id: "git-soft-reset",
     label: "Soft Reset Last Commit",
     icon: Undo2,
@@ -356,6 +465,17 @@ const STATIC_COMMANDS: CommandEntry[] = [
       } catch {
         toast.error("Reset failed");
       }
+    },
+  },
+  {
+    id: "git-switch-repo",
+    label: "Switch Git Repo\u2026",
+    icon: FolderGit2,
+    group: "git",
+    keywords: ["repo", "repository", "switch", "multi"],
+    isAvailable: (ctx) => ctx.repos.length > 1,
+    action: ({ openSubFlow }) => {
+      openSubFlow({ type: "switch-repo", query: "" });
     },
   },
   // Navigation
@@ -450,6 +570,32 @@ const STATIC_COMMANDS: CommandEntry[] = [
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: ({ close }) => {
       useGitStore.getState().setActiveView("stash");
+      if (!useUiStore.getState().showGitPanel) useUiStore.getState().toggleGitPanel();
+      close();
+    },
+  },
+  {
+    id: "view-files",
+    label: "Open Git Files",
+    icon: File,
+    group: "view",
+    keywords: ["files", "tree", "explorer"],
+    isAvailable: (ctx) => !!ctx.activeRepoPath,
+    action: ({ close }) => {
+      useGitStore.getState().setActiveView("files");
+      if (!useUiStore.getState().showGitPanel) useUiStore.getState().toggleGitPanel();
+      close();
+    },
+  },
+  {
+    id: "view-worktrees",
+    label: "Open Git Worktrees",
+    icon: FolderGit2,
+    group: "view",
+    keywords: ["worktrees", "worktree", "working"],
+    isAvailable: (ctx) => !!ctx.activeRepoPath,
+    action: ({ close }) => {
+      useGitStore.getState().setActiveView("worktrees");
       if (!useUiStore.getState().showGitPanel) useUiStore.getState().toggleGitPanel();
       close();
     },
@@ -665,6 +811,7 @@ export function CommandPalette({ open, onClose }: Props) {
 
   const activeRepo = repos.find((r) => r.id === activeRepoId);
   const activeRepoPath = activeRepo?.path ?? null;
+  const gitStatus = useGitStore((s) => s.status);
 
   const workspaceThreads = useMemo(
     () => threads.filter((t) => t.workspaceId === activeWorkspaceId),
@@ -689,10 +836,11 @@ export function CommandPalette({ open, onClose }: Props) {
     () => ({
       activeWorkspaceId,
       activeRepoPath,
+      repos,
       close: onClose,
       openSubFlow: setSubFlow,
     }),
-    [activeWorkspaceId, activeRepoPath, onClose],
+    [activeWorkspaceId, activeRepoPath, repos, onClose],
   );
 
   // Available commands filtered by context
@@ -716,7 +864,7 @@ export function CommandPalette({ open, onClose }: Props) {
     return () => window.clearTimeout(timer);
   }, [open]);
 
-  /* ---- File search (lazy, debounced) ---- */
+  /* ---- File search (lazy, debounced, progressive) ---- */
   useEffect(() => {
     if (!open || mode !== "auto" || term.length < 2 || !activeRepoPath) {
       if (mode !== "auto") setFileEntries([]);
@@ -734,11 +882,32 @@ export function CommandPalette({ open, onClose }: Props) {
 
     const timer = window.setTimeout(async () => {
       try {
-        const page = await ipc.getFileTreePage(activeRepoPath, 0, 2000);
-        if (cancelled) return;
-        const files = page.entries.filter((e) => !e.isDir);
-        fileCacheRef.current.set(activeRepoPath, files);
-        setFileEntries(files);
+        const repoPath = activeRepoPath;
+        const accumulated: FileTreeEntry[] = [];
+
+        for (let page = 0; page < FILE_SEARCH_MAX_PAGES; page++) {
+          if (cancelled) return;
+
+          const result = await ipc.getFileTreePage(
+            repoPath,
+            page * FILE_SEARCH_PAGE_SIZE,
+            FILE_SEARCH_PAGE_SIZE,
+          );
+          if (cancelled) return;
+
+          const files = result.entries.filter((e) => !e.isDir);
+          accumulated.push(...files);
+          setFileEntries([...accumulated]);
+
+          if (!result.hasMore) break;
+
+          // Let the UI breathe between pages
+          await new Promise((r) => setTimeout(r, FILE_SEARCH_PAGE_DELAY_MS));
+        }
+
+        if (!cancelled) {
+          fileCacheRef.current.set(repoPath, accumulated);
+        }
       } catch {
         // Degrade gracefully — no file results
       } finally {
@@ -752,28 +921,31 @@ export function CommandPalette({ open, onClose }: Props) {
     };
   }, [open, mode, term, activeRepoPath]);
 
-  /* ---- Branch search for sub-flow ---- */
+  /* ---- Branch search for checkout sub-flow (local + remote) ---- */
   useEffect(() => {
     if (!open || subFlow?.type !== "checkout-branch" || !activeRepoPath) return;
 
     let cancelled = false;
+    const searchQuery = subFlow.query || undefined;
 
     const timer = window.setTimeout(async () => {
       try {
-        const page = await ipc.listGitBranches(
-          activeRepoPath,
-          "local",
-          0,
-          50,
-          subFlow.query || undefined,
+        const [localPage, remotePage] = await Promise.all([
+          ipc.listGitBranches(activeRepoPath, "local", 0, 50, searchQuery),
+          ipc.listGitBranches(activeRepoPath, "remote", 0, 50, searchQuery),
+        ]);
+        if (cancelled) return;
+        const localNames = new Set(localPage.entries.map((b) => b.name));
+        const remotes = remotePage.entries.filter((b) => {
+          const shortName = b.name.includes("/") ? b.name.slice(b.name.indexOf("/") + 1) : b.name;
+          return !localNames.has(shortName);
+        });
+        const merged = [...localPage.entries, ...remotes].slice(0, 80);
+        setSubFlow((prev) =>
+          prev?.type === "checkout-branch"
+            ? { ...prev, branches: merged, loading: false }
+            : prev,
         );
-        if (!cancelled) {
-          setSubFlow((prev) =>
-            prev?.type === "checkout-branch"
-              ? { ...prev, branches: page.entries, loading: false }
-              : prev,
-          );
-        }
       } catch {
         if (!cancelled) {
           setSubFlow((prev) =>
@@ -788,6 +960,78 @@ export function CommandPalette({ open, onClose }: Props) {
       window.clearTimeout(timer);
     };
   }, [open, subFlow?.type, subFlow?.type === "checkout-branch" ? subFlow.query : null, activeRepoPath]);
+
+  /* ---- Branch search for delete sub-flow (local + remote, exclude current) ---- */
+  useEffect(() => {
+    if (!open || subFlow?.type !== "delete-branch" || !activeRepoPath) return;
+
+    let cancelled = false;
+    const searchQuery = subFlow.query || undefined;
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const [localPage, remotePage] = await Promise.all([
+          ipc.listGitBranches(activeRepoPath, "local", 0, 50, searchQuery),
+          ipc.listGitBranches(activeRepoPath, "remote", 0, 50, searchQuery),
+        ]);
+        if (cancelled) return;
+        const localNames = new Set(localPage.entries.map((b) => b.name));
+        const remotes = remotePage.entries.filter((b) => {
+          const shortName = b.name.includes("/") ? b.name.slice(b.name.indexOf("/") + 1) : b.name;
+          return !localNames.has(shortName);
+        });
+        const merged = [...localPage.entries, ...remotes]
+          .filter((b) => !b.isCurrent)
+          .slice(0, 80);
+        setSubFlow((prev) =>
+          prev?.type === "delete-branch"
+            ? { ...prev, branches: merged, loading: false }
+            : prev,
+        );
+      } catch {
+        if (!cancelled) {
+          setSubFlow((prev) =>
+            prev?.type === "delete-branch" ? { ...prev, loading: false } : prev,
+          );
+        }
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [open, subFlow?.type, subFlow?.type === "delete-branch" ? subFlow.query : null, activeRepoPath]);
+
+  /* ---- Stash list for apply/pop sub-flow ---- */
+  useEffect(() => {
+    if (!open || !activeRepoPath) return;
+    if (subFlow?.type !== "apply-stash" && subFlow?.type !== "pop-stash") return;
+
+    let cancelled = false;
+    const flowType = subFlow.type;
+
+    (async () => {
+      try {
+        await useGitStore.getState().loadStashes(activeRepoPath);
+        if (cancelled) return;
+        const stashes = useGitStore.getState().stashes;
+        setSubFlow((prev) =>
+          prev?.type === flowType
+            ? { ...prev, stashes, loading: false }
+            : prev,
+        );
+      } catch {
+        if (!cancelled) {
+          setSubFlow((prev) =>
+            prev?.type === flowType ? { ...prev, loading: false } : prev,
+          );
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [open, subFlow?.type, activeRepoPath]);
 
   /* ---- Build result groups ---- */
   const groups = useMemo<ResultGroup[]>(() => {
@@ -821,13 +1065,15 @@ export function CommandPalette({ open, onClose }: Props) {
         }];
       }
       if (subFlow.type === "commit") {
+        const stagedCount = gitStatus?.files.filter((f) => f.indexStatus).length ?? 0;
+        const stagedHint = stagedCount > 0 ? `(${stagedCount} staged)` : "(no staged files)";
         return [{
           label: "Commit",
           items: [{
             type: "sub-action",
             label: subFlow.value.length > 0
-              ? `Commit with: "${subFlow.value}"`
-              : "Type a commit message\u2026",
+              ? `Commit with: "${subFlow.value}" ${stagedHint}`
+              : `Type a commit message\u2026 ${stagedHint}`,
           }],
         }];
       }
@@ -841,6 +1087,49 @@ export function CommandPalette({ open, onClose }: Props) {
               : "Press Enter to stash (or type a message)",
           }],
         }];
+      }
+      if (subFlow.type === "delete-branch") {
+        const items: ResultItem[] = subFlow.branches.map((b) => ({
+          type: "branch" as const,
+          entry: b,
+        }));
+        if (subFlow.loading && items.length === 0) {
+          return [{ label: "Delete Branch", items: [{ type: "sub-action", label: "Loading branches\u2026" }] }];
+        }
+        if (items.length === 0) {
+          return [{ label: "Delete Branch", items: [{ type: "sub-action", label: "No branches found" }] }];
+        }
+        return [{ label: "Delete Branch", items }];
+      }
+      if (subFlow.type === "apply-stash" || subFlow.type === "pop-stash") {
+        const label = subFlow.type === "apply-stash" ? "Apply Stash" : "Pop Stash";
+        const filtered = subFlow.query
+          ? subFlow.stashes.filter((s) => s.name.toLowerCase().includes(subFlow.query.toLowerCase()))
+          : subFlow.stashes;
+        const items: ResultItem[] = filtered.map((s) => ({
+          type: "stash" as const,
+          entry: s,
+        }));
+        if (subFlow.loading && items.length === 0) {
+          return [{ label, items: [{ type: "sub-action", label: "Loading stashes\u2026" }] }];
+        }
+        if (items.length === 0) {
+          return [{ label, items: [{ type: "sub-action", label: "No stashes found" }] }];
+        }
+        return [{ label, items }];
+      }
+      if (subFlow.type === "switch-repo") {
+        const filtered = subFlow.query
+          ? repos.filter((r) => r.name.toLowerCase().includes(subFlow.query.toLowerCase()))
+          : repos;
+        const items: ResultItem[] = filtered.map((r) => ({
+          type: "repo" as const,
+          entry: r,
+        }));
+        if (items.length === 0) {
+          return [{ label: "Switch Repo", items: [{ type: "sub-action", label: "No repos found" }] }];
+        }
+        return [{ label: "Switch Repo", items }];
       }
     }
 
@@ -986,7 +1275,7 @@ export function CommandPalette({ open, onClose }: Props) {
     return result;
   }, [
     mode, term, subFlow, availableCommands, workspaceThreads, workspaces,
-    installedHarnesses, fileEntries, fileLoading, activeThread,
+    installedHarnesses, fileEntries, fileLoading, activeThread, gitStatus, repos,
   ]);
 
   // Flat items for keyboard navigation
@@ -1048,6 +1337,9 @@ export function CommandPalette({ open, onClose }: Props) {
           onClose();
           if (activeRepoPath) {
             await useFileStore.getState().openFile(activeRepoPath, item.entry.path);
+            if (activeWorkspaceId) {
+              void useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "editor");
+            }
           }
           break;
         }
@@ -1073,15 +1365,50 @@ export function CommandPalette({ open, onClose }: Props) {
           break;
         }
         case "branch": {
-          onClose();
-          if (activeRepoPath) {
-            try {
-              await useGitStore.getState().checkoutBranch(activeRepoPath, item.entry.name, item.entry.isRemote);
-              toast.success(`Checked out ${item.entry.name}`);
-            } catch {
-              toast.error("Checkout failed");
+          if (subFlow?.type === "delete-branch") {
+            onClose();
+            if (activeRepoPath) {
+              try {
+                await useGitStore.getState().deleteBranch(activeRepoPath, item.entry.name, false);
+                toast.success(`Deleted ${item.entry.name}`);
+              } catch {
+                toast.error("Branch not fully merged. Use the git panel to force-delete.");
+              }
+            }
+          } else {
+            onClose();
+            if (activeRepoPath) {
+              try {
+                await useGitStore.getState().checkoutBranch(activeRepoPath, item.entry.name, item.entry.isRemote);
+                toast.success(`Checked out ${item.entry.name}`);
+              } catch {
+                toast.error("Checkout failed");
+              }
             }
           }
+          break;
+        }
+        case "stash": {
+          onClose();
+          if (activeRepoPath) {
+            const action = subFlow?.type === "pop-stash" ? "pop" : "apply";
+            try {
+              if (action === "pop") {
+                await useGitStore.getState().popStash(activeRepoPath, item.entry.index);
+                toast.success(`Popped stash: ${item.entry.name}`);
+              } else {
+                await useGitStore.getState().applyStash(activeRepoPath, item.entry.index);
+                toast.success(`Applied stash: ${item.entry.name}`);
+              }
+            } catch {
+              toast.error(`Stash ${action} failed`);
+            }
+          }
+          break;
+        }
+        case "repo": {
+          onClose();
+          useWorkspaceStore.getState().setActiveRepo(item.entry.id);
           break;
         }
         case "send-message": {
@@ -1096,11 +1423,26 @@ export function CommandPalette({ open, onClose }: Props) {
           break;
       }
     },
-    [commandCtx, activeRepoPath, activeWorkspaceId, activeThreadId, onClose, launchHarness],
+    [commandCtx, activeRepoPath, activeWorkspaceId, activeThreadId, onClose, launchHarness, subFlow],
   );
 
   const executeSubFlow = useCallback(async () => {
-    if (!subFlow || !activeRepoPath) return;
+    if (!subFlow) return;
+
+    // List-picker sub-flows delegate to executeItem
+    if (
+      subFlow.type === "checkout-branch" ||
+      subFlow.type === "delete-branch" ||
+      subFlow.type === "apply-stash" ||
+      subFlow.type === "pop-stash" ||
+      subFlow.type === "switch-repo"
+    ) {
+      const selected = flatItems[activeIndex];
+      if (selected) void executeItem(selected);
+      return;
+    }
+
+    if (!activeRepoPath) return;
 
     if (subFlow.type === "create-branch") {
       if (subFlow.value.length === 0 || /\s/.test(subFlow.value)) return;
@@ -1116,6 +1458,11 @@ export function CommandPalette({ open, onClose }: Props) {
 
     if (subFlow.type === "commit") {
       if (subFlow.value.length === 0) return;
+      const stagedFiles = useGitStore.getState().status?.files.filter((f) => f.indexStatus) ?? [];
+      if (stagedFiles.length === 0) {
+        toast.warning("No staged files to commit");
+        return;
+      }
       onClose();
       try {
         await useGitStore.getState().commit(activeRepoPath, subFlow.value);
@@ -1136,7 +1483,7 @@ export function CommandPalette({ open, onClose }: Props) {
       }
       return;
     }
-  }, [subFlow, activeRepoPath, onClose]);
+  }, [subFlow, activeRepoPath, onClose, flatItems, activeIndex, executeItem]);
 
   /* ---- Keyboard handler ---- */
 
@@ -1201,13 +1548,20 @@ export function CommandPalette({ open, onClose }: Props) {
       if (subFlow) {
         if (subFlow.type === "checkout-branch") {
           setSubFlow({ ...subFlow, query: value, loading: true });
+        } else if (subFlow.type === "delete-branch") {
+          setSubFlow({ ...subFlow, query: value, loading: true });
         } else if (subFlow.type === "create-branch") {
           setSubFlow({ ...subFlow, value });
         } else if (subFlow.type === "commit") {
           setSubFlow({ ...subFlow, value });
         } else if (subFlow.type === "stash") {
           setSubFlow({ ...subFlow, value });
+        } else if (subFlow.type === "apply-stash" || subFlow.type === "pop-stash") {
+          setSubFlow({ ...subFlow, query: value });
+        } else if (subFlow.type === "switch-repo") {
+          setSubFlow({ ...subFlow, query: value });
         }
+        setActiveIndex(0);
       } else {
         setQuery(value);
         setActiveIndex(0);
@@ -1221,9 +1575,13 @@ export function CommandPalette({ open, onClose }: Props) {
   const getInputValue = (): string => {
     if (subFlow) {
       if (subFlow.type === "checkout-branch") return subFlow.query;
+      if (subFlow.type === "delete-branch") return subFlow.query;
       if (subFlow.type === "create-branch") return subFlow.value;
       if (subFlow.type === "commit") return subFlow.value;
       if (subFlow.type === "stash") return subFlow.value;
+      if (subFlow.type === "apply-stash") return subFlow.query;
+      if (subFlow.type === "pop-stash") return subFlow.query;
+      if (subFlow.type === "switch-repo") return subFlow.query;
     }
     return query;
   };
@@ -1231,9 +1589,13 @@ export function CommandPalette({ open, onClose }: Props) {
   const getPlaceholder = (): string => {
     if (subFlow) {
       if (subFlow.type === "checkout-branch") return "Search branches\u2026";
+      if (subFlow.type === "delete-branch") return "Search branches to delete\u2026";
       if (subFlow.type === "create-branch") return "Enter branch name\u2026";
       if (subFlow.type === "commit") return "Enter commit message\u2026";
       if (subFlow.type === "stash") return "Stash message (optional)\u2026";
+      if (subFlow.type === "apply-stash") return "Search stashes\u2026";
+      if (subFlow.type === "pop-stash") return "Search stashes\u2026";
+      if (subFlow.type === "switch-repo") return "Search repos\u2026";
     }
     return "Search files, commands, threads\u2026";
   };
@@ -1245,6 +1607,10 @@ export function CommandPalette({ open, onClose }: Props) {
         "create-branch": "new branch",
         commit: "commit",
         stash: "stash",
+        "delete-branch": "delete branch",
+        "apply-stash": "apply stash",
+        "pop-stash": "pop stash",
+        "switch-repo": "repo",
       };
       return <span style={STYLES.modeBadge}>{labels[subFlow.type]}</span>;
     }
@@ -1261,6 +1627,7 @@ export function CommandPalette({ open, onClose }: Props) {
     switch (item.type) {
       case "command": {
         const Icon = item.entry.icon;
+        const showRepoBadge = item.entry.group === "git" && repos.length > 1 && activeRepo;
         return (
           <button
             key={key}
@@ -1270,7 +1637,19 @@ export function CommandPalette({ open, onClose }: Props) {
             onClick={() => void executeItem(item)}
           >
             <span style={STYLES.itemIcon(active)}><Icon size={16} /></span>
-            <span style={STYLES.itemLabel}>{item.entry.label}</span>
+            <span style={{ ...STYLES.itemLabel, display: "flex", alignItems: "center", gap: 6 }}>
+              {item.entry.label}
+              {showRepoBadge && (
+                <span style={{
+                  fontSize: 10,
+                  padding: "1px 5px",
+                  borderRadius: 3,
+                  background: "var(--bg-4)",
+                  color: "var(--text-3)",
+                  flexShrink: 0,
+                }}>{activeRepo.name}</span>
+              )}
+            </span>
             {item.entry.shortcut && <span style={STYLES.itemShortcut}>{item.entry.shortcut}</span>}
             {(item.entry.id === "switch-thread" || item.entry.id === "switch-workspace") && (
               <ChevronRight size={14} style={{ color: "var(--text-3)" }} />
@@ -1358,6 +1737,58 @@ export function CommandPalette({ open, onClose }: Props) {
             <span style={STYLES.itemLabel}>
               {item.entry.name}
               {item.entry.isCurrent && <span style={{ color: "var(--accent)", marginLeft: 6, fontSize: 11 }}>current</span>}
+              {item.entry.isRemote && <span style={{ color: "var(--text-3)", marginLeft: 6, fontSize: 11 }}>remote</span>}
+            </span>
+            <span />
+          </button>
+        );
+      }
+      case "stash": {
+        return (
+          <button
+            key={key}
+            ref={active ? activeItemRef : undefined}
+            style={STYLES.item(active)}
+            onMouseEnter={() => setActiveIndex(index)}
+            onClick={() => void executeItem(item)}
+          >
+            <span style={STYLES.itemIcon(active)}><Layers size={16} /></span>
+            <span style={{ ...STYLES.itemLabel, display: "flex", alignItems: "center", gap: 6 }}>
+              {item.entry.name}
+              {item.entry.branchHint && (
+                <span style={{
+                  fontSize: 10,
+                  padding: "1px 5px",
+                  borderRadius: 3,
+                  background: "var(--bg-4)",
+                  color: "var(--text-3)",
+                  flexShrink: 0,
+                }}>{item.entry.branchHint}</span>
+              )}
+            </span>
+            <span />
+          </button>
+        );
+      }
+      case "repo": {
+        const isCurrent = item.entry.id === activeRepoId;
+        return (
+          <button
+            key={key}
+            ref={active ? activeItemRef : undefined}
+            style={STYLES.item(active)}
+            onMouseEnter={() => setActiveIndex(index)}
+            onClick={() => void executeItem(item)}
+          >
+            <span style={STYLES.itemIcon(active)}><FolderGit2 size={16} /></span>
+            <span style={{ overflow: "hidden" }}>
+              <span style={{ ...STYLES.itemLabel, display: "flex", alignItems: "center", gap: 6 }}>
+                {item.entry.name}
+                {isCurrent && (
+                  <span style={{ color: "var(--accent)", fontSize: 11, flexShrink: 0 }}>current</span>
+                )}
+              </span>
+              <span style={STYLES.itemDescription}>{item.entry.path}</span>
             </span>
             <span />
           </button>

@@ -1,6 +1,8 @@
 use std::{
+    collections::HashMap,
     fs,
     path::PathBuf,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -18,12 +20,61 @@ const FILE_TREE_DEFAULT_PAGE_SIZE: usize = 2000;
 const FILE_TREE_MAX_PAGE_SIZE: usize = 5000;
 const FILE_TREE_MAX_SCAN_ENTRIES: usize = 50_000;
 const FILE_TREE_SCAN_TIMEOUT: Duration = Duration::from_secs(2);
+const FILE_TREE_CACHE_TTL: Duration = Duration::from_secs(30);
 
 const GIT_BRANCH_MAX_PAGE_SIZE: usize = 1000;
 const GIT_COMMIT_MAX_PAGE_SIZE: usize = 200;
 
 const GIT_RECORD_SEPARATOR: char = '\u{1e}';
 const GIT_FIELD_SEPARATOR: char = '\u{1f}';
+
+// ── File Tree Cache ────────────────────────────────────────────
+
+struct FileTreeCacheEntry {
+    entries: Arc<Vec<FileTreeEntryDto>>,
+    truncated: bool,
+    populated_at: Instant,
+}
+
+pub struct FileTreeCache {
+    inner: Mutex<HashMap<String, FileTreeCacheEntry>>,
+}
+
+impl FileTreeCache {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn get(&self, repo_path: &str) -> Option<(Arc<Vec<FileTreeEntryDto>>, bool)> {
+        let map = self.inner.lock().unwrap();
+        let entry = map.get(repo_path)?;
+        if entry.populated_at.elapsed() >= FILE_TREE_CACHE_TTL {
+            return None;
+        }
+        Some((Arc::clone(&entry.entries), entry.truncated))
+    }
+
+    fn insert(&self, repo_path: &str, entries: Vec<FileTreeEntryDto>, truncated: bool) -> Arc<Vec<FileTreeEntryDto>> {
+        let arc = Arc::new(entries);
+        let mut map = self.inner.lock().unwrap();
+        map.insert(
+            repo_path.to_string(),
+            FileTreeCacheEntry {
+                entries: Arc::clone(&arc),
+                truncated,
+                populated_at: Instant::now(),
+            },
+        );
+        arc
+    }
+
+    pub fn invalidate(&self, repo_path: &str) {
+        let mut map = self.inner.lock().unwrap();
+        map.remove(repo_path);
+    }
+}
 
 pub fn get_git_status(repo_path: &str) -> anyhow::Result<GitStatusDto> {
     let repo = Repository::open(repo_path).context("failed to open repository")?;
@@ -523,21 +574,35 @@ pub fn get_commit_diff(repo_path: &str, commit_hash: &str) -> anyhow::Result<Str
     run_git(repo_path, &["diff-tree", "-p", commit_hash])
 }
 
-pub fn get_file_tree(repo_path: &str) -> anyhow::Result<Vec<FileTreeEntryDto>> {
-    Ok(scan_file_tree(repo_path)?.entries)
+pub fn get_file_tree(repo_path: &str, cache: &FileTreeCache) -> anyhow::Result<Vec<FileTreeEntryDto>> {
+    if let Some((entries, _)) = cache.get(repo_path) {
+        return Ok((*entries).clone());
+    }
+    let scan = scan_file_tree(repo_path)?;
+    let arc = cache.insert(repo_path, scan.entries, scan.truncated);
+    Ok((*arc).clone())
 }
 
 pub fn get_file_tree_page(
     repo_path: &str,
     offset: usize,
     limit: usize,
+    cache: &FileTreeCache,
 ) -> anyhow::Result<FileTreePageDto> {
     let limit = limit.clamp(1, FILE_TREE_MAX_PAGE_SIZE);
-    let scan = scan_file_tree(repo_path)?;
-    let total = scan.entries.len();
+
+    let (all_entries, truncated) = if let Some(hit) = cache.get(repo_path) {
+        hit
+    } else {
+        let scan = scan_file_tree(repo_path)?;
+        let arc = cache.insert(repo_path, scan.entries, scan.truncated);
+        (arc, scan.truncated)
+    };
+
+    let total = all_entries.len();
     let offset = offset.min(total);
     let end = offset.saturating_add(limit).min(total);
-    let entries = scan.entries[offset..end].to_vec();
+    let entries = all_entries[offset..end].to_vec();
 
     Ok(FileTreePageDto {
         entries,
@@ -545,7 +610,7 @@ pub fn get_file_tree_page(
         limit,
         total,
         has_more: end < total,
-        scan_truncated: scan.truncated,
+        scan_truncated: truncated,
     })
 }
 
@@ -563,13 +628,14 @@ struct FileTreeScanContext {
 
 fn scan_file_tree(repo_path: &str) -> anyhow::Result<FileTreeScanResult> {
     let root = PathBuf::from(repo_path);
+    let repo = Repository::open(repo_path).ok();
     let mut context = FileTreeScanContext {
         entries: Vec::with_capacity(FILE_TREE_DEFAULT_PAGE_SIZE),
         scanned_count: 0,
         truncated: false,
         deadline: Instant::now() + FILE_TREE_SCAN_TIMEOUT,
     };
-    visit_dir(&root, &root, &mut context)?;
+    visit_dir(&root, &root, repo.as_ref(), &mut context)?;
     context.entries.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(FileTreeScanResult {
         entries: context.entries,
@@ -580,6 +646,7 @@ fn scan_file_tree(repo_path: &str) -> anyhow::Result<FileTreeScanResult> {
 fn visit_dir(
     root: &PathBuf,
     current: &PathBuf,
+    repo: Option<&Repository>,
     context: &mut FileTreeScanContext,
 ) -> anyhow::Result<()> {
     if Instant::now() >= context.deadline {
@@ -617,6 +684,13 @@ fn visit_dir(
             .map(|item| item.to_string_lossy().to_string())
             .unwrap_or_else(|_| path.to_string_lossy().to_string());
 
+        // Skip gitignored paths
+        if let Some(repo) = repo {
+            if repo.is_path_ignored(&relative).unwrap_or(false) {
+                continue;
+            }
+        }
+
         context.scanned_count += 1;
 
         if path.is_dir() {
@@ -624,7 +698,7 @@ fn visit_dir(
                 path: relative.clone(),
                 is_dir: true,
             });
-            visit_dir(root, &path, context)?;
+            visit_dir(root, &path, repo, context)?;
         } else {
             context.entries.push(FileTreeEntryDto {
                 path: relative,
