@@ -1,5 +1,16 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.20.0...vnull) (2026-03-03)
+
+### Features
+
+* overall layout adjustments for git panel ([8ffdc0b](https://github.com/wygoralves/panes/commit/8ffdc0bf1c89874385be8c21ccd03c1bd50f8d18))
+
+### Bug Fixes
+
+* adjust padding of the gitpanel ([f853189](https://github.com/wygoralves/panes/commit/f8531896b748eaa1a4ad537ac2d01b2345c29658))
+* remove unwanted divider on changes panel ([a697cca](https://github.com/wygoralves/panes/commit/a697ccaf955bb8e7b55811f3b32b87050f0c1ae8))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.19.0...vnull) (2026-03-03)
 
 ### Features
