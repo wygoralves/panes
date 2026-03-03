@@ -302,8 +302,8 @@ export function GitBranchesView({ repo, onError }: Props) {
     <>
       <div
         style={{
-          borderBottom: "1px solid var(--border)",
-          padding: "8px 12px",
+          height: 34,
+          padding: "0 12px",
           display: "flex",
           alignItems: "center",
           gap: 8,
@@ -403,15 +403,17 @@ export function GitBranchesView({ repo, onError }: Props) {
 
       {(branchesTotal > 0 || localSearch) && (
         <div className="git-filter-bar">
-          <Search size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
-          <input
-            type="text"
-            className="git-inline-input"
-            placeholder="Search branches..."
-            value={localSearch}
-            onChange={(e) => onSearchChange(e.target.value)}
-            style={{ padding: "3px 8px", fontSize: 11 }}
-          />
+          <div className="git-filter-input-wrap">
+            <Search size={12} className="git-filter-icon" />
+            <input
+              type="text"
+              className="git-inline-input"
+              placeholder="Search branches..."
+              value={localSearch}
+              onChange={(e) => onSearchChange(e.target.value)}
+              style={{ padding: "3px 8px 3px 24px", fontSize: 11 }}
+            />
+          </div>
           {localSearch && (
             <button
               type="button"

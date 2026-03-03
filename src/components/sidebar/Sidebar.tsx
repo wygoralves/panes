@@ -852,7 +852,6 @@ function CollapsedRail({
           alignItems: "center",
           justifyContent: "flex-end",
           paddingBottom: 4,
-          borderBottom: "1px solid var(--border)",
         }}
       >
         <button
@@ -875,6 +874,8 @@ function CollapsedRail({
           </svg>
         </button>
       </div>
+
+      <div className="sb-rail-divider" />
 
       {/* Project icons */}
       <div

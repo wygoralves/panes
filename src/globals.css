@@ -704,12 +704,12 @@ button, input, textarea, select {
 
 /* Repo bar (multi-repo switcher) */
 .git-repo-bar {
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--border);
+  height: 34px;
+  padding: 0 12px;
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 @keyframes spin {
@@ -1039,12 +1039,31 @@ button, input, textarea, select {
 }
 
 .git-filter-bar {
-  border-bottom: 1px solid var(--border);
   padding: 6px 12px;
   display: flex;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+}
+
+.git-filter-bar .git-filter-input-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.git-filter-bar .git-filter-input-wrap .git-filter-icon {
+  position: absolute;
+  left: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  pointer-events: none;
+  display: flex;
+}
+
+.git-filter-bar .git-filter-input-wrap .git-inline-input {
+  padding-left: 24px;
 }
 
 /* Error bar */
@@ -1077,7 +1096,7 @@ button, input, textarea, select {
   overflow: hidden;
 }
 .git-scope-btn {
-  padding: 4px 10px;
+  padding: 3px 9px;
   font-size: 11px;
   cursor: pointer;
   transition: all var(--duration-fast) var(--ease-out);
@@ -1361,7 +1380,6 @@ button, input, textarea, select {
 .terminal-split-panel {
   height: 100%;
   min-height: 0;
-  border-top: 1px solid var(--border);
   background: #050505;
 }
 
@@ -1376,7 +1394,7 @@ button, input, textarea, select {
 .terminal-tabs-bar {
   display: flex;
   align-items: stretch;
-  min-height: 32px;
+  height: 34px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-2);
 }

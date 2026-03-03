@@ -98,7 +98,6 @@ export function GitStashView({ repo, onError }: Props) {
       <div
         style={{
           padding: "8px 12px",
-          borderBottom: "1px solid var(--border)",
           display: "flex",
           gap: 6,
           alignItems: "center",
@@ -140,15 +139,17 @@ export function GitStashView({ repo, onError }: Props) {
 
       {stashes.length > 0 && (
         <div className="git-filter-bar">
-          <Search size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
-          <input
-            type="text"
-            className="git-inline-input"
-            placeholder="Filter stashes..."
-            value={filterQuery}
-            onChange={(e) => setFilterQuery(e.target.value)}
-            style={{ padding: "3px 8px", fontSize: 11 }}
-          />
+          <div className="git-filter-input-wrap">
+            <Search size={12} className="git-filter-icon" />
+            <input
+              type="text"
+              className="git-inline-input"
+              placeholder="Filter stashes..."
+              value={filterQuery}
+              onChange={(e) => setFilterQuery(e.target.value)}
+              style={{ padding: "3px 8px 3px 24px", fontSize: 11 }}
+            />
+          </div>
           {filterQuery && (
             <button
               type="button"

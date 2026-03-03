@@ -277,7 +277,6 @@ export function GitWorktreesView({ repo, onError }: Props) {
     <>
       <div
         style={{
-          borderBottom: "1px solid var(--border)",
           padding: "8px 12px",
           display: "flex",
           alignItems: "center",
@@ -374,15 +373,17 @@ export function GitWorktreesView({ repo, onError }: Props) {
 
       {worktrees.length > 0 && (
         <div className="git-filter-bar">
-          <Search size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
-          <input
-            type="text"
-            className="git-inline-input"
-            placeholder="Filter worktrees..."
-            value={filterQuery}
-            onChange={(e) => setFilterQuery(e.target.value)}
-            style={{ padding: "3px 8px", fontSize: 11 }}
-          />
+          <div className="git-filter-input-wrap">
+            <Search size={12} className="git-filter-icon" />
+            <input
+              type="text"
+              className="git-inline-input"
+              placeholder="Filter worktrees..."
+              value={filterQuery}
+              onChange={(e) => setFilterQuery(e.target.value)}
+              style={{ padding: "3px 8px 3px 24px", fontSize: 11 }}
+            />
+          </div>
           {filterQuery && (
             <button
               type="button"

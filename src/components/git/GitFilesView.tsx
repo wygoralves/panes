@@ -210,7 +210,7 @@ export function GitFilesView({ repo }: Props) {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {/* Search filter */}
-      <div style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>
+      <div style={{ padding: "8px 10px" }}>
         <div
           style={{
             display: "flex",
