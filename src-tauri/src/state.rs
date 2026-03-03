@@ -4,8 +4,8 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    config::app_config::AppConfig, db::Database, engines::EngineManager,
-    git::repo::FileTreeCache, git::watcher::GitWatcherManager, terminal::TerminalManager,
+    config::app_config::AppConfig, db::Database, engines::EngineManager, git::repo::FileTreeCache,
+    git::watcher::GitWatcherManager, terminal::TerminalManager,
 };
 
 #[derive(Clone)]
