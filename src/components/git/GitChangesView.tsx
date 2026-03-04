@@ -378,6 +378,17 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     });
   }
 
+  function onDiscardDirectory(dirPath: string) {
+    const directoryFiles = unstagedDirectoryFiles.get(dirPath) ?? [];
+    if (directoryFiles.length === 0 || loadingKey !== null) return;
+    const dirName = dirPath.split("/").pop() ?? dirPath;
+    setDiscardPrompt({
+      title: "Discard changes",
+      message: `Discard all changes in "${dirName}"? ${directoryFiles.length} file${directoryFiles.length === 1 ? "" : "s"} will be reverted. This cannot be undone.`,
+      files: directoryFiles,
+    });
+  }
+
   function onDiscardAll() {
     if (unstagedFiles.length === 0 || loadingKey !== null) return;
     setDiscardPrompt({
@@ -436,6 +447,24 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
             )}
             <span>{row.name}</span>
           </button>
+          {!staged && (
+            <button
+              type="button"
+              className="git-stage-btn git-discard-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                void onDiscardDirectory(row.path);
+              }}
+              disabled={directoryFileCount === 0 || loadingKey !== null}
+              title="Discard all changes in this folder"
+              style={{
+                opacity: directoryFileCount === 0 || loadingKey !== null ? 0.35 : undefined,
+                cursor: directoryFileCount === 0 || loadingKey !== null ? "default" : "pointer",
+              }}
+            >
+              <Undo2 size={13} />
+            </button>
+          )}
           <button
             type="button"
             className="git-stage-btn git-dir-stage-btn"
