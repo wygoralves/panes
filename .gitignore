@@ -8,8 +8,8 @@ src-tauri/gen/
 .agent-workspace/
 *.tsbuildinfo
 
-# Claude Code local settings (machine-specific)
-.claude/settings.local.json
+# Claude Code
+.claude/
 
 # Generated icon PNGs (regenerate from app-icon.svg)
 app-icon.png
