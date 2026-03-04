@@ -1,5 +1,12 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.23.0...vnull) (2026-03-04)
+
+### Features
+
+* add folder discard controls for git panel ([8ee5ec1](https://github.com/wygoralves/panes/commit/8ee5ec12d3f1e6f9a1a359e68571b6d7b37cb0f6))
+* add performance improvements to chat and git panels ([aea4a3f](https://github.com/wygoralves/panes/commit/aea4a3f334795563a299e79d062d01a458e1ce0a))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.22.0...vnull) (2026-03-03)
 
 ### Features
