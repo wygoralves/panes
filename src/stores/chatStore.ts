@@ -9,6 +9,7 @@ import type {
   ContentBlock,
   ContextUsage,
   Message,
+  MessageWindowCursor,
   StreamEvent,
   ThreadStatus
 } from "../types";
@@ -16,12 +17,17 @@ import type {
 interface ChatState {
   threadId: string | null;
   messages: Message[];
+  olderCursor: MessageWindowCursor | null;
+  hasOlderMessages: boolean;
+  loadingOlderMessages: boolean;
+  olderLoadBlockedUntil: number;
   status: ThreadStatus;
   streaming: boolean;
   usageLimits: ContextUsage | null;
   error?: string;
   unlisten?: () => void;
   setActiveThread: (threadId: string | null) => Promise<void>;
+  loadOlderMessages: () => Promise<void>;
   send: (
     message: string,
     options?: {
@@ -41,7 +47,7 @@ interface ChatState {
 let activeThreadBindSeq = 0;
 const STREAM_EVENT_BATCH_WINDOW_MS = 16;
 const MESSAGE_WINDOW_INITIAL_LIMIT = 120;
-const MESSAGE_WINDOW_MAX_PAGES = 1000;
+const OLDER_MESSAGES_RETRY_BACKOFF_MS = 2_000;
 const MAX_FULLY_HYDRATED_MESSAGES = 80;
 const ACTION_OUTPUT_MAX_CHARS = 180_000;
 const ACTION_OUTPUT_TRIM_TARGET_CHARS = 120_000;
@@ -650,6 +656,10 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
 export const useChatStore = create<ChatState>((set, get) => ({
   threadId: null,
   messages: [],
+  olderCursor: null,
+  hasOlderMessages: false,
+  loadingOlderMessages: false,
+  olderLoadBlockedUntil: 0,
   status: "idle",
   streaming: false,
   usageLimits: null,
@@ -676,6 +686,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         threadId: null,
         messages: [],
+        olderCursor: null,
+        hasOlderMessages: false,
+        loadingOlderMessages: false,
+        olderLoadBlockedUntil: 0,
         streaming: false,
         status: "idle",
         usageLimits: null,
@@ -691,24 +705,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         MESSAGE_WINDOW_INITIAL_LIMIT,
       );
       let messages = normalizeMessages(messageWindow.messages);
-      let cursor = messageWindow.nextCursor;
-      let loadedPages = 1;
-      while (cursor && loadedPages < MESSAGE_WINDOW_MAX_PAGES) {
-        if (bindSeq !== activeThreadBindSeq) {
-          return;
-        }
-        const olderWindow = await ipc.getThreadMessagesWindow(
-          threadId,
-          cursor,
-          MESSAGE_WINDOW_INITIAL_LIMIT,
-        );
-        const olderMessages = normalizeMessages(olderWindow.messages).map((message) =>
-          summarizeMessageForMemory(message),
-        );
-        messages = [...olderMessages, ...messages];
-        cursor = olderWindow.nextCursor;
-        loadedPages += 1;
-      }
+      const olderCursor = messageWindow.nextCursor;
       messages = applyHydrationWindow(messages);
       if (bindSeq !== activeThreadBindSeq) {
         return;
@@ -760,6 +757,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           let nextMessages = state.messages;
           let nextStreaming = state.streaming;
           let nextUsageLimits = state.usageLimits;
+          let hydrationRecalcRequired = false;
           for (const queuedEvent of batch) {
             if (queuedEvent.type === "UsageLimitsUpdated") {
               nextUsageLimits = mapUsageLimitsFromEvent(queuedEvent);
@@ -768,10 +766,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (queuedEvent.type === "TurnCompleted") {
               pendingTurnMetaByThread.delete(threadId);
             }
+            const previousLength = nextMessages.length;
             nextMessages = applyStreamEvent(nextMessages, queuedEvent, state.threadId);
+            if (nextMessages.length !== previousLength) {
+              hydrationRecalcRequired = true;
+            }
             nextStreaming = queuedEvent.type !== "TurnCompleted";
           }
-          nextMessages = applyHydrationWindow(nextMessages);
+          if (hydrationRecalcRequired) {
+            nextMessages = applyHydrationWindow(nextMessages);
+          }
 
           if (
             nextMessages === state.messages &&
@@ -845,6 +849,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         threadId,
         messages,
+        olderCursor,
+        hasOlderMessages: olderCursor !== null,
+        loadingOlderMessages: false,
+        olderLoadBlockedUntil: 0,
         unlisten,
         error: undefined,
         streaming: false,
@@ -855,7 +863,81 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (bindSeq !== activeThreadBindSeq) {
         return;
       }
-      set({ threadId, messages: [], usageLimits: null, error: String(error) });
+      set({
+        threadId,
+        messages: [],
+        olderCursor: null,
+        hasOlderMessages: false,
+        loadingOlderMessages: false,
+        olderLoadBlockedUntil: 0,
+        usageLimits: null,
+        error: String(error),
+      });
+    }
+  },
+  loadOlderMessages: async () => {
+    const state = get();
+    const threadId = state.threadId;
+    const cursor = state.olderCursor;
+    if (
+      !threadId ||
+      !cursor ||
+      state.loadingOlderMessages ||
+      state.olderLoadBlockedUntil > Date.now()
+    ) {
+      return;
+    }
+
+    set((current) => {
+      if (
+        current.threadId !== threadId ||
+        current.loadingOlderMessages ||
+        current.olderCursor !== cursor
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        loadingOlderMessages: true,
+      };
+    });
+
+    try {
+      const olderWindow = await ipc.getThreadMessagesWindow(
+        threadId,
+        cursor,
+        MESSAGE_WINDOW_INITIAL_LIMIT,
+      );
+      const olderMessages = normalizeMessages(olderWindow.messages).map((message) =>
+        summarizeMessageForMemory(message),
+      );
+      set((current) => {
+        if (current.threadId !== threadId) {
+          return current;
+        }
+        const nextCursor = olderWindow.nextCursor;
+        return {
+          ...current,
+          messages: applyHydrationWindow([...olderMessages, ...current.messages]),
+          olderCursor: nextCursor,
+          hasOlderMessages: nextCursor !== null,
+          loadingOlderMessages: false,
+          olderLoadBlockedUntil: 0,
+        };
+      });
+    } catch (error) {
+      const retryAt = Date.now() + OLDER_MESSAGES_RETRY_BACKOFF_MS;
+      set((current) => {
+        if (current.threadId !== threadId) {
+          return current;
+        }
+        return {
+          ...current,
+          loadingOlderMessages: false,
+          olderLoadBlockedUntil: retryAt,
+          error: String(error),
+        };
+      });
     }
   },
   send: async (message, options) => {
