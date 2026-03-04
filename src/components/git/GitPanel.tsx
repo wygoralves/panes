@@ -37,7 +37,8 @@ const VIEW_OPTIONS = [
   { value: "files", label: "Files", icon: <FolderTree size={13} /> },
   { value: "worktrees", label: "Worktrees", icon: <GitFork size={13} /> },
 ];
-const GIT_WATCHER_REFRESH_DEBOUNCE_MS = 550;
+const GIT_WATCHER_REFRESH_DEBOUNCE_MS_CHANGES = 550;
+const GIT_WATCHER_REFRESH_DEBOUNCE_MS_BACKGROUND = 1100;
 
 export function GitPanel() {
   const {
@@ -243,8 +244,11 @@ export function GitPanel() {
     if (!effectiveRepoPath) {
       return;
     }
-    void refresh(effectiveRepoPath);
-  }, [effectiveRepoPath, refresh]);
+    void refresh(
+      effectiveRepoPath,
+      activeView === "changes" ? { force: true } : undefined,
+    );
+  }, [activeView, effectiveRepoPath, refresh]);
 
   useEffect(() => {
     if (!effectiveRepoPath) return;
@@ -257,10 +261,15 @@ export function GitPanel() {
       if (watcherRefreshTimerRef.current !== null) {
         return;
       }
+      const gitState = useGitStore.getState();
+      const debounceMs =
+        gitState.activeView === "changes"
+          ? GIT_WATCHER_REFRESH_DEBOUNCE_MS_CHANGES
+          : GIT_WATCHER_REFRESH_DEBOUNCE_MS_BACKGROUND;
       watcherRefreshTimerRef.current = window.setTimeout(() => {
         watcherRefreshTimerRef.current = null;
         void flushRefresh();
-      }, GIT_WATCHER_REFRESH_DEBOUNCE_MS);
+      }, debounceMs);
     }
 
     async function flushRefresh() {
@@ -285,8 +294,14 @@ export function GitPanel() {
       watcherRefreshInFlightRef.current = true;
       try {
         watcherRefreshQueuedRef.current = false;
-        invalidateRepoCache(repoPath);
-        await refresh(repoPath);
+        const gitState = useGitStore.getState();
+        const prioritizeStatusRefresh = gitState.activeView === "changes";
+        if (prioritizeStatusRefresh) {
+          invalidateRepoCache(repoPath);
+          await refresh(repoPath, { force: true });
+        } else {
+          await refresh(repoPath);
+        }
       } finally {
         watcherRefreshInFlightRef.current = false;
         if (watcherRefreshQueuedRef.current) {
@@ -341,8 +356,14 @@ export function GitPanel() {
     watcherRefreshInFlightRef.current = true;
     void (async () => {
       try {
-        invalidateRepoCache(effectiveRepoPath);
-        await refresh(effectiveRepoPath, { force: true });
+        const gitState = useGitStore.getState();
+        const prioritizeStatusRefresh = gitState.activeView === "changes";
+        if (prioritizeStatusRefresh) {
+          invalidateRepoCache(effectiveRepoPath);
+          await refresh(effectiveRepoPath, { force: true });
+        } else {
+          await refresh(effectiveRepoPath);
+        }
       } finally {
         watcherRefreshInFlightRef.current = false;
       }

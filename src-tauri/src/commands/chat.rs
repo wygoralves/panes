@@ -25,7 +25,8 @@ use crate::{
 
 const MAX_THREAD_TITLE_CHARS: usize = 72;
 const STREAM_EVENT_COALESCE_MAX_CHARS: usize = 8_192;
-const STREAM_DB_FLUSH_INTERVAL: Duration = Duration::from_millis(180);
+const STREAM_DB_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
+const STREAM_DB_BLOCKS_FLUSH_INTERVAL: Duration = Duration::from_millis(900);
 const ACTION_OUTPUT_MAX_CHUNKS: usize = 240;
 const MAX_ATTACHMENTS_PER_TURN: usize = 10;
 const MESSAGE_WINDOW_DEFAULT_LIMIT: usize = 120;
@@ -590,6 +591,7 @@ async fn run_turn(
     let mut message_state_dirty = false;
     let mut thread_status_dirty = false;
     let mut last_persist_at = Instant::now();
+    let mut last_blocks_persist_at = Instant::now();
     let mut last_persisted_thread_status = thread_status.clone();
     let stream_event_topic = format!("stream-event-{}", thread.id);
     let approval_event_topic = format!("approval-request-{}", thread.id);
@@ -640,6 +642,7 @@ async fn run_turn(
                                 &mut thread_status_dirty,
                                 &mut last_persisted_thread_status,
                                 &mut last_persist_at,
+                                &mut last_blocks_persist_at,
                                 force_persist,
                             )
                             .await;
@@ -684,6 +687,7 @@ async fn run_turn(
                             &mut thread_status_dirty,
                             &mut last_persisted_thread_status,
                             &mut last_persist_at,
+                            &mut last_blocks_persist_at,
                             force_persist,
                         )
                         .await;
@@ -729,6 +733,7 @@ async fn run_turn(
                     &mut thread_status_dirty,
                     &mut last_persisted_thread_status,
                     &mut last_persist_at,
+                    &mut last_blocks_persist_at,
                     force_persist,
                 )
                 .await;
@@ -773,6 +778,7 @@ async fn run_turn(
             &mut thread_status_dirty,
             &mut last_persisted_thread_status,
             &mut last_persist_at,
+            &mut last_blocks_persist_at,
             force_persist,
         )
         .await;
@@ -836,6 +842,7 @@ async fn run_turn(
         &mut thread_status_dirty,
         &mut last_persisted_thread_status,
         &mut last_persist_at,
+        &mut last_blocks_persist_at,
         true,
     )
     .await;
@@ -1149,6 +1156,7 @@ async fn flush_stream_state(
     thread_status_dirty: &mut bool,
     last_persisted_thread_status: &mut ThreadStatusDto,
     last_persist_at: &mut Instant,
+    last_blocks_persist_at: &mut Instant,
     force: bool,
 ) {
     if !*blocks_dirty && !*message_state_dirty && !*thread_status_dirty {
@@ -1156,34 +1164,69 @@ async fn flush_stream_state(
     }
 
     let now = Instant::now();
-    if !force && now.duration_since(*last_persist_at) < STREAM_DB_FLUSH_INTERVAL {
+
+    if *thread_status_dirty && *last_persisted_thread_status == *thread_status {
+        *thread_status_dirty = false;
+    }
+
+    let should_flush_state = force || now.duration_since(*last_persist_at) >= STREAM_DB_FLUSH_INTERVAL;
+    let should_flush_blocks =
+        force || now.duration_since(*last_blocks_persist_at) >= STREAM_DB_BLOCKS_FLUSH_INTERVAL;
+
+    if !should_flush_blocks && !should_flush_state {
         return;
     }
 
-    if *blocks_dirty || *message_state_dirty {
+    let mut did_flush_state = false;
+    let mut did_flush_blocks = false;
+
+    if *blocks_dirty && should_flush_blocks {
+        match serde_json::to_string(blocks) {
+            Ok(blocks_json) => {
+                if let Err(error) = run_db(state.db.clone(), {
+                    let assistant_message_id = assistant_message_id.to_string();
+                    let message_status = message_status.clone();
+                    move |db| {
+                        db::messages::update_assistant_blocks_json(
+                            db,
+                            &assistant_message_id,
+                            &blocks_json,
+                            message_status,
+                        )
+                    }
+                })
+                .await
+                {
+                    log::warn!("failed to persist assistant stream blocks: {error}");
+                } else {
+                    *blocks_dirty = false;
+                    *message_state_dirty = false;
+                    did_flush_blocks = true;
+                    did_flush_state = true;
+                }
+            }
+            Err(error) => {
+                log::warn!("failed to serialize assistant stream blocks: {error}");
+            }
+        }
+    } else if *message_state_dirty && should_flush_state {
         if let Err(error) = run_db(state.db.clone(), {
             let assistant_message_id = assistant_message_id.to_string();
-            let blocks = blocks.to_vec();
             let message_status = message_status.clone();
             move |db| {
-                let blocks_json = serde_json::to_value(&blocks)?;
-                db::messages::update_assistant_blocks(
-                    db,
-                    &assistant_message_id,
-                    &blocks_json,
-                    message_status,
-                )
+                db::messages::update_assistant_status(db, &assistant_message_id, message_status)
             }
         })
         .await
         {
-            log::warn!("failed to persist assistant stream blocks: {error}");
+            log::warn!("failed to persist assistant stream status: {error}");
+        } else {
+            *message_state_dirty = false;
+            did_flush_state = true;
         }
-        *blocks_dirty = false;
-        *message_state_dirty = false;
     }
 
-    if *thread_status_dirty && *last_persisted_thread_status != *thread_status {
+    if *thread_status_dirty && should_flush_state && *last_persisted_thread_status != *thread_status {
         if let Err(error) = run_db(state.db.clone(), {
             let thread_id = thread.id.clone();
             let thread_status = thread_status.clone();
@@ -1192,11 +1235,19 @@ async fn flush_stream_state(
         .await
         {
             log::warn!("failed to persist thread status during stream: {error}");
+        } else {
+            *last_persisted_thread_status = thread_status.clone();
+            *thread_status_dirty = false;
+            did_flush_state = true;
         }
-        *last_persisted_thread_status = thread_status.clone();
     }
-    *thread_status_dirty = false;
-    *last_persist_at = now;
+
+    if did_flush_blocks {
+        *last_blocks_persist_at = now;
+    }
+    if did_flush_state {
+        *last_persist_at = now;
+    }
 }
 
 async fn maybe_update_thread_title(

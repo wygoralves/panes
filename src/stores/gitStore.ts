@@ -14,6 +14,11 @@ const BRANCH_PAGE_SIZE = 200;
 const COMMIT_PAGE_SIZE = 100;
 const GIT_STATUS_CACHE_TTL_MS = 1_000;
 const GIT_DIFF_CACHE_TTL_MS = 1_200;
+const GIT_ACTIVE_VIEW_REFRESH_MIN_INTERVAL_MS = 1_500;
+const GIT_STATUS_CACHE_MAX_ENTRIES = 32;
+const GIT_DIFF_CACHE_MAX_ENTRIES = 320;
+const GIT_STATUS_CACHE_MAX_BYTES = 3 * 1024 * 1024;
+const GIT_DIFF_CACHE_MAX_BYTES = 24 * 1024 * 1024;
 const DRAFT_HISTORY_MAX = 3;
 
 export interface GitDraftsPayload {
@@ -89,6 +94,103 @@ const statusCacheByRepo = new Map<string, GitStatusCacheEntry>();
 const statusInFlightByRepo = new Map<string, Promise<GitStatus>>();
 const diffCacheByKey = new Map<string, GitDiffCacheEntry>();
 const diffInFlightByKey = new Map<string, Promise<string>>();
+const activeViewRefreshedAtByKey = new Map<string, number>();
+let statusCacheBytes = 0;
+let diffCacheBytes = 0;
+
+function estimateStatusCacheEntryBytes(repoPath: string, entry: GitStatusCacheEntry): number {
+  let bytes = repoPath.length * 2 + entry.status.branch.length * 2 + 96;
+  for (const file of entry.status.files) {
+    bytes += file.path.length * 2;
+    bytes += (file.indexStatus?.length ?? 0) * 2;
+    bytes += (file.worktreeStatus?.length ?? 0) * 2;
+    bytes += 48;
+  }
+  return bytes;
+}
+
+function estimateDiffCacheEntryBytes(key: string, entry: GitDiffCacheEntry): number {
+  return (key.length + entry.diff.length) * 2 + 96;
+}
+
+function removeStatusCacheEntry(repoPath: string) {
+  const existing = statusCacheByRepo.get(repoPath);
+  if (!existing) {
+    return;
+  }
+  statusCacheBytes = Math.max(
+    0,
+    statusCacheBytes - estimateStatusCacheEntryBytes(repoPath, existing),
+  );
+  statusCacheByRepo.delete(repoPath);
+}
+
+function removeDiffCacheEntry(key: string) {
+  const existing = diffCacheByKey.get(key);
+  if (!existing) {
+    return;
+  }
+  diffCacheBytes = Math.max(0, diffCacheBytes - estimateDiffCacheEntryBytes(key, existing));
+  diffCacheByKey.delete(key);
+}
+
+function trimStatusCacheToLimits() {
+  while (
+    statusCacheByRepo.size > GIT_STATUS_CACHE_MAX_ENTRIES ||
+    statusCacheBytes > GIT_STATUS_CACHE_MAX_BYTES
+  ) {
+    let oldestKey: string | null = null;
+    let oldestUpdatedAt = Number.POSITIVE_INFINITY;
+
+    for (const [key, entry] of statusCacheByRepo.entries()) {
+      if (entry.updatedAt < oldestUpdatedAt) {
+        oldestUpdatedAt = entry.updatedAt;
+        oldestKey = key;
+      }
+    }
+
+    if (!oldestKey) {
+      break;
+    }
+    removeStatusCacheEntry(oldestKey);
+  }
+}
+
+function trimDiffCacheToLimits() {
+  while (
+    diffCacheByKey.size > GIT_DIFF_CACHE_MAX_ENTRIES ||
+    diffCacheBytes > GIT_DIFF_CACHE_MAX_BYTES
+  ) {
+    let oldestKey: string | null = null;
+    let oldestUpdatedAt = Number.POSITIVE_INFINITY;
+
+    for (const [key, entry] of diffCacheByKey.entries()) {
+      if (entry.updatedAt < oldestUpdatedAt) {
+        oldestUpdatedAt = entry.updatedAt;
+        oldestKey = key;
+      }
+    }
+
+    if (!oldestKey) {
+      break;
+    }
+    removeDiffCacheEntry(oldestKey);
+  }
+}
+
+function setStatusCacheEntry(repoPath: string, entry: GitStatusCacheEntry) {
+  removeStatusCacheEntry(repoPath);
+  statusCacheByRepo.set(repoPath, entry);
+  statusCacheBytes += estimateStatusCacheEntryBytes(repoPath, entry);
+  trimStatusCacheToLimits();
+}
+
+function setDiffCacheEntry(key: string, entry: GitDiffCacheEntry) {
+  removeDiffCacheEntry(key);
+  diffCacheByKey.set(key, entry);
+  diffCacheBytes += estimateDiffCacheEntryBytes(key, entry);
+  trimDiffCacheToLimits();
+}
 
 function getRepoRevision(repoPath: string): number {
   return repoRevisionByPath.get(repoPath) ?? 0;
@@ -106,11 +208,11 @@ function buildDiffCacheKey(repoPath: string, filePath: string, staged: boolean):
 
 function invalidateRepoCaches(repoPath: string) {
   incrementRepoRevision(repoPath);
-  statusCacheByRepo.delete(repoPath);
+  removeStatusCacheEntry(repoPath);
   statusInFlightByRepo.delete(repoPath);
-  for (const key of diffCacheByKey.keys()) {
+  for (const key of [...diffCacheByKey.keys()]) {
     if (key.startsWith(`${repoPath}::`)) {
-      diffCacheByKey.delete(key);
+      removeDiffCacheEntry(key);
     }
   }
   for (const key of diffInFlightByKey.keys()) {
@@ -118,6 +220,38 @@ function invalidateRepoCaches(repoPath: string) {
       diffInFlightByKey.delete(key);
     }
   }
+  for (const key of activeViewRefreshedAtByKey.keys()) {
+    if (key.startsWith(`${repoPath}::`)) {
+      activeViewRefreshedAtByKey.delete(key);
+    }
+  }
+}
+
+function shouldRefreshActiveView(
+  repoPath: string,
+  view: GitPanelView,
+  force: boolean,
+): boolean {
+  if (view === "changes") {
+    return false;
+  }
+  if (force) {
+    return true;
+  }
+  const key = `${repoPath}::${view}`;
+  const now = performance.now();
+  const last = activeViewRefreshedAtByKey.get(key);
+  if (last !== undefined && now - last < GIT_ACTIVE_VIEW_REFRESH_MIN_INTERVAL_MS) {
+    return false;
+  }
+  return true;
+}
+
+function markActiveViewRefreshed(repoPath: string, view: GitPanelView) {
+  if (view === "changes") {
+    return;
+  }
+  activeViewRefreshedAtByKey.set(`${repoPath}::${view}`, performance.now());
 }
 
 async function getGitStatusCached(repoPath: string, force = false): Promise<GitStatus> {
@@ -130,6 +264,10 @@ async function getGitStatusCached(repoPath: string, force = false): Promise<GitS
     cached.revision === revision &&
     now - cached.updatedAt <= GIT_STATUS_CACHE_TTL_MS
   ) {
+    setStatusCacheEntry(repoPath, {
+      ...cached,
+      updatedAt: now,
+    });
     return cached.status;
   }
 
@@ -143,7 +281,7 @@ async function getGitStatusCached(repoPath: string, force = false): Promise<GitS
     .getGitStatus(repoPath)
     .then((status) => {
       if (getRepoRevision(repoPath) === requestRevision) {
-        statusCacheByRepo.set(repoPath, {
+        setStatusCacheEntry(repoPath, {
           status,
           revision: requestRevision,
           updatedAt: performance.now(),
@@ -175,6 +313,10 @@ async function getGitDiffCached(
     cached.revision === revision &&
     now - cached.updatedAt <= GIT_DIFF_CACHE_TTL_MS
   ) {
+    setDiffCacheEntry(key, {
+      ...cached,
+      updatedAt: now,
+    });
     return cached.diff;
   }
 
@@ -188,7 +330,7 @@ async function getGitDiffCached(
     .getFileDiff(repoPath, filePath, staged)
     .then((diff) => {
       if (getRepoRevision(repoPath) === requestRevision) {
-        diffCacheByKey.set(key, {
+        setDiffCacheEntry(key, {
           diff,
           revision: requestRevision,
           updatedAt: performance.now(),
@@ -377,6 +519,8 @@ export const useGitStore = create<GitState>((set, get) => {
       let selectedDiff: string | undefined = currentState.diff;
       let nextSelectedFile = selectedFile;
       let nextSelectedFileStaged = currentState.selectedFileStaged;
+      const shouldRefreshSelectedDiff = currentState.activeView === "changes";
+      let selectedDiffRefreshed = false;
 
       if (selectedFile) {
         const selectedStatus = status.files.find((file) => file.path === selectedFile);
@@ -387,32 +531,49 @@ export const useGitStore = create<GitState>((set, get) => {
           ? (selectedFileStaged ? Boolean(selectedStatus.worktreeStatus) : Boolean(selectedStatus.indexStatus))
           : false;
 
-        if (sameStateExists) {
-          try {
-            selectedDiff = await getGitDiffCached(repoPath, selectedFile, selectedFileStaged);
-          } catch {
-            selectedDiff = undefined;
-          }
-        } else if (oppositeStateExists) {
-          const flippedStaged = !selectedFileStaged;
-          nextSelectedFileStaged = flippedStaged;
-          try {
-            selectedDiff = await getGitDiffCached(repoPath, selectedFile, flippedStaged);
-          } catch {
-            selectedDiff = undefined;
-          }
-        } else {
+        if (!sameStateExists && !oppositeStateExists) {
           selectedDiff = undefined;
           nextSelectedFile = undefined;
           nextSelectedFileStaged = undefined;
+        } else if (shouldRefreshSelectedDiff) {
+          if (sameStateExists) {
+            try {
+              selectedDiff = await getGitDiffCached(repoPath, selectedFile, selectedFileStaged);
+              selectedDiffRefreshed = true;
+            } catch {
+              selectedDiff = undefined;
+            }
+          } else {
+            const flippedStaged = !selectedFileStaged;
+            nextSelectedFileStaged = flippedStaged;
+            try {
+              selectedDiff = await getGitDiffCached(repoPath, selectedFile, flippedStaged);
+              selectedDiffRefreshed = true;
+            } catch {
+              selectedDiff = undefined;
+            }
+          }
+        } else {
+          if (!sameStateExists && oppositeStateExists) {
+            nextSelectedFileStaged = !selectedFileStaged;
+          }
+          selectedDiff = undefined;
         }
       }
 
-      const viewState = await refreshActiveView(repoPath, {
-        activeView: currentState.activeView,
-        branchScope: currentState.branchScope,
-        branchSearch: currentState.branchSearch,
-      });
+      const forceRefresh = options?.force ?? false;
+      const refreshView = shouldRefreshActiveView(
+        repoPath,
+        currentState.activeView,
+        forceRefresh,
+      );
+      const viewState = refreshView
+        ? await refreshActiveView(repoPath, {
+            activeView: currentState.activeView,
+            branchScope: currentState.branchScope,
+            branchSearch: currentState.branchSearch,
+          })
+        : {};
 
       if (requestSeq === refreshSeq && isRepoActive(repoPath)) {
         set({
@@ -423,12 +584,17 @@ export const useGitStore = create<GitState>((set, get) => {
           diff: selectedDiff,
           error: undefined,
         });
+        if (refreshView) {
+          markActiveViewRefreshed(repoPath, currentState.activeView);
+        }
       }
 
       recordPerfMetric("git.refresh.ms", performance.now() - startedAt, {
         repoPath,
         fileCount: status.files.length,
-        cached: !(options?.force ?? false),
+        cached: !forceRefresh,
+        viewRefreshed: refreshView,
+        selectedDiffRefreshed,
       });
     } catch (error) {
       if (requestSeq === refreshSeq && isRepoActive(repoPath)) {

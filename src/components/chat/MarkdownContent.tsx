@@ -12,8 +12,10 @@ const REMARK_PLUGINS = [remarkGfm];
 const REHYPE_PLUGINS = [rehypeHighlight];
 const MARKDOWN_WORKER_THRESHOLD_CHARS = 1000;
 const MARKDOWN_CACHE_LIMIT = 280;
+const MARKDOWN_CACHE_MAX_BYTES = 8 * 1024 * 1024;
 
 const markdownHtmlCache = new Map<string, string>();
+let markdownHtmlCacheBytes = 0;
 let markdownWorkerInstance: Worker | null = null;
 let markdownWorkerRequestSeq = 0;
 const markdownWorkerCallbacks = new Map<
@@ -45,17 +47,38 @@ function readCachedMarkdownHtml(cacheKey: string): string | null {
 }
 
 function writeCachedMarkdownHtml(cacheKey: string, html: string) {
+  const nextEntryBytes = estimateCacheEntryBytes(cacheKey, html);
+  const existing = markdownHtmlCache.get(cacheKey);
   if (markdownHtmlCache.has(cacheKey)) {
+    if (existing !== undefined) {
+      markdownHtmlCacheBytes -= estimateCacheEntryBytes(cacheKey, existing);
+    }
     markdownHtmlCache.delete(cacheKey);
   }
   markdownHtmlCache.set(cacheKey, html);
-  while (markdownHtmlCache.size > MARKDOWN_CACHE_LIMIT) {
-    const oldest = markdownHtmlCache.keys().next().value;
-    if (!oldest) {
+  markdownHtmlCacheBytes += nextEntryBytes;
+  while (
+    markdownHtmlCache.size > MARKDOWN_CACHE_LIMIT ||
+    markdownHtmlCacheBytes > MARKDOWN_CACHE_MAX_BYTES
+  ) {
+    const oldestKey = markdownHtmlCache.keys().next().value;
+    if (!oldestKey) {
       break;
     }
-    markdownHtmlCache.delete(oldest);
+    const oldestHtml = markdownHtmlCache.get(oldestKey);
+    if (oldestHtml !== undefined) {
+      markdownHtmlCacheBytes -= estimateCacheEntryBytes(oldestKey, oldestHtml);
+    }
+    markdownHtmlCache.delete(oldestKey);
   }
+
+  if (markdownHtmlCacheBytes < 0) {
+    markdownHtmlCacheBytes = 0;
+  }
+}
+
+function estimateCacheEntryBytes(cacheKey: string, html: string): number {
+  return (cacheKey.length + html.length) * 2;
 }
 
 function ensureMarkdownWorker(): Worker | null {

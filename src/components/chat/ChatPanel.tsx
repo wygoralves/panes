@@ -569,6 +569,9 @@ export function ChatPanel() {
   );
   const {
     messages,
+    hasOlderMessages,
+    loadingOlderMessages,
+    loadOlderMessages,
     send,
     cancel,
     respondApproval,
@@ -615,6 +618,8 @@ export function ChatPanel() {
   const titleInputRef = useRef<HTMLInputElement>(null);
   const effortSyncKeyRef = useRef<string | null>(null);
   const highlightTimeoutRef = useRef<number | null>(null);
+  const prependLoadInFlightRef = useRef(false);
+  const threadActivatedAtRef = useRef(0);
   const initialScrollThreadRef = useRef<string | null>(null);
   const messageHeightsRef = useRef<Map<string, number>>(new Map());
   const layoutVersionRafRef = useRef<number | null>(null);
@@ -1093,6 +1098,11 @@ export function ChatPanel() {
   }, []);
 
   useEffect(() => {
+    threadActivatedAtRef.current = performance.now();
+    prependLoadInFlightRef.current = false;
+  }, [threadId]);
+
+  useEffect(() => {
     if (!threadId) {
       initialScrollThreadRef.current = null;
       setAutoScrollLocked(false);
@@ -1138,6 +1148,45 @@ export function ChatPanel() {
   }, [messages, autoScrollLocked, scrollViewportToBottom]);
 
   useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || !threadId || !hasOlderMessages || loadingOlderMessages) {
+      return;
+    }
+    if (performance.now() - threadActivatedAtRef.current < 700) {
+      return;
+    }
+    if (viewportScrollTop > 80 || prependLoadInFlightRef.current) {
+      return;
+    }
+
+    prependLoadInFlightRef.current = true;
+    const previousScrollHeight = viewport.scrollHeight;
+    void loadOlderMessages()
+      .then(() => {
+        window.requestAnimationFrame(() => {
+          const latestViewport = viewportRef.current;
+          if (!latestViewport) {
+            return;
+          }
+          const nextScrollHeight = latestViewport.scrollHeight;
+          const delta = nextScrollHeight - previousScrollHeight;
+          if (delta > 0) {
+            latestViewport.scrollTop = latestViewport.scrollTop + delta;
+          }
+        });
+      })
+      .finally(() => {
+        prependLoadInFlightRef.current = false;
+      });
+  }, [
+    hasOlderMessages,
+    loadOlderMessages,
+    loadingOlderMessages,
+    threadId,
+    viewportScrollTop,
+  ]);
+
+  useEffect(() => {
     if (!messageFocusTarget) {
       return;
     }
@@ -1149,6 +1198,12 @@ export function ChatPanel() {
       (message) => message.id === messageFocusTarget.messageId,
     );
     if (targetIndex < 0) {
+      if (hasOlderMessages && !loadingOlderMessages && !prependLoadInFlightRef.current) {
+        prependLoadInFlightRef.current = true;
+        void loadOlderMessages().finally(() => {
+          prependLoadInFlightRef.current = false;
+        });
+      }
       return;
     }
 
@@ -1193,7 +1248,15 @@ export function ChatPanel() {
     }, 2400);
 
     clearMessageFocusTarget();
-  }, [clearMessageFocusTarget, messageFocusTarget, messages, threadId]);
+  }, [
+    clearMessageFocusTarget,
+    hasOlderMessages,
+    loadOlderMessages,
+    loadingOlderMessages,
+    messageFocusTarget,
+    messages,
+    threadId,
+  ]);
 
   useEffect(() => {
     return () => {

@@ -54,10 +54,10 @@ pub fn insert_assistant_placeholder(
     )
 }
 
-pub fn update_assistant_blocks(
+pub fn update_assistant_blocks_json(
     db: &Database,
     message_id: &str,
-    blocks: &Value,
+    blocks_json: &str,
     status: MessageStatusDto,
 ) -> anyhow::Result<()> {
     let conn = db.connect()?;
@@ -65,9 +65,25 @@ pub fn update_assistant_blocks(
         "UPDATE messages
      SET blocks_json = ?1, status = ?2
      WHERE id = ?3",
-        params![blocks.to_string(), status.as_str(), message_id],
+        params![blocks_json, status.as_str(), message_id],
     )
     .context("failed to update assistant blocks")?;
+    Ok(())
+}
+
+pub fn update_assistant_status(
+    db: &Database,
+    message_id: &str,
+    status: MessageStatusDto,
+) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    conn.execute(
+        "UPDATE messages
+     SET status = ?1
+     WHERE id = ?2",
+        params![status.as_str(), message_id],
+    )
+    .context("failed to update assistant status")?;
     Ok(())
 }
 
