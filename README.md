@@ -5,10 +5,11 @@
 <h1 align="center">Panes</h1>
 
 <p align="center">
-  <strong>The open-source desktop cockpit for AI coding agents.</strong>
+  <strong>The open-source Agent Development Environment.</strong>
 </p>
 
 <p align="center">
+  <a href="https://panesade.com">Website</a> &bull;
   <a href="#features">Features</a> &bull;
   <a href="#getting-started">Getting Started</a> &bull;
   <a href="#development">Development</a> &bull;
@@ -30,7 +31,7 @@
 
 Panes wraps a rich native UI around terminal-based coding agents, giving developers a single pane of glass to orchestrate, review, and approve everything their AI agents do — across multiple repositories.
 
-CLI coding agents are powerful. Panes makes them even more so: real-time streaming chat, native git integration, multi-repo management, approval workflows, an integrated terminal with split panes, and full audit trails — all in a fast, local-first desktop app.
+CLI coding agents are powerful. Panes makes them even more so: real-time streaming chat, native git integration, multi-repo management, approval workflows, an integrated terminal with split panes and broadcast mode, a built-in file editor, and full audit trails — all in a fast, local-first desktop app.
 
 <!-- TODO: Add screenshot here -->
 <!-- <p align="center"><img src="docs/screenshot.png" alt="Panes screenshot" width="800" /></p> -->
@@ -44,16 +45,18 @@ CLI coding agents are powerful. Panes makes them even more so: real-time streami
 - Global message search (FTS5) with keyboard navigation
 
 **Git — First-Class Citizen**
-- Full git panel: status, diff, stage, unstage, commit, discard (per-file and bulk with confirmation)
-- Branch management: create, rename, delete, checkout (local + remote)
+- Full git panel: status, diff, stage, unstage, commit, discard, soft reset (per-file and bulk with confirmation)
+- Branch management: create, rename, delete, checkout (local + remote) with auto-checkout on creation
 - Remote operations: fetch, pull, push with ahead/behind tracking
 - Commit history browser and stash management
+- Worktree management: create, list, and remove git worktrees from the UI
 - Filesystem watcher for real-time change detection
 - Multi-repo awareness: auto-detect nested repos, per-repo active toggle
 
 **Engine Orchestration**
 - Engine-agnostic architecture — orchestrate any external coding agent
 - Codex engine fully integrated (JSONL protocol, streaming, approvals, model picker)
+- Multi-agent launching: spin up multiple agents simultaneously, optionally in separate worktrees
 - Approval workflows with structured questionnaires and custom JSON mode
 - Trust levels per repository (trusted / standard / restricted)
 - Runtime model discovery and reasoning effort control
@@ -62,11 +65,20 @@ CLI coding agents are powerful. Panes makes them even more so: real-time streami
 - Integrated native terminal (PTY) with xterm.js + WebGL rendering
 - Multi-session tab groups per workspace, with inline tab renaming (double-click or right-click)
 - Split panes: divide any terminal horizontally or vertically, with draggable resize handles
+- Broadcast mode: type once, send to all sessions in a group (`Cmd+Shift+I`)
 - Persistent sessions across navigation — scrollback survives workspace switches
+- Harness-aware tab labeling for coding agent processes
+
+**File Editor**
+- Built-in file editor (CodeMirror 6) for reviewing and editing files surfaced by agents
+- Syntax highlighting for JS/TS, Python, Rust, Go, HTML, CSS, JSON, YAML, SQL, Markdown, and more
+- Integrated save (`Cmd+S`) with direct filesystem writes
+- Dedicated editor layout mode — seamlessly switch between chat, terminal, and editor views
 
 **Desktop Experience**
 - Three-column resizable layout with pin/unpin sidebar
-- Layout mode switcher: chat only, split (chat + terminal), or terminal only — cycled with Cmd+Shift+T, persisted per workspace
+- Four layout modes: chat, split (chat + terminal), terminal, and editor — cycled with `Cmd+Shift+T`, persisted per workspace
+- Command palette (`Cmd+K`) for quick navigation and actions
 - Virtualized message list and diff rendering for large threads
 - Workspace/thread persistence across sessions
 - Crash recovery for interrupted turns
@@ -163,6 +175,7 @@ cargo clippy            # Lint
 | Frontend | React 19 + TypeScript 5.5 + Vite 6 |
 | Styling | Tailwind CSS 4 |
 | State management | Zustand 5 |
+| File editor | CodeMirror 6 |
 | Terminal | xterm.js + WebGL + portable-pty (Rust) |
 | Database | SQLite (rusqlite) with FTS5 |
 | Git | libgit2 for reads, CLI subprocess for writes |
@@ -175,6 +188,7 @@ cargo clippy            # Lint
 - **Web Workers** — markdown and diff parsing offloaded to workers to keep UI thread at 60fps
 - **Virtualization** — messages virtualized at 40+ items; diffs at 500+ lines
 - **Engine-agnostic** — all engines emit a unified `EngineEvent` model regardless of native protocol
+- **Multi-agent** — launch multiple agents in parallel, each in its own worktree, with broadcast mode to fan out input
 - **Local-first** — everything stored locally in SQLite, no cloud dependency
 
 ## Contributing
