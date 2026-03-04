@@ -1169,7 +1169,8 @@ async fn flush_stream_state(
         *thread_status_dirty = false;
     }
 
-    let should_flush_state = force || now.duration_since(*last_persist_at) >= STREAM_DB_FLUSH_INTERVAL;
+    let should_flush_state =
+        force || now.duration_since(*last_persist_at) >= STREAM_DB_FLUSH_INTERVAL;
     let should_flush_blocks =
         force || now.duration_since(*last_blocks_persist_at) >= STREAM_DB_BLOCKS_FLUSH_INTERVAL;
 
@@ -1226,7 +1227,8 @@ async fn flush_stream_state(
         }
     }
 
-    if *thread_status_dirty && should_flush_state && *last_persisted_thread_status != *thread_status {
+    if *thread_status_dirty && should_flush_state && *last_persisted_thread_status != *thread_status
+    {
         if let Err(error) = run_db(state.db.clone(), {
             let thread_id = thread.id.clone();
             let thread_status = thread_status.clone();
