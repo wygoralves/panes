@@ -400,8 +400,8 @@ function MessageRowView({
               maxWidth: "75%",
               padding: "10px 14px",
               borderRadius: "var(--radius-md)",
-              background: "var(--bg-3)",
-              border: "1px solid var(--border)",
+              background: "rgba(14, 240, 195, 0.06)",
+              border: "1px solid rgba(14, 240, 195, 0.10)",
               fontSize: 13,
               lineHeight: 1.6,
               whiteSpace: "pre-wrap",
@@ -1757,22 +1757,31 @@ export function ChatPanel() {
 
   const streamingIndicator = streaming ? (
     <div
-      className="animate-fade-in"
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 6,
-        color: "var(--text-3)",
-        fontSize: 11.5,
-        padding: "4px 12px",
+        gap: 10,
+        padding: "12px 16px",
+        borderRadius: "var(--radius-md)",
+        background: "var(--bg-2)",
+        border: "1px solid var(--border)",
+        width: "fit-content",
+        animation: "fade-in var(--duration-normal) var(--ease-out) both",
       }}
     >
       <Brain
-        size={12}
+        size={14}
         className="thinking-icon-active"
         style={{ color: "var(--info)" }}
       />
-      <span>Thinking&hellip;</span>
+      <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text-2)" }}>
+        Thinking
+      </span>
+      <span className="chat-streaming-dots">
+        <span />
+        <span />
+        <span />
+      </span>
     </div>
   ) : null;
 
@@ -2164,16 +2173,28 @@ export function ChatPanel() {
               gap: 6,
               padding: "6px 10px",
               borderRadius: "var(--radius-sm)",
-              border: "1px solid var(--border)",
-              background: "var(--bg-2)",
-              color: "var(--text-2)",
+              border: streaming ? "1px solid rgba(96, 165, 250, 0.25)" : "1px solid var(--border)",
+              background: streaming ? "rgba(96, 165, 250, 0.08)" : "var(--bg-2)",
+              color: streaming ? "var(--info)" : "var(--text-2)",
               fontSize: 11.5,
               cursor: "pointer",
               boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
               zIndex: 2,
             }}
           >
-            Jump to latest
+            {streaming && (
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: "var(--info)",
+                  animation: "pulse-soft 1.5s ease-in-out infinite",
+                  flexShrink: 0,
+                }}
+              />
+            )}
+            {streaming ? "New activity" : "Jump to latest"}
           </button>
         )}
             </div>

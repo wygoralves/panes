@@ -971,57 +971,7 @@ function ApprovalCard({
         </div>
       )}
 
-      {/* Action buttons — Cancel/Deny left, Allow right */}
-      {isPending && !showStructuredToolInput && !requiresCustomPayload && (
-        <div className="acard-actions">
-          <button
-            type="button"
-            className="approval-btn approval-btn-cancel"
-            onClick={() => onApproval(block.approvalId, { decision: "cancel" })}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="approval-btn approval-btn-deny"
-            onClick={() => onApproval(block.approvalId, { decision: "decline" })}
-          >
-            Deny
-          </button>
-          <span className="approval-actions-gap" />
-          <button
-            type="button"
-            className="approval-btn approval-btn-session"
-            onClick={() =>
-              onApproval(block.approvalId, { decision: "accept_for_session" })
-            }
-          >
-            Allow session
-          </button>
-          {proposedExecpolicyAmendment.length > 0 && (
-            <button
-              type="button"
-              className="approval-btn approval-btn-session"
-              onClick={() =>
-                onApproval(block.approvalId, {
-                  acceptWithExecpolicyAmendment: {
-                    execpolicy_amendment: proposedExecpolicyAmendment,
-                  },
-                })
-              }
-            >
-              Allow + policy
-            </button>
-          )}
-          <button
-            type="button"
-            className="approval-btn approval-btn-allow"
-            onClick={() => onApproval(block.approvalId, { decision: "accept" })}
-          >
-            Allow
-          </button>
-        </div>
-      )}
+      {/* Standard approval — no inline buttons; the approval banner handles it */}
 
       {/* Advanced JSON — only for custom payload requests */}
       {isPending && requiresCustomPayload && (
