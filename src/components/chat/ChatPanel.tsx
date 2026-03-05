@@ -32,6 +32,7 @@ import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { MessageBlocks } from "./MessageBlocks";
 import { isRequestUserInputApproval, requiresCustomApprovalPayload } from "./toolInputApproval";
 import { Dropdown } from "../shared/Dropdown";
+import { ModelPicker } from "./ModelPicker";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import type { ApprovalBlock, ApprovalResponse, ChatAttachment, ContentBlock, Message, TrustLevel } from "../../types";
@@ -650,6 +651,7 @@ export function ChatPanel() {
   const clearMessageFocusTarget = useUiStore((s) => s.clearMessageFocusTarget);
   const showSidebar = useUiStore((s) => s.showSidebar);
   const engines = useEngineStore((s) => s.engines);
+  const health = useEngineStore((s) => s.health);
   const {
     repos,
     activeRepoId,
@@ -2524,55 +2526,21 @@ export function ChatPanel() {
 
               <div className="chat-toolbar-divider" />
 
-              {/* Engine + Model selector */}
-              <Dropdown
-                value={selectedModelOptionValue}
-                onChange={(v) => {
+              {/* Engine + Model + Effort selector */}
+              <ModelPicker
+                engines={engines}
+                health={health}
+                selectedEngineId={selectedEngineId}
+                selectedModelId={selectedModelId ?? selectedModel?.id ?? ""}
+                selectedEffort={selectedEffort}
+                onEngineModelChange={(engineId, modelId) => {
                   manuallyOverrodeThreadSelectionRef.current = true;
-                  const selection = decodeModelOptionValue(v);
-                  if (!selection) {
-                    setSelectedModelId(null);
-                    return;
-                  }
-                  if (selection.engineId !== selectedEngineId) {
-                    setSelectedEngineId(selection.engineId);
-                  }
-                  setSelectedModelId(selection.modelId);
+                  if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
+                  setSelectedModelId(modelId);
                 }}
-                disabled={availableModels.length === 0 && otherEngineGroups.length === 0}
-                title="Select model"
-                selectedLabel={modelPickerLabel}
-                selectedIcon={selectedEngineId === "codex" ? <OpenAiIcon size={12} /> : undefined}
-                options={activeModels.map((model) => ({
-                  value: encodeModelOptionValue(selectedEngineId, model.id),
-                  label: formatEngineModelLabel(selectedEngine?.name, model.displayName),
-                  icon: selectedEngineId === "codex" ? <OpenAiIcon size={12} /> : undefined,
-                }))}
-                groups={[
-                  ...(legacyModels.length > 0 ? [{
-                    label: "Legacy Models",
-                    options: legacyModels.map((model) => ({
-                      value: encodeModelOptionValue(selectedEngineId, model.id),
-                      label: formatEngineModelLabel(selectedEngine?.name, model.displayName),
-                      icon: selectedEngineId === "codex" ? <OpenAiIcon size={12} /> : undefined,
-                    })),
-                  }] : []),
-                  ...otherEngineGroups,
-                ]}
+                onEffortChange={(effort) => void onReasoningEffortChange(effort)}
+                disabled={availableModels.length === 0}
               />
-
-              {/* Reasoning effort */}
-              {supportedEfforts.length > 0 && (
-                <Dropdown
-                  value={selectedEffort}
-                  onChange={(v) => void onReasoningEffortChange(v)}
-                  title="Thinking budget"
-                  options={supportedEfforts.map((option) => ({
-                    value: option.reasoningEffort,
-                    label: formatReasoningEffortLabel(option.reasoningEffort),
-                  }))}
-                />
-              )}
 
               <div className="chat-toolbar-divider" />
 
