@@ -12563,10 +12563,42 @@ function createQueryContext(id) {
     id,
     query: null,
     actionCounter: 0,
-    pendingActionIds: [],
+    actionIdsByToolUseId: /* @__PURE__ */ new Map(),
     pendingApprovalIds: /* @__PURE__ */ new Set(),
     cancelled: false
   };
+}
+function serializeToolOutput(output) {
+  if (typeof output === "string") {
+    return output;
+  }
+  if (output == null) {
+    return void 0;
+  }
+  try {
+    return JSON.stringify(output);
+  } catch {
+    return String(output);
+  }
+}
+function getActionIdForToolUse(context, toolUseId) {
+  if (typeof toolUseId === "string" && toolUseId.length > 0) {
+    const actionId = context.actionIdsByToolUseId.get(toolUseId);
+    context.actionIdsByToolUseId.delete(toolUseId);
+    if (actionId) {
+      return actionId;
+    }
+  }
+  return `claude-action-${context.actionCounter}`;
+}
+function formatSdkResultError(message) {
+  if (Array.isArray(message?.errors) && message.errors.length > 0) {
+    return message.errors.join("\n");
+  }
+  if (typeof message?.subtype === "string" && message.subtype.length > 0) {
+    return `Claude query failed: ${message.subtype.replaceAll("_", " ")}`;
+  }
+  return "Claude query failed.";
 }
 function cleanupPendingApprovalsForQuery(queryId, denialMessage) {
   const context = activeQueries.get(queryId);
@@ -12586,7 +12618,7 @@ function cleanupPendingApprovalsForQuery(queryId, denialMessage) {
   }
   context.pendingApprovalIds.clear();
 }
-async function requestApproval(context, toolName, toolInput) {
+async function requestApproval(context, toolName, toolInput, suggestions = []) {
   const approvalId = `${context.id}:approval:${context.pendingApprovalIds.size + 1}:${Date.now()}`;
   emit({
     id: context.id,
@@ -12599,6 +12631,7 @@ async function requestApproval(context, toolName, toolInput) {
   const permission = await new Promise((resolve) => {
     pendingApprovals.set(approvalId, {
       queryId: context.id,
+      suggestions,
       resolve
     });
     context.pendingApprovalIds.add(approvalId);
@@ -12642,14 +12675,20 @@ function buildPermissionHandler({
     if (!requiresApproval(trustMode, toolName)) {
       return { behavior: "allow" };
     }
-    return requestApproval(context, toolName, toolInput);
+    return requestApproval(context, toolName, toolInput, options?.suggestions);
   };
 }
-function resolveApprovalDecision(response) {
+function resolveApprovalDecision(response, suggestions = []) {
   const decision = typeof response?.decision === "string" ? response.decision : "";
-  if (decision === "accept" || decision === "accept_for_session") {
+  if (decision === "accept") {
     return {
       behavior: "allow"
+    };
+  }
+  if (decision === "accept_for_session") {
+    return {
+      behavior: "allow",
+      ...Array.isArray(suggestions) && suggestions.length > 0 ? { updatedPermissions: suggestions } : {}
     };
   }
   return {
@@ -12734,7 +12773,10 @@ async function handleQuery(req) {
               const actionId = `claude-action-${++context.actionCounter}`;
               const toolName = hookInput?.tool_name || hookInput?.name || "unknown";
               const toolInput = hookInput?.tool_input || hookInput?.input || {};
-              context.pendingActionIds.push(actionId);
+              const toolUseId = hookInput?.tool_use_id || hookInput?.toolUseID || hookInput?.toolUseId;
+              if (typeof toolUseId === "string" && toolUseId.length > 0) {
+                context.actionIdsByToolUseId.set(toolUseId, actionId);
+              }
               emit({
                 id,
                 type: "action_started",
@@ -12754,9 +12796,19 @@ async function handleQuery(req) {
           matcher: ".*",
           hooks: [
             async (hookInput) => {
-              const actionId = context.pendingActionIds.pop() || `claude-action-${context.actionCounter}`;
-              const output = hookInput?.tool_result || hookInput?.result;
-              const outputStr = typeof output === "string" ? output.slice(0, 4e3) : output != null ? JSON.stringify(output).slice(0, 4e3) : void 0;
+              const toolUseId = hookInput?.tool_use_id || hookInput?.toolUseID || hookInput?.toolUseId;
+              const actionId = getActionIdForToolUse(context, toolUseId);
+              const output = hookInput?.tool_response ?? hookInput?.tool_result ?? hookInput?.result;
+              const outputStr = serializeToolOutput(output)?.slice(0, 4e3);
+              if (outputStr) {
+                emit({
+                  id,
+                  type: "action_output_delta",
+                  actionId,
+                  stream: "stdout",
+                  content: outputStr
+                });
+              }
               emit({
                 id,
                 type: "action_completed",
@@ -12775,7 +12827,8 @@ async function handleQuery(req) {
           matcher: ".*",
           hooks: [
             async (hookInput) => {
-              const actionId = context.pendingActionIds.pop() || `claude-action-${context.actionCounter}`;
+              const toolUseId = hookInput?.tool_use_id || hookInput?.toolUseID || hookInput?.toolUseId;
+              const actionId = getActionIdForToolUse(context, toolUseId);
               emit({
                 id,
                 type: "action_completed",
@@ -12797,10 +12850,11 @@ async function handleQuery(req) {
   if (sessionId) options.sessionId = sessionId;
   if (maxTurns) options.maxTurns = maxTurns;
   if (reasoningEffort) options.effort = reasoningEffort;
+  let actualSessionId = null;
   try {
     emit({ id, type: "turn_started" });
-    let actualSessionId = null;
     let sawTextDelta = false;
+    let terminalStatus = "completed";
     const promptInput = buildPromptInput(
       prompt,
       attachments,
@@ -12816,6 +12870,21 @@ async function handleQuery(req) {
       if (message.type === "system" && message.subtype === "init") {
         actualSessionId = message.session_id;
         emit({ id, type: "session_init", sessionId: actualSessionId });
+      } else if (message.type === "result") {
+        actualSessionId = message.session_id || actualSessionId;
+        if (message.subtype === "success") {
+          if (typeof message.result === "string" && message.result.length > 0 && !sawTextDelta) {
+            emit({ id, type: "text_delta", content: message.result });
+          }
+        } else {
+          terminalStatus = "failed";
+          emit({
+            id,
+            type: "error",
+            message: formatSdkResultError(message),
+            recoverable: false
+          });
+        }
       } else if (message.type === "stream_event") {
         const streamEvent = message.event;
         if (streamEvent?.type !== "content_block_delta") {
@@ -12828,14 +12897,12 @@ async function handleQuery(req) {
         } else if (delta?.type === "thinking_delta" && typeof delta.thinking === "string" && delta.thinking.length > 0) {
           emit({ id, type: "thinking_delta", content: delta.thinking });
         }
-      } else if ("result" in message && typeof message.result === "string" && message.result.length > 0 && !sawTextDelta) {
-        emit({ id, type: "text_delta", content: message.result });
       }
     }
     emit({
       id,
       type: "turn_completed",
-      status: context.cancelled ? "interrupted" : "completed",
+      status: context.cancelled ? "interrupted" : terminalStatus,
       sessionId: actualSessionId
     });
   } catch (err) {
@@ -12845,7 +12912,7 @@ async function handleQuery(req) {
       message: err.message || String(err),
       recoverable: false
     });
-    emit({ id, type: "turn_completed", status: "failed", sessionId: null });
+    emit({ id, type: "turn_completed", status: "failed", sessionId: actualSessionId });
   } finally {
     cleanupPendingApprovalsForQuery(id, "Claude query was canceled.");
     activeQueries.delete(id);
@@ -12879,7 +12946,7 @@ function handleApprovalResponse(params = {}) {
   pendingApprovals.delete(approvalId);
   const context = activeQueries.get(pending.queryId);
   context?.pendingApprovalIds.delete(approvalId);
-  pending.resolve(resolveApprovalDecision(params.response || {}));
+  pending.resolve(resolveApprovalDecision(params.response || {}, pending.suggestions));
 }
 rl.on("line", (line) => {
   let req;

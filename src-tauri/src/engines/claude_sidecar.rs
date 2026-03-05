@@ -12,8 +12,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{
-    ActionResult, ActionType, Engine, EngineEvent, EngineThread, ModelInfo, ReasoningEffortOption,
-    SandboxPolicy, ThreadScope, TurnCompletionStatus, TurnInput,
+    ActionResult, ActionType, Engine, EngineEvent, EngineThread, ModelInfo, OutputStream,
+    ReasoningEffortOption, SandboxPolicy, ThreadScope, TurnCompletionStatus, TurnInput,
 };
 
 // ── Sidecar event protocol ────────────────────────────────────────────
@@ -46,6 +46,13 @@ enum SidecarEvent {
         action_type: String,
         summary: String,
         details: Option<serde_json::Value>,
+    },
+    ActionOutputDelta {
+        id: Option<String>,
+        #[serde(rename = "actionId")]
+        action_id: String,
+        stream: String,
+        content: String,
     },
     ActionCompleted {
         id: Option<String>,
@@ -92,6 +99,7 @@ impl SidecarEvent {
             | SidecarEvent::TextDelta { id, .. }
             | SidecarEvent::ThinkingDelta { id, .. }
             | SidecarEvent::ActionStarted { id, .. }
+            | SidecarEvent::ActionOutputDelta { id, .. }
             | SidecarEvent::ActionCompleted { id, .. }
             | SidecarEvent::ApprovalRequested { id, .. }
             | SidecarEvent::TurnCompleted { id, .. }
@@ -111,8 +119,8 @@ struct ClaudeTransport {
 
 impl ClaudeTransport {
     async fn spawn(sidecar_path: PathBuf) -> anyhow::Result<Self> {
-        let node =
-            which::which("node").context("node executable not found in PATH — required for the Claude engine")?;
+        let node = which::which("node")
+            .context("node executable not found in PATH — required for the Claude engine")?;
 
         let sidecar_dir = sidecar_path
             .parent()
@@ -214,7 +222,9 @@ impl ClaudeTransport {
         if let Some(resource_dir) = resource_dir {
             let bundled_candidates = [
                 resource_dir.join("claude-agent-sdk-server.mjs"),
-                resource_dir.join("sidecar-dist").join("claude-agent-sdk-server.mjs"),
+                resource_dir
+                    .join("sidecar-dist")
+                    .join("claude-agent-sdk-server.mjs"),
             ];
             for candidate in bundled_candidates {
                 if candidate.exists() {
@@ -345,6 +355,13 @@ impl ClaudeSidecarEngine {
             "git" => ActionType::Git,
             "search" => ActionType::Search,
             _ => ActionType::Other,
+        }
+    }
+
+    fn parse_output_stream(s: &str) -> OutputStream {
+        match s {
+            "stderr" => OutputStream::Stderr,
+            _ => OutputStream::Stdout,
         }
     }
 
@@ -502,11 +519,10 @@ impl Engine for ClaudeSidecarEngine {
     }
 
     async fn is_available(&self) -> bool {
-        which::which("node").is_ok()
-            && {
-                let state = self.state.lock().await;
-                ClaudeTransport::resolve_sidecar_path(state.resource_dir.as_ref()).is_ok()
-            }
+        which::which("node").is_ok() && {
+            let state = self.state.lock().await;
+            ClaudeTransport::resolve_sidecar_path(state.resource_dir.as_ref()).is_ok()
+        }
     }
 
     async fn version(&self) -> Option<String> {
@@ -692,6 +708,21 @@ impl Engine for ClaudeSidecarEngine {
                                             action_type: Self::parse_action_type(&action_type),
                                             summary,
                                             details: details.unwrap_or(serde_json::json!({})),
+                                        })
+                                        .await
+                                        .ok();
+                                }
+                                SidecarEvent::ActionOutputDelta {
+                                    action_id,
+                                    stream,
+                                    content,
+                                    ..
+                                } => {
+                                    event_tx
+                                        .send(EngineEvent::ActionOutputDelta {
+                                            action_id,
+                                            stream: Self::parse_output_stream(&stream),
+                                            content,
                                         })
                                         .await
                                         .ok();

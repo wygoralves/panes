@@ -2196,36 +2196,19 @@ export function ChatPanel() {
           {/* Pending approvals */}
           {pendingApprovals.length > 0 && (
             <div className="chat-approval-banner">
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  marginBottom: 8,
-                }}
-              >
-                <Shield size={14} style={{ color: "var(--warning)" }} />
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--warning)" }}>
-                  Pending approval
-                </div>
-                <div style={{ flex: 1 }} />
-                <div style={{ fontSize: 11, color: "var(--text-3)" }}>
-                  The engine is waiting for your decision.
-                </div>
+              <div className="approval-header">
+                <span className="approval-header-icon">
+                  <Shield size={11} />
+                </span>
+                <span className="approval-header-title">
+                  Approval required
+                </span>
+                <span className="approval-header-spacer" />
                 {activeRepo && activeRepo.trustLevel !== "trusted" && (
                   <button
                     type="button"
-                    className="btn-ghost"
+                    className="approval-trust-btn"
                     onClick={() => void onRepoTrustLevelChange("trusted")}
-                    style={{
-                      marginLeft: 8,
-                      padding: "4px 8px",
-                      fontSize: 11,
-                      borderRadius: "var(--radius-sm)",
-                      border: "1px solid rgba(52, 211, 153, 0.25)",
-                      color: "var(--success)",
-                      cursor: "pointer",
-                    }}
                     title="Set trusted policy for this repo (on-request approvals, network requested enabled)"
                   >
                     Trust repo
@@ -2234,17 +2217,8 @@ export function ChatPanel() {
                 {!activeRepo && repos.length > 0 && workspaceTrustLevel !== "trusted" && (
                   <button
                     type="button"
-                    className="btn-ghost"
+                    className="approval-trust-btn"
                     onClick={() => void onWorkspaceTrustLevelChange("trusted")}
-                    style={{
-                      marginLeft: 8,
-                      padding: "4px 8px",
-                      fontSize: 11,
-                      borderRadius: "var(--radius-sm)",
-                      border: "1px solid rgba(52, 211, 153, 0.25)",
-                      color: "var(--success)",
-                      cursor: "pointer",
-                    }}
                     title="Set trusted policy for all repositories (on-request approvals, network requested enabled)"
                   >
                     Trust workspace
@@ -2252,7 +2226,7 @@ export function ChatPanel() {
                 )}
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div className="approval-rows">
                 {pendingApprovals.slice(-3).map((approval) => {
                   const details = approval.details ?? {};
                   const isToolInputRequest = isRequestUserInputApproval(details);
@@ -2278,31 +2252,16 @@ export function ChatPanel() {
                       key={approval.approvalId}
                       className="chat-approval-row"
                     >
-                      <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="approval-row-info">
                         <div
-                          style={{
-                            fontSize: 12.5,
-                            fontWeight: 600,
-                            color: "var(--text-1)",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
+                          className="approval-row-summary"
                           title={approval.summary}
                         >
                           {approval.summary}
                         </div>
                         {(command || reason) && (
                           <div
-                            style={{
-                              marginTop: 2,
-                              fontSize: 11,
-                              color: "var(--text-2)",
-                              fontFamily: '"JetBrains Mono", monospace',
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
+                            className="approval-row-detail"
                             title={command ?? reason}
                           >
                             {command ?? reason}
@@ -2310,16 +2269,9 @@ export function ChatPanel() {
                         )}
                       </div>
 
-                      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                      <div className="approval-actions">
                         {isToolInputRequest || requiresCustomPayload ? (
-                          <span
-                            style={{
-                              fontSize: 11.5,
-                              color: "var(--text-3)",
-                              maxWidth: 220,
-                              textAlign: "right",
-                            }}
-                          >
+                          <span className="approval-row-hint">
                             {isToolInputRequest
                               ? "Respond in the approval card below."
                               : "This request requires custom JSON. Respond in the approval card below."}
@@ -2328,22 +2280,40 @@ export function ChatPanel() {
                           <>
                             <button
                               type="button"
-                              className="btn-primary"
+                              className="approval-btn approval-btn-cancel"
                               onClick={() =>
-                                void respondApproval(approval.approvalId, { decision: "accept" })
+                                void respondApproval(approval.approvalId, { decision: "cancel" })
                               }
-                              style={{
-                                padding: "5px 10px",
-                                fontSize: 12,
-                                cursor: "pointer",
-                              }}
                             >
-                              Allow
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              className="approval-btn approval-btn-deny"
+                              onClick={() =>
+                                void respondApproval(approval.approvalId, {
+                                  decision: "decline",
+                                })
+                              }
+                            >
+                              Deny
+                            </button>
+                            <span className="approval-actions-gap" />
+                            <button
+                              type="button"
+                              className="approval-btn approval-btn-session"
+                              onClick={() =>
+                                void respondApproval(approval.approvalId, {
+                                  decision: "accept_for_session",
+                                })
+                              }
+                            >
+                              Allow session
                             </button>
                             {proposedExecpolicyAmendment.length > 0 && (
                               <button
                                 type="button"
-                                className="btn-outline"
+                                className="approval-btn approval-btn-session"
                                 onClick={() =>
                                   void respondApproval(approval.approvalId, {
                                     acceptWithExecpolicyAmendment: {
@@ -2351,60 +2321,18 @@ export function ChatPanel() {
                                     },
                                   })
                                 }
-                                style={{
-                                  padding: "5px 10px",
-                                  fontSize: 12,
-                                  cursor: "pointer",
-                                }}
                               >
                                 Allow + policy
                               </button>
                             )}
                             <button
                               type="button"
-                              className="btn-outline"
+                              className="approval-btn approval-btn-allow"
                               onClick={() =>
-                                void respondApproval(approval.approvalId, {
-                                  decision: "accept_for_session",
-                                })
+                                void respondApproval(approval.approvalId, { decision: "accept" })
                               }
-                              style={{
-                                padding: "5px 10px",
-                                fontSize: 12,
-                                cursor: "pointer",
-                              }}
                             >
-                              Allow session
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-danger-ghost"
-                              onClick={() =>
-                                void respondApproval(approval.approvalId, {
-                                  decision: "decline",
-                                })
-                              }
-                              style={{
-                                padding: "5px 10px",
-                                fontSize: 12,
-                                cursor: "pointer",
-                              }}
-                            >
-                              Deny
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-cancel-ghost"
-                              onClick={() =>
-                                void respondApproval(approval.approvalId, { decision: "cancel" })
-                              }
-                              style={{
-                                padding: "5px 10px",
-                                fontSize: 12,
-                                cursor: "pointer",
-                              }}
-                            >
-                              Cancel
+                              Allow
                             </button>
                           </>
                         )}

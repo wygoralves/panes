@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, ChevronRight, Sparkles, Zap } from "lucide-react";
+import { Check, ChevronDown, ChevronRight } from "lucide-react";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import type { EngineHealth, EngineInfo, EngineModel } from "../../types";
 
@@ -335,16 +335,7 @@ function ModelRow({
               {formatModelName(model.displayName)}
             </span>
             {model.isDefault && (
-              <span className="mp-badge mp-badge-default">
-                <Sparkles size={8} />
-                Default
-              </span>
-            )}
-            {upgradeName && (
-              <span className="mp-badge mp-badge-upgrade">
-                <Zap size={8} />
-                {upgradeName}
-              </span>
+              <span className="mp-model-default">default</span>
             )}
           </div>
           {model.description && (
