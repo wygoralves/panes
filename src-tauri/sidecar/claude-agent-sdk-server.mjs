@@ -6,14 +6,16 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 
 let queryFn;
+const sdkModuleSpecifier =
+  process.env.CLAUDE_AGENT_SDK_MODULE || "@anthropic-ai/claude-agent-sdk";
 try {
-  const sdk = await import("@anthropic-ai/claude-agent-sdk");
+  const sdk = await import(sdkModuleSpecifier);
   queryFn = sdk.query;
 } catch (err) {
   process.stdout.write(
     JSON.stringify({
       type: "error",
-      message: `Failed to load @anthropic-ai/claude-agent-sdk: ${err.message}. Install it with: pnpm add @anthropic-ai/claude-agent-sdk`,
+      message: `Failed to load ${sdkModuleSpecifier}: ${err.message}. Install it with: pnpm add @anthropic-ai/claude-agent-sdk`,
     }) + "\n",
   );
   process.exit(1);

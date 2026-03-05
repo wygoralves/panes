@@ -890,3 +890,51 @@ impl Engine for ClaudeSidecarEngine {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserializes_action_output_delta_events() {
+        let event: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "action_output_delta",
+            "id": "request-1",
+            "actionId": "action-1",
+            "stream": "stderr",
+            "content": "permission denied",
+        }))
+        .expect("action_output_delta should deserialize");
+
+        assert_eq!(event.request_id(), Some("request-1"));
+        match event {
+            SidecarEvent::ActionOutputDelta {
+                action_id,
+                stream,
+                content,
+                ..
+            } => {
+                assert_eq!(action_id, "action-1");
+                assert_eq!(stream, "stderr");
+                assert_eq!(content, "permission denied");
+            }
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_output_stream_names() {
+        assert!(matches!(
+            ClaudeSidecarEngine::parse_output_stream("stderr"),
+            OutputStream::Stderr
+        ));
+        assert!(matches!(
+            ClaudeSidecarEngine::parse_output_stream("stdout"),
+            OutputStream::Stdout
+        ));
+        assert!(matches!(
+            ClaudeSidecarEngine::parse_output_stream("unknown"),
+            OutputStream::Stdout
+        ));
+    }
+}
