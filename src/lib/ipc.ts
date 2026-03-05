@@ -10,7 +10,9 @@ import type {
   GitBranchPage,
   GitBranchScope,
   GitCommitPage,
+  GitInitRepoStatus,
   GitStash,
+  GitRemote,
   GitWorktree,
   EngineHealth,
   EngineInfo,
@@ -210,6 +212,19 @@ export const ipc = {
     }),
   pruneGitWorktrees: (repoPath: string) =>
     invoke<void>("prune_git_worktrees", { repoPath }),
+  initGitRepo: (repoPath: string, validateOnly?: boolean) =>
+    invoke<GitInitRepoStatus>("init_git_repo", {
+      repoPath,
+      validateOnly: validateOnly ?? null,
+    }),
+  listGitRemotes: (repoPath: string) =>
+    invoke<GitRemote[]>("list_git_remotes", { repoPath }),
+  addGitRemote: (repoPath: string, name: string, url: string) =>
+    invoke<void>("add_git_remote", { repoPath, name, url }),
+  removeGitRemote: (repoPath: string, name: string) =>
+    invoke<void>("remove_git_remote", { repoPath, name }),
+  renameGitRemote: (repoPath: string, oldName: string, newName: string) =>
+    invoke<void>("rename_git_remote", { repoPath, oldName, newName }),
   terminalCreateSession: (workspaceId: string, cols: number, rows: number, cwd?: string | null) =>
     invoke<TerminalSession>("terminal_create_session", { workspaceId, cols, rows, cwd: cwd ?? null }),
   terminalWrite: (workspaceId: string, sessionId: string, data: string) =>

@@ -14,6 +14,7 @@ import {
   Archive,
   MoreHorizontal,
   CornerUpLeft,
+  Link,
 } from "lucide-react";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore, type GitPanelView } from "../../stores/gitStore";
@@ -22,12 +23,14 @@ import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag
 import { toast } from "../../stores/toastStore";
 import { Dropdown } from "../shared/Dropdown";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
+import type { GitInitRepoStatus } from "../../types";
 import { GitChangesView } from "./GitChangesView";
 import { GitBranchesView } from "./GitBranchesView";
 import { GitCommitsView } from "./GitCommitsView";
 import { GitStashView } from "./GitStashView";
 import { GitFilesView } from "./GitFilesView";
 import { GitWorktreesView } from "./GitWorktreesView";
+import { GitRemotesView } from "./GitRemotesView";
 
 const VIEW_OPTIONS = [
   { value: "changes", label: "Changes", icon: <FileDiff size={13} /> },
@@ -42,11 +45,13 @@ const GIT_WATCHER_REFRESH_DEBOUNCE_MS_BACKGROUND = 1100;
 
 export function GitPanel() {
   const {
+    workspaces,
     repos,
     activeWorkspaceId,
     activeRepoId,
     setActiveRepo,
     setWorkspaceGitActiveRepos,
+    rescanWorkspace,
   } = useWorkspaceStore();
   const {
     status,
@@ -75,6 +80,9 @@ export function GitPanel() {
   const [localError, setLocalError] = useState<string | undefined>();
   const [softResetConfirmOpen, setSoftResetConfirmOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [remotesOpen, setRemotesOpen] = useState(false);
+  const [initLoading, setInitLoading] = useState(false);
+  const [initRepoStatus, setInitRepoStatus] = useState<GitInitRepoStatus | null>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const moreTriggerRef = useRef<HTMLButtonElement>(null);
   const [moreMenuPos, setMoreMenuPos] = useState({ top: 0, left: 0 });
@@ -112,6 +120,10 @@ export function GitPanel() {
     () => repos.filter((repo) => repo.isActive),
     [repos],
   );
+  const activeWorkspaceRootPath = useMemo(
+    () => workspaces.find((workspace) => workspace.id === activeWorkspaceId)?.rootPath ?? null,
+    [activeWorkspaceId, workspaces],
+  );
 
   const activeRepo = useMemo(() => {
     if (controlledRepos.length === 0) {
@@ -140,6 +152,9 @@ export function GitPanel() {
     remoteSyncAction &&
     remoteSyncRepoPath === effectiveRepoPath,
   );
+  const initBlockedByRepoPath = initRepoStatus?.canInitialize === false
+    ? initRepoStatus.blockingRepoPath
+    : null;
   const syncDisabled = !effectiveRepoPath || loading || isActiveRepoSyncing;
   const pushCount = status?.ahead ?? 0;
   const pullCount = status?.behind ?? 0;
@@ -343,6 +358,31 @@ export function GitPanel() {
       unlisten?.();
     };
   }, [effectiveRepoPath, invalidateRepoCache, refresh]);
+
+  useEffect(() => {
+    if (effectiveRepo || !activeWorkspaceRootPath) {
+      setInitRepoStatus(null);
+      return;
+    }
+
+    let cancelled = false;
+    void ipc.initGitRepo(activeWorkspaceRootPath, true)
+      .then((status) => {
+        if (!cancelled) {
+          setInitRepoStatus(status);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setInitRepoStatus(null);
+          setLocalError(String(error));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceRootPath, effectiveRepo]);
 
   useEffect(() => {
     if (!effectiveRepoPath || isActiveRepoSyncing) {
@@ -554,7 +594,35 @@ export function GitPanel() {
             <GitBranchIcon size={20} />
           </div>
           <p className="git-empty-title">No repositories found</p>
-          <p className="git-empty-sub">Open a folder with a git repository</p>
+          <p className="git-empty-sub">
+            {initBlockedByRepoPath
+              ? `This workspace is already inside the Git repository at ${initBlockedByRepoPath}.`
+              : "Open a folder with a git repository"}
+          </p>
+          {activeWorkspaceId && activeWorkspaceRootPath && initRepoStatus?.canInitialize === true && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ marginTop: 12, fontSize: 13 }}
+              disabled={initLoading}
+              onClick={() => {
+                setInitLoading(true);
+                void (async () => {
+                  try {
+                    await ipc.initGitRepo(activeWorkspaceRootPath);
+                    await rescanWorkspace(activeWorkspaceId);
+                    toast.success("Repository initialized");
+                  } catch (e) {
+                    toast.error(String(e));
+                  } finally {
+                    setInitLoading(false);
+                  }
+                })();
+              }}
+            >
+              {initLoading ? "Initializing..." : "Initialize Repository"}
+            </button>
+          )}
         </div>
       )}
 
@@ -623,7 +691,28 @@ export function GitPanel() {
               <Undo2 size={13} />
               <span style={{ flex: 1 }}>Soft reset last commit</span>
             </button>
+            <button
+              type="button"
+              className="git-action-menu-item"
+              onClick={() => {
+                closeMoreMenu();
+                setRemotesOpen(true);
+              }}
+              disabled={!effectiveRepoPath}
+            >
+              <Link size={13} />
+              <span style={{ flex: 1 }}>Manage Remotes...</span>
+            </button>
           </div>,
+          document.body,
+        )}
+
+      {remotesOpen && effectiveRepo &&
+        createPortal(
+          <GitRemotesView
+            repo={effectiveRepo}
+            onClose={() => setRemotesOpen(false)}
+          />,
           document.body,
         )}
     </div>

@@ -68,6 +68,8 @@ pub fn run() {
         .menu(build_app_menu)
         .setup(|app| {
             let handle = app.handle().clone();
+            let resource_dir = app.path().resource_dir().ok();
+            app.state::<AppState>().engines.set_resource_dir(resource_dir);
             app.on_menu_event(move |_app, event| {
                 let id = event.id().as_ref();
                 match id {
@@ -127,6 +129,11 @@ pub fn run() {
             commands::git::list_git_worktrees,
             commands::git::remove_git_worktree,
             commands::git::prune_git_worktrees,
+            commands::git::init_git_repo,
+            commands::git::list_git_remotes,
+            commands::git::add_git_remote,
+            commands::git::remove_git_remote,
+            commands::git::rename_git_remote,
             commands::files::list_dir,
             commands::files::read_file,
             commands::files::write_file,

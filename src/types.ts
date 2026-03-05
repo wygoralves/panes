@@ -315,6 +315,16 @@ export interface GitWorktree {
   isPrunable: boolean;
 }
 
+export interface GitRemote {
+  name: string;
+  url: string;
+}
+
+export interface GitInitRepoStatus {
+  canInitialize: boolean;
+  blockingRepoPath: string | null;
+}
+
 export interface WorktreeSessionInfo {
   repoPath: string;
   worktreePath: string;

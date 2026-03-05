@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:claude-sidecar": "node scripts/build-claude-sidecar.mjs",
+    "build:desktop": "npm run build && npm run build:claude-sidecar",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "test": "vitest run",
@@ -16,6 +18,7 @@
     "release": "release-it"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.69",
     "@codemirror/commands": "^6.10.2",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-html": "^6.4.11",

@@ -3,6 +3,7 @@ import type {
   GitBranch,
   GitBranchScope,
   GitCommit,
+  GitRemote,
   GitStash,
   GitStatus,
   GitWorktree,
@@ -369,6 +370,9 @@ interface GitState {
   commitsTotal: number;
   stashes: GitStash[];
   worktrees: GitWorktree[];
+  remotes: GitRemote[];
+  remotesRepoPath: string | null;
+  remotesLoading: boolean;
   mainRepoPath: string | null;
   selectedCommitHash?: string;
   commitDiff?: string;
@@ -408,6 +412,10 @@ interface GitState {
   popStash: (repoPath: string, stashIndex: number) => Promise<void>;
   selectCommit: (repoPath: string, commitHash: string) => Promise<void>;
   clearCommitSelection: () => void;
+  loadRemotes: (repoPath: string) => Promise<void>;
+  addRemote: (repoPath: string, name: string, url: string) => Promise<void>;
+  removeRemote: (repoPath: string, name: string) => Promise<void>;
+  renameRemote: (repoPath: string, oldName: string, newName: string) => Promise<void>;
   clearError: () => void;
   drafts: GitDraftsPayload;
   loadDraftsForWorkspace: (workspaceId: string) => void;
@@ -471,6 +479,7 @@ export const useGitStore = create<GitState>((set, get) => {
   let stashesSeq = 0;
   let worktreesSeq = 0;
   let commitDiffSeq = 0;
+  let remotesSeq = 0;
 
   const isRepoActive = (repoPath: string): boolean => {
     const activeRepoPath = get().activeRepoPath;
@@ -659,6 +668,9 @@ export const useGitStore = create<GitState>((set, get) => {
     commitsTotal: 0,
     stashes: [],
     worktrees: [],
+    remotes: [],
+    remotesRepoPath: null,
+    remotesLoading: false,
     mainRepoPath: null,
     setActiveRepoPath: (repoPath) => {
       if (get().activeRepoPath === repoPath) {
@@ -683,6 +695,9 @@ export const useGitStore = create<GitState>((set, get) => {
         commitsTotal: 0,
         stashes: [],
         worktrees: [],
+        remotes: [],
+        remotesRepoPath: null,
+        remotesLoading: false,
         selectedCommitHash: undefined,
         commitDiff: undefined,
         error: undefined,
@@ -996,6 +1011,64 @@ export const useGitStore = create<GitState>((set, get) => {
     },
     clearCommitSelection: () => {
       set({ selectedCommitHash: undefined, commitDiff: undefined });
+    },
+    loadRemotes: async (repoPath) => {
+      const requestSeq = ++remotesSeq;
+      const { remotes, remotesRepoPath } = get();
+      const shouldClearRemotes = remotesRepoPath !== repoPath;
+
+      set({
+        remotes: shouldClearRemotes ? [] : remotes,
+        remotesRepoPath: repoPath,
+        remotesLoading: true,
+        error: undefined,
+      });
+      try {
+        const remotes = await ipc.listGitRemotes(repoPath);
+        if (requestSeq === remotesSeq && isRepoActive(repoPath)) {
+          set({ remotes, remotesRepoPath: repoPath });
+        }
+      } catch (error) {
+        if (requestSeq === remotesSeq && isRepoActive(repoPath)) {
+          set({ error: String(error) });
+        }
+      } finally {
+        if (requestSeq === remotesSeq) {
+          set({ remotesLoading: false });
+        }
+      }
+    },
+    addRemote: async (repoPath, name, url) => {
+      await runRepoMutationWithRefresh(repoPath, async () => {
+        await ipc.addGitRemote(repoPath, name, url);
+      });
+      await get().loadRemotes(repoPath);
+      // Auto-fetch from the new remote and refresh cached git state so new refs
+      // appear immediately. Swallow network/empty-remote failures.
+      try {
+        await ipc.fetchGit(repoPath);
+        get().invalidateRepoCache(repoPath);
+        beginLoading();
+        try {
+          await runRefresh(repoPath, { force: true });
+        } finally {
+          endLoading();
+        }
+      } catch {
+        // Swallow: remote may be unreachable or empty
+      }
+    },
+    removeRemote: async (repoPath, name) => {
+      await runRepoMutationWithRefresh(repoPath, async () => {
+        await ipc.removeGitRemote(repoPath, name);
+      });
+      await get().loadRemotes(repoPath);
+    },
+    renameRemote: async (repoPath, oldName, newName) => {
+      await runRepoMutationWithRefresh(repoPath, async () => {
+        await ipc.renameGitRemote(repoPath, oldName, newName);
+      });
+      await get().loadRemotes(repoPath);
     },
     clearError: () => set({ error: undefined }),
     drafts: { ...EMPTY_DRAFTS },

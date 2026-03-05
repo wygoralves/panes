@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -121,8 +121,12 @@ impl EngineManager {
     pub fn new() -> Self {
         Self {
             codex: Arc::new(CodexEngine::default()),
-            claude: Arc::new(ClaudeSidecarEngine),
+            claude: Arc::new(ClaudeSidecarEngine::default()),
         }
+    }
+
+    pub fn set_resource_dir(&self, resource_dir: Option<PathBuf>) {
+        self.claude.set_resource_dir(resource_dir);
     }
 
     pub async fn list_engines(&self) -> anyhow::Result<Vec<EngineInfoDto>> {
@@ -167,19 +171,15 @@ impl EngineManager {
                 })
             }
             "claude" => {
-                let available = self.claude.is_available().await;
-                let version = self.claude.version().await;
+                let report = self.claude.health_report().await;
                 Ok(EngineHealthDto {
                     id: "claude".to_string(),
-                    available,
-                    version,
-                    details: Some(
-                        "Claude sidecar scaffold is present; SDK runtime wiring pending"
-                            .to_string(),
-                    ),
-                    warnings: Vec::new(),
-                    checks: Vec::new(),
-                    fixes: Vec::new(),
+                    available: report.available,
+                    version: report.version,
+                    details: Some(report.details),
+                    warnings: report.warnings,
+                    checks: report.checks,
+                    fixes: report.fixes,
                 })
             }
             _ => anyhow::bail!("unknown engine: {engine_id}"),

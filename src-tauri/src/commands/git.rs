@@ -6,7 +6,7 @@ use crate::{
     git::{repo, worktree},
     models::{
         FileTreeEntryDto, FileTreePageDto, GitBranchPageDto, GitBranchScopeDto, GitCommitPageDto,
-        GitStashDto, GitStatusDto, GitWorktreeDto,
+        GitInitRepoStatusDto, GitRemoteDto, GitStashDto, GitStatusDto, GitWorktreeDto,
     },
     state::AppState,
 };
@@ -448,6 +448,93 @@ fn ensure_gitignore_entry(repo_path: &str, pattern: &str) -> Result<(), String> 
     }
 
     Ok(())
+}
+
+// ── Init & Remote Management ──────────────────────────────────
+
+#[tauri::command]
+pub async fn init_git_repo(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    validate_only: Option<bool>,
+) -> Result<GitInitRepoStatusDto, String> {
+    if repo_path.is_empty() {
+        return Err("repo_path is required".to_string());
+    }
+    if !std::path::Path::new(&repo_path).is_dir() {
+        return Err(format!(
+            "path does not exist or is not a directory: {repo_path}"
+        ));
+    }
+    let validate_only = validate_only.unwrap_or(false);
+    tokio::task::spawn_blocking(move || {
+        repo::init_repo(&repo_path, validate_only).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn list_git_remotes(
+    _state: State<'_, AppState>,
+    repo_path: String,
+) -> Result<Vec<GitRemoteDto>, String> {
+    tokio::task::spawn_blocking(move || repo::list_remotes(&repo_path).map_err(err_to_string))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn add_git_remote(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    name: String,
+    url: String,
+) -> Result<(), String> {
+    if name.is_empty() || name.contains(char::is_whitespace) {
+        return Err(format!("invalid remote name: {name}"));
+    }
+    if url.is_empty() {
+        return Err("url is required".to_string());
+    }
+    tokio::task::spawn_blocking(move || {
+        repo::add_remote(&repo_path, &name, &url).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn remove_git_remote(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    name: String,
+) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("name is required".to_string());
+    }
+    tokio::task::spawn_blocking(move || {
+        repo::remove_remote(&repo_path, &name).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn rename_git_remote(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    old_name: String,
+    new_name: String,
+) -> Result<(), String> {
+    if new_name.is_empty() || new_name.contains(char::is_whitespace) {
+        return Err(format!("invalid remote name: {new_name}"));
+    }
+    tokio::task::spawn_blocking(move || {
+        repo::rename_remote(&repo_path, &old_name, &new_name).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {

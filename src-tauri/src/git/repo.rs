@@ -7,11 +7,12 @@ use std::{
 };
 
 use anyhow::Context;
-use git2::{Repository, Status, StatusOptions};
+use git2::{ErrorCode, Repository, Status, StatusOptions};
 
 use crate::models::{
     FileTreeEntryDto, FileTreePageDto, GitBranchDto, GitBranchPageDto, GitBranchScopeDto,
-    GitCommitDto, GitCommitPageDto, GitFileStatusDto, GitStashDto, GitStatusDto,
+    GitCommitDto, GitCommitPageDto, GitFileStatusDto, GitInitRepoStatusDto, GitStashDto,
+    GitStatusDto,
 };
 
 use super::cli_fallback::run_git;
@@ -892,4 +893,85 @@ fn is_no_upstream_error(error: &anyhow::Error) -> bool {
         || text.contains("no upstream configured")
         || text.contains("no tracking information")
         || text.contains("set-upstream")
+}
+
+// ── Init & Remote Management ─────────────────────────────────────────
+
+pub fn inspect_init_repo(path: &str) -> anyhow::Result<GitInitRepoStatusDto> {
+    let target_path = fs::canonicalize(path).context("failed to resolve repository path")?;
+    let discovered_repo = match Repository::discover(&target_path) {
+        Ok(repo) => repo,
+        Err(error) if error.code() == ErrorCode::NotFound => {
+            return Ok(GitInitRepoStatusDto {
+                can_initialize: true,
+                blocking_repo_path: None,
+            });
+        }
+        Err(error) => return Err(error).context("failed to inspect ancestor repositories"),
+    };
+
+    let blocking_repo_path = discovered_repo
+        .workdir()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| discovered_repo.path().to_path_buf());
+    let blocking_repo_path = fs::canonicalize(&blocking_repo_path)
+        .unwrap_or(blocking_repo_path)
+        .to_string_lossy()
+        .to_string();
+
+    Ok(GitInitRepoStatusDto {
+        can_initialize: false,
+        blocking_repo_path: Some(blocking_repo_path),
+    })
+}
+
+pub fn init_repo(path: &str, validate_only: bool) -> anyhow::Result<GitInitRepoStatusDto> {
+    let status = inspect_init_repo(path)?;
+    if validate_only {
+        return Ok(status);
+    }
+
+    if !status.can_initialize {
+        let blocking_path = status
+            .blocking_repo_path
+            .as_deref()
+            .unwrap_or(path);
+        anyhow::bail!(
+            "cannot initialize a repository inside an existing git repository: {blocking_path}"
+        );
+    }
+
+    run_git(path, &["init"]).context("failed to initialize git repository")?;
+    Ok(status)
+}
+
+pub fn list_remotes(repo_path: &str) -> anyhow::Result<Vec<crate::models::GitRemoteDto>> {
+    let repo = Repository::open(repo_path).context("failed to open repository")?;
+    let remote_names = repo.remotes().context("failed to list remotes")?;
+    let mut remotes = Vec::new();
+    for name in remote_names.iter().flatten() {
+        if let Ok(remote) = repo.find_remote(name) {
+            remotes.push(crate::models::GitRemoteDto {
+                name: name.to_string(),
+                url: remote.url().unwrap_or("").to_string(),
+            });
+        }
+    }
+    Ok(remotes)
+}
+
+pub fn add_remote(repo_path: &str, name: &str, url: &str) -> anyhow::Result<()> {
+    run_git(repo_path, &["remote", "add", name, url]).context("failed to add remote")?;
+    Ok(())
+}
+
+pub fn remove_remote(repo_path: &str, name: &str) -> anyhow::Result<()> {
+    run_git(repo_path, &["remote", "remove", name]).context("failed to remove remote")?;
+    Ok(())
+}
+
+pub fn rename_remote(repo_path: &str, old_name: &str, new_name: &str) -> anyhow::Result<()> {
+    run_git(repo_path, &["remote", "rename", old_name, new_name])
+        .context("failed to rename remote")?;
+    Ok(())
 }

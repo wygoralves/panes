@@ -193,6 +193,32 @@ function formatEngineModelLabel(
   return effortLabel ? `${baseLabel} ${effortLabel}` : baseLabel;
 }
 
+function encodeModelOptionValue(engineId: string, modelId: string): string {
+  return JSON.stringify([engineId, modelId]);
+}
+
+function decodeModelOptionValue(value: string): { engineId: string; modelId: string } | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 2 &&
+      typeof parsed[0] === "string" &&
+      typeof parsed[1] === "string"
+    ) {
+      return { engineId: parsed[0], modelId: parsed[1] };
+    }
+  } catch {
+    // Ignore malformed legacy values.
+  }
+
+  return null;
+}
+
 function readThreadLastModelId(thread: {
   engineMetadata?: Record<string, unknown>;
 }): string | null {
@@ -617,6 +643,8 @@ export function ChatPanel() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const effortSyncKeyRef = useRef<string | null>(null);
+  const manuallyOverrodeThreadSelectionRef = useRef(false);
+  const lastSyncedThreadIdRef = useRef<string | null>(null);
   const highlightTimeoutRef = useRef<number | null>(null);
   const prependLoadInFlightRef = useRef(false);
   const threadActivatedAtRef = useRef(0);
@@ -672,6 +700,22 @@ export function ChatPanel() {
     [availableModels],
   );
 
+  // All models from other engines, grouped by engine name
+  const otherEngineGroups = useMemo(() => {
+    return engines
+      .filter((e) => e.id !== selectedEngineId)
+      .map((engine) => ({
+        label: engine.name,
+        options: engine.models
+          .filter((m) => !m.hidden)
+          .map((model) => ({
+            value: encodeModelOptionValue(engine.id, model.id),
+            label: formatEngineModelLabel(engine.name, model.displayName),
+          })),
+      }))
+      .filter((g) => g.options.length > 0);
+  }, [engines, selectedEngineId]);
+
   const selectedModel = useMemo(
     () => availableModels.find((model) => model.id === selectedModelId) ?? availableModels[0] ?? null,
     [availableModels, selectedModelId],
@@ -681,6 +725,12 @@ export function ChatPanel() {
     () => selectedModel?.supportedReasoningEfforts ?? [],
     [selectedModel],
   );
+  const selectedReasoningEffort = useMemo(
+    () => supportedEfforts.some((option) => option.reasoningEffort === selectedEffort)
+      ? selectedEffort
+      : null,
+    [selectedEffort, supportedEfforts],
+  );
   const activeThreadReasoningEffort =
     typeof activeThread?.engineMetadata?.reasoningEffort === "string"
       ? activeThread.engineMetadata.reasoningEffort
@@ -688,6 +738,12 @@ export function ChatPanel() {
   const modelPickerLabel = useMemo(() => {
     return formatEngineModelLabel(selectedEngine?.name, selectedModel?.displayName);
   }, [selectedEngine?.name, selectedModel?.displayName]);
+  const selectedModelOptionValue = useMemo(() => {
+    if (!selectedEngineId || !selectedModelId) {
+      return "";
+    }
+    return encodeModelOptionValue(selectedEngineId, selectedModelId);
+  }, [selectedEngineId, selectedModelId]);
 
   const renderAssistantIdentity = useCallback((message: Message) => {
     const messageEngineId =
@@ -1027,8 +1083,16 @@ export function ChatPanel() {
 
   useEffect(() => {
     if (!activeThread) {
+      lastSyncedThreadIdRef.current = null;
+      manuallyOverrodeThreadSelectionRef.current = false;
       return;
     }
+    const threadChanged = lastSyncedThreadIdRef.current !== activeThread.id;
+    if (!threadChanged && manuallyOverrodeThreadSelectionRef.current) {
+      return;
+    }
+    lastSyncedThreadIdRef.current = activeThread.id;
+    manuallyOverrodeThreadSelectionRef.current = false;
     if (activeThread.engineId !== selectedEngineId) {
       setSelectedEngineId(activeThread.engineId);
     }
@@ -1344,7 +1408,7 @@ export function ChatPanel() {
           planMode,
           engineId: selectedEngineId,
           modelId: selectedModelId!,
-          effort: selectedEngineId === "codex" ? selectedEffort : null,
+          effort: selectedReasoningEffort,
         });
         return;
       }
@@ -1353,9 +1417,9 @@ export function ChatPanel() {
     const text = input.trim();
     const currentAttachments = [...attachments];
 
-    if (selectedEngineId === "codex" && selectedEffort) {
-      await ipc.setThreadReasoningEffort(targetThreadId, selectedEffort, selectedModelId);
-      setThreadReasoningEffortLocal(targetThreadId, selectedEffort);
+    if (selectedReasoningEffort) {
+      await ipc.setThreadReasoningEffort(targetThreadId, selectedReasoningEffort, selectedModelId);
+      setThreadReasoningEffortLocal(targetThreadId, selectedReasoningEffort);
     }
     setThreadLastModelLocal(targetThreadId, selectedModelId);
 
@@ -1363,7 +1427,7 @@ export function ChatPanel() {
       threadIdOverride: targetThreadId,
       engineId: selectedEngineId,
       modelId: selectedModelId,
-      reasoningEffort: selectedEngineId === "codex" ? selectedEffort : null,
+      reasoningEffort: selectedReasoningEffort,
       attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
       planMode,
     });
@@ -1381,7 +1445,7 @@ export function ChatPanel() {
     try {
       await ipc.confirmWorkspaceThread(prompt.threadId, prompt.threadPaths);
 
-      if (prompt.engineId === "codex" && prompt.effort) {
+      if (prompt.effort) {
         await ipc.setThreadReasoningEffort(prompt.threadId, prompt.effort, prompt.modelId);
         setThreadReasoningEffortLocal(prompt.threadId, prompt.effort);
       }
@@ -1413,10 +1477,6 @@ export function ChatPanel() {
 
   async function onReasoningEffortChange(nextEffort: string) {
     setSelectedEffort(nextEffort);
-    if (selectedEngineId !== "codex") {
-      return;
-    }
-
     const targetThreadId = threadId ?? activeThread?.id ?? null;
     if (!targetThreadId) {
       return;
@@ -2407,29 +2467,43 @@ export function ChatPanel() {
 
               {/* Engine + Model selector */}
               <Dropdown
-                value={selectedModelId ?? ""}
-                onChange={(v) => setSelectedModelId(v || null)}
-                disabled={availableModels.length === 0}
+                value={selectedModelOptionValue}
+                onChange={(v) => {
+                  manuallyOverrodeThreadSelectionRef.current = true;
+                  const selection = decodeModelOptionValue(v);
+                  if (!selection) {
+                    setSelectedModelId(null);
+                    return;
+                  }
+                  if (selection.engineId !== selectedEngineId) {
+                    setSelectedEngineId(selection.engineId);
+                  }
+                  setSelectedModelId(selection.modelId);
+                }}
+                disabled={availableModels.length === 0 && otherEngineGroups.length === 0}
                 title="Select model"
                 selectedLabel={modelPickerLabel}
                 selectedIcon={selectedEngineId === "codex" ? <OpenAiIcon size={12} /> : undefined}
                 options={activeModels.map((model) => ({
-                  value: model.id,
+                  value: encodeModelOptionValue(selectedEngineId, model.id),
                   label: formatEngineModelLabel(selectedEngine?.name, model.displayName),
                   icon: selectedEngineId === "codex" ? <OpenAiIcon size={12} /> : undefined,
                 }))}
-                groups={legacyModels.length > 0 ? [{
-                  label: "Legacy Models",
-                  options: legacyModels.map((model) => ({
-                    value: model.id,
-                    label: formatEngineModelLabel(selectedEngine?.name, model.displayName),
-                    icon: selectedEngineId === "codex" ? <OpenAiIcon size={12} /> : undefined,
-                  })),
-                }] : undefined}
+                groups={[
+                  ...(legacyModels.length > 0 ? [{
+                    label: "Legacy Models",
+                    options: legacyModels.map((model) => ({
+                      value: encodeModelOptionValue(selectedEngineId, model.id),
+                      label: formatEngineModelLabel(selectedEngine?.name, model.displayName),
+                      icon: selectedEngineId === "codex" ? <OpenAiIcon size={12} /> : undefined,
+                    })),
+                  }] : []),
+                  ...otherEngineGroups,
+                ]}
               />
 
               {/* Reasoning effort */}
-              {selectedEngineId === "codex" && supportedEfforts.length > 0 && (
+              {supportedEfforts.length > 0 && (
                 <Dropdown
                   value={selectedEffort}
                   onChange={(v) => void onReasoningEffortChange(v)}

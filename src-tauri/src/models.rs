@@ -470,6 +470,22 @@ pub struct TerminalOutputThrottleSnapshotDto {
     pub buffer_trimmed_bytes: u64,
 }
 
+// ── Git Remotes ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRemoteDto {
+    pub name: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitInitRepoStatusDto {
+    pub can_initialize: bool,
+    pub blocking_repo_path: Option<String>,
+}
+
 // ── Setup / Onboarding ──────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -427,13 +427,6 @@ pub async fn cancel_turn(state: State<'_, AppState>, thread_id: String) -> Resul
             .await
             .map_err(err_to_string)?;
     }
-
-    run_db(db, {
-        let thread_id = thread_id.clone();
-        move |db| db::threads::update_thread_status(db, &thread_id, ThreadStatusDto::Idle)
-    })
-    .await?;
-    state.turns.finish(&thread_id).await;
     Ok(())
 }
 

@@ -28,6 +28,7 @@ interface WorkspaceState {
   hasWorkspaceGitSelection: (workspaceId: string) => Promise<boolean>;
   setRepoTrustLevel: (repoId: string, trustLevel: TrustLevel) => Promise<void>;
   setAllReposTrustLevel: (trustLevel: TrustLevel) => Promise<void>;
+  rescanWorkspace: (workspaceId: string) => Promise<void>;
 }
 
 const LAST_WORKSPACE_KEY = "panes:lastActiveWorkspaceId";
@@ -319,6 +320,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch (error) {
       set({ error: String(error) });
     }
+  },
+  rescanWorkspace: async (workspaceId) => {
+    const workspace = get().workspaces.find((w) => w.id === workspaceId);
+    if (!workspace) return;
+    await ipc.openWorkspace(workspace.rootPath, workspace.scanDepth);
+    await get().loadRepos(workspaceId);
   },
   setAllReposTrustLevel: async (trustLevel) => {
     const repos = get().repos;
