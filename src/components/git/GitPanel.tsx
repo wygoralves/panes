@@ -49,6 +49,7 @@ export function GitPanel() {
     repos,
     activeWorkspaceId,
     activeRepoId,
+    reposLoading,
     setActiveRepo,
     setWorkspaceGitActiveRepos,
     rescanWorkspace,
@@ -360,7 +361,7 @@ export function GitPanel() {
   }, [effectiveRepoPath, invalidateRepoCache, refresh]);
 
   useEffect(() => {
-    if (effectiveRepo || !activeWorkspaceRootPath) {
+    if (reposLoading || effectiveRepo || !activeWorkspaceRootPath) {
       setInitRepoStatus(null);
       return;
     }
@@ -382,7 +383,7 @@ export function GitPanel() {
     return () => {
       cancelled = true;
     };
-  }, [activeWorkspaceRootPath, effectiveRepo]);
+  }, [activeWorkspaceRootPath, effectiveRepo, reposLoading]);
 
   useEffect(() => {
     if (!effectiveRepoPath || isActiveRepoSyncing) {
@@ -593,13 +594,20 @@ export function GitPanel() {
           <div className="git-empty-icon-box">
             <GitBranchIcon size={20} />
           </div>
-          <p className="git-empty-title">No repositories found</p>
+          <p className="git-empty-title">
+            {reposLoading ? "Scanning repositories..." : "No repositories found"}
+          </p>
           <p className="git-empty-sub">
-            {initBlockedByRepoPath
+            {reposLoading
+              ? "Checking this workspace for git repositories"
+              : initBlockedByRepoPath
               ? `This workspace is already inside the Git repository at ${initBlockedByRepoPath}.`
               : "Open a folder with a git repository"}
           </p>
-          {activeWorkspaceId && activeWorkspaceRootPath && initRepoStatus?.canInitialize === true && (
+          {!reposLoading &&
+            activeWorkspaceId &&
+            activeWorkspaceRootPath &&
+            initRepoStatus?.canInitialize === true && (
             <button
               type="button"
               className="btn btn-primary"

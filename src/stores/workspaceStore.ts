@@ -13,6 +13,7 @@ interface WorkspaceState {
   activeWorkspaceId: string | null;
   repos: Repo[];
   activeRepoId: string | null;
+  reposLoading: boolean;
   loading: boolean;
   error?: string;
   loadWorkspaces: () => Promise<void>;
@@ -33,6 +34,7 @@ interface WorkspaceState {
 
 const LAST_WORKSPACE_KEY = "panes:lastActiveWorkspaceId";
 const LAST_REPO_BY_WORKSPACE_KEY = "panes:lastActiveRepoByWorkspace";
+let reposLoadSeq = 0;
 
 type LastRepoByWorkspace = Record<string, string>;
 
@@ -109,6 +111,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   activeWorkspaceId: null,
   repos: [],
   activeRepoId: null,
+  reposLoading: false,
   loading: false,
   loadWorkspaces: async () => {
     set({ loading: true, error: undefined });
@@ -178,7 +181,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       if (nextActive) {
         await get().loadRepos(nextActive);
       } else {
-        set({ repos: [], activeRepoId: null });
+        set({ repos: [], activeRepoId: null, reposLoading: false });
       }
     } catch (error) {
       set({ loading: false, error: String(error) });
@@ -212,8 +215,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
   loadRepos: async (workspaceId) => {
+    const requestSeq = ++reposLoadSeq;
+    set({ reposLoading: true });
     try {
       const repos = await ipc.getRepos(workspaceId);
+      if (requestSeq !== reposLoadSeq) {
+        return;
+      }
+      if (get().activeWorkspaceId !== workspaceId) {
+        set({ reposLoading: false });
+        return;
+      }
       const fallbackActiveRepoId = resolveActiveRepoId(
         workspaceId,
         repos,
@@ -225,9 +237,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({
         repos,
         activeRepoId: fallbackActiveRepoId,
+        reposLoading: false,
       });
     } catch (error) {
-      set({ error: String(error) });
+      if (requestSeq !== reposLoadSeq) {
+        return;
+      }
+      if (get().activeWorkspaceId !== workspaceId) {
+        set({ reposLoading: false });
+        return;
+      }
+      set({ error: String(error), reposLoading: false });
     }
   },
   setActiveWorkspace: async (workspaceId) => {

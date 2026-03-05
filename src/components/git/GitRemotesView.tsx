@@ -12,8 +12,16 @@ interface Props {
 }
 
 export function GitRemotesView({ repo, onClose }: Props) {
-  const { remotes, remotesRepoPath, remotesLoading, loadRemotes, addRemote, removeRemote, renameRemote } =
-    useGitStore();
+  const {
+    remotes,
+    remotesRepoPath,
+    remotesLoading,
+    remotesError,
+    loadRemotes,
+    addRemote,
+    removeRemote,
+    renameRemote,
+  } = useGitStore();
 
   const [showAdd, setShowAdd] = useState(false);
   const [addName, setAddName] = useState("origin");
@@ -23,7 +31,6 @@ export function GitRemotesView({ repo, onClose }: Props) {
   const [renamingRemote, setRenamingRemote] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const renameInFlightRef = useRef(false);
-  const cancelRenameOnBlurRef = useRef(false);
 
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
@@ -35,7 +42,6 @@ export function GitRemotesView({ repo, onClose }: Props) {
     if (renameInFlightRef.current) {
       return;
     }
-    cancelRenameOnBlurRef.current = true;
     setRenamingRemote(null);
     setRenameValue("");
   }, []);
@@ -47,7 +53,6 @@ export function GitRemotesView({ repo, onClose }: Props) {
     setRenamingRemote(null);
     setRenameValue("");
     setConfirmDelete(null);
-    cancelRenameOnBlurRef.current = false;
   }, [repo.path]);
 
   useEffect(() => {
@@ -100,7 +105,6 @@ export function GitRemotesView({ repo, onClose }: Props) {
 
   const handleRename = useCallback(
     async (oldName: string) => {
-      cancelRenameOnBlurRef.current = false;
       const newName = renameValue.trim();
       if (!newName || newName === oldName) {
         setRenamingRemote(null);
@@ -144,7 +148,13 @@ export function GitRemotesView({ repo, onClose }: Props) {
           <p style={{ fontSize: 12, color: "var(--text-3)", margin: "8px 0" }}>Loading...</p>
         )}
 
-        {!remotesLoading && visibleRemotes.length === 0 && (
+        {!remotesLoading && remotesRepoPath === repo.path && remotesError && (
+          <p style={{ fontSize: 12, color: "var(--danger)", margin: "8px 0" }}>
+            {remotesError}
+          </p>
+        )}
+
+        {!remotesLoading && !remotesError && visibleRemotes.length === 0 && (
           <p style={{ fontSize: 12, color: "var(--text-3)", margin: "8px 0" }}>
             No remotes configured.
           </p>
@@ -178,13 +188,7 @@ export function GitRemotesView({ repo, onClose }: Props) {
                     cancelRename();
                   }
                 }}
-                onBlur={() => {
-                  if (cancelRenameOnBlurRef.current) {
-                    cancelRenameOnBlurRef.current = false;
-                    return;
-                  }
-                  void handleRename(remote.name);
-                }}
+                onBlur={cancelRename}
                 style={{ flex: 1, fontSize: 12 }}
               />
             ) : (

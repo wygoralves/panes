@@ -132,6 +132,44 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
 const CODEX_ATTACHMENT_EXTENSIONS = Array.from(
   new Set([...IMAGE_ATTACHMENT_EXTENSIONS, ...TEXT_ATTACHMENT_EXTENSIONS]),
 );
+const CLAUDE_TEXT_ATTACHMENT_EXTENSIONS = Array.from(
+  new Set([...TEXT_ATTACHMENT_EXTENSIONS, "svg"]),
+);
+const CLAUDE_IMAGE_ATTACHMENT_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp"];
+const CLAUDE_ATTACHMENT_EXTENSIONS = Array.from(
+  new Set([...CLAUDE_TEXT_ATTACHMENT_EXTENSIONS, ...CLAUDE_IMAGE_ATTACHMENT_EXTENSIONS]),
+);
+
+interface AttachmentFilterConfig {
+  supportedExtensions: string[];
+  textExtensions: string[];
+  imageExtensions: string[];
+  title: string;
+  warningMessage: string;
+}
+
+function getAttachmentFilterConfig(engineId: string): AttachmentFilterConfig | null {
+  switch (engineId) {
+    case "codex":
+      return {
+        supportedExtensions: CODEX_ATTACHMENT_EXTENSIONS,
+        textExtensions: [...TEXT_ATTACHMENT_EXTENSIONS],
+        imageExtensions: [...IMAGE_ATTACHMENT_EXTENSIONS],
+        title: "Attach files (images and text)",
+        warningMessage: "Only image and text attachments are supported for Codex turns.",
+      };
+    case "claude":
+      return {
+        supportedExtensions: CLAUDE_ATTACHMENT_EXTENSIONS,
+        textExtensions: CLAUDE_TEXT_ATTACHMENT_EXTENSIONS,
+        imageExtensions: CLAUDE_IMAGE_ATTACHMENT_EXTENSIONS,
+        title: "Attach files (text, SVG, and supported images)",
+        warningMessage: "Only text files (including SVG) and PNG/JPEG/GIF/WEBP images are supported for Claude turns.",
+      };
+    default:
+      return null;
+  }
+}
 
 function OpenAiIcon({ size = 12 }: { size?: number }) {
   return (
@@ -510,9 +548,9 @@ function fileNameFromPath(filePath: string): string {
   return filePath.split("/").pop() ?? filePath.split("\\").pop() ?? filePath;
 }
 
-function isSupportedCodexAttachmentName(fileName: string): boolean {
+function isSupportedAttachmentName(fileName: string, supportedExtensions: ReadonlySet<string>): boolean {
   const extension = getFileExtension(fileName);
-  return IMAGE_ATTACHMENT_EXTENSIONS.has(extension) || TEXT_ATTACHMENT_EXTENSIONS.has(extension);
+  return supportedExtensions.has(extension);
 }
 
 function guessMimeType(fileName: string): string | undefined {
@@ -822,13 +860,15 @@ export function ChatPanel() {
       });
     }
 
-    if (selectedEngineId === "codex") {
+    const attachmentFilterConfig = getAttachmentFilterConfig(selectedEngineId);
+    if (attachmentFilterConfig) {
+      const supportedExtensions = new Set(attachmentFilterConfig.supportedExtensions);
       const supportedAttachments = nextAttachments.filter((attachment) =>
-        isSupportedCodexAttachmentName(attachment.fileName),
+        isSupportedAttachmentName(attachment.fileName, supportedExtensions),
       );
       const skippedCount = nextAttachments.length - supportedAttachments.length;
       if (skippedCount > 0) {
-        toast.warning("Only image and text attachments are supported for Codex turns.");
+        toast.warning(attachmentFilterConfig.warningMessage);
       }
       nextAttachments = supportedAttachments;
     }
@@ -850,6 +890,25 @@ export function ChatPanel() {
       return merged;
     });
   }, [activeWorkspaceId, selectedEngineId]);
+
+  useEffect(() => {
+    const attachmentFilterConfig = getAttachmentFilterConfig(selectedEngineId);
+    if (!attachmentFilterConfig) {
+      return;
+    }
+
+    const supportedExtensions = new Set(attachmentFilterConfig.supportedExtensions);
+    setAttachments((prev) => {
+      const supportedAttachments = prev.filter((attachment) =>
+        isSupportedAttachmentName(attachment.fileName, supportedExtensions),
+      );
+      if (supportedAttachments.length === prev.length) {
+        return prev;
+      }
+      toast.warning(attachmentFilterConfig.warningMessage);
+      return supportedAttachments;
+    });
+  }, [selectedEngineId]);
 
   const isDropPositionInsideChatSection = useCallback((x: number, y: number): boolean => {
     const container = chatSectionRef.current;
@@ -1533,23 +1592,23 @@ export function ChatPanel() {
   async function handleAddAttachment() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const codexAttachmentFilter = selectedEngineId === "codex";
+      const attachmentFilterConfig = getAttachmentFilterConfig(selectedEngineId);
       const selected = await open({
         multiple: true,
-        title: codexAttachmentFilter ? "Attach files (images and text)" : "Attach files",
-        filters: codexAttachmentFilter
+        title: attachmentFilterConfig?.title ?? "Attach files",
+        filters: attachmentFilterConfig
           ? [
               {
                 name: "Supported files",
-                extensions: CODEX_ATTACHMENT_EXTENSIONS,
+                extensions: attachmentFilterConfig.supportedExtensions,
               },
               {
                 name: "Images",
-                extensions: [...IMAGE_ATTACHMENT_EXTENSIONS],
+                extensions: attachmentFilterConfig.imageExtensions,
               },
               {
                 name: "Text files",
-                extensions: [...TEXT_ATTACHMENT_EXTENSIONS],
+                extensions: attachmentFilterConfig.textExtensions,
               },
             ]
           : undefined,

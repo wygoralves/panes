@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-#!/usr/bin/env node
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res) => function __init() {

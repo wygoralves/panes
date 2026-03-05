@@ -373,6 +373,7 @@ interface GitState {
   remotes: GitRemote[];
   remotesRepoPath: string | null;
   remotesLoading: boolean;
+  remotesError?: string;
   mainRepoPath: string | null;
   selectedCommitHash?: string;
   commitDiff?: string;
@@ -671,6 +672,7 @@ export const useGitStore = create<GitState>((set, get) => {
     remotes: [],
     remotesRepoPath: null,
     remotesLoading: false,
+    remotesError: undefined,
     mainRepoPath: null,
     setActiveRepoPath: (repoPath) => {
       if (get().activeRepoPath === repoPath) {
@@ -698,6 +700,7 @@ export const useGitStore = create<GitState>((set, get) => {
         remotes: [],
         remotesRepoPath: null,
         remotesLoading: false,
+        remotesError: undefined,
         selectedCommitHash: undefined,
         commitDiff: undefined,
         error: undefined,
@@ -1021,16 +1024,17 @@ export const useGitStore = create<GitState>((set, get) => {
         remotes: shouldClearRemotes ? [] : remotes,
         remotesRepoPath: repoPath,
         remotesLoading: true,
+        remotesError: undefined,
         error: undefined,
       });
       try {
         const remotes = await ipc.listGitRemotes(repoPath);
         if (requestSeq === remotesSeq && isRepoActive(repoPath)) {
-          set({ remotes, remotesRepoPath: repoPath });
+          set({ remotes, remotesRepoPath: repoPath, remotesError: undefined });
         }
       } catch (error) {
         if (requestSeq === remotesSeq && isRepoActive(repoPath)) {
-          set({ error: String(error) });
+          set({ error: String(error), remotesError: String(error) });
         }
       } finally {
         if (requestSeq === remotesSeq) {
