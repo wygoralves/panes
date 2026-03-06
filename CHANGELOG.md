@@ -1,5 +1,21 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.24.0...vnull) (2026-03-06)
+
+### Features
+
+* add claude sdk integration to Panes ([8d39e58](https://github.com/wygoralves/panes/commit/8d39e582a0ee173404d18208b9df59dcbe3e8866))
+* add tests for claude sdk ([a192fe3](https://github.com/wygoralves/panes/commit/a192fe3227d795c1379361f46f44c330cf99cfdf))
+* harden claude integration ([a188d88](https://github.com/wygoralves/panes/commit/a188d883a11526d5425ac4b6d80596169eac1363))
+* improve branding on chat components ([9f8e732](https://github.com/wygoralves/panes/commit/9f8e73208fa9f1eb3ff330491add4e9fdd465624))
+* improve expandable components experience ([e857ab2](https://github.com/wygoralves/panes/commit/e857ab292145f3ea86766dd0978e7a192cbd0696))
+* improve UI for chat components ([7d5c978](https://github.com/wygoralves/panes/commit/7d5c9785cf9a5bee3d6fb88096d26485c316dd8c))
+* improve UI for permissions dropdown ([2ec7175](https://github.com/wygoralves/panes/commit/2ec71755b49861d4a77925f2b0904c6da95dd10f))
+* improve UI of the model and engine picker ([38d0d1f](https://github.com/wygoralves/panes/commit/38d0d1fd6f9d6a5387595154ad6dbe4e44bd94ce))
+* more performance and responsiveness improvements to the chat panel ([af86089](https://github.com/wygoralves/panes/commit/af8608990e5c501933a54ccd00a649bad73462eb))
+* performance improvements on the chat panel ([1217a15](https://github.com/wygoralves/panes/commit/1217a153e8addd3c9bc56b47e8f622b255abd070))
+* polish UI of the approval banners and harden claude sdk integration ([58ae068](https://github.com/wygoralves/panes/commit/58ae06838ab736f42f3e11f28c9fa67ad4d845a7))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.23.0...vnull) (2026-03-04)
 
 ### Features
