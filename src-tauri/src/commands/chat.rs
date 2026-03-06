@@ -25,6 +25,7 @@ use crate::{
 
 const MAX_THREAD_TITLE_CHARS: usize = 72;
 const STREAM_EVENT_COALESCE_MAX_CHARS: usize = 8_192;
+const STREAM_EVENT_COALESCE_IDLE_FLUSH_INTERVAL: Duration = Duration::from_millis(24);
 const STREAM_DB_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 const STREAM_DB_BLOCKS_FLUSH_INTERVAL: Duration = Duration::from_millis(900);
 const ACTION_OUTPUT_MAX_CHUNKS: usize = 240;
@@ -590,7 +591,65 @@ async fn run_turn(
     let approval_event_topic = format!("approval-request-{}", thread.id);
     let mut pending_event: Option<EngineEvent> = None;
 
-    while let Some(incoming_event) = event_rx.recv().await {
+    loop {
+        let incoming_event = if pending_event.is_some() {
+            match tokio::time::timeout(STREAM_EVENT_COALESCE_IDLE_FLUSH_INTERVAL, event_rx.recv())
+                .await
+            {
+                Ok(event) => event,
+                Err(_) => {
+                    if let Some(event) = pending_event.take() {
+                        let progress = process_stream_event(
+                            &app,
+                            &state,
+                            &thread,
+                            &assistant_message_id,
+                            &stream_event_topic,
+                            &approval_event_topic,
+                            &event,
+                            &mut blocks,
+                            &mut action_index,
+                            &mut approval_index,
+                            max_output_chars,
+                        )
+                        .await;
+                        let force_persist = apply_stream_progress(
+                            progress,
+                            &mut message_status,
+                            &mut thread_status,
+                            &mut token_usage,
+                            &mut blocks_dirty,
+                            &mut message_state_dirty,
+                            &mut thread_status_dirty,
+                        );
+                        flush_stream_state(
+                            &state,
+                            &thread,
+                            &assistant_message_id,
+                            &blocks,
+                            &message_status,
+                            &thread_status,
+                            &mut blocks_dirty,
+                            &mut message_state_dirty,
+                            &mut thread_status_dirty,
+                            &mut last_persisted_thread_status,
+                            &mut last_persist_at,
+                            &mut last_blocks_persist_at,
+                            force_persist,
+                        )
+                        .await;
+                    }
+                    continue;
+                }
+            }
+        } else {
+            event_rx.recv().await
+        };
+
+        let Some(incoming_event) = incoming_event else {
+            break;
+        };
+
         let mut current_event = incoming_event;
 
         loop {
