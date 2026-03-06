@@ -847,6 +847,17 @@ export function ChatPanel() {
     };
   }, [activeThread?.engineId, activeThread?.modelId, engines, selectedEngine, selectedEngineId, selectedModel?.id]);
 
+  function trustLevelTooltip(level: TrustLevel): string {
+    switch (level) {
+      case "trusted":
+        return "Trusted — approvals on-request, network requests enabled";
+      case "restricted":
+        return "Restricted — untrusted, safe commands only";
+      default:
+        return "Standard — approvals on-request, network requests disabled";
+    }
+  }
+
   const workspaceTrustLevel: TrustLevel = useMemo(() => {
     if (!repos.length) {
       return "standard";
@@ -2528,54 +2539,26 @@ export function ChatPanel() {
                 <Dropdown
                   value={activeRepo.trustLevel}
                   onChange={(v) => void onRepoTrustLevelChange(v as TrustLevel)}
-                  title="Execution policy"
+                  title={trustLevelTooltip(activeRepo.trustLevel)}
+                  selectedIcon={<Shield size={11} />}
                   options={[
-                    { value: "trusted", label: "trusted (on-request, net requested on)" },
-                    { value: "standard", label: "standard (on-request, net requested off)" },
-                    { value: "restricted", label: "restricted (untrusted: safe cmds only)" },
+                    { value: "trusted", label: "Trusted" },
+                    { value: "standard", label: "Standard" },
+                    { value: "restricted", label: "Restricted" },
                   ]}
-                  triggerStyle={
-                    activeRepo.trustLevel === "trusted"
-                      ? {
-                          background: "rgba(52, 211, 153, 0.12)",
-                          color: "var(--success)",
-                          border: "1px solid rgba(52, 211, 153, 0.25)",
-                        }
-                      : activeRepo.trustLevel === "restricted"
-                        ? {
-                            background: "rgba(248, 113, 113, 0.10)",
-                            color: "var(--danger)",
-                            border: "1px solid rgba(248, 113, 113, 0.2)",
-                          }
-                        : undefined
-                  }
                 />
               )}
               {!activeRepo && repos.length > 0 && (
                 <Dropdown
                   value={workspaceTrustLevel}
                   onChange={(v) => void onWorkspaceTrustLevelChange(v as TrustLevel)}
-                  title="Workspace execution policy"
+                  title={trustLevelTooltip(workspaceTrustLevel)}
+                  selectedIcon={<Shield size={11} />}
                   options={[
-                    { value: "trusted", label: "trusted (on-request, net requested on)" },
-                    { value: "standard", label: "standard (on-request, net requested off)" },
-                    { value: "restricted", label: "restricted (untrusted: safe cmds only)" },
+                    { value: "trusted", label: "Trusted" },
+                    { value: "standard", label: "Standard" },
+                    { value: "restricted", label: "Restricted" },
                   ]}
-                  triggerStyle={
-                    workspaceTrustLevel === "trusted"
-                      ? {
-                          background: "rgba(52, 211, 153, 0.12)",
-                          color: "var(--success)",
-                          border: "1px solid rgba(52, 211, 153, 0.25)",
-                        }
-                      : workspaceTrustLevel === "restricted"
-                        ? {
-                            background: "rgba(248, 113, 113, 0.10)",
-                            color: "var(--danger)",
-                            border: "1px solid rgba(248, 113, 113, 0.2)",
-                          }
-                        : undefined
-                  }
                 />
               )}
 
