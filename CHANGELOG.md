@@ -1,5 +1,19 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.25.0...vnull) (2026-03-06)
+
+### Features
+
+* harden Codex thread policy handling ([de95d09](https://github.com/wygoralves/panes/commit/de95d09f588387de0adddf845cce9c9cd631579a))
+* improve UI for permissions ([ce2bde9](https://github.com/wygoralves/panes/commit/ce2bde93fb7251db8f249148dee4b71eee37efc7))
+* some more ui updates for permission policies ([6c03489](https://github.com/wygoralves/panes/commit/6c03489d059d31f21d17ddc189c6d65c2b44f8c3))
+* surface model reroutes and MCP progress ([4652270](https://github.com/wygoralves/panes/commit/4652270f9975a4d136eacdd3bb22cda28edc5ce1))
+
+### Bug Fixes
+
+* fix approval banners not resolving correctly ([32082d1](https://github.com/wygoralves/panes/commit/32082d1d0076bba63f7bb1cbd36f589e91ddeba3))
+* harden permission flows for codex execution ([a8ea77c](https://github.com/wygoralves/panes/commit/a8ea77cae2fcec9d775b62a95d60460165bab40d))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.24.0...vnull) (2026-03-06)
 
 ### Features
