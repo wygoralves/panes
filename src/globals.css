@@ -453,12 +453,12 @@ button, input, textarea, select {
 
 /* ── Collapsible block headers ── */
 .msg-block-header {
-  display: flex; align-items: center; gap: 6px; padding: 3px 12px;
+  display: flex; align-items: center; gap: 6px; padding: 6px 12px;
   cursor: pointer; user-select: none;
   border-radius: var(--radius-sm);
   transition: background var(--duration-fast) var(--ease-out);
 }
-.msg-block-header:hover { background: rgba(255, 255, 255, 0.04); }
+.msg-block-header:hover { background: rgba(255, 255, 255, 0.06); }
 .msg-block-chevron {
   flex-shrink: 0; color: var(--text-3); opacity: 0.5;
   transition: transform var(--duration-fast) var(--ease-out);
