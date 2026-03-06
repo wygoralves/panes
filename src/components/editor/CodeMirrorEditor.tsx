@@ -46,7 +46,7 @@ const darkVoidTheme = EditorView.theme(
       borderLeftWidth: "2px",
     },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
-      backgroundColor: "rgba(14, 240, 195, 0.12) !important",
+      backgroundColor: "rgba(255, 107, 107, 0.12) !important",
     },
     ".cm-activeLineGutter": {
       backgroundColor: "rgba(255, 255, 255, 0.04)",
@@ -59,7 +59,7 @@ const darkVoidTheme = EditorView.theme(
       fontSize: "11px",
     },
     ".cm-matchingBracket": {
-      backgroundColor: "rgba(14, 240, 195, 0.18)",
+      backgroundColor: "rgba(255, 107, 107, 0.18)",
       outline: "none",
     },
     ".cm-searchMatch": {

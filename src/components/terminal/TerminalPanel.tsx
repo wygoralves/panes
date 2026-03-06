@@ -2182,8 +2182,8 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       theme: {
         background: "#050505",
         foreground: "#f5f5f5",
-        selectionBackground: "rgba(14, 240, 195, 0.28)",
-        cursor: "#0ef0c3",
+        selectionBackground: "rgba(255, 107, 107, 0.28)",
+        cursor: "#FF6B6B",
       },
     });
 

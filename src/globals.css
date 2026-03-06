@@ -15,10 +15,10 @@
   --text-2: #a8a8a8;
   --text-3: #737373;
 
-  /* Accent — Electric Teal */
-  --accent: #0ef0c3;
-  --accent-dim: rgba(14, 240, 195, 0.10);
-  --accent-glow: 0 0 12px rgba(14, 240, 195, 0.15);
+  /* Accent — Coral */
+  --accent: #FF6B6B;
+  --accent-dim: rgba(255, 107, 107, 0.10);
+  --accent-glow: 0 0 12px rgba(255, 107, 107, 0.15);
   --accent-2: #a78bfa;
   --accent-2-dim: rgba(167, 139, 250, 0.10);
 
@@ -31,7 +31,7 @@
   /* Borders */
   --border: rgba(255, 255, 255, 0.16);
   --border-active: rgba(255, 255, 255, 0.26);
-  --border-accent: rgba(14, 240, 195, 0.20);
+  --border-accent: rgba(255, 107, 107, 0.20);
 
   /* Glass */
   --glass-bg: rgba(0, 0, 0, 0.75);
@@ -351,8 +351,8 @@ button, input, textarea, select {
 }
 
 @keyframes glow-pulse {
-  0%, 100% { box-shadow: 0 0 8px rgba(14, 240, 195, 0.15); }
-  50% { box-shadow: 0 0 20px rgba(14, 240, 195, 0.3); }
+  0%, 100% { box-shadow: 0 0 8px rgba(255, 107, 107, 0.15); }
+  50% { box-shadow: 0 0 20px rgba(255, 107, 107, 0.3); }
 }
 
 @keyframes thinking-pulse {
@@ -608,7 +608,7 @@ button, input, textarea, select {
 
 /* ── Selection ── */
 ::selection {
-  background: rgba(14, 240, 195, 0.20);
+  background: rgba(255, 107, 107, 0.20);
   color: var(--text-1);
 }
 
@@ -1728,13 +1728,13 @@ button, input, textarea, select {
 }
 
 .terminal-leaf-pane-broadcasting::after {
-  border-color: rgba(14, 240, 195, 0.5);
+  border-color: rgba(255, 107, 107, 0.5);
   animation: broadcast-pulse 2s ease-in-out infinite;
 }
 
 @keyframes broadcast-pulse {
-  0%, 100% { border-color: rgba(14, 240, 195, 0.5); }
-  50% { border-color: rgba(14, 240, 195, 0.85); }
+  0%, 100% { border-color: rgba(255, 107, 107, 0.5); }
+  50% { border-color: rgba(255, 107, 107, 0.85); }
 }
 
 .terminal-broadcast-banner {
@@ -1743,7 +1743,7 @@ button, input, textarea, select {
   gap: 6px;
   padding: 3px 10px;
   background: var(--accent-dim);
-  border-bottom: 1px solid rgba(14, 240, 195, 0.15);
+  border-bottom: 1px solid rgba(255, 107, 107, 0.15);
   color: var(--accent);
   font-size: 10px;
   font-weight: 500;
@@ -1769,7 +1769,7 @@ button, input, textarea, select {
 
 .terminal-broadcast-banner-close:hover {
   opacity: 1;
-  background: rgba(14, 240, 195, 0.15);
+  background: rgba(255, 107, 107, 0.15);
 }
 
 /* ── Multi-Launch mode (inside new-tab dropdown) ── */
@@ -1915,7 +1915,7 @@ button, input, textarea, select {
   background: var(--accent-dim);
 }
 .tnd-option-card-active:hover {
-  background: rgba(14, 240, 195, 0.14);
+  background: rgba(255, 107, 107, 0.14);
 }
 
 .tnd-option-icon {
@@ -1931,7 +1931,7 @@ button, input, textarea, select {
   transition: all var(--duration-fast) var(--ease-out);
 }
 .tnd-option-card-active .tnd-option-icon {
-  background: rgba(14, 240, 195, 0.15);
+  background: rgba(255, 107, 107, 0.15);
   color: var(--accent);
 }
 
@@ -2060,8 +2060,8 @@ button, input, textarea, select {
 .grid-preview-cell {
   flex: 1;
   border-radius: 2px;
-  background: rgba(14, 240, 195, 0.08);
-  border: 1px solid rgba(14, 240, 195, 0.15);
+  background: rgba(255, 107, 107, 0.08);
+  border: 1px solid rgba(255, 107, 107, 0.15);
   min-width: 0;
 }
 
@@ -2188,7 +2188,7 @@ button, input, textarea, select {
 }
 
 .sb-pin-btn-active:hover {
-  background: rgba(14, 240, 195, 0.15);
+  background: rgba(255, 107, 107, 0.15);
   color: var(--accent);
 }
 
@@ -2330,7 +2330,7 @@ button, input, textarea, select {
 
 .sb-thread-active {
   color: var(--text-1);
-  background: rgba(14, 240, 195, 0.04);
+  background: rgba(255, 107, 107, 0.04);
 }
 
 .sb-thread-active::before {
@@ -2398,8 +2398,8 @@ button, input, textarea, select {
   align-items: center;
   gap: 8px;
   border-radius: var(--radius-sm);
-  background: rgba(14, 240, 195, 0.06);
-  border: 1px solid rgba(14, 240, 195, 0.12);
+  background: rgba(255, 107, 107, 0.06);
+  border: 1px solid rgba(255, 107, 107, 0.12);
   color: var(--accent);
   font-size: 12.5px;
   font-weight: 500;
@@ -2409,9 +2409,9 @@ button, input, textarea, select {
 }
 
 .sb-new-thread-btn:hover {
-  background: rgba(14, 240, 195, 0.1);
-  border-color: rgba(14, 240, 195, 0.2);
-  box-shadow: 0 0 16px rgba(14, 240, 195, 0.06);
+  background: rgba(255, 107, 107, 0.1);
+  border-color: rgba(255, 107, 107, 0.2);
+  box-shadow: 0 0 16px rgba(255, 107, 107, 0.06);
 }
 
 /* Open project button */
@@ -2572,8 +2572,8 @@ button, input, textarea, select {
 }
 
 .update-dlg-btn-accent:hover {
-  background: rgba(14, 240, 195, 0.14);
-  border-color: rgba(14, 240, 195, 0.35);
+  background: rgba(255, 107, 107, 0.14);
+  border-color: rgba(255, 107, 107, 0.35);
   box-shadow: var(--accent-glow);
 }
 
@@ -2589,7 +2589,7 @@ button, input, textarea, select {
   width: 40%;
   height: 100%;
   border-radius: 2px;
-  background: linear-gradient(90deg, var(--accent), rgba(14, 240, 195, 0.3), var(--accent));
+  background: linear-gradient(90deg, var(--accent), rgba(255, 107, 107, 0.3), var(--accent));
   background-size: 200% 100%;
   animation: shimmer 1.5s ease-in-out infinite;
 }
@@ -3748,7 +3748,7 @@ button, input, textarea, select {
 }
 
 .hp-tile-native:hover .hp-tile-icon {
-  border-color: rgba(14, 240, 195, 0.3);
+  border-color: rgba(255, 107, 107, 0.3);
 }
 
 .hp-tile-body {
@@ -3781,7 +3781,7 @@ button, input, textarea, select {
   letter-spacing: 0.05em;
   color: var(--accent);
   background: var(--accent-dim);
-  border: 1px solid rgba(14, 240, 195, 0.12);
+  border: 1px solid rgba(255, 107, 107, 0.12);
 }
 
 .hp-tile-desc {
@@ -3867,7 +3867,7 @@ button, input, textarea, select {
 }
 
 .hp-btn-launch:hover {
-  background: rgba(14, 240, 195, 0.15);
+  background: rgba(255, 107, 107, 0.15);
   box-shadow: var(--accent-glow);
 }
 

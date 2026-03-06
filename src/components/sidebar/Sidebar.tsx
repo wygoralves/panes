@@ -870,7 +870,7 @@ function CollapsedRail({
             <rect x="10" y="36" width="94" height="94" stroke="white" strokeWidth="6"/>
             <rect x="36" y="10" width="94" height="94" stroke="white" strokeWidth="6"/>
             <rect x="23" y="23" width="94" height="94" stroke="white" strokeWidth="6"/>
-            <rect x="50" y="50" width="40" height="40" fill="#48F3CD"/>
+            <rect x="50" y="50" width="40" height="40" fill="#FF6B6B"/>
           </svg>
         </button>
       </div>

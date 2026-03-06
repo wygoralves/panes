@@ -409,9 +409,9 @@ function MessageRowView({
         alignItems: isUser ? "flex-end" : "flex-start",
         maxWidth: "100%",
         borderRadius: "var(--radius-md)",
-        outline: isHighlighted ? "2px solid rgba(14, 240, 195, 0.35)" : "none",
+        outline: isHighlighted ? "2px solid rgba(255, 107, 107, 0.35)" : "none",
         boxShadow: isHighlighted
-          ? "0 10px 28px rgba(14, 240, 195, 0.12)"
+          ? "0 10px 28px rgba(255, 107, 107, 0.12)"
           : "none",
         transition:
           "outline-color var(--duration-normal) var(--ease-out), box-shadow var(--duration-normal) var(--ease-out)",
@@ -424,8 +424,8 @@ function MessageRowView({
               maxWidth: "75%",
               padding: "10px 14px",
               borderRadius: "var(--radius-md)",
-              background: "rgba(14, 240, 195, 0.06)",
-              border: "1px solid rgba(14, 240, 195, 0.10)",
+              background: "rgba(255, 107, 107, 0.06)",
+              border: "1px solid rgba(255, 107, 107, 0.10)",
               fontSize: 13,
               lineHeight: 1.6,
               whiteSpace: "pre-wrap",

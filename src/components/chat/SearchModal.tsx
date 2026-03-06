@@ -278,7 +278,7 @@ export function SearchModal({ open, onClose }: Props) {
                       textAlign: "left",
                       padding: "10px 14px",
                       borderBottom: "1px solid var(--border)",
-                      background: active ? "rgba(14, 240, 195, 0.08)" : "transparent",
+                      background: active ? "rgba(255, 107, 107, 0.08)" : "transparent",
                       cursor: "pointer",
                       display: "grid",
                       gap: 4
