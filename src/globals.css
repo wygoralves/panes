@@ -2911,6 +2911,9 @@ button, input, textarea, select {
 
 .acard-details {
   padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .acard-command {
@@ -2937,13 +2940,13 @@ button, input, textarea, select {
 }
 
 .acard-meta {
-  margin: 5px 0 0;
+  margin: 0;
   font-size: 11px;
   color: var(--text-3);
 }
 
 .acard-remaining {
-  margin-top: 6px;
+  margin: 0;
 }
 
 .acard-remaining-pre {
