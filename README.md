@@ -5,7 +5,7 @@
 <h1 align="center">Panes</h1>
 
 <p align="center">
-  <strong>The open-source Agent Development Environment.</strong>
+  <strong>The local-first cockpit for AI-assisted coding.</strong>
 </p>
 
 <p align="center">
@@ -24,65 +24,56 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg" alt="Platform" />
   <img src="https://img.shields.io/badge/tauri-v2-blue?logo=tauri" alt="Tauri v2" />
   <img src="https://img.shields.io/badge/auto--update-OTA-green.svg" alt="OTA Auto-Update" />
-  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome" />
 </p>
 
 ---
 
-Panes wraps a rich native UI around terminal-based coding agents, giving developers a single pane of glass to orchestrate, review, and approve everything their AI agents do — across multiple repositories.
+Panes wraps a native desktop UI around external coding agents, git, terminal workflows, and lightweight file editing. It gives developers one place to chat with agents, inspect diffs, approve actions, manage multi-repo work, and keep an audit trail of what happened.
 
-CLI coding agents are powerful. Panes makes them even more so: real-time streaming chat, native git integration, multi-repo management, approval workflows, an integrated terminal with split panes and broadcast mode, a built-in file editor, and full audit trails — all in a fast, local-first desktop app.
-
-<!-- TODO: Add screenshot here -->
-<!-- <p align="center"><img src="docs/screenshot.png" alt="Panes screenshot" width="800" /></p> -->
+Panes is not a full IDE, but it does ship with a built-in multi-tab editor for quick review and edits without leaving the app.
 
 ## Features
 
-**Chat & Streaming**
-- Real-time streaming chat with structured content blocks (text, thinking, code, diffs, actions, approvals)
-- Event coalescing and frontend batching for buttery-smooth streaming
-- Markdown rendering with Web Worker offload and LRU caching
-- Global message search (FTS5) with keyboard navigation
+### Chat & Agents
 
-**Git — First-Class Citizen**
-- Full git panel: status, diff, stage, unstage, commit, discard, soft reset (per-file and bulk with confirmation)
-- Branch management: create, rename, delete, checkout (local + remote) with auto-checkout on creation
-- Remote operations: fetch, pull, push with ahead/behind tracking
-- Commit history browser and stash management
-- Worktree management: create, list, and remove git worktrees from the UI
-- Filesystem watcher for real-time change detection
-- Multi-repo awareness: auto-detect nested repos, per-repo active toggle
+- Streaming chat with structured content blocks for text, thinking, actions, diffs, approvals, attachments, and usage updates
+- Codex chat integration via `codex app-server`
+- Claude chat integration via a Claude Agent SDK sidecar
+- Plan mode, attachments, reasoning effort controls, per-thread approval/network overrides, and Codex-specific sandbox-mode overrides
+- Global FTS message search with keyboard navigation
+- Windowed message loading and lazy hydration for long threads/action output
 
-**Engine Orchestration**
-- Engine-agnostic architecture — orchestrate any external coding agent
-- Codex engine fully integrated (JSONL protocol, streaming, approvals, model picker)
-- Multi-agent launching: spin up multiple agents simultaneously, optionally in separate worktrees
-- Approval workflows with structured questionnaires and custom JSON mode
-- Trust levels per repository (trusted / standard / restricted)
-- Runtime model discovery and reasoning effort control
+### Git
 
-**Terminal**
-- Integrated native terminal (PTY) with xterm.js + WebGL rendering
-- Multi-session tab groups per workspace, with inline tab renaming (double-click or right-click)
-- Split panes: divide any terminal horizontally or vertically, with draggable resize handles
-- Broadcast mode: type once, send to all sessions in a group (`Cmd+Shift+I`)
-- Persistent sessions across navigation — scrollback survives workspace switches
-- Harness-aware tab labeling for coding agent processes
+- Multi-repo awareness with per-repo active toggles and trust levels
+- Changes, diff, stage, unstage, discard, commit, and soft reset
+- Branch management with pagination and search
+- Commit history, stash operations, worktree management, and remote management
+- Repo initialization flow from the UI
+- Filesystem watching plus cached/truncated file-tree scanning for large repos
 
-**File Editor**
-- Built-in file editor (CodeMirror 6) for reviewing and editing files surfaced by agents
-- Syntax highlighting for JS/TS, Python, Rust, Go, HTML, CSS, JSON, YAML, SQL, Markdown, and more
-- Integrated save (`Cmd+S`) with direct filesystem writes
-- Dedicated editor layout mode — seamlessly switch between chat, terminal, and editor views
+### Terminal & Harnesses
 
-**Desktop Experience**
-- Three-column resizable layout with pin/unpin sidebar
-- Four layout modes: chat, split (chat + terminal), terminal, and editor — cycled with `Cmd+Shift+T`, persisted per workspace
-- Command palette (`Cmd+K`) for quick navigation and actions
-- Virtualized message list and diff rendering for large threads
-- Workspace/thread persistence across sessions
-- Crash recovery for interrupted turns
-- OTA auto-updates via Tauri updater
+- Native PTY terminal powered by xterm.js + WebGL
+- Terminal groups, split panes, draggable resize, and broadcast mode
+- Session replay/resume and renderer diagnostics
+- Harness detection, install, and launch flows for Codex CLI, Claude Code, Gemini CLI, Kiro, OpenCode, Kilo Code, and Factory Droid
+- Multi-launch mode that can fan out one session per harness, optionally with one git worktree per session
+
+### Editor & Desktop UX
+
+- Multi-tab CodeMirror editor with dirty tracking, save, and external-modification warnings
+- Built-in find/replace (`Cmd+F`, `Cmd+H`) and editor toggle (`Cmd+E`)
+- Command palette for commands, files, threads, workspaces, harnesses, and git actions
+- Setup wizard for Node.js and Codex requirements, plus Git detection
+- Update dialog with download/install flow
+- Crash recovery, toast notifications, and session persistence
+
+## Current State
+
+Panes is pre-MVP but already implements the core desktop workflow: chat engines, git panel, terminals, harness launch, built-in editing, setup, updates, and local persistence.
+
+There is real automated coverage now, but it is still selective. The repo already has GitHub Actions validation and release automation, including bundle and update-manifest publishing.
 
 ## Getting Started
 
@@ -93,19 +84,15 @@ CLI coding agents are powerful. Panes makes them even more so: real-time streami
 | Rust toolchain | stable |
 | Node.js | 20+ |
 | pnpm | 9+ |
+| Codex CLI | Required for the Codex chat engine; setup can install it via npm |
 | Tauri v2 prerequisites | [See Tauri docs](https://v2.tauri.app/start/prerequisites/) |
 
 ### Install and Run
 
 ```bash
-# Clone the repository
 git clone https://github.com/wygoralves/panes.git
 cd panes
-
-# Install dependencies
 pnpm install
-
-# Run in development mode (hot-reload frontend + Rust backend)
 pnpm tauri:dev
 ```
 
@@ -115,24 +102,34 @@ pnpm tauri:dev
 pnpm tauri:build
 ```
 
-Build targets: `.app` (macOS), `.dmg` (macOS), `.deb` (Linux), `.AppImage` (Linux).
+Common bundle artifacts include macOS DMGs/app archives and Linux DEB/AppImage outputs, depending on platform and target.
+
+Git is recommended for the repo-management features, but the app can still launch without it.
 
 ## Development
 
 ```bash
-pnpm tauri:dev          # Full app dev mode (frontend + backend)
-pnpm dev                # Frontend-only dev server (no Tauri backend)
-pnpm build              # Frontend-only production build
-pnpm typecheck          # TypeScript type checking
+pnpm tauri:dev          # full desktop app in dev mode
+pnpm tauri:build        # native desktop bundles
+
+pnpm dev                # frontend-only dev server
+pnpm build              # frontend production build
+pnpm test               # Vitest suite
+pnpm typecheck          # TypeScript no-emit check
+
+pnpm build:claude-sidecar   # bundle the runtime Claude sidecar
+pnpm build:desktop          # build frontend + bundled sidecar assets, not native app bundles
+pnpm release:check          # evaluate whether a release should be cut
+pnpm release                # run release-it
 ```
 
 Rust-only:
 
 ```bash
 cd src-tauri
-cargo check             # Type check
-cargo fmt               # Format
-cargo clippy            # Lint
+cargo check
+cargo fmt
+cargo clippy
 ```
 
 ### Runtime Paths
@@ -140,66 +137,39 @@ cargo clippy            # Lint
 | Path | Purpose |
 |---|---|
 | `~/.agent-workspace/config.toml` | App configuration |
-| `~/.agent-workspace/workspaces.db` | SQLite database (all persistent state) |
+| `~/.agent-workspace/workspaces.db` | SQLite database |
+| `~/.agent-workspace/logs` | App log directory |
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────┐
-│                Frontend (React + TS)                 │
-│                                                     │
-│  Sidebar  ←→  ChatPanel  ←→  GitPanel               │
-│                  ↕                                   │
-│            TerminalPanel                             │
-│                  ↕                                   │
-│   Zustand Stores + IPC Bridge + Web Workers          │
-├─────────────────────────────────────────────────────┤
-│              Tauri IPC boundary                      │
-├─────────────────────────────────────────────────────┤
-│                Backend (Rust)                        │
-│                                                     │
-│  Engines ←→ DB (SQLite) ←→ Git (libgit2)            │
-│                ↕               ↕                     │
-│          Terminal (PTY)    FS Watcher                 │
-│                ↕                                     │
-│     External Engine Process                          │
-│     (codex app-server, etc)                          │
-└─────────────────────────────────────────────────────┘
-```
+Panes uses a React + Zustand frontend running inside a Tauri shell, with a Rust backend that owns persistence, engine orchestration, git operations, terminal management, and filesystem-safe file access.
 
-### Tech Stack
+The app currently exposes Codex and Claude as chat engines. Codex talks to `codex app-server`; Claude is bridged through the bundled Claude runtime sidecar.
+
+### Stack
 
 | Layer | Technology |
 |---|---|
-| Desktop framework | Tauri v2 (Rust + webview) |
+| Desktop framework | Tauri v2 |
 | Frontend | React 19 + TypeScript 5.5 + Vite 6 |
 | Styling | Tailwind CSS 4 |
 | State management | Zustand 5 |
+| Markdown | micromark + highlight.js |
+| Diff | diff2html + custom parser |
 | File editor | CodeMirror 6 |
-| Terminal | xterm.js + WebGL + portable-pty (Rust) |
-| Database | SQLite (rusqlite) with FTS5 |
-| Git | libgit2 for reads, CLI subprocess for writes |
-| Markdown | micromark + highlight.js (Web Worker) |
-| Diff | diff2html + custom parser (Web Worker) |
-
-### Key Design Decisions
-
-- **Event coalescing** — backend merges consecutive deltas (up to 8KB) before IPC emission; frontend batches events in 16ms windows before React state updates
-- **Web Workers** — markdown and diff parsing offloaded to workers to keep UI thread at 60fps
-- **Virtualization** — messages virtualized at 40+ items; diffs at 500+ lines
-- **Engine-agnostic** — all engines emit a unified `EngineEvent` model regardless of native protocol
-- **Multi-agent** — launch multiple agents in parallel, each in its own worktree, with broadcast mode to fan out input
-- **Local-first** — everything stored locally in SQLite, no cloud dependency
+| Terminal | xterm.js + portable-pty |
+| Database | SQLite + FTS5 |
+| Git | `git2` + CLI helpers |
 
 ## Contributing
 
-Contributions are welcome! Whether it's bug reports, feature requests, or pull requests — all input helps.
+Contributions are welcome.
 
 1. Fork the repo
-2. Create your branch (`git checkout -b feat/my-feature`)
-3. Commit your changes
-4. Push to your branch
-5. Open a Pull Request
+2. Create your branch
+3. Make the change
+4. Run the relevant checks
+5. Open a pull request
 
 ## License
 

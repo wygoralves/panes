@@ -254,17 +254,28 @@ function collectCandidatePaths(toolName, toolInput, cwd) {
   }
   return paths;
 }
-function resolveTrustMode(approvalPolicy, allowNetwork) {
-  if (approvalPolicy === "untrusted") {
-    return "restricted";
+function resolvePermissionMode(approvalPolicy, allowNetwork) {
+  switch (approvalPolicy) {
+    case "restricted":
+    case "standard":
+    case "trusted":
+      return approvalPolicy;
+    case "untrusted":
+      return "restricted";
+    case "never":
+      return "trusted";
+    case "on-failure":
+      return "standard";
+    case "on-request":
+    default:
+      return allowNetwork ? "trusted" : "standard";
   }
-  return allowNetwork ? "trusted" : "standard";
 }
-function requiresApproval(trustMode, toolName) {
-  if (trustMode === "trusted") {
+function requiresApproval(permissionMode, toolName) {
+  if (permissionMode === "trusted") {
     return false;
   }
-  if (trustMode === "restricted") {
+  if (permissionMode === "restricted") {
     return true;
   }
   return !["Read", "Glob", "Grep"].includes(toolName);
@@ -359,7 +370,7 @@ function buildPermissionHandler({
   approvalPolicy
 }) {
   const normalizedRoots = writableRoots.map((root) => path.resolve(root));
-  const trustMode = resolveTrustMode(approvalPolicy, allowNetwork);
+  const permissionMode = resolvePermissionMode(approvalPolicy, allowNetwork);
   return async (toolName, input, options) => {
     const toolInput = input ?? {};
     if (!allowNetwork && toolName === "WebFetch") {
@@ -383,7 +394,7 @@ function buildPermissionHandler({
         };
       }
     }
-    if (!requiresApproval(trustMode, toolName)) {
+    if (!requiresApproval(permissionMode, toolName)) {
       return { behavior: "allow" };
     }
     return requestApproval(context, toolName, toolInput, options?.suggestions);

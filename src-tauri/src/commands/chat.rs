@@ -349,8 +349,14 @@ pub async fn send_message(
         writable_roots,
         allow_network,
         approval_policy: Some(
-            thread_approval_policy_override(thread.engine_metadata.as_ref())
-                .unwrap_or_else(|| approval_policy_for_trust_level(&trust_level).to_string()),
+            thread_approval_policy_override(
+                thread.engine_id.as_str(),
+                thread.engine_metadata.as_ref(),
+            )
+            .unwrap_or_else(|| {
+                approval_policy_for_engine_and_trust_level(thread.engine_id.as_str(), &trust_level)
+                    .to_string()
+            }),
         ),
         reasoning_effort,
         sandbox_mode: Some(sandbox_mode),
@@ -1825,11 +1831,21 @@ fn aggregate_workspace_trust_level(repos: &[RepoDto]) -> TrustLevelDto {
     TrustLevelDto::Standard
 }
 
-fn approval_policy_for_trust_level(trust_level: &TrustLevelDto) -> &'static str {
-    match trust_level {
-        TrustLevelDto::Trusted => "on-request",
-        TrustLevelDto::Standard => "on-request",
-        TrustLevelDto::Restricted => "untrusted",
+fn approval_policy_for_engine_and_trust_level(
+    engine_id: &str,
+    trust_level: &TrustLevelDto,
+) -> &'static str {
+    match engine_id {
+        "claude" => match trust_level {
+            TrustLevelDto::Trusted => "trusted",
+            TrustLevelDto::Standard => "standard",
+            TrustLevelDto::Restricted => "restricted",
+        },
+        _ => match trust_level {
+            TrustLevelDto::Trusted => "on-request",
+            TrustLevelDto::Standard => "on-request",
+            TrustLevelDto::Restricted => "untrusted",
+        },
     }
 }
 
@@ -1837,13 +1853,21 @@ fn allow_network_for_trust_level(trust_level: &TrustLevelDto) -> bool {
     matches!(trust_level, TrustLevelDto::Trusted)
 }
 
-fn thread_approval_policy_override(metadata: Option<&Value>) -> Option<String> {
-    metadata
-        .and_then(|value| value.get("sandboxApprovalPolicy"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| matches!(*value, "untrusted" | "on-failure" | "on-request" | "never"))
-        .map(ToOwned::to_owned)
+fn thread_approval_policy_override(engine_id: &str, metadata: Option<&Value>) -> Option<String> {
+    match engine_id {
+        "claude" => metadata
+            .and_then(|value| value.get("claudePermissionMode"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| matches!(*value, "trusted" | "standard" | "restricted"))
+            .map(ToOwned::to_owned),
+        _ => metadata
+            .and_then(|value| value.get("sandboxApprovalPolicy"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| matches!(*value, "untrusted" | "on-failure" | "on-request" | "never"))
+            .map(ToOwned::to_owned),
+    }
 }
 
 fn thread_allow_network_override(metadata: Option<&Value>) -> Option<bool> {
@@ -1909,6 +1933,39 @@ mod tests {
             Some("danger-full-access"),
             true,
         ));
+    }
+
+    #[test]
+    fn claude_defaults_follow_trust_level_directly() {
+        assert_eq!(
+            approval_policy_for_engine_and_trust_level("claude", &TrustLevelDto::Trusted),
+            "trusted"
+        );
+        assert_eq!(
+            approval_policy_for_engine_and_trust_level("claude", &TrustLevelDto::Standard),
+            "standard"
+        );
+        assert_eq!(
+            approval_policy_for_engine_and_trust_level("claude", &TrustLevelDto::Restricted),
+            "restricted"
+        );
+    }
+
+    #[test]
+    fn claude_permission_mode_override_uses_claude_key() {
+        let metadata = serde_json::json!({
+            "claudePermissionMode": "restricted",
+            "sandboxApprovalPolicy": "never",
+        });
+
+        assert_eq!(
+            thread_approval_policy_override("claude", Some(&metadata)).as_deref(),
+            Some("restricted")
+        );
+        assert_eq!(
+            thread_approval_policy_override("codex", Some(&metadata)).as_deref(),
+            Some("never")
+        );
     }
 }
 

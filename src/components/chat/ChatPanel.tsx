@@ -115,7 +115,16 @@ const REASONING_EFFORT_LABELS: Record<string, string> = {
   high: "High",
   xhigh: "XHigh",
 };
-type ThreadApprovalPolicyValue = "inherit" | "untrusted" | "on-failure" | "on-request" | "never";
+type CodexThreadApprovalPolicyValue =
+  | "inherit"
+  | "untrusted"
+  | "on-failure"
+  | "on-request"
+  | "never";
+type ClaudeThreadPermissionModeValue = "inherit" | "restricted" | "standard" | "trusted";
+type ThreadApprovalPolicyValue =
+  | CodexThreadApprovalPolicyValue
+  | ClaudeThreadPermissionModeValue;
 type ThreadSandboxModeValue =
   | "inherit"
   | "read-only"
@@ -132,21 +141,21 @@ const TRUST_LEVEL_OPTIONS = [
   {
     value: "trusted",
     label: "Trusted",
-    description: "On-request approvals with network access enabled.",
+    description: "Broad access with network enabled by default.",
   },
   {
     value: "standard",
     label: "Standard",
-    description: "On-request approvals with network access disabled.",
+    description: "Balanced access with network disabled by default.",
   },
   {
     value: "restricted",
     label: "Restricted",
-    description: "Treat commands as untrusted and keep execution constrained.",
+    description: "Tight approval handling and constrained execution.",
   },
 ] satisfies Array<{ value: TrustLevel; label: string; description: string }>;
 
-const THREAD_APPROVAL_POLICY_OPTIONS = [
+const CODEX_THREAD_APPROVAL_POLICY_OPTIONS = [
   {
     value: "inherit",
     label: "Auto",
@@ -173,7 +182,34 @@ const THREAD_APPROVAL_POLICY_OPTIONS = [
     description: "Continue automatically without approval prompts.",
   },
 ] satisfies Array<{
-  value: ThreadApprovalPolicyValue;
+  value: CodexThreadApprovalPolicyValue;
+  label: string;
+  description: string;
+}>;
+
+const CLAUDE_THREAD_PERMISSION_MODE_OPTIONS = [
+  {
+    value: "inherit",
+    label: "Auto",
+    description: "Follow the repo trust defaults for Claude.",
+  },
+  {
+    value: "restricted",
+    label: "Restricted",
+    description: "Require approval for every tool call.",
+  },
+  {
+    value: "standard",
+    label: "Standard",
+    description: "Auto-allow read-only tools and ask before risky ones.",
+  },
+  {
+    value: "trusted",
+    label: "Trusted",
+    description: "Skip approval prompts for allowed tools.",
+  },
+] satisfies Array<{
+  value: ClaudeThreadPermissionModeValue;
   label: string;
   description: string;
 }>;
@@ -209,7 +245,7 @@ const THREAD_NETWORK_POLICY_OPTIONS = [
   {
     value: "inherit",
     label: "Auto",
-    description: "Follow the current trust and sandbox defaults.",
+    description: "Follow the current thread and trust defaults.",
   },
   {
     value: "enabled",
@@ -403,7 +439,7 @@ function formatEngineModelLabel(
   return effortLabel ? `${baseLabel} ${effortLabel}` : baseLabel;
 }
 
-function readThreadApprovalPolicyValue(thread: Thread | null): ThreadApprovalPolicyValue {
+function readCodexThreadApprovalPolicyValue(thread: Thread | null): CodexThreadApprovalPolicyValue {
   const value = thread?.engineMetadata?.sandboxApprovalPolicy;
   if (
     value === "untrusted" ||
@@ -414,6 +450,24 @@ function readThreadApprovalPolicyValue(thread: Thread | null): ThreadApprovalPol
     return value;
   }
   return "inherit";
+}
+
+function readClaudeThreadPermissionModeValue(
+  thread: Thread | null,
+): ClaudeThreadPermissionModeValue {
+  const value = thread?.engineMetadata?.claudePermissionMode;
+  if (value === "restricted" || value === "standard" || value === "trusted") {
+    return value;
+  }
+  return "inherit";
+}
+
+function readThreadApprovalPolicyValue(thread: Thread | null): ThreadApprovalPolicyValue {
+  if (thread?.engineId === "claude") {
+    return readClaudeThreadPermissionModeValue(thread);
+  }
+
+  return readCodexThreadApprovalPolicyValue(thread);
 }
 
 function readThreadSandboxModeValue(thread: Thread | null): ThreadSandboxModeValue {
@@ -465,16 +519,33 @@ function applyThreadExecutionPolicyPatch(
     ...patch,
   };
 
-  if (nextState.approvalPolicy === "inherit") {
-    delete metadata.sandboxApprovalPolicy;
+  if (thread.engineId === "claude") {
+    if (
+      nextState.approvalPolicy === "restricted" ||
+      nextState.approvalPolicy === "standard" ||
+      nextState.approvalPolicy === "trusted"
+    ) {
+      metadata.claudePermissionMode = nextState.approvalPolicy;
+    } else {
+      delete metadata.claudePermissionMode;
+    }
   } else {
-    metadata.sandboxApprovalPolicy = nextState.approvalPolicy;
-  }
+    if (
+      nextState.approvalPolicy === "untrusted" ||
+      nextState.approvalPolicy === "on-failure" ||
+      nextState.approvalPolicy === "on-request" ||
+      nextState.approvalPolicy === "never"
+    ) {
+      metadata.sandboxApprovalPolicy = nextState.approvalPolicy;
+    } else {
+      delete metadata.sandboxApprovalPolicy;
+    }
 
-  if (nextState.sandboxMode === "inherit") {
-    delete metadata.sandboxMode;
-  } else {
-    metadata.sandboxMode = nextState.sandboxMode;
+    if (nextState.sandboxMode === "inherit") {
+      delete metadata.sandboxMode;
+    } else {
+      metadata.sandboxMode = nextState.sandboxMode;
+    }
   }
 
   if (nextState.networkPolicy === "inherit") {
@@ -1126,6 +1197,12 @@ export function ChatPanel() {
   }
 
   const activeThreadApprovalPolicy = readThreadApprovalPolicyValue(activeThread);
+  const activeThreadApprovalTitle =
+    activeThread?.engineId === "claude" ? "Permission mode" : "Approval policy";
+  const activeThreadApprovalOptions =
+    activeThread?.engineId === "claude"
+      ? CLAUDE_THREAD_PERMISSION_MODE_OPTIONS
+      : CODEX_THREAD_APPROVAL_POLICY_OPTIONS;
   const activeThreadSandboxMode = readThreadSandboxModeValue(activeThread);
   const activeThreadNetworkPolicy = readThreadNetworkPolicyValue(activeThread);
   const threadSandboxModeOptions = useMemo(
@@ -1145,11 +1222,14 @@ export function ChatPanel() {
     (option) => option.value === activeThreadSandboxMode,
   );
   const threadPolicyCustomCount =
-    (activeThreadApprovalPolicy !== "inherit" ? 1 : 0) +
-    (activeThreadSandboxMode !== "inherit" ? 1 : 0) +
-    (activeThreadSandboxMode !== "danger-full-access" && activeThreadNetworkPolicy !== "inherit"
-      ? 1
-      : 0);
+    activeThread?.engineId === "claude"
+      ? (activeThreadApprovalPolicy !== "inherit" ? 1 : 0) +
+        (activeThreadNetworkPolicy !== "inherit" ? 1 : 0)
+      : (activeThreadApprovalPolicy !== "inherit" ? 1 : 0) +
+        (activeThreadSandboxMode !== "inherit" ? 1 : 0) +
+        (activeThreadSandboxMode !== "danger-full-access" && activeThreadNetworkPolicy !== "inherit"
+          ? 1
+          : 0);
 
   const workspaceTrustLevel: TrustLevel = useMemo(() => {
     if (!repos.length) {
@@ -1932,21 +2012,25 @@ export function ChatPanel() {
   }
 
   async function onThreadExecutionPolicyChange(patch: ThreadExecutionPolicyPatch) {
-    if (!activeThread || activeThread.engineId !== "codex") {
+    if (!activeThread || (activeThread.engineId !== "codex" && activeThread.engineId !== "claude")) {
       return;
     }
 
     const currentThread =
       useThreadStore.getState().threads.find((thread) => thread.id === activeThread.id) ??
       activeThread;
+    const isCodexThread = currentThread.engineId === "codex";
     const nextState = {
       ...readThreadExecutionPolicyState(currentThread),
       ...patch,
     };
     const nextPatch: ThreadExecutionPolicyPatch = { ...patch };
-    const currentStoredNetworkPolicy = readThreadStoredNetworkPolicyValue(currentThread);
+    const currentStoredNetworkPolicy = isCodexThread
+      ? readThreadStoredNetworkPolicyValue(currentThread)
+      : "inherit";
 
     if (
+      isCodexThread &&
       codexExternalSandboxActive &&
       (patch.sandboxMode === "read-only" || patch.sandboxMode === "workspace-write")
     ) {
@@ -1956,7 +2040,12 @@ export function ChatPanel() {
       return;
     }
 
-    if (nextState.sandboxMode === "danger-full-access") {
+    if (!isCodexThread && patch.sandboxMode !== undefined) {
+      toast.error("Sandbox mode overrides are currently only available for Codex threads.");
+      return;
+    }
+
+    if (isCodexThread && nextState.sandboxMode === "danger-full-access") {
       if (patch.networkPolicy !== undefined) {
         delete nextPatch.networkPolicy;
       }
@@ -2905,7 +2994,10 @@ export function ChatPanel() {
                 disabled={availableModels.length === 0}
               />
 
-              {(activeRepo || repos.length > 0 || activeThread?.engineId === "codex") && (
+              {(activeRepo ||
+                repos.length > 0 ||
+                activeThread?.engineId === "codex" ||
+                activeThread?.engineId === "claude") && (
                 <>
                   <div className="chat-toolbar-divider" />
                   <PermissionPicker
@@ -2921,17 +3013,24 @@ export function ChatPanel() {
                           ? (value) => void onWorkspaceTrustLevelChange(value)
                           : undefined
                     }
-                    customPolicyCount={activeThread?.engineId === "codex" ? threadPolicyCustomCount : 0}
+                    customPolicyCount={
+                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                        ? threadPolicyCustomCount
+                        : 0
+                    }
+                    approvalTitle={activeThread?.engineId ? activeThreadApprovalTitle : undefined}
                     approvalValue={
-                      activeThread?.engineId === "codex" ? activeThreadApprovalPolicy : undefined
+                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                        ? activeThreadApprovalPolicy
+                        : undefined
                     }
                     approvalOptions={
-                      activeThread?.engineId === "codex"
-                        ? THREAD_APPROVAL_POLICY_OPTIONS
+                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                        ? activeThreadApprovalOptions
                         : undefined
                     }
                     onApprovalChange={
-                      activeThread?.engineId === "codex"
+                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
                         ? (value) =>
                             void onThreadExecutionPolicyChange({
                               approvalPolicy: value as ThreadApprovalPolicyValue,
@@ -2965,22 +3064,27 @@ export function ChatPanel() {
                         : null
                     }
                     networkValue={
-                      activeThread?.engineId === "codex" ? activeThreadNetworkPolicy : undefined
+                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                        ? activeThreadNetworkPolicy
+                        : undefined
                     }
                     networkOptions={
-                      activeThread?.engineId === "codex"
+                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
                         ? THREAD_NETWORK_POLICY_OPTIONS
                         : undefined
                     }
                     onNetworkChange={
-                      activeThread?.engineId === "codex"
+                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
                         ? (value) =>
                             void onThreadExecutionPolicyChange({
                               networkPolicy: value as ThreadNetworkPolicyValue,
                             })
                         : undefined
                     }
-                    networkDisabled={activeThreadSandboxMode === "danger-full-access"}
+                    networkDisabled={
+                      activeThread?.engineId === "codex" &&
+                      activeThreadSandboxMode === "danger-full-access"
+                    }
                     networkNotice={
                       activeThread?.engineId === "codex" &&
                       activeThreadSandboxMode === "danger-full-access"

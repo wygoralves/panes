@@ -28,6 +28,7 @@ interface PermissionPickerProps {
   trustOptions?: PermissionOption<TrustLevel>[];
   onTrustChange?: (value: TrustLevel) => void;
   customPolicyCount?: number;
+  approvalTitle?: string;
   approvalValue?: string;
   approvalOptions?: PermissionOption[];
   onApprovalChange?: (value: string) => void;
@@ -60,6 +61,7 @@ export function PermissionPicker({
   trustOptions,
   onTrustChange,
   customPolicyCount = 0,
+  approvalTitle = "Approval policy",
   approvalValue,
   approvalOptions,
   onApprovalChange,
@@ -104,7 +106,7 @@ export function PermissionPicker({
       items.push({
         id: "approval",
         icon: <Shield size={13} />,
-        title: "Approval policy",
+        title: approvalTitle,
         currentLabel: findOption(approvalOptions, approvalValue)?.label ?? null,
         options: approvalOptions,
         value: approvalValue,
@@ -145,6 +147,7 @@ export function PermissionPicker({
     trustValue,
     trustOptions,
     onTrustChange,
+    approvalTitle,
     approvalOptions,
     approvalValue,
     onApprovalChange,
@@ -178,7 +181,7 @@ export function PermissionPicker({
     }
     if (approvalValue) {
       const label = findOption(approvalOptions, approvalValue)?.label;
-      if (label) lines.push(`Approvals: ${label}`);
+      if (label) lines.push(`${approvalTitle}: ${label}`);
     }
     if (sandboxValue) {
       lines.push(`Sandbox: ${sandboxSelectedLabel ?? findOption(sandboxOptions, sandboxValue)?.label ?? sandboxValue}`);
@@ -189,6 +192,7 @@ export function PermissionPicker({
     return lines;
   }, [
     approvalOptions,
+    approvalTitle,
     approvalValue,
     networkOptions,
     networkValue,

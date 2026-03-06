@@ -325,19 +325,17 @@ pub async fn set_thread_execution_policy(
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
-    if thread.engine_id != "codex" {
-        return Err(
-            "thread execution policy overrides are currently only supported for Codex threads"
-                .to_string(),
-        );
-    }
-
     let normalized_approval_policy = if update_approval_policy {
-        normalize_thread_approval_policy(approval_policy)?
+        normalize_thread_approval_policy_for_engine(thread.engine_id.as_str(), approval_policy)?
     } else {
         None
     };
     let normalized_sandbox_mode = if update_sandbox_mode {
+        if thread.engine_id != "codex" {
+            return Err(
+                "sandbox mode overrides are currently only supported for Codex threads".to_string(),
+            );
+        }
         normalize_thread_sandbox_mode(sandbox_mode)?
     } else {
         None
@@ -363,12 +361,13 @@ pub async fn set_thread_execution_policy(
 
     if let Some(object) = metadata.as_object_mut() {
         if update_approval_policy {
+            let approval_policy_key = approval_policy_metadata_key(thread.engine_id.as_str());
             match normalized_approval_policy {
                 Some(value) => {
-                    object.insert("sandboxApprovalPolicy".to_string(), json!(value));
+                    object.insert(approval_policy_key.to_string(), json!(value));
                 }
                 None => {
-                    object.remove("sandboxApprovalPolicy");
+                    object.remove(approval_policy_key);
                 }
             }
         }
@@ -493,7 +492,17 @@ fn err_to_string(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
-fn normalize_thread_approval_policy(value: Option<String>) -> Result<Option<String>, String> {
+fn approval_policy_metadata_key(engine_id: &str) -> &'static str {
+    match engine_id {
+        "claude" => "claudePermissionMode",
+        _ => "sandboxApprovalPolicy",
+    }
+}
+
+fn normalize_thread_approval_policy_for_engine(
+    engine_id: &str,
+    value: Option<String>,
+) -> Result<Option<String>, String> {
     let normalized = value
         .as_deref()
         .map(str::trim)
@@ -504,11 +513,19 @@ fn normalize_thread_approval_policy(value: Option<String>) -> Result<Option<Stri
         return Ok(None);
     };
 
-    match normalized.as_str() {
-        "untrusted" | "on-failure" | "on-request" | "never" => Ok(Some(normalized)),
-        _ => Err(format!(
-            "invalid approval policy `{normalized}`. expected one of: untrusted, on-failure, on-request, never"
-        )),
+    match engine_id {
+        "claude" => match normalized.as_str() {
+            "restricted" | "standard" | "trusted" => Ok(Some(normalized)),
+            _ => Err(format!(
+                "invalid Claude permission mode `{normalized}`. expected one of: restricted, standard, trusted"
+            )),
+        },
+        _ => match normalized.as_str() {
+            "untrusted" | "on-failure" | "on-request" | "never" => Ok(Some(normalized)),
+            _ => Err(format!(
+                "invalid approval policy `{normalized}`. expected one of: untrusted, on-failure, on-request, never"
+            )),
+        },
     }
 }
 
@@ -590,5 +607,28 @@ mod tests {
             normalize_thread_sandbox_mode(Some("read_only".to_string())).unwrap(),
             Some("read-only".to_string())
         );
+    }
+
+    #[test]
+    fn normalize_thread_approval_policy_accepts_claude_modes() {
+        assert_eq!(
+            normalize_thread_approval_policy_for_engine("claude", Some("trusted".to_string()))
+                .unwrap(),
+            Some("trusted".to_string())
+        );
+        assert_eq!(
+            normalize_thread_approval_policy_for_engine("claude", Some("STANDARD".to_string()))
+                .unwrap(),
+            Some("standard".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_thread_approval_policy_rejects_codex_values_for_claude() {
+        assert!(normalize_thread_approval_policy_for_engine(
+            "claude",
+            Some("on-request".to_string())
+        )
+        .is_err());
     }
 }
