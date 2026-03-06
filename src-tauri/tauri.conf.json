@@ -4,8 +4,8 @@
   "version": "0.25.0",
   "identifier": "com.panes.app",
   "build": {
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build:desktop",
+    "beforeDevCommand": "pnpm run dev",
+    "beforeBuildCommand": "pnpm run build:desktop",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
