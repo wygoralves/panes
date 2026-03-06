@@ -3248,6 +3248,135 @@ button, input, textarea, select {
   outline-offset: 2px;
 }
 
+/* ── Git Remotes Modal ───────────────────────────────────────────── */
+
+.git-remotes-modal {
+  width: 440px;
+  max-width: calc(100vw - 48px);
+  max-height: 70vh;
+  overflow: auto;
+  border-radius: var(--radius-lg);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7);
+  animation: confirm-dialog-in 200ms var(--ease-out) both;
+  display: flex;
+  flex-direction: column;
+}
+
+.git-remotes-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.git-remotes-header-icon {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.git-remotes-title {
+  flex: 1;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.git-remotes-close {
+  padding: 2px 4px;
+}
+
+.git-remotes-list {
+  flex: 1;
+  overflow: auto;
+}
+
+.git-remotes-empty {
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 16px;
+  margin: 0;
+}
+.git-remotes-error {
+  font-size: 12px;
+  color: var(--danger);
+  padding: 16px;
+  margin: 0;
+}
+
+.git-remotes-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.git-remotes-row:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+.git-remotes-name {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-1);
+  min-width: 56px;
+  flex-shrink: 0;
+}
+.git-remotes-url {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+.git-remotes-row-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.git-remotes-row-actions .btn {
+  padding: 4px 5px;
+}
+.git-remotes-row:hover .git-remotes-row-actions {
+  opacity: 1;
+}
+
+.git-remotes-add-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-2);
+  padding: 10px 16px;
+  width: 100%;
+  border-radius: 0;
+}
+
+.git-remotes-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+.git-remotes-add-inputs {
+  display: flex;
+  gap: 8px;
+}
+.git-remotes-add-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.git-remotes-add-actions .btn {
+  font-size: 12px;
+}
+
 /* ── File Editor ─────────────────────────────────────────────────── */
 
 .editor-tabs-bar {

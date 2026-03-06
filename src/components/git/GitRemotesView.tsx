@@ -130,132 +130,107 @@ export function GitRemotesView({ repo, onClose }: Props) {
   return (
     <div className="confirm-dialog-backdrop" onMouseDown={onClose}>
       <div
-        className="confirm-dialog-card"
-        style={{ width: 420, maxHeight: "70vh", overflow: "auto", textAlign: "left" }}
+        className="git-remotes-modal"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
-          <Link size={16} style={{ marginRight: 8, color: "var(--text-2)" }} />
-          <h3 style={{ flex: 1, margin: 0, fontSize: 14, fontWeight: 600 }}>
-            Manage Remotes
-          </h3>
-          <button type="button" className="btn btn-ghost" onClick={onClose} style={{ padding: "2px 4px" }}>
+        <div className="git-remotes-header">
+          <Link size={14} className="git-remotes-header-icon" />
+          <h3 className="git-remotes-title">Manage Remotes</h3>
+          <button type="button" className="btn btn-ghost git-remotes-close" onClick={onClose}>
             <X size={14} />
           </button>
         </div>
 
-        {remotesLoading && (
-          <p style={{ fontSize: 12, color: "var(--text-3)", margin: "8px 0" }}>Loading...</p>
-        )}
+        <div className="git-remotes-list">
+          {remotesLoading && (
+            <p className="git-remotes-empty">Loading...</p>
+          )}
 
-        {!remotesLoading && remotesRepoPath === repo.path && remotesError && (
-          <p style={{ fontSize: 12, color: "var(--danger)", margin: "8px 0" }}>
-            {remotesError}
-          </p>
-        )}
+          {!remotesLoading && remotesRepoPath === repo.path && remotesError && (
+            <p className="git-remotes-error">{remotesError}</p>
+          )}
 
-        {!remotesLoading && !remotesError && visibleRemotes.length === 0 && (
-          <p style={{ fontSize: 12, color: "var(--text-3)", margin: "8px 0" }}>
-            No remotes configured.
-          </p>
-        )}
+          {!remotesLoading && !remotesError && visibleRemotes.length === 0 && (
+            <p className="git-remotes-empty">No remotes configured.</p>
+          )}
 
-        {visibleRemotes.map((remote) => (
-          <div
-            key={remote.name}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "6px 0",
-              borderBottom: "1px solid rgba(255,255,255,0.04)",
-            }}
-          >
-            {renamingRemote === remote.name ? (
-              <input
-                autoFocus
-                className="git-input"
-                value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void handleRename(remote.name);
-                  }
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    cancelRename();
-                  }
-                }}
-                onBlur={cancelRename}
-                style={{ flex: 1, fontSize: 12 }}
-              />
-            ) : (
-              <>
-                <span style={{ fontWeight: 600, fontSize: 12, minWidth: 56, flexShrink: 0 }}>
-                  {remote.name}
-                </span>
-                <span
-                  style={{
-                    flex: 1,
-                    fontSize: 11,
-                    color: "var(--text-3)",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+          {visibleRemotes.map((remote) => (
+            <div key={remote.name} className="git-remotes-row">
+              {renamingRemote === remote.name ? (
+                <input
+                  autoFocus
+                  className="git-inline-input"
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void handleRename(remote.name);
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      cancelRename();
+                    }
                   }}
-                  title={remote.url}
-                >
-                  {remote.url}
-                </span>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  title="Rename"
-                  style={{ padding: "2px 4px" }}
-                  onClick={() => {
-                    setRenamingRemote(remote.name);
-                    setRenameValue(remote.name);
-                  }}
-                >
-                  <Pencil size={12} />
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  title="Remove"
-                  style={{ padding: "2px 4px" }}
-                  onClick={() => setConfirmDelete(remote.name)}
-                >
-                  <Trash2 size={12} />
-                </button>
-              </>
-            )}
-          </div>
-        ))}
+                  onBlur={cancelRename}
+                />
+              ) : (
+                <>
+                  <span className="git-remotes-name">{remote.name}</span>
+                  <span className="git-remotes-url" title={remote.url}>
+                    {remote.url}
+                  </span>
+                  <div className="git-remotes-row-actions">
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      title="Rename"
+                      onClick={() => {
+                        setRenamingRemote(remote.name);
+                        setRenameValue(remote.name);
+                      }}
+                    >
+                      <Pencil size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      title="Remove"
+                      onClick={() => setConfirmDelete(remote.name)}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
 
         {showAdd ? (
-          <div style={{ marginTop: 12 }}>
-            <input
-              autoFocus
-              className="git-input"
-              placeholder="Name (e.g. origin)"
-              value={addName}
-              onChange={(e) => setAddName(e.target.value)}
-              style={{ display: "block", width: "100%", fontSize: 12, marginBottom: 6 }}
-            />
-            <input
-              className="git-input"
-              placeholder="URL (e.g. https://github.com/user/repo.git)"
-              value={addUrl}
-              onChange={(e) => setAddUrl(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void handleAdd();
-              }}
-              style={{ display: "block", width: "100%", fontSize: 12, marginBottom: 8 }}
-            />
-            <div style={{ display: "flex", gap: 8 }}>
+          <div className="git-remotes-add-form">
+            <div className="git-remotes-add-inputs">
+              <input
+                autoFocus
+                className="git-inline-input"
+                placeholder="Name"
+                value={addName}
+                onChange={(e) => setAddName(e.target.value)}
+                style={{ width: 100, flexShrink: 0 }}
+              />
+              <input
+                className="git-inline-input"
+                placeholder="https://github.com/user/repo.git"
+                value={addUrl}
+                onChange={(e) => setAddUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleAdd();
+                }}
+                style={{ flex: 1 }}
+              />
+            </div>
+            <div className="git-remotes-add-actions">
               <button
                 type="button"
                 className="btn btn-ghost"
@@ -273,21 +248,19 @@ export function GitRemotesView({ repo, onClose }: Props) {
                 disabled={addLoading || !addName.trim() || !addUrl.trim()}
                 onClick={() => void handleAdd()}
               >
-                {addLoading ? "Adding..." : "Add Remote"}
+                {addLoading ? "Adding..." : "Add"}
               </button>
             </div>
           </div>
         ) : (
           <button
             type="button"
-            className="btn btn-ghost"
-            style={{ marginTop: 8, fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}
+            className="btn btn-ghost git-remotes-add-btn"
             onClick={() => setShowAdd(true)}
           >
             <Plus size={13} /> Add Remote
           </button>
         )}
-
       </div>
 
       {createPortal(
