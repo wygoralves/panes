@@ -9,6 +9,18 @@ type PermissionOption<T extends string = string> = {
   description?: string;
 };
 
+type RailItem = {
+  id: string;
+  icon: ReactNode;
+  title: string;
+  currentLabel: string | null;
+  options: PermissionOption[];
+  value: string;
+  onChange?: (value: string) => void;
+  disabled?: boolean;
+  note?: string | null;
+};
+
 interface PermissionPickerProps {
   disabled?: boolean;
   trustScopeLabel?: string;
@@ -63,6 +75,7 @@ export function PermissionPicker({
   networkNotice,
 }: PermissionPickerProps) {
   const [open, setOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState<string>("");
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ bottom: 0, left: 0 });
@@ -71,39 +84,115 @@ export function PermissionPicker({
     () => findOption(trustOptions, trustValue),
     [trustOptions, trustValue],
   );
-  const approvalOption = useMemo(
-    () => findOption(approvalOptions, approvalValue),
-    [approvalOptions, approvalValue],
-  );
-  const sandboxOption = useMemo(
-    () => findOption(sandboxOptions, sandboxValue),
-    [sandboxOptions, sandboxValue],
-  );
-  const networkOption = useMemo(
-    () => findOption(networkOptions, networkValue),
-    [networkOptions, networkValue],
-  );
+
+  const railItems = useMemo<RailItem[]>(() => {
+    const items: RailItem[] = [];
+
+    if (trustScopeLabel && trustValue && trustOptions && onTrustChange) {
+      items.push({
+        id: "trust",
+        icon: <Shield size={13} />,
+        title: trustScopeLabel,
+        currentLabel: findOption(trustOptions, trustValue)?.label ?? null,
+        options: trustOptions as PermissionOption[],
+        value: trustValue,
+        onChange: (v) => onTrustChange(v as TrustLevel),
+      });
+    }
+
+    if (approvalOptions && approvalValue !== undefined) {
+      items.push({
+        id: "approval",
+        icon: <Shield size={13} />,
+        title: "Approval policy",
+        currentLabel: findOption(approvalOptions, approvalValue)?.label ?? null,
+        options: approvalOptions,
+        value: approvalValue,
+        onChange: onApprovalChange,
+      });
+    }
+
+    if (sandboxOptions && sandboxValue !== undefined) {
+      items.push({
+        id: "sandbox",
+        icon: <SquareTerminal size={13} />,
+        title: "Sandbox mode",
+        currentLabel: sandboxSelectedLabel ?? findOption(sandboxOptions, sandboxValue)?.label ?? null,
+        options: sandboxOptions,
+        value: sandboxValue,
+        onChange: onSandboxChange,
+        note: sandboxNotice,
+      });
+    }
+
+    if (networkOptions && networkValue !== undefined) {
+      items.push({
+        id: "network",
+        icon: <Monitor size={13} />,
+        title: "Network access",
+        currentLabel: findOption(networkOptions, networkValue)?.label ?? null,
+        options: networkOptions,
+        value: networkValue,
+        onChange: onNetworkChange,
+        disabled: networkDisabled,
+        note: networkNotice,
+      });
+    }
+
+    return items;
+  }, [
+    trustScopeLabel,
+    trustValue,
+    trustOptions,
+    onTrustChange,
+    approvalOptions,
+    approvalValue,
+    onApprovalChange,
+    sandboxOptions,
+    sandboxValue,
+    onSandboxChange,
+    sandboxSelectedLabel,
+    sandboxNotice,
+    networkOptions,
+    networkValue,
+    onNetworkChange,
+    networkDisabled,
+    networkNotice,
+  ]);
+
+  // Default to first section when opened; reset when closed
+  useEffect(() => {
+    if (open) {
+      if (railItems.length > 0 && !activeSection) {
+        setActiveSection(railItems[0].id);
+      }
+    } else {
+      setActiveSection("");
+    }
+  }, [open, railItems, activeSection]);
 
   const summaryLines = useMemo(() => {
     const lines: string[] = [];
     if (trustScopeLabel && trustOption) {
       lines.push(`${trustScopeLabel}: ${trustOption.label}`);
     }
-    if (approvalOption) {
-      lines.push(`Approvals: ${approvalOption.label}`);
+    if (approvalValue) {
+      const label = findOption(approvalOptions, approvalValue)?.label;
+      if (label) lines.push(`Approvals: ${label}`);
     }
     if (sandboxValue) {
-      lines.push(`Sandbox: ${sandboxSelectedLabel ?? sandboxOption?.label ?? sandboxValue}`);
+      lines.push(`Sandbox: ${sandboxSelectedLabel ?? findOption(sandboxOptions, sandboxValue)?.label ?? sandboxValue}`);
     }
     if (networkValue) {
-      lines.push(`Network: ${networkOption?.label ?? networkValue}`);
+      lines.push(`Network: ${findOption(networkOptions, networkValue)?.label ?? networkValue}`);
     }
     return lines;
   }, [
-    approvalOption,
-    networkOption,
+    approvalOptions,
+    approvalValue,
+    networkOptions,
     networkValue,
-    sandboxOption,
+    sandboxOptions,
     sandboxSelectedLabel,
     sandboxValue,
     trustOption,
@@ -116,8 +205,7 @@ export function PermissionPicker({
     }
 
     const rect = triggerRef.current.getBoundingClientRect();
-    const popoverWidth = Math.min(420, window.innerWidth - 16);
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - popoverWidth - 8));
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - 460));
 
     setPos({
       bottom: window.innerHeight - rect.top + 6,
@@ -164,7 +252,7 @@ export function PermissionPicker({
   }, [disabled]);
 
   const title = summaryLines.length > 0 ? summaryLines.join(" | ") : "Permissions";
-  const hasThreadControls = Boolean(approvalOptions && sandboxOptions && networkOptions);
+  const activeItem = railItems.find((i) => i.id === activeSection) ?? null;
 
   const popover = open
     ? createPortal(
@@ -177,57 +265,64 @@ export function PermissionPicker({
             left: pos.left,
           }}
         >
-          <div className="pp-header">
-            <div className="pp-header-title">
-              <Shield size={13} />
-              <span>Permissions</span>
+          {/* Left rail */}
+          <div className="pp-rail">
+            <div className="pp-rail-label">Policy</div>
+            {railItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`pp-rail-item${activeSection === item.id ? " pp-rail-item-active" : ""}`}
+                onClick={() => setActiveSection(item.id)}
+              >
+                <span className="pp-rail-item-icon">{item.icon}</span>
+                <span className="pp-rail-item-name">{item.title}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Right panel */}
+          {activeItem ? (
+            <div className="pp-panel">
+              <div className="pp-panel-header">
+                <div className="pp-panel-title">
+                  <span>{activeItem.title}</span>
+                </div>
+                {customPolicyCount > 0 ? (
+                  <span className="pp-header-badge">Custom</span>
+                ) : null}
+              </div>
+              <div className="pp-panel-content">
+                <div className="pp-options">
+                  {activeItem.options.map((option) => {
+                    const selected = option.value === activeItem.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`pp-option${selected ? " pp-option-selected" : ""}`}
+                        onClick={() => activeItem.onChange?.(option.value)}
+                        disabled={activeItem.disabled}
+                      >
+                        <div className="pp-option-copy">
+                          <span className="pp-option-label">{option.label}</span>
+                          {option.description ? (
+                            <span className="pp-option-description">{option.description}</span>
+                          ) : null}
+                        </div>
+                        {selected ? (
+                          <Check size={13} className="pp-option-check" />
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+                {activeItem.note ? (
+                  <p className="pp-section-note">{activeItem.note}</p>
+                ) : null}
+              </div>
             </div>
-            {customPolicyCount > 0 ? (
-              <span className="pp-header-badge">Custom thread policy</span>
-            ) : null}
-          </div>
-
-          <div className="pp-sections">
-            {trustScopeLabel && trustValue && trustOptions && onTrustChange ? (
-              <PolicySection
-                icon={<Shield size={13} />}
-                title={trustScopeLabel}
-                value={trustValue}
-                options={trustOptions}
-                onChange={(value) => onTrustChange(value as TrustLevel)}
-              />
-            ) : null}
-
-            {hasThreadControls ? (
-              <>
-                <PolicySection
-                  icon={<Shield size={13} />}
-                  title="Approval policy"
-                  value={approvalValue ?? ""}
-                  options={approvalOptions ?? []}
-                  onChange={onApprovalChange}
-                />
-                <PolicySection
-                  icon={<SquareTerminal size={13} />}
-                  title="Sandbox mode"
-                  value={sandboxValue ?? ""}
-                  valueLabel={sandboxSelectedLabel ?? undefined}
-                  options={sandboxOptions ?? []}
-                  onChange={onSandboxChange}
-                  note={sandboxNotice}
-                />
-                <PolicySection
-                  icon={<Monitor size={13} />}
-                  title="Network access"
-                  value={networkValue ?? ""}
-                  options={networkOptions ?? []}
-                  onChange={onNetworkChange}
-                  disabled={networkDisabled}
-                  note={networkNotice}
-                />
-              </>
-            ) : null}
-          </div>
+          ) : null}
         </div>,
         document.body,
       )
@@ -260,75 +355,5 @@ export function PermissionPicker({
       </button>
       {popover}
     </div>
-  );
-}
-
-function PolicySection({
-  icon,
-  title,
-  value,
-  valueLabel,
-  options,
-  onChange,
-  disabled = false,
-  note,
-}: {
-  icon: ReactNode;
-  title: string;
-  value: string;
-  valueLabel?: string;
-  options: PermissionOption[];
-  onChange?: (value: string) => void;
-  disabled?: boolean;
-  note?: string | null;
-}) {
-  const selectedOption = findOption(options, value);
-  const currentLabel = valueLabel ?? selectedOption?.label ?? value;
-  const currentDescription = selectedOption?.description;
-
-  return (
-    <section className="pp-section">
-      <div className="pp-section-header">
-        <div className="pp-section-title">
-          <span className="pp-section-icon">{icon}</span>
-          <span>{title}</span>
-        </div>
-        {currentLabel ? (
-          <span className="pp-section-value">{currentLabel}</span>
-        ) : null}
-      </div>
-
-      {currentDescription ? (
-        <p className="pp-section-description">{currentDescription}</p>
-      ) : null}
-
-      <div className="pp-options">
-        {options.map((option) => {
-          const selected = option.value === value;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              className={`pp-option${selected ? " pp-option-selected" : ""}`}
-              onClick={() => onChange?.(option.value)}
-              disabled={disabled}
-              title={option.description}
-            >
-              <div className="pp-option-copy">
-                <span className="pp-option-label">{option.label}</span>
-                {option.description ? (
-                  <span className="pp-option-description">{option.description}</span>
-                ) : null}
-              </div>
-              {selected ? (
-                <Check size={13} className="pp-option-check" />
-              ) : null}
-            </button>
-          );
-        })}
-      </div>
-
-      {note ? <p className="pp-section-note">{note}</p> : null}
-    </section>
   );
 }
