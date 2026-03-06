@@ -1,5 +1,5 @@
 use chrono::Utc;
-use serde_json::{json, Value};
+use serde_json::json;
 use tauri::State;
 
 use crate::{db, models::ThreadDto, state::AppState};
@@ -262,22 +262,17 @@ pub async fn archive_thread(state: State<'_, AppState>, thread_id: String) -> Re
             log::warn!("failed to interrupt thread before archive: {error}");
         }
 
+        state
+            .engines
+            .archive_thread(&thread)
+            .await
+            .map_err(err_to_string)?;
+
         run_db(db, {
             let thread_id = thread_id.clone();
             move |db| db::threads::archive_thread(db, &thread_id)
         })
         .await?;
-
-        let engines = state.engines.clone();
-        let thread_for_sync = thread.clone();
-        tokio::spawn(async move {
-            if let Err(error) = engines.archive_thread(&thread_for_sync).await {
-                log::warn!(
-                    "archived thread {} locally but failed to archive engine runtime state: {error}",
-                    thread_for_sync.id
-                );
-            }
-        });
 
         Ok(())
     }
@@ -300,18 +295,13 @@ pub async fn restore_thread(
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
-    let restored = run_db(db, move |db| db::threads::restore_thread(db, &thread_id)).await?;
+    state
+        .engines
+        .unarchive_thread(&thread)
+        .await
+        .map_err(err_to_string)?;
 
-    let engines = state.engines.clone();
-    let thread_for_sync = thread.clone();
-    tokio::spawn(async move {
-        if let Err(error) = engines.unarchive_thread(&thread_for_sync).await {
-            log::warn!(
-                "restored thread {} locally but failed to restore engine runtime state: {error}",
-                thread_for_sync.id
-            );
-        }
-    });
+    let restored = run_db(db, move |db| db::threads::restore_thread(db, &thread_id)).await?;
 
     Ok(restored)
 }
@@ -352,8 +342,6 @@ pub async fn set_thread_execution_policy(
     } else {
         None
     };
-    let previous_sandbox_mode =
-        thread_sandbox_mode(thread.engine_metadata.as_ref()).map(str::to_owned);
     let external_sandbox_active = state.engines.codex_uses_external_sandbox().await;
 
     if external_sandbox_active
@@ -367,12 +355,6 @@ pub async fn set_thread_execution_policy(
                 .to_string(),
         );
     }
-    let clear_network_override = should_clear_network_override_when_leaving_full_access(
-        previous_sandbox_mode.as_deref(),
-        update_sandbox_mode,
-        normalized_sandbox_mode.as_deref(),
-        update_allow_network,
-    );
 
     let mut metadata = thread.engine_metadata.unwrap_or_else(|| json!({}));
     if !metadata.is_object() {
@@ -402,10 +384,6 @@ pub async fn set_thread_execution_policy(
             }
         }
 
-        if clear_network_override {
-            object.remove("sandboxAllowNetwork");
-        }
-
         if update_allow_network {
             match allow_network {
                 Some(value) => {
@@ -417,8 +395,6 @@ pub async fn set_thread_execution_policy(
             }
         }
     }
-
-    canonicalize_thread_execution_metadata(&mut metadata);
 
     run_db(db.clone(), {
         let thread_id = thread_id.clone();
@@ -563,41 +539,12 @@ fn normalize_thread_sandbox_mode(value: Option<String>) -> Result<Option<String>
     Ok(Some(canonical.to_string()))
 }
 
-fn thread_sandbox_mode(metadata: Option<&Value>) -> Option<&str> {
+#[cfg(test)]
+fn thread_allow_network(metadata: Option<&serde_json::Value>) -> Option<bool> {
     metadata
-        .and_then(Value::as_object)
-        .and_then(|value| value.get("sandboxMode"))
-        .and_then(Value::as_str)
-}
-
-fn thread_allow_network(metadata: Option<&Value>) -> Option<bool> {
-    metadata
-        .and_then(Value::as_object)
+        .and_then(serde_json::Value::as_object)
         .and_then(|value| value.get("sandboxAllowNetwork"))
-        .and_then(Value::as_bool)
-}
-
-fn canonicalize_thread_execution_metadata(metadata: &mut Value) {
-    let sandbox_mode = thread_sandbox_mode(Some(metadata)).map(str::to_owned);
-    let allow_network = thread_allow_network(Some(metadata));
-
-    if sandbox_mode.as_deref() == Some("danger-full-access") && allow_network == Some(false) {
-        if let Some(object) = metadata.as_object_mut() {
-            object.insert("sandboxAllowNetwork".to_string(), json!(true));
-        }
-    }
-}
-
-fn should_clear_network_override_when_leaving_full_access(
-    previous_sandbox_mode: Option<&str>,
-    update_sandbox_mode: bool,
-    next_sandbox_mode: Option<&str>,
-    update_allow_network: bool,
-) -> bool {
-    update_sandbox_mode
-        && !update_allow_network
-        && previous_sandbox_mode == Some("danger-full-access")
-        && next_sandbox_mode != Some("danger-full-access")
+        .and_then(serde_json::Value::as_bool)
 }
 
 fn normalize_thread_title(raw: &str) -> Result<String, String> {
@@ -624,15 +571,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn canonicalize_full_access_enables_network() {
-        let mut metadata = json!({
+    fn thread_allow_network_reads_explicit_override_in_full_access_mode() {
+        let metadata = json!({
             "sandboxMode": "danger-full-access",
             "sandboxAllowNetwork": false,
         });
 
-        canonicalize_thread_execution_metadata(&mut metadata);
-
-        assert_eq!(thread_allow_network(Some(&metadata)), Some(true));
+        assert_eq!(thread_allow_network(Some(&metadata)), Some(false));
     }
 
     #[test]
@@ -645,27 +590,5 @@ mod tests {
             normalize_thread_sandbox_mode(Some("read_only".to_string())).unwrap(),
             Some("read-only".to_string())
         );
-    }
-
-    #[test]
-    fn leaving_full_access_clears_network_override_when_network_is_not_updated() {
-        assert!(should_clear_network_override_when_leaving_full_access(
-            Some("danger-full-access"),
-            true,
-            None,
-            false,
-        ));
-        assert!(should_clear_network_override_when_leaving_full_access(
-            Some("danger-full-access"),
-            true,
-            Some("workspace-write"),
-            false,
-        ));
-        assert!(!should_clear_network_override_when_leaving_full_access(
-            Some("danger-full-access"),
-            true,
-            Some("workspace-write"),
-            true,
-        ));
     }
 }

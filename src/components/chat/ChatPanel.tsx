@@ -38,8 +38,8 @@ import {
   parseProposedNetworkPolicyAmendments,
   requiresCustomApprovalPayload,
 } from "./toolInputApproval";
-import { Dropdown } from "../shared/Dropdown";
 import { ModelPicker } from "./ModelPicker";
+import { PermissionPicker } from "./PermissionPicker";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { getHarnessIcon } from "../shared/HarnessLogos";
@@ -128,26 +128,104 @@ type ThreadExecutionPolicyPatch = Partial<{
   networkPolicy: ThreadNetworkPolicyValue;
 }>;
 
-const THREAD_APPROVAL_POLICY_OPTIONS: Array<{ value: ThreadApprovalPolicyValue; label: string }> = [
-  { value: "inherit", label: "Auto" },
-  { value: "untrusted", label: "Untrusted" },
-  { value: "on-request", label: "On-request" },
-  { value: "on-failure", label: "On-failure" },
-  { value: "never", label: "Never" },
-];
+const TRUST_LEVEL_OPTIONS = [
+  {
+    value: "trusted",
+    label: "Trusted",
+    description: "On-request approvals with network access enabled.",
+  },
+  {
+    value: "standard",
+    label: "Standard",
+    description: "On-request approvals with network access disabled.",
+  },
+  {
+    value: "restricted",
+    label: "Restricted",
+    description: "Treat commands as untrusted and keep execution constrained.",
+  },
+] satisfies Array<{ value: TrustLevel; label: string; description: string }>;
 
-const THREAD_SANDBOX_MODE_OPTIONS: Array<{ value: ThreadSandboxModeValue; label: string }> = [
-  { value: "inherit", label: "Auto" },
-  { value: "read-only", label: "Read-only" },
-  { value: "workspace-write", label: "Workspace-write" },
-  { value: "danger-full-access", label: "Full access" },
-];
+const THREAD_APPROVAL_POLICY_OPTIONS = [
+  {
+    value: "inherit",
+    label: "Auto",
+    description: "Follow the repo trust policy.",
+  },
+  {
+    value: "untrusted",
+    label: "Untrusted",
+    description: "Force strict approval handling for the thread.",
+  },
+  {
+    value: "on-request",
+    label: "On-request",
+    description: "Ask before sensitive actions.",
+  },
+  {
+    value: "on-failure",
+    label: "On-failure",
+    description: "Only stop for approval after a failure.",
+  },
+  {
+    value: "never",
+    label: "Never",
+    description: "Continue automatically without approval prompts.",
+  },
+] satisfies Array<{
+  value: ThreadApprovalPolicyValue;
+  label: string;
+  description: string;
+}>;
 
-const THREAD_NETWORK_POLICY_OPTIONS: Array<{ value: ThreadNetworkPolicyValue; label: string }> = [
-  { value: "inherit", label: "Auto" },
-  { value: "enabled", label: "Enabled" },
-  { value: "restricted", label: "Restricted" },
-];
+const THREAD_SANDBOX_MODE_OPTIONS = [
+  {
+    value: "inherit",
+    label: "Auto",
+    description: "Use the engine default sandbox.",
+  },
+  {
+    value: "read-only",
+    label: "Read-only",
+    description: "Allow reads only. No file writes.",
+  },
+  {
+    value: "workspace-write",
+    label: "Workspace-write",
+    description: "Allow writes inside the workspace only.",
+  },
+  {
+    value: "danger-full-access",
+    label: "Full access",
+    description: "Unrestricted filesystem access for the thread.",
+  },
+] satisfies Array<{
+  value: ThreadSandboxModeValue;
+  label: string;
+  description: string;
+}>;
+
+const THREAD_NETWORK_POLICY_OPTIONS = [
+  {
+    value: "inherit",
+    label: "Auto",
+    description: "Follow the current trust and sandbox defaults.",
+  },
+  {
+    value: "enabled",
+    label: "Enabled",
+    description: "Allow network access for this thread.",
+  },
+  {
+    value: "restricted",
+    label: "Restricted",
+    description: "Block outbound network access for this thread.",
+  },
+] satisfies Array<{
+  value: ThreadNetworkPolicyValue;
+  label: string;
+  description: string;
+}>;
 
 function isCodexExternalSandboxWarning(message?: string): boolean {
   if (typeof message !== "string") {
@@ -346,11 +424,7 @@ function readThreadSandboxModeValue(thread: Thread | null): ThreadSandboxModeVal
   return "inherit";
 }
 
-function readThreadNetworkPolicyValue(thread: Thread | null): ThreadNetworkPolicyValue {
-  if (readThreadSandboxModeValue(thread) === "danger-full-access") {
-    return "enabled";
-  }
-
+function readThreadStoredNetworkPolicyValue(thread: Thread | null): ThreadNetworkPolicyValue {
   const value = thread?.engineMetadata?.sandboxAllowNetwork;
   if (value === true) {
     return "enabled";
@@ -361,31 +435,24 @@ function readThreadNetworkPolicyValue(thread: Thread | null): ThreadNetworkPolic
   return "inherit";
 }
 
-function canonicalizeThreadExecutionPolicyState(state: {
-  approvalPolicy: ThreadApprovalPolicyValue;
-  sandboxMode: ThreadSandboxModeValue;
-  networkPolicy: ThreadNetworkPolicyValue;
-}): {
+function readThreadNetworkPolicyValue(thread: Thread | null): ThreadNetworkPolicyValue {
+  if (readThreadSandboxModeValue(thread) === "danger-full-access") {
+    return "enabled";
+  }
+
+  return readThreadStoredNetworkPolicyValue(thread);
+}
+
+function readThreadExecutionPolicyState(thread: Thread | null): {
   approvalPolicy: ThreadApprovalPolicyValue;
   sandboxMode: ThreadSandboxModeValue;
   networkPolicy: ThreadNetworkPolicyValue;
 } {
-  if (state.sandboxMode === "danger-full-access") {
-    return {
-      ...state,
-      networkPolicy: "enabled",
-    };
-  }
-
-  return state;
-}
-
-function readThreadExecutionPolicyState(thread: Thread | null) {
-  return canonicalizeThreadExecutionPolicyState({
+  return {
     approvalPolicy: readThreadApprovalPolicyValue(thread),
     sandboxMode: readThreadSandboxModeValue(thread),
-    networkPolicy: readThreadNetworkPolicyValue(thread),
-  });
+    networkPolicy: readThreadStoredNetworkPolicyValue(thread),
+  };
 }
 
 function applyThreadExecutionPolicyPatch(
@@ -393,10 +460,10 @@ function applyThreadExecutionPolicyPatch(
   patch: ThreadExecutionPolicyPatch,
 ): Thread {
   const metadata = { ...(thread.engineMetadata ?? {}) };
-  const nextState = canonicalizeThreadExecutionPolicyState({
+  const nextState = {
     ...readThreadExecutionPolicyState(thread),
     ...patch,
-  });
+  };
 
   if (nextState.approvalPolicy === "inherit") {
     delete metadata.sandboxApprovalPolicy;
@@ -410,9 +477,7 @@ function applyThreadExecutionPolicyPatch(
     metadata.sandboxMode = nextState.sandboxMode;
   }
 
-  if (nextState.sandboxMode === "danger-full-access") {
-    metadata.sandboxAllowNetwork = true;
-  } else if (nextState.networkPolicy === "inherit") {
+  if (nextState.networkPolicy === "inherit") {
     delete metadata.sandboxAllowNetwork;
   } else {
     metadata.sandboxAllowNetwork = nextState.networkPolicy === "enabled";
@@ -1054,14 +1119,10 @@ export function ChatPanel() {
   }, [activeThread?.engineId, activeThread?.modelId, engines, selectedEngine, selectedEngineId, selectedModel?.id]);
 
   function trustLevelTooltip(level: TrustLevel): string {
-    switch (level) {
-      case "trusted":
-        return "Trusted — approvals on-request, network requests enabled";
-      case "restricted":
-        return "Restricted — untrusted, safe commands only";
-      default:
-        return "Standard — approvals on-request, network requests disabled";
-    }
+    return (
+      TRUST_LEVEL_OPTIONS.find((option) => option.value === level)?.description ??
+      "Permission policy"
+    );
   }
 
   const activeThreadApprovalPolicy = readThreadApprovalPolicyValue(activeThread);
@@ -1083,6 +1144,12 @@ export function ChatPanel() {
   const activeThreadSandboxModeSupported = threadSandboxModeOptions.some(
     (option) => option.value === activeThreadSandboxMode,
   );
+  const threadPolicyCustomCount =
+    (activeThreadApprovalPolicy !== "inherit" ? 1 : 0) +
+    (activeThreadSandboxMode !== "inherit" ? 1 : 0) +
+    (activeThreadSandboxMode !== "danger-full-access" && activeThreadNetworkPolicy !== "inherit"
+      ? 1
+      : 0);
 
   const workspaceTrustLevel: TrustLevel = useMemo(() => {
     if (!repos.length) {
@@ -1755,7 +1822,12 @@ export function ChatPanel() {
       useThreadStore.getState().threads.find((thread) => thread.id === targetThreadId) ??
       activeThread;
 
-    if (currentThread && currentThread.repoId === null && repos.length > 1) {
+    if (
+      currentThread &&
+      currentThread.repoId === null &&
+      repos.length > 1 &&
+      readThreadSandboxModeValue(currentThread) !== "read-only"
+    ) {
       const optIn = Boolean(currentThread.engineMetadata?.workspaceWriteOptIn);
       if (!optIn) {
         const repoNames = repos.map((repo) => repo.name).join(", ");
@@ -1867,12 +1939,12 @@ export function ChatPanel() {
     const currentThread =
       useThreadStore.getState().threads.find((thread) => thread.id === activeThread.id) ??
       activeThread;
-    const nextState = canonicalizeThreadExecutionPolicyState({
+    const nextState = {
       ...readThreadExecutionPolicyState(currentThread),
       ...patch,
-    });
+    };
     const nextPatch: ThreadExecutionPolicyPatch = { ...patch };
-    const currentSandboxMode = readThreadSandboxModeValue(currentThread);
+    const currentStoredNetworkPolicy = readThreadStoredNetworkPolicyValue(currentThread);
 
     if (
       codexExternalSandboxActive &&
@@ -1884,24 +1956,18 @@ export function ChatPanel() {
       return;
     }
 
-    if (
-      patch.sandboxMode !== undefined &&
-      patch.sandboxMode !== "danger-full-access" &&
-      currentSandboxMode === "danger-full-access" &&
-      patch.networkPolicy === undefined
-    ) {
-      nextPatch.networkPolicy = "inherit";
-    }
-
     if (nextState.sandboxMode === "danger-full-access") {
+      if (patch.networkPolicy !== undefined) {
+        delete nextPatch.networkPolicy;
+      }
+
       if (
         patch.networkPolicy === "restricted" ||
         (patch.sandboxMode === "danger-full-access" &&
-          readThreadNetworkPolicyValue(currentThread) === "restricted")
+          currentStoredNetworkPolicy === "restricted")
       ) {
-        toast.warning("Full access sandbox always enables network access.");
+        toast.warning("Full access sandbox temporarily enables network access.");
       }
-      nextPatch.networkPolicy = "enabled";
     }
 
     applyThreadUpdateLocal(applyThreadExecutionPolicyPatch(currentThread, nextPatch));
@@ -1917,6 +1983,7 @@ export function ChatPanel() {
       );
 
       if (threadExecutionPolicyRequestIdsRef.current[currentThread.id] !== requestId) {
+        await refreshThreads(currentThread.workspaceId);
         return;
       }
 
@@ -2838,85 +2905,88 @@ export function ChatPanel() {
                 disabled={availableModels.length === 0}
               />
 
-              <div className="chat-toolbar-divider" />
-
-              {/* Trust level dropdown */}
-              {activeRepo && (
-                <Dropdown
-                  value={activeRepo.trustLevel}
-                  onChange={(v) => void onRepoTrustLevelChange(v as TrustLevel)}
-                  title={trustLevelTooltip(activeRepo.trustLevel)}
-                  selectedIcon={<Shield size={11} />}
-                  options={[
-                    { value: "trusted", label: "Trusted" },
-                    { value: "standard", label: "Standard" },
-                    { value: "restricted", label: "Restricted" },
-                  ]}
-                />
-              )}
-              {!activeRepo && repos.length > 0 && (
-                <Dropdown
-                  value={workspaceTrustLevel}
-                  onChange={(v) => void onWorkspaceTrustLevelChange(v as TrustLevel)}
-                  title={trustLevelTooltip(workspaceTrustLevel)}
-                  selectedIcon={<Shield size={11} />}
-                  options={[
-                    { value: "trusted", label: "Trusted" },
-                    { value: "standard", label: "Standard" },
-                    { value: "restricted", label: "Restricted" },
-                  ]}
-                />
-              )}
-
-              {activeThread?.engineId === "codex" && (
+              {(activeRepo || repos.length > 0 || activeThread?.engineId === "codex") && (
                 <>
-                  <Dropdown
-                    value={activeThreadApprovalPolicy}
-                    onChange={(value) =>
-                      void onThreadExecutionPolicyChange({
-                        approvalPolicy: value as ThreadApprovalPolicyValue,
-                      })
+                  <div className="chat-toolbar-divider" />
+                  <PermissionPicker
+                    trustScopeLabel={
+                      activeRepo ? "Repo access" : repos.length > 0 ? "Workspace access" : undefined
                     }
-                    title="Thread approval policy override"
-                    selectedIcon={<Shield size={11} />}
-                    options={THREAD_APPROVAL_POLICY_OPTIONS}
-                  />
-                  <Dropdown
-                    value={activeThreadSandboxMode}
-                    onChange={(value) =>
-                      void onThreadExecutionPolicyChange({
-                        sandboxMode: value as ThreadSandboxModeValue,
-                      })
+                    trustValue={activeRepo?.trustLevel ?? (repos.length > 0 ? workspaceTrustLevel : undefined)}
+                    trustOptions={TRUST_LEVEL_OPTIONS}
+                    onTrustChange={
+                      activeRepo
+                        ? (value) => void onRepoTrustLevelChange(value)
+                        : repos.length > 0
+                          ? (value) => void onWorkspaceTrustLevelChange(value)
+                          : undefined
                     }
-                    title={
-                      codexExternalSandboxActive
-                        ? "Read-only and workspace-write sandbox overrides are unavailable while Codex is using external sandbox mode on this machine."
-                        : "Thread sandbox mode override"
+                    customPolicyCount={activeThread?.engineId === "codex" ? threadPolicyCustomCount : 0}
+                    approvalValue={
+                      activeThread?.engineId === "codex" ? activeThreadApprovalPolicy : undefined
                     }
-                    selectedLabel={
-                      codexExternalSandboxActive && !activeThreadSandboxModeSupported
+                    approvalOptions={
+                      activeThread?.engineId === "codex"
+                        ? THREAD_APPROVAL_POLICY_OPTIONS
+                        : undefined
+                    }
+                    onApprovalChange={
+                      activeThread?.engineId === "codex"
+                        ? (value) =>
+                            void onThreadExecutionPolicyChange({
+                              approvalPolicy: value as ThreadApprovalPolicyValue,
+                            })
+                        : undefined
+                    }
+                    sandboxValue={
+                      activeThread?.engineId === "codex" ? activeThreadSandboxMode : undefined
+                    }
+                    sandboxOptions={
+                      activeThread?.engineId === "codex" ? threadSandboxModeOptions : undefined
+                    }
+                    onSandboxChange={
+                      activeThread?.engineId === "codex"
+                        ? (value) =>
+                            void onThreadExecutionPolicyChange({
+                              sandboxMode: value as ThreadSandboxModeValue,
+                            })
+                        : undefined
+                    }
+                    sandboxSelectedLabel={
+                      activeThread?.engineId === "codex" &&
+                      codexExternalSandboxActive &&
+                      !activeThreadSandboxModeSupported
                         ? `${activeThreadSandboxModeOption?.label ?? activeThreadSandboxMode} (unsupported)`
                         : undefined
                     }
-                    selectedIcon={<SquareTerminal size={11} />}
-                    options={threadSandboxModeOptions}
-                  />
-                  <Dropdown
-                    value={activeThreadNetworkPolicy}
-                    onChange={(value) =>
-                      void onThreadExecutionPolicyChange({
-                        networkPolicy: value as ThreadNetworkPolicyValue,
-                      })
+                    sandboxNotice={
+                      activeThread?.engineId === "codex" && codexExternalSandboxActive
+                        ? "Read-only and workspace-write overrides are unavailable while Codex is using external sandbox mode on this machine."
+                        : null
                     }
-                    disabled={activeThreadSandboxMode === "danger-full-access"}
-                    title="Thread network policy override"
-                    selectedLabel={
-                      activeThreadSandboxMode === "danger-full-access"
-                        ? "Always enabled"
+                    networkValue={
+                      activeThread?.engineId === "codex" ? activeThreadNetworkPolicy : undefined
+                    }
+                    networkOptions={
+                      activeThread?.engineId === "codex"
+                        ? THREAD_NETWORK_POLICY_OPTIONS
                         : undefined
                     }
-                    selectedIcon={<Monitor size={11} />}
-                    options={THREAD_NETWORK_POLICY_OPTIONS}
+                    onNetworkChange={
+                      activeThread?.engineId === "codex"
+                        ? (value) =>
+                            void onThreadExecutionPolicyChange({
+                              networkPolicy: value as ThreadNetworkPolicyValue,
+                            })
+                        : undefined
+                    }
+                    networkDisabled={activeThreadSandboxMode === "danger-full-access"}
+                    networkNotice={
+                      activeThread?.engineId === "codex" &&
+                      activeThreadSandboxMode === "danger-full-access"
+                        ? "Full access always enables network access."
+                        : null
+                    }
                   />
                 </>
               )}

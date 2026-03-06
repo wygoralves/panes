@@ -228,9 +228,13 @@ impl Engine for CodexEngine {
         }
 
         if let Some(existing_thread_id) = resume_engine_thread_id {
-            let resume_params = serde_json::json!({
-              "threadId": existing_thread_id,
-            });
+            let resume_params = build_thread_resume_params(
+                existing_thread_id,
+                model,
+                &cwd,
+                &approval_policy,
+                &sandbox_mode,
+            );
 
             match request_with_fallback(
                 transport.as_ref(),
@@ -1922,6 +1926,23 @@ fn scope_cwd(scope: &ThreadScope) -> String {
     }
 }
 
+fn build_thread_resume_params(
+    thread_id: &str,
+    model: &str,
+    cwd: &str,
+    approval_policy: &str,
+    sandbox_mode: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+      "threadId": thread_id,
+      "model": model,
+      "cwd": cwd,
+      "approvalPolicy": approval_policy,
+      "sandbox": sandbox_mode,
+      "persistExtendedHistory": false,
+    })
+}
+
 fn sandbox_mode_from_policy(sandbox: &SandboxPolicy, force_external_sandbox: bool) -> String {
     // `thread/start` only accepts sandbox mode enums. When local workspace sandboxing is broken
     // (common in macOS app contexts), use danger-full-access and enforce external sandboxing on
@@ -2630,6 +2651,29 @@ mod tests {
         let normalized = normalize_approval_response(Some("item/tool/call"), response.clone());
 
         assert_eq!(normalized, response);
+    }
+
+    #[test]
+    fn thread_resume_params_include_requested_runtime() {
+        let params = build_thread_resume_params(
+            "thread-123",
+            "gpt-5-codex",
+            "/tmp/workspace",
+            "on-request",
+            "workspace-write",
+        );
+
+        assert_eq!(
+            params,
+            json!({
+                "threadId": "thread-123",
+                "model": "gpt-5-codex",
+                "cwd": "/tmp/workspace",
+                "approvalPolicy": "on-request",
+                "sandbox": "workspace-write",
+                "persistExtendedHistory": false,
+            })
+        );
     }
 
     #[test]
