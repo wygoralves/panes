@@ -167,4 +167,127 @@ describe("chatStore send", () => {
 
     vi.useRealTimers();
   });
+
+  it("updates the assistant model label and inserts a reroute notice when the model is rerouted", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    mockIpc.sendMessage.mockResolvedValueOnce("assistant-message-id");
+    await expect(
+      useChatStore.getState().send("hello", {
+        engineId: "codex",
+        modelId: "gpt-5.1-codex-mini",
+      }),
+    ).resolves.toBe(true);
+
+    const optimisticAssistant = useChatStore
+      .getState()
+      .messages.find((message) => message.role === "assistant" && message.clientTurnId);
+    expect(streamHandler).not.toBeNull();
+
+    streamHandler!({
+      type: "ModelRerouted",
+      from_model: "gpt-5.1-codex-mini",
+      to_model: "gpt-5.3-codex",
+      reason: "highRiskCyberActivity",
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    const reroutedAssistant = useChatStore
+      .getState()
+      .messages.find((message) => message.id === optimisticAssistant?.id);
+    expect(reroutedAssistant?.turnModelId).toBe("gpt-5.3-codex");
+    expect(mockRecordPerfMetric).toHaveBeenCalledWith(
+      "chat.turn.first_content.ms",
+      expect.any(Number),
+      expect.objectContaining({
+        threadId: "thread-1",
+        modelId: "gpt-5.3-codex",
+      }),
+    );
+    expect(reroutedAssistant?.blocks).toEqual([
+      {
+        type: "notice",
+        kind: "model_rerouted",
+        level: "info",
+        title: "Model rerouted",
+        message: "Switched from gpt-5.1-codex-mini to gpt-5.3-codex (highRiskCyberActivity).",
+      },
+    ]);
+
+    vi.useRealTimers();
+  });
+
+  it("stores only the latest MCP progress message on the matching action block", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    mockIpc.sendMessage.mockResolvedValueOnce("assistant-message-id");
+    await expect(
+      useChatStore.getState().send("hello", {
+        engineId: "codex",
+        modelId: "gpt-5.3-codex",
+      }),
+    ).resolves.toBe(true);
+
+    expect(streamHandler).not.toBeNull();
+    streamHandler!({
+      type: "ActionStarted",
+      action_id: "action-1",
+      engine_action_id: "item-1",
+      action_type: "other",
+      summary: "search_docs",
+      details: {},
+    });
+    streamHandler!({
+      type: "ActionProgressUpdated",
+      action_id: "action-1",
+      message: "Connecting",
+    });
+    streamHandler!({
+      type: "ActionProgressUpdated",
+      action_id: "action-1",
+      message: "Fetching results",
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    const assistant = useChatStore
+      .getState()
+      .messages.find((message) => message.role === "assistant" && message.blocks?.length);
+    expect(assistant?.blocks).toEqual([
+      {
+        type: "action",
+        actionId: "action-1",
+        engineActionId: "item-1",
+        actionType: "other",
+        summary: "search_docs",
+        details: {
+          progressKind: "mcp",
+          progressMessage: "Fetching results",
+        },
+        outputChunks: [],
+        outputDeferred: false,
+        outputDeferredLoaded: true,
+        status: "running",
+      },
+    ]);
+
+    vi.useRealTimers();
+  });
 });

@@ -59,14 +59,20 @@ pub fn update_assistant_blocks_json(
     message_id: &str,
     blocks_json: &str,
     status: MessageStatusDto,
+    turn_model_id: Option<&str>,
 ) -> anyhow::Result<()> {
     let conn = db.connect()?;
     let normalized_blocks_json = normalize_blocks_json_for_message(&conn, message_id, blocks_json)?;
     conn.execute(
         "UPDATE messages
-     SET blocks_json = ?1, status = ?2
-     WHERE id = ?3",
-        params![normalized_blocks_json, status.as_str(), message_id],
+     SET blocks_json = ?1, status = ?2, turn_model_id = COALESCE(?3, turn_model_id)
+     WHERE id = ?4",
+        params![
+            normalized_blocks_json,
+            status.as_str(),
+            turn_model_id,
+            message_id
+        ],
     )
     .context("failed to update assistant blocks")?;
     Ok(())
@@ -93,6 +99,7 @@ pub fn complete_assistant_message(
     message_id: &str,
     status: MessageStatusDto,
     token_usage: Option<(u64, u64)>,
+    turn_model_id: Option<&str>,
 ) -> anyhow::Result<()> {
     let (input, output) = token_usage.unwrap_or((0, 0));
     let conn = db.connect()?;
@@ -100,11 +107,34 @@ pub fn complete_assistant_message(
         "UPDATE messages
      SET status = ?1,
          token_input = ?2,
-         token_output = ?3
-     WHERE id = ?4",
-        params![status.as_str(), input as i64, output as i64, message_id],
+         token_output = ?3,
+         turn_model_id = COALESCE(?4, turn_model_id)
+     WHERE id = ?5",
+        params![
+            status.as_str(),
+            input as i64,
+            output as i64,
+            turn_model_id,
+            message_id
+        ],
     )
     .context("failed to complete assistant message")?;
+    Ok(())
+}
+
+pub fn update_assistant_turn_model_id(
+    db: &Database,
+    message_id: &str,
+    turn_model_id: &str,
+) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    conn.execute(
+        "UPDATE messages
+     SET turn_model_id = ?1
+     WHERE id = ?2",
+        params![turn_model_id, message_id],
+    )
+    .context("failed to update assistant turn model id")?;
     Ok(())
 }
 
@@ -745,6 +775,7 @@ mod tests {
             &message.id,
             &pending_blocks.to_string(),
             MessageStatusDto::Completed,
+            None,
         )
         .unwrap();
 
@@ -752,6 +783,30 @@ mod tests {
         let (status, decision) = approval_block_status(&blocks).unwrap();
         assert_eq!(status, "answered");
         assert_eq!(decision, Some("accept"));
+    }
+
+    #[test]
+    fn update_assistant_turn_model_id_updates_message_metadata() {
+        let db = test_db();
+        let thread_id = test_thread(&db);
+        let message = insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            None,
+            Some(json!([])),
+            MessageStatusDto::Streaming,
+            Some("codex"),
+            Some("gpt-5.1-codex-mini"),
+            None,
+        )
+        .unwrap();
+
+        update_assistant_turn_model_id(&db, &message.id, "gpt-5.3-codex").unwrap();
+
+        let reloaded = get_thread_messages(&db, &thread_id).unwrap();
+        assert_eq!(reloaded.len(), 1);
+        assert_eq!(reloaded[0].turn_model_id.as_deref(), Some("gpt-5.3-codex"));
     }
 
     #[test]

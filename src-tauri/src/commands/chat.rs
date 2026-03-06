@@ -79,6 +79,14 @@ enum ContentBlock {
     #[serde(rename = "thinking")]
     Thinking { content: String },
 
+    #[serde(rename = "notice")]
+    Notice {
+        kind: String,
+        level: String,
+        title: String,
+        message: String,
+    },
+
     #[serde(rename = "error")]
     Error { message: String },
 
@@ -116,6 +124,7 @@ struct EventProgress {
     message_status: Option<MessageStatusDto>,
     thread_status: Option<ThreadStatusDto>,
     token_usage: Option<(u64, u64)>,
+    turn_model_id: Option<String>,
     blocks_changed: bool,
     force_persist: bool,
 }
@@ -395,6 +404,7 @@ pub async fn send_message(
     let assistant_message_id = assistant_message.id.clone();
     let turn_input_for_task = turn_input.clone();
     let thread_for_task = thread.clone();
+    let initial_turn_model_id = effective_model_id.clone();
 
     tokio::spawn(async move {
         run_turn(
@@ -403,6 +413,7 @@ pub async fn send_message(
             thread_for_task,
             engine_thread_id,
             assistant_message_id,
+            initial_turn_model_id,
             turn_input_for_task,
             client_turn_id,
             cancellation,
@@ -591,6 +602,7 @@ async fn run_turn(
     thread: crate::models::ThreadDto,
     engine_thread_id: String,
     assistant_message_id: String,
+    initial_turn_model_id: String,
     turn_input: TurnInput,
     client_turn_id: Option<String>,
     cancellation: CancellationToken,
@@ -621,10 +633,12 @@ async fn run_turn(
     let mut approval_index: HashMap<String, usize> = HashMap::new();
     let mut message_status = MessageStatusDto::Streaming;
     let mut thread_status = ThreadStatusDto::Streaming;
+    let mut turn_model_id = initial_turn_model_id;
     let mut token_usage: Option<(u64, u64)> = None;
     let mut blocks_dirty = false;
     let mut message_state_dirty = false;
     let mut thread_status_dirty = false;
+    let mut turn_model_dirty = false;
     let mut last_persist_at = Instant::now();
     let mut last_blocks_persist_at = Instant::now();
     let mut last_persisted_thread_status = thread_status.clone();
@@ -651,10 +665,12 @@ async fn run_turn(
         initial_progress,
         &mut message_status,
         &mut thread_status,
+        &mut turn_model_id,
         &mut token_usage,
         &mut blocks_dirty,
         &mut message_state_dirty,
         &mut thread_status_dirty,
+        &mut turn_model_dirty,
     );
     flush_stream_state(
         &state,
@@ -663,9 +679,11 @@ async fn run_turn(
         &blocks,
         &message_status,
         &thread_status,
+        &turn_model_id,
         &mut blocks_dirty,
         &mut message_state_dirty,
         &mut thread_status_dirty,
+        &mut turn_model_dirty,
         &mut last_persisted_thread_status,
         &mut last_persist_at,
         &mut last_blocks_persist_at,
@@ -699,10 +717,12 @@ async fn run_turn(
                             progress,
                             &mut message_status,
                             &mut thread_status,
+                            &mut turn_model_id,
                             &mut token_usage,
                             &mut blocks_dirty,
                             &mut message_state_dirty,
                             &mut thread_status_dirty,
+                            &mut turn_model_dirty,
                         );
                         flush_stream_state(
                             &state,
@@ -711,9 +731,11 @@ async fn run_turn(
                             &blocks,
                             &message_status,
                             &thread_status,
+                            &turn_model_id,
                             &mut blocks_dirty,
                             &mut message_state_dirty,
                             &mut thread_status_dirty,
+                            &mut turn_model_dirty,
                             &mut last_persisted_thread_status,
                             &mut last_persist_at,
                             &mut last_blocks_persist_at,
@@ -759,10 +781,12 @@ async fn run_turn(
                                 progress,
                                 &mut message_status,
                                 &mut thread_status,
+                                &mut turn_model_id,
                                 &mut token_usage,
                                 &mut blocks_dirty,
                                 &mut message_state_dirty,
                                 &mut thread_status_dirty,
+                                &mut turn_model_dirty,
                             );
                             flush_stream_state(
                                 &state,
@@ -771,9 +795,11 @@ async fn run_turn(
                                 &blocks,
                                 &message_status,
                                 &thread_status,
+                                &turn_model_id,
                                 &mut blocks_dirty,
                                 &mut message_state_dirty,
                                 &mut thread_status_dirty,
+                                &mut turn_model_dirty,
                                 &mut last_persisted_thread_status,
                                 &mut last_persist_at,
                                 &mut last_blocks_persist_at,
@@ -804,10 +830,12 @@ async fn run_turn(
                             progress,
                             &mut message_status,
                             &mut thread_status,
+                            &mut turn_model_id,
                             &mut token_usage,
                             &mut blocks_dirty,
                             &mut message_state_dirty,
                             &mut thread_status_dirty,
+                            &mut turn_model_dirty,
                         );
                         flush_stream_state(
                             &state,
@@ -816,9 +844,11 @@ async fn run_turn(
                             &blocks,
                             &message_status,
                             &thread_status,
+                            &turn_model_id,
                             &mut blocks_dirty,
                             &mut message_state_dirty,
                             &mut thread_status_dirty,
+                            &mut turn_model_dirty,
                             &mut last_persisted_thread_status,
                             &mut last_persist_at,
                             &mut last_blocks_persist_at,
@@ -850,10 +880,12 @@ async fn run_turn(
                     progress,
                     &mut message_status,
                     &mut thread_status,
+                    &mut turn_model_id,
                     &mut token_usage,
                     &mut blocks_dirty,
                     &mut message_state_dirty,
                     &mut thread_status_dirty,
+                    &mut turn_model_dirty,
                 );
                 flush_stream_state(
                     &state,
@@ -862,9 +894,11 @@ async fn run_turn(
                     &blocks,
                     &message_status,
                     &thread_status,
+                    &turn_model_id,
                     &mut blocks_dirty,
                     &mut message_state_dirty,
                     &mut thread_status_dirty,
+                    &mut turn_model_dirty,
                     &mut last_persisted_thread_status,
                     &mut last_persist_at,
                     &mut last_blocks_persist_at,
@@ -895,10 +929,12 @@ async fn run_turn(
             progress,
             &mut message_status,
             &mut thread_status,
+            &mut turn_model_id,
             &mut token_usage,
             &mut blocks_dirty,
             &mut message_state_dirty,
             &mut thread_status_dirty,
+            &mut turn_model_dirty,
         );
         flush_stream_state(
             &state,
@@ -907,9 +943,11 @@ async fn run_turn(
             &blocks,
             &message_status,
             &thread_status,
+            &turn_model_id,
             &mut blocks_dirty,
             &mut message_state_dirty,
             &mut thread_status_dirty,
+            &mut turn_model_dirty,
             &mut last_persisted_thread_status,
             &mut last_persist_at,
             &mut last_blocks_persist_at,
@@ -971,9 +1009,11 @@ async fn run_turn(
         &blocks,
         &message_status,
         &thread_status,
+        &turn_model_id,
         &mut blocks_dirty,
         &mut message_state_dirty,
         &mut thread_status_dirty,
+        &mut turn_model_dirty,
         &mut last_persisted_thread_status,
         &mut last_persist_at,
         &mut last_blocks_persist_at,
@@ -991,6 +1031,7 @@ async fn run_turn(
                 &assistant_message_id,
                 message_status,
                 token_usage,
+                Some(turn_model_id.as_str()),
             )
         }
     })
@@ -1033,6 +1074,7 @@ fn is_coalescable_stream_event(event: &EngineEvent) -> bool {
         EngineEvent::TextDelta { .. }
             | EngineEvent::ThinkingDelta { .. }
             | EngineEvent::ActionOutputDelta { .. }
+            | EngineEvent::ActionProgressUpdated { .. }
     )
 }
 
@@ -1041,6 +1083,7 @@ fn coalesced_event_content_len(event: &EngineEvent) -> usize {
         EngineEvent::TextDelta { content }
         | EngineEvent::ThinkingDelta { content }
         | EngineEvent::ActionOutputDelta { content, .. } => content.len(),
+        EngineEvent::ActionProgressUpdated { message, .. } => message.len(),
         _ => 0,
     }
 }
@@ -1110,6 +1153,19 @@ fn try_coalesce_stream_events(
                 ))
             }
         }
+        (
+            EngineEvent::ActionProgressUpdated {
+                action_id,
+                message: _,
+            },
+            EngineEvent::ActionProgressUpdated {
+                action_id: next_action_id,
+                message: next_message,
+            },
+        ) if action_id == next_action_id => Ok(EngineEvent::ActionProgressUpdated {
+            action_id,
+            message: next_message,
+        }),
         (previous, next) => Err((previous, next)),
     }
 }
@@ -1247,10 +1303,12 @@ fn apply_stream_progress(
     progress: EventProgress,
     message_status: &mut MessageStatusDto,
     thread_status: &mut ThreadStatusDto,
+    turn_model_id: &mut String,
     token_usage: &mut Option<(u64, u64)>,
     blocks_dirty: &mut bool,
     message_state_dirty: &mut bool,
     thread_status_dirty: &mut bool,
+    turn_model_dirty: &mut bool,
 ) -> bool {
     if progress.blocks_changed {
         *blocks_dirty = true;
@@ -1270,6 +1328,13 @@ fn apply_stream_progress(
         }
     }
 
+    if let Some(next_turn_model_id) = progress.turn_model_id {
+        if *turn_model_id != next_turn_model_id {
+            *turn_model_id = next_turn_model_id;
+            *turn_model_dirty = true;
+        }
+    }
+
     if let Some(tokens) = progress.token_usage {
         *token_usage = Some(tokens);
     }
@@ -1285,15 +1350,17 @@ async fn flush_stream_state(
     blocks: &[ContentBlock],
     message_status: &MessageStatusDto,
     thread_status: &ThreadStatusDto,
+    turn_model_id: &str,
     blocks_dirty: &mut bool,
     message_state_dirty: &mut bool,
     thread_status_dirty: &mut bool,
+    turn_model_dirty: &mut bool,
     last_persisted_thread_status: &mut ThreadStatusDto,
     last_persist_at: &mut Instant,
     last_blocks_persist_at: &mut Instant,
     force: bool,
 ) {
-    if !*blocks_dirty && !*message_state_dirty && !*thread_status_dirty {
+    if !*blocks_dirty && !*message_state_dirty && !*thread_status_dirty && !*turn_model_dirty {
         return;
     }
 
@@ -1321,12 +1388,14 @@ async fn flush_stream_state(
                 if let Err(error) = run_db(state.db.clone(), {
                     let assistant_message_id = assistant_message_id.to_string();
                     let message_status = message_status.clone();
+                    let turn_model_id = turn_model_id.to_string();
                     move |db| {
                         db::messages::update_assistant_blocks_json(
                             db,
                             &assistant_message_id,
                             &blocks_json,
                             message_status,
+                            Some(turn_model_id.as_str()),
                         )
                     }
                 })
@@ -1336,6 +1405,7 @@ async fn flush_stream_state(
                 } else {
                     *blocks_dirty = false;
                     *message_state_dirty = false;
+                    *turn_model_dirty = false;
                     did_flush_blocks = true;
                     did_flush_state = true;
                 }
@@ -1357,6 +1427,27 @@ async fn flush_stream_state(
             log::warn!("failed to persist assistant stream status: {error}");
         } else {
             *message_state_dirty = false;
+            did_flush_state = true;
+        }
+    }
+
+    if *turn_model_dirty && should_flush_state {
+        if let Err(error) = run_db(state.db.clone(), {
+            let assistant_message_id = assistant_message_id.to_string();
+            let turn_model_id = turn_model_id.to_string();
+            move |db| {
+                db::messages::update_assistant_turn_model_id(
+                    db,
+                    &assistant_message_id,
+                    &turn_model_id,
+                )
+            }
+        })
+        .await
+        {
+            log::warn!("failed to persist assistant turn model id during stream: {error}");
+        } else {
+            *turn_model_dirty = false;
             did_flush_state = true;
         }
     }
@@ -1582,6 +1673,13 @@ fn apply_event_to_blocks(
                 }
             }
         }
+        EngineEvent::ActionProgressUpdated { action_id, message } => {
+            if let Some(index) = action_index.get(action_id).copied() {
+                if let Some(ContentBlock::Action { details, .. }) = blocks.get_mut(index) {
+                    progress.blocks_changed = update_action_progress(details, message);
+                }
+            }
+        }
         EngineEvent::ActionCompleted { action_id, result } => {
             if let Some(index) = action_index.get(action_id).copied() {
                 if let Some(ContentBlock::Action {
@@ -1615,6 +1713,27 @@ fn apply_event_to_blocks(
                 scope,
             });
             progress.blocks_changed = true;
+        }
+        EngineEvent::ModelRerouted {
+            from_model,
+            to_model,
+            reason,
+        } => {
+            let block = ContentBlock::Notice {
+                kind: "model_rerouted".to_string(),
+                level: "info".to_string(),
+                title: "Model rerouted".to_string(),
+                message: format_model_reroute_notice(from_model, to_model, reason),
+            };
+            progress.blocks_changed = upsert_notice_block(
+                blocks,
+                action_index,
+                approval_index,
+                "model_rerouted",
+                block,
+            );
+            progress.turn_model_id = Some(to_model.to_string());
+            progress.force_persist = true;
         }
         EngineEvent::ApprovalRequested {
             approval_id,
@@ -1691,6 +1810,36 @@ fn append_thinking_delta(blocks: &mut Vec<ContentBlock>, content: &str) -> bool 
     true
 }
 
+fn update_action_progress(details: &mut Value, message: &str) -> bool {
+    let current_message = details
+        .get("progressMessage")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let current_kind = details
+        .get("progressKind")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+
+    if current_message.as_deref() == Some(message) && current_kind.as_deref() == Some("mcp") {
+        return false;
+    }
+
+    if !details.is_object() {
+        *details = Value::Object(serde_json::Map::new());
+    }
+
+    if let Some(details_object) = details.as_object_mut() {
+        details_object.insert("progressKind".to_string(), Value::String("mcp".to_string()));
+        details_object.insert(
+            "progressMessage".to_string(),
+            Value::String(message.to_string()),
+        );
+        return true;
+    }
+
+    false
+}
+
 fn upsert_action_block(
     blocks: &mut Vec<ContentBlock>,
     action_index: &mut HashMap<String, usize>,
@@ -1727,6 +1876,58 @@ fn upsert_approval_block(
     blocks.push(block);
     approval_index.insert(approval_id.to_string(), index);
     true
+}
+
+fn upsert_notice_block(
+    blocks: &mut Vec<ContentBlock>,
+    action_index: &mut HashMap<String, usize>,
+    approval_index: &mut HashMap<String, usize>,
+    kind: &str,
+    block: ContentBlock,
+) -> bool {
+    if let Some(index) = blocks.iter().position(|existing| {
+        matches!(
+            existing,
+            ContentBlock::Notice {
+                kind: existing_kind,
+                ..
+            } if existing_kind == kind
+        )
+    }) {
+        if let Some(existing) = blocks.get_mut(index) {
+            *existing = block;
+            return true;
+        }
+    }
+
+    blocks.insert(0, block);
+    rebuild_block_indexes(blocks, action_index, approval_index);
+    true
+}
+
+fn rebuild_block_indexes(
+    blocks: &[ContentBlock],
+    action_index: &mut HashMap<String, usize>,
+    approval_index: &mut HashMap<String, usize>,
+) {
+    action_index.clear();
+    approval_index.clear();
+
+    for (index, block) in blocks.iter().enumerate() {
+        match block {
+            ContentBlock::Action { action_id, .. } => {
+                action_index.insert(action_id.clone(), index);
+            }
+            ContentBlock::Approval { approval_id, .. } => {
+                approval_index.insert(approval_id.clone(), index);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn format_model_reroute_notice(from_model: &str, to_model: &str, reason: &str) -> String {
+    format!("Switched from {from_model} to {to_model} ({reason}).")
 }
 
 fn trim_action_output_chunks(
@@ -1966,6 +2167,104 @@ mod tests {
             thread_approval_policy_override("codex", Some(&metadata)).as_deref(),
             Some("never")
         );
+    }
+
+    #[test]
+    fn action_progress_coalescing_keeps_latest_message() {
+        let merged = try_coalesce_stream_events(
+            EngineEvent::ActionProgressUpdated {
+                action_id: "action-1".to_string(),
+                message: "Connecting".to_string(),
+            },
+            EngineEvent::ActionProgressUpdated {
+                action_id: "action-1".to_string(),
+                message: "Fetching results".to_string(),
+            },
+        )
+        .expect("expected coalesced action progress");
+
+        match merged {
+            EngineEvent::ActionProgressUpdated { action_id, message } => {
+                assert_eq!(action_id, "action-1");
+                assert_eq!(message, "Fetching results");
+            }
+            other => panic!("expected action progress event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn model_reroute_notice_reindexes_action_blocks() {
+        let mut blocks = Vec::new();
+        let mut action_index = HashMap::new();
+        let mut approval_index = HashMap::new();
+
+        let started = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::ActionStarted {
+                action_id: "action-1".to_string(),
+                engine_action_id: Some("item-1".to_string()),
+                action_type: crate::engines::events::ActionType::Other,
+                summary: "search_docs".to_string(),
+                details: serde_json::json!({}),
+            },
+            1000,
+        );
+        assert!(started.blocks_changed);
+
+        let rerouted = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::ModelRerouted {
+                from_model: "gpt-5.1-codex-mini".to_string(),
+                to_model: "gpt-5.3-codex".to_string(),
+                reason: "highRiskCyberActivity".to_string(),
+            },
+            1000,
+        );
+        assert!(rerouted.blocks_changed);
+        assert_eq!(rerouted.turn_model_id.as_deref(), Some("gpt-5.3-codex"));
+
+        let progress = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::ActionProgressUpdated {
+                action_id: "action-1".to_string(),
+                message: "Fetching results".to_string(),
+            },
+            1000,
+        );
+        assert!(progress.blocks_changed);
+
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Notice {
+                kind,
+                level,
+                title,
+                ..
+            } if kind == "model_rerouted" && level == "info" && title == "Model rerouted"
+        ));
+        match &blocks[1] {
+            ContentBlock::Action { details, .. } => {
+                assert_eq!(
+                    details
+                        .get("progressKind")
+                        .and_then(serde_json::Value::as_str),
+                    Some("mcp")
+                );
+                assert_eq!(
+                    details
+                        .get("progressMessage")
+                        .and_then(serde_json::Value::as_str),
+                    Some("Fetching results")
+                );
+            }
+            other => panic!("expected action block, got {other:?}"),
+        }
     }
 }
 

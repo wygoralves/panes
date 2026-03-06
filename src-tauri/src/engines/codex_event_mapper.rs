@@ -12,6 +12,7 @@ use super::{
 pub struct TurnEventMapper {
     engine_action_to_internal: HashMap<String, String>,
     pending_actions_without_engine_id: Vec<String>,
+    pending_mcp_progress_by_engine_id: HashMap<String, String>,
     latest_token_usage: Option<TokenUsage>,
     latest_usage_limits: UsageLimitsSnapshot,
     streamed_agent_message_items: HashSet<String>,
@@ -109,6 +110,7 @@ impl TurnEventMapper {
                     vec![EngineEvent::ThinkingDelta { content }]
                 }
             }
+            "itemmcptoolcallprogress" => self.map_mcp_tool_call_progress(params),
             "threadtokenusageupdated" => {
                 self.latest_token_usage = extract_token_usage(params);
                 if let Some(context_update) = extract_context_usage_limits(params) {
@@ -123,6 +125,7 @@ impl TurnEventMapper {
                     Vec::new()
                 }
             }
+            "modelrerouted" => self.map_model_rerouted(params),
             "accountratelimitsupdated" => {
                 if merge_rate_limits_snapshot(&mut self.latest_usage_limits, params) {
                     vec![EngineEvent::UsageLimitsUpdated {
@@ -345,15 +348,30 @@ impl TurnEventMapper {
             "mcpToolCall" => {
                 let engine_item_id = extract_any_string(item, &["id"]);
                 let action_id = self.resolve_or_register_action(engine_item_id.as_deref());
-
-                vec![EngineEvent::ActionStarted {
+                let mut events = vec![EngineEvent::ActionStarted {
                     action_id,
                     engine_action_id: engine_item_id,
                     action_type: ActionType::Other,
                     summary: extract_any_string(item, &["name", "toolName"])
                         .unwrap_or_else(|| "Tool call".to_string()),
                     details: item.clone(),
-                }]
+                }];
+
+                if let Some(engine_item_id) = extract_any_string(item, &["id"]) {
+                    if let Some(progress_message) = self
+                        .pending_mcp_progress_by_engine_id
+                        .remove(&engine_item_id)
+                    {
+                        if let Some(EngineEvent::ActionStarted { action_id, .. }) = events.first() {
+                            events.push(EngineEvent::ActionProgressUpdated {
+                                action_id: action_id.clone(),
+                                message: progress_message,
+                            });
+                        }
+                    }
+                }
+
+                events
             }
             "agentMessage" => Vec::new(),
             "plan" => {
@@ -475,6 +493,43 @@ impl TurnEventMapper {
             stream,
             content,
         })
+    }
+
+    fn map_mcp_tool_call_progress(&mut self, params: &Value) -> Vec<EngineEvent> {
+        let Some(engine_item_id) = extract_any_string(params, &["itemId", "item_id", "id"]) else {
+            return Vec::new();
+        };
+        let message =
+            extract_any_string(params, &["message", "text", "content"]).unwrap_or_default();
+        if message.is_empty() {
+            return Vec::new();
+        }
+
+        if let Some(action_id) = self.engine_action_to_internal.get(&engine_item_id).cloned() {
+            return vec![EngineEvent::ActionProgressUpdated { action_id, message }];
+        }
+
+        self.pending_mcp_progress_by_engine_id
+            .insert(engine_item_id, message);
+        Vec::new()
+    }
+
+    fn map_model_rerouted(&mut self, params: &Value) -> Vec<EngineEvent> {
+        let Some(from_model) = extract_any_string(params, &["fromModel", "from_model"]) else {
+            return Vec::new();
+        };
+        let Some(to_model) = extract_any_string(params, &["toModel", "to_model"]) else {
+            return Vec::new();
+        };
+        let Some(reason) = extract_any_string(params, &["reason"]) else {
+            return Vec::new();
+        };
+
+        vec![EngineEvent::ModelRerouted {
+            from_model,
+            to_model,
+            reason,
+        }]
     }
 
     fn resolve_or_register_action(&mut self, engine_action_id: Option<&str>) -> String {
@@ -1086,6 +1141,133 @@ mod tests {
                 assert_eq!(usage.context_window_percent, Some(25));
             }
             _ => panic!("expected usage limits update"),
+        }
+    }
+
+    #[test]
+    fn map_notification_emits_model_rerouted_event() {
+        let mut mapper = TurnEventMapper::default();
+        let params = json!({
+            "threadId": "thr_123",
+            "turnId": "turn_123",
+            "fromModel": "gpt-5.1-codex-mini",
+            "toModel": "gpt-5.3-codex",
+            "reason": "highRiskCyberActivity",
+            "extra": {
+                "ignored": true
+            }
+        });
+
+        let events = mapper.map_notification("model/rerouted", &params);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            EngineEvent::ModelRerouted {
+                from_model,
+                to_model,
+                reason,
+            } => {
+                assert_eq!(from_model, "gpt-5.1-codex-mini");
+                assert_eq!(to_model, "gpt-5.3-codex");
+                assert_eq!(reason, "highRiskCyberActivity");
+            }
+            _ => panic!("expected model rerouted event"),
+        }
+    }
+
+    #[test]
+    fn map_notification_emits_mcp_progress_for_started_item() {
+        let mut mapper = TurnEventMapper::default();
+        let started_events = mapper.map_notification(
+            "item/started",
+            &json!({
+                "item": {
+                    "id": "item_123",
+                    "type": "mcpToolCall",
+                    "name": "search_docs"
+                }
+            }),
+        );
+
+        let action_id = match &started_events[0] {
+            EngineEvent::ActionStarted { action_id, .. } => action_id.clone(),
+            _ => panic!("expected action started event"),
+        };
+
+        let events = mapper.map_notification(
+            "item/mcpToolCall/progress",
+            &json!({
+                "threadId": "thr_123",
+                "turnId": "turn_123",
+                "itemId": "item_123",
+                "message": "Resolving server capabilities"
+            }),
+        );
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            EngineEvent::ActionProgressUpdated {
+                action_id: actual,
+                message,
+            } => {
+                assert_eq!(actual, &action_id);
+                assert_eq!(message, "Resolving server capabilities");
+            }
+            _ => panic!("expected action progress event"),
+        }
+    }
+
+    #[test]
+    fn map_notification_replays_latest_mcp_progress_when_item_starts() {
+        let mut mapper = TurnEventMapper::default();
+
+        let initial = mapper.map_notification(
+            "item/mcpToolCall/progress",
+            &json!({
+                "threadId": "thr_123",
+                "turnId": "turn_123",
+                "itemId": "item_123",
+                "message": "Queued"
+            }),
+        );
+        assert!(initial.is_empty());
+
+        let replacement = mapper.map_notification(
+            "item/mcpToolCall/progress",
+            &json!({
+                "threadId": "thr_123",
+                "turnId": "turn_123",
+                "itemId": "item_123",
+                "message": "Connecting"
+            }),
+        );
+        assert!(replacement.is_empty());
+
+        let started_events = mapper.map_notification(
+            "item/started",
+            &json!({
+                "item": {
+                    "id": "item_123",
+                    "type": "mcpToolCall",
+                    "name": "search_docs"
+                }
+            }),
+        );
+
+        assert_eq!(started_events.len(), 2);
+        let action_id = match &started_events[0] {
+            EngineEvent::ActionStarted { action_id, .. } => action_id.clone(),
+            _ => panic!("expected action started event"),
+        };
+
+        match &started_events[1] {
+            EngineEvent::ActionProgressUpdated {
+                action_id: actual,
+                message,
+            } => {
+                assert_eq!(actual, &action_id);
+                assert_eq!(message, "Connecting");
+            }
+            _ => panic!("expected replayed action progress event"),
         }
     }
 

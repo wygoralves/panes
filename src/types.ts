@@ -106,6 +106,14 @@ export interface DiffBlock {
   scope: "turn" | "file" | "workspace";
 }
 
+export interface NoticeBlock {
+  type: "notice";
+  kind: "model_rerouted";
+  level: "info";
+  title: string;
+  message: string;
+}
+
 export interface ActionBlock {
   type: "action";
   actionId: string;
@@ -223,6 +231,7 @@ export type ContentBlock =
   | TextBlock
   | CodeBlock
   | DiffBlock
+  | NoticeBlock
   | ActionBlock
   | ApprovalBlock
   | ThinkingBlock
@@ -615,6 +624,12 @@ export interface ActionOutputDeltaEvent {
   content: string;
 }
 
+export interface ActionProgressUpdatedEvent {
+  type: "ActionProgressUpdated";
+  action_id: string;
+  message: string;
+}
+
 export interface ActionCompletedEvent {
   type: "ActionCompleted";
   action_id: string;
@@ -660,6 +675,13 @@ export interface UsageLimitsUpdatedEvent {
   };
 }
 
+export interface ModelReroutedEvent {
+  type: "ModelRerouted";
+  from_model: string;
+  to_model: string;
+  reason: string;
+}
+
 export type StreamEvent =
   | TurnStartedEvent
   | TurnCompletedEvent
@@ -667,9 +689,11 @@ export type StreamEvent =
   | ThinkingDeltaEvent
   | ActionStartedEvent
   | ActionOutputDeltaEvent
+  | ActionProgressUpdatedEvent
   | ActionCompletedEvent
   | DiffUpdatedEvent
   | ApprovalRequestedEvent
+  | ModelReroutedEvent
   | ErrorEvent
   | UsageLimitsUpdatedEvent;
 

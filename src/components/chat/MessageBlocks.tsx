@@ -14,6 +14,7 @@ import {
   FileText,
   Image,
   File,
+  Info,
 } from "lucide-react";
 import type {
   ActionBlock,
@@ -23,6 +24,7 @@ import type {
   ContentBlock,
   DiffBlock,
   MessageStatus,
+  NoticeBlock,
   ThinkingBlock,
 } from "../../types";
 import { ToolInputQuestionnaire } from "./ToolInputQuestionnaire";
@@ -50,6 +52,7 @@ import type {
   DiffParseWorkerRequest,
   DiffParseWorkerResponse,
 } from "../../workers/diffParser.types";
+import { getMessageBlockKey } from "./messageBlockKeys";
 
 const MarkdownContent = lazy(() => import("./MarkdownContent"));
 const DIFF_WORKER_THRESHOLD_CHARS = 12_000;
@@ -553,6 +556,34 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
   );
 }
 
+function NoticeBlockView({ block }: { block: NoticeBlock }) {
+  return (
+    <div
+      style={{
+        margin: "2px 12px 8px",
+        padding: "9px 12px",
+        borderRadius: "var(--radius-sm)",
+        border: "1px solid rgba(96, 165, 250, 0.16)",
+        background: "rgba(96, 165, 250, 0.08)",
+        color: "var(--text-2)",
+        fontSize: 12,
+        lineHeight: 1.5,
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 8,
+      }}
+    >
+      <Info size={14} style={{ flexShrink: 0, color: "var(--info)", marginTop: 1 }} />
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--info)", marginBottom: 2 }}>
+          {block.title}
+        </div>
+        <div>{block.message}</div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Action Block ── */
 
 function ActionStatusBadge({ status }: { status: string }) {
@@ -617,6 +648,10 @@ function ActionBlockView({
   const actionDetails = (block.details ?? {}) as Record<string, unknown>;
   const outputTruncated =
     "outputTruncated" in actionDetails && actionDetails.outputTruncated === true;
+  const progressMessage =
+    actionDetails.progressKind === "mcp" && typeof actionDetails.progressMessage === "string"
+      ? actionDetails.progressMessage
+      : null;
   const [expanded, setExpanded] = useState(isRunning || isPending);
   const [loadingDeferredOutput, setLoadingDeferredOutput] = useState(false);
   const [deferredOutputError, setDeferredOutputError] = useState<string | null>(null);
@@ -673,6 +708,19 @@ function ActionBlockView({
         </span>
         <ActionStatusBadge status={block.status} />
       </div>
+
+      {progressMessage && (
+        <div
+          style={{
+            padding: "0 12px 6px 30px",
+            fontSize: 11,
+            color: "var(--text-3)",
+            lineHeight: 1.5,
+          }}
+        >
+          {progressMessage}
+        </div>
+      )}
 
       {expanded && (outputChunks.length > 0 || block.result?.error || outputDeferred) && (
         <div style={{
@@ -1118,6 +1166,7 @@ function MessageBlocksView({ blocks = [], status, onApproval, onLoadActionOutput
       {safeBlocks.map((rawBlock, index) => {
         if (!isBlockLike(rawBlock)) return null;
         const block = rawBlock as ContentBlock;
+        const blockKey = getMessageBlockKey(block, index, safeBlocks);
 
         /* ── Text ── */
         if (block.type === "text") {
@@ -1128,7 +1177,7 @@ function MessageBlocksView({ blocks = [], status, onApproval, onLoadActionOutput
           if (isStreamingText) {
             return (
               <div
-                key={index}
+                key={blockKey}
                 style={{
                   fontSize: 13,
                   padding: "4px 14px",
@@ -1143,7 +1192,7 @@ function MessageBlocksView({ blocks = [], status, onApproval, onLoadActionOutput
 
           return (
             <Suspense
-              key={index}
+              key={blockKey}
               fallback={
                 <div
                   style={{
@@ -1171,7 +1220,7 @@ function MessageBlocksView({ blocks = [], status, onApproval, onLoadActionOutput
           const lang = String(block.language ?? "text");
           return (
             <div
-              key={index}
+              key={blockKey}
               style={{
                 borderRadius: "var(--radius-sm)",
                 border: "1px solid var(--border)",
@@ -1215,14 +1264,19 @@ function MessageBlocksView({ blocks = [], status, onApproval, onLoadActionOutput
 
         /* ── Diff ── */
         if (block.type === "diff") {
-          return <MessageDiffBlock key={index} block={block} defaultExpanded={index === lastDiffIndex} />;
+          return <MessageDiffBlock key={blockKey} block={block} defaultExpanded={index === lastDiffIndex} />;
+        }
+
+        /* ── Notice ── */
+        if (block.type === "notice") {
+          return <NoticeBlockView key={blockKey} block={block} />;
         }
 
         /* ── Action ── */
         if (block.type === "action") {
           return (
             <ActionBlockView
-              key={block.actionId}
+              key={blockKey}
               block={block}
               onLoadDeferredOutput={
                 onLoadActionOutput ? () => onLoadActionOutput(block.actionId) : undefined
@@ -1233,14 +1287,14 @@ function MessageBlocksView({ blocks = [], status, onApproval, onLoadActionOutput
 
         /* ── Approval ── */
         if (block.type === "approval") {
-          return <ApprovalCard key={index} block={block} onApproval={onApproval} />;
+          return <ApprovalCard key={blockKey} block={block} onApproval={onApproval} />;
         }
 
         /* ── Thinking ── */
         if (block.type === "thinking") {
           const isLastBlock = index === safeBlocks.length - 1;
           const thinkingActive = status === "streaming" && isLastBlock;
-          return <ThinkingBlockView key={index} block={block} isStreaming={thinkingActive} />;
+          return <ThinkingBlockView key={blockKey} block={block} isStreaming={thinkingActive} />;
         }
 
         /* ── Attachment ── */
@@ -1254,7 +1308,7 @@ function MessageBlocksView({ blocks = [], status, onApproval, onLoadActionOutput
               : File;
           return (
             <div
-              key={index}
+              key={blockKey}
               className="chat-attachment-chip"
               style={{ margin: "2px 12px", display: "inline-flex" }}
             >
@@ -1268,7 +1322,7 @@ function MessageBlocksView({ blocks = [], status, onApproval, onLoadActionOutput
         if (block.type === "error") {
           return (
             <div
-              key={index}
+              key={blockKey}
               style={{
                 padding: "10px 14px",
                 borderRadius: "var(--radius-sm)",

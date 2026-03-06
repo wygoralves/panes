@@ -2521,8 +2521,10 @@ fn is_known_codex_notification_method(normalized_method: &str) -> bool {
             | "item/plan/delta"
             | "item/reasoning/summarytextdelta"
             | "item/reasoning/textdelta"
+            | "item/mcptoolcall/progress"
             | "item/commandexecution/outputdelta"
             | "item/filechange/outputdelta"
+            | "model/rerouted"
             | "error"
     )
 }

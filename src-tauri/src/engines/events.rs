@@ -28,6 +28,10 @@ pub enum EngineEvent {
         stream: OutputStream,
         content: String,
     },
+    ActionProgressUpdated {
+        action_id: String,
+        message: String,
+    },
     ActionCompleted {
         action_id: String,
         result: ActionResult,
@@ -44,6 +48,11 @@ pub enum EngineEvent {
     },
     UsageLimitsUpdated {
         usage: UsageLimitsSnapshot,
+    },
+    ModelRerouted {
+        from_model: String,
+        to_model: String,
+        reason: String,
     },
     Error {
         message: String,

@@ -10,6 +10,7 @@ import type {
   ContextUsage,
   Message,
   MessageWindowCursor,
+  NoticeBlock,
   StreamEvent,
   ThreadStatus
 } from "../types";
@@ -127,6 +128,8 @@ function eventHasVisibleAssistantContent(event: StreamEvent): boolean {
     case "ActionCompleted":
     case "ApprovalRequested":
     case "DiffUpdated":
+    case "ActionProgressUpdated":
+    case "ModelRerouted":
     case "Error":
       return true;
     default:
@@ -394,6 +397,21 @@ function upsertBlock(blocks: ContentBlock[], block: ContentBlock): ContentBlock[
   }
 
   return [...blocks, block];
+}
+
+function upsertNoticeBlock(blocks: ContentBlock[], block: NoticeBlock): ContentBlock[] {
+  const idx = blocks.findIndex(
+    (candidate) =>
+      candidate.type === "notice" &&
+      (candidate as NoticeBlock).kind === block.kind,
+  );
+  if (idx >= 0) {
+    const next = [...blocks];
+    next[idx] = block;
+    return next;
+  }
+
+  return [block, ...blocks];
 }
 
 function normalizeBlocks(blocks?: ContentBlock[]): ContentBlock[] | undefined {
@@ -775,6 +793,33 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     }
   }
 
+  if (event.type === "ActionProgressUpdated") {
+    const actionId = String(event.action_id ?? "");
+    const progressMessage = String(event.message ?? "");
+    if (actionId && progressMessage) {
+      const blocks = assistant.blocks ?? [];
+      assistant.blocks = patchActionBlock(blocks, actionId, (block) => {
+        const details = (block.details ?? {}) as Record<string, unknown>;
+        if (
+          details.progressKind === "mcp" &&
+          typeof details.progressMessage === "string" &&
+          details.progressMessage === progressMessage
+        ) {
+          return block;
+        }
+
+        return {
+          ...block,
+          details: {
+            ...details,
+            progressKind: "mcp",
+            progressMessage,
+          },
+        };
+      });
+    }
+  }
+
   if (event.type === "ActionCompleted") {
     const blocks = assistant.blocks ?? [];
     const actionId = String(event.action_id ?? "");
@@ -839,6 +884,22 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
           scope,
         },
       ];
+    }
+  }
+
+  if (event.type === "ModelRerouted") {
+    const fromModel = String(event.from_model ?? "").trim();
+    const toModel = String(event.to_model ?? "").trim();
+    const reason = String(event.reason ?? "").trim();
+    if (toModel) {
+      assistant.turnModelId = toModel;
+      assistant.blocks = upsertNoticeBlock(assistant.blocks ?? [], {
+        type: "notice",
+        kind: "model_rerouted",
+        level: "info",
+        title: "Model rerouted",
+        message: `Switched from ${fromModel || "the requested model"} to ${toModel}${reason ? ` (${reason})` : ""}.`,
+      });
     }
   }
 
@@ -1050,14 +1111,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (bindSeq !== activeThreadBindSeq) {
           return;
         }
-        if (event.type === "TurnStarted") {
-          const pendingTurnMeta = pendingTurnMetaByThread.get(threadId);
-          if (
-            pendingTurnMeta &&
-            typeof event.client_turn_id === "string" &&
-            event.client_turn_id.length > 0
-          ) {
-            pendingTurnMeta.clientTurnId = event.client_turn_id;
+        const pendingTurnMeta = pendingTurnMetaByThread.get(threadId);
+        if (
+          pendingTurnMeta &&
+          event.type === "TurnStarted" &&
+          typeof event.client_turn_id === "string" &&
+          event.client_turn_id.length > 0
+        ) {
+          pendingTurnMeta.clientTurnId = event.client_turn_id;
+        }
+        if (pendingTurnMeta && event.type === "ModelRerouted") {
+          const reroutedModelId =
+            typeof event.to_model === "string" ? event.to_model.trim() : "";
+          if (reroutedModelId) {
+            pendingTurnMeta.turnModelId = reroutedModelId;
           }
         }
         recordPendingTurnLatencyMetrics(threadId, event);
