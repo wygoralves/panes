@@ -69,7 +69,9 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let resource_dir = app.path().resource_dir().ok();
-            app.state::<AppState>().engines.set_resource_dir(resource_dir);
+            app.state::<AppState>()
+                .engines
+                .set_resource_dir(resource_dir);
             app.on_menu_event(move |_app, event| {
                 let id = event.id().as_ref();
                 match id {
@@ -140,6 +142,7 @@ pub fn run() {
             commands::git::watch_git_repo,
             commands::engines::list_engines,
             commands::engines::engine_health,
+            commands::engines::prewarm_engine,
             commands::engines::run_engine_check,
             commands::threads::list_threads,
             commands::threads::list_archived_threads,

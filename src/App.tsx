@@ -38,6 +38,7 @@ export function App() {
   const scanHarnesses = useHarnessStore((s) => s.scan);
   const refreshAllThreads = useThreadStore((s) => s.refreshAllThreads);
   const refreshThreads = useThreadStore((s) => s.refreshThreads);
+  const applyThreadUpdateLocal = useThreadStore((s) => s.applyThreadUpdateLocal);
   const searchOpen = useUiStore((s) => s.searchOpen);
   const setSearchOpen = useUiStore((s) => s.setSearchOpen);
   const commandPaletteOpen = useUiStore((s) => s.commandPaletteOpen);
@@ -56,7 +57,10 @@ export function App() {
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    void listenThreadUpdated(({ workspaceId }) => {
+    void listenThreadUpdated(({ workspaceId, thread }) => {
+      if (thread && applyThreadUpdateLocal(thread)) {
+        return;
+      }
       void refreshThreads(workspaceId);
     }).then((fn) => {
       unlisten = fn;
@@ -67,7 +71,7 @@ export function App() {
         unlisten();
       }
     };
-  }, [refreshThreads]);
+  }, [applyThreadUpdateLocal, refreshThreads]);
 
   useEffect(() => {
     function onBeforeUnload() {

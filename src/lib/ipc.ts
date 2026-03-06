@@ -96,6 +96,7 @@ export const ipc = {
   deleteThread: (threadId: string) => invoke<void>("delete_thread", { threadId }),
   listEngines: () => invoke<EngineInfo[]>("list_engines"),
   engineHealth: (engineId: string) => invoke<EngineHealth>("engine_health", { engineId }),
+  prewarmEngine: (engineId: string) => invoke<void>("prewarm_engine", { engineId }),
   runEngineCheck: (engineId: string, command: string) =>
     invoke<EngineCheckResult>("run_engine_check", { engineId, command }),
   sendMessage: (
@@ -104,6 +105,7 @@ export const ipc = {
     modelId?: string | null,
     attachments?: ChatAttachment[] | null,
     planMode?: boolean | null,
+    clientTurnId?: string | null,
   ) =>
     invoke<string>("send_message", {
       threadId,
@@ -111,6 +113,7 @@ export const ipc = {
       modelId: modelId ?? null,
       attachments: attachments ?? null,
       planMode: planMode ?? null,
+      clientTurnId: clientTurnId ?? null,
     }),
   cancelTurn: (threadId: string) => invoke<void>("cancel_turn", { threadId }),
   respondApproval: (threadId: string, approvalId: string, response: ApprovalResponse) =>
@@ -296,6 +299,7 @@ export async function listenGitRepoChanged(
 export interface ThreadUpdatedEvent {
   threadId: string;
   workspaceId: string;
+  thread?: Thread | null;
 }
 
 export async function listenThreadUpdated(

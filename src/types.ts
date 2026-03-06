@@ -54,6 +54,7 @@ export interface Message {
   role: "user" | "assistant";
   content?: string;
   blocks?: ContentBlock[];
+  clientTurnId?: string | null;
   turnEngineId?: string | null;
   turnModelId?: string | null;
   turnReasoningEffort?: string | null;
@@ -551,6 +552,7 @@ export interface StreamTokenUsage {
 
 export interface TurnStartedEvent {
   type: "TurnStarted";
+  client_turn_id?: string | null;
 }
 
 export interface TurnCompletedEvent {

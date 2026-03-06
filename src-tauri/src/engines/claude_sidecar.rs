@@ -296,6 +296,10 @@ impl ClaudeSidecarEngine {
         state.resource_dir = resource_dir;
     }
 
+    pub async fn prewarm(&self) -> anyhow::Result<()> {
+        self.ensure_transport().await.map(|_| ())
+    }
+
     async fn ensure_transport(&self) -> anyhow::Result<Arc<ClaudeTransport>> {
         let mut state = self.state.lock().await;
 
@@ -674,7 +678,12 @@ impl Engine for ClaudeSidecarEngine {
 
                             match sidecar_event {
                                 SidecarEvent::TurnStarted { .. } => {
-                                    event_tx.send(EngineEvent::TurnStarted).await.ok();
+                                    event_tx
+                                        .send(EngineEvent::TurnStarted {
+                                            client_turn_id: None,
+                                        })
+                                        .await
+                                        .ok();
                                 }
                                 SidecarEvent::SessionInit { session_id, .. } => {
                                     let mut state = state_ref.lock().await;

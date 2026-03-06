@@ -932,10 +932,7 @@ pub fn init_repo(path: &str, validate_only: bool) -> anyhow::Result<GitInitRepoS
     }
 
     if !status.can_initialize {
-        let blocking_path = status
-            .blocking_repo_path
-            .as_deref()
-            .unwrap_or(path);
+        let blocking_path = status.blocking_repo_path.as_deref().unwrap_or(path);
         anyhow::bail!(
             "cannot initialize a repository inside an existing git repository: {blocking_path}"
         );

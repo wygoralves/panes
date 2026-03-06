@@ -52,15 +52,97 @@ const MAX_FULLY_HYDRATED_MESSAGES = 80;
 const ACTION_OUTPUT_MAX_CHARS = 180_000;
 const ACTION_OUTPUT_TRIM_TARGET_CHARS = 120_000;
 const ACTION_OUTPUT_MAX_CHUNKS = 240;
-const pendingTurnMetaByThread = new Map<
-  string,
-  {
-    turnEngineId?: string | null;
-    turnModelId?: string | null;
-    turnReasoningEffort?: string | null;
-  }
->();
+
+interface PendingTurnMeta {
+  turnEngineId?: string | null;
+  turnModelId?: string | null;
+  turnReasoningEffort?: string | null;
+  clientTurnId?: string | null;
+  assistantMessageId?: string | null;
+  startedAt: number;
+  firstShellRecorded: boolean;
+  firstContentRecorded: boolean;
+  firstTextRecorded: boolean;
+}
+
+interface AssistantMessageTarget {
+  clientTurnId?: string | null;
+  assistantMessageId?: string | null;
+}
+
+const pendingTurnMetaByThread = new Map<string, PendingTurnMeta>();
 const inflightActionOutputHydration = new Map<string, Promise<void>>();
+
+function recordPendingTurnMetric(
+  threadId: string,
+  flag: keyof Pick<
+    PendingTurnMeta,
+    "firstShellRecorded" | "firstContentRecorded" | "firstTextRecorded"
+  >,
+  metricName:
+    | "chat.turn.first_shell.ms"
+    | "chat.turn.first_content.ms"
+    | "chat.turn.first_text.ms",
+) {
+  const pendingTurnMeta = pendingTurnMetaByThread.get(threadId);
+  if (!pendingTurnMeta || pendingTurnMeta[flag]) {
+    return;
+  }
+
+  pendingTurnMeta[flag] = true;
+  recordPerfMetric(metricName, performance.now() - pendingTurnMeta.startedAt, {
+    threadId,
+    clientTurnId: pendingTurnMeta.clientTurnId ?? undefined,
+    engineId: pendingTurnMeta.turnEngineId ?? undefined,
+    modelId: pendingTurnMeta.turnModelId ?? undefined,
+  });
+}
+
+function schedulePendingTurnShellMetric(threadId: string, clientTurnId: string) {
+  const schedule = (() => {
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      return globalThis.requestAnimationFrame.bind(globalThis);
+    }
+    return (callback: FrameRequestCallback) =>
+      globalThis.setTimeout(() => callback(performance.now()), 0);
+  })();
+
+  schedule(() => {
+    const pendingTurnMeta = pendingTurnMetaByThread.get(threadId);
+    if (!pendingTurnMeta || pendingTurnMeta.clientTurnId !== clientTurnId) {
+      return;
+    }
+    recordPendingTurnMetric(threadId, "firstShellRecorded", "chat.turn.first_shell.ms");
+  });
+}
+
+function eventHasVisibleAssistantContent(event: StreamEvent): boolean {
+  switch (event.type) {
+    case "TextDelta":
+      return String(event.content ?? "").length > 0;
+    case "ThinkingDelta":
+      return String(event.content ?? "").length > 0;
+    case "ActionStarted":
+    case "ActionOutputDelta":
+    case "ActionCompleted":
+    case "ApprovalRequested":
+    case "DiffUpdated":
+    case "Error":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function recordPendingTurnLatencyMetrics(threadId: string, event: StreamEvent) {
+  if (eventHasVisibleAssistantContent(event)) {
+    recordPendingTurnMetric(threadId, "firstContentRecorded", "chat.turn.first_content.ms");
+  }
+
+  if (event.type === "TextDelta" && String(event.content ?? "").length > 0) {
+    recordPendingTurnMetric(threadId, "firstTextRecorded", "chat.turn.first_text.ms");
+  }
+}
 
 function resolveApprovalDecision(response: ApprovalResponse): ApprovalBlock["decision"] {
   if ("decision" in response && typeof response.decision === "string") {
@@ -145,21 +227,19 @@ function patchActionBlock(
   return nextBlocks;
 }
 
-function ensureAssistantMessage(messages: Message[], threadId: string): Message[] {
-  const existing = messages[messages.length - 1];
-  if (existing && existing.role === "assistant" && existing.status === "streaming") {
-    return messages;
-  }
-
-  return [...messages, createStreamingAssistantMessage(threadId)];
-}
-
-function createStreamingAssistantMessage(threadId: string): Message {
+function createStreamingAssistantMessage(
+  threadId: string,
+  options?: {
+    id?: string;
+    clientTurnId?: string | null;
+  },
+): Message {
   const pendingTurnMeta = pendingTurnMetaByThread.get(threadId);
   return {
-    id: crypto.randomUUID(),
+    id: options?.id ?? crypto.randomUUID(),
     threadId,
     role: "assistant",
+    clientTurnId: options?.clientTurnId ?? pendingTurnMeta?.clientTurnId ?? null,
     turnEngineId: pendingTurnMeta?.turnEngineId ?? null,
     turnModelId: pendingTurnMeta?.turnModelId ?? null,
     turnReasoningEffort: pendingTurnMeta?.turnReasoningEffort ?? null,
@@ -190,7 +270,40 @@ function hasRenderableAssistantContent(message: Message): boolean {
   });
 }
 
-function compactTrailingStreamingAssistantMessages(messages: Message[]): Message[] {
+function resolveAssistantMessageIndex(
+  messages: Message[],
+  target: AssistantMessageTarget,
+): number {
+  if (target.assistantMessageId) {
+    const byIdIndex = messages.findIndex((message) => message.id === target.assistantMessageId);
+    if (byIdIndex >= 0) {
+      return byIdIndex;
+    }
+  }
+
+  if (target.clientTurnId) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role === "assistant" && message.clientTurnId === target.clientTurnId) {
+        return index;
+      }
+    }
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "assistant" && message.status === "streaming") {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function compactTrailingStreamingAssistantMessages(
+  messages: Message[],
+  target: AssistantMessageTarget,
+): Message[] {
   if (messages.length < 2) {
     return messages;
   }
@@ -210,15 +323,51 @@ function compactTrailingStreamingAssistantMessages(messages: Message[]): Message
   }
 
   const trailingMessages = messages.slice(trailingStart);
-  let keepIndex = trailingMessages.length - 1;
-  for (let index = trailingMessages.length - 1; index >= 0; index -= 1) {
-    if (hasRenderableAssistantContent(trailingMessages[index])) {
-      keepIndex = index;
-      break;
+  let keepIndex = -1;
+
+  if (target.assistantMessageId) {
+    keepIndex = trailingMessages.findIndex((message) => message.id === target.assistantMessageId);
+  }
+  if (keepIndex < 0 && target.clientTurnId) {
+    keepIndex = trailingMessages.findIndex(
+      (message) => message.clientTurnId === target.clientTurnId,
+    );
+  }
+  if (keepIndex < 0) {
+    keepIndex = trailingMessages.length - 1;
+    for (let index = trailingMessages.length - 1; index >= 0; index -= 1) {
+      if (hasRenderableAssistantContent(trailingMessages[index])) {
+        keepIndex = index;
+        break;
+      }
     }
   }
 
   return [...messages.slice(0, trailingStart), trailingMessages[keepIndex]];
+}
+
+function ensureAssistantMessage(
+  messages: Message[],
+  threadId: string,
+  target: AssistantMessageTarget,
+): { messages: Message[]; assistantIndex: number } {
+  const compactedMessages = compactTrailingStreamingAssistantMessages(messages, target);
+  const existingIndex = resolveAssistantMessageIndex(compactedMessages, target);
+  if (existingIndex >= 0) {
+    return {
+      messages: compactedMessages,
+      assistantIndex: existingIndex,
+    };
+  }
+
+  const assistantMessage = createStreamingAssistantMessage(threadId, {
+    id: target.assistantMessageId ?? undefined,
+    clientTurnId: target.clientTurnId ?? null,
+  });
+  return {
+    messages: [...compactedMessages, assistantMessage],
+    assistantIndex: compactedMessages.length,
+  };
 }
 
 function upsertBlock(blocks: ContentBlock[], block: ContentBlock): ContentBlock[] {
@@ -479,19 +628,45 @@ function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimit
   };
 }
 
+function resolveAssistantTargetFromEvent(
+  threadId: string,
+  event: StreamEvent,
+): AssistantMessageTarget {
+  const pendingTurnMeta = pendingTurnMetaByThread.get(threadId);
+  const eventClientTurnId =
+    event.type === "TurnStarted" && typeof event.client_turn_id === "string"
+      ? event.client_turn_id
+      : null;
+
+  return {
+    clientTurnId: eventClientTurnId ?? pendingTurnMeta?.clientTurnId ?? null,
+    assistantMessageId:
+      eventClientTurnId && pendingTurnMeta?.clientTurnId === eventClientTurnId
+        ? pendingTurnMeta.assistantMessageId ?? null
+        : pendingTurnMeta?.assistantMessageId ?? null,
+  };
+}
+
 function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: string): Message[] {
   if (event.type === "UsageLimitsUpdated") {
     return messages;
   }
 
-  let next = ensureAssistantMessage(
-    compactTrailingStreamingAssistantMessages(messages),
+  const assistantTarget = resolveAssistantTargetFromEvent(threadId, event);
+  const { messages: ensuredMessages, assistantIndex } = ensureAssistantMessage(
+    messages,
     threadId,
+    assistantTarget,
   );
-  const currentAssistant = next[next.length - 1];
+  let next = ensuredMessages;
+  const currentAssistant = next[assistantIndex];
   const assistant: Message = { ...currentAssistant };
   const existingBlocks = currentAssistant.blocks ?? [];
   assistant.blocks = existingBlocks;
+
+  if (event.type === "TurnStarted" && typeof event.client_turn_id === "string") {
+    assistant.clientTurnId = event.client_turn_id;
+  }
 
   if (event.type === "TextDelta") {
     const blocks = assistant.blocks ?? [];
@@ -692,6 +867,7 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
   const blocksChanged = assistant.blocks !== existingBlocks;
   const statusChanged = assistant.status !== currentAssistant.status;
   const metadataChanged =
+    assistant.clientTurnId !== currentAssistant.clientTurnId ||
     assistant.turnEngineId !== currentAssistant.turnEngineId ||
     assistant.turnModelId !== currentAssistant.turnModelId ||
     assistant.turnReasoningEffort !== currentAssistant.turnReasoningEffort ||
@@ -702,7 +878,11 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     return next;
   }
 
-  next = [...next.slice(0, -1), assistant];
+  next = [
+    ...next.slice(0, assistantIndex),
+    assistant,
+    ...next.slice(assistantIndex + 1),
+  ];
   return next;
 }
 
@@ -765,7 +945,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const queuedStreamEvents: StreamEvent[] = [];
-      let streamFlushTimer: number | null = null;
+      let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
       let streamFlushInProgress = false;
       let eventRateWindowStartedAt = performance.now();
       let eventRateWindowCount = 0;
@@ -792,7 +972,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return;
         }
         if (streamFlushTimer !== null) {
-          window.clearTimeout(streamFlushTimer);
+          globalThis.clearTimeout(streamFlushTimer);
           streamFlushTimer = null;
         }
         if (queuedStreamEvents.length === 0) {
@@ -816,15 +996,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
               nextUsageLimits = mapUsageLimitsFromEvent(queuedEvent);
               continue;
             }
-            if (queuedEvent.type === "TurnCompleted") {
-              pendingTurnMetaByThread.delete(threadId);
-            }
             const previousLength = nextMessages.length;
             nextMessages = applyStreamEvent(nextMessages, queuedEvent, state.threadId);
             if (nextMessages.length !== previousLength) {
               hydrationRecalcRequired = true;
             }
             nextStreaming = queuedEvent.type !== "TurnCompleted";
+            if (queuedEvent.type === "TurnCompleted") {
+              pendingTurnMetaByThread.delete(threadId);
+            }
           }
           if (hydrationRecalcRequired) {
             nextMessages = applyHydrationWindow(nextMessages);
@@ -860,7 +1040,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (streamFlushTimer !== null) {
           return;
         }
-        streamFlushTimer = window.setTimeout(() => {
+        streamFlushTimer = globalThis.setTimeout(() => {
           streamFlushTimer = null;
           flushQueuedStreamEvents();
         }, STREAM_EVENT_BATCH_WINDOW_MS);
@@ -870,6 +1050,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (bindSeq !== activeThreadBindSeq) {
           return;
         }
+        if (event.type === "TurnStarted") {
+          const pendingTurnMeta = pendingTurnMetaByThread.get(threadId);
+          if (
+            pendingTurnMeta &&
+            typeof event.client_turn_id === "string" &&
+            event.client_turn_id.length > 0
+          ) {
+            pendingTurnMeta.clientTurnId = event.client_turn_id;
+          }
+        }
+        recordPendingTurnLatencyMetrics(threadId, event);
         queuedStreamEvents.push(event);
         eventRateWindowCount += 1;
         const now = performance.now();
@@ -886,7 +1077,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const unlisten = () => {
         if (streamFlushTimer !== null) {
-          window.clearTimeout(streamFlushTimer);
+          globalThis.clearTimeout(streamFlushTimer);
           streamFlushTimer = null;
         }
         queuedStreamEvents.length = 0;
@@ -1005,10 +1196,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ error: "No active thread selected" });
       return false;
     }
+    const startedAt = performance.now();
+    const clientTurnId = crypto.randomUUID();
+    const optimisticAssistantMessageId = crypto.randomUUID();
     pendingTurnMetaByThread.set(threadId, {
       turnEngineId: options?.engineId ?? null,
       turnModelId: options?.modelId ?? null,
       turnReasoningEffort: options?.reasoningEffort ?? null,
+      clientTurnId,
+      assistantMessageId: optimisticAssistantMessageId,
+      startedAt,
+      firstShellRecorded: false,
+      firstContentRecorded: false,
+      firstTextRecorded: false,
     });
 
     const attachments = options?.attachments ?? [];
@@ -1041,7 +1241,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       hydration: "full",
       hasDeferredContent: false,
     };
-    const optimisticAssistantMessage = createStreamingAssistantMessage(threadId);
+    const optimisticAssistantMessage = createStreamingAssistantMessage(threadId, {
+      id: optimisticAssistantMessageId,
+      clientTurnId,
+    });
 
     set((state) => ({
       messages: applyHydrationWindow([
@@ -1053,6 +1256,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streaming: true,
       error: undefined
     }));
+    schedulePendingTurnShellMetric(threadId, clientTurnId);
 
     try {
       await ipc.sendMessage(
@@ -1061,6 +1265,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         options?.modelId ?? null,
         attachments.length > 0 ? attachments : null,
         planMode,
+        clientTurnId,
       );
       return true;
     } catch (error) {

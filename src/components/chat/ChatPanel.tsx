@@ -141,6 +141,43 @@ const CLAUDE_IMAGE_ATTACHMENT_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp"]
 const CLAUDE_ATTACHMENT_EXTENSIONS = Array.from(
   new Set([...CLAUDE_TEXT_ATTACHMENT_EXTENSIONS, ...CLAUDE_IMAGE_ATTACHMENT_EXTENSIONS]),
 );
+const ENGINE_PREWARM_THROTTLE_MS = 30_000;
+const lastPrewarmAttemptAtByEngine = new Map<string, number>();
+const inflightPrewarmByEngine = new Map<string, Promise<void>>();
+
+function scheduleIdleTask(callback: () => void): () => void {
+  if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+    const idleId = window.requestIdleCallback(() => callback(), { timeout: 600 });
+    return () => window.cancelIdleCallback(idleId);
+  }
+
+  const timeoutId = window.setTimeout(callback, 120);
+  return () => window.clearTimeout(timeoutId);
+}
+
+function prewarmEngineTransport(engineId: string): Promise<void> {
+  const now = Date.now();
+  const lastAttemptAt = lastPrewarmAttemptAtByEngine.get(engineId) ?? 0;
+  if (now - lastAttemptAt < ENGINE_PREWARM_THROTTLE_MS) {
+    return Promise.resolve();
+  }
+
+  const existingTask = inflightPrewarmByEngine.get(engineId);
+  if (existingTask) {
+    return existingTask;
+  }
+
+  lastPrewarmAttemptAtByEngine.set(engineId, now);
+  const task = ipc.prewarmEngine(engineId)
+    .catch(() => {
+      // Ignore prewarm failures; engine health/setup surfaces the actionable state.
+    })
+    .finally(() => {
+      inflightPrewarmByEngine.delete(engineId);
+    });
+  inflightPrewarmByEngine.set(engineId, task);
+  return task;
+}
 
 interface AttachmentFilterConfig {
   supportedExtensions: string[];
@@ -1103,6 +1140,32 @@ export function ChatPanel() {
       setSelectedModelId(selectedModel.id);
     }
   }, [selectedModel, selectedModelId]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId || engines.length === 0) {
+      return;
+    }
+
+    const engineIds = new Set<string>();
+    if (selectedEngineId) {
+      engineIds.add(selectedEngineId);
+    }
+    if (activeThread?.engineId) {
+      engineIds.add(activeThread.engineId);
+    }
+
+    const cancelers = Array.from(engineIds)
+      .filter((engineId) => engines.some((engine) => engine.id === engineId))
+      .map((engineId) =>
+        scheduleIdleTask(() => {
+          void prewarmEngineTransport(engineId);
+        }),
+      );
+
+    return () => {
+      cancelers.forEach((cancel) => cancel());
+    };
+  }, [activeWorkspaceId, activeThread?.engineId, engines, selectedEngineId]);
 
   useEffect(() => {
     if (!selectedModel) {

@@ -125,6 +125,8 @@ struct EventProgress {
 struct ThreadUpdatedEvent {
     thread_id: String,
     workspace_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thread: Option<ThreadDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +160,7 @@ pub async fn send_message(
     model_id: Option<String>,
     attachments: Option<Vec<ChatAttachmentPayload>>,
     plan_mode: Option<bool>,
+    client_turn_id: Option<String>,
 ) -> Result<String, String> {
     if state.turns.get(&thread_id).await.is_some() {
         return Err(
@@ -365,6 +368,7 @@ pub async fn send_message(
             engine_thread_id,
             assistant_message_id,
             turn_input_for_task,
+            client_turn_id,
             cancellation,
         )
         .await;
@@ -552,6 +556,7 @@ async fn run_turn(
     engine_thread_id: String,
     assistant_message_id: String,
     turn_input: TurnInput,
+    client_turn_id: Option<String>,
     cancellation: CancellationToken,
 ) {
     let max_output_chars = state.config.debug.max_action_output_chars;
@@ -590,6 +595,47 @@ async fn run_turn(
     let stream_event_topic = format!("stream-event-{}", thread.id);
     let approval_event_topic = format!("approval-request-{}", thread.id);
     let mut pending_event: Option<EngineEvent> = None;
+
+    let initial_turn_started_event = EngineEvent::TurnStarted { client_turn_id };
+    let initial_progress = process_stream_event(
+        &app,
+        &state,
+        &thread,
+        &assistant_message_id,
+        &stream_event_topic,
+        &approval_event_topic,
+        &initial_turn_started_event,
+        &mut blocks,
+        &mut action_index,
+        &mut approval_index,
+        max_output_chars,
+    )
+    .await;
+    let initial_force_persist = apply_stream_progress(
+        initial_progress,
+        &mut message_status,
+        &mut thread_status,
+        &mut token_usage,
+        &mut blocks_dirty,
+        &mut message_state_dirty,
+        &mut thread_status_dirty,
+    );
+    flush_stream_state(
+        &state,
+        &thread,
+        &assistant_message_id,
+        &blocks,
+        &message_status,
+        &thread_status,
+        &mut blocks_dirty,
+        &mut message_state_dirty,
+        &mut thread_status_dirty,
+        &mut last_persisted_thread_status,
+        &mut last_persist_at,
+        &mut last_blocks_persist_at,
+        initial_force_persist,
+    )
+    .await;
 
     loop {
         let incoming_event = if pending_event.is_some() {
@@ -929,15 +975,15 @@ async fn run_turn(
         }
     }
 
-    if maybe_update_thread_title(&state, &thread, &engine_thread_id, &turn_input.message)
-        .await
-        .is_some()
+    if let Some(updated_thread) =
+        maybe_update_thread_title(&state, &thread, &engine_thread_id, &turn_input.message).await
     {
         let _ = app.emit(
             "thread-updated",
             ThreadUpdatedEvent {
                 thread_id: thread.id.clone(),
                 workspace_id: thread.workspace_id.clone(),
+                thread: Some(updated_thread),
             },
         );
     }
@@ -1309,7 +1355,7 @@ async fn maybe_update_thread_title(
     thread: &ThreadDto,
     engine_thread_id: &str,
     user_message: &str,
-) -> Option<String> {
+) -> Option<ThreadDto> {
     if !should_autotitle_thread(thread) {
         return None;
     }
@@ -1326,16 +1372,23 @@ async fn maybe_update_thread_title(
         return None;
     }
 
-    if let Err(error) = run_db(state.db.clone(), {
+    let updated_thread = match run_db(state.db.clone(), {
         let thread_id = thread.id.clone();
         let candidate = candidate.clone();
-        move |db| db::threads::update_thread_title(db, &thread_id, &candidate)
+        move |db| {
+            db::threads::update_thread_title(db, &thread_id, &candidate)?;
+            db::threads::get_thread(db, &thread_id)?
+                .ok_or_else(|| anyhow::anyhow!("thread not found after title update: {thread_id}"))
+        }
     })
     .await
     {
-        log::warn!("failed to update thread title: {error}");
-        return None;
-    }
+        Ok(updated_thread) => updated_thread,
+        Err(error) => {
+            log::warn!("failed to update thread title: {error}");
+            return None;
+        }
+    };
 
     if let Err(error) = state
         .engines
@@ -1345,7 +1398,7 @@ async fn maybe_update_thread_title(
         log::debug!("failed to sync thread name with engine: {error}");
     }
 
-    Some(candidate)
+    Some(updated_thread)
 }
 
 fn should_autotitle_thread(thread: &ThreadDto) -> bool {
@@ -1398,7 +1451,7 @@ fn apply_event_to_blocks(
     let mut progress = EventProgress::default();
 
     match event {
-        EngineEvent::TurnStarted => {
+        EngineEvent::TurnStarted { .. } => {
             progress.thread_status = Some(ThreadStatusDto::Streaming);
         }
         EngineEvent::TurnCompleted {

@@ -186,6 +186,14 @@ impl EngineManager {
         }
     }
 
+    pub async fn prewarm(&self, engine_id: &str) -> anyhow::Result<()> {
+        match engine_id {
+            "codex" => self.codex.prewarm().await,
+            "claude" => self.claude.prewarm().await,
+            _ => anyhow::bail!("unknown engine: {engine_id}"),
+        }
+    }
+
     pub async fn ensure_engine_thread(
         &self,
         thread: &ThreadDto,

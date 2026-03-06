@@ -34,6 +34,7 @@ interface ThreadState {
   removeThread: (threadId: string) => Promise<void>;
   restoreThread: (threadId: string) => Promise<void>;
   setActiveThread: (threadId: string | null) => void;
+  applyThreadUpdateLocal: (thread: Thread) => boolean;
   setThreadReasoningEffortLocal: (threadId: string, reasoningEffort: string | null) => void;
   setThreadLastModelLocal: (threadId: string, modelId: string | null) => void;
 }
@@ -379,6 +380,45 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       localStorage.removeItem(LAST_THREAD_KEY);
     }
     set({ activeThreadId: threadId });
+  },
+  applyThreadUpdateLocal: (updatedThread) => {
+    let applied = false;
+
+    set((state) => {
+      const workspaceThreads = state.threadsByWorkspace[updatedThread.workspaceId];
+      if (!workspaceThreads?.some((thread) => thread.id === updatedThread.id)) {
+        return state;
+      }
+
+      applied = true;
+      const nextWorkspaceThreads = workspaceThreads.map((thread) =>
+        thread.id === updatedThread.id ? updatedThread : thread,
+      );
+      const threadsByWorkspace = mergeWorkspaceThreads(
+        state.threadsByWorkspace,
+        updatedThread.workspaceId,
+        nextWorkspaceThreads,
+      );
+      const archivedThreads = state.archivedThreadsByWorkspace[updatedThread.workspaceId] ?? [];
+      const archivedThreadsByWorkspace = archivedThreads.some(
+        (thread) => thread.id === updatedThread.id,
+      )
+        ? {
+            ...state.archivedThreadsByWorkspace,
+            [updatedThread.workspaceId]: archivedThreads.map((thread) =>
+              thread.id === updatedThread.id ? updatedThread : thread,
+            ),
+          }
+        : state.archivedThreadsByWorkspace;
+
+      return {
+        threadsByWorkspace,
+        archivedThreadsByWorkspace,
+        threads: flattenThreadsByWorkspace(threadsByWorkspace),
+      };
+    });
+
+    return applied;
   },
   setThreadReasoningEffortLocal: (threadId, reasoningEffort) =>
     set((state) => {

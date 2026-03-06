@@ -27,6 +27,15 @@ pub async fn engine_health(
 }
 
 #[tauri::command]
+pub async fn prewarm_engine(state: State<'_, AppState>, engine_id: String) -> Result<(), String> {
+    state
+        .engines
+        .prewarm(&engine_id)
+        .await
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
 pub async fn run_engine_check(
     state: State<'_, AppState>,
     engine_id: String,

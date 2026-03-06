@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum EngineEvent {
-    TurnStarted,
+    TurnStarted {
+        client_turn_id: Option<String>,
+    },
     TurnCompleted {
         token_usage: Option<TokenUsage>,
         status: TurnCompletionStatus,

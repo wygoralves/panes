@@ -28,7 +28,9 @@ impl TurnEventMapper {
         let method_key = method_signature(method);
 
         match method_key.as_str() {
-            "turnstarted" => vec![EngineEvent::TurnStarted],
+            "turnstarted" => vec![EngineEvent::TurnStarted {
+                client_turn_id: None,
+            }],
             "turncompleted" => {
                 let mut events = Vec::new();
                 let token_usage =
@@ -179,7 +181,9 @@ impl TurnEventMapper {
                 if let Some(status) = turn.get("status").and_then(Value::as_str) {
                     let normalized_status = status.to_lowercase();
                     if normalized_status == "inprogress" {
-                        out.push(EngineEvent::TurnStarted);
+                        out.push(EngineEvent::TurnStarted {
+                            client_turn_id: None,
+                        });
                     } else {
                         let completion_status = parse_turn_completion_status(status);
                         if completion_status == TurnCompletionStatus::Failed {

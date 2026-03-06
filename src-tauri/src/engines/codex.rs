@@ -67,7 +67,7 @@ struct PendingApproval {
     method: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ThreadRuntime {
     cwd: String,
     model_id: String,
@@ -183,14 +183,24 @@ impl Engine for CodexEngine {
         model: &str,
         sandbox: SandboxPolicy,
     ) -> Result<EngineThread, anyhow::Error> {
-        let transport = self.ensure_ready_transport().await?;
-
         let cwd = scope_cwd(&scope);
         let approval_policy = sandbox
             .approval_policy
             .clone()
             .unwrap_or_else(|| "on-request".to_string());
         let mut force_external_sandbox = self.resolve_external_sandbox_mode().await;
+        let mut sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
+        let mut sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
+        let mut requested_runtime = ThreadRuntime {
+            cwd: cwd.clone(),
+            model_id: model.to_string(),
+            approval_policy: approval_policy.clone(),
+            sandbox_policy: sandbox_policy.clone(),
+            reasoning_effort: sandbox.reasoning_effort.clone(),
+        };
+
+        let transport = self.ensure_ready_transport().await?;
+
         if !force_external_sandbox
             && self
                 .detect_workspace_write_sandbox_failure(transport.as_ref(), &cwd, &sandbox)
@@ -199,9 +209,21 @@ impl Engine for CodexEngine {
             force_external_sandbox = true;
             self.set_force_external_sandbox(true).await;
             log::warn!("forcing external sandbox mode after workspaceWrite command probe failed");
+            sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
+            sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
+            requested_runtime.sandbox_policy = sandbox_policy.clone();
         }
-        let sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
-        let sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
+
+        if let Some(existing_thread_id) = resume_engine_thread_id {
+            if self
+                .can_reuse_live_thread(existing_thread_id, &requested_runtime)
+                .await
+            {
+                return Ok(EngineThread {
+                    engine_thread_id: existing_thread_id.to_string(),
+                });
+            }
+        }
 
         if let Some(existing_thread_id) = resume_engine_thread_id {
             let resume_params = serde_json::json!({
@@ -226,13 +248,12 @@ impl Engine for CodexEngine {
                         .unwrap_or_else(|| existing_thread_id.to_string());
                     let runtime = thread_runtime_from_start_response(
                         &result,
-                        &cwd,
-                        model,
-                        &approval_policy,
-                        &sandbox_policy,
-                        sandbox.reasoning_effort.clone(),
+                        &requested_runtime.cwd,
+                        &requested_runtime.model_id,
+                        &requested_runtime.approval_policy,
+                        &requested_runtime.sandbox_policy,
+                        requested_runtime.reasoning_effort.clone(),
                     );
-
                     self.store_thread_runtime(&engine_thread_id, runtime).await;
 
                     return Ok(EngineThread { engine_thread_id });
@@ -265,13 +286,12 @@ impl Engine for CodexEngine {
             .ok_or_else(|| anyhow::anyhow!("missing thread id in thread/start response"))?;
         let runtime = thread_runtime_from_start_response(
             &result,
-            &cwd,
-            model,
-            &approval_policy,
-            &sandbox_policy,
-            sandbox.reasoning_effort.clone(),
+            &requested_runtime.cwd,
+            &requested_runtime.model_id,
+            &requested_runtime.approval_policy,
+            &requested_runtime.sandbox_policy,
+            requested_runtime.reasoning_effort.clone(),
         );
-
         self.store_thread_runtime(&engine_thread_id, runtime).await;
 
         Ok(EngineThread { engine_thread_id })
@@ -620,6 +640,10 @@ impl Engine for CodexEngine {
 }
 
 impl CodexEngine {
+    pub async fn prewarm(&self) -> anyhow::Result<()> {
+        self.ensure_ready_transport().await.map(|_| ())
+    }
+
     pub async fn health_report(&self) -> CodexHealthReport {
         let resolution = resolve_codex_executable().await;
         let version_result = self.probe_version_from_resolution(&resolution).await;
@@ -1129,6 +1153,31 @@ impl CodexEngine {
     async fn thread_runtime(&self, engine_thread_id: &str) -> Option<ThreadRuntime> {
         let state = self.state.lock().await;
         state.thread_runtimes.get(engine_thread_id).cloned()
+    }
+
+    async fn can_reuse_live_thread(
+        &self,
+        engine_thread_id: &str,
+        requested_runtime: &ThreadRuntime,
+    ) -> bool {
+        let (transport, initialized, runtime_matches) = {
+            let state = self.state.lock().await;
+            (
+                state.transport.clone(),
+                state.initialized,
+                state.thread_runtimes.get(engine_thread_id) == Some(requested_runtime),
+            )
+        };
+
+        if !initialized || !runtime_matches {
+            return false;
+        }
+
+        let Some(transport) = transport else {
+            return false;
+        };
+
+        transport.is_alive().await
     }
 }
 
