@@ -359,6 +359,7 @@ function MessageRowView({
     [message.blocks],
   );
   const hasAssistantContent = !isUser && hasVisibleContent(message.blocks);
+  const showAssistantShell = !isUser && (hasAssistantContent || message.status === "streaming");
 
   return (
     <div
@@ -436,7 +437,7 @@ function MessageRowView({
             </span>
           )}
         </>
-      ) : hasAssistantContent ? (
+      ) : showAssistantShell ? (
         <>
           <div
             style={{
@@ -463,12 +464,37 @@ function MessageRowView({
                 <span>{assistantLabel}</span>
               </span>
             </div>
-            <MessageBlocks
-              blocks={message.blocks}
-              status={message.status}
-              onApproval={onApproval}
-              onLoadActionOutput={(actionId) => onLoadActionOutput(message.id, actionId)}
-            />
+            {hasAssistantContent ? (
+              <MessageBlocks
+                blocks={message.blocks}
+                status={message.status}
+                onApproval={onApproval}
+                onLoadActionOutput={(actionId) => onLoadActionOutput(message.id, actionId)}
+              />
+            ) : (
+              <div
+                style={{
+                  padding: "8px 14px 12px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  color: "var(--text-3)",
+                  fontSize: 12,
+                }}
+              >
+                <Brain
+                  size={12}
+                  className="thinking-icon-active"
+                  style={{ color: "var(--info)" }}
+                />
+                <span>Thinking</span>
+                <span className="chat-streaming-dots">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+              </div>
+            )}
           </div>
           {messageTimestamp && (
             <span
@@ -1729,36 +1755,6 @@ export function ChatPanel() {
     viewportScrollTop,
   ]);
 
-  const streamingIndicator = streaming ? (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "12px 16px",
-        borderRadius: "var(--radius-md)",
-        background: "var(--bg-2)",
-        border: "1px solid var(--border)",
-        width: "fit-content",
-        animation: "fade-in var(--duration-normal) var(--ease-out) both",
-      }}
-    >
-      <Brain
-        size={14}
-        className="thinking-icon-active"
-        style={{ color: "var(--info)" }}
-      />
-      <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text-2)" }}>
-        Thinking
-      </span>
-      <span className="chat-streaming-dots">
-        <span />
-        <span />
-        <span />
-      </span>
-    </div>
-  ) : null;
-
   const workspaceName = activeWorkspace?.name || activeWorkspace?.rootPath.split("/").pop() || "";
 
   // Compute total diff stats for header display
@@ -2106,8 +2102,6 @@ export function ChatPanel() {
             {virtualWindow.bottomSpacerHeight > 0 && (
               <div style={{ height: virtualWindow.bottomSpacerHeight }} />
             )}
-
-            {streamingIndicator}
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: MESSAGE_ROW_GAP }}>
@@ -2126,7 +2120,6 @@ export function ChatPanel() {
                 />
               );
             })}
-            {streamingIndicator}
           </div>
         )}
 

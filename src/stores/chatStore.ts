@@ -151,24 +151,74 @@ function ensureAssistantMessage(messages: Message[], threadId: string): Message[
     return messages;
   }
 
+  return [...messages, createStreamingAssistantMessage(threadId)];
+}
+
+function createStreamingAssistantMessage(threadId: string): Message {
   const pendingTurnMeta = pendingTurnMetaByThread.get(threadId);
-  return [
-    ...messages,
-    {
-      id: crypto.randomUUID(),
-      threadId,
-      role: "assistant",
-      turnEngineId: pendingTurnMeta?.turnEngineId ?? null,
-      turnModelId: pendingTurnMeta?.turnModelId ?? null,
-      turnReasoningEffort: pendingTurnMeta?.turnReasoningEffort ?? null,
-      status: "streaming",
-      schemaVersion: 1,
-      blocks: [],
-      createdAt: new Date().toISOString(),
-      hydration: "full",
-      hasDeferredContent: false,
+  return {
+    id: crypto.randomUUID(),
+    threadId,
+    role: "assistant",
+    turnEngineId: pendingTurnMeta?.turnEngineId ?? null,
+    turnModelId: pendingTurnMeta?.turnModelId ?? null,
+    turnReasoningEffort: pendingTurnMeta?.turnReasoningEffort ?? null,
+    status: "streaming",
+    schemaVersion: 1,
+    blocks: [],
+    createdAt: new Date().toISOString(),
+    hydration: "full",
+    hasDeferredContent: false,
+  };
+}
+
+function hasRenderableAssistantContent(message: Message): boolean {
+  if (typeof message.content === "string" && message.content.trim().length > 0) {
+    return true;
+  }
+
+  const blocks = message.blocks;
+  if (!Array.isArray(blocks) || blocks.length === 0) {
+    return false;
+  }
+
+  return blocks.some((block) => {
+    if (block.type === "text" || block.type === "thinking") {
+      return Boolean(block.content?.trim());
     }
-  ];
+    return true;
+  });
+}
+
+function compactTrailingStreamingAssistantMessages(messages: Message[]): Message[] {
+  if (messages.length < 2) {
+    return messages;
+  }
+
+  let trailingStart = messages.length;
+  while (trailingStart > 0) {
+    const message = messages[trailingStart - 1];
+    if (message.role !== "assistant" || message.status !== "streaming") {
+      break;
+    }
+    trailingStart -= 1;
+  }
+
+  const trailingCount = messages.length - trailingStart;
+  if (trailingCount <= 1) {
+    return messages;
+  }
+
+  const trailingMessages = messages.slice(trailingStart);
+  let keepIndex = trailingMessages.length - 1;
+  for (let index = trailingMessages.length - 1; index >= 0; index -= 1) {
+    if (hasRenderableAssistantContent(trailingMessages[index])) {
+      keepIndex = index;
+      break;
+    }
+  }
+
+  return [...messages.slice(0, trailingStart), trailingMessages[keepIndex]];
 }
 
 function upsertBlock(blocks: ContentBlock[], block: ContentBlock): ContentBlock[] {
@@ -434,7 +484,10 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     return messages;
   }
 
-  let next = ensureAssistantMessage(messages, threadId);
+  let next = ensureAssistantMessage(
+    compactTrailingStreamingAssistantMessages(messages),
+    threadId,
+  );
   const currentAssistant = next[next.length - 1];
   const assistant: Message = { ...currentAssistant };
   const existingBlocks = currentAssistant.blocks ?? [];
@@ -988,9 +1041,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       hydration: "full",
       hasDeferredContent: false,
     };
+    const optimisticAssistantMessage = createStreamingAssistantMessage(threadId);
 
     set((state) => ({
-      messages: applyHydrationWindow([...state.messages, userMessage]),
+      messages: applyHydrationWindow([
+        ...state.messages,
+        userMessage,
+        optimisticAssistantMessage,
+      ]),
       status: "streaming",
       streaming: true,
       error: undefined
@@ -1007,7 +1065,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return true;
     } catch (error) {
       pendingTurnMetaByThread.delete(threadId);
-      set({ status: "error", streaming: false, error: String(error) });
+      set((state) => ({
+        messages: state.messages.filter((item) => item.id !== optimisticAssistantMessage.id),
+        status: "error",
+        streaming: false,
+        error: String(error),
+      }));
       return false;
     }
   },

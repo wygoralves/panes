@@ -293,23 +293,16 @@ impl Engine for CodexEngine {
         let runtime = self.thread_runtime(&thread_id).await;
         validate_turn_attachments(&input.attachments).await?;
 
-        match request_with_fallback(
-            transport.as_ref(),
-            ACCOUNT_RATE_LIMITS_READ_METHODS,
-            serde_json::Value::Null,
-            Duration::from_secs(5),
-        )
-        .await
-        {
-            Ok(snapshot) => {
-                if let Some(event) = mapper.map_rate_limits_snapshot(&snapshot) {
-                    event_tx.send(event).await.ok();
-                }
-            }
-            Err(error) => {
-                log::debug!("account/rateLimits/read unavailable: {error}");
-            }
-        }
+        let transport_for_rate_limits = transport.clone();
+        let rate_limits_task = tokio::spawn(async move {
+            request_with_fallback(
+                transport_for_rate_limits.as_ref(),
+                ACCOUNT_RATE_LIMITS_READ_METHODS,
+                serde_json::Value::Null,
+                Duration::from_secs(5),
+            )
+            .await
+        });
 
         let transport_for_turn = transport.clone();
         let thread_id_for_turn = thread_id.clone();
@@ -326,6 +319,8 @@ impl Engine for CodexEngine {
         });
 
         let mut turn_task = turn_task;
+        let mut rate_limits_task = rate_limits_task;
+        let mut rate_limits_done = false;
         let mut turn_request_done = false;
         let mut completion_seen = false;
         let mut expected_turn_id: Option<String> = None;
@@ -333,6 +328,22 @@ impl Engine for CodexEngine {
 
         while !completion_seen || !turn_request_done {
             tokio::select! {
+              response = &mut rate_limits_task, if !rate_limits_done => {
+                rate_limits_done = true;
+                match response {
+                  Ok(Ok(snapshot)) => {
+                    if let Some(event) = mapper.map_rate_limits_snapshot(&snapshot) {
+                      event_tx.send(event).await.ok();
+                    }
+                  }
+                  Ok(Err(error)) => {
+                    log::debug!("account/rateLimits/read unavailable: {error}");
+                  }
+                  Err(error) => {
+                    log::debug!("account/rateLimits/read task join failed: {error}");
+                  }
+                }
+              }
               _ = cancellation.cancelled() => {
                 self
                   .interrupt(&thread_id)
@@ -514,6 +525,10 @@ impl Engine for CodexEngine {
                 }
               }
             }
+        }
+
+        if !rate_limits_done {
+            rate_limits_task.abort();
         }
 
         if !completion_seen {
