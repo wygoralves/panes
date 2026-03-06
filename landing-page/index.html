@@ -13,18 +13,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="style.css?v=2">
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://unpkg.com/lucide@0.460.0"></script>
 </head>
 <body>
-
-  <!-- Scroll progress -->
-  <div class="scroll-progress" id="scroll-progress"></div>
-
-  <!-- Noise texture overlay -->
-  <div class="noise"></div>
-
-  <!-- Grid background -->
-  <div class="grid-bg"></div>
 
   <!-- Navigation -->
   <nav class="nav" id="nav">
@@ -53,11 +44,11 @@
   <section class="hero">
     <div class="container hero-container">
       <h1 class="hero-title anim-hero" style="--d:1">
-        The Agentic Engineering<br><span class="gradient-text">Open Source Cockpit</span>
+        One app for all your<br>coding agents.
       </h1>
 
       <p class="hero-subtitle anim-hero" style="--d:3">
-        Manage your AI agents with chat, terminal, git, and file editor across multiple workspaces. Built with Rust for speed, fully open-source.
+        Chat, terminal, git, and file editor in a single native window. Engine-agnostic, open-source, built with Rust.
       </p>
 
       <div class="hero-actions anim-hero" style="--d:5">
@@ -70,13 +61,12 @@
           <span>View Source</span>
         </a>
       </div>
+
     </div>
 
     <!-- ═══ The Living Mockup ═══ -->
     <div class="container">
       <div class="mockup-wrapper anim-hero" style="--d:7">
-        <div class="mockup-glow"></div>
-
         <div class="app-frame">
           <div class="window-controls">
             <div class="win-btn win-close"></div>
@@ -266,7 +256,6 @@
           </div><!-- /content-card -->
         </div>
 
-        <div class="mockup-reflection"></div>
       </div>
     </div>
   </section>
@@ -376,8 +365,8 @@
           <div class="feature-icon">
             <i data-lucide="zap" class="icon"></i>
           </div>
-          <h3>Built with Rust</h3>
-          <p>Native speed via Rust and Tauri. Zero web latency, native filesystem access, and ultra-low memory footprint.</p>
+          <h3>Instant, native speed</h3>
+          <p>Built with Rust and Tauri. Zero web latency, native filesystem access, and an ultra-low memory footprint.</p>
         </div>
 
         <!-- ROW 2: Codex (1col) + Integrated Terminal (2col) -->
@@ -599,11 +588,6 @@
             <a href="https://github.com/wygoralves/panes/issues" target="_blank" rel="noopener">Issues</a>
             <a href="https://github.com/wygoralves/panes/discussions" target="_blank" rel="noopener">Discussions</a>
           </div>
-          <div class="footer-col">
-            <h4>Legal</h4>
-            <a href="#">Privacy</a>
-            <a href="#">Terms</a>
-          </div>
         </div>
       </div>
 
@@ -633,34 +617,19 @@
       });
     }
 
-    // ── Scroll progress bar ──
-    const progressBar = document.getElementById('scroll-progress');
-    let ticking = false;
-
-    function updateProgress() {
-      const scrollTop = window.scrollY;
-      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
-      const progress = docHeight > 0 ? scrollTop / docHeight : 0;
-      progressBar.style.transform = 'scaleX(' + progress + ')';
-      ticking = false;
-    }
-
     // ── Nav scroll effect ──
     const nav = document.getElementById('nav');
-
-    function updateNav() {
-      if (window.scrollY > 40) {
-        nav.classList.add('scrolled');
-      } else {
-        nav.classList.remove('scrolled');
-      }
-    }
+    let ticking = false;
 
     window.addEventListener('scroll', function() {
       if (!ticking) {
         requestAnimationFrame(function() {
-          updateProgress();
-          updateNav();
+          if (window.scrollY > 40) {
+            nav.classList.add('scrolled');
+          } else {
+            nav.classList.remove('scrolled');
+          }
+          ticking = false;
         });
         ticking = true;
       }
