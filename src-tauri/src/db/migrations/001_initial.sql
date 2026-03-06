@@ -100,6 +100,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_thread_status_created ON messages(thread
 CREATE INDEX IF NOT EXISTS idx_actions_thread ON actions(thread_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_actions_thread_status_created ON actions(thread_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_approvals_thread ON approvals(thread_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_approvals_message_status ON approvals(message_id, status, created_at ASC);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
   thread_id UNINDEXED,

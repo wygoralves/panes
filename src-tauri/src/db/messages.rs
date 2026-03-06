@@ -1,7 +1,7 @@
 use anyhow::Context;
 use std::collections::HashMap;
 
-use rusqlite::{params, OptionalExtension, Row};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -61,11 +61,12 @@ pub fn update_assistant_blocks_json(
     status: MessageStatusDto,
 ) -> anyhow::Result<()> {
     let conn = db.connect()?;
+    let normalized_blocks_json = normalize_blocks_json_for_message(&conn, message_id, blocks_json)?;
     conn.execute(
         "UPDATE messages
      SET blocks_json = ?1, status = ?2
      WHERE id = ?3",
-        params![blocks_json, status.as_str(), message_id],
+        params![normalized_blocks_json, status.as_str(), message_id],
     )
     .context("failed to update assistant blocks")?;
     Ok(())
@@ -123,6 +124,7 @@ pub fn get_thread_messages(db: &Database, thread_id: &str) -> anyhow::Result<Vec
     for row in rows {
         out.push(row?);
     }
+    reconcile_answered_approvals_for_messages(&conn, &mut out)?;
 
     Ok(out)
 }
@@ -197,10 +199,11 @@ pub fn get_thread_messages_window(
     };
 
     messages_desc.reverse();
-    let messages = messages_desc
+    let mut messages: Vec<MessageDto> = messages_desc
         .into_iter()
         .map(|(message, _)| message)
         .collect();
+    reconcile_answered_approvals_for_messages(&conn, &mut messages)?;
     Ok(MessageWindowDto {
         messages,
         next_cursor,
@@ -222,9 +225,10 @@ pub fn get_message_blocks(db: &Database, message_id: &str) -> anyhow::Result<Opt
         return Ok(None);
     };
 
-    let blocks = raw_blocks
+    let mut blocks = raw_blocks
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_else(|| serde_json::json!([]));
+    reconcile_answered_approvals_for_message(&conn, message_id, &mut blocks)?;
     Ok(Some(blocks))
 }
 
@@ -511,4 +515,288 @@ fn apply_answered_approvals_to_blocks(
     }
 
     changed
+}
+
+fn normalize_blocks_json_for_message(
+    conn: &Connection,
+    message_id: &str,
+    blocks_json: &str,
+) -> anyhow::Result<String> {
+    let mut blocks_value: Value = match serde_json::from_str(blocks_json) {
+        Ok(value) => value,
+        Err(_) => return Ok(blocks_json.to_string()),
+    };
+
+    reconcile_answered_approvals_for_message(conn, message_id, &mut blocks_value)?;
+    Ok(blocks_value.to_string())
+}
+
+fn reconcile_answered_approvals_for_messages(
+    conn: &Connection,
+    messages: &mut [MessageDto],
+) -> anyhow::Result<()> {
+    let message_ids: Vec<String> = messages
+        .iter()
+        .filter(|message| message.blocks.is_some())
+        .map(|message| message.id.clone())
+        .collect();
+    if message_ids.is_empty() {
+        return Ok(());
+    }
+
+    let answered_by_message = load_answered_approvals_for_message_ids(conn, &message_ids)?;
+    if answered_by_message.is_empty() {
+        return Ok(());
+    }
+
+    for message in messages {
+        let Some(blocks) = message.blocks.as_mut() else {
+            continue;
+        };
+        let Some(answered) = answered_by_message.get(&message.id) else {
+            continue;
+        };
+        apply_answered_approvals_to_blocks(blocks, answered);
+    }
+
+    Ok(())
+}
+
+fn reconcile_answered_approvals_for_message(
+    conn: &Connection,
+    message_id: &str,
+    blocks: &mut Value,
+) -> anyhow::Result<bool> {
+    let answered = load_answered_approvals_for_message(conn, message_id)?;
+    if answered.is_empty() {
+        return Ok(false);
+    }
+
+    Ok(apply_answered_approvals_to_blocks(blocks, &answered))
+}
+
+fn load_answered_approvals_for_message(
+    conn: &Connection,
+    message_id: &str,
+) -> anyhow::Result<HashMap<String, String>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, decision
+         FROM approvals
+         WHERE message_id = ?1
+           AND status = 'answered'
+           AND decision IS NOT NULL",
+        )
+        .context("failed to prepare approval lookup for message")?;
+    let rows = stmt
+        .query_map(params![message_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .context("failed to query answered approvals for message")?;
+
+    let mut answered = HashMap::new();
+    for row in rows {
+        let (approval_id, decision) = row?;
+        answered.insert(approval_id, decision);
+    }
+
+    Ok(answered)
+}
+
+fn load_answered_approvals_for_message_ids(
+    conn: &Connection,
+    message_ids: &[String],
+) -> anyhow::Result<HashMap<String, HashMap<String, String>>> {
+    if message_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = std::iter::repeat_n("?", message_ids.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT message_id, id, decision
+         FROM approvals
+         WHERE message_id IS NOT NULL
+           AND status = 'answered'
+           AND decision IS NOT NULL
+           AND message_id IN ({placeholders})"
+    );
+    let mut stmt = conn
+        .prepare(&sql)
+        .context("failed to prepare approval lookup for messages")?;
+    let rows = stmt
+        .query_map(params_from_iter(message_ids.iter()), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .context("failed to query answered approvals for messages")?;
+
+    let mut answered_by_message: HashMap<String, HashMap<String, String>> = HashMap::new();
+    for row in rows {
+        let (message_id, approval_id, decision) = row?;
+        answered_by_message
+            .entry(message_id)
+            .or_default()
+            .insert(approval_id, decision);
+    }
+
+    Ok(answered_by_message)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        sync::{Arc, Mutex},
+    };
+
+    use serde_json::json;
+
+    use crate::{
+        db::{actions, threads, workspaces, ConnectionPool, SQLITE_POOL_MAX_IDLE},
+        engines::events::ActionType,
+    };
+
+    use super::*;
+
+    fn test_db() -> Database {
+        let path = std::env::temp_dir().join(format!("panes-messages-{}.db", Uuid::new_v4()));
+        let db = Database {
+            path,
+            pool: Arc::new(ConnectionPool {
+                idle: Mutex::new(Vec::new()),
+                max_idle: SQLITE_POOL_MAX_IDLE,
+            }),
+        };
+        db.run_migrations().expect("failed to run test migrations");
+        db
+    }
+
+    fn test_thread(db: &Database) -> String {
+        let root = std::env::temp_dir().join(format!("panes-workspace-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("failed to create temp workspace root");
+        let workspace =
+            workspaces::upsert_workspace(db, root.to_string_lossy().as_ref(), 1).unwrap();
+        let thread =
+            threads::create_thread(db, &workspace.id, None, "codex", "gpt-5.3-codex", "test")
+                .unwrap();
+        thread.id
+    }
+
+    fn approval_blocks_json(approval_id: &str) -> Value {
+        json!([
+            {
+                "type": "approval",
+                "approvalId": approval_id,
+                "actionType": "command",
+                "summary": "Run tests",
+                "details": {},
+                "status": "pending"
+            }
+        ])
+    }
+
+    fn approval_block_status(blocks: &Value) -> Option<(&str, Option<&str>)> {
+        let items = blocks.as_array()?;
+        let approval = items.first()?.as_object()?;
+        Some((
+            approval.get("status")?.as_str()?,
+            approval.get("decision").and_then(Value::as_str),
+        ))
+    }
+
+    #[test]
+    fn update_assistant_blocks_json_preserves_answered_approval_status() {
+        let db = test_db();
+        let thread_id = test_thread(&db);
+        let approval_id = "approval-1";
+        let pending_blocks = approval_blocks_json(approval_id);
+        let message = insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            None,
+            Some(pending_blocks.clone()),
+            MessageStatusDto::Streaming,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        actions::insert_approval(
+            &db,
+            approval_id,
+            &thread_id,
+            &message.id,
+            &ActionType::Command,
+            "Run tests",
+            &json!({}),
+        )
+        .unwrap();
+        actions::answer_approval(&db, approval_id, "accept").unwrap();
+
+        update_assistant_blocks_json(
+            &db,
+            &message.id,
+            &pending_blocks.to_string(),
+            MessageStatusDto::Completed,
+        )
+        .unwrap();
+
+        let blocks = get_message_blocks(&db, &message.id).unwrap().unwrap();
+        let (status, decision) = approval_block_status(&blocks).unwrap();
+        assert_eq!(status, "answered");
+        assert_eq!(decision, Some("accept"));
+    }
+
+    #[test]
+    fn get_thread_messages_window_reconciles_stale_approval_blocks() {
+        let db = test_db();
+        let thread_id = test_thread(&db);
+        let approval_id = "approval-2";
+        let pending_blocks = approval_blocks_json(approval_id);
+        let message = insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            None,
+            Some(pending_blocks.clone()),
+            MessageStatusDto::Completed,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        actions::insert_approval(
+            &db,
+            approval_id,
+            &thread_id,
+            &message.id,
+            &ActionType::Command,
+            "Run tests",
+            &json!({}),
+        )
+        .unwrap();
+        actions::answer_approval(&db, approval_id, "accept").unwrap();
+
+        let conn = db.connect().unwrap();
+        conn.execute(
+            "UPDATE messages SET blocks_json = ?1 WHERE id = ?2",
+            params![pending_blocks.to_string(), message.id],
+        )
+        .unwrap();
+        drop(conn);
+
+        let window = get_thread_messages_window(&db, &thread_id, None, 20).unwrap();
+        let blocks = window.messages[0].blocks.as_ref().unwrap();
+        let (status, decision) = approval_block_status(blocks).unwrap();
+        assert_eq!(status, "answered");
+        assert_eq!(decision, Some("accept"));
+    }
 }
