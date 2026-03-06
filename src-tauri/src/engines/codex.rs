@@ -247,14 +247,8 @@ impl Engine for CodexEngine {
                 Ok(result) => {
                     let engine_thread_id = extract_thread_id(&result)
                         .unwrap_or_else(|| existing_thread_id.to_string());
-                    let runtime = thread_runtime_from_start_response(
-                        &result,
-                        &requested_runtime.cwd,
-                        &requested_runtime.model_id,
-                        &requested_runtime.approval_policy,
-                        &requested_runtime.sandbox_policy,
-                        requested_runtime.reasoning_effort.clone(),
-                    );
+                    let runtime =
+                        thread_runtime_from_resume_response(&result, &requested_runtime);
                     self.store_thread_runtime(&engine_thread_id, runtime).await;
 
                     return Ok(EngineThread { engine_thread_id });
@@ -2280,6 +2274,30 @@ fn thread_runtime_from_start_response(
     runtime
 }
 
+fn thread_runtime_from_resume_response(
+    response: &serde_json::Value,
+    requested_runtime: &ThreadRuntime,
+) -> ThreadRuntime {
+    let mut runtime = thread_runtime_from_start_response(
+        response,
+        &requested_runtime.cwd,
+        &requested_runtime.model_id,
+        &requested_runtime.approval_policy,
+        &requested_runtime.sandbox_policy,
+        requested_runtime.reasoning_effort.clone(),
+    );
+
+    // `thread/resume` can echo the previous thread preview, including stale model or effort.
+    // The requested runtime is what we want to apply to subsequent `turn/start` calls.
+    runtime.cwd = requested_runtime.cwd.clone();
+    runtime.model_id = requested_runtime.model_id.clone();
+    runtime.approval_policy = requested_runtime.approval_policy.clone();
+    runtime.sandbox_policy = requested_runtime.sandbox_policy.clone();
+    runtime.reasoning_effort = requested_runtime.reasoning_effort.clone();
+
+    runtime
+}
+
 fn extract_any_string(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
     for key in keys {
         if let Some(found) = value.get(*key) {
@@ -2820,5 +2838,33 @@ mod tests {
             json!({"type":"workspaceWrite","networkAccess":false})
         );
         assert_eq!(runtime.reasoning_effort.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn thread_runtime_from_resume_response_prefers_requested_runtime() {
+        let requested_runtime = ThreadRuntime {
+            cwd: "/tmp/requested".to_string(),
+            model_id: "gpt-5.1-codex-mini".to_string(),
+            approval_policy: "on-request".to_string(),
+            sandbox_policy: json!({
+                "type": "workspaceWrite",
+                "writableRoots": ["/tmp/requested"],
+                "networkAccess": false,
+            }),
+            reasoning_effort: Some("medium".to_string()),
+        };
+        let response = json!({
+            "cwd": "/tmp/stale",
+            "model": "gpt-5.3-codex",
+            "approvalPolicy": "never",
+            "sandbox": {
+                "type": "dangerFullAccess",
+            },
+            "reasoningEffort": "xhigh"
+        });
+
+        let runtime = thread_runtime_from_resume_response(&response, &requested_runtime);
+
+        assert_eq!(runtime, requested_runtime);
     }
 }
