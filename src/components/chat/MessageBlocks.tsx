@@ -426,10 +426,7 @@ function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaul
 
   return (
     <div>
-      <div
-        className="msg-block-header"
-        onClick={() => setExpanded((v) => !v)}
-      >
+      <div className="msg-block-header" onClick={() => setExpanded((v) => !v)}>
         <ChevronRight
           size={11}
           className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
@@ -482,10 +479,7 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
 
   return (
     <div>
-      <div
-        className="msg-block-header"
-        onClick={() => setExpanded((v) => !v)}
-      >
+      <div className="msg-block-header" onClick={() => setExpanded((v) => !v)}>
         <ChevronRight
           size={11}
           className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
