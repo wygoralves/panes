@@ -10,7 +10,7 @@ import {
 import { useSetupStore, type SetupPhase } from "../../stores/setupStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { copyTextToClipboard } from "../../lib/clipboard";
-import type { DepStatus } from "../../types";
+import type { CodexProtocolDiagnostics, DepStatus, EngineHealth } from "../../types";
 
 const SETUP_COMPLETED_KEY = "panes.setup.completed.v2";
 
@@ -502,6 +502,150 @@ function CheckItem({ label, detail }: { label: string; detail: string }) {
   );
 }
 
+function DiagnosticsRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 3,
+        padding: "8px 0",
+        borderTop: "1px solid rgba(255, 255, 255, 0.06)",
+      }}
+    >
+      <span
+        style={{
+          fontSize: 10.5,
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          color: "var(--text-3)",
+        }}
+      >
+        {label}
+      </span>
+      <span style={{ fontSize: 12, color: "var(--text-1)", lineHeight: 1.5 }}>{value}</span>
+    </div>
+  );
+}
+
+function formatMethodSummary(diagnostics: CodexProtocolDiagnostics) {
+  const methods = diagnostics.methodAvailability ?? [];
+  const available = methods.filter((item) => item.status === "available").length;
+  const unsupported = methods.filter((item) => item.status === "unsupported").length;
+  const errors = methods.filter((item) => item.status === "error").length;
+  return `${available} available, ${unsupported} unsupported, ${errors} errors`;
+}
+
+function CodexDiagnosticsPanel({ health }: { health?: EngineHealth }) {
+  const diagnostics = health?.protocolDiagnostics;
+  const [open, setOpen] = useState(false);
+
+  if (!health) {
+    return null;
+  }
+
+  const summary = diagnostics
+    ? formatMethodSummary(diagnostics)
+    : health.available
+      ? "Runtime diagnostics have not been fetched yet."
+      : health.details ?? "Codex is not available yet.";
+  const configWarning = diagnostics?.lastConfigWarning;
+  const accountLogin = diagnostics?.lastAccountLogin;
+  const mcpOauth = diagnostics?.lastMcpOauth;
+  const capabilitySummary = diagnostics
+    ? `${diagnostics.experimentalFeatures.length} experimental features, ${diagnostics.apps.length} apps, ${diagnostics.collaborationModes.length} collaboration modes`
+    : null;
+
+  return (
+    <div
+      style={{
+        borderRadius: "var(--radius-sm)",
+        border: "1px solid var(--border)",
+        overflow: "hidden",
+      }}
+    >
+      <button
+        type="button"
+        className="btn-ghost"
+        onClick={() => setOpen((value) => !value)}
+        style={{
+          width: "100%",
+          padding: "11px 14px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          cursor: "pointer",
+          borderRadius: 0,
+          color: "var(--text-1)",
+        }}
+      >
+        <div style={{ display: "grid", gap: 3, textAlign: "left" }}>
+          <span style={{ fontSize: 12.5, fontWeight: 600 }}>Codex diagnostics</span>
+          <span style={{ fontSize: 11.5, color: "var(--text-2)" }}>{summary}</span>
+        </div>
+        <ChevronDown
+          size={14}
+          style={{
+            flexShrink: 0,
+            transform: open ? "rotate(180deg)" : "rotate(0deg)",
+            transition: "transform 0.15s",
+          }}
+        />
+      </button>
+      {open && (
+        <div
+          style={{
+            padding: "0 14px 12px",
+            background: "rgba(255, 255, 255, 0.02)",
+          }}
+        >
+          {capabilitySummary && (
+            <DiagnosticsRow label="Capabilities" value={capabilitySummary} />
+          )}
+          {diagnostics?.methodAvailability?.length ? (
+            <DiagnosticsRow
+              label="Methods"
+              value={diagnostics.methodAvailability
+                .map((item) => `${item.method}: ${item.status}`)
+                .join(" | ")}
+            />
+          ) : null}
+          {configWarning ? (
+            <DiagnosticsRow
+              label="Last config warning"
+              value={[
+                configWarning.summary,
+                configWarning.path,
+                configWarning.startLine ? `line ${configWarning.startLine}` : null,
+              ]
+                .filter(Boolean)
+                .join(" | ")}
+            />
+          ) : null}
+          {accountLogin ? (
+            <DiagnosticsRow
+              label="Last account login"
+              value={accountLogin.success ? "Success" : accountLogin.error ?? "Failed"}
+            />
+          ) : null}
+          {mcpOauth ? (
+            <DiagnosticsRow
+              label="Last MCP OAuth"
+              value={mcpOauth.success ? `${mcpOauth.name}: success` : `${mcpOauth.name}: ${mcpOauth.error ?? "failed"}`}
+            />
+          ) : null}
+          {diagnostics?.fetchedAt ? (
+            <DiagnosticsRow
+              label="Fetched"
+              value={`${diagnostics.fetchedAt}${diagnostics.stale ? " (stale)" : ""}`}
+            />
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ErrorPhase() {
   const { error, verify } = useSetupStore();
 
@@ -569,6 +713,7 @@ export function SetupWizard() {
   const loadedOnce = useEngineStore((s) => s.loadedOnce);
   const loadingEngines = useEngineStore((s) => s.loading);
   const health = useEngineStore((s) => s.health);
+  const codexHealth = health.codex;
 
   const hasTriggered = useRef(false);
 
@@ -728,6 +873,8 @@ export function SetupWizard() {
 
         {/* Phase content */}
         <PhaseContent phase={phase} />
+
+        <CodexDiagnosticsPanel health={codexHealth} />
 
         {/* Footer — Recheck for non-scanning/installing phases */}
         {phase === "plan" && (

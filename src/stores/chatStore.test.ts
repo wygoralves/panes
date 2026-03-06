@@ -4,6 +4,7 @@ import type { StreamEvent } from "../types";
 const mockIpc = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   getThreadMessagesWindow: vi.fn(),
+  syncThreadFromEngine: vi.fn(),
 }));
 
 const mockListenThreadEvents = vi.hoisted(() => vi.fn());
@@ -19,6 +20,7 @@ vi.mock("../lib/perfTelemetry", () => ({
 }));
 
 import { useChatStore } from "./chatStore";
+import { useThreadStore } from "./threadStore";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -37,7 +39,32 @@ describe("chatStore send", () => {
       messages: [],
       nextCursor: null,
     });
+    mockIpc.syncThreadFromEngine.mockResolvedValue({
+      id: "thread-1",
+      workspaceId: "workspace-1",
+      repoId: null,
+      engineId: "codex",
+      modelId: "gpt-5.3-codex",
+      engineThreadId: "engine-thread-1",
+      engineMetadata: {
+        codexSyncRequired: false,
+      },
+      title: "Thread 1",
+      status: "idle",
+      messageCount: 0,
+      totalTokens: 0,
+      createdAt: new Date().toISOString(),
+      lastActivityAt: new Date().toISOString(),
+    });
     mockListenThreadEvents.mockResolvedValue(() => {});
+    useThreadStore.setState({
+      threads: [],
+      threadsByWorkspace: {},
+      archivedThreadsByWorkspace: {},
+      activeThreadId: null,
+      loading: false,
+      error: undefined,
+    });
     useChatStore.setState({
       threadId: "thread-1",
       messages: [],
@@ -289,5 +316,41 @@ describe("chatStore send", () => {
     ]);
 
     vi.useRealTimers();
+  });
+
+  it("syncs dirty Codex thread metadata before binding the message window", async () => {
+    const thread = {
+      id: "thread-1",
+      workspaceId: "workspace-1",
+      repoId: null,
+      engineId: "codex" as const,
+      modelId: "gpt-5.3-codex",
+      engineThreadId: "engine-thread-1",
+      engineMetadata: {
+        codexSyncRequired: true,
+      },
+      title: "Thread 1",
+      status: "idle" as const,
+      messageCount: 0,
+      totalTokens: 0,
+      createdAt: new Date().toISOString(),
+      lastActivityAt: new Date().toISOString(),
+    };
+
+    useThreadStore.setState({
+      threads: [thread],
+      threadsByWorkspace: {
+        "workspace-1": [thread],
+      },
+      archivedThreadsByWorkspace: {},
+      activeThreadId: "thread-1",
+      loading: false,
+      error: undefined,
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    expect(mockIpc.syncThreadFromEngine).toHaveBeenCalledWith("thread-1");
+    expect(mockIpc.getThreadMessagesWindow).toHaveBeenCalledWith("thread-1", null, 120);
   });
 });

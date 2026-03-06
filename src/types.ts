@@ -268,6 +268,73 @@ export interface EngineHealth {
   warnings?: string[];
   checks?: string[];
   fixes?: string[];
+  protocolDiagnostics?: CodexProtocolDiagnostics;
+}
+
+export interface CodexMethodAvailability {
+  method: string;
+  status: string;
+  detail?: string;
+}
+
+export interface CodexExperimentalFeature {
+  name: string;
+  enabled: boolean;
+  defaultEnabled: boolean;
+  stage: string;
+  displayName?: string;
+  description?: string;
+}
+
+export interface CodexApp {
+  id: string;
+  name: string;
+  description?: string;
+  isEnabled: boolean;
+  isAccessible: boolean;
+}
+
+export interface CodexConfigWarning {
+  summary: string;
+  details?: string;
+  path?: string;
+  startLine?: number;
+  startColumn?: number;
+}
+
+export interface CodexAccountLoginCompleted {
+  success: boolean;
+  error?: string;
+  loginId?: string;
+}
+
+export interface CodexMcpOauthCompleted {
+  name: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface CodexProtocolDiagnostics {
+  methodAvailability: CodexMethodAvailability[];
+  experimentalFeatures: CodexExperimentalFeature[];
+  collaborationModes: string[];
+  apps: CodexApp[];
+  lastConfigWarning?: CodexConfigWarning;
+  lastAccountLogin?: CodexAccountLoginCompleted;
+  lastMcpOauth?: CodexMcpOauthCompleted;
+  fetchedAt?: string;
+  stale: boolean;
+}
+
+export interface RuntimeToast {
+  variant: "success" | "error" | "warning" | "info";
+  message: string;
+}
+
+export interface EngineRuntimeUpdatedEvent {
+  engineId: string;
+  protocolDiagnostics?: CodexProtocolDiagnostics;
+  toast?: RuntimeToast;
 }
 
 export interface EngineCheckResult {

@@ -238,6 +238,114 @@ pub struct EngineHealthDto {
     pub checks: Vec<String>,
     #[serde(default)]
     pub fixes: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protocol_diagnostics: Option<CodexProtocolDiagnosticsDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexProtocolDiagnosticsDto {
+    #[serde(default)]
+    pub method_availability: Vec<CodexMethodAvailabilityDto>,
+    #[serde(default)]
+    pub experimental_features: Vec<CodexExperimentalFeatureDto>,
+    #[serde(default)]
+    pub collaboration_modes: Vec<String>,
+    #[serde(default)]
+    pub apps: Vec<CodexAppDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_config_warning: Option<CodexConfigWarningDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_account_login: Option<CodexAccountLoginCompletedDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_mcp_oauth: Option<CodexMcpOauthCompletedDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fetched_at: Option<String>,
+    #[serde(default)]
+    pub stale: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexMethodAvailabilityDto {
+    pub method: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexExperimentalFeatureDto {
+    pub name: String,
+    pub enabled: bool,
+    pub default_enabled: bool,
+    pub stage: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexAppDto {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub is_enabled: bool,
+    pub is_accessible: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexConfigWarningDto {
+    pub summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_column: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexAccountLoginCompletedDto {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub login_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexMcpOauthCompletedDto {
+    pub name: String,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeToastDto {
+    pub variant: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineRuntimeUpdatedDto {
+    pub engine_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protocol_diagnostics: Option<CodexProtocolDiagnosticsDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub toast: Option<RuntimeToastDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

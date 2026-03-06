@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { EngineHealth, EngineInfo } from "../types";
+import type { EngineHealth, EngineInfo, EngineRuntimeUpdatedEvent } from "../types";
 import { ipc } from "../lib/ipc";
 
 interface EngineState {
@@ -9,6 +9,7 @@ interface EngineState {
   loadedOnce: boolean;
   error?: string;
   load: () => Promise<void>;
+  applyRuntimeUpdate: (event: EngineRuntimeUpdatedEvent) => void;
 }
 
 export const useEngineStore = create<EngineState>((set) => ({
@@ -70,5 +71,31 @@ export const useEngineStore = create<EngineState>((set) => ({
         },
       });
     }
-  }
+  },
+  applyRuntimeUpdate: ({ engineId, protocolDiagnostics }) =>
+    set((state) => {
+      const current = state.health[engineId];
+      const nextHealth: EngineHealth = current
+        ? {
+            ...current,
+            available: true,
+            details: current.available ? current.details : undefined,
+            protocolDiagnostics: protocolDiagnostics ?? current.protocolDiagnostics,
+          }
+        : {
+            id: engineId,
+            available: true,
+            warnings: [],
+            checks: [],
+            fixes: [],
+            protocolDiagnostics,
+          };
+
+      return {
+        health: {
+          ...state.health,
+          [engineId]: nextHealth,
+        },
+      };
+    }),
 }));

@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     collections::HashMap,
     env,
     ffi::OsString,
@@ -10,6 +11,7 @@ use std::{
 
 use anyhow::Context;
 use async_trait::async_trait;
+use chrono::Utc;
 use serde::Deserialize;
 use tokio::{
     fs as tokio_fs,
@@ -18,11 +20,17 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+use crate::models::{
+    CodexAccountLoginCompletedDto, CodexAppDto, CodexConfigWarningDto, CodexExperimentalFeatureDto,
+    CodexMcpOauthCompletedDto, CodexMethodAvailabilityDto, CodexProtocolDiagnosticsDto,
+    RuntimeToastDto,
+};
+
 use super::{
     codex_event_mapper::TurnEventMapper, codex_protocol::IncomingMessage,
     codex_transport::CodexTransport, ActionResult, Engine, EngineEvent, EngineThread, ModelInfo,
-    ReasoningEffortOption, SandboxPolicy, ThreadScope, TurnAttachment, TurnCompletionStatus,
-    TurnInput,
+    ReasoningEffortOption, SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment,
+    TurnCompletionStatus, TurnInput,
 };
 
 const INITIALIZE_METHODS: &[&str] = &["initialize"];
@@ -32,6 +40,9 @@ const THREAD_READ_METHODS: &[&str] = &["thread/read"];
 const THREAD_ARCHIVE_METHODS: &[&str] = &["thread/archive"];
 const THREAD_UNARCHIVE_METHODS: &[&str] = &["thread/unarchive"];
 const THREAD_SET_NAME_METHODS: &[&str] = &["thread/name/set"];
+const EXPERIMENTAL_FEATURE_LIST_METHODS: &[&str] = &["experimentalFeature/list"];
+const COLLABORATION_MODE_LIST_METHODS: &[&str] = &["collaborationMode/list"];
+const APP_LIST_METHODS: &[&str] = &["app/list"];
 const TURN_START_METHODS: &[&str] = &["turn/start"];
 const TURN_INTERRUPT_METHODS: &[&str] = &["turn/interrupt"];
 const COMMAND_EXEC_METHODS: &[&str] = &["command/exec"];
@@ -58,9 +69,9 @@ const LOGIN_SHELL_CLI_PROBES: &[(&str, &[&str])] = &[
     ("/bin/bash", &["-lic", "command -v codex"]),
 ];
 
-#[derive(Default)]
 pub struct CodexEngine {
     state: Arc<Mutex<CodexState>>,
+    runtime_events: broadcast::Sender<CodexRuntimeEvent>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +98,18 @@ struct CodexState {
     thread_runtimes: HashMap<String, ThreadRuntime>,
     sandbox_probe_completed: bool,
     force_external_sandbox: bool,
+    protocol_diagnostics: Option<CodexProtocolDiagnosticsDto>,
+    runtime_monitor_transport_tag: Option<usize>,
+}
+
+impl Default for CodexEngine {
+    fn default() -> Self {
+        let (runtime_events, _) = broadcast::channel(256);
+        Self {
+            state: Arc::new(Mutex::new(CodexState::default())),
+            runtime_events,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +128,24 @@ pub struct CodexHealthReport {
     pub warnings: Vec<String>,
     pub checks: Vec<String>,
     pub fixes: Vec<String>,
+    pub protocol_diagnostics: Option<CodexProtocolDiagnosticsDto>,
+}
+
+#[derive(Debug, Clone)]
+pub enum CodexRuntimeEvent {
+    DiagnosticsUpdated {
+        diagnostics: CodexProtocolDiagnosticsDto,
+        toast: Option<RuntimeToastDto>,
+    },
+    ThreadStatusChanged {
+        engine_thread_id: String,
+        status_type: String,
+        active_flags: Vec<String>,
+    },
+    ThreadNameUpdated {
+        engine_thread_id: String,
+        thread_name: Option<String>,
+    },
 }
 
 #[async_trait]
@@ -247,8 +288,7 @@ impl Engine for CodexEngine {
                 Ok(result) => {
                     let engine_thread_id = extract_thread_id(&result)
                         .unwrap_or_else(|| existing_thread_id.to_string());
-                    let runtime =
-                        thread_runtime_from_resume_response(&result, &requested_runtime);
+                    let runtime = thread_runtime_from_resume_response(&result, &requested_runtime);
                     self.store_thread_runtime(&engine_thread_id, runtime).await;
 
                     return Ok(EngineThread { engine_thread_id });
@@ -671,6 +711,10 @@ impl Engine for CodexEngine {
 }
 
 impl CodexEngine {
+    pub fn subscribe_runtime_events(&self) -> broadcast::Receiver<CodexRuntimeEvent> {
+        self.runtime_events.subscribe()
+    }
+
     pub async fn prewarm(&self) -> anyhow::Result<()> {
         self.ensure_ready_transport().await.map(|_| ())
     }
@@ -703,6 +747,12 @@ impl CodexEngine {
             }
         }
 
+        let protocol_diagnostics = if available {
+            self.protocol_diagnostics_snapshot().await
+        } else {
+            None
+        };
+
         CodexHealthReport {
             available,
             version,
@@ -710,6 +760,7 @@ impl CodexEngine {
             warnings,
             checks: codex_health_checks(),
             fixes: codex_fix_commands(&resolution, execution_error.as_deref()),
+            protocol_diagnostics,
         }
     }
 
@@ -813,6 +864,33 @@ impl CodexEngine {
         extract_thread_preview(&result)
     }
 
+    pub async fn read_thread_sync_snapshot(
+        &self,
+        engine_thread_id: &str,
+    ) -> anyhow::Result<ThreadSyncSnapshot> {
+        let transport = self.ensure_ready_transport().await?;
+        let params = serde_json::json!({
+          "threadId": engine_thread_id,
+          "includeTurns": false,
+        });
+
+        let result = request_with_fallback(
+            transport.as_ref(),
+            THREAD_READ_METHODS,
+            params,
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to read codex thread metadata")?;
+
+        Ok(ThreadSyncSnapshot {
+            title: extract_thread_title(&result),
+            preview: extract_thread_preview(&result),
+            raw_status: extract_thread_runtime_status_type(&result),
+            active_flags: extract_thread_runtime_active_flags(&result),
+        })
+    }
+
     pub async fn set_thread_name(
         &self,
         engine_thread_id: &str,
@@ -908,7 +986,10 @@ impl CodexEngine {
         for attempt in 0..TRANSPORT_RESTART_MAX_ATTEMPTS {
             let transport = self.ensure_transport().await?;
             match self.ensure_initialized(&transport).await {
-                Ok(()) => return Ok(transport),
+                Ok(()) => {
+                    self.ensure_runtime_monitor_started(&transport).await;
+                    return Ok(transport);
+                }
                 Err(error) => {
                     let message = format!(
                         "codex initialize failed (attempt {}/{})",
@@ -976,6 +1057,10 @@ impl CodexEngine {
             state.thread_runtimes.clear();
             state.sandbox_probe_completed = false;
             state.force_external_sandbox = false;
+            if let Some(diagnostics) = state.protocol_diagnostics.as_mut() {
+                diagnostics.stale = true;
+            }
+            state.runtime_monitor_transport_tag = None;
             transport
         };
 
@@ -1019,6 +1104,230 @@ impl CodexEngine {
         state.initialized = true;
 
         Ok(())
+    }
+
+    async fn protocol_diagnostics_snapshot(&self) -> Option<CodexProtocolDiagnosticsDto> {
+        let current = {
+            let state = self.state.lock().await;
+            state.protocol_diagnostics.clone()
+        };
+        let needs_refresh = current
+            .as_ref()
+            .map(|diagnostics| diagnostics.stale || diagnostics.fetched_at.is_none())
+            .unwrap_or(true);
+
+        if !needs_refresh {
+            return current;
+        }
+
+        let transport = match self.ensure_ready_transport().await {
+            Ok(transport) => transport,
+            Err(error) => {
+                log::debug!("failed to load codex protocol diagnostics: {error}");
+                return current;
+            }
+        };
+
+        match refresh_protocol_diagnostics_via_transport(transport.as_ref(), current.clone()).await
+        {
+            Ok(diagnostics) => {
+                self.store_protocol_diagnostics(diagnostics.clone()).await;
+                Some(diagnostics)
+            }
+            Err(error) => {
+                log::debug!("failed to refresh codex protocol diagnostics: {error}");
+                if let Some(mut diagnostics) = current {
+                    diagnostics.stale = true;
+                    self.store_protocol_diagnostics(diagnostics.clone()).await;
+                    Some(diagnostics)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    async fn store_protocol_diagnostics(&self, diagnostics: CodexProtocolDiagnosticsDto) {
+        let mut state = self.state.lock().await;
+        state.protocol_diagnostics = Some(diagnostics);
+    }
+
+    async fn ensure_runtime_monitor_started(&self, transport: &Arc<CodexTransport>) {
+        let transport_tag = Arc::as_ptr(transport) as usize;
+        {
+            let mut state = self.state.lock().await;
+            if state.runtime_monitor_transport_tag == Some(transport_tag) {
+                return;
+            }
+            state.runtime_monitor_transport_tag = Some(transport_tag);
+        }
+
+        let transport = transport.clone();
+        let state = self.state.clone();
+        let runtime_events = self.runtime_events.clone();
+        tokio::spawn(async move {
+            if let Ok(diagnostics) =
+                refresh_protocol_diagnostics_for_runtime_monitor(transport.as_ref(), state.clone())
+                    .await
+            {
+                let _ = runtime_events.send(CodexRuntimeEvent::DiagnosticsUpdated {
+                    diagnostics,
+                    toast: None,
+                });
+            }
+
+            let mut subscription = transport.subscribe();
+            loop {
+                match subscription.recv().await {
+                    Ok(IncomingMessage::Notification { method, params }) => {
+                        let normalized_method = normalize_method(&method);
+                        match normalized_method.as_str() {
+                            "thread/status/changed" => {
+                                if let Some(engine_thread_id) =
+                                    extract_any_string(&params, &["threadId", "thread_id"])
+                                {
+                                    let status_type =
+                                        extract_nested_string(&params, &["status", "type"])
+                                            .or_else(|| {
+                                                params
+                                                    .get("status")
+                                                    .and_then(serde_json::Value::as_str)
+                                                    .map(str::to_string)
+                                            })
+                                            .unwrap_or_else(|| "unknown".to_string());
+                                    let active_flags =
+                                        extract_thread_active_flags_from_status_value(
+                                            params.get("status"),
+                                        );
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::ThreadStatusChanged {
+                                            engine_thread_id,
+                                            status_type,
+                                            active_flags,
+                                        },
+                                    );
+                                }
+                            }
+                            "thread/name/updated" => {
+                                if let Some(engine_thread_id) =
+                                    extract_any_string(&params, &["threadId", "thread_id"])
+                                {
+                                    let thread_name =
+                                        extract_any_string(&params, &["threadName", "thread_name"]);
+                                    let _ =
+                                        runtime_events.send(CodexRuntimeEvent::ThreadNameUpdated {
+                                            engine_thread_id,
+                                            thread_name,
+                                        });
+                                }
+                            }
+                            "configwarning" => {
+                                if let Some(diagnostics) =
+                                    update_protocol_diagnostics_with_config_warning(
+                                        state.clone(),
+                                        &params,
+                                    )
+                                    .await
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::DiagnosticsUpdated {
+                                            diagnostics,
+                                            toast: build_config_warning_toast(&params),
+                                        },
+                                    );
+                                }
+                            }
+                            "account/login/completed" => {
+                                if let Some(diagnostics) =
+                                    update_protocol_diagnostics_with_account_login(
+                                        state.clone(),
+                                        &params,
+                                    )
+                                    .await
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::DiagnosticsUpdated {
+                                            diagnostics,
+                                            toast: build_account_login_toast(&params),
+                                        },
+                                    );
+                                }
+                            }
+                            "mcpserver/oauthlogin/completed" => {
+                                if let Some(diagnostics) =
+                                    update_protocol_diagnostics_with_mcp_oauth(
+                                        state.clone(),
+                                        &params,
+                                    )
+                                    .await
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::DiagnosticsUpdated {
+                                            diagnostics,
+                                            toast: build_mcp_oauth_toast(&params),
+                                        },
+                                    );
+                                }
+                            }
+                            "app/list/updated" => {
+                                match refresh_protocol_diagnostics_for_runtime_monitor(
+                                    transport.as_ref(),
+                                    state.clone(),
+                                )
+                                .await
+                                {
+                                    Ok(diagnostics) => {
+                                        let _ = runtime_events.send(
+                                            CodexRuntimeEvent::DiagnosticsUpdated {
+                                                diagnostics,
+                                                toast: None,
+                                            },
+                                        );
+                                    }
+                                    Err(error) => {
+                                        log::debug!(
+                                            "failed to refresh codex diagnostics after app/list update: {error}"
+                                        );
+                                    }
+                                }
+                            }
+                            "serverrequest/resolved" => {
+                                let request_id = params
+                                    .get("requestId")
+                                    .or_else(|| params.get("request_id"))
+                                    .cloned();
+                                if let Some(request_id) = request_id {
+                                    if let Some(approval_id) =
+                                        resolve_pending_approval_request(state.clone(), &request_id)
+                                            .await
+                                    {
+                                        log::debug!(
+                                            "codex server request resolved approval: approval_id={approval_id}"
+                                        );
+                                    } else {
+                                        log::debug!(
+                                            "codex server request resolved without approval match: request_id={request_id}"
+                                        );
+                                    }
+                                } else {
+                                    log::debug!(
+                                        "codex server request resolved without request id: params={params}"
+                                    );
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Ok(IncomingMessage::Request { .. }) | Ok(IncomingMessage::Response(_)) => {}
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        log::warn!(
+                            "codex runtime monitor lagged on notifications, skipped {skipped} messages"
+                        );
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
     }
 
     async fn resolve_external_sandbox_mode(&self) -> bool {
@@ -2328,6 +2637,466 @@ fn extract_any_i64(value: &serde_json::Value, keys: &[&str]) -> Option<i64> {
     None
 }
 
+fn extract_nested_string(value: &serde_json::Value, path: &[&str]) -> Option<String> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_str().map(str::to_string)
+}
+
+fn extract_nested_i64(value: &serde_json::Value, path: &[&str]) -> Option<i64> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    if let Some(number) = current.as_i64() {
+        return Some(number);
+    }
+    current
+        .as_str()
+        .and_then(|text| text.trim().parse::<i64>().ok())
+}
+
+fn extract_thread_title(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("thread")
+        .and_then(|thread| extract_any_string(thread, &["name", "threadName", "title"]))
+        .or_else(|| extract_any_string(value, &["name", "threadName", "title"]))
+}
+
+fn extract_thread_runtime_status_type(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("thread")
+        .and_then(|thread| {
+            extract_nested_string(thread, &["status", "type"])
+                .or_else(|| extract_any_string(thread, &["status"]))
+        })
+        .or_else(|| {
+            extract_nested_string(value, &["status", "type"])
+                .or_else(|| extract_any_string(value, &["status"]))
+        })
+}
+
+fn extract_thread_active_flags_from_status_value(value: Option<&serde_json::Value>) -> Vec<String> {
+    value
+        .and_then(|status| status.get("activeFlags"))
+        .and_then(serde_json::Value::as_array)
+        .map(|flags| {
+            flags
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn extract_thread_runtime_active_flags(value: &serde_json::Value) -> Vec<String> {
+    value
+        .get("thread")
+        .map(|thread| extract_thread_active_flags_from_status_value(thread.get("status")))
+        .unwrap_or_else(|| extract_thread_active_flags_from_status_value(value.get("status")))
+}
+
+#[derive(Debug)]
+enum MethodCallOutcome<T> {
+    Available(T),
+    Unsupported(Option<String>),
+    Error(String),
+}
+
+fn update_method_availability(
+    diagnostics: &mut CodexProtocolDiagnosticsDto,
+    method: &str,
+    availability: CodexMethodAvailabilityDto,
+) {
+    if let Some(existing) = diagnostics
+        .method_availability
+        .iter_mut()
+        .find(|item| item.method == method)
+    {
+        *existing = availability;
+    } else {
+        diagnostics.method_availability.push(availability);
+    }
+}
+
+async fn fetch_paginated_data(
+    transport: &CodexTransport,
+    methods: &[&str],
+    mut params_for_cursor: impl FnMut(Option<String>) -> serde_json::Value,
+) -> Result<Vec<serde_json::Value>, anyhow::Error> {
+    let mut cursor: Option<String> = None;
+    let mut out = Vec::new();
+
+    loop {
+        let response = request_with_fallback(
+            transport,
+            methods,
+            params_for_cursor(cursor.clone()),
+            DEFAULT_TIMEOUT,
+        )
+        .await?;
+        let Some(data) = response.get("data").and_then(serde_json::Value::as_array) else {
+            break;
+        };
+        out.extend(data.iter().cloned());
+        let next_cursor = extract_any_string(&response, &["nextCursor", "next_cursor"]);
+        if next_cursor.is_none() {
+            break;
+        }
+        cursor = next_cursor;
+    }
+
+    Ok(out)
+}
+
+fn method_call_outcome_from_error<T>(error: anyhow::Error) -> MethodCallOutcome<T> {
+    let message = error.to_string();
+    if is_method_not_supported_error(&message) {
+        MethodCallOutcome::Unsupported(Some(message))
+    } else {
+        MethodCallOutcome::Error(message)
+    }
+}
+
+fn is_method_not_supported_error(message: &str) -> bool {
+    let normalized = message.to_lowercase();
+    normalized.contains("32601")
+        || normalized.contains("method not found")
+        || normalized.contains("unknown method")
+        || normalized.contains("not supported")
+}
+
+async fn fetch_experimental_features(
+    transport: &CodexTransport,
+) -> MethodCallOutcome<Vec<CodexExperimentalFeatureDto>> {
+    let response =
+        match fetch_paginated_data(transport, EXPERIMENTAL_FEATURE_LIST_METHODS, |cursor| {
+            serde_json::json!({
+                "limit": 200,
+                "cursor": cursor,
+            })
+        })
+        .await
+        {
+            Ok(data) => data,
+            Err(error) => return method_call_outcome_from_error(error),
+        };
+
+    MethodCallOutcome::Available(
+        response
+            .into_iter()
+            .map(|entry| CodexExperimentalFeatureDto {
+                name: extract_any_string(&entry, &["name"])
+                    .unwrap_or_else(|| "unknown".to_string()),
+                enabled: entry
+                    .get("enabled")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                default_enabled: entry
+                    .get("defaultEnabled")
+                    .or_else(|| entry.get("default_enabled"))
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                stage: extract_any_string(&entry, &["stage"])
+                    .unwrap_or_else(|| "unknown".to_string()),
+                display_name: extract_any_string(&entry, &["displayName", "display_name"]),
+                description: extract_any_string(&entry, &["description"]),
+            })
+            .collect(),
+    )
+}
+
+async fn fetch_collaboration_modes(transport: &CodexTransport) -> MethodCallOutcome<Vec<String>> {
+    let response = match request_with_fallback(
+        transport,
+        COLLABORATION_MODE_LIST_METHODS,
+        serde_json::Value::Null,
+        DEFAULT_TIMEOUT,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => return method_call_outcome_from_error(error),
+    };
+
+    let data = response
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| response.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut modes = BTreeSet::new();
+    for entry in data {
+        if let Some(mode) = extract_any_string(&entry, &["mode", "name", "id"]) {
+            modes.insert(mode);
+        }
+    }
+
+    MethodCallOutcome::Available(modes.into_iter().collect())
+}
+
+async fn fetch_apps(transport: &CodexTransport) -> MethodCallOutcome<Vec<CodexAppDto>> {
+    let response = match fetch_paginated_data(transport, APP_LIST_METHODS, |cursor| {
+        serde_json::json!({
+            "limit": 200,
+            "cursor": cursor,
+            "forceRefetch": true,
+        })
+    })
+    .await
+    {
+        Ok(data) => data,
+        Err(error) => return method_call_outcome_from_error(error),
+    };
+
+    MethodCallOutcome::Available(
+        response
+            .into_iter()
+            .map(|entry| CodexAppDto {
+                id: extract_any_string(&entry, &["id"]).unwrap_or_else(|| "unknown".to_string()),
+                name: extract_any_string(&entry, &["name"])
+                    .unwrap_or_else(|| "unknown".to_string()),
+                description: extract_any_string(&entry, &["description"]),
+                is_enabled: entry
+                    .get("isEnabled")
+                    .or_else(|| entry.get("is_enabled"))
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(true),
+                is_accessible: entry
+                    .get("isAccessible")
+                    .or_else(|| entry.get("is_accessible"))
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+            })
+            .collect(),
+    )
+}
+
+async fn refresh_protocol_diagnostics_via_transport(
+    transport: &CodexTransport,
+    previous: Option<CodexProtocolDiagnosticsDto>,
+) -> anyhow::Result<CodexProtocolDiagnosticsDto> {
+    let mut diagnostics = previous.unwrap_or_default();
+    let experimental = fetch_experimental_features(transport).await;
+    let collaboration = fetch_collaboration_modes(transport).await;
+    let apps = fetch_apps(transport).await;
+
+    let experimental_availability = match experimental {
+        MethodCallOutcome::Available(value) => {
+            diagnostics.experimental_features = value;
+            CodexMethodAvailabilityDto {
+                method: "experimentalFeature/list".to_string(),
+                status: "available".to_string(),
+                detail: None,
+            }
+        }
+        MethodCallOutcome::Unsupported(detail) => CodexMethodAvailabilityDto {
+            method: "experimentalFeature/list".to_string(),
+            status: "unsupported".to_string(),
+            detail,
+        },
+        MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
+            method: "experimentalFeature/list".to_string(),
+            status: "error".to_string(),
+            detail: Some(detail),
+        },
+    };
+    update_method_availability(
+        &mut diagnostics,
+        "experimentalFeature/list",
+        experimental_availability,
+    );
+
+    let collaboration_availability = match collaboration {
+        MethodCallOutcome::Available(value) => {
+            diagnostics.collaboration_modes = value;
+            CodexMethodAvailabilityDto {
+                method: "collaborationMode/list".to_string(),
+                status: "available".to_string(),
+                detail: None,
+            }
+        }
+        MethodCallOutcome::Unsupported(detail) => CodexMethodAvailabilityDto {
+            method: "collaborationMode/list".to_string(),
+            status: "unsupported".to_string(),
+            detail,
+        },
+        MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
+            method: "collaborationMode/list".to_string(),
+            status: "error".to_string(),
+            detail: Some(detail),
+        },
+    };
+    update_method_availability(
+        &mut diagnostics,
+        "collaborationMode/list",
+        collaboration_availability,
+    );
+
+    let app_availability = match apps {
+        MethodCallOutcome::Available(value) => {
+            diagnostics.apps = value;
+            CodexMethodAvailabilityDto {
+                method: "app/list".to_string(),
+                status: "available".to_string(),
+                detail: None,
+            }
+        }
+        MethodCallOutcome::Unsupported(detail) => CodexMethodAvailabilityDto {
+            method: "app/list".to_string(),
+            status: "unsupported".to_string(),
+            detail,
+        },
+        MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
+            method: "app/list".to_string(),
+            status: "error".to_string(),
+            detail: Some(detail),
+        },
+    };
+    update_method_availability(&mut diagnostics, "app/list", app_availability);
+
+    diagnostics.fetched_at = Some(Utc::now().to_rfc3339());
+    diagnostics.stale = false;
+    diagnostics
+        .method_availability
+        .sort_by(|left, right| left.method.cmp(&right.method));
+    Ok(diagnostics)
+}
+
+async fn refresh_protocol_diagnostics_for_runtime_monitor(
+    transport: &CodexTransport,
+    state: Arc<Mutex<CodexState>>,
+) -> anyhow::Result<CodexProtocolDiagnosticsDto> {
+    let current = {
+        let state = state.lock().await;
+        state.protocol_diagnostics.clone()
+    };
+    let diagnostics = refresh_protocol_diagnostics_via_transport(transport, current).await?;
+    {
+        let mut state = state.lock().await;
+        state.protocol_diagnostics = Some(diagnostics.clone());
+    }
+    Ok(diagnostics)
+}
+
+async fn update_protocol_diagnostics_with_config_warning(
+    state: Arc<Mutex<CodexState>>,
+    params: &serde_json::Value,
+) -> Option<CodexProtocolDiagnosticsDto> {
+    let mut state = state.lock().await;
+    let diagnostics = state
+        .protocol_diagnostics
+        .get_or_insert_with(Default::default);
+    diagnostics.last_config_warning = Some(CodexConfigWarningDto {
+        summary: extract_any_string(params, &["summary"])
+            .unwrap_or_else(|| "Config warning".to_string()),
+        details: extract_any_string(params, &["details"]),
+        path: extract_any_string(params, &["path"]),
+        start_line: extract_nested_i64(params, &["range", "start", "line"])
+            .and_then(|value| u64::try_from(value).ok()),
+        start_column: extract_nested_i64(params, &["range", "start", "column"])
+            .and_then(|value| u64::try_from(value).ok()),
+    });
+    Some(diagnostics.clone())
+}
+
+async fn update_protocol_diagnostics_with_account_login(
+    state: Arc<Mutex<CodexState>>,
+    params: &serde_json::Value,
+) -> Option<CodexProtocolDiagnosticsDto> {
+    let mut state = state.lock().await;
+    let diagnostics = state
+        .protocol_diagnostics
+        .get_or_insert_with(Default::default);
+    diagnostics.last_account_login = Some(CodexAccountLoginCompletedDto {
+        success: params
+            .get("success")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        error: extract_any_string(params, &["error"]),
+        login_id: extract_any_string(params, &["loginId", "login_id"]),
+    });
+    Some(diagnostics.clone())
+}
+
+async fn update_protocol_diagnostics_with_mcp_oauth(
+    state: Arc<Mutex<CodexState>>,
+    params: &serde_json::Value,
+) -> Option<CodexProtocolDiagnosticsDto> {
+    let mut state = state.lock().await;
+    let diagnostics = state
+        .protocol_diagnostics
+        .get_or_insert_with(Default::default);
+    diagnostics.last_mcp_oauth = Some(CodexMcpOauthCompletedDto {
+        name: extract_any_string(params, &["name"]).unwrap_or_else(|| "unknown".to_string()),
+        success: params
+            .get("success")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        error: extract_any_string(params, &["error"]),
+    });
+    Some(diagnostics.clone())
+}
+
+fn build_config_warning_toast(params: &serde_json::Value) -> Option<RuntimeToastDto> {
+    extract_any_string(params, &["summary"]).map(|summary| RuntimeToastDto {
+        variant: "warning".to_string(),
+        message: summary,
+    })
+}
+
+fn build_account_login_toast(params: &serde_json::Value) -> Option<RuntimeToastDto> {
+    let success = params
+        .get("success")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if success {
+        return None;
+    }
+
+    Some(RuntimeToastDto {
+        variant: "error".to_string(),
+        message: extract_any_string(params, &["error"])
+            .unwrap_or_else(|| "Codex account login failed.".to_string()),
+    })
+}
+
+fn build_mcp_oauth_toast(params: &serde_json::Value) -> Option<RuntimeToastDto> {
+    let success = params
+        .get("success")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if success {
+        return None;
+    }
+
+    let server_name =
+        extract_any_string(params, &["name"]).unwrap_or_else(|| "MCP server".to_string());
+    Some(RuntimeToastDto {
+        variant: "error".to_string(),
+        message: extract_any_string(params, &["error"])
+            .map(|error| format!("{server_name} OAuth failed: {error}"))
+            .unwrap_or_else(|| format!("{server_name} OAuth failed.")),
+    })
+}
+
+async fn resolve_pending_approval_request(
+    state: Arc<Mutex<CodexState>>,
+    request_id: &serde_json::Value,
+) -> Option<String> {
+    let mut state = state.lock().await;
+    let approval_id = state
+        .approval_requests
+        .iter()
+        .find(|(_, pending)| pending.raw_request_id == *request_id)
+        .map(|(approval_id, _)| approval_id.clone())?;
+    state.approval_requests.remove(&approval_id);
+    Some(approval_id)
+}
+
 fn belongs_to_thread(params: &serde_json::Value, thread_id: &str) -> bool {
     let candidates = [
         "threadId",
@@ -2866,5 +3635,26 @@ mod tests {
         let runtime = thread_runtime_from_resume_response(&response, &requested_runtime);
 
         assert_eq!(runtime, requested_runtime);
+    }
+
+    #[tokio::test]
+    async fn resolve_pending_approval_request_removes_matching_request() {
+        let state = Arc::new(Mutex::new(CodexState::default()));
+        {
+            let mut locked = state.lock().await;
+            locked.approval_requests.insert(
+                "approval-1".to_string(),
+                PendingApproval {
+                    raw_request_id: json!(42),
+                    method: "item/fileChange/requestApproval".to_string(),
+                },
+            );
+        }
+
+        let approval_id = resolve_pending_approval_request(state.clone(), &json!(42)).await;
+
+        assert_eq!(approval_id.as_deref(), Some("approval-1"));
+        let locked = state.lock().await;
+        assert!(locked.approval_requests.is_empty());
     }
 }

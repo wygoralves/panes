@@ -12,9 +12,10 @@ use std::sync::Arc;
 
 use config::app_config::AppConfig;
 use db::Database;
-use engines::EngineManager;
+use engines::{CodexRuntimeEvent, EngineManager};
 use git::repo::FileTreeCache;
 use git::watcher::GitWatcherManager;
+use models::{EngineRuntimeUpdatedDto, ThreadDto, ThreadStatusDto};
 use state::{AppState, TurnManager};
 use tauri::{
     image::Image,
@@ -69,9 +70,9 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let resource_dir = app.path().resource_dir().ok();
-            app.state::<AppState>()
-                .engines
-                .set_resource_dir(resource_dir);
+            let state = app.state::<AppState>().inner().clone();
+            state.engines.set_resource_dir(resource_dir);
+            tauri::async_runtime::spawn(run_codex_runtime_bridge(handle.clone(), state.clone()));
             app.on_menu_event(move |_app, event| {
                 let id = event.id().as_ref();
                 match id {
@@ -153,6 +154,7 @@ pub fn run() {
             commands::threads::set_thread_execution_policy,
             commands::threads::archive_thread,
             commands::threads::restore_thread,
+            commands::threads::sync_thread_from_engine,
             commands::threads::delete_thread,
             commands::terminal::terminal_create_session,
             commands::terminal::terminal_write,
@@ -181,6 +183,270 @@ pub fn run() {
         }
         _ => {}
     });
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadUpdatedEvent {
+    thread_id: String,
+    workspace_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thread: Option<ThreadDto>,
+}
+
+async fn run_codex_runtime_bridge(app: tauri::AppHandle, state: AppState) {
+    let mut rx = state.engines.subscribe_codex_runtime_events();
+    loop {
+        match rx.recv().await {
+            Ok(event) => handle_codex_runtime_event(&app, &state, event).await,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                log::warn!("codex runtime bridge lagged and skipped {skipped} events");
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
+async fn handle_codex_runtime_event(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    event: CodexRuntimeEvent,
+) {
+    match event {
+        CodexRuntimeEvent::DiagnosticsUpdated { diagnostics, toast } => {
+            let _ = app.emit(
+                "engine-runtime-updated",
+                EngineRuntimeUpdatedDto {
+                    engine_id: "codex".to_string(),
+                    protocol_diagnostics: Some(diagnostics),
+                    toast,
+                },
+            );
+        }
+        CodexRuntimeEvent::ThreadStatusChanged {
+            engine_thread_id,
+            status_type,
+            active_flags,
+        } => {
+            if let Some(updated_thread) = apply_codex_runtime_thread_update(
+                state,
+                &engine_thread_id,
+                None,
+                Some(status_type.as_str()),
+                &active_flags,
+                None,
+                None,
+                None,
+            )
+            .await
+            {
+                let _ = app.emit(
+                    "thread-updated",
+                    ThreadUpdatedEvent {
+                        thread_id: updated_thread.id.clone(),
+                        workspace_id: updated_thread.workspace_id.clone(),
+                        thread: Some(updated_thread),
+                    },
+                );
+            }
+        }
+        CodexRuntimeEvent::ThreadNameUpdated {
+            engine_thread_id,
+            thread_name,
+        } => {
+            let normalized_thread_name = thread_name.and_then(|name| {
+                let trimmed = name.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            });
+            let sync_required = if normalized_thread_name.is_some() {
+                Some(false)
+            } else {
+                Some(true)
+            };
+            let sync_reason = if normalized_thread_name.is_some() {
+                None
+            } else {
+                Some("thread_name_updated")
+            };
+            if let Some(updated_thread) = apply_codex_runtime_thread_update(
+                state,
+                &engine_thread_id,
+                normalized_thread_name.as_deref(),
+                None,
+                &[],
+                None,
+                sync_required,
+                sync_reason,
+            )
+            .await
+            {
+                let _ = app.emit(
+                    "thread-updated",
+                    ThreadUpdatedEvent {
+                        thread_id: updated_thread.id.clone(),
+                        workspace_id: updated_thread.workspace_id.clone(),
+                        thread: Some(updated_thread),
+                    },
+                );
+            }
+        }
+    }
+}
+
+async fn apply_codex_runtime_thread_update(
+    state: &AppState,
+    engine_thread_id: &str,
+    title: Option<&str>,
+    raw_status: Option<&str>,
+    active_flags: &[String],
+    preview: Option<&str>,
+    sync_required: Option<bool>,
+    sync_reason: Option<&str>,
+) -> Option<ThreadDto> {
+    let thread = run_db(state.db.clone(), {
+        let engine_thread_id = engine_thread_id.to_string();
+        move |db| db::threads::find_thread_by_engine_thread_id(db, "codex", &engine_thread_id)
+    })
+    .await
+    .ok()??;
+
+    let has_local_turn = state.turns.get(&thread.id).await.is_some();
+    let next_status = map_codex_runtime_status_to_local(raw_status, active_flags, has_local_turn);
+    let metadata = merge_codex_runtime_metadata(
+        thread.engine_metadata.clone(),
+        raw_status,
+        active_flags,
+        preview,
+        sync_required,
+        sync_reason,
+    );
+
+    run_db(state.db.clone(), {
+        let thread_id = thread.id.clone();
+        let title = title.map(str::to_string);
+        let metadata = metadata.clone();
+        let next_status = next_status.clone();
+        move |db| {
+            db::threads::update_thread_runtime_snapshot(
+                db,
+                &thread_id,
+                title.as_deref(),
+                next_status,
+                Some(&metadata),
+            )
+        }
+    })
+    .await
+    .ok()
+}
+
+fn merge_codex_runtime_metadata(
+    existing: Option<serde_json::Value>,
+    raw_status: Option<&str>,
+    active_flags: &[String],
+    preview: Option<&str>,
+    sync_required: Option<bool>,
+    sync_reason: Option<&str>,
+) -> serde_json::Value {
+    let mut metadata = existing.unwrap_or_else(|| serde_json::json!({}));
+    if !metadata.is_object() {
+        metadata = serde_json::json!({});
+    }
+
+    if let Some(object) = metadata.as_object_mut() {
+        if raw_status.is_some() {
+            match raw_status.map(str::trim).filter(|value| !value.is_empty()) {
+                Some(status) => {
+                    object.insert("codexThreadStatus".to_string(), serde_json::json!(status));
+                }
+                None => {
+                    object.remove("codexThreadStatus");
+                }
+            }
+
+            if active_flags.is_empty() {
+                object.remove("codexThreadActiveFlags");
+            } else {
+                object.insert(
+                    "codexThreadActiveFlags".to_string(),
+                    serde_json::json!(active_flags),
+                );
+            }
+        }
+
+        if preview.is_some() {
+            match preview.map(str::trim).filter(|value| !value.is_empty()) {
+                Some(preview) => {
+                    object.insert("codexPreview".to_string(), serde_json::json!(preview));
+                }
+                None => {
+                    object.remove("codexPreview");
+                }
+            }
+        }
+
+        if let Some(sync_required) = sync_required {
+            object.insert(
+                "codexSyncRequired".to_string(),
+                serde_json::json!(sync_required),
+            );
+            object.insert(
+                "codexSyncUpdatedAt".to_string(),
+                serde_json::json!(chrono::Utc::now().to_rfc3339()),
+            );
+            match sync_reason.map(str::trim).filter(|value| !value.is_empty()) {
+                Some(reason) => {
+                    object.insert("codexSyncReason".to_string(), serde_json::json!(reason));
+                }
+                None => {
+                    object.insert("codexSyncReason".to_string(), serde_json::Value::Null);
+                }
+            }
+        }
+    }
+
+    metadata
+}
+
+fn map_codex_runtime_status_to_local(
+    raw_status: Option<&str>,
+    active_flags: &[String],
+    has_local_turn: bool,
+) -> Option<ThreadStatusDto> {
+    if has_local_turn {
+        return None;
+    }
+
+    match raw_status.map(str::trim).filter(|value| !value.is_empty()) {
+        Some("systemError") => Some(ThreadStatusDto::Error),
+        Some("idle") | Some("notLoaded") => Some(ThreadStatusDto::Idle),
+        Some("active") => {
+            if active_flags
+                .iter()
+                .any(|flag| matches!(flag.as_str(), "waitingOnApproval" | "waitingOnUserInput"))
+            {
+                Some(ThreadStatusDto::AwaitingApproval)
+            } else {
+                Some(ThreadStatusDto::Streaming)
+            }
+        }
+        _ => None,
+    }
+}
+
+async fn run_db<T, F>(db: crate::db::Database, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&crate::db::Database) -> anyhow::Result<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || operation(&db))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
 }
 
 fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {

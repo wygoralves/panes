@@ -2,7 +2,11 @@ use chrono::Utc;
 use serde_json::json;
 use tauri::State;
 
-use crate::{db, models::ThreadDto, state::AppState};
+use crate::{
+    db,
+    models::{ThreadDto, ThreadStatusDto},
+    state::AppState,
+};
 
 const MAX_THREAD_TITLE_CHARS: usize = 120;
 
@@ -307,6 +311,65 @@ pub async fn restore_thread(
 }
 
 #[tauri::command]
+pub async fn sync_thread_from_engine(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<ThreadDto, String> {
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if thread.engine_id != "codex" {
+        return Ok(thread);
+    }
+
+    let Some(snapshot) = state
+        .engines
+        .read_thread_sync_snapshot(&thread)
+        .await
+        .map_err(err_to_string)?
+    else {
+        return Ok(thread);
+    };
+
+    let has_local_turn = state.turns.get(&thread_id).await.is_some();
+    let metadata = merge_codex_runtime_metadata(
+        thread.engine_metadata.clone(),
+        snapshot.raw_status.as_deref(),
+        &snapshot.active_flags,
+        snapshot.preview.as_deref(),
+        false,
+        None,
+    );
+    let next_status = map_codex_thread_status_to_local(
+        snapshot.raw_status.as_deref(),
+        &snapshot.active_flags,
+        has_local_turn,
+    );
+
+    run_db(db, {
+        let thread_id = thread_id.clone();
+        let title = snapshot.title.clone();
+        let metadata = metadata.clone();
+        let next_status = next_status.clone();
+        move |db| {
+            db::threads::update_thread_runtime_snapshot(
+                db,
+                &thread_id,
+                title.as_deref(),
+                next_status,
+                Some(&metadata),
+            )
+        }
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn set_thread_execution_policy(
     state: State<'_, AppState>,
     thread_id: String,
@@ -488,6 +551,91 @@ async fn validate_model_for_thread_engine(
     Ok(requested_model_id.to_string())
 }
 
+fn merge_codex_runtime_metadata(
+    existing: Option<serde_json::Value>,
+    raw_status: Option<&str>,
+    active_flags: &[String],
+    preview: Option<&str>,
+    sync_required: bool,
+    sync_reason: Option<&str>,
+) -> serde_json::Value {
+    let mut metadata = existing.unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        metadata = json!({});
+    }
+
+    if let Some(object) = metadata.as_object_mut() {
+        match raw_status.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(status) => {
+                object.insert("codexThreadStatus".to_string(), json!(status));
+            }
+            None => {
+                object.remove("codexThreadStatus");
+            }
+        }
+
+        if active_flags.is_empty() {
+            object.remove("codexThreadActiveFlags");
+        } else {
+            object.insert("codexThreadActiveFlags".to_string(), json!(active_flags));
+        }
+
+        match preview.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(preview) => {
+                object.insert("codexPreview".to_string(), json!(preview));
+            }
+            None => {
+                object.remove("codexPreview");
+            }
+        }
+
+        object.insert("codexSyncRequired".to_string(), json!(sync_required));
+        if sync_required {
+            object.insert(
+                "codexSyncUpdatedAt".to_string(),
+                json!(Utc::now().to_rfc3339()),
+            );
+            if let Some(reason) = sync_reason.map(str::trim).filter(|value| !value.is_empty()) {
+                object.insert("codexSyncReason".to_string(), json!(reason));
+            }
+        } else {
+            object.insert(
+                "codexSyncUpdatedAt".to_string(),
+                json!(Utc::now().to_rfc3339()),
+            );
+            object.insert("codexSyncReason".to_string(), serde_json::Value::Null);
+        }
+    }
+
+    metadata
+}
+
+fn map_codex_thread_status_to_local(
+    raw_status: Option<&str>,
+    active_flags: &[String],
+    has_local_turn: bool,
+) -> Option<ThreadStatusDto> {
+    if has_local_turn {
+        return None;
+    }
+
+    match raw_status.map(str::trim).filter(|value| !value.is_empty()) {
+        Some("systemError") => Some(ThreadStatusDto::Error),
+        Some("idle") | Some("notLoaded") => Some(ThreadStatusDto::Idle),
+        Some("active") => {
+            if active_flags
+                .iter()
+                .any(|flag| matches!(flag.as_str(), "waitingOnApproval" | "waitingOnUserInput"))
+            {
+                Some(ThreadStatusDto::AwaitingApproval)
+            } else {
+                Some(ThreadStatusDto::Streaming)
+            }
+        }
+        _ => None,
+    }
+}
+
 fn err_to_string(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
@@ -630,5 +778,54 @@ mod tests {
             Some("on-request".to_string())
         )
         .is_err());
+    }
+
+    #[test]
+    fn merge_codex_runtime_metadata_sets_runtime_fields() {
+        let metadata = merge_codex_runtime_metadata(
+            Some(json!({
+                "existing": true,
+                "codexSyncRequired": true,
+                "codexSyncReason": "stale",
+            })),
+            Some("active"),
+            &["waitingOnApproval".to_string()],
+            Some("Preview"),
+            false,
+            None,
+        );
+
+        assert_eq!(metadata.get("existing"), Some(&json!(true)));
+        assert_eq!(metadata.get("codexThreadStatus"), Some(&json!("active")));
+        assert_eq!(
+            metadata.get("codexThreadActiveFlags"),
+            Some(&json!(["waitingOnApproval"]))
+        );
+        assert_eq!(metadata.get("codexPreview"), Some(&json!("Preview")));
+        assert_eq!(metadata.get("codexSyncRequired"), Some(&json!(false)));
+        assert_eq!(
+            metadata.get("codexSyncReason"),
+            Some(&serde_json::Value::Null)
+        );
+    }
+
+    #[test]
+    fn map_codex_thread_status_to_local_honors_waiting_flags() {
+        assert_eq!(
+            map_codex_thread_status_to_local(
+                Some("active"),
+                &["waitingOnApproval".to_string()],
+                false,
+            ),
+            Some(ThreadStatusDto::AwaitingApproval)
+        );
+        assert_eq!(
+            map_codex_thread_status_to_local(Some("systemError"), &[], false),
+            Some(ThreadStatusDto::Error)
+        );
+        assert_eq!(
+            map_codex_thread_status_to_local(Some("active"), &[], true),
+            None
+        );
     }
 }

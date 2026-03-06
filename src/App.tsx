@@ -7,7 +7,7 @@ import { SetupWizard } from "./components/onboarding/SetupWizard";
 import { ToastContainer } from "./components/shared/ToastContainer";
 import { useUpdateStore } from "./stores/updateStore";
 import { useHarnessStore } from "./stores/harnessStore";
-import { listenThreadUpdated, listenMenuAction } from "./lib/ipc";
+import { ipc, listenEngineRuntimeUpdated, listenMenuAction, listenThreadUpdated } from "./lib/ipc";
 import { useWorkspaceStore } from "./stores/workspaceStore";
 import { useEngineStore } from "./stores/engineStore";
 import { useUiStore } from "./stores/uiStore";
@@ -15,6 +15,8 @@ import { useThreadStore } from "./stores/threadStore";
 import { useGitStore } from "./stores/gitStore";
 import { useTerminalStore, collectSessionIds } from "./stores/terminalStore";
 import { useFileStore } from "./stores/fileStore";
+import { toast } from "./stores/toastStore";
+import type { RuntimeToast, Thread } from "./types";
 import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMirrorEditor";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -31,10 +33,37 @@ function fireShortcut(id: string, action: () => void) {
   action();
 }
 
+function isCodexSyncRequired(thread: Thread | null | undefined): boolean {
+  return thread?.engineId === "codex" && thread.engineMetadata?.codexSyncRequired === true;
+}
+
+function showRuntimeToast(runtimeToast?: RuntimeToast) {
+  if (!runtimeToast) {
+    return;
+  }
+
+  switch (runtimeToast.variant) {
+    case "success":
+      toast.success(runtimeToast.message);
+      break;
+    case "warning":
+      toast.warning(runtimeToast.message);
+      break;
+    case "info":
+      toast.info(runtimeToast.message);
+      break;
+    case "error":
+    default:
+      toast.error(runtimeToast.message);
+      break;
+  }
+}
+
 export function App() {
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces);
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const loadEngines = useEngineStore((s) => s.load);
+  const applyEngineRuntimeUpdate = useEngineStore((s) => s.applyRuntimeUpdate);
   const scanHarnesses = useHarnessStore((s) => s.scan);
   const refreshAllThreads = useThreadStore((s) => s.refreshAllThreads);
   const refreshThreads = useThreadStore((s) => s.refreshThreads);
@@ -57,9 +86,25 @@ export function App() {
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    void listenThreadUpdated(({ workspaceId, thread }) => {
-      if (thread && applyThreadUpdateLocal(thread)) {
-        return;
+    void listenThreadUpdated(async ({ workspaceId, thread }) => {
+      if (thread) {
+        const applied = applyThreadUpdateLocal(thread);
+        const activeThreadId = useThreadStore.getState().activeThreadId;
+        if (thread.id === activeThreadId && isCodexSyncRequired(thread)) {
+          try {
+            const syncedThread = await ipc.syncThreadFromEngine(thread.id);
+            if (useThreadStore.getState().applyThreadUpdateLocal(syncedThread)) {
+              return;
+            }
+          } catch (error) {
+            console.warn(`Failed to sync active Codex thread ${thread.id}:`, error);
+          }
+          void refreshThreads(workspaceId);
+          return;
+        }
+        if (applied) {
+          return;
+        }
       }
       void refreshThreads(workspaceId);
     }).then((fn) => {
@@ -72,6 +117,22 @@ export function App() {
       }
     };
   }, [applyThreadUpdateLocal, refreshThreads]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listenEngineRuntimeUpdated((event) => {
+      applyEngineRuntimeUpdate(event);
+      showRuntimeToast(event.toast);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [applyEngineRuntimeUpdate]);
 
   useEffect(() => {
     function onBeforeUnload() {

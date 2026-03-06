@@ -45,6 +45,26 @@ pub fn get_thread(db: &Database, thread_id: &str) -> anyhow::Result<Option<Threa
   .context("failed to query thread")
 }
 
+pub fn find_thread_by_engine_thread_id(
+    db: &Database,
+    engine_id: &str,
+    engine_thread_id: &str,
+) -> anyhow::Result<Option<ThreadDto>> {
+    let conn = db.connect()?;
+    conn.query_row(
+        "SELECT id, workspace_id, repo_id, engine_id, model_id, engine_thread_id, engine_metadata_json,
+                COALESCE(title, ''), status, message_count, total_tokens, created_at, last_activity_at
+         FROM threads
+         WHERE engine_id = ?1
+           AND engine_thread_id = ?2
+         LIMIT 1",
+        params![engine_id, engine_thread_id],
+        map_thread_row,
+    )
+    .optional()
+    .context("failed to query thread by engine thread id")
+}
+
 pub fn list_threads_for_workspace(
     db: &Database,
     workspace_id: &str,
@@ -223,6 +243,40 @@ pub fn update_thread_title(db: &Database, thread_id: &str, title: &str) -> anyho
     Ok(())
 }
 
+pub fn update_thread_runtime_snapshot(
+    db: &Database,
+    thread_id: &str,
+    title: Option<&str>,
+    status: Option<ThreadStatusDto>,
+    metadata: Option<&serde_json::Value>,
+) -> anyhow::Result<ThreadDto> {
+    let existing = get_thread(db, thread_id)?
+        .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
+
+    if let Some(title) =
+        title.filter(|_| !thread_manual_title_locked(existing.engine_metadata.as_ref()))
+    {
+        update_thread_title(db, thread_id, title)?;
+    }
+    if let Some(status) = status {
+        update_thread_status(db, thread_id, status)?;
+    }
+    if let Some(metadata) = metadata {
+        update_engine_metadata(db, thread_id, metadata)?;
+    }
+    get_thread(db, thread_id)?.ok_or_else(|| {
+        anyhow::anyhow!("thread not found after runtime snapshot update: {thread_id}")
+    })
+}
+
+fn thread_manual_title_locked(metadata: Option<&serde_json::Value>) -> bool {
+    metadata
+        .and_then(serde_json::Value::as_object)
+        .and_then(|object| object.get("manualTitle"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
 pub fn reconcile_runtime_state(db: &Database) -> anyhow::Result<RuntimeRecoveryReport> {
     let mut conn = db.connect()?;
     let tx = conn
@@ -343,4 +397,83 @@ fn map_thread_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadDto> {
         created_at: row.get(11)?,
         last_activity_at: row.get(12)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        sync::{Arc, Mutex},
+    };
+
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use crate::db::{workspaces, ConnectionPool, SQLITE_POOL_MAX_IDLE};
+
+    use super::*;
+
+    fn test_db() -> Database {
+        let path = std::env::temp_dir().join(format!("panes-threads-{}.db", Uuid::new_v4()));
+        let db = Database {
+            path,
+            pool: Arc::new(ConnectionPool {
+                idle: Mutex::new(Vec::new()),
+                max_idle: SQLITE_POOL_MAX_IDLE,
+            }),
+        };
+        db.run_migrations().expect("failed to run test migrations");
+        db
+    }
+
+    fn test_thread(db: &Database, title: &str) -> ThreadDto {
+        let root = std::env::temp_dir().join(format!("panes-workspace-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("failed to create temp workspace root");
+        let workspace =
+            workspaces::upsert_workspace(db, root.to_string_lossy().as_ref(), 1).unwrap();
+        create_thread(db, &workspace.id, None, "codex", "gpt-5.3-codex", title).unwrap()
+    }
+
+    #[test]
+    fn update_thread_runtime_snapshot_preserves_manual_title() {
+        let db = test_db();
+        let thread = test_thread(&db, "Manual title");
+        let manual_metadata = json!({
+            "manualTitle": true,
+            "manualTitleUpdatedAt": "2026-03-06T12:00:00Z",
+        });
+        update_engine_metadata(&db, &thread.id, &manual_metadata).unwrap();
+
+        let updated = update_thread_runtime_snapshot(
+            &db,
+            &thread.id,
+            Some("Engine renamed title"),
+            Some(ThreadStatusDto::Idle),
+            Some(&json!({
+                "manualTitle": true,
+                "codexThreadStatus": "idle",
+                "codexSyncRequired": false,
+            })),
+        )
+        .unwrap();
+
+        assert_eq!(updated.title, "Manual title");
+        assert_eq!(updated.status, ThreadStatusDto::Idle);
+        assert_eq!(
+            updated
+                .engine_metadata
+                .as_ref()
+                .and_then(|value| value.get("codexThreadStatus"))
+                .and_then(serde_json::Value::as_str),
+            Some("idle")
+        );
+        assert_eq!(
+            updated
+                .engine_metadata
+                .as_ref()
+                .and_then(|value| value.get("manualTitle"))
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+    }
 }

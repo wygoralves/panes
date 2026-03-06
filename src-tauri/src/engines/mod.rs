@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use async_trait::async_trait;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 
@@ -19,6 +19,7 @@ pub mod codex_protocol;
 pub mod codex_transport;
 pub mod events;
 
+pub use codex::CodexRuntimeEvent;
 pub use events::*;
 
 #[derive(Debug, Clone)]
@@ -62,6 +63,14 @@ pub struct ReasoningEffortOption {
 #[derive(Debug, Clone)]
 pub struct EngineThread {
     pub engine_thread_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ThreadSyncSnapshot {
+    pub title: Option<String>,
+    pub preview: Option<String>,
+    pub raw_status: Option<String>,
+    pub active_flags: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -173,6 +182,7 @@ impl EngineManager {
                     warnings: report.warnings,
                     checks: report.checks,
                     fixes: report.fixes,
+                    protocol_diagnostics: report.protocol_diagnostics,
                 })
             }
             "claude" => {
@@ -185,6 +195,7 @@ impl EngineManager {
                     warnings: report.warnings,
                     checks: report.checks,
                     fixes: report.fixes,
+                    protocol_diagnostics: None,
                 })
             }
             _ => anyhow::bail!("unknown engine: {engine_id}"),
@@ -319,6 +330,29 @@ impl EngineManager {
         match thread.engine_id.as_str() {
             "codex" => self.codex.set_thread_name(engine_thread_id, name).await,
             "claude" => Ok(()),
+            _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
+        }
+    }
+
+    pub fn subscribe_codex_runtime_events(&self) -> broadcast::Receiver<CodexRuntimeEvent> {
+        self.codex.subscribe_runtime_events()
+    }
+
+    pub async fn read_thread_sync_snapshot(
+        &self,
+        thread: &ThreadDto,
+    ) -> anyhow::Result<Option<ThreadSyncSnapshot>> {
+        let Some(engine_thread_id) = thread.engine_thread_id.as_deref() else {
+            return Ok(None);
+        };
+
+        match thread.engine_id.as_str() {
+            "codex" => self
+                .codex
+                .read_thread_sync_snapshot(engine_thread_id)
+                .await
+                .map(Some),
+            "claude" => Ok(None),
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         }
     }

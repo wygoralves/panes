@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { ipc, listenThreadEvents } from "../lib/ipc";
 import { recordPerfMetric } from "../lib/perfTelemetry";
+import { useThreadStore } from "./threadStore";
 import type {
   ApprovalResponse,
   ActionBlock,
@@ -73,6 +74,10 @@ interface AssistantMessageTarget {
 
 const pendingTurnMetaByThread = new Map<string, PendingTurnMeta>();
 const inflightActionOutputHydration = new Map<string, Promise<void>>();
+
+function isCodexThreadSyncRequired(metadata: Record<string, unknown> | undefined): boolean {
+  return metadata?.codexSyncRequired === true;
+}
 
 function recordPendingTurnMetric(
   threadId: string,
@@ -993,6 +998,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     try {
+      const threadState = useThreadStore.getState();
+      const activeThread = threadState.threads.find((thread) => thread.id === threadId);
+      if (activeThread?.engineId === "codex" && isCodexThreadSyncRequired(activeThread.engineMetadata)) {
+        try {
+          const syncedThread = await ipc.syncThreadFromEngine(threadId);
+          threadState.applyThreadUpdateLocal(syncedThread);
+        } catch (error) {
+          console.warn(`Failed to sync Codex thread ${threadId}:`, error);
+        }
+      }
+
       const messageWindow = await ipc.getThreadMessagesWindow(
         threadId,
         null,

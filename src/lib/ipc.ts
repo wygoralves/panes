@@ -7,6 +7,7 @@ import type {
   ContentBlock,
   DependencyReport,
   EngineCheckResult,
+  EngineRuntimeUpdatedEvent,
   GitBranchPage,
   GitBranchScope,
   GitCommitPage,
@@ -110,6 +111,8 @@ export const ipc = {
     }),
   archiveThread: (threadId: string) => invoke<void>("archive_thread", { threadId }),
   restoreThread: (threadId: string) => invoke<Thread>("restore_thread", { threadId }),
+  syncThreadFromEngine: (threadId: string) =>
+    invoke<Thread>("sync_thread_from_engine", { threadId }),
   deleteThread: (threadId: string) => invoke<void>("delete_thread", { threadId }),
   listEngines: () => invoke<EngineInfo[]>("list_engines"),
   engineHealth: (engineId: string) => invoke<EngineHealth>("engine_health", { engineId }),
@@ -323,6 +326,15 @@ export async function listenThreadUpdated(
   onEvent: (event: ThreadUpdatedEvent) => void
 ): Promise<UnlistenFn> {
   return listen<ThreadUpdatedEvent>("thread-updated", ({ payload }) => onEvent(payload));
+}
+
+export async function listenEngineRuntimeUpdated(
+  onEvent: (event: EngineRuntimeUpdatedEvent) => void
+): Promise<UnlistenFn> {
+  return listen<EngineRuntimeUpdatedEvent>(
+    "engine-runtime-updated",
+    ({ payload }) => onEvent(payload)
+  );
 }
 
 export async function listenMenuAction(
