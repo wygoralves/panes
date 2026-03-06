@@ -30,13 +30,29 @@ import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { MessageBlocks } from "./MessageBlocks";
-import { isRequestUserInputApproval, requiresCustomApprovalPayload } from "./toolInputApproval";
+import {
+  isRequestUserInputApproval,
+  parseApprovalCommand,
+  parseApprovalReason,
+  parseProposedExecpolicyAmendment,
+  parseProposedNetworkPolicyAmendments,
+  requiresCustomApprovalPayload,
+} from "./toolInputApproval";
 import { Dropdown } from "../shared/Dropdown";
 import { ModelPicker } from "./ModelPicker";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { getHarnessIcon } from "../shared/HarnessLogos";
-import type { ApprovalBlock, ApprovalResponse, ChatAttachment, ContentBlock, Message, TrustLevel } from "../../types";
+import type {
+  ApprovalBlock,
+  ApprovalResponse,
+  ChatAttachment,
+  ContentBlock,
+  EngineHealth,
+  Message,
+  Thread,
+  TrustLevel,
+} from "../../types";
 
 const MESSAGE_VIRTUALIZATION_THRESHOLD = 40;
 const MESSAGE_ESTIMATED_ROW_HEIGHT = 220;
@@ -99,6 +115,60 @@ const REASONING_EFFORT_LABELS: Record<string, string> = {
   high: "High",
   xhigh: "XHigh",
 };
+type ThreadApprovalPolicyValue = "inherit" | "untrusted" | "on-failure" | "on-request" | "never";
+type ThreadSandboxModeValue =
+  | "inherit"
+  | "read-only"
+  | "workspace-write"
+  | "danger-full-access";
+type ThreadNetworkPolicyValue = "inherit" | "enabled" | "restricted";
+type ThreadExecutionPolicyPatch = Partial<{
+  approvalPolicy: ThreadApprovalPolicyValue;
+  sandboxMode: ThreadSandboxModeValue;
+  networkPolicy: ThreadNetworkPolicyValue;
+}>;
+
+const THREAD_APPROVAL_POLICY_OPTIONS: Array<{ value: ThreadApprovalPolicyValue; label: string }> = [
+  { value: "inherit", label: "Auto" },
+  { value: "untrusted", label: "Untrusted" },
+  { value: "on-request", label: "On-request" },
+  { value: "on-failure", label: "On-failure" },
+  { value: "never", label: "Never" },
+];
+
+const THREAD_SANDBOX_MODE_OPTIONS: Array<{ value: ThreadSandboxModeValue; label: string }> = [
+  { value: "inherit", label: "Auto" },
+  { value: "read-only", label: "Read-only" },
+  { value: "workspace-write", label: "Workspace-write" },
+  { value: "danger-full-access", label: "Full access" },
+];
+
+const THREAD_NETWORK_POLICY_OPTIONS: Array<{ value: ThreadNetworkPolicyValue; label: string }> = [
+  { value: "inherit", label: "Auto" },
+  { value: "enabled", label: "Enabled" },
+  { value: "restricted", label: "Restricted" },
+];
+
+function isCodexExternalSandboxWarning(message?: string): boolean {
+  if (typeof message !== "string") {
+    return false;
+  }
+
+  const normalized = message.toLowerCase();
+  return normalized.includes("external sandbox mode");
+}
+
+function codexUsesExternalSandbox(health: Record<string, EngineHealth>): boolean {
+  const codexHealth = health.codex;
+  if (!codexHealth?.available) {
+    return false;
+  }
+
+  return (codexHealth.warnings ?? []).some((warning) =>
+    isCodexExternalSandboxWarning(warning),
+  );
+}
+
 const IMAGE_ATTACHMENT_EXTENSIONS = new Set([
   "png",
   "jpg",
@@ -253,6 +323,136 @@ function formatEngineModelLabel(
     : modelLabel || engineName || "Assistant";
   const effortLabel = formatReasoningEffortLabel(reasoningEffort);
   return effortLabel ? `${baseLabel} ${effortLabel}` : baseLabel;
+}
+
+function readThreadApprovalPolicyValue(thread: Thread | null): ThreadApprovalPolicyValue {
+  const value = thread?.engineMetadata?.sandboxApprovalPolicy;
+  if (
+    value === "untrusted" ||
+    value === "on-failure" ||
+    value === "on-request" ||
+    value === "never"
+  ) {
+    return value;
+  }
+  return "inherit";
+}
+
+function readThreadSandboxModeValue(thread: Thread | null): ThreadSandboxModeValue {
+  const value = thread?.engineMetadata?.sandboxMode;
+  if (value === "read-only" || value === "workspace-write" || value === "danger-full-access") {
+    return value;
+  }
+  return "inherit";
+}
+
+function readThreadNetworkPolicyValue(thread: Thread | null): ThreadNetworkPolicyValue {
+  if (readThreadSandboxModeValue(thread) === "danger-full-access") {
+    return "enabled";
+  }
+
+  const value = thread?.engineMetadata?.sandboxAllowNetwork;
+  if (value === true) {
+    return "enabled";
+  }
+  if (value === false) {
+    return "restricted";
+  }
+  return "inherit";
+}
+
+function canonicalizeThreadExecutionPolicyState(state: {
+  approvalPolicy: ThreadApprovalPolicyValue;
+  sandboxMode: ThreadSandboxModeValue;
+  networkPolicy: ThreadNetworkPolicyValue;
+}): {
+  approvalPolicy: ThreadApprovalPolicyValue;
+  sandboxMode: ThreadSandboxModeValue;
+  networkPolicy: ThreadNetworkPolicyValue;
+} {
+  if (state.sandboxMode === "danger-full-access") {
+    return {
+      ...state,
+      networkPolicy: "enabled",
+    };
+  }
+
+  return state;
+}
+
+function readThreadExecutionPolicyState(thread: Thread | null) {
+  return canonicalizeThreadExecutionPolicyState({
+    approvalPolicy: readThreadApprovalPolicyValue(thread),
+    sandboxMode: readThreadSandboxModeValue(thread),
+    networkPolicy: readThreadNetworkPolicyValue(thread),
+  });
+}
+
+function applyThreadExecutionPolicyPatch(
+  thread: Thread,
+  patch: ThreadExecutionPolicyPatch,
+): Thread {
+  const metadata = { ...(thread.engineMetadata ?? {}) };
+  const nextState = canonicalizeThreadExecutionPolicyState({
+    ...readThreadExecutionPolicyState(thread),
+    ...patch,
+  });
+
+  if (nextState.approvalPolicy === "inherit") {
+    delete metadata.sandboxApprovalPolicy;
+  } else {
+    metadata.sandboxApprovalPolicy = nextState.approvalPolicy;
+  }
+
+  if (nextState.sandboxMode === "inherit") {
+    delete metadata.sandboxMode;
+  } else {
+    metadata.sandboxMode = nextState.sandboxMode;
+  }
+
+  if (nextState.sandboxMode === "danger-full-access") {
+    metadata.sandboxAllowNetwork = true;
+  } else if (nextState.networkPolicy === "inherit") {
+    delete metadata.sandboxAllowNetwork;
+  } else {
+    metadata.sandboxAllowNetwork = nextState.networkPolicy === "enabled";
+  }
+
+  return {
+    ...thread,
+    engineMetadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+  };
+}
+
+function toThreadExecutionPolicyRequest(
+  patch: ThreadExecutionPolicyPatch,
+): {
+  approvalPolicy?: string | null;
+  sandboxMode?: string | null;
+  allowNetwork?: boolean | null;
+} {
+  const request: {
+    approvalPolicy?: string | null;
+    sandboxMode?: string | null;
+    allowNetwork?: boolean | null;
+  } = {};
+
+  if ("approvalPolicy" in patch) {
+    request.approvalPolicy = patch.approvalPolicy === "inherit" ? null : patch.approvalPolicy;
+  }
+
+  if ("sandboxMode" in patch) {
+    request.sandboxMode = patch.sandboxMode === "inherit" ? null : patch.sandboxMode;
+  }
+
+  if ("networkPolicy" in patch) {
+    request.allowNetwork =
+      patch.networkPolicy === "inherit"
+        ? null
+        : patch.networkPolicy === "enabled";
+  }
+
+  return request;
 }
 
 function encodeModelOptionValue(engineId: string, modelId: string): string {
@@ -689,6 +889,10 @@ export function ChatPanel() {
   const showSidebar = useUiStore((s) => s.showSidebar);
   const engines = useEngineStore((s) => s.engines);
   const health = useEngineStore((s) => s.health);
+  const codexExternalSandboxActive = useMemo(
+    () => codexUsesExternalSandbox(health),
+    [health],
+  );
   const {
     repos,
     activeRepoId,
@@ -704,6 +908,7 @@ export function ChatPanel() {
     threads,
     activeThreadId,
     setActiveThread: setActiveThreadInStore,
+    applyThreadUpdateLocal,
     setThreadReasoningEffortLocal,
     setThreadLastModelLocal,
     renameThread,
@@ -728,6 +933,7 @@ export function ChatPanel() {
   const initialScrollThreadRef = useRef<string | null>(null);
   const messageHeightsRef = useRef<Map<string, number>>(new Map());
   const layoutVersionRafRef = useRef<number | null>(null);
+  const threadExecutionPolicyRequestIdsRef = useRef<Record<string, number>>({});
   const [listLayoutVersion, setListLayoutVersion] = useState(0);
   const [viewportScrollTop, setViewportScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
@@ -857,6 +1063,26 @@ export function ChatPanel() {
         return "Standard — approvals on-request, network requests disabled";
     }
   }
+
+  const activeThreadApprovalPolicy = readThreadApprovalPolicyValue(activeThread);
+  const activeThreadSandboxMode = readThreadSandboxModeValue(activeThread);
+  const activeThreadNetworkPolicy = readThreadNetworkPolicyValue(activeThread);
+  const threadSandboxModeOptions = useMemo(
+    () =>
+      codexExternalSandboxActive
+        ? THREAD_SANDBOX_MODE_OPTIONS.filter(
+            (option) =>
+              option.value === "inherit" || option.value === "danger-full-access",
+          )
+        : THREAD_SANDBOX_MODE_OPTIONS,
+    [codexExternalSandboxActive],
+  );
+  const activeThreadSandboxModeOption = THREAD_SANDBOX_MODE_OPTIONS.find(
+    (option) => option.value === activeThreadSandboxMode,
+  );
+  const activeThreadSandboxModeSupported = threadSandboxModeOptions.some(
+    (option) => option.value === activeThreadSandboxMode,
+  );
 
   const workspaceTrustLevel: TrustLevel = useMemo(() => {
     if (!repos.length) {
@@ -1633,6 +1859,78 @@ export function ChatPanel() {
     await setAllReposTrustLevel(nextTrustLevel);
   }
 
+  async function onThreadExecutionPolicyChange(patch: ThreadExecutionPolicyPatch) {
+    if (!activeThread || activeThread.engineId !== "codex") {
+      return;
+    }
+
+    const currentThread =
+      useThreadStore.getState().threads.find((thread) => thread.id === activeThread.id) ??
+      activeThread;
+    const nextState = canonicalizeThreadExecutionPolicyState({
+      ...readThreadExecutionPolicyState(currentThread),
+      ...patch,
+    });
+    const nextPatch: ThreadExecutionPolicyPatch = { ...patch };
+    const currentSandboxMode = readThreadSandboxModeValue(currentThread);
+
+    if (
+      codexExternalSandboxActive &&
+      (patch.sandboxMode === "read-only" || patch.sandboxMode === "workspace-write")
+    ) {
+      toast.error(
+        "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode.",
+      );
+      return;
+    }
+
+    if (
+      patch.sandboxMode !== undefined &&
+      patch.sandboxMode !== "danger-full-access" &&
+      currentSandboxMode === "danger-full-access" &&
+      patch.networkPolicy === undefined
+    ) {
+      nextPatch.networkPolicy = "inherit";
+    }
+
+    if (nextState.sandboxMode === "danger-full-access") {
+      if (
+        patch.networkPolicy === "restricted" ||
+        (patch.sandboxMode === "danger-full-access" &&
+          readThreadNetworkPolicyValue(currentThread) === "restricted")
+      ) {
+        toast.warning("Full access sandbox always enables network access.");
+      }
+      nextPatch.networkPolicy = "enabled";
+    }
+
+    applyThreadUpdateLocal(applyThreadExecutionPolicyPatch(currentThread, nextPatch));
+
+    const requestId =
+      (threadExecutionPolicyRequestIdsRef.current[currentThread.id] ?? 0) + 1;
+    threadExecutionPolicyRequestIdsRef.current[currentThread.id] = requestId;
+
+    try {
+      const updatedThread = await ipc.setThreadExecutionPolicy(
+        currentThread.id,
+        toThreadExecutionPolicyRequest(nextPatch),
+      );
+
+      if (threadExecutionPolicyRequestIdsRef.current[currentThread.id] !== requestId) {
+        return;
+      }
+
+      applyThreadUpdateLocal(updatedThread);
+    } catch (error) {
+      if (threadExecutionPolicyRequestIdsRef.current[currentThread.id] !== requestId) {
+        return;
+      }
+
+      toast.error(`Failed to update thread execution policy: ${String(error)}`);
+      await refreshThreads(currentThread.workspaceId);
+    }
+  }
+
   function startThreadTitleEdit() {
     if (!activeThread) {
       return;
@@ -2293,21 +2591,12 @@ export function ChatPanel() {
                   const details = approval.details ?? {};
                   const isToolInputRequest = isRequestUserInputApproval(details);
                   const requiresCustomPayload = requiresCustomApprovalPayload(details);
-                  const proposedExecpolicyAmendment = Array.isArray(
-                    details.proposedExecpolicyAmendment
-                  )
-                    ? details.proposedExecpolicyAmendment.filter(
-                        (entry): entry is string => typeof entry === "string"
-                      )
-                    : [];
-                  const command =
-                    typeof details.command === "string"
-                      ? details.command
-                      : undefined;
-                  const reason =
-                    typeof details.reason === "string"
-                      ? details.reason
-                      : undefined;
+                  const proposedExecpolicyAmendment =
+                    parseProposedExecpolicyAmendment(details);
+                  const proposedNetworkPolicyAmendments =
+                    parseProposedNetworkPolicyAmendments(details);
+                  const command = parseApprovalCommand(details);
+                  const reason = parseApprovalReason(details);
 
                   return (
                     <div
@@ -2387,6 +2676,23 @@ export function ChatPanel() {
                                 Allow + policy
                               </button>
                             )}
+                            {proposedNetworkPolicyAmendments.map((amendment) => (
+                              <button
+                                key={`${amendment.action}:${amendment.host}`}
+                                type="button"
+                                className="approval-btn approval-btn-session"
+                                onClick={() =>
+                                  void respondApproval(approval.approvalId, {
+                                    applyNetworkPolicyAmendment: {
+                                      network_policy_amendment: amendment,
+                                    },
+                                  })
+                                }
+                                title={`${amendment.action} ${amendment.host} for future requests`}
+                              >
+                                {amendment.action === "allow" ? "Allow" : "Block"} host
+                              </button>
+                            ))}
                             <button
                               type="button"
                               className="approval-btn approval-btn-allow"
@@ -2560,6 +2866,59 @@ export function ChatPanel() {
                     { value: "restricted", label: "Restricted" },
                   ]}
                 />
+              )}
+
+              {activeThread?.engineId === "codex" && (
+                <>
+                  <Dropdown
+                    value={activeThreadApprovalPolicy}
+                    onChange={(value) =>
+                      void onThreadExecutionPolicyChange({
+                        approvalPolicy: value as ThreadApprovalPolicyValue,
+                      })
+                    }
+                    title="Thread approval policy override"
+                    selectedIcon={<Shield size={11} />}
+                    options={THREAD_APPROVAL_POLICY_OPTIONS}
+                  />
+                  <Dropdown
+                    value={activeThreadSandboxMode}
+                    onChange={(value) =>
+                      void onThreadExecutionPolicyChange({
+                        sandboxMode: value as ThreadSandboxModeValue,
+                      })
+                    }
+                    title={
+                      codexExternalSandboxActive
+                        ? "Read-only and workspace-write sandbox overrides are unavailable while Codex is using external sandbox mode on this machine."
+                        : "Thread sandbox mode override"
+                    }
+                    selectedLabel={
+                      codexExternalSandboxActive && !activeThreadSandboxModeSupported
+                        ? `${activeThreadSandboxModeOption?.label ?? activeThreadSandboxMode} (unsupported)`
+                        : undefined
+                    }
+                    selectedIcon={<SquareTerminal size={11} />}
+                    options={threadSandboxModeOptions}
+                  />
+                  <Dropdown
+                    value={activeThreadNetworkPolicy}
+                    onChange={(value) =>
+                      void onThreadExecutionPolicyChange({
+                        networkPolicy: value as ThreadNetworkPolicyValue,
+                      })
+                    }
+                    disabled={activeThreadSandboxMode === "danger-full-access"}
+                    title="Thread network policy override"
+                    selectedLabel={
+                      activeThreadSandboxMode === "danger-full-access"
+                        ? "Always enabled"
+                        : undefined
+                    }
+                    selectedIcon={<Monitor size={11} />}
+                    options={THREAD_NETWORK_POLICY_OPTIONS}
+                  />
+                </>
               )}
 
               <div style={{ flex: 1 }} />

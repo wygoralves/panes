@@ -91,6 +91,23 @@ export const ipc = {
     modelId?: string | null,
   ) =>
     invoke<void>("set_thread_reasoning_effort", { threadId, reasoningEffort, modelId: modelId ?? null }),
+  setThreadExecutionPolicy: (
+    threadId: string,
+    patch: {
+      approvalPolicy?: string | null;
+      sandboxMode?: string | null;
+      allowNetwork?: boolean | null;
+    },
+  ) =>
+    invoke<Thread>("set_thread_execution_policy", {
+      threadId,
+      updateApprovalPolicy: Object.prototype.hasOwnProperty.call(patch, "approvalPolicy"),
+      approvalPolicy: patch.approvalPolicy ?? null,
+      updateSandboxMode: Object.prototype.hasOwnProperty.call(patch, "sandboxMode"),
+      sandboxMode: patch.sandboxMode ?? null,
+      updateAllowNetwork: Object.prototype.hasOwnProperty.call(patch, "allowNetwork"),
+      allowNetwork: patch.allowNetwork ?? null,
+    }),
   archiveThread: (threadId: string) => invoke<void>("archive_thread", { threadId }),
   restoreThread: (threadId: string) => invoke<Thread>("restore_thread", { threadId }),
   deleteThread: (threadId: string) => invoke<void>("delete_thread", { threadId }),

@@ -222,8 +222,33 @@ pub async fn send_message(
         }
     };
 
+    let trust_level = selected_repo
+        .as_ref()
+        .map(|repo| repo.trust_level.clone())
+        .unwrap_or_else(|| aggregate_workspace_trust_level(&repos));
+    let reasoning_effort = thread_reasoning_effort(thread.engine_metadata.as_ref());
+    let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref());
+    let sandbox_mode = sandbox_mode_override
+        .clone()
+        .unwrap_or_else(|| "workspace-write".to_string());
+    let codex_external_sandbox_active = if thread.engine_id == "codex" {
+        state.engines.codex_uses_external_sandbox().await
+    } else {
+        false
+    };
+
+    if unsupported_thread_sandbox_override_for_external_sandbox(
+        sandbox_mode_override.as_deref(),
+        codex_external_sandbox_active,
+    ) {
+        return Err(
+            "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode. Clear the override or restore local Codex sandboxing first.".to_string(),
+        );
+    }
+
     if let ThreadScope::Workspace { writable_roots, .. } = &scope {
         if writable_roots.len() > 1
+            && sandbox_mode_requires_workspace_opt_in(&sandbox_mode)
             && !workspace_write_opt_in_enabled(thread.engine_metadata.as_ref())
         {
             return Err(
@@ -231,12 +256,6 @@ pub async fn send_message(
             );
         }
     }
-
-    let trust_level = selected_repo
-        .as_ref()
-        .map(|repo| repo.trust_level.clone())
-        .unwrap_or_else(|| aggregate_workspace_trust_level(&repos));
-    let reasoning_effort = thread_reasoning_effort(thread.engine_metadata.as_ref());
 
     if requested_model_id.is_some() {
         let mut metadata = thread
@@ -319,11 +338,22 @@ pub async fn send_message(
         }
     };
 
+    let allow_network = if sandbox_mode.eq_ignore_ascii_case("danger-full-access") {
+        true
+    } else {
+        thread_allow_network_override(thread.engine_metadata.as_ref())
+            .unwrap_or_else(|| allow_network_for_trust_level(&trust_level))
+    };
+
     let sandbox = SandboxPolicy {
         writable_roots,
-        allow_network: allow_network_for_trust_level(&trust_level),
-        approval_policy: Some(approval_policy_for_trust_level(&trust_level).to_string()),
+        allow_network,
+        approval_policy: Some(
+            thread_approval_policy_override(thread.engine_metadata.as_ref())
+                .unwrap_or_else(|| approval_policy_for_trust_level(&trust_level).to_string()),
+        ),
         reasoning_effort,
+        sandbox_mode: Some(sandbox_mode),
     };
 
     let engine_thread_id = state
@@ -1807,11 +1837,79 @@ fn allow_network_for_trust_level(trust_level: &TrustLevelDto) -> bool {
     matches!(trust_level, TrustLevelDto::Trusted)
 }
 
+fn thread_approval_policy_override(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("sandboxApprovalPolicy"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| matches!(*value, "untrusted" | "on-failure" | "on-request" | "never"))
+        .map(ToOwned::to_owned)
+}
+
+fn thread_allow_network_override(metadata: Option<&Value>) -> Option<bool> {
+    metadata
+        .and_then(|value| value.get("sandboxAllowNetwork"))
+        .and_then(Value::as_bool)
+}
+
+fn thread_sandbox_mode(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("sandboxMode"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| {
+            matches!(
+                *value,
+                "read-only" | "workspace-write" | "danger-full-access"
+            )
+        })
+        .map(ToOwned::to_owned)
+}
+
+fn sandbox_mode_requires_workspace_opt_in(mode: &str) -> bool {
+    !mode.eq_ignore_ascii_case("read-only")
+}
+
+fn unsupported_thread_sandbox_override_for_external_sandbox(
+    sandbox_mode: Option<&str>,
+    external_sandbox_active: bool,
+) -> bool {
+    external_sandbox_active && matches!(sandbox_mode, Some("read-only" | "workspace-write"))
+}
+
 fn thread_reasoning_effort(metadata: Option<&Value>) -> Option<String> {
     metadata
         .and_then(|value| value.get("reasoningEffort"))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_sandbox_allows_default_workspace_write_mode() {
+        assert!(!unsupported_thread_sandbox_override_for_external_sandbox(
+            None, true,
+        ));
+    }
+
+    #[test]
+    fn external_sandbox_blocks_explicit_workspace_write_override() {
+        assert!(unsupported_thread_sandbox_override_for_external_sandbox(
+            Some("workspace-write"),
+            true,
+        ));
+        assert!(unsupported_thread_sandbox_override_for_external_sandbox(
+            Some("read-only"),
+            true,
+        ));
+        assert!(!unsupported_thread_sandbox_override_for_external_sandbox(
+            Some("danger-full-access"),
+            true,
+        ));
+    }
 }
 
 async fn resolve_turn_model_id(

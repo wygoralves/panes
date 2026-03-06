@@ -27,8 +27,16 @@ import type {
 } from "../../types";
 import { ToolInputQuestionnaire } from "./ToolInputQuestionnaire";
 import {
+  buildDynamicToolCallResponse,
   defaultAdvancedApprovalPayload,
+  isDynamicToolCallApproval,
   isRequestUserInputApproval,
+  parseApprovalCommand,
+  parseApprovalReason,
+  parseDynamicToolCallArguments,
+  parseDynamicToolCallName,
+  parseProposedExecpolicyAmendment,
+  parseProposedNetworkPolicyAmendments,
   parseToolInputQuestions,
   requiresCustomApprovalPayload,
 } from "./toolInputApproval";
@@ -789,18 +797,31 @@ function ActionBlockView({
 const APPROVAL_INTERNAL_KEYS = new Set([
   "_serverMethod",
   "threadId",
+  "thread_id",
   "turnId",
+  "turn_id",
   "itemId",
+  "item_id",
   "proposedExecpolicyAmendment",
+  "proposed_execpolicy_amendment",
+  "proposedNetworkPolicyAmendments",
+  "proposed_network_policy_amendments",
+  "networkApprovalContext",
+  "network_approval_context",
   "questions",
   "command",
   "reason",
   "commandActions",
+  "callId",
+  "call_id",
+  "arguments",
+  "tool",
+  "name",
 ]);
 
 function extractApprovalDetails(details: Record<string, unknown>) {
-  const command = typeof details.command === "string" ? details.command : undefined;
-  const reason = typeof details.reason === "string" ? details.reason : undefined;
+  const command = parseApprovalCommand(details);
+  const reason = parseApprovalReason(details);
   const commandActions = Array.isArray(details.commandActions) ? details.commandActions : [];
   const commandActionCount = commandActions.length;
   const remainingDetails: Record<string, unknown> = {};
@@ -821,15 +842,15 @@ function ApprovalCard({
   const isPending = block.status === "pending";
   const details = block.details ?? {};
   const isToolInputRequest = isRequestUserInputApproval(details);
+  const isDynamicToolCall = isDynamicToolCallApproval(details);
   const requiresCustomPayload = requiresCustomApprovalPayload(details);
   const toolInputQuestions = isToolInputRequest ? parseToolInputQuestions(details) : [];
   const showStructuredToolInput =
     isPending && isToolInputRequest && toolInputQuestions.length > 0;
-  const proposedExecpolicyAmendment = Array.isArray(details.proposedExecpolicyAmendment)
-    ? details.proposedExecpolicyAmendment.filter(
-        (entry): entry is string => typeof entry === "string"
-      )
-    : [];
+  const proposedExecpolicyAmendment = parseProposedExecpolicyAmendment(details);
+  const proposedNetworkPolicyAmendments = parseProposedNetworkPolicyAmendments(details);
+  const dynamicToolName = parseDynamicToolCallName(details);
+  const dynamicToolArguments = parseDynamicToolCallArguments(details);
 
   const { command, reason, commandActionCount, remainingDetails, hasRemainingDetails } =
     extractApprovalDetails(details);
@@ -841,10 +862,19 @@ function ApprovalCard({
   const [advancedJsonPayload, setAdvancedJsonPayload] = useState(defaultAdvancedPayload);
   const [advancedJsonError, setAdvancedJsonError] = useState<string | null>(null);
   const [showRemainingDetails, setShowRemainingDetails] = useState(false);
+  const [dynamicToolSuccess, setDynamicToolSuccess] = useState(true);
+  const [dynamicToolText, setDynamicToolText] = useState("");
+  const [dynamicToolImageUrl, setDynamicToolImageUrl] = useState("");
 
   useEffect(() => {
     setAdvancedJsonPayload(defaultAdvancedPayload);
   }, [defaultAdvancedPayload, block.approvalId]);
+
+  useEffect(() => {
+    setDynamicToolSuccess(true);
+    setDynamicToolText("");
+    setDynamicToolImageUrl("");
+  }, [block.approvalId]);
 
   let decisionLabel = "Answered";
   if (block.decision === "decline") {
@@ -887,6 +917,13 @@ function ApprovalCard({
     onApproval(block.approvalId, parsedPayload as ApprovalResponse);
   }
 
+  function submitDynamicToolResponse() {
+    onApproval(
+      block.approvalId,
+      buildDynamicToolCallResponse(dynamicToolText, dynamicToolSuccess, dynamicToolImageUrl),
+    );
+  }
+
   return (
     <div className="acard">
       {/* Header */}
@@ -917,6 +954,22 @@ function ApprovalCard({
             <p className="acard-meta">
               {commandActionCount} action{commandActionCount > 1 ? "s" : ""} in this request
             </p>
+          )}
+          {proposedExecpolicyAmendment.length > 0 && (
+            <p className="acard-meta">
+              Exec policy amendment available for {proposedExecpolicyAmendment.join(" ")}
+            </p>
+          )}
+          {proposedNetworkPolicyAmendments.length > 0 && (
+            <p className="acard-meta">
+              Network amendment available for{" "}
+              {proposedNetworkPolicyAmendments
+                .map((amendment) => `${amendment.action} ${amendment.host}`)
+                .join(", ")}
+            </p>
+          )}
+          {isDynamicToolCall && dynamicToolName && (
+            <p className="acard-meta">Dynamic tool: {dynamicToolName}</p>
           )}
           {hasRemainingDetails && (
             <div className="acard-remaining">
@@ -956,11 +1009,57 @@ function ApprovalCard({
         </div>
       )}
 
+      {isPending && isDynamicToolCall && (
+        <div className="acard-section">
+          <div className="acard-advanced" style={{ gap: 10 }}>
+            <p className="acard-reason">
+              Respond to the dynamic tool call without hand-writing JSON.
+            </p>
+            {dynamicToolArguments && (
+              <pre className="acard-remaining-pre">
+                {JSON.stringify(dynamicToolArguments, null, 2)}
+              </pre>
+            )}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className={`approval-btn ${dynamicToolSuccess ? "approval-btn-allow" : "approval-btn-deny"}`}
+                onClick={() => setDynamicToolSuccess((current) => !current)}
+              >
+                {dynamicToolSuccess ? "Success" : "Failure"}
+              </button>
+            </div>
+            <textarea
+              className="acard-textarea"
+              value={dynamicToolText}
+              onChange={(event) => setDynamicToolText(event.target.value)}
+              rows={4}
+              placeholder="Tool response text (optional)"
+            />
+            <input
+              className="acard-textarea"
+              value={dynamicToolImageUrl}
+              onChange={(event) => setDynamicToolImageUrl(event.target.value)}
+              placeholder="Image URL (optional)"
+            />
+            <div className="acard-advanced-footer">
+              <button
+                type="button"
+                className="approval-btn approval-btn-allow"
+                onClick={submitDynamicToolResponse}
+              >
+                Send tool response
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isPending && requiresCustomPayload && !showStructuredToolInput && (
         <div className="acard-section">
           <p className="acard-reason">
-            This request requires a custom JSON response. Use Advanced and submit a
-            DynamicToolCallResponse payload (`success` + `contentItems`).
+            This request supports a structured response form below. Advanced JSON is still
+            available for edge cases.
           </p>
         </div>
       )}

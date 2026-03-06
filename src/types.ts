@@ -159,6 +159,32 @@ export interface AcceptWithExecpolicyAmendmentDecision {
   };
 }
 
+export interface NetworkPolicyAmendment {
+  host: string;
+  action: "allow" | "deny";
+}
+
+export interface ApplyNetworkPolicyAmendmentDecision {
+  applyNetworkPolicyAmendment: {
+    network_policy_amendment: NetworkPolicyAmendment;
+  };
+}
+
+export interface DynamicToolCallOutputTextItem {
+  type: "inputText";
+  text: string;
+}
+
+export interface DynamicToolCallOutputImageItem {
+  type: "inputImage";
+  imageUrl: string;
+}
+
+export interface DynamicToolCallResponse {
+  success: boolean;
+  contentItems: Array<DynamicToolCallOutputTextItem | DynamicToolCallOutputImageItem>;
+}
+
 export interface ToolInputAnswer {
   answers: string[];
 }
@@ -168,6 +194,8 @@ export type ApprovalResponse =
       decision: ApprovalDecision;
     }
   | AcceptWithExecpolicyAmendmentDecision
+  | ApplyNetworkPolicyAmendmentDecision
+  | DynamicToolCallResponse
   | {
       answers: Record<string, ToolInputAnswer>;
     }

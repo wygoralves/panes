@@ -1,5 +1,5 @@
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{json, Value};
 use tauri::State;
 
 use crate::{db, models::ThreadDto, state::AppState};
@@ -250,27 +250,41 @@ pub async fn archive_thread(state: State<'_, AppState>, thread_id: String) -> Re
     state.turns.cancel(&thread_id).await;
 
     let db = state.db.clone();
-    if let Some(thread) = run_db(db.clone(), {
-        let thread_id = thread_id.clone();
-        move |db| db::threads::get_thread(db, &thread_id)
-    })
-    .await?
-    {
+    let result = async {
+        let thread = run_db(db.clone(), {
+            let thread_id = thread_id.clone();
+            move |db| db::threads::get_thread(db, &thread_id)
+        })
+        .await?
+        .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
         if let Err(error) = state.engines.interrupt(&thread).await {
             log::warn!("failed to interrupt thread before archive: {error}");
         }
-    } else {
-        state.turns.finish(&thread_id).await;
-        return Err(format!("thread not found: {thread_id}"));
-    }
 
-    run_db(db, {
-        let thread_id = thread_id.clone();
-        move |db| db::threads::archive_thread(db, &thread_id)
-    })
-    .await?;
+        run_db(db, {
+            let thread_id = thread_id.clone();
+            move |db| db::threads::archive_thread(db, &thread_id)
+        })
+        .await?;
+
+        let engines = state.engines.clone();
+        let thread_for_sync = thread.clone();
+        tokio::spawn(async move {
+            if let Err(error) = engines.archive_thread(&thread_for_sync).await {
+                log::warn!(
+                    "archived thread {} locally but failed to archive engine runtime state: {error}",
+                    thread_for_sync.id
+                );
+            }
+        });
+
+        Ok(())
+    }
+    .await;
+
     state.turns.finish(&thread_id).await;
-    Ok(())
+    result
 }
 
 #[tauri::command]
@@ -278,10 +292,147 @@ pub async fn restore_thread(
     state: State<'_, AppState>,
     thread_id: String,
 ) -> Result<ThreadDto, String> {
-    run_db(state.db.clone(), move |db| {
-        db::threads::restore_thread(db, &thread_id)
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
     })
-    .await
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    let restored = run_db(db, move |db| db::threads::restore_thread(db, &thread_id)).await?;
+
+    let engines = state.engines.clone();
+    let thread_for_sync = thread.clone();
+    tokio::spawn(async move {
+        if let Err(error) = engines.unarchive_thread(&thread_for_sync).await {
+            log::warn!(
+                "restored thread {} locally but failed to restore engine runtime state: {error}",
+                thread_for_sync.id
+            );
+        }
+    });
+
+    Ok(restored)
+}
+
+#[tauri::command]
+pub async fn set_thread_execution_policy(
+    state: State<'_, AppState>,
+    thread_id: String,
+    update_approval_policy: bool,
+    approval_policy: Option<String>,
+    update_sandbox_mode: bool,
+    sandbox_mode: Option<String>,
+    update_allow_network: bool,
+    allow_network: Option<bool>,
+) -> Result<ThreadDto, String> {
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if thread.engine_id != "codex" {
+        return Err(
+            "thread execution policy overrides are currently only supported for Codex threads"
+                .to_string(),
+        );
+    }
+
+    let normalized_approval_policy = if update_approval_policy {
+        normalize_thread_approval_policy(approval_policy)?
+    } else {
+        None
+    };
+    let normalized_sandbox_mode = if update_sandbox_mode {
+        normalize_thread_sandbox_mode(sandbox_mode)?
+    } else {
+        None
+    };
+    let previous_sandbox_mode =
+        thread_sandbox_mode(thread.engine_metadata.as_ref()).map(str::to_owned);
+    let external_sandbox_active = state.engines.codex_uses_external_sandbox().await;
+
+    if external_sandbox_active
+        && matches!(
+            normalized_sandbox_mode.as_deref(),
+            Some("read-only" | "workspace-write")
+        )
+    {
+        return Err(
+            "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode."
+                .to_string(),
+        );
+    }
+    let clear_network_override = should_clear_network_override_when_leaving_full_access(
+        previous_sandbox_mode.as_deref(),
+        update_sandbox_mode,
+        normalized_sandbox_mode.as_deref(),
+        update_allow_network,
+    );
+
+    let mut metadata = thread.engine_metadata.unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        metadata = json!({});
+    }
+
+    if let Some(object) = metadata.as_object_mut() {
+        if update_approval_policy {
+            match normalized_approval_policy {
+                Some(value) => {
+                    object.insert("sandboxApprovalPolicy".to_string(), json!(value));
+                }
+                None => {
+                    object.remove("sandboxApprovalPolicy");
+                }
+            }
+        }
+
+        if update_sandbox_mode {
+            match normalized_sandbox_mode {
+                Some(value) => {
+                    object.insert("sandboxMode".to_string(), json!(value));
+                }
+                None => {
+                    object.remove("sandboxMode");
+                }
+            }
+        }
+
+        if clear_network_override {
+            object.remove("sandboxAllowNetwork");
+        }
+
+        if update_allow_network {
+            match allow_network {
+                Some(value) => {
+                    object.insert("sandboxAllowNetwork".to_string(), json!(value));
+                }
+                None => {
+                    object.remove("sandboxAllowNetwork");
+                }
+            }
+        }
+    }
+
+    canonicalize_thread_execution_metadata(&mut metadata);
+
+    run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        let metadata = metadata.clone();
+        move |db| db::threads::update_engine_metadata(db, &thread_id, &metadata)
+    })
+    .await?;
+
+    run_db(db, {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found after execution policy update: {thread_id}"))
 }
 
 async fn validate_reasoning_effort(
@@ -366,6 +517,89 @@ fn err_to_string(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
+fn normalize_thread_approval_policy(value: Option<String>) -> Result<Option<String>, String> {
+    let normalized = value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_lowercase);
+
+    let Some(normalized) = normalized else {
+        return Ok(None);
+    };
+
+    match normalized.as_str() {
+        "untrusted" | "on-failure" | "on-request" | "never" => Ok(Some(normalized)),
+        _ => Err(format!(
+            "invalid approval policy `{normalized}`. expected one of: untrusted, on-failure, on-request, never"
+        )),
+    }
+}
+
+fn normalize_thread_sandbox_mode(value: Option<String>) -> Result<Option<String>, String> {
+    let normalized = value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_lowercase());
+
+    let Some(normalized) = normalized else {
+        return Ok(None);
+    };
+
+    let canonical = match normalized.as_str() {
+        "readonly" | "read-only" | "read_only" => "read-only",
+        "workspacewrite" | "workspace-write" | "workspace_write" => "workspace-write",
+        "dangerfullaccess" | "danger-full-access" | "danger_full_access" => {
+            "danger-full-access"
+        }
+        _ => {
+            return Err(format!(
+                "invalid sandbox mode `{normalized}`. expected one of: read-only, workspace-write, danger-full-access"
+            ))
+        }
+    };
+
+    Ok(Some(canonical.to_string()))
+}
+
+fn thread_sandbox_mode(metadata: Option<&Value>) -> Option<&str> {
+    metadata
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("sandboxMode"))
+        .and_then(Value::as_str)
+}
+
+fn thread_allow_network(metadata: Option<&Value>) -> Option<bool> {
+    metadata
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("sandboxAllowNetwork"))
+        .and_then(Value::as_bool)
+}
+
+fn canonicalize_thread_execution_metadata(metadata: &mut Value) {
+    let sandbox_mode = thread_sandbox_mode(Some(metadata)).map(str::to_owned);
+    let allow_network = thread_allow_network(Some(metadata));
+
+    if sandbox_mode.as_deref() == Some("danger-full-access") && allow_network == Some(false) {
+        if let Some(object) = metadata.as_object_mut() {
+            object.insert("sandboxAllowNetwork".to_string(), json!(true));
+        }
+    }
+}
+
+fn should_clear_network_override_when_leaving_full_access(
+    previous_sandbox_mode: Option<&str>,
+    update_sandbox_mode: bool,
+    next_sandbox_mode: Option<&str>,
+    update_allow_network: bool,
+) -> bool {
+    update_sandbox_mode
+        && !update_allow_network
+        && previous_sandbox_mode == Some("danger-full-access")
+        && next_sandbox_mode != Some("danger-full-access")
+}
+
 fn normalize_thread_title(raw: &str) -> Result<String, String> {
     let compact = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     let trimmed = compact.trim();
@@ -383,4 +617,55 @@ fn normalize_thread_title(raw: &str) -> Result<String, String> {
     };
 
     Ok(title)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonicalize_full_access_enables_network() {
+        let mut metadata = json!({
+            "sandboxMode": "danger-full-access",
+            "sandboxAllowNetwork": false,
+        });
+
+        canonicalize_thread_execution_metadata(&mut metadata);
+
+        assert_eq!(thread_allow_network(Some(&metadata)), Some(true));
+    }
+
+    #[test]
+    fn normalize_thread_sandbox_mode_accepts_aliases() {
+        assert_eq!(
+            normalize_thread_sandbox_mode(Some("danger_full_access".to_string())).unwrap(),
+            Some("danger-full-access".to_string())
+        );
+        assert_eq!(
+            normalize_thread_sandbox_mode(Some("read_only".to_string())).unwrap(),
+            Some("read-only".to_string())
+        );
+    }
+
+    #[test]
+    fn leaving_full_access_clears_network_override_when_network_is_not_updated() {
+        assert!(should_clear_network_override_when_leaving_full_access(
+            Some("danger-full-access"),
+            true,
+            None,
+            false,
+        ));
+        assert!(should_clear_network_override_when_leaving_full_access(
+            Some("danger-full-access"),
+            true,
+            Some("workspace-write"),
+            false,
+        ));
+        assert!(!should_clear_network_override_when_leaving_full_access(
+            Some("danger-full-access"),
+            true,
+            Some("workspace-write"),
+            true,
+        ));
+    }
 }

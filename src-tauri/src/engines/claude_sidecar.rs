@@ -898,6 +898,14 @@ impl Engine for ClaudeSidecarEngine {
         }
         Ok(())
     }
+
+    async fn archive_thread(&self, _engine_thread_id: &str) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
+    async fn unarchive_thread(&self, _engine_thread_id: &str) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

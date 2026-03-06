@@ -150,6 +150,7 @@ pub fn run() {
             commands::threads::rename_thread,
             commands::threads::confirm_workspace_thread,
             commands::threads::set_thread_reasoning_effort,
+            commands::threads::set_thread_execution_policy,
             commands::threads::archive_thread,
             commands::threads::restore_thread,
             commands::threads::delete_thread,

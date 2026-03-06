@@ -16,7 +16,7 @@ const SETUP_COMPLETED_KEY = "panes.setup.completed.v2";
 
 function StatusIcon({ found }: { found: boolean }) {
   return found ? (
-    <CheckCircle2 size={15} style={{ color: "var(--success)" }} />
+    <CheckCircle2 size={15} style={{ color: "var(--accent)" }} />
   ) : (
     <AlertTriangle size={15} style={{ color: "var(--warning)" }} />
   );
@@ -32,10 +32,10 @@ function DepCard({
   description: string;
 }) {
   const borderColor = dep.found
-    ? "rgba(52, 211, 153, 0.25)"
+    ? "rgba(255, 107, 107, 0.25)"
     : "rgba(251, 191, 36, 0.25)";
   const bgColor = dep.found
-    ? "rgba(52, 211, 153, 0.04)"
+    ? "rgba(255, 107, 107, 0.04)"
     : "rgba(251, 191, 36, 0.04)";
 
   return (
@@ -57,7 +57,7 @@ function DepCard({
           height: 26,
           borderRadius: "50%",
           background: dep.found
-            ? "rgba(52, 211, 153, 0.12)"
+            ? "rgba(255, 107, 107, 0.12)"
             : "rgba(251, 191, 36, 0.12)",
           display: "flex",
           alignItems: "center",
@@ -474,11 +474,11 @@ function CheckItem({ label, detail }: { label: string; detail: string }) {
         gap: 10,
         padding: "8px 12px",
         borderRadius: "var(--radius-sm)",
-        background: "rgba(52, 211, 153, 0.04)",
-        border: "1px solid rgba(52, 211, 153, 0.2)",
+        background: "rgba(255, 107, 107, 0.04)",
+        border: "1px solid rgba(255, 107, 107, 0.2)",
       }}
     >
-      <CheckCircle2 size={14} style={{ color: "var(--success)", flexShrink: 0 }} />
+      <CheckCircle2 size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
       <span
         style={{
           fontSize: 12.5,
@@ -662,20 +662,20 @@ export function SetupWizard() {
               height: 32,
               borderRadius: "var(--radius-sm)",
               border: isComplete
-                ? "1px solid rgba(52, 211, 153, 0.3)"
+                ? "1px solid rgba(255, 107, 107, 0.3)"
                 : "1px solid var(--border)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               background: isComplete
-                ? "rgba(52, 211, 153, 0.08)"
+                ? "rgba(255, 107, 107, 0.08)"
                 : "var(--bg-2)",
               flexShrink: 0,
               transition: "all 0.2s",
             }}
           >
             {isComplete ? (
-              <CheckCircle2 size={16} style={{ color: "var(--success)" }} />
+              <CheckCircle2 size={16} style={{ color: "var(--accent)" }} />
             ) : (
               <Settings2 size={16} style={{ color: "var(--text-2)" }} />
             )}
@@ -696,7 +696,7 @@ export function SetupWizard() {
               style={{
                 margin: "3px 0 0",
                 fontSize: 12,
-                color: isComplete ? "var(--success)" : "var(--text-2)",
+                color: isComplete ? "var(--accent)" : "var(--text-2)",
                 lineHeight: 1.4,
                 transition: "color 0.2s",
               }}

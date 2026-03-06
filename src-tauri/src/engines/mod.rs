@@ -38,6 +38,7 @@ pub struct SandboxPolicy {
     pub allow_network: bool,
     pub approval_policy: Option<String>,
     pub reasoning_effort: Option<String>,
+    pub sandbox_mode: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +111,10 @@ pub trait Engine: Send + Sync {
     ) -> Result<(), anyhow::Error>;
 
     async fn interrupt(&self, engine_thread_id: &str) -> Result<(), anyhow::Error>;
+
+    async fn archive_thread(&self, engine_thread_id: &str) -> Result<(), anyhow::Error>;
+
+    async fn unarchive_thread(&self, engine_thread_id: &str) -> Result<(), anyhow::Error>;
 }
 
 pub struct EngineManager {
@@ -264,6 +269,34 @@ impl EngineManager {
             "claude" => self.claude.interrupt(engine_thread_id).await,
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         }
+    }
+
+    pub async fn archive_thread(&self, thread: &ThreadDto) -> anyhow::Result<()> {
+        let Some(engine_thread_id) = thread.engine_thread_id.as_deref() else {
+            return Ok(());
+        };
+
+        match thread.engine_id.as_str() {
+            "codex" => self.codex.archive_thread(engine_thread_id).await,
+            "claude" => self.claude.archive_thread(engine_thread_id).await,
+            _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
+        }
+    }
+
+    pub async fn unarchive_thread(&self, thread: &ThreadDto) -> anyhow::Result<()> {
+        let Some(engine_thread_id) = thread.engine_thread_id.as_deref() else {
+            return Ok(());
+        };
+
+        match thread.engine_id.as_str() {
+            "codex" => self.codex.unarchive_thread(engine_thread_id).await,
+            "claude" => self.claude.unarchive_thread(engine_thread_id).await,
+            _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
+        }
+    }
+
+    pub async fn codex_uses_external_sandbox(&self) -> bool {
+        self.codex.uses_external_sandbox().await
     }
 
     pub async fn read_thread_preview(

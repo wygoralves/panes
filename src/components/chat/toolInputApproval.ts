@@ -1,4 +1,4 @@
-import type { ApprovalResponse } from "../../types";
+import type { ApprovalResponse, DynamicToolCallResponse, NetworkPolicyAmendment } from "../../types";
 
 export interface ToolInputOption {
   label: string;
@@ -54,6 +54,146 @@ export function defaultAdvancedApprovalPayload(
   }
 
   return { decision: "accept" };
+}
+
+function readDetailsValue(
+  details: Record<string, unknown> | undefined,
+  camelKey: string,
+  snakeKey: string,
+): unknown {
+  if (!details) {
+    return undefined;
+  }
+
+  if (camelKey in details) {
+    return details[camelKey];
+  }
+
+  return details[snakeKey];
+}
+
+export function parseApprovalCommand(details?: Record<string, unknown>): string | undefined {
+  const value = readDetailsValue(details, "command", "command");
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  if (Array.isArray(value)) {
+    const parts = value
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    return parts.length > 0 ? parts.join(" ") : undefined;
+  }
+
+  return undefined;
+}
+
+export function parseApprovalReason(details?: Record<string, unknown>): string | undefined {
+  const value = readDetailsValue(details, "reason", "reason");
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export function parseProposedExecpolicyAmendment(
+  details?: Record<string, unknown>
+): string[] {
+  const value = readDetailsValue(
+    details,
+    "proposedExecpolicyAmendment",
+    "proposed_execpolicy_amendment",
+  );
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+export function parseProposedNetworkPolicyAmendments(
+  details?: Record<string, unknown>
+): NetworkPolicyAmendment[] {
+  const value = readDetailsValue(
+    details,
+    "proposedNetworkPolicyAmendments",
+    "proposed_network_policy_amendments",
+  );
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      if (typeof entry !== "object" || entry === null) {
+        return null;
+      }
+
+      const amendment = entry as Record<string, unknown>;
+      const host = typeof amendment.host === "string" ? amendment.host.trim() : "";
+      const action = amendment.action;
+      if (!host || (action !== "allow" && action !== "deny")) {
+        return null;
+      }
+
+      return {
+        host,
+        action,
+      } satisfies NetworkPolicyAmendment;
+    })
+    .filter((entry): entry is NetworkPolicyAmendment => Boolean(entry));
+}
+
+export function parseDynamicToolCallName(details?: Record<string, unknown>): string | undefined {
+  const tool =
+    typeof details?.tool === "string"
+      ? details.tool.trim()
+      : typeof details?.name === "string"
+        ? details.name.trim()
+        : "";
+  return tool.length > 0 ? tool : undefined;
+}
+
+export function parseDynamicToolCallArguments(
+  details?: Record<string, unknown>
+): Record<string, unknown> | null {
+  const value = details?.arguments;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+export function buildDynamicToolCallResponse(
+  text: string,
+  success: boolean,
+  imageUrl?: string
+): DynamicToolCallResponse {
+  const contentItems: DynamicToolCallResponse["contentItems"] = [];
+  const normalizedText = text.trim();
+  const normalizedImageUrl = imageUrl?.trim();
+
+  if (normalizedText) {
+    contentItems.push({
+      type: "inputText",
+      text: normalizedText,
+    });
+  }
+
+  if (normalizedImageUrl) {
+    contentItems.push({
+      type: "inputImage",
+      imageUrl: normalizedImageUrl,
+    });
+  }
+
+  return {
+    success,
+    contentItems,
+  };
 }
 
 function parseOption(raw: unknown): ToolInputOption | null {

@@ -29,6 +29,8 @@ const INITIALIZE_METHODS: &[&str] = &["initialize"];
 const THREAD_START_METHODS: &[&str] = &["thread/start"];
 const THREAD_RESUME_METHODS: &[&str] = &["thread/resume"];
 const THREAD_READ_METHODS: &[&str] = &["thread/read"];
+const THREAD_ARCHIVE_METHODS: &[&str] = &["thread/archive"];
+const THREAD_UNARCHIVE_METHODS: &[&str] = &["thread/unarchive"];
 const THREAD_SET_NAME_METHODS: &[&str] = &["thread/name/set"];
 const TURN_START_METHODS: &[&str] = &["turn/start"];
 const TURN_INTERRUPT_METHODS: &[&str] = &["turn/interrupt"];
@@ -228,11 +230,6 @@ impl Engine for CodexEngine {
         if let Some(existing_thread_id) = resume_engine_thread_id {
             let resume_params = serde_json::json!({
               "threadId": existing_thread_id,
-              "model": model,
-              "cwd": cwd.clone(),
-              "approvalPolicy": approval_policy.clone(),
-              "sandbox": sandbox_mode,
-              "persistExtendedHistory": false,
             });
 
             match request_with_fallback(
@@ -637,6 +634,42 @@ impl Engine for CodexEngine {
             Err(error) => Err(error.context("codex turn interrupt request failed")),
         }
     }
+
+    async fn archive_thread(&self, engine_thread_id: &str) -> Result<(), anyhow::Error> {
+        let transport = self.ensure_ready_transport().await?;
+        let params = serde_json::json!({
+            "threadId": engine_thread_id,
+        });
+
+        request_with_fallback(
+            transport.as_ref(),
+            THREAD_ARCHIVE_METHODS,
+            params,
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to archive codex thread")?;
+
+        Ok(())
+    }
+
+    async fn unarchive_thread(&self, engine_thread_id: &str) -> Result<(), anyhow::Error> {
+        let transport = self.ensure_ready_transport().await?;
+        let params = serde_json::json!({
+            "threadId": engine_thread_id,
+        });
+
+        request_with_fallback(
+            transport.as_ref(),
+            THREAD_UNARCHIVE_METHODS,
+            params,
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to unarchive codex thread")?;
+
+        Ok(())
+    }
 }
 
 impl CodexEngine {
@@ -691,6 +724,10 @@ impl CodexEngine {
                 self.models()
             }
         }
+    }
+
+    pub async fn uses_external_sandbox(&self) -> bool {
+        self.resolve_external_sandbox_mode().await
     }
 
     pub async fn sandbox_preflight_warning(&self) -> Option<String> {
@@ -1885,17 +1922,17 @@ fn scope_cwd(scope: &ThreadScope) -> String {
     }
 }
 
-fn sandbox_mode_from_policy(
-    _sandbox: &SandboxPolicy,
-    force_external_sandbox: bool,
-) -> &'static str {
+fn sandbox_mode_from_policy(sandbox: &SandboxPolicy, force_external_sandbox: bool) -> String {
     // `thread/start` only accepts sandbox mode enums. When local workspace sandboxing is broken
     // (common in macOS app contexts), use danger-full-access and enforce external sandboxing on
     // each `turn/start` via `sandboxPolicy`.
     if force_external_sandbox {
-        "danger-full-access"
+        "danger-full-access".to_string()
     } else {
-        "workspace-write"
+        sandbox
+            .sandbox_mode
+            .clone()
+            .unwrap_or_else(|| "workspace-write".to_string())
     }
 }
 
@@ -1909,18 +1946,32 @@ fn sandbox_policy_to_json(
           "networkAccess": if sandbox.allow_network { "enabled" } else { "restricted" },
         })
     } else {
-        serde_json::json!({
-          "type": "workspaceWrite",
-          "writableRoots": sandbox.writable_roots.clone(),
-          "readOnlyAccess": {
-            "type": "restricted",
-            "includePlatformDefaults": true,
-            "readableRoots": sandbox.writable_roots.clone(),
-          },
-          "networkAccess": sandbox.allow_network,
-          "excludeTmpdirEnvVar": false,
-          "excludeSlashTmp": false,
-        })
+        match sandbox.sandbox_mode.as_deref().unwrap_or("workspace-write") {
+            "read-only" => serde_json::json!({
+              "type": "readOnly",
+              "access": {
+                "type": "restricted",
+                "includePlatformDefaults": true,
+                "readableRoots": sandbox.writable_roots.clone(),
+              },
+              "networkAccess": sandbox.allow_network,
+            }),
+            "danger-full-access" => serde_json::json!({
+              "type": "dangerFullAccess",
+            }),
+            _ => serde_json::json!({
+              "type": "workspaceWrite",
+              "writableRoots": sandbox.writable_roots.clone(),
+              "readOnlyAccess": {
+                "type": "restricted",
+                "includePlatformDefaults": true,
+                "readableRoots": sandbox.writable_roots.clone(),
+              },
+              "networkAccess": sandbox.allow_network,
+              "excludeTmpdirEnvVar": false,
+              "excludeSlashTmp": false,
+            }),
+        }
     }
 }
 
@@ -2320,6 +2371,14 @@ fn normalize_approval_response(
             });
         }
 
+        if let Some(amendment) = response.get("applyNetworkPolicyAmendment").cloned() {
+            response = serde_json::json!({
+                "decision": {
+                    "applyNetworkPolicyAmendment": amendment,
+                }
+            });
+        }
+
         if let Some(object) = response.as_object_mut() {
             if let Some(decision) = object.get("decision").and_then(serde_json::Value::as_str) {
                 object.insert(
@@ -2342,6 +2401,24 @@ fn normalize_approval_response(
                 "decision": {
                     "approved_execpolicy_amendment": {
                         "proposed_execpolicy_amendment": amendment_values,
+                    }
+                }
+            });
+        }
+
+        if let Some(amendment_value) = response
+            .get("network_policy_amendment")
+            .or_else(|| {
+                response
+                    .get("applyNetworkPolicyAmendment")
+                    .and_then(|value| value.get("network_policy_amendment"))
+            })
+            .cloned()
+        {
+            response = serde_json::json!({
+                "decision": {
+                    "network_policy_amendment": {
+                        "network_policy_amendment": amendment_value,
                     }
                 }
             });
@@ -2467,6 +2544,35 @@ mod tests {
     }
 
     #[test]
+    fn normalize_modern_network_policy_amendment_from_top_level() {
+        let response = json!({
+            "applyNetworkPolicyAmendment": {
+                "network_policy_amendment": {
+                    "host": "registry.npmjs.org",
+                    "action": "allow"
+                }
+            }
+        });
+
+        let normalized =
+            normalize_approval_response(Some("item/commandExecution/requestApproval"), response);
+
+        assert_eq!(
+            normalized,
+            json!({
+                "decision": {
+                    "applyNetworkPolicyAmendment": {
+                        "network_policy_amendment": {
+                            "host": "registry.npmjs.org",
+                            "action": "allow"
+                        }
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
     fn normalize_legacy_accept_with_execpolicy_to_legacy_shape() {
         let response = json!({
             "acceptWithExecpolicyAmendment": {
@@ -2482,6 +2588,32 @@ mod tests {
                 "decision": {
                     "approved_execpolicy_amendment": {
                         "proposed_execpolicy_amendment": ["pnpm", "install"]
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn normalize_legacy_network_policy_to_legacy_shape() {
+        let response = json!({
+            "network_policy_amendment": {
+                "host": "registry.npmjs.org",
+                "action": "allow"
+            }
+        });
+
+        let normalized = normalize_approval_response(Some("execCommandApproval"), response);
+
+        assert_eq!(
+            normalized,
+            json!({
+                "decision": {
+                    "network_policy_amendment": {
+                        "network_policy_amendment": {
+                            "host": "registry.npmjs.org",
+                            "action": "allow"
+                        }
                     }
                 }
             })
