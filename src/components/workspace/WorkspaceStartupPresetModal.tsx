@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Download,
   Play,
@@ -12,6 +13,7 @@ import {
   Columns2,
 } from "lucide-react";
 import { ipc } from "../../lib/ipc";
+import { t as translate } from "../../i18n";
 import { useHarnessStore } from "../../stores/harnessStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
@@ -260,10 +262,10 @@ function resolveBlankGroupNames(
     }
 
     let terminalNumber = 1;
-    let candidate = `Terminal ${terminalNumber}`;
+    let candidate = translate("workspace:startup.fallbackTerminal", { index: terminalNumber });
     while (usedNames.has(candidate)) {
       terminalNumber += 1;
-      candidate = `Terminal ${terminalNumber}`;
+      candidate = translate("workspace:startup.fallbackTerminal", { index: terminalNumber });
     }
     usedNames.add(candidate);
     return { ...group, name: candidate };
@@ -292,7 +294,8 @@ function groupNamePlaceholder(
   index: number,
   harnessNamesById: ReadonlyMap<string, string>,
 ): string {
-  return defaultGroupNameFromHarness(group, harnessNamesById) ?? `Terminal ${index + 1}`;
+  return defaultGroupNameFromHarness(group, harnessNamesById)
+    ?? translate("workspace:startup.fallbackTerminal", { index: index + 1 });
 }
 
 function updateGroupById(
@@ -322,6 +325,10 @@ function fileFormatFromPath(path: string): WorkspaceStartupPresetFormat {
   return path.toLowerCase().endsWith(".toml") ? "toml" : "json";
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function defaultExportFilename(
   workspace: Workspace,
   format: WorkspaceStartupPresetFormat,
@@ -340,6 +347,7 @@ function StartupSplitNodeEditor({
   sessionIds,
   onChange,
 }: StartupSplitNodeEditorProps) {
+  const { t } = useTranslation("workspace");
   const leafFallback = sessionIds[0] ?? "session-1";
   const nextLeafId = node.type === "leaf"
     ? node.sessionId
@@ -353,8 +361,8 @@ function StartupSplitNodeEditor({
         <Dropdown
           value={node.type}
           options={[
-            { value: "leaf", label: "Leaf" },
-            { value: "split", label: "Split" },
+            { value: "leaf", label: t("startup.modal.leaf") },
+            { value: "split", label: t("startup.modal.split") },
           ]}
           triggerStyle={{ borderRadius: "var(--radius-sm)", minWidth: 120 }}
           onChange={(nextType) => {
@@ -369,7 +377,7 @@ function StartupSplitNodeEditor({
               return;
             }
             if (!secondSessionId) {
-              toast.error("Add another pane before converting this node into a split.");
+              toast.error(t("startup.modal.addAnotherPaneBeforeSplit"));
               return;
             }
             onChange({
@@ -409,8 +417,8 @@ function StartupSplitNodeEditor({
             <Dropdown
               value={node.direction}
               options={[
-                { value: "vertical", label: "Vertical split" },
-                { value: "horizontal", label: "Horizontal split" },
+                { value: "vertical", label: t("startup.modal.verticalSplit") },
+                { value: "horizontal", label: t("startup.modal.horizontalSplit") },
               ]}
               triggerStyle={{ borderRadius: "var(--radius-sm)", minWidth: 140 }}
               onChange={(dir) =>
@@ -438,7 +446,7 @@ function StartupSplitNodeEditor({
           </div>
           <div className="workspace-preset-tree-children">
             <StartupSplitNodeEditor
-              label={`${label} A`}
+              label={t("startup.modal.childLabel", { label, suffix: "A" })}
               node={node.children[0]}
               sessionIds={sessionIds}
               onChange={(nextChild) =>
@@ -449,7 +457,7 @@ function StartupSplitNodeEditor({
               }
             />
             <StartupSplitNodeEditor
-              label={`${label} B`}
+              label={t("startup.modal.childLabel", { label, suffix: "B" })}
               node={node.children[1]}
               sessionIds={sessionIds}
               onChange={(nextChild) =>
@@ -471,6 +479,7 @@ export function WorkspaceStartupPresetModal({
   workspace,
   onClose,
 }: WorkspaceStartupPresetModalProps) {
+  const { t } = useTranslation("workspace");
   const harnesses = useHarnessStore((state) => state.harnesses);
   const isActiveWorkspace = useWorkspaceStore((state) => state.activeWorkspaceId === workspace.id);
   const runtimeWorkspace = useTerminalStore((state) => state.workspaces[workspace.id]);
@@ -502,6 +511,29 @@ export function WorkspaceStartupPresetModal({
     (group) => (group.sessionMeta ? Object.values(group.sessionMeta) : []).some((meta) => meta.worktree),
   );
   const controlsDisabled = loading || saving;
+  const viewOptions = useMemo(
+    () =>
+      VIEW_OPTIONS.map((value) => ({
+        value,
+        label: t(`startup.views.${value}`),
+      })),
+    [t],
+  );
+  const pathBaseOptions = useMemo(
+    () =>
+      PATH_BASE_OPTIONS.map((value) => ({
+        value,
+        label: t(`startup.pathBase.${value}`),
+      })),
+    [t],
+  );
+  const advancedFormatOptions = useMemo(
+    () => [
+      { value: "json", label: "JSON" },
+      { value: "toml", label: "TOML" },
+    ],
+    [],
+  );
 
   useEffect(() => {
     openRef.current = open;
@@ -562,13 +594,13 @@ export function WorkspaceStartupPresetModal({
       if (!canCommitWorkspaceStartupPresetLoad(requestId, loadRequestIdRef.current, openRef.current)) {
         return;
       }
-      toast.error(`Failed to load startup preset: ${String(error)}`);
+      toast.error(t("startup.toasts.loadFailed", { error: getErrorMessage(error) }));
     } finally {
       if (canCommitWorkspaceStartupPresetLoad(requestId, loadRequestIdRef.current, openRef.current)) {
         setLoading(false);
       }
     }
-  }, [serializePresetForEditor, workspace.id]);
+  }, [serializePresetForEditor, t, workspace.id]);
 
   useEffect(() => {
     if (!open) {
@@ -641,9 +673,9 @@ export function WorkspaceStartupPresetModal({
       setBuilderDraft(normalizePresetDraft(normalized));
       setEditorMode("builder");
     } catch (error) {
-      toast.error(`Fix the advanced preset before switching modes: ${String(error)}`);
+      toast.error(t("startup.toasts.fixBeforeClosing", { error: getErrorMessage(error) }));
     }
-  }, [advancedDraft, advancedFormat, editorMode, loading, syncAdvancedFromBuilder, workspace.id]);
+  }, [advancedDraft, advancedFormat, editorMode, loading, syncAdvancedFromBuilder, t, workspace.id]);
 
   const handleAdvancedFormatChange = useCallback(async (
     nextFormat: WorkspaceStartupPresetFormat,
@@ -667,9 +699,9 @@ export function WorkspaceStartupPresetModal({
 
       await syncAdvancedFromBuilder(nextFormat);
     } catch (error) {
-      toast.error(`Failed to switch preset format: ${String(error)}`);
+      toast.error(t("startup.toasts.switchFormatFailed", { error: getErrorMessage(error) }));
     }
-  }, [advancedDraft, advancedFormat, editorMode, loading, serializePresetForEditor, syncAdvancedFromBuilder, workspace.id]);
+  }, [advancedDraft, advancedFormat, editorMode, loading, serializePresetForEditor, syncAdvancedFromBuilder, t, workspace.id]);
 
   const updateDraft = useCallback((updater: (current: WorkspaceStartupPreset) => WorkspaceStartupPreset) => {
     setBuilderDraft((current) => normalizePresetDraft(updater(current)));
@@ -836,11 +868,11 @@ export function WorkspaceStartupPresetModal({
     }
     try {
       await resolveCurrentPreset();
-      toast.success("Startup preset is valid.");
+      toast.success(t("startup.toasts.validationPassed"));
     } catch (error) {
-      toast.error(`Preset validation failed: ${String(error)}`);
+      toast.error(t("startup.toasts.validationFailed", { error: getErrorMessage(error) }));
     }
-  }, [resolveCurrentPreset]);
+  }, [loading, resolveCurrentPreset, t]);
 
   const handleSave = useCallback(async () => {
     if (loading) {
@@ -859,13 +891,13 @@ export function WorkspaceStartupPresetModal({
       setBuilderDraft(canonical);
       setAdvancedDraft(await serializeCurrentBuilder(advancedFormat, canonical));
       useTerminalStore.getState().setWorkspaceStartupPresetState(workspace.id, canonical);
-      toast.success("Workspace startup preset saved.");
+      toast.success(t("startup.toasts.saved"));
     } catch (error) {
-      toast.error(`Failed to save startup preset: ${String(error)}`);
+      toast.error(t("startup.toasts.saveFailed", { error: getErrorMessage(error) }));
     } finally {
       setSaving(false);
     }
-  }, [advancedDraft, advancedFormat, builderDraft, editorMode, harnessNamesById, loading, serializeCurrentBuilder, workspace.id]);
+  }, [advancedDraft, advancedFormat, builderDraft, editorMode, harnessNamesById, loading, serializeCurrentBuilder, t, workspace.id]);
 
   const handleClear = useCallback(async () => {
     if (loading) {
@@ -881,13 +913,13 @@ export function WorkspaceStartupPresetModal({
       setAdvancedDraft(await serializeCurrentBuilder("json", emptyPreset));
       setEditorMode("builder");
       useTerminalStore.getState().setWorkspaceStartupPresetState(workspace.id, null);
-      toast.success("Workspace startup preset cleared.");
+      toast.success(t("startup.toasts.cleared"));
     } catch (error) {
-      toast.error(`Failed to clear startup preset: ${String(error)}`);
+      toast.error(t("startup.toasts.clearFailed", { error: getErrorMessage(error) }));
     } finally {
       setSaving(false);
     }
-  }, [loading, serializeCurrentBuilder, workspace.id]);
+  }, [loading, serializeCurrentBuilder, t, workspace.id]);
 
   const handleSaveCurrentLayout = useCallback(async () => {
     if (loading) {
@@ -896,11 +928,11 @@ export function WorkspaceStartupPresetModal({
     setSaving(true);
     try {
       if (!isActiveWorkspace) {
-        throw new Error("switch to this workspace before saving its current layout");
+        throw new Error(t("startup.errors.switchWorkspaceFirst"));
       }
       const serialized = useTerminalStore.getState().serializeWorkspaceRuntimeAsStartupPreset(workspace.id);
       if (!serialized) {
-        throw new Error("runtime layout is not available for this workspace");
+        throw new Error(t("startup.errors.runtimeLayoutUnavailable"));
       }
       const normalized = await ipc.setWorkspaceStartupPreset(workspace.id, serialized);
       const canonical = normalizePresetDraft(normalized);
@@ -908,13 +940,13 @@ export function WorkspaceStartupPresetModal({
       setBuilderDraft(canonical);
       setAdvancedDraft(await serializeCurrentBuilder(advancedFormat, canonical));
       useTerminalStore.getState().setWorkspaceStartupPresetState(workspace.id, canonical);
-      toast.success("Current layout saved as the workspace default.");
+      toast.success(t("startup.toasts.currentLayoutSaved"));
     } catch (error) {
-      toast.error(`Failed to save current layout: ${String(error)}`);
+      toast.error(t("startup.toasts.saveLayoutFailed", { error: getErrorMessage(error) }));
     } finally {
       setSaving(false);
     }
-  }, [advancedFormat, isActiveWorkspace, loading, serializeCurrentBuilder, workspace.id]);
+  }, [advancedFormat, isActiveWorkspace, loading, serializeCurrentBuilder, t, workspace.id]);
 
   const performApply = useCallback(async (removeWorktrees: boolean) => {
     if (!pendingApplyPreset || applyInFlightRef.current || loading) {
@@ -929,21 +961,21 @@ export function WorkspaceStartupPresetModal({
         .getState()
         .applyWorkspaceStartupPresetNow(workspace.id, normalized, { removeWorktrees });
       if (!applied) {
-        throw new Error("the preset could not be applied");
+        throw new Error(t("startup.errors.presetCouldNotBeApplied"));
       }
       setPendingApplyPreset(null);
       const canonical = normalizePresetDraft(normalized);
       setBuilderDraft(canonical);
       setAdvancedDraft(await serializeCurrentBuilder(advancedFormat, canonical));
       await refreshLiveSessionCount();
-      toast.success("Startup preset applied.");
+      toast.success(t("startup.toasts.applied"));
     } catch (error) {
-      toast.error(`Failed to apply startup preset: ${String(error)}`);
+      toast.error(t("startup.toasts.applyFailed", { error: getErrorMessage(error) }));
     } finally {
       applyInFlightRef.current = false;
       setSaving(false);
     }
-  }, [advancedFormat, loading, pendingApplyPreset, refreshLiveSessionCount, resolveCurrentPreset, serializeCurrentBuilder, workspace.id]);
+  }, [advancedFormat, loading, pendingApplyPreset, refreshLiveSessionCount, resolveCurrentPreset, serializeCurrentBuilder, t, workspace.id]);
 
   const handleApplyNow = useCallback(async () => {
     if (applyInFlightRef.current || loading) {
@@ -954,7 +986,7 @@ export function WorkspaceStartupPresetModal({
     setSaving(true);
     try {
       if (!isActiveWorkspace) {
-        throw new Error("switch to this workspace before applying its startup preset");
+        throw new Error(t("startup.errors.switchWorkspaceFirst"));
       }
       const normalized = await resolveCurrentPreset();
       const currentLiveSessionCount = await refreshLiveSessionCount();
@@ -964,17 +996,17 @@ export function WorkspaceStartupPresetModal({
       }
       const applied = await useTerminalStore.getState().applyWorkspaceStartupPresetNow(workspace.id, normalized);
       if (!applied) {
-        throw new Error("the preset could not be applied");
+        throw new Error(t("startup.errors.presetCouldNotBeApplied"));
       }
       await refreshLiveSessionCount();
-      toast.success("Startup preset applied.");
+      toast.success(t("startup.toasts.applied"));
     } catch (error) {
-      toast.error(`Failed to apply startup preset: ${String(error)}`);
+      toast.error(t("startup.toasts.applyFailed", { error: getErrorMessage(error) }));
     } finally {
       applyInFlightRef.current = false;
       setSaving(false);
     }
-  }, [isActiveWorkspace, loading, refreshLiveSessionCount, resolveCurrentPreset, workspace.id]);
+  }, [isActiveWorkspace, loading, refreshLiveSessionCount, resolveCurrentPreset, t, workspace.id]);
 
   const handleImport = useCallback(async () => {
     if (loading) {
@@ -985,9 +1017,9 @@ export function WorkspaceStartupPresetModal({
       const { readTextFile } = await import("@tauri-apps/plugin-fs");
       const selected = await openDialog({
         multiple: false,
-        title: "Import workspace startup preset",
+        title: t("startup.dialog.importTitle"),
         filters: [
-          { name: "Preset files", extensions: ["json", "toml"] },
+          { name: t("startup.dialog.presetFiles"), extensions: ["json", "toml"] },
           { name: "JSON", extensions: ["json"] },
           { name: "TOML", extensions: ["toml"] },
         ],
@@ -1001,11 +1033,11 @@ export function WorkspaceStartupPresetModal({
       setBuilderDraft(normalizePresetDraft(normalized));
       setAdvancedFormat(format);
       setAdvancedDraft(raw);
-      toast.success("Startup preset imported.");
+      toast.success(t("startup.toasts.imported"));
     } catch (error) {
-      toast.error(`Failed to import startup preset: ${String(error)}`);
+      toast.error(t("startup.toasts.importFailed", { error: getErrorMessage(error) }));
     }
-  }, [loading, workspace.id]);
+  }, [loading, t, workspace.id]);
 
   const handleExport = useCallback(async () => {
     if (loading) {
@@ -1018,7 +1050,7 @@ export function WorkspaceStartupPresetModal({
       const { save } = await import("@tauri-apps/plugin-dialog");
       const { writeTextFile } = await import("@tauri-apps/plugin-fs");
       const target = await save({
-        title: "Export workspace startup preset",
+        title: t("startup.dialog.exportTitle"),
         defaultPath: defaultExportFilename(workspace, format),
         filters: [
           {
@@ -1031,11 +1063,11 @@ export function WorkspaceStartupPresetModal({
         return;
       }
       await writeTextFile(target, raw);
-      toast.success("Startup preset exported.");
+      toast.success(t("startup.toasts.exported"));
     } catch (error) {
-      toast.error(`Failed to export startup preset: ${String(error)}`);
+      toast.error(t("startup.toasts.exportFailed", { error: getErrorMessage(error) }));
     }
-  }, [advancedFormat, loading, resolveCurrentPreset, serializeCurrentBuilder, workspace, workspace.id]);
+  }, [advancedFormat, loading, resolveCurrentPreset, serializeCurrentBuilder, t, workspace, workspace.id]);
 
   if (!open) {
     return null;
@@ -1057,11 +1089,11 @@ export function WorkspaceStartupPresetModal({
               <Settings2 size={16} />
             </div>
             <div>
-              <h3 className="workspace-preset-title">Workspace Startup Presets</h3>
+              <h3 className="workspace-preset-title">{t("startup.modal.title")}</h3>
               <p className="workspace-preset-subtitle">{workspace.name || workspace.rootPath}</p>
             </div>
           </div>
-          <button type="button" className="btn btn-ghost" onClick={onClose} title="Close">
+          <button type="button" className="btn btn-ghost" onClick={onClose} title={t("common:actions.close")}>
             <X size={14} />
           </button>
         </div>
@@ -1074,7 +1106,7 @@ export function WorkspaceStartupPresetModal({
               onClick={() => void switchEditorMode("builder")}
               disabled={controlsDisabled}
             >
-              Builder
+              {t("startup.modal.builder")}
             </button>
             <button
               type="button"
@@ -1082,7 +1114,7 @@ export function WorkspaceStartupPresetModal({
               onClick={() => void switchEditorMode("advanced")}
               disabled={controlsDisabled}
             >
-              Advanced
+              {t("startup.modal.advanced")}
             </button>
           </div>
 
@@ -1090,10 +1122,7 @@ export function WorkspaceStartupPresetModal({
             {editorMode === "advanced" && (
               <Dropdown
                 value={advancedFormat}
-                options={[
-                  { value: "json", label: "JSON" },
-                  { value: "toml", label: "TOML" },
-                ]}
+                options={advancedFormatOptions}
                 disabled={controlsDisabled}
                 triggerStyle={{ borderRadius: "var(--radius-sm)", minWidth: 80 }}
                 onChange={(v) =>
@@ -1103,21 +1132,21 @@ export function WorkspaceStartupPresetModal({
             )}
             <button type="button" className="btn btn-ghost" onClick={() => void handleImport()} disabled={controlsDisabled}>
               <Upload size={12} />
-              Import
+              {t("startup.import")}
             </button>
             <button type="button" className="btn btn-ghost" onClick={() => void handleExport()} disabled={controlsDisabled}>
               <Download size={12} />
-              Export
+              {t("startup.export")}
             </button>
             <button type="button" className="btn btn-ghost" onClick={() => void handleValidate()} disabled={controlsDisabled}>
-              Validate
+              {t("startup.modal.validate")}
             </button>
           </div>
         </div>
 
         <div className="workspace-preset-body">
           {loading ? (
-            <div className="workspace-preset-empty-state">Loading preset...</div>
+            <div className="workspace-preset-empty-state">{t("startup.loading")}</div>
           ) : editorMode === "advanced" ? (
             <textarea
               className="workspace-preset-advanced-editor"
@@ -1130,17 +1159,14 @@ export function WorkspaceStartupPresetModal({
             <>
               <section className="workspace-preset-section">
                 <div className="workspace-preset-section-header">
-                  <h4>General</h4>
+                  <h4>{t("startup.modal.general")}</h4>
                 </div>
                 <div className="workspace-preset-grid">
                   <label className="workspace-preset-field">
-                    <span>Default view</span>
+                    <span>{t("startup.modal.defaultView")}</span>
                     <Dropdown
                       value={builderDraft.defaultView}
-                      options={VIEW_OPTIONS.map((v) => ({
-                        value: v,
-                        label: v.charAt(0).toUpperCase() + v.slice(1),
-                      }))}
+                      options={viewOptions}
                       triggerStyle={{ borderRadius: "var(--radius-sm)" }}
                       onChange={(v) =>
                         handleDefaultViewChange(v as WorkspaceDefaultView)
@@ -1149,7 +1175,7 @@ export function WorkspaceStartupPresetModal({
                   </label>
                   {shouldShowStartupSplitPanelSize(builderDraft.defaultView) && (
                     <label className="workspace-preset-field">
-                      <span>Split panel size</span>
+                      <span>{t("startup.splitPanelSize")}</span>
                       <input
                         className="git-inline-input"
                         type="number"
@@ -1171,27 +1197,27 @@ export function WorkspaceStartupPresetModal({
               <section className="workspace-preset-section">
                 <div className="workspace-preset-section-header">
                   <div>
-                    <h4>Startup Layout</h4>
-                    <p>Applied only when the workspace has no live terminal sessions.</p>
+                    <h4>{t("startup.modal.startupLayout")}</h4>
+                    <p>{t("startup.modal.appliedOnlyWhen")}</p>
                   </div>
                   <button type="button" className="btn btn-ghost" onClick={addGroup}>
                     <Plus size={12} />
-                    Add tab
+                    {t("startup.addTab")}
                   </button>
                 </div>
 
                 {!terminalDraft || terminalDraft.groups.length === 0 ? (
                   <div className="workspace-preset-empty-state">
-                    <p>No startup tabs configured.</p>
+                    <p>{t("startup.modal.noStartupTabsConfigured")}</p>
                     <button type="button" className="btn btn-outline" onClick={ensureTerminal}>
-                      Create startup layout
+                      {t("startup.modal.createStartupLayout")}
                     </button>
                   </div>
                 ) : (
                   <>
                     <div className="workspace-preset-grid">
                       <label className="workspace-preset-field">
-                        <span>Active tab on start</span>
+                        <span>{t("startup.modal.activeTabOnStart")}</span>
                         <Dropdown
                           value={terminalDraft.activeGroupId ?? ""}
                           options={terminalDraft.groups.map((group) => ({
@@ -1203,7 +1229,7 @@ export function WorkspaceStartupPresetModal({
                         />
                       </label>
                       <label className="workspace-preset-field">
-                        <span>Focused pane on start</span>
+                        <span>{t("startup.modal.focusedPaneOnStart")}</span>
                         <Dropdown
                           value={terminalDraft.focusedSessionId ?? ""}
                           options={terminalDraft.groups.flatMap((group) =>
@@ -1234,7 +1260,7 @@ export function WorkspaceStartupPresetModal({
                           <div className="workspace-preset-group-header">
                             <div className="workspace-preset-group-title-row">
                               <label className="workspace-preset-field" style={{ flex: 1 }}>
-                                <span>Tab name</span>
+                                <span>{t("startup.modal.tabName")}</span>
                                 <input
                                   className="git-inline-input"
                                   value={group.name}
@@ -1248,7 +1274,7 @@ export function WorkspaceStartupPresetModal({
                                 />
                               </label>
                               <label className="workspace-preset-field" style={{ width: 180 }}>
-                                <span>Group id</span>
+                                <span>{t("startup.modal.groupId")}</span>
                                 <input
                                   className="git-inline-input"
                                   value={group.id}
@@ -1282,22 +1308,22 @@ export function WorkspaceStartupPresetModal({
                                     })
                                   }
                                 />
-                                Broadcast on start
+                                {t("startup.modal.broadcastOnStart")}
                               </label>
                               <button type="button" className="btn btn-ghost" onClick={() => addSession(group.id)}>
                                 <Plus size={12} />
-                                Add pane
+                                {t("startup.addPane")}
                               </button>
                               <button type="button" className="btn btn-ghost" onClick={() => removeGroup(group.id)}>
                                 <Trash2 size={12} />
-                                Remove tab
+                                {t("startup.removeTab")}
                               </button>
                             </div>
                           </div>
 
                           <div className="workspace-preset-subsection">
                             <div className="workspace-preset-subsection-header">
-                              <h5>Worktree</h5>
+                              <h5>{t("startup.modal.worktree")}</h5>
                             </div>
                             <div className="workspace-preset-grid">
                               <label className="workspace-preset-checkbox">
@@ -1320,17 +1346,17 @@ export function WorkspaceStartupPresetModal({
                                     }))
                                   }
                                 />
-                                Enable per-pane worktrees
+                                {t("startup.modal.enablePerPaneWorktrees")}
                               </label>
                               {worktree.enabled && (
                                 <>
                                   <label className="workspace-preset-field">
-                                    <span>Repo mode</span>
+                                    <span>{t("startup.worktree.repo")}</span>
                                     <Dropdown
                                       value={worktree.repoMode}
                                       options={[
-                                        { value: "active_repo", label: "Active repo" },
-                                        { value: "fixed_repo", label: "Fixed repo" },
+                                        { value: "active_repo", label: t("startup.worktree.activeRepo") },
+                                        { value: "fixed_repo", label: t("startup.worktree.fixedRepo") },
                                       ]}
                                       triggerStyle={{ borderRadius: "var(--radius-sm)" }}
                                       onChange={(v) =>
@@ -1347,7 +1373,7 @@ export function WorkspaceStartupPresetModal({
                                   </label>
                                   {worktree.repoMode === "fixed_repo" && (
                                     <label className="workspace-preset-field">
-                                      <span>Repo path</span>
+                                      <span>{t("startup.worktree.path")}</span>
                                       <input
                                         className="git-inline-input"
                                         value={worktree.repoPath ?? ""}
@@ -1367,7 +1393,7 @@ export function WorkspaceStartupPresetModal({
                                     </label>
                                   )}
                                   <label className="workspace-preset-field">
-                                    <span>Base branch</span>
+                                    <span>{t("startup.worktree.branch")}</span>
                                     <input
                                       className="git-inline-input"
                                       value={worktree.baseBranch ?? ""}
@@ -1385,7 +1411,7 @@ export function WorkspaceStartupPresetModal({
                                     />
                                   </label>
                                   <label className="workspace-preset-field">
-                                    <span>Base dir</span>
+                                    <span>{t("startup.worktree.directory")}</span>
                                     <input
                                       className="git-inline-input"
                                       value={worktree.baseDir ?? ""}
@@ -1403,7 +1429,7 @@ export function WorkspaceStartupPresetModal({
                                     />
                                   </label>
                                   <label className="workspace-preset-field">
-                                    <span>Branch prefix</span>
+                                    <span>{t("startup.worktree.prefix")}</span>
                                     <input
                                       className="git-inline-input"
                                       value={worktree.branchPrefix ?? ""}
@@ -1427,14 +1453,14 @@ export function WorkspaceStartupPresetModal({
 
                           <div className="workspace-preset-subsection">
                             <div className="workspace-preset-subsection-header">
-                              <h5>Panes</h5>
+                              <h5>{t("startup.modal.panes")}</h5>
                             </div>
                             <div className="workspace-preset-sessions">
                               {group.sessions.map((session, index) => (
                                 <div key={session.id} className="workspace-preset-session-card">
                                   <div className="workspace-preset-inline-row">
                                     <label className="workspace-preset-field" style={{ flex: 1 }}>
-                                      <span>Pane id</span>
+                                      <span>{t("startup.modal.paneId")}</span>
                                       <input
                                         className="git-inline-input"
                                         value={session.id}
@@ -1442,7 +1468,7 @@ export function WorkspaceStartupPresetModal({
                                       />
                                     </label>
                                     <label className="workspace-preset-field" style={{ flex: 1 }}>
-                                      <span>Title</span>
+                                      <span>{t("startup.pane.title")}</span>
                                       <input
                                         className="git-inline-input"
                                         value={session.title ?? ""}
@@ -1452,14 +1478,14 @@ export function WorkspaceStartupPresetModal({
                                             title: event.target.value || null,
                                           }))
                                         }
-                                        placeholder={`Pane ${index + 1}`}
+                                        placeholder={t("startup.modal.panePlaceholder", { index: index + 1 })}
                                       />
                                     </label>
                                   </div>
 
                                   <div className="workspace-preset-grid">
                                     <label className="workspace-preset-field">
-                                      <span>CWD</span>
+                                      <span>{t("startup.modal.cwd")}</span>
                                       <input
                                         className="git-inline-input"
                                         value={session.cwd}
@@ -1473,13 +1499,10 @@ export function WorkspaceStartupPresetModal({
                                       />
                                     </label>
                                     <label className="workspace-preset-field">
-                                      <span>Path base</span>
+                                      <span>{t("startup.modal.pathBase")}</span>
                                       <Dropdown
                                         value={session.cwdBase ?? "workspace"}
-                                        options={PATH_BASE_OPTIONS.map((p) => ({
-                                          value: p,
-                                          label: p.charAt(0).toUpperCase() + p.slice(1),
-                                        }))}
+                                        options={pathBaseOptions}
                                         triggerStyle={{ borderRadius: "var(--radius-sm)" }}
                                         onChange={(v) =>
                                           updateSession(group.id, session.id, (currentSession) => ({
@@ -1490,11 +1513,11 @@ export function WorkspaceStartupPresetModal({
                                       />
                                     </label>
                                     <label className="workspace-preset-field">
-                                      <span>Harness</span>
+                                      <span>{t("startup.modal.harness")}</span>
                                       <Dropdown
                                         value={session.harnessId ?? ""}
                                         options={[
-                                          { value: "", label: "Plain terminal" },
+                                          { value: "", label: t("startup.modal.plainTerminal") },
                                           ...installedHarnesses.map((h) => ({
                                             value: h.id,
                                             label: h.name,
@@ -1521,7 +1544,7 @@ export function WorkspaceStartupPresetModal({
                                         }
                                         disabled={!session.harnessId}
                                       />
-                                      Launch harness on create
+                                      {t("startup.modal.launchHarnessOnCreate")}
                                     </label>
                                   </div>
 
@@ -1533,7 +1556,7 @@ export function WorkspaceStartupPresetModal({
                                       disabled={group.sessions.length === 1}
                                     >
                                       <Trash2 size={12} />
-                                      Remove pane
+                                      {t("startup.removePane")}
                                     </button>
                                   </div>
                                 </div>
@@ -1543,14 +1566,14 @@ export function WorkspaceStartupPresetModal({
 
                           <div className="workspace-preset-subsection">
                             <div className="workspace-preset-subsection-header">
-                              <h5>Split tree</h5>
+                              <h5>{t("startup.modal.splitTree")}</h5>
                               <span className="workspace-preset-hint">
                                 <Columns2 size={12} />
-                                Use pane ids from this tab
+                                {t("startup.modal.usePaneIdsFromTab")}
                               </span>
                             </div>
                             <StartupSplitNodeEditor
-                              label="Root"
+                              label={t("startup.modal.root")}
                               node={group.root}
                               sessionIds={groupSessionIds}
                               onChange={(nextRoot) =>
@@ -1573,9 +1596,9 @@ export function WorkspaceStartupPresetModal({
 
         <div className="workspace-preset-footer">
           <div className="workspace-preset-footer-meta">
-            <span>{savedPreset ? "Preset saved in workspace DB" : "Workspace is using default startup behavior"}</span>
-            {liveSessionCount > 0 && <span>{liveSessionCount} live terminal session(s) currently open</span>}
-            {!isActiveWorkspace && <span>Switch to this workspace to save its current layout.</span>}
+            <span>{savedPreset ? t("startup.modal.footer.presetSavedInDb") : t("startup.modal.footer.defaultBehavior")}</span>
+            {liveSessionCount > 0 && <span>{t("startup.modal.footer.liveSessions", { count: liveSessionCount })}</span>}
+            {!isActiveWorkspace && <span>{t("startup.modal.footer.switchWorkspaceToSaveLayout")}</span>}
           </div>
           <div className="workspace-preset-footer-actions">
             <button
@@ -1583,28 +1606,28 @@ export function WorkspaceStartupPresetModal({
               className="btn btn-ghost"
               onClick={() => void handleSaveCurrentLayout()}
               disabled={controlsDisabled || !isActiveWorkspace}
-              title={isActiveWorkspace ? "Save the current terminal layout" : "Switch to this workspace to save its current layout"}
+              title={isActiveWorkspace ? t("startup.modal.footer.saveCurrentLayoutTitleActive") : t("startup.modal.footer.saveCurrentLayoutTitleInactive")}
             >
               <Rows2 size={12} />
-              Save current layout
+              {t("startup.modal.footer.saveCurrentLayout")}
             </button>
             <button
               type="button"
               className="btn btn-ghost"
               onClick={() => void handleApplyNow()}
               disabled={controlsDisabled || !isActiveWorkspace}
-              title={isActiveWorkspace ? "Apply the preset to this workspace now" : "Switch to this workspace to apply its preset now"}
+              title={isActiveWorkspace ? t("startup.modal.footer.applyNowTitleActive") : t("startup.modal.footer.applyNowTitleInactive")}
             >
               <Play size={12} />
-              Apply now
+              {t("startup.applyNow")}
             </button>
             <button type="button" className="btn btn-ghost" onClick={() => void handleClear()} disabled={controlsDisabled}>
               <Trash2 size={12} />
-              Reset behavior
+              {t("startup.modal.footer.resetBehavior")}
             </button>
             <button type="button" className="btn btn-primary" onClick={() => void handleSave()} disabled={controlsDisabled}>
               <Save size={12} />
-              Save preset
+              {t("startup.modal.footer.savePreset")}
             </button>
           </div>
         </div>
@@ -1612,28 +1635,28 @@ export function WorkspaceStartupPresetModal({
         {pendingApplyPreset && (
           <div className="workspace-preset-apply-confirm">
             <div>
-              <strong>Replace the current terminal state?</strong>
+              <strong>{t("startup.confirm.replaceCurrentSessions")}</strong>
               <p>
-                Applying the preset will close the current terminal sessions.
-                {hasWorktrees ? " Choose whether the existing worktrees should be removed as well." : ""}
+                {t("startup.modal.confirm.applyingPresetWillClose")}
+                {hasWorktrees ? ` ${t("startup.confirm.keepOrRemoveWorktrees")}` : ""}
               </p>
             </div>
             <div className="workspace-preset-apply-actions">
               <button type="button" className="btn btn-ghost" onClick={() => setPendingApplyPreset(null)} disabled={saving}>
-                Cancel
+                {t("startup.confirm.cancel")}
               </button>
               {hasWorktrees ? (
                 <>
                   <button type="button" className="btn btn-ghost" onClick={() => void performApply(false)} disabled={saving}>
-                    Keep worktrees
+                    {t("startup.confirm.keepWorktrees")}
                   </button>
                   <button type="button" className="confirm-dialog-btn-danger" onClick={() => void performApply(true)} disabled={saving}>
-                    Remove worktrees
+                    {t("startup.confirm.removeWorktrees")}
                   </button>
                 </>
               ) : (
                 <button type="button" className="btn btn-primary" onClick={() => void performApply(false)} disabled={saving}>
-                  Apply preset
+                  {t("startup.modal.applyPreset")}
                 </button>
               )}
             </div>
