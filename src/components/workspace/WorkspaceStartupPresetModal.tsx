@@ -28,6 +28,10 @@ import type {
   WorkspaceStartupSplitNode,
   WorkspaceStartupWorktreeConfig,
 } from "../../types";
+import {
+  resolveStartupSessionHarnessSelection,
+  shouldShowStartupSplitPanelSize,
+} from "../../lib/workspaceStartupUi";
 
 type EditorMode = "builder" | "advanced";
 
@@ -63,11 +67,11 @@ function createDefaultSession(index = 1): WorkspaceStartupSession {
   };
 }
 
-function createDefaultGroup(index = 1): WorkspaceStartupGroup {
+function createDefaultGroup(_index = 1): WorkspaceStartupGroup {
   const session = createDefaultSession(1);
   return {
     id: createStartupId("group"),
-    name: `Tab ${index}`,
+    name: "",
     broadcastOnStart: false,
     worktree: null,
     sessions: [session],
@@ -184,9 +188,9 @@ function normalizeTerminalPreset(
     };
   }
 
-  const groups = terminal.groups.map((group, index) => ({
+  const groups = terminal.groups.map((group) => ({
     ...group,
-    name: group.name.trim() || `Tab ${index + 1}`,
+    name: group.name.trim(),
     broadcastOnStart: Boolean(group.broadcastOnStart),
   }));
   const activeGroupId = groups.some((group) => group.id === terminal.activeGroupId)
@@ -213,6 +217,82 @@ function normalizePresetDraft(preset: WorkspaceStartupPreset): WorkspaceStartupP
     splitPanelSize: clampSplitPanelSize(preset.splitPanelSize),
     terminal: normalizeTerminalPreset(preset.terminal),
   };
+}
+
+function defaultGroupNameFromHarness(
+  group: WorkspaceStartupGroup,
+  harnessNamesById: ReadonlyMap<string, string>,
+): string | null {
+  if (group.sessions.length !== 1) {
+    return null;
+  }
+  const harnessId = group.sessions[0]?.harnessId?.trim();
+  if (!harnessId) {
+    return null;
+  }
+  const harnessName = harnessNamesById.get(harnessId)?.trim();
+  return harnessName || null;
+}
+
+function resolveBlankGroupNames(
+  groups: WorkspaceStartupGroup[],
+  harnessNamesById: ReadonlyMap<string, string>,
+): WorkspaceStartupGroup[] {
+  const usedNames = new Set<string>();
+
+  return groups.map((group) => {
+    const explicitName = group.name.trim();
+    if (explicitName) {
+      usedNames.add(explicitName);
+      return { ...group, name: explicitName };
+    }
+
+    const harnessName = defaultGroupNameFromHarness(group, harnessNamesById);
+    if (harnessName) {
+      let candidate = harnessName;
+      let suffix = 2;
+      while (usedNames.has(candidate)) {
+        candidate = `${harnessName} ${suffix}`;
+        suffix += 1;
+      }
+      usedNames.add(candidate);
+      return { ...group, name: candidate };
+    }
+
+    let terminalNumber = 1;
+    let candidate = `Terminal ${terminalNumber}`;
+    while (usedNames.has(candidate)) {
+      terminalNumber += 1;
+      candidate = `Terminal ${terminalNumber}`;
+    }
+    usedNames.add(candidate);
+    return { ...group, name: candidate };
+  });
+}
+
+function materializePresetDraft(
+  preset: WorkspaceStartupPreset,
+  harnessNamesById: ReadonlyMap<string, string>,
+): WorkspaceStartupPreset {
+  const normalized = normalizePresetDraft(preset);
+  if (!normalized.terminal) {
+    return normalized;
+  }
+  return {
+    ...normalized,
+    terminal: {
+      ...normalized.terminal,
+      groups: resolveBlankGroupNames(normalized.terminal.groups, harnessNamesById),
+    },
+  };
+}
+
+function groupNamePlaceholder(
+  group: WorkspaceStartupGroup,
+  index: number,
+  harnessNamesById: ReadonlyMap<string, string>,
+): string {
+  return defaultGroupNameFromHarness(group, harnessNamesById) ?? `Terminal ${index + 1}`;
 }
 
 function updateGroupById(
@@ -399,6 +479,10 @@ export function WorkspaceStartupPresetModal({
     () => harnesses.filter((harness) => harness.found),
     [harnesses],
   );
+  const harnessNamesById = useMemo(
+    () => new Map(installedHarnesses.map((harness) => [harness.id, harness.name])),
+    [installedHarnesses],
+  );
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -428,12 +512,13 @@ export function WorkspaceStartupPresetModal({
 
   const serializePresetForEditor = useCallback(
     async (format: WorkspaceStartupPresetFormat, preset: WorkspaceStartupPreset) => {
+      const materialized = materializePresetDraft(preset, harnessNamesById);
       if (format === "json") {
-        return serializeWorkspaceStartupPresetAsJson(preset);
+        return serializeWorkspaceStartupPresetAsJson(materialized);
       }
-      return await ipc.serializeWorkspaceStartupPreset(workspace.id, preset, format);
+      return await ipc.serializeWorkspaceStartupPreset(workspace.id, materialized, format);
     },
-    [workspace.id],
+    [harnessNamesById, workspace.id],
   );
 
   const serializeCurrentBuilder = useCallback(
@@ -521,10 +606,11 @@ export function WorkspaceStartupPresetModal({
       return normalized;
     }
 
-    const normalized = await ipc.normalizeWorkspaceStartupPreset(workspace.id, builderDraft);
+    const materialized = materializePresetDraft(builderDraft, harnessNamesById);
+    const normalized = await ipc.normalizeWorkspaceStartupPreset(workspace.id, materialized);
     setBuilderDraft(normalizePresetDraft(normalized));
     return normalized;
-  }, [advancedDraft, advancedFormat, builderDraft, editorMode, workspace.id]);
+  }, [advancedDraft, advancedFormat, builderDraft, editorMode, harnessNamesById, workspace.id]);
 
   const syncAdvancedFromBuilder = useCallback(
     async (format: WorkspaceStartupPresetFormat) => {
@@ -764,7 +850,10 @@ export function WorkspaceStartupPresetModal({
     try {
       const normalized = editorMode === "advanced"
         ? await ipc.setWorkspaceStartupPresetRaw(workspace.id, advancedFormat, advancedDraft)
-        : await ipc.setWorkspaceStartupPreset(workspace.id, builderDraft);
+        : await ipc.setWorkspaceStartupPreset(
+          workspace.id,
+          materializePresetDraft(builderDraft, harnessNamesById),
+        );
       const canonical = normalizePresetDraft(normalized);
       setSavedPreset(canonical);
       setBuilderDraft(canonical);
@@ -776,7 +865,7 @@ export function WorkspaceStartupPresetModal({
     } finally {
       setSaving(false);
     }
-  }, [advancedDraft, advancedFormat, builderDraft, editorMode, loading, serializeCurrentBuilder, workspace.id]);
+  }, [advancedDraft, advancedFormat, builderDraft, editorMode, harnessNamesById, loading, serializeCurrentBuilder, workspace.id]);
 
   const handleClear = useCallback(async () => {
     if (loading) {
@@ -1058,22 +1147,24 @@ export function WorkspaceStartupPresetModal({
                       }
                     />
                   </label>
-                  <label className="workspace-preset-field">
-                    <span>Split panel size</span>
-                    <input
-                      className="git-inline-input"
-                      type="number"
-                      min={15}
-                      max={72}
-                      value={builderDraft.splitPanelSize ?? DEFAULT_SPLIT_PANEL_SIZE}
-                      onChange={(event) =>
-                        updateDraft((current) => ({
-                          ...current,
-                          splitPanelSize: Number(event.target.value),
-                        }))
-                      }
-                    />
-                  </label>
+                  {shouldShowStartupSplitPanelSize(builderDraft.defaultView) && (
+                    <label className="workspace-preset-field">
+                      <span>Split panel size</span>
+                      <input
+                        className="git-inline-input"
+                        type="number"
+                        min={15}
+                        max={72}
+                        value={builderDraft.splitPanelSize ?? DEFAULT_SPLIT_PANEL_SIZE}
+                        onChange={(event) =>
+                          updateDraft((current) => ({
+                            ...current,
+                            splitPanelSize: Number(event.target.value),
+                          }))
+                        }
+                      />
+                    </label>
+                  )}
                 </div>
               </section>
 
@@ -1127,7 +1218,7 @@ export function WorkspaceStartupPresetModal({
                       </label>
                     </div>
 
-                    {terminalDraft.groups.map((group) => {
+                    {terminalDraft.groups.map((group, groupIndex) => {
                       const groupSessionIds = group.sessions.map((session) => session.id);
                       const worktree = group.worktree ?? {
                         enabled: false,
@@ -1153,6 +1244,7 @@ export function WorkspaceStartupPresetModal({
                                       name: event.target.value,
                                     }))
                                   }
+                                  placeholder={groupNamePlaceholder(group, groupIndex, harnessNamesById)}
                                 />
                               </label>
                               <label className="workspace-preset-field" style={{ width: 180 }}>
@@ -1412,10 +1504,7 @@ export function WorkspaceStartupPresetModal({
                                         onChange={(v) =>
                                           updateSession(group.id, session.id, (currentSession) => ({
                                             ...currentSession,
-                                            harnessId: v || null,
-                                            launchHarnessOnCreate: v
-                                              ? currentSession.launchHarnessOnCreate ?? true
-                                              : false,
+                                            ...resolveStartupSessionHarnessSelection(v),
                                           }))
                                         }
                                       />

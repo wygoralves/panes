@@ -29,6 +29,10 @@ import type {
   WorkspaceStartupSplitNode,
   WorkspaceStartupWorktreeConfig,
 } from "../../types";
+import {
+  resolveStartupSessionHarnessSelection,
+  shouldShowStartupSplitPanelSize,
+} from "../../lib/workspaceStartupUi";
 
 /* ── Helpers ───────────────────────────────────────── */
 
@@ -51,11 +55,11 @@ function createDefaultSession(index = 1): WorkspaceStartupSession {
   };
 }
 
-function createDefaultGroup(index = 1): WorkspaceStartupGroup {
+function createDefaultGroup(_index = 1): WorkspaceStartupGroup {
   const session = createDefaultSession(1);
   return {
     id: createStartupId("group"),
-    name: `Tab ${index}`,
+    name: "",
     broadcastOnStart: false,
     worktree: null,
     sessions: [session],
@@ -121,9 +125,9 @@ function normalizeTerminalPreset(
   if (terminal.groups.length === 0) {
     return { ...terminal, activeGroupId: null, focusedSessionId: null };
   }
-  const groups = terminal.groups.map((g, i) => ({
+  const groups = terminal.groups.map((g) => ({
     ...g,
-    name: g.name.trim() || `Tab ${i + 1}`,
+    name: g.name.trim(),
     broadcastOnStart: Boolean(g.broadcastOnStart),
   }));
   const activeGroupId = groups.some((g) => g.id === terminal.activeGroupId)
@@ -144,6 +148,76 @@ function normalizePresetDraft(preset: WorkspaceStartupPreset): WorkspaceStartupP
     splitPanelSize: clampSplitPanelSize(preset.splitPanelSize),
     terminal: normalizeTerminalPreset(preset.terminal),
   };
+}
+
+function defaultGroupNameFromHarness(
+  group: WorkspaceStartupGroup,
+  harnessNamesById: ReadonlyMap<string, string>,
+): string | null {
+  if (group.sessions.length !== 1) return null;
+  const harnessId = group.sessions[0]?.harnessId?.trim();
+  if (!harnessId) return null;
+  const harnessName = harnessNamesById.get(harnessId)?.trim();
+  return harnessName || null;
+}
+
+function resolveBlankGroupNames(
+  groups: WorkspaceStartupGroup[],
+  harnessNamesById: ReadonlyMap<string, string>,
+): WorkspaceStartupGroup[] {
+  const usedNames = new Set<string>();
+
+  return groups.map((group) => {
+    const explicitName = group.name.trim();
+    if (explicitName) {
+      usedNames.add(explicitName);
+      return { ...group, name: explicitName };
+    }
+
+    const harnessName = defaultGroupNameFromHarness(group, harnessNamesById);
+    if (harnessName) {
+      let candidate = harnessName;
+      let suffix = 2;
+      while (usedNames.has(candidate)) {
+        candidate = `${harnessName} ${suffix}`;
+        suffix += 1;
+      }
+      usedNames.add(candidate);
+      return { ...group, name: candidate };
+    }
+
+    let terminalNumber = 1;
+    let candidate = `Terminal ${terminalNumber}`;
+    while (usedNames.has(candidate)) {
+      terminalNumber += 1;
+      candidate = `Terminal ${terminalNumber}`;
+    }
+    usedNames.add(candidate);
+    return { ...group, name: candidate };
+  });
+}
+
+function materializePresetDraft(
+  preset: WorkspaceStartupPreset,
+  harnessNamesById: ReadonlyMap<string, string>,
+): WorkspaceStartupPreset {
+  const normalized = normalizePresetDraft(preset);
+  if (!normalized.terminal) return normalized;
+  return {
+    ...normalized,
+    terminal: {
+      ...normalized.terminal,
+      groups: resolveBlankGroupNames(normalized.terminal.groups, harnessNamesById),
+    },
+  };
+}
+
+function groupNamePlaceholder(
+  group: WorkspaceStartupGroup,
+  index: number,
+  harnessNamesById: ReadonlyMap<string, string>,
+): string {
+  return defaultGroupNameFromHarness(group, harnessNamesById) ?? `Terminal ${index + 1}`;
 }
 
 function updateGroupById(
@@ -200,6 +274,10 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
   const runtimeWorkspace = useTerminalStore((s) => s.workspaces[workspace.id]);
 
   const installedHarnesses = useMemo(() => harnesses.filter((h) => h.found), [harnesses]);
+  const harnessNamesById = useMemo(
+    () => new Map(installedHarnesses.map((harness) => [harness.id, harness.name])),
+    [installedHarnesses],
+  );
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -235,10 +313,11 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
 
   const serializeForEditor = useCallback(
     async (format: WorkspaceStartupPresetFormat, preset: WorkspaceStartupPreset) => {
-      if (format === "json") return serializeAsJson(preset);
-      return await ipc.serializeWorkspaceStartupPreset(workspace.id, preset, format);
+      const materialized = materializePresetDraft(preset, harnessNamesById);
+      if (format === "json") return serializeAsJson(materialized);
+      return await ipc.serializeWorkspaceStartupPreset(workspace.id, materialized, format);
     },
-    [workspace.id],
+    [harnessNamesById, workspace.id],
   );
 
   const serializeCurrentBuilder = useCallback(
@@ -413,10 +492,11 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       setBuilderDraft(normalizePresetDraft(normalized));
       return normalized;
     }
-    const normalized = await ipc.normalizeWorkspaceStartupPreset(workspace.id, builderDraft);
+    const materialized = materializePresetDraft(builderDraft, harnessNamesById);
+    const normalized = await ipc.normalizeWorkspaceStartupPreset(workspace.id, materialized);
     setBuilderDraft(normalizePresetDraft(normalized));
     return normalized;
-  }, [advancedDraft, advancedFormat, advancedOpen, builderDraft, workspace.id]);
+  }, [advancedDraft, advancedFormat, advancedOpen, builderDraft, harnessNamesById, workspace.id]);
 
   /* ── Advanced editor ── */
 
@@ -488,7 +568,10 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
     try {
       const normalized = advancedOpen
         ? await ipc.setWorkspaceStartupPresetRaw(workspace.id, advancedFormat, advancedDraft)
-        : await ipc.setWorkspaceStartupPreset(workspace.id, builderDraft);
+        : await ipc.setWorkspaceStartupPreset(
+          workspace.id,
+          materializePresetDraft(builderDraft, harnessNamesById),
+        );
       const canonical = normalizePresetDraft(normalized);
       setSavedPreset(canonical);
       setBuilderDraft(canonical);
@@ -508,6 +591,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
     loading,
     serializeCurrentBuilder,
     workspace.id,
+    harnessNamesById,
   ]);
 
   const handleClear = useCallback(async () => {
@@ -721,11 +805,11 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
               onChange={(v) => handleDefaultViewChange(v as WorkspaceDefaultView)}
             />
           </div>
-          {(builderDraft.defaultView === "split" || builderDraft.defaultView === "terminal") && (
+          {shouldShowStartupSplitPanelSize(builderDraft.defaultView) && (
             <>
               <div className="wsp-field-divider" />
               <div className="wsp-field">
-                <span className="wsp-field-label">Terminal size</span>
+                <span className="wsp-field-label">Split panel size</span>
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <input
                     className="ws-depth-input"
@@ -801,7 +885,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                       onChange={(e) =>
                         updateGroup(group.id, (g) => ({ ...g, name: e.target.value }))
                       }
-                      placeholder={`Tab ${gi + 1}`}
+                      placeholder={groupNamePlaceholder(group, gi, harnessNamesById)}
                     />
                     <button
                       type="button"
@@ -1001,10 +1085,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                               onChange={(v) =>
                                 updateSession(group.id, session.id, (s) => ({
                                   ...s,
-                                  harnessId: v || null,
-                                  launchHarnessOnCreate: v
-                                    ? (s.launchHarnessOnCreate ?? true)
-                                    : false,
+                                  ...resolveStartupSessionHarnessSelection(v),
                                 }))
                               }
                             />

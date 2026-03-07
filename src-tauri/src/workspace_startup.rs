@@ -126,6 +126,7 @@ pub struct WorkspaceStartupSession {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkspaceStartupSplitNode {
     Leaf {
+        #[serde(rename = "sessionId", alias = "session_id")]
         session_id: String,
     },
     Split {
@@ -876,6 +877,54 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("unknown sessionId"));
+    }
+
+    #[test]
+    fn parses_raw_json_with_camel_case_split_leaf_session_id() {
+        let raw_json = serde_json::json!({
+            "version": 1,
+            "defaultView": "split",
+            "splitPanelSize": 32,
+            "terminal": {
+                "applyWhen": "no_live_sessions",
+                "groups": [{
+                    "id": "main",
+                    "name": "Main",
+                    "sessions": [{
+                        "id": "a",
+                        "cwd": ".",
+                        "cwdBase": "workspace"
+                    }],
+                    "root": {
+                        "type": "leaf",
+                        "sessionId": "a"
+                    }
+                }],
+                "activeGroupId": "main",
+                "focusedSessionId": "a"
+            }
+        })
+        .to_string();
+
+        let parsed =
+            parse_workspace_startup_preset_raw(WorkspaceStartupPresetFormat::Json, &raw_json)
+                .unwrap();
+        let terminal = parsed.terminal.unwrap();
+
+        match &terminal.groups[0].root {
+            WorkspaceStartupSplitNode::Leaf { session_id } => assert_eq!(session_id, "a"),
+            WorkspaceStartupSplitNode::Split { .. } => panic!("expected leaf node"),
+        }
+    }
+
+    #[test]
+    fn serializes_split_leaf_session_id_as_camel_case() {
+        let serialized =
+            serialize_workspace_startup_preset(&preset(), WorkspaceStartupPresetFormat::Json)
+                .unwrap();
+
+        assert!(serialized.contains("\"sessionId\""));
+        assert!(!serialized.contains("\"session_id\""));
     }
 
     #[test]
