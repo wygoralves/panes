@@ -145,6 +145,57 @@
       "updateExecutionPolicyFailed": "Falha ao atualizar a política de execução da thread: {{error}}"
     }
   },
+  "messageBlocks": {
+    "diffFallback": "diff ({{scope}})",
+    "parsing": "Analisando...",
+    "parsingDiff": "Analisando diff...",
+    "noChanges": "Sem alterações",
+    "thinking": "Raciocínio",
+    "actionStatus": {
+      "done": "Concluído",
+      "running": "Em andamento",
+      "error": "Erro",
+      "pending": "Pendente"
+    },
+    "deferredOutput": {
+      "loadingFull": "Carregando saída completa da ação...",
+      "loading": "Carregando saída da ação...",
+      "failed": "Falha ao carregar a saída da ação.",
+      "retry": "Tentar novamente"
+    },
+    "outputTruncated": "Mostrando apenas a saída mais recente da ação (blocos anteriores truncados por desempenho).",
+    "approval": {
+      "decision": {
+        "answered": "Respondido",
+        "denied": "Negado",
+        "canceled": "Cancelado",
+        "approved": "Aprovado"
+      },
+      "invalidJson": "JSON inválido: {{error}}",
+      "payloadMustBeObject": "O payload precisa ser um objeto JSON.",
+      "actionCount_one": "{{count}} ação nesta solicitação",
+      "actionCount_other": "{{count}} ações nesta solicitação",
+      "execPolicyAmendment": "Alteração de política de execução disponível para {{value}}",
+      "networkAmendment": "Alteração de rede disponível para {{value}}",
+      "dynamicTool": "Ferramenta dinâmica: {{name}}",
+      "showDetails": "Mostrar detalhes",
+      "hideDetails": "Ocultar detalhes",
+      "pendingQuestions_one": "{{count}} pergunta aguardando resposta.",
+      "pendingQuestions_other": "{{count}} perguntas aguardando resposta.",
+      "dynamicToolPrompt": "Responda à chamada da ferramenta dinâmica sem escrever JSON manualmente.",
+      "dynamicToolSuccess": "Sucesso",
+      "dynamicToolFailure": "Falha",
+      "toolResponsePlaceholder": "Texto da resposta da ferramenta (opcional)",
+      "imageUrlPlaceholder": "URL da imagem (opcional)",
+      "sendToolResponse": "Enviar resposta da ferramenta",
+      "customPayloadHint": "Esta solicitação aceita um formulário estruturado abaixo. O JSON avançado continua disponível para casos extremos.",
+      "sendPayload": "Enviar payload"
+    },
+    "toolInput": {
+      "otherAnswerPlaceholder": "Outra resposta (opcional)",
+      "sendAnswers": "Enviar respostas"
+    }
+  },
   "status": {
     "now": "agora",
     "minutesShort": "{{count}} min",

@@ -1,4 +1,5 @@
 import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   CheckCircle2,
   Circle,
@@ -74,6 +75,7 @@ const actionIcons: Record<string, typeof Terminal> = {
 /* ── Diff Block ── */
 
 function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaultExpanded: boolean }) {
+  const { t } = useTranslation("chat");
   const [expanded, setExpanded] = useState(defaultExpanded);
   const raw = String(block.diff ?? "");
   const fallbackFilename = useMemo(() => extractDiffFilename(raw), [raw]);
@@ -97,11 +99,11 @@ function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaul
         />
         <FileDiff size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
         <span style={{ fontSize: 11.5, color: "var(--text-2)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {filename ?? `diff (${String(block.scope ?? "turn")})`}
+          {filename ?? t("messageBlocks.diffFallback", { scope: String(block.scope ?? "turn") })}
         </span>
         {loadingParse && (
           <span style={{ fontSize: 10, color: "var(--text-3)", flexShrink: 0 }}>
-            Parsing...
+            {t("messageBlocks.parsing")}
           </span>
         )}
         {(adds > 0 || dels > 0) && (
@@ -114,7 +116,7 @@ function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaul
       {expanded && (
         !parseResult && (loadingParse || !parseAttempted) ? (
           <div style={{ padding: "4px 14px", fontSize: 11.5, color: "var(--text-3)" }}>
-            Parsing diff...
+            {t("messageBlocks.parsingDiff")}
           </div>
         ) : parseResult && parseResult.parsed.length > 0 ? (
           <div style={{
@@ -127,7 +129,7 @@ function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaul
           </div>
         ) : (
           <div style={{ padding: "4px 14px", fontSize: 11.5, color: "var(--text-3)" }}>
-            No changes
+            {t("messageBlocks.noChanges")}
           </div>
         )
       )}
@@ -138,6 +140,7 @@ function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaul
 /* ── Thinking Block ── */
 
 function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStreaming: boolean }) {
+  const { t } = useTranslation("chat");
   const [expanded, setExpanded] = useState(false);
   const content = String(block.content ?? "");
 
@@ -154,7 +157,8 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
           style={isStreaming ? { color: "var(--info)", flexShrink: 0 } : { color: "var(--info)", opacity: 0.45, flexShrink: 0 }}
         />
         <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>
-          Thinking{isStreaming ? "\u2026" : ""}
+          {t("messageBlocks.thinking")}
+          {isStreaming ? "\u2026" : ""}
         </span>
       </div>
       {expanded && (
@@ -240,11 +244,12 @@ function NoticeBlockView({ block }: { block: NoticeBlock }) {
 /* ── Action Block ── */
 
 function ActionStatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation("chat");
   if (status === "done") {
     return (
       <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--success)", fontSize: 10, opacity: 0.7 }}>
         <CheckCircle2 size={11} />
-        Done
+        {t("messageBlocks.actionStatus.done")}
       </span>
     );
   }
@@ -252,7 +257,7 @@ function ActionStatusBadge({ status }: { status: string }) {
     return (
       <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--warning)", fontSize: 10, fontWeight: 500 }}>
         <Loader2 size={11} style={{ animation: "pulse-soft 1s ease-in-out infinite" }} />
-        Running
+        {t("messageBlocks.actionStatus.running")}
       </span>
     );
   }
@@ -260,14 +265,14 @@ function ActionStatusBadge({ status }: { status: string }) {
     return (
       <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--danger)", fontSize: 10 }}>
         <XCircle size={11} />
-        Error
+        {t("messageBlocks.actionStatus.error")}
       </span>
     );
   }
   return (
     <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-3)", fontSize: 10 }}>
       <Circle size={11} />
-      Pending
+      {t("messageBlocks.actionStatus.pending")}
     </span>
   );
 }
@@ -279,6 +284,7 @@ function ActionBlockView({
   block: ActionBlock;
   onLoadDeferredOutput?: () => Promise<void>;
 }) {
+  const { t } = useTranslation("chat");
   const outputChunks = Array.isArray(block.outputChunks) ? block.outputChunks : [];
   const outputDeferred = block.outputDeferred === true;
   const outputText = useMemo(
@@ -402,10 +408,10 @@ function ActionBlockView({
                   <Loader2 size={12} style={{ animation: "pulse-soft 1s ease-in-out infinite" }} />
                 )}
                 {loadingDeferredOutput
-                  ? "Loading full action output..."
+                  ? t("messageBlocks.deferredOutput.loadingFull")
                   : deferredOutputError
-                    ? "Failed to load action output."
-                    : "Loading action output..."}
+                    ? t("messageBlocks.deferredOutput.failed")
+                    : t("messageBlocks.deferredOutput.loading")}
               </span>
               {!loadingDeferredOutput && deferredOutputError && onLoadDeferredOutput && (
                 <button
@@ -425,7 +431,7 @@ function ActionBlockView({
                     cursor: "pointer",
                   }}
                 >
-                  Retry
+                  {t("messageBlocks.deferredOutput.retry")}
                 </button>
               )}
             </div>
@@ -461,7 +467,7 @@ function ActionBlockView({
                 color: "var(--text-3)",
               }}
             >
-              Showing latest action output only (older chunks truncated for performance).
+              {t("messageBlocks.outputTruncated")}
             </div>
           )}
 
@@ -540,6 +546,7 @@ function ApprovalCard({
   block: ApprovalBlock;
   onApproval: (approvalId: string, response: ApprovalResponse) => void;
 }) {
+  const { t } = useTranslation("chat");
   const isPending = block.status === "pending";
   const details = block.details ?? {};
   const isToolInputRequest = isRequestUserInputApproval(details);
@@ -577,13 +584,13 @@ function ApprovalCard({
     setDynamicToolImageUrl("");
   }, [block.approvalId]);
 
-  let decisionLabel = "Answered";
+  let decisionLabel = t("messageBlocks.approval.decision.answered");
   if (block.decision === "decline") {
-    decisionLabel = "Denied";
+    decisionLabel = t("messageBlocks.approval.decision.denied");
   } else if (block.decision === "cancel") {
-    decisionLabel = "Canceled";
+    decisionLabel = t("messageBlocks.approval.decision.canceled");
   } else if (block.decision === "accept" || block.decision === "accept_for_session") {
-    decisionLabel = "Approved";
+    decisionLabel = t("messageBlocks.approval.decision.approved");
   }
 
   let decisionBackground = "rgba(148,163,184,0.12)";
@@ -601,7 +608,9 @@ function ApprovalCard({
     try {
       parsedPayload = JSON.parse(advancedJsonPayload);
     } catch (error) {
-      setAdvancedJsonError(`Invalid JSON: ${String(error)}`);
+      setAdvancedJsonError(
+        t("messageBlocks.approval.invalidJson", { error: String(error) }),
+      );
       return;
     }
 
@@ -610,7 +619,7 @@ function ApprovalCard({
       parsedPayload === null ||
       Array.isArray(parsedPayload)
     ) {
-      setAdvancedJsonError("Payload must be a JSON object.");
+      setAdvancedJsonError(t("messageBlocks.approval.payloadMustBeObject"));
       return;
     }
 
@@ -653,24 +662,29 @@ function ApprovalCard({
           )}
           {commandActionCount > 0 && (
             <p className="acard-meta">
-              {commandActionCount} action{commandActionCount > 1 ? "s" : ""} in this request
+              {t("messageBlocks.approval.actionCount", { count: commandActionCount })}
             </p>
           )}
           {proposedExecpolicyAmendment.length > 0 && (
             <p className="acard-meta">
-              Exec policy amendment available for {proposedExecpolicyAmendment.join(" ")}
+              {t("messageBlocks.approval.execPolicyAmendment", {
+                value: proposedExecpolicyAmendment.join(" "),
+              })}
             </p>
           )}
           {proposedNetworkPolicyAmendments.length > 0 && (
             <p className="acard-meta">
-              Network amendment available for{" "}
-              {proposedNetworkPolicyAmendments
-                .map((amendment) => `${amendment.action} ${amendment.host}`)
-                .join(", ")}
+              {t("messageBlocks.approval.networkAmendment", {
+                value: proposedNetworkPolicyAmendments
+                  .map((amendment) => `${amendment.action} ${amendment.host}`)
+                  .join(", "),
+              })}
             </p>
           )}
           {isDynamicToolCall && dynamicToolName && (
-            <p className="acard-meta">Dynamic tool: {dynamicToolName}</p>
+            <p className="acard-meta">
+              {t("messageBlocks.approval.dynamicTool", { name: dynamicToolName })}
+            </p>
           )}
           {hasRemainingDetails && (
             <div className="acard-remaining">
@@ -679,7 +693,9 @@ function ApprovalCard({
                 className="acard-toggle"
                 onClick={() => setShowRemainingDetails((v) => !v)}
               >
-                {showRemainingDetails ? "Hide details" : "Show details"}
+                {showRemainingDetails
+                  ? t("messageBlocks.approval.hideDetails")
+                  : t("messageBlocks.approval.showDetails")}
               </button>
               {showRemainingDetails && (
                 <pre className="acard-remaining-pre">
@@ -695,8 +711,9 @@ function ApprovalCard({
       {isToolInputRequest && toolInputQuestions.length > 0 && (
         <div className="acard-section">
           <p className="acard-reason">
-            {toolInputQuestions.length} question
-            {toolInputQuestions.length > 1 ? "s" : ""} pending input.
+            {t("messageBlocks.approval.pendingQuestions", {
+              count: toolInputQuestions.length,
+            })}
           </p>
         </div>
       )}
@@ -714,7 +731,7 @@ function ApprovalCard({
         <div className="acard-section">
           <div className="acard-advanced" style={{ gap: 10 }}>
             <p className="acard-reason">
-              Respond to the dynamic tool call without hand-writing JSON.
+              {t("messageBlocks.approval.dynamicToolPrompt")}
             </p>
             {dynamicToolArguments && (
               <pre className="acard-remaining-pre">
@@ -727,7 +744,9 @@ function ApprovalCard({
                 className={`approval-btn ${dynamicToolSuccess ? "approval-btn-allow" : "approval-btn-deny"}`}
                 onClick={() => setDynamicToolSuccess((current) => !current)}
               >
-                {dynamicToolSuccess ? "Success" : "Failure"}
+                {dynamicToolSuccess
+                  ? t("messageBlocks.approval.dynamicToolSuccess")
+                  : t("messageBlocks.approval.dynamicToolFailure")}
               </button>
             </div>
             <textarea
@@ -735,13 +754,13 @@ function ApprovalCard({
               value={dynamicToolText}
               onChange={(event) => setDynamicToolText(event.target.value)}
               rows={4}
-              placeholder="Tool response text (optional)"
+              placeholder={t("messageBlocks.approval.toolResponsePlaceholder")}
             />
             <input
               className="acard-textarea"
               value={dynamicToolImageUrl}
               onChange={(event) => setDynamicToolImageUrl(event.target.value)}
-              placeholder="Image URL (optional)"
+              placeholder={t("messageBlocks.approval.imageUrlPlaceholder")}
             />
             <div className="acard-advanced-footer">
               <button
@@ -749,7 +768,7 @@ function ApprovalCard({
                 className="approval-btn approval-btn-allow"
                 onClick={submitDynamicToolResponse}
               >
-                Send tool response
+                {t("messageBlocks.approval.sendToolResponse")}
               </button>
             </div>
           </div>
@@ -759,8 +778,7 @@ function ApprovalCard({
       {isPending && requiresCustomPayload && !showStructuredToolInput && (
         <div className="acard-section">
           <p className="acard-reason">
-            This request supports a structured response form below. Advanced JSON is still
-            available for edge cases.
+            {t("messageBlocks.approval.customPayloadHint")}
           </p>
         </div>
       )}
@@ -791,7 +809,7 @@ function ApprovalCard({
                 className="approval-btn approval-btn-allow"
                 onClick={submitAdvancedJsonPayload}
               >
-                Send payload
+                {t("messageBlocks.approval.sendPayload")}
               </button>
             </div>
           </div>

@@ -145,6 +145,57 @@
       "updateExecutionPolicyFailed": "Failed to update thread execution policy: {{error}}"
     }
   },
+  "messageBlocks": {
+    "diffFallback": "diff ({{scope}})",
+    "parsing": "Parsing...",
+    "parsingDiff": "Parsing diff...",
+    "noChanges": "No changes",
+    "thinking": "Thinking",
+    "actionStatus": {
+      "done": "Done",
+      "running": "Running",
+      "error": "Error",
+      "pending": "Pending"
+    },
+    "deferredOutput": {
+      "loadingFull": "Loading full action output...",
+      "loading": "Loading action output...",
+      "failed": "Failed to load action output.",
+      "retry": "Retry"
+    },
+    "outputTruncated": "Showing latest action output only (older chunks truncated for performance).",
+    "approval": {
+      "decision": {
+        "answered": "Answered",
+        "denied": "Denied",
+        "canceled": "Canceled",
+        "approved": "Approved"
+      },
+      "invalidJson": "Invalid JSON: {{error}}",
+      "payloadMustBeObject": "Payload must be a JSON object.",
+      "actionCount_one": "{{count}} action in this request",
+      "actionCount_other": "{{count}} actions in this request",
+      "execPolicyAmendment": "Exec policy amendment available for {{value}}",
+      "networkAmendment": "Network amendment available for {{value}}",
+      "dynamicTool": "Dynamic tool: {{name}}",
+      "showDetails": "Show details",
+      "hideDetails": "Hide details",
+      "pendingQuestions_one": "{{count}} question pending input.",
+      "pendingQuestions_other": "{{count}} questions pending input.",
+      "dynamicToolPrompt": "Respond to the dynamic tool call without hand-writing JSON.",
+      "dynamicToolSuccess": "Success",
+      "dynamicToolFailure": "Failure",
+      "toolResponsePlaceholder": "Tool response text (optional)",
+      "imageUrlPlaceholder": "Image URL (optional)",
+      "sendToolResponse": "Send tool response",
+      "customPayloadHint": "This request supports a structured response form below. Advanced JSON is still available for edge cases.",
+      "sendPayload": "Send payload"
+    },
+    "toolInput": {
+      "otherAnswerPlaceholder": "Other answer (optional)",
+      "sendAnswers": "Send answers"
+    }
+  },
   "status": {
     "now": "now",
     "minutesShort": "{{count}} min",
