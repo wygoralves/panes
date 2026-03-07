@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  ArrowLeft,
   ArrowRight,
   CheckCircle2,
   ClipboardCopy,
@@ -33,11 +34,13 @@ const INSTALL_COMMANDS: Record<string, string> = {
 /* ─── Harness tile ─── */
 function HarnessTile({
   harness,
+  description,
   onInstallInTerminal,
   onCopyCommand,
   onLaunch,
 }: {
   harness: HarnessInfo;
+  description: string;
   onInstallInTerminal: () => void;
   onCopyCommand: () => void;
   onLaunch: () => void;
@@ -56,7 +59,7 @@ function HarnessTile({
           <span className="hp-tile-name">{harness.name}</span>
           {harness.native && <span className="hp-tile-badge">{t("harnesses.native")}</span>}
         </div>
-        <p className="hp-tile-desc">{harness.description}</p>
+        <p className="hp-tile-desc">{description}</p>
         {harness.found && (
           <div className="hp-tile-meta">
             <span className="hp-tile-status-ok">
@@ -115,6 +118,7 @@ export function HarnessPanel() {
   const setActiveView = useUiStore((s) => s.setActiveView);
 
   const installedCount = harnesses.filter((h) => h.found).length;
+  const goBack = useCallback(() => setActiveView("chat"), [setActiveView]);
 
   const spawnInTerminal = useCallback(
     async (command: string) => {
@@ -169,10 +173,23 @@ export function HarnessPanel() {
           {/* Header */}
           <div className="hp-header">
             <div className="hp-header-top">
+              <button type="button" className="wsp-back" onClick={goBack} title={t("workspace:actions.back")}>
+                <ArrowLeft size={14} />
+              </button>
               <div className="hp-header-icon">
                 <Terminal size={16} />
               </div>
-              <h1 className="hp-title">{t("harnesses.title")}</h1>
+              <div className="hp-header-text">
+                <h1 className="hp-title">{t("harnesses.title")}</h1>
+                <p className="hp-subtitle">
+                  {phase === "scanning"
+                    ? t("harnesses.scanning")
+                    : t("harnesses.detectedCount", {
+                        installed: installedCount,
+                        total: harnesses.length,
+                      })}
+                </p>
+              </div>
               <button
                 type="button"
                 className="hp-rescan"
@@ -188,14 +205,6 @@ export function HarnessPanel() {
                 />
               </button>
             </div>
-            <p className="hp-subtitle">
-              {phase === "scanning"
-                ? t("harnesses.scanning")
-                : t("harnesses.detectedCount", {
-                    installed: installedCount,
-                    total: harnesses.length,
-                  })}
-            </p>
           </div>
 
           {/* Content */}
@@ -213,6 +222,7 @@ export function HarnessPanel() {
                 <HarnessTile
                   key={h.id}
                   harness={h}
+                  description={t(`harnesses.descriptions.${h.id}`, { defaultValue: h.description })}
                   onInstallInTerminal={() => handleInstallInTerminal(h.id)}
                   onCopyCommand={() => handleCopyCommand(h.id)}
                   onLaunch={() => void handleLaunch(h.id)}

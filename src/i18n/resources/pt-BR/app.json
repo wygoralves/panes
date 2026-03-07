@@ -275,7 +275,7 @@
     }
   },
   "harnesses": {
-    "title": "Agent Harnesses",
+    "title": "Harnesses de Agentes",
     "native": "Nativo",
     "installed": "Instalado",
     "launch": "Abrir",
@@ -287,7 +287,16 @@
     "scanning": "Escaneando seu sistema...",
     "detectedCount": "{{installed}} de {{total}} ferramentas detectadas",
     "loading": "Detectando harnesses instalados...",
-    "footerHint": "Harnesses instalados aparecem como opções de abertura rápida no botão + do terminal"
+    "footerHint": "Harnesses instalados aparecem como opções de abertura rápida no botão + do terminal",
+    "descriptions": {
+      "codex": "CLI de coding agent da OpenAI, integrado nativamente ao chat e aos fluxos de terminal do Panes",
+      "claude-code": "CLI de coding da Anthropic, integrada nativamente ao Panes para fluxos em repo e no terminal",
+      "gemini-cli": "CLI de coding agent da Google para geração de código, tarefas de repo e fluxo no terminal",
+      "kiro": "CLI de coding da AWS focada em fluxos mais estruturados no estilo agent",
+      "opencode": "Assistente de código open source para chat, edições e fluxos no terminal",
+      "kilo-code": "CLI leve de assistência de código para tarefas do dia a dia no repo",
+      "factory-droid": "Coding agent autônomo da Factory para implementações maiores"
+    }
   },
   "editor": {
     "closeTab": "Fechar arquivo",

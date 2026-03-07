@@ -287,7 +287,16 @@
     "scanning": "Scanning your system...",
     "detectedCount": "{{installed}} of {{total}} tools detected",
     "loading": "Detecting installed harnesses...",
-    "footerHint": "Installed harnesses appear as quick-launch options in your terminal + button"
+    "footerHint": "Installed harnesses appear as quick-launch options in your terminal + button",
+    "descriptions": {
+      "codex": "OpenAI's coding agent CLI, integrated natively with Panes chat and terminal workflows",
+      "claude-code": "Anthropic's coding CLI, integrated natively with Panes for repo-aware and terminal-driven workflows",
+      "gemini-cli": "Google's coding agent CLI for code generation, repo tasks, and terminal workflows",
+      "kiro": "AWS's coding CLI focused on structured, agent-style development workflows",
+      "opencode": "Open-source coding assistant for chat, edits, and terminal workflows",
+      "kilo-code": "Lightweight coding assistant CLI for everyday code and repo tasks",
+      "factory-droid": "Factory's autonomous coding agent for larger implementation tasks"
+    }
   },
   "editor": {
     "closeTab": "Close file",

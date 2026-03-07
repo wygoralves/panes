@@ -4846,35 +4846,41 @@ button, input, textarea, select {
 .hp-header {
   display: flex;
   flex-direction: column;
-  gap: 6px;
 }
 
 .hp-header-top {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .hp-header-icon {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--border);
+  background: var(--accent-dim);
+  border: 1px solid var(--border-accent);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-2);
+  color: var(--accent);
   flex-shrink: 0;
+}
+
+.hp-header-text {
+  flex: 1;
+  min-width: 0;
 }
 
 .hp-title {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 650;
   color: var(--text-1);
   letter-spacing: -0.02em;
-  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .hp-rescan {
@@ -4899,9 +4905,12 @@ button, input, textarea, select {
 
 .hp-subtitle {
   margin: 0;
-  font-size: 13px;
+  font-size: 11px;
   color: var(--text-3);
   line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Loading */
