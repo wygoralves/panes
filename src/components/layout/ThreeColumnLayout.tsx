@@ -6,6 +6,7 @@ import { HarnessPanel } from "../onboarding/HarnessPanel";
 import { WorkspaceSettingsPage } from "../workspace/WorkspaceSettingsPage";
 import { GitPanel } from "../git/GitPanel";
 import { useUiStore } from "../../stores/uiStore";
+import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
 
 const SIDEBAR_WIDTH_KEY = "panes:sidebar-width";
 const MIN_SIDEBAR = 160;
@@ -27,10 +28,13 @@ export function ThreeColumnLayout() {
   const showSidebar = useUiStore((state) => state.showSidebar);
   const sidebarPinned = useUiStore((state) => state.sidebarPinned);
   const showGitPanel = useUiStore((state) => state.showGitPanel);
+  const focusMode = useUiStore((state) => state.focusMode);
   const activeView = useUiStore((state) => state.activeView);
 
   const sidebarVisible = showSidebar && sidebarPinned;
   const centerDefaultSize = showGitPanel ? 74 : 100;
+  const fullBleedContent = focusMode || !showSidebar;
+  const showFocusDragStrip = focusMode && !showSidebar && !showGitPanel;
 
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const draggingRef = useRef(false);
@@ -84,7 +88,14 @@ export function ThreeColumnLayout() {
       )}
 
       {/* Floating content card */}
-      <div className={`content-card ${!showSidebar ? "content-card-full" : ""}`}>
+      <div className={`content-card ${fullBleedContent ? "content-card-full" : ""}`}>
+        {showFocusDragStrip && (
+          <div
+            className="focus-drag-strip"
+            onMouseDown={handleDragMouseDown}
+            onDoubleClick={handleDragDoubleClick}
+          />
+        )}
         <PanelGroup
           key={`${showGitPanel}`}
           direction="horizontal"

@@ -10,6 +10,7 @@
     "window": "Janela",
     "toggleSidebar": "Alternar sidebar",
     "toggleGitPanel": "Alternar painel Git",
+    "toggleFocusMode": "Alternar modo foco",
     "search": "Buscar",
     "toggleTerminal": "Alternar terminal",
     "close": "Fechar"

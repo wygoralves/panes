@@ -8,12 +8,19 @@ interface MessageFocusTarget {
   requestedAt: number;
 }
 
+interface FocusModeSnapshot {
+  showSidebar: boolean;
+  showGitPanel: boolean;
+}
+
 type ActiveView = "chat" | "harnesses" | "workspace-settings";
 
 interface UiState {
   showSidebar: boolean;
   sidebarPinned: boolean;
   showGitPanel: boolean;
+  focusMode: boolean;
+  focusModeSnapshot: FocusModeSnapshot | null;
   searchOpen: boolean;
   activeView: ActiveView;
   settingsWorkspaceId: string | null;
@@ -27,6 +34,8 @@ interface UiState {
   toggleSidebarPin: () => void;
   setSidebarPinned: (pinned: boolean) => void;
   toggleGitPanel: () => void;
+  setFocusMode: (enabled: boolean) => void;
+  toggleFocusMode: () => void;
   setSearchOpen: (open: boolean) => void;
   setActiveView: (view: ActiveView) => void;
   openWorkspaceSettings: (workspaceId: string) => void;
@@ -34,12 +43,20 @@ interface UiState {
   clearMessageFocusTarget: () => void;
 }
 
-const savedPinned = localStorage.getItem(SIDEBAR_PINNED_KEY);
+const savedPinned = (() => {
+  try {
+    return localStorage.getItem(SIDEBAR_PINNED_KEY);
+  } catch {
+    return null;
+  }
+})();
 
 export const useUiStore = create<UiState>((set) => ({
   showSidebar: true,
   sidebarPinned: savedPinned !== null ? savedPinned === "true" : true,
   showGitPanel: true,
+  focusMode: false,
+  focusModeSnapshot: null,
   searchOpen: false,
   commandPaletteOpen: false,
   commandPaletteInitialQuery: null,
@@ -53,14 +70,71 @@ export const useUiStore = create<UiState>((set) => ({
   toggleSidebarPin: () =>
     set((state) => {
       const next = !state.sidebarPinned;
-      localStorage.setItem(SIDEBAR_PINNED_KEY, String(next));
+      try {
+        localStorage.setItem(SIDEBAR_PINNED_KEY, String(next));
+      } catch {
+        // Ignore storage failures in non-browser/test environments.
+      }
       return { sidebarPinned: next, showSidebar: true };
     }),
   setSidebarPinned: (pinned) => {
-    localStorage.setItem(SIDEBAR_PINNED_KEY, String(pinned));
+    try {
+      localStorage.setItem(SIDEBAR_PINNED_KEY, String(pinned));
+    } catch {
+      // Ignore storage failures in non-browser/test environments.
+    }
     set({ sidebarPinned: pinned, showSidebar: true });
   },
   toggleGitPanel: () => set((state) => ({ showGitPanel: !state.showGitPanel })),
+  setFocusMode: (enabled) =>
+    set((state) => {
+      if (enabled) {
+        if (state.focusMode) {
+          return state;
+        }
+        return {
+          focusMode: true,
+          focusModeSnapshot: {
+            showSidebar: state.showSidebar,
+            showGitPanel: state.showGitPanel,
+          },
+          showSidebar: false,
+        };
+      }
+
+      if (!state.focusMode) {
+        return state;
+      }
+
+      const snapshot = state.focusModeSnapshot;
+      return {
+        focusMode: false,
+        focusModeSnapshot: null,
+        showSidebar: snapshot?.showSidebar ?? state.showSidebar,
+        showGitPanel: snapshot?.showGitPanel ?? state.showGitPanel,
+      };
+    }),
+  toggleFocusMode: () =>
+    set((state) => {
+      if (!state.focusMode) {
+        return {
+          focusMode: true,
+          focusModeSnapshot: {
+            showSidebar: state.showSidebar,
+            showGitPanel: state.showGitPanel,
+          },
+          showSidebar: false,
+        };
+      }
+
+      const snapshot = state.focusModeSnapshot;
+      return {
+        focusMode: false,
+        focusModeSnapshot: null,
+        showSidebar: snapshot?.showSidebar ?? state.showSidebar,
+        showGitPanel: snapshot?.showGitPanel ?? state.showGitPanel,
+      };
+    }),
   setSearchOpen: (open) => set({ searchOpen: open }),
   setActiveView: (view) => {
     set({ activeView: view });

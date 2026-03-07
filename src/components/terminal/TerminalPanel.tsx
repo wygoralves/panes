@@ -21,6 +21,7 @@ import {
   collectSessionIds,
   getGroupDisplayHarness,
 } from "../../stores/terminalStore";
+import { useUiStore } from "../../stores/uiStore";
 import type {
   SplitNode,
   SplitContainer as SplitContainerType,
@@ -1755,6 +1756,9 @@ function NewTabDropdown({
 export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const { t } = useTranslation("app");
   const workspaceState = useTerminalStore((state) => state.workspaces[workspaceId]);
+  const focusMode = useUiStore((state) => state.focusMode);
+  const showSidebar = useUiStore((state) => state.showSidebar);
+  const showGitPanel = useUiStore((state) => state.showGitPanel);
   const isOpen = workspaceState?.isOpen ?? false;
   const layoutMode = workspaceState?.layoutMode ?? "chat";
   const sessions = workspaceState?.sessions ?? [];
@@ -1764,6 +1768,9 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const activeGroupId = workspaceState?.activeGroupId ?? null;
   const focusedSessionId = workspaceState?.focusedSessionId ?? null;
   const pendingStartupPreset = workspaceState?.pendingStartupPreset ?? null;
+  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+  const useTitlebarSafeInset = isMac && focusMode && !showSidebar && layoutMode === "terminal";
+  const useFocusModeHeaderHeight = focusMode && showGitPanel;
 
   const createSession = useTerminalStore((state) => state.createSession);
   const materializeWorkspaceStartupPreset = useTerminalStore(
@@ -2798,7 +2805,13 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   }, [resolveSessionIdForDiagnostics, t, workspaceId]);
 
   return (
-    <div className="terminal-panel-root">
+    <div
+      className={`terminal-panel-root${useTitlebarSafeInset ? " terminal-panel-root-titlebar-safe" : ""}${
+        useFocusModeHeaderHeight ? " terminal-panel-root-focus-tabs" : ""
+      }${
+        !showGitPanel ? " terminal-panel-root-compact-tabs" : ""
+      }`}
+    >
       <div className="terminal-tabs-bar">
         <div className="terminal-tabs-list" ref={tabsListRef}>
           {groups.map((group) => {
@@ -2874,7 +2887,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
           })}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+        <div className="terminal-tabs-actions">
           <button
             ref={newTabBtnRef}
             type="button"

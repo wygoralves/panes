@@ -53,6 +53,7 @@
   --content-top-margin: 8px;
   --content-radius: 10px;
   --content-border: rgba(255, 255, 255, 0.08);
+  --panel-header-height: 48px;
 
   /* Transitions */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -210,6 +211,7 @@ button, input, textarea, select {
 }
 
 .content-card {
+  position: relative;
   flex: 1;
   min-width: 0;
   margin-top: var(--content-top-margin);
@@ -226,6 +228,15 @@ button, input, textarea, select {
   margin-top: 0;
   border-radius: 0;
   border: none;
+}
+
+.focus-drag-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 10px;
+  z-index: 4;
 }
 
 .content-panel {
@@ -622,7 +633,7 @@ button, input, textarea, select {
 }
 
 .git-header {
-  height: 46px;
+  height: var(--panel-header-height);
   padding: 0 14px;
   border-bottom: 1px solid var(--border);
   display: flex;
@@ -1327,6 +1338,11 @@ button, input, textarea, select {
   overflow: hidden;
 }
 
+.chat-focus-safe-strip {
+  height: 32px;
+  flex-shrink: 0;
+}
+
 /* Layout mode switcher */
 .layout-mode-switcher {
   display: inline-flex;
@@ -1410,12 +1426,31 @@ button, input, textarea, select {
   background: var(--bg-2);
 }
 
+.terminal-panel-root-focus-tabs .terminal-tabs-bar {
+  height: var(--panel-header-height);
+}
+
+.terminal-panel-root-compact-tabs .terminal-tabs-bar {
+  height: 40px;
+}
+
 .terminal-tabs-list {
   display: flex;
   min-width: 0;
   overflow-x: auto;
   flex: 1;
   scrollbar-width: none;
+}
+
+.terminal-panel-root-titlebar-safe .terminal-tabs-list {
+  padding-left: 74px;
+}
+
+.terminal-tabs-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 16px;
 }
 
 .terminal-tabs-list::-webkit-scrollbar {
@@ -1474,16 +1509,21 @@ button, input, textarea, select {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  border: none;
+  width: 22px;
+  height: 22px;
+  border: 1px solid transparent;
   background: transparent;
   padding: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   color: var(--text-3);
   cursor: pointer;
   opacity: 0;
-  transition: opacity var(--duration-fast) var(--ease-out);
+  flex-shrink: 0;
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .terminal-tab:hover .terminal-tab-close,
@@ -1494,24 +1534,42 @@ button, input, textarea, select {
 .terminal-tab-close:hover {
   color: var(--text-1);
   background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 .terminal-add-btn {
-  width: 32px;
-  min-width: 32px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: transparent;
   color: var(--text-3);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-out);
+  flex-shrink: 0;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
 }
 
 .terminal-add-btn:hover {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.terminal-add-btn:active {
+  transform: translateY(1px);
+}
+
+.terminal-add-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .terminal-body {
@@ -1738,6 +1796,7 @@ button, input, textarea, select {
 .terminal-broadcast-btn-active {
   color: var(--accent) !important;
   background: var(--accent-dim) !important;
+  border-color: rgba(255, 107, 107, 0.22) !important;
 }
 
 .terminal-leaf-pane-broadcasting::after {
@@ -4492,6 +4551,10 @@ button, input, textarea, select {
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+.editor-tabs-bar-titlebar-safe {
+  padding-left: 74px;
 }
 
 .editor-tabs-bar::-webkit-scrollbar {

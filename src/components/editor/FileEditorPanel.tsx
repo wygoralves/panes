@@ -3,6 +3,7 @@ import { X, FileText, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useFileStore } from "../../stores/fileStore";
 import { useTerminalStore } from "../../stores/terminalStore";
+import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
@@ -19,8 +20,12 @@ export function FileEditorPanel() {
   const requestCloseTab = useFileStore((s) => s.requestCloseTab);
   const confirmCloseTab = useFileStore((s) => s.confirmCloseTab);
   const cancelCloseTab = useFileStore((s) => s.cancelCloseTab);
+  const focusMode = useUiStore((s) => s.focusMode);
+  const showSidebar = useUiStore((s) => s.showSidebar);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
+  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+  const useTitlebarSafeInset = isMac && focusMode && !showSidebar;
 
   // Cmd+S to save — Cmd+W is handled via native menu "close-window" action.
   // Note: e.preventDefault() for Cmd+S is handled at the app level (App.tsx)
@@ -44,7 +49,7 @@ export function FileEditorPanel() {
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       {/* Tab bar */}
       {tabs.length > 0 && (
-        <div className="editor-tabs-bar">
+        <div className={`editor-tabs-bar${useTitlebarSafeInset ? " editor-tabs-bar-titlebar-safe" : ""}`}>
           {tabs.map((tab) => (
             <div
               key={tab.id}

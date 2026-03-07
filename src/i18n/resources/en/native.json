@@ -10,6 +10,7 @@
     "window": "Window",
     "toggleSidebar": "Toggle Sidebar",
     "toggleGitPanel": "Toggle Git Panel",
+    "toggleFocusMode": "Toggle Focus Mode",
     "search": "Search",
     "toggleTerminal": "Toggle Terminal",
     "close": "Close"

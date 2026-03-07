@@ -84,6 +84,7 @@
       "layoutEditor": "Switch to File Editor",
       "toggleSidebar": "Toggle Sidebar",
       "toggleGitPanel": "Toggle Git Panel",
+      "toggleFocusMode": "Toggle Focus Mode",
       "searchMessages": "Search Messages",
       "gitFetch": "Git Fetch",
       "gitPull": "Git Pull",

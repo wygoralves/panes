@@ -270,21 +270,6 @@ export function GitDiffEditorPanel({
 
   return (
     <div className="git-diff-editor-panel">
-      <div className="git-diff-editor-header">
-        <div className="git-diff-editor-labels">
-          {statusBadges.map((badge) => (
-            <span key={badge} className="git-diff-editor-badge">
-              {badge}
-            </span>
-          ))}
-        </div>
-        {readOnlyModified ? (
-          <span className="git-diff-editor-note">
-            {t("editor.gitDiff.readOnlyModified")}
-          </span>
-        ) : null}
-      </div>
-
       {calloutMessage ? (
         <div className="git-diff-editor-callout">
           {calloutMessage}

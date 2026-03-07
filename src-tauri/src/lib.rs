@@ -80,8 +80,8 @@ pub fn run() {
             app.on_menu_event(move |_app, event| {
                 let id = event.id().as_ref();
                 match id {
-                    "toggle-sidebar" | "toggle-git-panel" | "toggle-search" | "toggle-terminal"
-                    | "close-window" => {
+                    "toggle-sidebar" | "toggle-git-panel" | "toggle-focus-mode"
+                    | "toggle-search" | "toggle-terminal" | "close-window" => {
                         let _ = handle.emit("menu-action", id);
                     }
                     _ => {}
@@ -522,6 +522,13 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
         true,
         Some("CmdOrCtrl+Shift+B"),
     )?;
+    let toggle_focus_mode = MenuItem::with_id(
+        handle,
+        "toggle-focus-mode",
+        strings.toggle_focus_mode,
+        true,
+        Some("CmdOrCtrl+Alt+F"),
+    )?;
     let toggle_search = MenuItem::with_id(
         handle,
         "toggle-search",
@@ -539,6 +546,7 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
     let view_menu = SubmenuBuilder::new(handle, strings.view_menu)
         .item(&toggle_sidebar)
         .item(&toggle_git_panel)
+        .item(&toggle_focus_mode)
         .separator()
         .item(&toggle_search)
         .separator()

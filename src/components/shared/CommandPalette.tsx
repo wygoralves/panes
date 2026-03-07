@@ -6,6 +6,7 @@ import {
   Columns2,
   SquareTerminal,
   FilePen,
+  Focus,
   PanelLeft,
   GitBranch as GitBranchIcon,
   Search,
@@ -248,6 +249,18 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     shortcut: "\u2318\u21E7B",
     action: ({ close }) => {
       useUiStore.getState().toggleGitPanel();
+      close();
+    },
+  },
+  {
+    id: "toggle-focus-mode",
+    label: t("commandPalette.commands.toggleFocusMode"),
+    icon: Focus,
+    group: "layout",
+    keywords: ["focus", "zen", "center", "chrome", "foco", "central"],
+    shortcut: "\u2318\u2325F",
+    action: ({ close }) => {
+      useUiStore.getState().toggleFocusMode();
       close();
     },
   },
@@ -1169,7 +1182,15 @@ export function CommandPalette({ open, onClose }: Props) {
       const result: ResultGroup[] = [];
 
       // Quick actions
-      const quickIds = ["layout-chat", "layout-split", "layout-terminal", "layout-editor", "toggle-sidebar", "toggle-git-panel"];
+      const quickIds = [
+        "layout-chat",
+        "layout-split",
+        "layout-terminal",
+        "layout-editor",
+        "toggle-sidebar",
+        "toggle-git-panel",
+        "toggle-focus-mode",
+      ];
       const quickItems: ResultItem[] = availableCommands
         .filter((c) => quickIds.includes(c.id))
         .map((c) => ({ type: "command", entry: c }));

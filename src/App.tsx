@@ -164,6 +164,7 @@ export function App() {
   // state, canceling each other out. A debounce guard (`shortcutLastFired`)
   // prevents the second handler from re-toggling within 100ms.
   //
+  // Cmd+Alt+F (focus mode) is intercepted before Cmd+F so it wins even in editors.
   // Cmd+E (editor toggle) has no native menu item — JS-only.
   // Cmd+S always prevents the browser save-page dialog.
   // Cmd+W is handled solely via the native menu "close-window" action.
@@ -179,6 +180,12 @@ export function App() {
       // Always prevent Cmd+S from opening the browser save dialog
       if (key === "s" && !e.shiftKey) {
         e.preventDefault();
+        return;
+      }
+
+      if (key === "f" && e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        fireShortcut("toggle-focus-mode", () => useUiStore.getState().toggleFocusMode());
         return;
       }
 
@@ -341,6 +348,9 @@ export function App() {
           break;
         case "toggle-git-panel":
           fireShortcut("toggle-git-panel", () => useUiStore.getState().toggleGitPanel());
+          break;
+        case "toggle-focus-mode":
+          fireShortcut("toggle-focus-mode", () => useUiStore.getState().toggleFocusMode());
           break;
         case "toggle-search":
           fireShortcut("toggle-search", () => useUiStore.getState().setSearchOpen(true));

@@ -1069,7 +1069,10 @@ export function ChatPanel() {
   } = useChatStore();
   const messageFocusTarget = useUiStore((s) => s.messageFocusTarget);
   const clearMessageFocusTarget = useUiStore((s) => s.clearMessageFocusTarget);
+  const focusMode = useUiStore((s) => s.focusMode);
   const showSidebar = useUiStore((s) => s.showSidebar);
+  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+  const useTitlebarSafeInset = isMac && focusMode && !showSidebar;
   const engines = useEngineStore((s) => s.engines);
   const health = useEngineStore((s) => s.health);
   const codexExternalSandboxActive = useMemo(
@@ -2364,6 +2367,7 @@ export function ChatPanel() {
   const layoutMode: LayoutMode = activeWorkspaceId
     ? (terminalWorkspaceState?.layoutMode ?? "chat")
     : "chat";
+  const showFocusModeSafeStrip = useTitlebarSafeInset && (layoutMode === "chat" || layoutMode === "split");
   const terminalPanelSize = activeWorkspaceId
     ? terminalWorkspaceState?.panelSize ?? 32
     : 32;
@@ -2424,166 +2428,175 @@ export function ChatPanel() {
         background: "var(--content-bg)",
       }}
     >
-      {/* ── Top Header Bar ── */}
-      <div
-        onMouseDown={handleDragMouseDown}
-        onDoubleClick={handleDragDoubleClick}
-        style={{
-          height: 46,
-          padding: "0 16px",
-          paddingLeft: showSidebar ? 16 : 80,
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-        }}
-      >
-        {/* Breadcrumb: workspace / thread title / +N files */}
-        <div className="no-drag" style={{ flex: 1, display: "flex", alignItems: "center", gap: 0, minWidth: 0 }}>
-          {workspaceName && (
-            <>
-              <span
+      {!focusMode && (
+        <div
+          onMouseDown={handleDragMouseDown}
+          onDoubleClick={handleDragDoubleClick}
+          style={{
+            height: "var(--panel-header-height)",
+            padding: "0 16px",
+            paddingLeft: showSidebar ? 16 : 80,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            borderBottom: "1px solid var(--border)",
+            flexShrink: 0,
+          }}
+        >
+          {/* Breadcrumb: workspace / thread title / +N files */}
+          <div className="no-drag" style={{ flex: 1, display: "flex", alignItems: "center", gap: 0, minWidth: 0 }}>
+            {workspaceName && (
+              <>
+                <span
+                  style={{
+                    fontSize: 12,
+                    color: "var(--text-3)",
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
+                  }}
+                >
+                  {workspaceName}
+                </span>
+                <span style={{ fontSize: 12, color: "var(--border)", margin: "0 6px", flexShrink: 0 }}>/</span>
+              </>
+            )}
+            {editingThreadTitle && activeThread ? (
+              <input
+                ref={titleInputRef}
+                value={threadTitleDraft}
+                onChange={(event) => setThreadTitleDraft(event.target.value)}
+                onBlur={cancelThreadTitleEdit}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void saveThreadTitleEdit();
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelThreadTitleEdit();
+                  }
+                }}
                 style={{
-                  fontSize: 12,
-                  color: "var(--text-3)",
+                  minWidth: 120,
+                  width: "100%",
+                  fontSize: 13.5,
+                  fontWeight: 600,
+                  letterSpacing: "-0.01em",
+                  color: "var(--text-1)",
+                  background: "var(--bg-3)",
+                  border: "1px solid var(--border-active)",
+                  borderRadius: "var(--radius-sm)",
+                  padding: "4px 8px",
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={startThreadTitleEdit}
+                disabled={!activeThread}
+                title={activeThread ? t("panel.renameThread") : ""}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  padding: "2px 6px",
+                  margin: 0,
+                  fontSize: 13.5,
+                  fontWeight: 600,
+                  letterSpacing: "-0.01em",
+                  color: "var(--text-1)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
-                  flexShrink: 0,
+                  cursor: activeThread ? "text" : "default",
+                  textAlign: "left",
+                  borderRadius: "var(--radius-sm)",
+                  transition: "background var(--duration-fast) var(--ease-out)",
+                }}
+                onMouseEnter={(e) => {
+                  if (activeThread) e.currentTarget.style.background = "rgba(255,255,255,0.04)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "transparent";
                 }}
               >
-                {workspaceName}
-              </span>
-              <span style={{ fontSize: 12, color: "var(--border)", margin: "0 6px", flexShrink: 0 }}>/</span>
-            </>
-          )}
-          {editingThreadTitle && activeThread ? (
-            <input
-              ref={titleInputRef}
-              value={threadTitleDraft}
-              onChange={(event) => setThreadTitleDraft(event.target.value)}
-              onBlur={cancelThreadTitleEdit}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void saveThreadTitleEdit();
-                  return;
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  cancelThreadTitleEdit();
-                }
-              }}
-              style={{
-                minWidth: 120,
-                width: "100%",
-                fontSize: 13.5,
-                fontWeight: 600,
-                letterSpacing: "-0.01em",
-                color: "var(--text-1)",
-                background: "var(--bg-3)",
-                border: "1px solid var(--border-active)",
-                borderRadius: "var(--radius-sm)",
-                padding: "4px 8px",
-              }}
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={startThreadTitleEdit}
-              disabled={!activeThread}
-              title={activeThread ? t("panel.renameThread") : ""}
-              style={{
-                border: "none",
-                background: "transparent",
-                padding: "2px 6px",
-                margin: 0,
-                fontSize: 13.5,
-                fontWeight: 600,
-                letterSpacing: "-0.01em",
-                color: "var(--text-1)",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                cursor: activeThread ? "text" : "default",
-                textAlign: "left",
-                borderRadius: "var(--radius-sm)",
-                transition: "background var(--duration-fast) var(--ease-out)",
-              }}
-              onMouseEnter={(e) => {
-                if (activeThread) e.currentTarget.style.background = "rgba(255,255,255,0.04)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "transparent";
-              }}
-            >
-              {activeThread?.title || (
-                layoutMode === "terminal" ? t("panel.threadTitle.terminal")
-                : layoutMode === "editor" ? t("panel.threadTitle.fileEditor")
-                : layoutMode === "split" ? t("panel.threadTitle.newChat")
-                : t("panel.threadTitle.newChat")
-              )}
-            </button>
-          )}
-          {totalAdded > 0 && (
-            <>
-              <span style={{ fontSize: 12, color: "var(--border)", margin: "0 6px", flexShrink: 0 }}>/</span>
-              <span
-                style={{
-                  fontSize: 11,
-                  fontFamily: '"JetBrains Mono", monospace',
-                  color: "var(--warning)",
-                  whiteSpace: "nowrap",
-                  flexShrink: 0,
-                }}
-              >
-                {t("panel.changedFiles", { count: totalAdded })}
-              </span>
-            </>
-          )}
-        </div>
+                {activeThread?.title || (
+                  layoutMode === "terminal" ? t("panel.threadTitle.terminal")
+                  : layoutMode === "editor" ? t("panel.threadTitle.fileEditor")
+                  : layoutMode === "split" ? t("panel.threadTitle.newChat")
+                  : t("panel.threadTitle.newChat")
+                )}
+              </button>
+            )}
+            {totalAdded > 0 && (
+              <>
+                <span style={{ fontSize: 12, color: "var(--border)", margin: "0 6px", flexShrink: 0 }}>/</span>
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontFamily: '"JetBrains Mono", monospace',
+                    color: "var(--warning)",
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
+                  }}
+                >
+                  {t("panel.changedFiles", { count: totalAdded })}
+                </span>
+              </>
+            )}
+          </div>
 
-        {/* Right-side action buttons */}
-        <div className="no-drag" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <div className="layout-mode-switcher">
-            <button
-              type="button"
-              title={t("panel.layout.chatOnly")}
-              disabled={!activeWorkspaceId}
-              onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "chat")}
-              className={`layout-mode-btn ${layoutMode === "chat" ? "active" : ""}`}
-            >
-              <MessageSquare size={12} />
-            </button>
-            <button
-              type="button"
-              title={t("panel.layout.splitView")}
-              disabled={!activeWorkspaceId}
-              onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "split")}
-              className={`layout-mode-btn ${layoutMode === "split" ? "active" : ""}`}
-            >
-              <Monitor size={12} />
-            </button>
-            <button
-              type="button"
-              title={t("panel.layout.terminalOnly")}
-              disabled={!activeWorkspaceId}
-              onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "terminal")}
-              className={`layout-mode-btn ${layoutMode === "terminal" ? "active" : ""}`}
-            >
-              <SquareTerminal size={12} />
-            </button>
-            <button
-              type="button"
-              title={t("panel.layout.fileEditor")}
-              disabled={!activeWorkspaceId}
-              onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "editor")}
-              className={`layout-mode-btn ${layoutMode === "editor" ? "active" : ""}`}
-            >
-              <FilePen size={12} />
-            </button>
+          {/* Right-side action buttons */}
+          <div className="no-drag" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <div className="layout-mode-switcher">
+              <button
+                type="button"
+                title={t("panel.layout.chatOnly")}
+                disabled={!activeWorkspaceId}
+                onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "chat")}
+                className={`layout-mode-btn ${layoutMode === "chat" ? "active" : ""}`}
+              >
+                <MessageSquare size={12} />
+              </button>
+              <button
+                type="button"
+                title={t("panel.layout.splitView")}
+                disabled={!activeWorkspaceId}
+                onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "split")}
+                className={`layout-mode-btn ${layoutMode === "split" ? "active" : ""}`}
+              >
+                <Monitor size={12} />
+              </button>
+              <button
+                type="button"
+                title={t("panel.layout.terminalOnly")}
+                disabled={!activeWorkspaceId}
+                onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "terminal")}
+                className={`layout-mode-btn ${layoutMode === "terminal" ? "active" : ""}`}
+              >
+                <SquareTerminal size={12} />
+              </button>
+              <button
+                type="button"
+                title={t("panel.layout.fileEditor")}
+                disabled={!activeWorkspaceId}
+                onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "editor")}
+                className={`layout-mode-btn ${layoutMode === "editor" ? "active" : ""}`}
+              >
+                <FilePen size={12} />
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
+
+      {showFocusModeSafeStrip && (
+        <div
+          className="chat-focus-safe-strip"
+          onMouseDown={handleDragMouseDown}
+          onDoubleClick={handleDragDoubleClick}
+        />
+      )}
 
       <div ref={contentAreaRef} className="chat-terminal-content">
         {/* Chat section */}
