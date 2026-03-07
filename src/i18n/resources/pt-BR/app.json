@@ -146,6 +146,22 @@
     "loading": "Detectando harnesses instalados...",
     "footerHint": "Harnesses instalados aparecem como opções de abertura rápida no botão + do terminal"
   },
+  "editor": {
+    "closeTab": "Fechar arquivo",
+    "loadingFile": "Carregando arquivo...",
+    "binaryFile": "Arquivo binário - não é possível exibir",
+    "emptyTitle": "Nenhum arquivo aberto",
+    "emptyHint": "Abra um arquivo pela visualização Files no painel Git",
+    "unsavedChangesTitle": "Alterações não salvas",
+    "unsavedChangesMessage": "\"{{name}}\" tem alterações não salvas. Descartá-las?",
+    "discard": "Descartar",
+    "cancel": "Cancelar",
+    "toasts": {
+      "modifiedExternally": "{{name}} foi modificado externamente. Salve novamente para sobrescrever.",
+      "saved": "{{name}} salvo",
+      "saveFailed": "Falha ao salvar: {{error}}"
+    }
+  },
   "engineHealth": {
     "missingTitle": "Engine Codex não detectada",
     "configWarningTitle": "Aviso de configuração do Codex",

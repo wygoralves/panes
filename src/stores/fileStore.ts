@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { ipc } from "../lib/ipc";
+import { t } from "../i18n";
 import { toast } from "./toastStore";
 import { useWorkspaceStore } from "./workspaceStore";
 import { useTerminalStore } from "./terminalStore";
@@ -157,7 +158,7 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
     try {
       const disk = await ipc.readFile(tab.repoPath, tab.filePath);
       if (!disk.isBinary && disk.content !== tab.savedContent) {
-        toast.warning(`${tab.fileName} was modified externally. Save again to overwrite.`);
+        toast.warning(t("app:editor.toasts.modifiedExternally", { name: tab.fileName }));
         set((state) => ({
           tabs: state.tabs.map((t) =>
             t.id === tabId
@@ -181,9 +182,9 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
             : t,
         ),
       }));
-      toast.success(`Saved ${tab.fileName}`);
+      toast.success(t("app:editor.toasts.saved", { name: tab.fileName }));
     } catch (err) {
-      toast.error(`Failed to save: ${String(err)}`);
+      toast.error(t("app:editor.toasts.saveFailed", { error: String(err) }));
     }
   },
 }));
