@@ -710,7 +710,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("panes-workspace-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).expect("failed to create temp workspace root");
         let workspace =
-            workspaces::upsert_workspace(db, root.to_string_lossy().as_ref(), 1).unwrap();
+            workspaces::upsert_workspace(db, root.to_string_lossy().as_ref(), Some(1)).unwrap();
         let thread =
             threads::create_thread(db, &workspace.id, None, "codex", "gpt-5.3-codex", "test")
                 .unwrap();

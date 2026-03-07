@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS repos (
   path TEXT NOT NULL,
   default_branch TEXT NOT NULL DEFAULT 'main',
   is_active INTEGER NOT NULL DEFAULT 1,
+  is_discovered INTEGER NOT NULL DEFAULT 1,
   trust_level TEXT NOT NULL DEFAULT 'standard',
   UNIQUE(workspace_id, path)
 );

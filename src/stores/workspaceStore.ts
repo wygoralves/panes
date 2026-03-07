@@ -30,7 +30,7 @@ interface WorkspaceState {
   hasWorkspaceGitSelection: (workspaceId: string) => Promise<boolean>;
   setRepoTrustLevel: (repoId: string, trustLevel: TrustLevel) => Promise<void>;
   setAllReposTrustLevel: (trustLevel: TrustLevel) => Promise<void>;
-  rescanWorkspace: (workspaceId: string) => Promise<void>;
+  rescanWorkspace: (workspaceId: string, scanDepth?: number) => Promise<Workspace | null>;
 }
 
 const LAST_WORKSPACE_KEY = "panes:lastActiveWorkspaceId";
@@ -350,11 +350,34 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({ error: String(error) });
     }
   },
-  rescanWorkspace: async (workspaceId) => {
+  rescanWorkspace: async (workspaceId, scanDepth) => {
     const workspace = get().workspaces.find((w) => w.id === workspaceId);
-    if (!workspace) return;
-    await ipc.openWorkspace(workspace.rootPath, workspace.scanDepth);
-    await get().loadRepos(workspaceId);
+    if (!workspace) return null;
+
+    try {
+      const updatedWorkspace = await ipc.openWorkspace(
+        workspace.rootPath,
+        scanDepth ?? workspace.scanDepth,
+      );
+      set((state) => ({
+        workspaces: [
+          updatedWorkspace,
+          ...state.workspaces.filter((item) => item.id !== updatedWorkspace.id),
+        ],
+        archivedWorkspaces: state.archivedWorkspaces.filter(
+          (item) => item.id !== updatedWorkspace.id,
+        ),
+      }));
+
+      if (get().activeWorkspaceId === workspaceId) {
+        await get().loadRepos(workspaceId);
+      }
+
+      return updatedWorkspace;
+    } catch (error) {
+      set({ error: String(error) });
+      throw error;
+    }
   },
   setAllReposTrustLevel: async (trustLevel) => {
     const repos = get().repos;

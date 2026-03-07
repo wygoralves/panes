@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   Plus,
-  FolderOpen,
   FolderGit2,
   MessageSquare,
   ChevronDown,
@@ -25,6 +24,8 @@ import { useUpdateStore } from "../../stores/updateStore";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { UpdateDialog } from "../onboarding/UpdateDialog";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
+import { WorkspaceMoreMenu } from "../workspace/WorkspaceMoreMenu";
+import { WorkspaceSettingsModal } from "../workspace/WorkspaceSettingsModal";
 import { WorkspaceStartupPresetModal } from "../workspace/WorkspaceStartupPresetModal";
 import type { Thread, Workspace } from "../../types";
 
@@ -48,23 +49,18 @@ interface ProjectGroup {
 }
 
 const MAX_VISIBLE_THREADS = 8;
-const DEFAULT_SCAN_DEPTH = 3;
-const MIN_SCAN_DEPTH = 0;
-const MAX_SCAN_DEPTH = 12;
-const SCAN_DEPTH_STORAGE_KEY = "panes.workspace.scanDepth";
+const LEGACY_SCAN_DEPTH_STORAGE_KEY = "panes.workspace.scanDepth";
+const LEGACY_SCAN_DEPTH_MIN = 0;
+const LEGACY_SCAN_DEPTH_MAX = 12;
 
-function readDefaultScanDepth(): number {
-  const stored = window.localStorage.getItem(SCAN_DEPTH_STORAGE_KEY);
-  if (!stored) return DEFAULT_SCAN_DEPTH;
+function readLegacyDefaultScanDepth(): number | undefined {
+  const stored = window.localStorage.getItem(LEGACY_SCAN_DEPTH_STORAGE_KEY);
+  if (!stored) return undefined;
   const parsed = Number.parseInt(stored, 10);
-  if (!Number.isFinite(parsed)) return DEFAULT_SCAN_DEPTH;
-  if (parsed < MIN_SCAN_DEPTH || parsed > MAX_SCAN_DEPTH) return DEFAULT_SCAN_DEPTH;
-  return parsed;
-}
-
-function parseScanDepth(input: string): number | null {
-  const parsed = Number.parseInt(input.trim(), 10);
-  if (!Number.isFinite(parsed) || parsed < MIN_SCAN_DEPTH || parsed > MAX_SCAN_DEPTH) return null;
+  if (!Number.isFinite(parsed)) return undefined;
+  if (parsed < LEGACY_SCAN_DEPTH_MIN || parsed > LEGACY_SCAN_DEPTH_MAX) {
+    return undefined;
+  }
   return parsed;
 }
 
@@ -117,11 +113,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [showAll, setShowAll] = useState<Record<string, boolean>>({});
   const [archivedOpen, setArchivedOpen] = useState(false);
-  const [advancedScanOpen, setAdvancedScanOpen] = useState(false);
-  const [advancedScanDraft, setAdvancedScanDraft] = useState(() =>
-    String(readDefaultScanDepth()),
-  );
-  const [advancedScanError, setAdvancedScanError] = useState<string | null>(null);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const [archiveWorkspacePrompt, setArchiveWorkspacePrompt] = useState<{
     workspace: Workspace;
@@ -129,7 +120,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const [archiveThreadPrompt, setArchiveThreadPrompt] = useState<{
     thread: Thread;
   } | null>(null);
-  const [startupPresetWorkspace, setStartupPresetWorkspace] = useState<Workspace | null>(null);
+  const [startupPresetWorkspaceId, setStartupPresetWorkspaceId] = useState<string | null>(null);
+  const [settingsWorkspaceId, setSettingsWorkspaceId] = useState<string | null>(null);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [settingsMenuPos, setSettingsMenuPos] = useState({ top: 0, left: 0 });
   const settingsMenuRef = useRef<HTMLDivElement>(null);
@@ -182,31 +174,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   async function onOpenFolder() {
     const selected = await open({ directory: true, multiple: false });
     if (!selected || Array.isArray(selected)) return;
-    await openWorkspace(selected, readDefaultScanDepth());
-  }
-
-  function toggleAdvancedScanConfig() {
-    setAdvancedScanOpen((current) => {
-      const next = !current;
-      if (next) {
-        setAdvancedScanDraft(String(readDefaultScanDepth()));
-        setAdvancedScanError(null);
-      }
-      return next;
-    });
-  }
-
-  function saveAdvancedScanConfig() {
-    const parsedDepth = parseScanDepth(advancedScanDraft);
-    if (parsedDepth === null) {
-      setAdvancedScanError(
-        `Use an integer between ${MIN_SCAN_DEPTH} and ${MAX_SCAN_DEPTH}.`,
-      );
-      return;
-    }
-    setAdvancedScanError(null);
-    window.localStorage.setItem(SCAN_DEPTH_STORAGE_KEY, String(parsedDepth));
-    setAdvancedScanOpen(false);
+    await openWorkspace(selected, readLegacyDefaultScanDepth());
   }
 
   async function onSelectThread(thread: Thread) {
@@ -281,6 +249,22 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   async function onRestoreThread(thread: Thread) {
     await restoreThread(thread.id);
   }
+
+  const startupPresetWorkspace = useMemo(
+    () =>
+      startupPresetWorkspaceId
+        ? workspaces.find((workspace) => workspace.id === startupPresetWorkspaceId) ?? null
+        : null,
+    [startupPresetWorkspaceId, workspaces],
+  );
+
+  const settingsWorkspace = useMemo(
+    () =>
+      settingsWorkspaceId
+        ? workspaces.find((workspace) => workspace.id === settingsWorkspaceId) ?? null
+        : null,
+    [settingsWorkspaceId, workspaces],
+  );
 
   return (
     <div
@@ -435,32 +419,12 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                     </span>
                   )}
 
-                  <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
-                    <span
-                      role="button"
-                      title="Workspace startup preset"
-                      className="sb-project-archive"
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setStartupPresetWorkspace(project.workspace);
-                      }}
-                    >
-                      <Terminal size={11} />
-                    </span>
-                    <span
-                      role="button"
-                      title="Archive workspace"
-                      className="sb-project-archive"
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void onDeleteWorkspace(project.workspace);
-                      }}
-                    >
-                      <Archive size={11} />
-                    </span>
-                  </span>
+                  <WorkspaceMoreMenu
+                    workspace={project.workspace}
+                    onOpenSettings={() => setSettingsWorkspaceId(project.workspace.id)}
+                    onOpenStartupPreset={() => setStartupPresetWorkspaceId(project.workspace.id)}
+                    onArchive={() => onDeleteWorkspace(project.workspace)}
+                  />
                 </button>
 
                 {/* Threads */}
@@ -633,61 +597,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
           Settings
         </button>
 
-        {advancedScanOpen && (
-          <div className="sb-scan-config">
-            <p style={{ margin: 0, fontSize: 11, color: "var(--text-3)" }}>
-              Default depth used when opening new projects ({MIN_SCAN_DEPTH}-{MAX_SCAN_DEPTH}).
-            </p>
-            <input
-              type="number"
-              min={MIN_SCAN_DEPTH}
-              max={MAX_SCAN_DEPTH}
-              step={1}
-              value={advancedScanDraft}
-              className="sb-scan-input"
-              onChange={(e) => {
-                setAdvancedScanDraft(e.target.value);
-                if (advancedScanError) setAdvancedScanError(null);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  saveAdvancedScanConfig();
-                } else if (e.key === "Escape") {
-                  e.preventDefault();
-                  setAdvancedScanOpen(false);
-                  setAdvancedScanError(null);
-                }
-              }}
-            />
-            {advancedScanError && (
-              <p style={{ margin: 0, fontSize: 11, color: "var(--danger)" }}>
-                {advancedScanError}
-              </p>
-            )}
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={() => {
-                  setAdvancedScanOpen(false);
-                  setAdvancedScanError(null);
-                }}
-                style={{ padding: "5px 9px", fontSize: 11.5, cursor: "pointer" }}
-              >
-                Close
-              </button>
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={saveAdvancedScanConfig}
-                style={{ padding: "5px 10px", fontSize: 11.5, cursor: "pointer" }}
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Settings portal menu */}
@@ -735,27 +644,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 />
               )}
             </button>
-            <div style={{ height: 1, margin: "4px 0", background: "var(--border)" }} />
-            <button
-              type="button"
-              className="git-action-menu-item"
-              style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
-              onClick={() => {
-                closeSettingsMenu();
-                toggleAdvancedScanConfig();
-              }}
-            >
-              <span>Scan depth</span>
-              <span
-                style={{
-                  fontFamily: '"JetBrains Mono", monospace',
-                  fontSize: 11,
-                  color: "var(--text-3)",
-                }}
-              >
-                {readDefaultScanDepth()}
-              </span>
-            </button>
           </div>,
           document.body,
         )}
@@ -798,11 +686,22 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
         document.body,
       )}
 
+      {settingsWorkspace && (
+        <WorkspaceSettingsModal
+          workspace={settingsWorkspace}
+          onClose={() => setSettingsWorkspaceId(null)}
+          onOpenStartupPreset={() => {
+            setSettingsWorkspaceId(null);
+            setStartupPresetWorkspaceId(settingsWorkspace.id);
+          }}
+        />
+      )}
+
       {startupPresetWorkspace && createPortal(
         <WorkspaceStartupPresetModal
           open={startupPresetWorkspace !== null}
           workspace={startupPresetWorkspace}
-          onClose={() => setStartupPresetWorkspace(null)}
+          onClose={() => setStartupPresetWorkspaceId(null)}
         />,
         document.body,
       )}
