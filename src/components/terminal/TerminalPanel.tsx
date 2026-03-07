@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Columns2, Copy, Folder, GitBranch as GitBranchIcon, Minus, Pencil, Plus, Radio, Rows2, SquareTerminal, Trash2, X } from "lucide-react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { useHarnessStore } from "../../stores/harnessStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { toast } from "../../stores/toastStore";
@@ -1260,6 +1261,7 @@ function SplitPaneView({
   ensureTerminal,
   showCloseButton,
 }: SplitPaneViewProps) {
+  const { t } = useTranslation("app");
   if (node.type === "leaf") {
     const isFocused = node.sessionId === activeIndicatorSessionId || isBroadcasting;
     return (
@@ -1310,7 +1312,7 @@ function SplitPaneView({
               e.stopPropagation();
               onClose(node.sessionId);
             }}
-            title="Close pane"
+            title={t("terminal.closePane")}
           >
             <X size={10} />
           </button>
@@ -1542,6 +1544,7 @@ function NewTabDropdown({
   onLaunchHarness,
   onMultiLaunch,
 }: NewTabDropdownProps) {
+  const { t } = useTranslation("app");
   const [mode, setMode] = useState<"default" | "multi">("default");
   const [quantities, setQuantities] = useState<Map<string, number>>(() => new Map());
   const [withBroadcast, setWithBroadcast] = useState(true);
@@ -1603,7 +1606,7 @@ function NewTabDropdown({
         <>
           <button type="button" className="terminal-new-dropdown-item" onClick={onNewTerminal}>
             <SquareTerminal size={13} />
-            Terminal
+            {t("terminal.terminal")}
           </button>
           {harnesses.length > 0 && <div className="terminal-new-dropdown-divider" />}
           {harnesses.map((h) => (
@@ -1626,7 +1629,7 @@ function NewTabDropdown({
                 onClick={() => setMode("multi")}
               >
                 <Rows2 size={13} />
-                Multi-launch...
+                {t("terminal.multiLaunchEntry")}
               </button>
             </>
           )}
@@ -1638,7 +1641,7 @@ function NewTabDropdown({
             <button type="button" className="tnd-back-btn" onClick={() => { setMode("default"); setQuantities(new Map()); }}>
               <X size={11} />
             </button>
-            <span className="tnd-multi-title">Multi-launch</span>
+            <span className="tnd-multi-title">{t("terminal.multiLaunchTitle")}</span>
           </div>
           <div className="terminal-new-dropdown-divider" />
           {harnesses.map((h) => {
@@ -1690,8 +1693,8 @@ function NewTabDropdown({
                       <Radio size={13} />
                     </div>
                     <div className="tnd-option-text">
-                      <span className="tnd-option-title">Broadcast input</span>
-                      <span className="tnd-option-desc">Type once, send to all panes</span>
+                      <span className="tnd-option-title">{t("terminal.broadcastInput")}</span>
+                      <span className="tnd-option-desc">{t("terminal.broadcastInputDescription")}</span>
                     </div>
                     <div className={`tnd-option-toggle${withBroadcast ? " tnd-option-toggle-on" : ""}`}>
                       <div className="tnd-option-toggle-dot" />
@@ -1709,8 +1712,8 @@ function NewTabDropdown({
                           <GitBranchIcon size={13} />
                         </div>
                         <div className="tnd-option-text">
-                          <span className="tnd-option-title">Git worktrees</span>
-                          <span className="tnd-option-desc">Each agent gets its own branch</span>
+                          <span className="tnd-option-title">{t("terminal.gitWorktrees")}</span>
+                          <span className="tnd-option-desc">{t("terminal.gitWorktreesDescription")}</span>
                         </div>
                         <div className={`tnd-option-toggle${useWorktrees ? " tnd-option-toggle-on" : ""}`}>
                           <div className="tnd-option-toggle-dot" />
@@ -1736,7 +1739,7 @@ function NewTabDropdown({
                   className="tnd-launch-btn"
                   onClick={() => onMultiLaunch(expandedIds, withBroadcast, selectedWorktreeRepoPath)}
                 >
-                  Launch {totalCount}
+                  {t("terminal.launchCount", { count: totalCount })}
                 </button>
               </div>
             </>
@@ -1750,6 +1753,7 @@ function NewTabDropdown({
 // ── Main component ──────────────────────────────────────────────────
 
 export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
+  const { t } = useTranslation("app");
   const workspaceState = useTerminalStore((state) => state.workspaces[workspaceId]);
   const isOpen = workspaceState?.isOpen ?? false;
   const layoutMode = workspaceState?.layoutMode ?? "chat";
@@ -1952,7 +1956,9 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       const remainingSessions = useTerminalStore.getState().workspaces[workspaceId]?.sessions ?? [];
       const stillOpen = sessionIds.filter((id) => remainingSessions.some((session) => session.id === id));
       if (stillOpen.length > 0) {
-        toast.error(`Failed to close ${stillOpen.length} terminal session(s); worktrees were kept`);
+        toast.error(
+          t("terminal.toasts.failedToCloseSessionsKept", { count: stillOpen.length }),
+        );
         setWorktreeCloseGroupId(null);
         return;
       }
@@ -1966,7 +1972,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       }
     }
     setWorktreeCloseGroupId(null);
-  }, [worktreeCloseGroupId, groups, getGroupWorktrees, removeGroupWorktrees, closeSession, workspaceId]);
+  }, [worktreeCloseGroupId, groups, getGroupWorktrees, removeGroupWorktrees, closeSession, t, workspaceId]);
 
   const handleWorktreeCloseCancel = useCallback(async () => {
     if (!worktreeCloseGroupId) return;
@@ -1978,11 +1984,11 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       const remainingSessions = useTerminalStore.getState().workspaces[workspaceId]?.sessions ?? [];
       const stillOpen = sessionIds.filter((id) => remainingSessions.some((session) => session.id === id));
       if (stillOpen.length > 0) {
-        toast.error(`Failed to close ${stillOpen.length} terminal session(s)`);
+        toast.error(t("terminal.toasts.failedToCloseSessions", { count: stillOpen.length }));
       }
     }
     setWorktreeCloseGroupId(null);
-  }, [worktreeCloseGroupId, groups, closeSession, workspaceId]);
+  }, [worktreeCloseGroupId, groups, closeSession, t, workspaceId]);
 
   const dismissWorktreeCloseDialog = useCallback(() => {
     setWorktreeCloseGroupId(null);
@@ -2753,7 +2759,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const copyRendererDiagnostics = useCallback((groupId?: string) => {
     const targetSessionId = resolveSessionIdForDiagnostics(groupId);
     if (!targetSessionId) {
-      toast.info("No terminal session available for diagnostics");
+      toast.info(t("terminal.toasts.noSessionForDiagnostics"));
       return;
     }
 
@@ -2777,17 +2783,19 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       };
       // Keep the clipboard write inside the user gesture call stack.
       void copyTextToClipboard(JSON.stringify(payload, null, 2))
-        .then(() => toast.success("Renderer diagnostics copied"))
+        .then(() => toast.success(t("terminal.toasts.diagnosticsCopied")))
         .catch((error) => {
-          toast.error(`Failed to copy diagnostics: ${String(error)}`);
+          toast.error(
+            t("terminal.toasts.diagnosticsCopyFailed", { error: String(error) }),
+          );
         });
 
       // Refresh backend snapshot for next time (async; no user gesture requirement).
       void refreshBackendRendererDiagnostics(workspaceId, targetSessionId);
     } catch (error) {
-      toast.error(`Failed to copy diagnostics: ${String(error)}`);
+      toast.error(t("terminal.toasts.diagnosticsCopyFailed", { error: String(error) }));
     }
-  }, [resolveSessionIdForDiagnostics, workspaceId]);
+  }, [resolveSessionIdForDiagnostics, t, workspaceId]);
 
   return (
     <div className="terminal-panel-root">
@@ -2879,7 +2887,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                 spawnNewSession();
               }
             }}
-            title="New terminal"
+            title={t("terminal.newTerminal")}
           >
             <Plus size={13} />
           </button>
@@ -2890,7 +2898,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                 className="terminal-add-btn"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => handleSplit("vertical")}
-                title="Split right"
+                title={t("terminal.splitRight")}
               >
                 <Columns2 size={13} />
               </button>
@@ -2899,7 +2907,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                 className="terminal-add-btn"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => handleSplit("horizontal")}
-                title="Split down"
+                title={t("terminal.splitDown")}
               >
                 <Rows2 size={13} />
               </button>
@@ -2918,7 +2926,11 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                         useTerminalStore.getState().toggleBroadcast(workspaceId, activeGroupId);
                       }
                     }}
-                    title={isBroadcasting ? "Broadcast ON — click to disable (Cmd+Shift+I)" : "Broadcast to all panes (Cmd+Shift+I)"}
+                    title={
+                      isBroadcasting
+                        ? t("terminal.broadcastTitleOn")
+                        : t("terminal.broadcastTitleOff")
+                    }
                   >
                     <Radio size={13} />
                   </button>
@@ -2929,7 +2941,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                   type="button"
                   className="terminal-add-btn"
                   onClick={() => void copyRendererDiagnostics()}
-                  title="Copy renderer diagnostics"
+                  title={t("terminal.copyRendererDiagnostics")}
                 >
                   <Copy size={13} />
                 </button>
@@ -2943,7 +2955,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         {workspaceState?.broadcastGroupId === activeGroupId && workspaceState?.broadcastGroupId != null && (
           <div className="terminal-broadcast-banner">
             <Radio size={10} />
-            Broadcasting to all panes
+            {t("terminal.broadcastBanner")}
             <button
               type="button"
               className="terminal-broadcast-banner-close"
@@ -2964,18 +2976,18 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
             </div>
             <div>
               <p className="terminal-empty-state-title">
-                {loading ? "Starting terminal..." : "No terminal session"}
+                {loading ? t("terminal.emptyStarting") : t("terminal.emptyTitle")}
               </p>
               {!loading && (
                 <p className="terminal-empty-state-subtitle">
-                  Open a new terminal to get started
+                  {t("terminal.emptyHint")}
                 </p>
               )}
             </div>
             {!loading && (
               <button type="button" className="terminal-new-btn" onClick={spawnNewSession}>
                 <Plus size={12} />
-                New Terminal
+                {t("terminal.newTerminal")}
               </button>
             )}
           </div>
@@ -3037,7 +3049,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
             onClick={() => startRenameFromMenu(ctxMenu.groupId)}
           >
             <Pencil size={12} />
-            Rename
+            {t("terminal.rename")}
           </button>
           <button
             type="button"
@@ -3045,7 +3057,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
             onClick={() => closeGroupFromMenu(ctxMenu.groupId)}
           >
             <Trash2 size={12} />
-            Close
+            {t("terminal.close")}
           </button>
           {SHOW_TERMINAL_DIAGNOSTICS_UI && (
             <button
@@ -3057,7 +3069,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
               }}
             >
               <Copy size={12} />
-              Copy diagnostics
+              {t("terminal.copyDiagnostics")}
             </button>
           )}
         </div>,
@@ -3079,10 +3091,10 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
       <ConfirmDialog
         open={worktreeCloseGroupId !== null}
-        title="Close agent group"
-        message="This group has git worktrees. Remove the worktree directories and branches, or keep them for later?"
-        confirmLabel="Remove worktrees"
-        cancelLabel="Keep worktrees"
+        title={t("terminal.closeAgentGroupTitle")}
+        message={t("terminal.closeAgentGroupMessage")}
+        confirmLabel={t("terminal.removeWorktrees")}
+        cancelLabel={t("terminal.keepWorktrees")}
         onConfirm={handleWorktreeCloseConfirm}
         onCancel={handleWorktreeCloseCancel}
         onDismiss={dismissWorktreeCloseDialog}

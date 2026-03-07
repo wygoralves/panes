@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ArrowRight,
   CheckCircle2,
@@ -41,6 +42,7 @@ function HarnessTile({
   onCopyCommand: () => void;
   onLaunch: () => void;
 }) {
+  const { t } = useTranslation("app");
   const installCmd = INSTALL_COMMANDS[harness.id];
 
   return (
@@ -52,14 +54,14 @@ function HarnessTile({
       <div className="hp-tile-body">
         <div className="hp-tile-name-row">
           <span className="hp-tile-name">{harness.name}</span>
-          {harness.native && <span className="hp-tile-badge">Native</span>}
+          {harness.native && <span className="hp-tile-badge">{t("harnesses.native")}</span>}
         </div>
         <p className="hp-tile-desc">{harness.description}</p>
         {harness.found && (
           <div className="hp-tile-meta">
             <span className="hp-tile-status-ok">
               <CheckCircle2 size={10} />
-              Installed
+              {t("harnesses.installed")}
             </span>
             {harness.version && <span className="hp-tile-version">{harness.version}</span>}
           </div>
@@ -70,7 +72,7 @@ function HarnessTile({
         {harness.found ? (
           <button type="button" className="hp-btn hp-btn-launch" onClick={onLaunch}>
             <Play size={11} />
-            Launch
+            {t("harnesses.launch")}
           </button>
         ) : installCmd ? (
           <div className="hp-tile-action-group">
@@ -88,7 +90,7 @@ function HarnessTile({
               onClick={onInstallInTerminal}
             >
               <Download size={11} />
-              Install
+              {t("harnesses.install")}
             </button>
           </div>
         ) : null}
@@ -99,6 +101,7 @@ function HarnessTile({
 
 /* ─── Main panel (full page) ─── */
 export function HarnessPanel() {
+  const { t } = useTranslation("app");
   const phase = useHarnessStore((s) => s.phase);
   const harnesses = useHarnessStore((s) => s.harnesses);
   const error = useHarnessStore((s) => s.error);
@@ -148,12 +151,12 @@ export function HarnessPanel() {
       void copyTextToClipboard(cmd)
         .then(() => {
           void import("../../stores/toastStore").then(({ toast }) => {
-            toast.success("Copied to clipboard");
+            toast.success(t("harnesses.copySuccess"));
           });
         })
         .catch(() => {
           void import("../../stores/toastStore").then(({ toast }) => {
-            toast.error("Failed to copy command");
+            toast.error(t("harnesses.copyFailed"));
           });
         });
     }
@@ -169,13 +172,13 @@ export function HarnessPanel() {
               <div className="hp-header-icon">
                 <Terminal size={16} />
               </div>
-              <h1 className="hp-title">Agent Harnesses</h1>
+              <h1 className="hp-title">{t("harnesses.title")}</h1>
               <button
                 type="button"
                 className="hp-rescan"
                 onClick={() => void scan()}
                 disabled={phase === "scanning"}
-                title="Rescan"
+                title={t("harnesses.rescan")}
               >
                 <RefreshCw
                   size={12}
@@ -187,8 +190,11 @@ export function HarnessPanel() {
             </div>
             <p className="hp-subtitle">
               {phase === "scanning"
-                ? "Scanning your system..."
-                : `${installedCount} of ${harnesses.length} tools detected`}
+                ? t("harnesses.scanning")
+                : t("harnesses.detectedCount", {
+                    installed: installedCount,
+                    total: harnesses.length,
+                  })}
             </p>
           </div>
 
@@ -199,7 +205,7 @@ export function HarnessPanel() {
                 size={20}
                 style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }}
               />
-              <p>Detecting installed harnesses...</p>
+              <p>{t("harnesses.loading")}</p>
             </div>
           ) : (
             <div className="hp-grid">
@@ -224,7 +230,7 @@ export function HarnessPanel() {
                 className="hp-btn hp-btn-install"
                 onClick={() => void scan()}
               >
-                Retry
+                {t("harnesses.retry")}
               </button>
             </div>
           )}
@@ -232,7 +238,7 @@ export function HarnessPanel() {
           {/* Footer hint */}
           <div className="hp-footer">
             <ArrowRight size={11} />
-            <span>Installed harnesses appear as quick-launch options in your terminal + button</span>
+            <span>{t("harnesses.footerHint")}</span>
           </div>
         </div>
       </div>
