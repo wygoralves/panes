@@ -92,7 +92,7 @@
       manifesto: {
         ariaLabel: "Product philosophy",
         textHtml:
-          "IDEs were designed for writing code. But you don't write code anymore. You orchestrate, review, and approve. <strong>Panes is the cockpit for that workflow.</strong>",
+          "IDEs were designed for writing code. But you barely write code anymore. You orchestrate, review, and approve. <strong>Panes is the cockpit for that workflow.</strong>",
         orchestrate: "orchestrate",
         review: "review",
         approve: "approve",
@@ -102,7 +102,7 @@
       },
       cta: {
         ariaLabel: "Download",
-        title: "Get started in 30 seconds.",
+        title: "Ready to start?",
         subtitleHtml:
           "Download, open a folder, start chatting.<br>Free and open-source.",
       },
@@ -198,7 +198,7 @@
       manifesto: {
         ariaLabel: "Filosofia do produto",
         textHtml:
-          "IDEs foram feitas pra escrever código. Mas você não escreve mais. Você orquestra, revisa e aprova. <strong>Panes é o cockpit desse fluxo.</strong>",
+          "IDEs foram feitas pra escrever código. Mas hoje você quase não escreve mais. Você orquestra, revisa e aprova. <strong>Panes é o cockpit desse fluxo.</strong>",
         orchestrate: "orquestrar",
         review: "revisar",
         approve: "aprovar",
@@ -208,7 +208,7 @@
       },
       cta: {
         ariaLabel: "Baixar",
-        title: "Começa em 30 segundos.",
+        title: "Pronto pra começar?",
         subtitleHtml:
           "Baixa, abre uma pasta e começa a usar.<br>Grátis e open source.",
       },
@@ -358,12 +358,8 @@
     setAttr("#lang-switcher", "aria-label", getValue(nextLocale, "common.languageSelector"));
     setAttr("#nav-hamburger", "aria-label", getValue(nextLocale, "common.toggleMenu"));
 
-    setTextAll('.nav-links a[href="#integrations"], .footer-col a[href="#integrations"]', getValue(nextLocale, "common.integrations"));
-    setTextAll('.nav-links a[href="#product"], .footer-col a[href="#product"]', getValue(nextLocale, "common.features"));
-    setText('.footer-col a[href="https://github.com/wygoralves/panes/releases/latest"]', getValue(nextLocale, "common.download"));
-    setText(".footer-col a[href=\"https://github.com/wygoralves/panes/issues\"]", getValue(nextLocale, "common.issues"));
-    setText(".footer-col a[href=\"https://github.com/wygoralves/panes/discussions\"]", getValue(nextLocale, "common.discussions"));
-    setTextAll(".footer-col h3", [getValue(nextLocale, "common.product"), getValue(nextLocale, "common.community")]);
+    setText('.nav-links a[href="#integrations"]', getValue(nextLocale, "common.integrations"));
+    setText('.nav-links a[href="#product"]', getValue(nextLocale, "common.features"));
 
     setAttr(".hero", "aria-label", getValue(nextLocale, "hero.ariaLabel"));
     setHtml(".hero-title", getValue(nextLocale, "hero.titleHtml"));
@@ -449,8 +445,7 @@
     setText(".cta-title", getValue(nextLocale, "cta.title"));
     setHtml(".cta-subtitle", getValue(nextLocale, "cta.subtitleHtml"));
 
-    setText(".footer-brand p", getValue(nextLocale, "footer.tagline"));
-    setHtml(".footer-bottom > span", getValue(nextLocale, "footer.copyright"));
+    setHtml(".footer-copy", getValue(nextLocale, "footer.copyright"));
 
     updateSwitcher(nextLocale);
 
