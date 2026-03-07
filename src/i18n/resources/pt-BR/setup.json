@@ -1,0 +1,76 @@
+{
+  "status": {
+    "detected": "Detectado",
+    "detectedWithPath": "{{version}}{{path}}",
+    "at": "em"
+  },
+  "scanning": {
+    "checking": "Verificando seu sistema..."
+  },
+  "deps": {
+    "node": {
+      "auto": "Nao encontrado - sera instalado via Homebrew",
+      "manual": "Nao encontrado - instale o Node.js 20+ manualmente"
+    },
+    "codex": {
+      "auto": "Nao encontrado - sera instalado via npm",
+      "manual": "Nao encontrado - instale com: npm install -g @openai/codex"
+    },
+    "git": {
+      "manual": "Nao encontrado - alguns recursos de Git ficarao indisponiveis"
+    }
+  },
+  "actions": {
+    "autoSetup": "Configurar automaticamente",
+    "manualInstructions": "Instrucoes de configuracao manual",
+    "getStarted": "Comecar",
+    "recheck": "Verificar novamente"
+  },
+  "manual": {
+    "title": "Instalacao manual",
+    "installNode": "Instalar Node.js",
+    "installCodex": "Instalar Codex CLI",
+    "nodeAltOrDownload": "Ou baixe em https://nodejs.org",
+    "nodeAltInstall": "Instale o Node.js 20+ em https://nodejs.org",
+    "nodeAltPackageManager": "Instale o Node.js 20+ com o gerenciador de pacotes do seu sistema operacional ou em https://nodejs.org",
+    "copied": "Copiado"
+  },
+  "install": {
+    "waiting": "Aguardando...",
+    "installing": "Instalando {{name}}...",
+    "finishing": "Finalizando..."
+  },
+  "diagnostics": {
+    "title": "Diagnosticos do Codex",
+    "methodsSummary": "{{available}} disponiveis, {{unsupported}} nao suportados, {{errors}} com erro",
+    "notFetched": "Os diagnosticos do runtime ainda nao foram coletados.",
+    "notAvailable": "O Codex ainda nao esta disponivel.",
+    "capabilitiesSummary": "{{experimental}} recursos experimentais, {{apps}} apps, {{modes}} modos de colaboracao",
+    "capabilities": "Capacidades",
+    "methods": "Metodos",
+    "lastConfigWarning": "Ultimo aviso de configuracao",
+    "lastAccountLogin": "Ultimo login da conta",
+    "lastMcpOauth": "Ultimo OAuth MCP",
+    "fetched": "Coletado em",
+    "line": "linha {{line}}",
+    "success": "Sucesso",
+    "failed": "Falhou",
+    "successLower": "sucesso",
+    "failedLower": "falhou",
+    "stale": "(desatualizado)"
+  },
+  "error": {
+    "unexpected": "Ocorreu um erro inesperado durante a configuracao."
+  },
+  "header": {
+    "completeTitle": "Configuracao concluida",
+    "installingTitle": "Instalando dependencias",
+    "errorTitle": "Erro na configuracao",
+    "systemTitle": "Configuracao do sistema",
+    "completeSubtitle": "Todas as verificacoes passaram. Voce esta pronto para comecar.",
+    "scanningSubtitle": "Verificando seu sistema...",
+    "installingSubtitle": "Instalando as dependencias ausentes.",
+    "errorSubtitle": "Revise o erro de configuracao e tente novamente.",
+    "planSubtitle": "Revise as dependencias detectadas antes de continuar."
+  }
+}

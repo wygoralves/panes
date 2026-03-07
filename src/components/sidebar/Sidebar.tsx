@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { open } from "@tauri-apps/plugin-dialog";
+import { useTranslation } from "react-i18next";
 import {
   Plus,
   FolderGit2,
@@ -13,6 +14,7 @@ import {
   Pin,
   PinOff,
   Terminal,
+  Check,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -20,26 +22,20 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useSetupStore } from "../../stores/setupStore";
 import { useUpdateStore } from "../../stores/updateStore";
-
+import { toast } from "../../stores/toastStore";
+import { ipc } from "../../lib/ipc";
+import { formatRelativeTime } from "../../lib/formatters";
+import {
+  getLocaleDisplayName,
+  normalizeAppLocale,
+  SUPPORTED_APP_LOCALES,
+  type AppLocale,
+} from "../../lib/locale";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { UpdateDialog } from "../onboarding/UpdateDialog";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { WorkspaceMoreMenu } from "../workspace/WorkspaceMoreMenu";
 import type { Thread, Workspace } from "../../types";
-
-function relativeTime(dateStr: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diffMs = now - then;
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d`;
-  return `${Math.floor(days / 30)}mo`;
-}
 
 interface ProjectGroup {
   workspace: Workspace;
@@ -67,6 +63,7 @@ function readLegacyDefaultScanDepth(): number | undefined {
    ───────────────────────────────────────────────────── */
 
 function SidebarContent({ onPin }: { onPin?: () => void }) {
+  const { t, i18n } = useTranslation(["app", "common"]);
   const {
     workspaces,
     archivedWorkspaces,
@@ -123,6 +120,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const [settingsMenuPos, setSettingsMenuPos] = useState({ top: 0, left: 0 });
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
+  const activeLocale = normalizeAppLocale(i18n.language);
 
   const closeSettingsMenu = useCallback(() => setSettingsMenuOpen(false), []);
 
@@ -204,7 +202,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     const createdThreadId = await createThread({
       workspaceId: project.id,
       repoId: null,
-      title: "New Thread",
+      title: t("app:sidebar.newThreadTitle"),
     });
     if (!createdThreadId) return;
     setCollapsed((prev) => ({ ...prev, [project.id]: false }));
@@ -245,6 +243,30 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
 
   async function onRestoreThread(thread: Thread) {
     await restoreThread(thread.id);
+  }
+
+  async function onLocaleSelect(locale: AppLocale) {
+    if (locale === activeLocale) {
+      closeSettingsMenu();
+      return;
+    }
+
+    try {
+      const savedLocale = await ipc.setAppLocale(locale);
+      await i18n.changeLanguage(savedLocale);
+      closeSettingsMenu();
+      toast.info(t("common:language.changed"));
+    } catch {
+      toast.error(t("app:sidebar.languageFailed"));
+    }
+  }
+
+  function getWorkspaceLabel(workspace: Workspace) {
+    return workspace.name || workspace.rootPath.split("/").pop() || t("app:sidebar.workspaceFallback");
+  }
+
+  function getThreadLabel(thread: Thread) {
+    return thread.title?.trim() || t("app:sidebar.untitledThread");
   }
 
   return (
@@ -292,7 +314,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               type="button"
               className={`sb-pin-btn ${sidebarPinned ? "sb-pin-btn-active" : ""}`}
               onClick={onPin ?? toggleSidebarPin}
-              title={sidebarPinned ? "Unpin sidebar" : "Pin sidebar"}
+              title={sidebarPinned ? t("app:sidebar.unpin") : t("app:sidebar.pin")}
             >
               {sidebarPinned ? <Pin size={13} /> : <PinOff size={13} />}
             </button>
@@ -313,7 +335,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             }}
           >
             <Plus size={14} strokeWidth={2.2} />
-            New thread
+            {t("app:sidebar.newThread")}
           </button>
 
           {/* Agents */}
@@ -324,7 +346,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             onClick={() => setActiveView(activeView === "harnesses" ? "chat" : "harnesses")}
           >
             <Terminal size={13} strokeWidth={2} />
-            Agents
+            {t("app:sidebar.agents")}
           </button>
         </div>
       </div>
@@ -332,11 +354,11 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       {/* ── Scrollable content ── */}
       <div style={{ flex: 1, overflow: "auto", paddingBottom: 4 }}>
         <div className="sb-section-label">
-          <span>Projects</span>
+          <span>{t("app:sidebar.projects")}</span>
           <button
             type="button"
             className="sb-add-project-btn"
-            title="Open project"
+            title={t("app:sidebar.openProject")}
             onClick={() => {
               if (activeView !== "chat") setActiveView("chat");
               void onOpenFolder();
@@ -348,18 +370,15 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
 
         {projects.length === 0 ? (
           <div className="sb-empty">
-            No projects yet.
+            {t("app:sidebar.noProjects")}
             <br />
-            Open a folder to get started.
+            {t("app:sidebar.openFolder")}
           </div>
         ) : (
           projects.map((project) => {
             const isActiveProject = project.workspace.id === activeWorkspaceId;
             const isCollapsed = collapsed[project.workspace.id] ?? false;
-            const projectName =
-              project.workspace.name ||
-              project.workspace.rootPath.split("/").pop() ||
-              "Project";
+            const projectName = getWorkspaceLabel(project.workspace);
             const isShowingAll = showAll[project.workspace.id] ?? false;
             const visibleThreads = isShowingAll
               ? project.threads
@@ -411,7 +430,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 {!isCollapsed && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 1, marginTop: 1 }}>
                     {project.threads.length === 0 ? (
-                      <div className="sb-no-threads">No threads</div>
+                      <div className="sb-no-threads">{t("app:sidebar.noThreads")}</div>
                     ) : (
                       <>
                         {visibleThreads.map((thread, i) => {
@@ -425,16 +444,16 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                               onClick={() => void onSelectThread(thread)}
                             >
                               <span className="sb-thread-title">
-                                {thread.title || "Untitled thread"}
+                                {getThreadLabel(thread)}
                               </span>
                               <span className="sb-thread-time">
                                 {thread.lastActivityAt
-                                  ? relativeTime(thread.lastActivityAt)
+                                  ? formatRelativeTime(thread.lastActivityAt, i18n.language)
                                   : ""}
                               </span>
                               <span
                                 role="button"
-                                title="Archive thread"
+                                title={t("app:sidebar.archiveThread")}
                                 className="sb-thread-archive"
                                 onMouseDown={(e) => e.stopPropagation()}
                                 onClick={(e) => {
@@ -459,7 +478,9 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                               }))
                             }
                           >
-                            Show {project.threads.length - MAX_VISIBLE_THREADS} more
+                            {t("app:sidebar.showMore", {
+                              count: project.threads.length - MAX_VISIBLE_THREADS,
+                            })}
                           </button>
                         )}
                       </>
@@ -484,7 +505,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               <ChevronRight size={11} style={{ flexShrink: 0, opacity: 0.6 }} />
             )}
             <Archive size={11} style={{ flexShrink: 0, opacity: 0.6 }} />
-            <span style={{ flex: 1, textAlign: "left" }}>Archived</span>
+            <span style={{ flex: 1, textAlign: "left" }}>{t("app:sidebar.archived")}</span>
             <span className="sb-project-count" style={{ fontSize: 9 }}>
               {archivedWorkspaces.length + archivedThreads.length}
             </span>
@@ -505,13 +526,13 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                     }}
                     title={workspace.name || workspace.rootPath}
                   >
-                    {workspace.name || workspace.rootPath.split("/").pop() || "Workspace"}
+                    {getWorkspaceLabel(workspace)}
                   </span>
                   <button
                     type="button"
                     className="sb-archived-restore"
                     onClick={() => void onRestoreWorkspace(workspace)}
-                    title="Restore workspace"
+                    title={t("app:sidebar.restoreWorkspace")}
                   >
                     <RotateCcw size={11} />
                   </button>
@@ -529,15 +550,15 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                     }}
-                    title={thread.title || "Untitled thread"}
+                    title={getThreadLabel(thread)}
                   >
-                    {thread.title || "Untitled thread"}
+                    {getThreadLabel(thread)}
                   </span>
                   <button
                     type="button"
                     className="sb-archived-restore"
                     onClick={() => void onRestoreThread(thread)}
-                    title="Restore thread"
+                    title={t("app:sidebar.restoreThread")}
                   >
                     <RotateCcw size={11} />
                   </button>
@@ -545,7 +566,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               ))}
 
               {archivedWorkspaces.length === 0 && archivedThreads.length === 0 && (
-                <div className="sb-no-threads">Nothing archived.</div>
+                <div className="sb-no-threads">{t("app:sidebar.nothingArchived")}</div>
               )}
             </div>
           )}
@@ -574,7 +595,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             <Settings size={14} style={{ opacity: 0.5 }} />
             {hasUpdate && <span className="sb-update-dot" />}
           </span>
-          Settings
+          {t("app:sidebar.settings")}
         </button>
 
       </div>
@@ -589,7 +610,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               position: "fixed",
               bottom: window.innerHeight - settingsMenuPos.top,
               left: settingsMenuPos.left,
-              minWidth: 180,
+              minWidth: 220,
             }}
           >
             <button
@@ -600,7 +621,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 openEngineSetup();
               }}
             >
-              Engine setup
+              {t("app:sidebar.engineSetup")}
             </button>
             <button
               type="button"
@@ -611,7 +632,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 setUpdateDialogOpen(true);
               }}
             >
-              <span>Check for updates</span>
+              <span>{t("app:sidebar.checkUpdates")}</span>
               {hasUpdate && (
                 <span
                   style={{
@@ -624,6 +645,32 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 />
               )}
             </button>
+            <div className="git-action-menu-divider" />
+            <div
+              style={{
+                padding: "6px 10px 4px",
+                fontSize: 11,
+                color: "var(--text-3)",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+              }}
+            >
+              {t("common:language.label")}
+            </div>
+            {SUPPORTED_APP_LOCALES.map((locale) => (
+              <button
+                key={locale}
+                type="button"
+                className="git-action-menu-item"
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+                onClick={() => {
+                  void onLocaleSelect(locale);
+                }}
+              >
+                <span>{getLocaleDisplayName(locale)}</span>
+                {activeLocale === locale ? <Check size={12} /> : null}
+              </button>
+            ))}
           </div>,
           document.body,
         )}
@@ -633,13 +680,15 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       {createPortal(
         <ConfirmDialog
           open={archiveWorkspacePrompt !== null}
-          title="Archive workspace"
+          title={t("app:sidebar.archiveWorkspaceTitle")}
           message={
             archiveWorkspacePrompt
-              ? `Archive workspace "${archiveWorkspacePrompt.workspace.name}" and hide its repos/threads/messages from the sidebar? You can reopen this folder later to restore it.`
+              ? t("app:sidebar.archiveWorkspaceMessage", {
+                  name: getWorkspaceLabel(archiveWorkspacePrompt.workspace),
+                })
               : ""
           }
-          confirmLabel="Archive"
+          confirmLabel={t("app:sidebar.archive")}
           onConfirm={() => {
             if (archiveWorkspacePrompt) void executeArchiveWorkspace(archiveWorkspacePrompt.workspace);
           }}
@@ -651,13 +700,15 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       {createPortal(
         <ConfirmDialog
           open={archiveThreadPrompt !== null}
-          title="Archive thread"
+          title={t("app:sidebar.archiveThreadTitle")}
           message={
             archiveThreadPrompt
-              ? `Archive thread "${archiveThreadPrompt.thread.title?.trim() || "Untitled thread"}"? It will be hidden from this project list.`
+              ? t("app:sidebar.archiveThreadMessage", {
+                  name: getThreadLabel(archiveThreadPrompt.thread),
+                })
               : ""
           }
-          confirmLabel="Archive"
+          confirmLabel={t("app:sidebar.archive")}
           onConfirm={() => {
             if (archiveThreadPrompt) void executeArchiveThread(archiveThreadPrompt.thread);
           }}
@@ -696,6 +747,7 @@ function CollapsedRail({
   onHoverEnd: () => void;
   flyoutVisible?: boolean;
 }) {
+  const { t } = useTranslation("app");
   const projects = useWorkspaceStore((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
@@ -713,7 +765,7 @@ function CollapsedRail({
     const createdThreadId = await createThread({
       workspaceId: activeProject.id,
       repoId: null,
-      title: "New Thread",
+      title: t("sidebar.newThreadTitle"),
     });
     if (!createdThreadId) return;
     await bindChatThread(createdThreadId);
@@ -749,7 +801,7 @@ function CollapsedRail({
           className="sb-rail-btn no-drag"
           onClick={() => void onNewThread()}
           disabled={!activeWorkspaceId}
-          title="New thread"
+          title={t("sidebar.newThread")}
           style={{
             opacity: activeWorkspaceId ? 1 : 0.45,
             border: "none",
@@ -810,7 +862,7 @@ function CollapsedRail({
       <button
         type="button"
         className="sb-rail-btn"
-        title="Settings"
+        title={t("sidebar.settings")}
         style={{ marginBottom: 8 }}
       >
         <Settings size={15} />

@@ -1,0 +1,108 @@
+{
+  "title": "Panes",
+  "search": {
+    "placeholder": "Buscar mensagens no workspace atual...",
+    "shortcut": "Atalho: Cmd/Ctrl+Shift+F",
+    "selectWorkspace": "Selecione um workspace para buscar.",
+    "minChars": "Digite pelo menos 2 caracteres.",
+    "searching": "Buscando...",
+    "noResults": "Nenhum resultado para \"{{query}}\".",
+    "threadFallback": "Thread"
+  },
+  "updates": {
+    "checkingTitle": "Verificando atualizações",
+    "checkingMessage": "Isso deve levar apenas um instante.",
+    "availableTitle": "v{{version}} disponível",
+    "availableMessage": "Baixe e instale para receber os recursos e correções mais recentes.",
+    "notNow": "Agora não",
+    "install": "Instalar atualização",
+    "installingTitle": "Instalando atualização...",
+    "installingMessage": "Não feche o app.",
+    "restartingTitle": "Reiniciando...",
+    "failedTitle": "Falha na atualização",
+    "failedMessage": "Ocorreu um erro inesperado.",
+    "idleTitle": "Panes",
+    "idleTitleWithVersion": "Panes v{{version}}",
+    "idleMessage": "Você está na versão mais recente.",
+    "checkAgain": "Verificar novamente"
+  },
+  "engineHealth": {
+    "missingTitle": "Engine Codex não detectada",
+    "configWarningTitle": "Aviso de config do Codex",
+    "staleTitle": "A sincronização de runtime do Codex está desatualizada",
+    "sandboxTitle": "Falha na verificação de sandbox do Codex",
+    "missingMessage": "Instale o Codex CLI e faça autenticação antes de iniciar threads de chat.",
+    "staleMessage": "O Panes não conseguiu atualizar o snapshot mais recente de capacidades do Codex. As notificações de runtime podem atrasar até a próxima reconexão bem-sucedida.",
+    "sandboxMessage": "Codex está instalado, mas a verificação local de sandbox do sistema falhou.",
+    "location": "Local:",
+    "runInTerminal": "Executar no terminal:"
+  },
+  "sidebar": {
+    "pin": "Fixar sidebar",
+    "unpin": "Desafixar sidebar",
+    "newThread": "Nova thread",
+    "newThreadTitle": "Nova Thread",
+    "agents": "Agentes",
+    "projects": "Projetos",
+    "openProject": "Abrir projeto",
+    "noProjects": "Nenhum projeto ainda.",
+    "openFolder": "Abra uma pasta para começar.",
+    "workspaceFallback": "Workspace",
+    "noThreads": "Nenhuma thread",
+    "untitledThread": "Thread sem título",
+    "archiveThread": "Arquivar thread",
+    "showMore": "Mostrar mais {{count}}",
+    "archived": "Arquivados",
+    "restoreWorkspace": "Restaurar workspace",
+    "restoreThread": "Restaurar thread",
+    "nothingArchived": "Nada arquivado.",
+    "settings": "Configurações",
+    "engineSetup": "Configurar engine",
+    "checkUpdates": "Verificar atualizações",
+    "languageFailed": "Falha ao atualizar o idioma.",
+    "archiveWorkspaceTitle": "Arquivar workspace",
+    "archiveWorkspaceMessage": "Arquivar o workspace \"{{name}}\" e ocultar seus repositórios/threads/mensagens da sidebar? Você poderá reabrir esta pasta depois para restaurá-lo.",
+    "archiveThreadTitle": "Arquivar thread",
+    "archiveThreadMessage": "Arquivar a thread \"{{name}}\"? Ela ficará oculta desta lista de projetos.",
+    "archive": "Arquivar"
+  },
+  "commandPalette": {
+    "placeholder": "Busque comandos, threads, workspaces ou arquivos...",
+    "mode": {
+      "command": "Comando",
+      "thread": "Thread",
+      "workspace": "Workspace",
+      "file": "Arquivo"
+    },
+    "group": {
+      "layout": "Layout",
+      "git": "Git",
+      "navigation": "Navegação",
+      "view": "Painel",
+      "files": "Arquivos",
+      "threads": "Threads",
+      "workspaces": "Workspaces",
+      "agents": "Agentes"
+    },
+    "empty": {
+      "noResults": "Nenhum resultado"
+    },
+    "footer": {
+      "select": "Selecionar",
+      "open": "Abrir",
+      "run": "Executar",
+      "dismiss": "Fechar"
+    }
+  },
+  "engineHealth": {
+    "missingTitle": "Engine Codex não detectada",
+    "configWarningTitle": "Aviso de configuração do Codex",
+    "staleTitle": "A sincronização do runtime do Codex está desatualizada",
+    "sandboxTitle": "Falha na verificação de sandbox do Codex",
+    "missingMessage": "Instale o Codex CLI e autentique-se antes de iniciar threads de chat.",
+    "staleMessage": "O Panes não conseguiu atualizar o snapshot mais recente de capacidades do Codex. Notificações do runtime podem atrasar até a próxima reconexão bem-sucedida.",
+    "sandboxMessage": "O Codex está instalado, mas a verificação local de sandbox do sistema operacional falhou.",
+    "location": "Local:",
+    "runInTerminal": "Executar no Terminal:"
+  }
+}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Monitor, Shield, SquareTerminal } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { TrustLevel } from "../../types";
 
 type PermissionOption<T extends string = string> = {
@@ -61,7 +62,7 @@ export function PermissionPicker({
   trustOptions,
   onTrustChange,
   customPolicyCount = 0,
-  approvalTitle = "Approval policy",
+  approvalTitle,
   approvalValue,
   approvalOptions,
   onApprovalChange,
@@ -76,11 +77,14 @@ export function PermissionPicker({
   networkDisabled = false,
   networkNotice,
 }: PermissionPickerProps) {
+  const { t } = useTranslation("chat");
   const [open, setOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<string>("");
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ bottom: 0, left: 0 });
+
+  const resolvedApprovalTitle = approvalTitle ?? t("permissionPicker.approvalPolicy");
 
   const trustOption = useMemo(
     () => findOption(trustOptions, trustValue),
@@ -98,7 +102,7 @@ export function PermissionPicker({
         currentLabel: findOption(trustOptions, trustValue)?.label ?? null,
         options: trustOptions as PermissionOption[],
         value: trustValue,
-        onChange: (v) => onTrustChange(v as TrustLevel),
+        onChange: (value) => onTrustChange(value as TrustLevel),
       });
     }
 
@@ -106,7 +110,7 @@ export function PermissionPicker({
       items.push({
         id: "approval",
         icon: <Shield size={13} />,
-        title: approvalTitle,
+        title: resolvedApprovalTitle,
         currentLabel: findOption(approvalOptions, approvalValue)?.label ?? null,
         options: approvalOptions,
         value: approvalValue,
@@ -118,8 +122,11 @@ export function PermissionPicker({
       items.push({
         id: "sandbox",
         icon: <SquareTerminal size={13} />,
-        title: "Sandbox mode",
-        currentLabel: sandboxSelectedLabel ?? findOption(sandboxOptions, sandboxValue)?.label ?? null,
+        title: t("permissionPicker.sandboxMode"),
+        currentLabel:
+          sandboxSelectedLabel ??
+          findOption(sandboxOptions, sandboxValue)?.label ??
+          null,
         options: sandboxOptions,
         value: sandboxValue,
         onChange: onSandboxChange,
@@ -131,7 +138,7 @@ export function PermissionPicker({
       items.push({
         id: "network",
         icon: <Monitor size={13} />,
-        title: "Network access",
+        title: t("permissionPicker.networkAccess"),
         currentLabel: findOption(networkOptions, networkValue)?.label ?? null,
         options: networkOptions,
         value: networkValue,
@@ -143,27 +150,27 @@ export function PermissionPicker({
 
     return items;
   }, [
-    trustScopeLabel,
-    trustValue,
-    trustOptions,
-    onTrustChange,
-    approvalTitle,
-    approvalOptions,
-    approvalValue,
-    onApprovalChange,
-    sandboxOptions,
-    sandboxValue,
-    onSandboxChange,
-    sandboxSelectedLabel,
-    sandboxNotice,
-    networkOptions,
-    networkValue,
-    onNetworkChange,
     networkDisabled,
     networkNotice,
+    networkOptions,
+    networkValue,
+    onApprovalChange,
+    onNetworkChange,
+    onSandboxChange,
+    onTrustChange,
+    approvalOptions,
+    approvalValue,
+    resolvedApprovalTitle,
+    sandboxNotice,
+    sandboxOptions,
+    sandboxSelectedLabel,
+    sandboxValue,
+    t,
+    trustOptions,
+    trustScopeLabel,
+    trustValue,
   ]);
 
-  // Default to first section when opened; reset when closed
   useEffect(() => {
     if (open) {
       if (railItems.length > 0 && !activeSection) {
@@ -172,7 +179,7 @@ export function PermissionPicker({
     } else {
       setActiveSection("");
     }
-  }, [open, railItems, activeSection]);
+  }, [activeSection, open, railItems]);
 
   const summaryLines = useMemo(() => {
     const lines: string[] = [];
@@ -181,24 +188,37 @@ export function PermissionPicker({
     }
     if (approvalValue) {
       const label = findOption(approvalOptions, approvalValue)?.label;
-      if (label) lines.push(`${approvalTitle}: ${label}`);
+      if (label) {
+        lines.push(`${resolvedApprovalTitle}: ${label}`);
+      }
     }
     if (sandboxValue) {
-      lines.push(`Sandbox: ${sandboxSelectedLabel ?? findOption(sandboxOptions, sandboxValue)?.label ?? sandboxValue}`);
+      lines.push(
+        `${t("permissionPicker.sandbox")}: ${
+          sandboxSelectedLabel ??
+          findOption(sandboxOptions, sandboxValue)?.label ??
+          sandboxValue
+        }`,
+      );
     }
     if (networkValue) {
-      lines.push(`Network: ${findOption(networkOptions, networkValue)?.label ?? networkValue}`);
+      lines.push(
+        `${t("permissionPicker.network")}: ${
+          findOption(networkOptions, networkValue)?.label ?? networkValue
+        }`,
+      );
     }
     return lines;
   }, [
     approvalOptions,
-    approvalTitle,
     approvalValue,
     networkOptions,
     networkValue,
+    resolvedApprovalTitle,
     sandboxOptions,
     sandboxSelectedLabel,
     sandboxValue,
+    t,
     trustOption,
     trustScopeLabel,
   ]);
@@ -255,8 +275,8 @@ export function PermissionPicker({
     setOpen((prev) => !prev);
   }, [disabled]);
 
-  const title = summaryLines.length > 0 ? summaryLines.join(" | ") : "Permissions";
-  const activeItem = railItems.find((i) => i.id === activeSection) ?? null;
+  const title = summaryLines.length > 0 ? summaryLines.join(" | ") : t("permissionPicker.title");
+  const activeItem = railItems.find((item) => item.id === activeSection) ?? null;
 
   const popover = open
     ? createPortal(
@@ -269,9 +289,8 @@ export function PermissionPicker({
             left: pos.left,
           }}
         >
-          {/* Left rail */}
           <div className="pp-rail">
-            <div className="pp-rail-label">Policy</div>
+            <div className="pp-rail-label">{t("permissionPicker.policy")}</div>
             {railItems.map((item) => (
               <button
                 key={item.id}
@@ -285,7 +304,6 @@ export function PermissionPicker({
             ))}
           </div>
 
-          {/* Right panel */}
           {activeItem ? (
             <div className="pp-panel">
               <div className="pp-panel-header">
@@ -293,7 +311,7 @@ export function PermissionPicker({
                   <span>{activeItem.title}</span>
                 </div>
                 {customPolicyCount > 0 ? (
-                  <span className="pp-header-badge">Custom</span>
+                  <span className="pp-header-badge">{t("permissionPicker.custom")}</span>
                 ) : null}
               </div>
               <div className="pp-panel-content">
@@ -314,16 +332,12 @@ export function PermissionPicker({
                             <span className="pp-option-description">{option.description}</span>
                           ) : null}
                         </div>
-                        {selected ? (
-                          <Check size={13} className="pp-option-check" />
-                        ) : null}
+                        {selected ? <Check size={13} className="pp-option-check" /> : null}
                       </button>
                     );
                   })}
                 </div>
-                {activeItem.note ? (
-                  <p className="pp-section-note">{activeItem.note}</p>
-                ) : null}
+                {activeItem.note ? <p className="pp-section-note">{activeItem.note}</p> : null}
               </div>
             </div>
           ) : null}
@@ -345,12 +359,10 @@ export function PermissionPicker({
         <span className="pp-trigger-icon">
           <Shield size={12} />
         </span>
-        <span className="pp-trigger-label">Permissions</span>
-        {trustOption ? (
-          <span className="pp-trigger-pill">{trustOption.label}</span>
-        ) : null}
+        <span className="pp-trigger-label">{t("permissionPicker.title")}</span>
+        {trustOption ? <span className="pp-trigger-pill">{trustOption.label}</span> : null}
         {customPolicyCount > 0 ? (
-          <span className="pp-trigger-pill pp-trigger-pill-accent">Custom</span>
+          <span className="pp-trigger-pill pp-trigger-pill-accent">{t("permissionPicker.custom")}</span>
         ) : null}
         <ChevronDown
           size={10}

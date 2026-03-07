@@ -1,0 +1,66 @@
+{
+  "errors": {
+    "notFound": "Workspace não encontrado."
+  },
+  "actions": {
+    "back": "Voltar",
+    "reveal": "Revelar",
+    "rescan": "Reescanear"
+  },
+  "nav": {
+    "general": "Geral",
+    "repositories": "Repositórios",
+    "startup": "Inicialização"
+  },
+  "sections": {
+    "workspace": "Workspace",
+    "scanning": "Escaneamento",
+    "info": "Informações"
+  },
+  "general": {
+    "workspaceFallback": "Workspace",
+    "name": "Nome",
+    "path": "Caminho"
+  },
+  "scanning": {
+    "depth": "Profundidade",
+    "scanning": "Escaneando..."
+  },
+  "info": {
+    "opened": "Aberto",
+    "created": "Criado"
+  },
+  "trust": {
+    "trusted": "Confiável",
+    "standard": "Padrão",
+    "restricted": "Restrito"
+  },
+  "repos": {
+    "count_one": "{{count}} repositório",
+    "count_other": "{{count}} repositórios",
+    "allTrusted": "Todos confiáveis",
+    "allStandard": "Todos padrão",
+    "loading": "Carregando...",
+    "emptyTitle": "Nenhum repositório encontrado.",
+    "emptyHint": "Tente aumentar a profundidade de escaneamento em Geral.",
+    "manageRemotes": "Gerenciar remotes",
+    "visible": "Visível no painel Git",
+    "hidden": "Oculto no painel Git",
+    "remotes": "Remotes"
+  },
+  "toasts": {
+    "rescanned": "Reescaneado.",
+    "updateScanDepthFailed": "Falha ao atualizar a profundidade de escaneamento.",
+    "reposRescanned": "Repositórios reescaneados.",
+    "rescanFailed": "Falha no reescaneamento.",
+    "updateTrustFailed": "Falha ao atualizar o nível de confiança.",
+    "toggleVisibilityFailed": "Falha ao alternar a visibilidade.",
+    "updateTrustLevelsFailed": "Falha ao atualizar os níveis de confiança.",
+    "revealFailed": "Falha ao revelar o workspace no Finder."
+  },
+  "more": {
+    "options": "Opções do workspace",
+    "settings": "Configurações do workspace",
+    "archive": "Arquivar workspace"
+  }
+}

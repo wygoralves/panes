@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, Loader2, MessageSquare, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { ipc } from "../../lib/ipc";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export function SearchModal({ open, onClose }: Props) {
+  const { t } = useTranslation("app");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -177,7 +179,7 @@ export function SearchModal({ open, onClose }: Props) {
               ref={inputRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search messages in current workspace..."
+              placeholder={t("search.placeholder")}
               style={{
                 flex: 1,
                 minWidth: 0,
@@ -229,27 +231,27 @@ export function SearchModal({ open, onClose }: Props) {
             </button>
           </div>
           <p style={{ margin: "8px 0 0", fontSize: 11.5, color: "var(--text-3)" }}>
-            Shortcut: Cmd/Ctrl+Shift+F
+            {t("search.shortcut")}
           </p>
         </div>
 
         <div style={{ overflow: "auto" }}>
           {!activeWorkspaceId && (
             <p style={{ margin: 0, padding: 16, color: "var(--text-2)" }}>
-              Select a workspace to search.
+              {t("search.selectWorkspace")}
             </p>
           )}
 
           {activeWorkspaceId && query.trim().length < 2 && (
             <p style={{ margin: 0, padding: 16, color: "var(--text-2)" }}>
-              Type at least 2 characters.
+              {t("search.minChars")}
             </p>
           )}
 
           {loading && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: 16, color: "var(--text-2)" }}>
               <Loader2 size={14} style={{ animation: "pulse-soft 1s ease-in-out infinite" }} />
-              Searching...
+              {t("search.searching")}
             </div>
           )}
 
@@ -259,7 +261,7 @@ export function SearchModal({ open, onClose }: Props) {
 
           {!loading && !error && query.trim().length >= 2 && results.length === 0 && (
             <p style={{ margin: 0, padding: 16, color: "var(--text-2)" }}>
-              No results for "{query.trim()}".
+              {t("search.noResults", { query: query.trim() })}
             </p>
           )}
 
@@ -286,7 +288,7 @@ export function SearchModal({ open, onClose }: Props) {
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-2)", fontSize: 11.5 }}>
                       <MessageSquare size={12} />
-                      {thread?.title || "Thread"}
+                      {thread?.title || t("search.threadFallback")}
                     </div>
                     <p
                       style={{

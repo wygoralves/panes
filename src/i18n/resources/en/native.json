@@ -1,0 +1,17 @@
+{
+  "app": {
+    "submenu": "Panes",
+    "aboutComment": "The open-source cockpit for AI-assisted coding",
+    "websiteLabel": "GitHub"
+  },
+  "menu": {
+    "edit": "Edit",
+    "view": "View",
+    "window": "Window",
+    "toggleSidebar": "Toggle Sidebar",
+    "toggleGitPanel": "Toggle Git Panel",
+    "search": "Search",
+    "toggleTerminal": "Toggle Terminal",
+    "close": "Close"
+  }
+}

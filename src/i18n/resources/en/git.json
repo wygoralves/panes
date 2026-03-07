@@ -1,0 +1,35 @@
+{
+  "panel": {
+    "tabs": {
+      "changes": "Changes",
+      "branches": "Branches",
+      "commits": "Commits",
+      "stash": "Stash",
+      "files": "Files",
+      "worktrees": "Worktrees"
+    },
+    "detached": "detached",
+    "syncing": "Syncing...",
+    "refreshAndFetch": "Refresh & fetch",
+    "moreActions": "More actions",
+    "backToMainRepo": "Back to main repo",
+    "scanningRepositories": "Scanning repositories...",
+    "noRepositories": "No repositories found",
+    "scanningHint": "Checking this workspace for git repositories",
+    "blockedByRepo": "This workspace is already inside the Git repository at {{path}}.",
+    "openFolderHint": "Open a folder with a git repository",
+    "initializeRepository": "Initialize Repository",
+    "initializingRepository": "Initializing...",
+    "repositoryInitialized": "Repository initialized",
+    "fetchedFromRemote": "Fetched from remote",
+    "pulledFromRemote": "Pulled from remote",
+    "pushedToRemote": "Pushed to remote",
+    "refreshed": "Refreshed",
+    "softResetCompleted": "Soft reset completed",
+    "undoLastCommit": "Undo last commit",
+    "undoLastCommitMessage": "This will undo the latest commit and keep all its changes staged. This cannot be undone from Panes.",
+    "softReset": "Soft reset",
+    "pull": "Pull",
+    "push": "Push"
+  }
+}

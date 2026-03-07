@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import {
   FolderGit2,
   FolderOpen,
@@ -11,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { ipc } from "../../lib/ipc";
+import { formatShortDate } from "../../lib/formatters";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { toast } from "../../stores/toastStore";
 import { Dropdown } from "../shared/Dropdown";
@@ -23,12 +25,6 @@ type Section = "general" | "repos" | "startup";
 const MIN_SCAN_DEPTH = 0;
 const MAX_SCAN_DEPTH = 12;
 
-const TRUST_OPTIONS = [
-  { value: "trusted", label: "Trusted" },
-  { value: "standard", label: "Standard" },
-  { value: "restricted", label: "Restricted" },
-];
-
 interface WorkspaceSettingsModalProps {
   workspace: Workspace;
   onClose: () => void;
@@ -38,6 +34,7 @@ export function WorkspaceSettingsModal({
   workspace,
   onClose,
 }: WorkspaceSettingsModalProps) {
+  const { t, i18n } = useTranslation("workspace");
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const storeRepos = useWorkspaceStore((s) => s.repos);
@@ -58,6 +55,11 @@ export function WorkspaceSettingsModal({
   const [localRepos, setLocalRepos] = useState<Repo[] | null>(null);
   const [reposLoading, setReposLoading] = useState(false);
   const [remotesRepo, setRemotesRepo] = useState<Repo | null>(null);
+  const trustOptions = [
+    { value: "trusted", label: t("trust.trusted") },
+    { value: "standard", label: t("trust.standard") },
+    { value: "restricted", label: t("trust.restricted") },
+  ];
 
   const repos = isActive ? storeRepos : (localRepos ?? []);
 
@@ -103,9 +105,9 @@ export function WorkspaceSettingsModal({
       if (updatedWorkspace) {
         setDepthDraft(String(updatedWorkspace.scanDepth));
       }
-      toast.success("Rescanned.");
+      toast.success(t("toasts.rescanned"));
     } catch {
-      toast.error("Failed to update scan depth.");
+      toast.error(t("toasts.updateScanDepthFailed"));
     } finally {
       setDepthSaving(false);
     }
@@ -118,9 +120,9 @@ export function WorkspaceSettingsModal({
       if (!isActive) {
         setLocalRepos(await ipc.getRepos(currentWorkspace.id));
       }
-      toast.success("Repos rescanned.");
+      toast.success(t("toasts.reposRescanned"));
     } catch {
-      toast.error("Rescan failed.");
+      toast.error(t("toasts.rescanFailed"));
     } finally {
       setDepthSaving(false);
     }
@@ -135,7 +137,7 @@ export function WorkspaceSettingsModal({
         setLocalRepos((p) => (p ?? []).map((r) => (r.id === repoId ? { ...r, trustLevel: level } : r)));
       }
     } catch {
-      toast.error("Failed to update trust level.");
+      toast.error(t("toasts.updateTrustFailed"));
     }
   }
 
@@ -148,7 +150,7 @@ export function WorkspaceSettingsModal({
         setLocalRepos((p) => (p ?? []).map((r) => (r.id === repoId ? { ...r, isActive: on } : r)));
       }
     } catch {
-      toast.error("Failed to toggle visibility.");
+      toast.error(t("toasts.toggleVisibilityFailed"));
     }
   }
 
@@ -161,14 +163,13 @@ export function WorkspaceSettingsModal({
         setLocalRepos((p) => (p ?? []).map((r) => ({ ...r, trustLevel: level })));
       }
     } catch {
-      toast.error("Failed to update trust levels.");
+      toast.error(t("toasts.updateTrustLevelsFailed"));
     }
   }
 
   function fmtDate(s: string) {
     try {
-      const d = new Date(s);
-      return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+      return formatShortDate(s, i18n.language);
     } catch {
       return s;
     }
@@ -186,12 +187,12 @@ export function WorkspaceSettingsModal({
     try {
       await ipc.revealPath(currentWorkspace.rootPath);
     } catch {
-      toast.error("Failed to reveal workspace in Finder.");
+      toast.error(t("toasts.revealFailed"));
     }
   }
 
   const name =
-    currentWorkspace.name || currentWorkspace.rootPath.split("/").pop() || "Workspace";
+    currentWorkspace.name || currentWorkspace.rootPath.split("/").pop() || t("general.workspaceFallback");
 
   return (
     <>
@@ -228,7 +229,7 @@ export function WorkspaceSettingsModal({
             onClick={() => setSection("general")}
           >
             <Info size={13} className="ws-nav-icon" />
-            General
+            {t("nav.general")}
           </button>
           <button
             type="button"
@@ -236,7 +237,7 @@ export function WorkspaceSettingsModal({
             onClick={() => setSection("repos")}
           >
             <GitBranch size={13} className="ws-nav-icon" />
-            Repositories
+            {t("nav.repositories")}
           </button>
           <button
             type="button"
@@ -244,7 +245,7 @@ export function WorkspaceSettingsModal({
             onClick={() => setSection("startup")}
           >
             <Play size={13} className="ws-nav-icon" />
-            Startup
+            {t("nav.startup")}
           </button>
         </div>
 
@@ -256,13 +257,13 @@ export function WorkspaceSettingsModal({
           {section === "general" && (
             <>
               <div className="ws-section">
-                <div className="ws-section-label">Workspace</div>
+                <div className="ws-section-label">{t("sections.workspace")}</div>
                 <div className="ws-prop">
-                  <span className="ws-prop-label">Name</span>
+                  <span className="ws-prop-label">{t("general.name")}</span>
                   <span className="ws-prop-value">{name}</span>
                 </div>
                 <div className="ws-prop">
-                  <span className="ws-prop-label">Path</span>
+                  <span className="ws-prop-label">{t("general.path")}</span>
                   <span className="ws-prop-value ws-prop-mono" title={currentWorkspace.rootPath}>
                     {currentWorkspace.rootPath}
                   </span>
@@ -273,16 +274,16 @@ export function WorkspaceSettingsModal({
                       onClick={() => void revealWorkspace()}
                     >
                       <FolderOpen size={11} />
-                      Reveal
+                      {t("actions.reveal")}
                     </button>
                   </div>
                 </div>
               </div>
 
               <div className="ws-section">
-                <div className="ws-section-label">Scanning</div>
+                <div className="ws-section-label">{t("sections.scanning")}</div>
                 <div className="ws-prop">
-                  <span className="ws-prop-label">Depth</span>
+                  <span className="ws-prop-label">{t("scanning.depth")}</span>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
                     <input
                       type="number"
@@ -306,7 +307,7 @@ export function WorkspaceSettingsModal({
                       disabled={depthSaving}
                     >
                       <RefreshCw size={10} />
-                      {depthSaving ? "Scanning..." : "Rescan"}
+                      {depthSaving ? t("scanning.scanning") : t("actions.rescan")}
                     </button>
                     {depthError && (
                       <span style={{ fontSize: 10.5, color: "var(--danger)" }}>{depthError}</span>
@@ -316,13 +317,13 @@ export function WorkspaceSettingsModal({
               </div>
 
               <div className="ws-section">
-                <div className="ws-section-label">Info</div>
+                <div className="ws-section-label">{t("sections.info")}</div>
                 <div className="ws-prop">
-                  <span className="ws-prop-label">Opened</span>
+                  <span className="ws-prop-label">{t("info.opened")}</span>
                   <span className="ws-prop-value">{fmtDate(currentWorkspace.lastOpenedAt)}</span>
                 </div>
                 <div className="ws-prop">
-                  <span className="ws-prop-label">Created</span>
+                  <span className="ws-prop-label">{t("info.created")}</span>
                   <span className="ws-prop-value">{fmtDate(currentWorkspace.createdAt)}</span>
                 </div>
               </div>
@@ -334,7 +335,7 @@ export function WorkspaceSettingsModal({
               {repos.length > 0 && (
                 <div className="ws-repos-toolbar">
                   <span className="ws-repos-toolbar-count">
-                    {repos.length} {repos.length === 1 ? "repo" : "repos"}
+                    {t("repos.count", { count: repos.length })}
                   </span>
                   <div className="ws-repos-toolbar-actions">
                     <button
@@ -342,14 +343,14 @@ export function WorkspaceSettingsModal({
                       className="ws-prop-btn"
                       onClick={() => void bulkTrust("trusted")}
                     >
-                      All trusted
+                      {t("repos.allTrusted")}
                     </button>
                     <button
                       type="button"
                       className="ws-prop-btn"
                       onClick={() => void bulkTrust("standard")}
                     >
-                      All standard
+                      {t("repos.allStandard")}
                     </button>
                     <button
                       type="button"
@@ -358,19 +359,19 @@ export function WorkspaceSettingsModal({
                       disabled={depthSaving}
                     >
                       <RefreshCw size={10} />
-                      {depthSaving ? "Scanning..." : "Rescan"}
+                      {depthSaving ? t("scanning.scanning") : t("actions.rescan")}
                     </button>
                   </div>
                 </div>
               )}
 
               {reposLoading && !isActive ? (
-                <div className="ws-repo-empty">Loading...</div>
+                <div className="ws-repo-empty">{t("repos.loading")}</div>
               ) : repos.length === 0 ? (
                 <div className="ws-repo-empty">
-                  No repositories found.
+                  {t("repos.emptyTitle")}
                   <br />
-                  Try increasing the scan depth in General.
+                  {t("repos.emptyHint")}
                 </div>
               ) : (
                 <div className="ws-repo-list">
@@ -389,14 +390,14 @@ export function WorkspaceSettingsModal({
                         <button
                           type="button"
                           className="ws-prop-btn"
-                          title="Manage remotes"
+                          title={t("repos.manageRemotes")}
                           onClick={() => setRemotesRepo(repo)}
                         >
                           <Link size={11} />
                         </button>
                         <Dropdown
                           value={repo.trustLevel}
-                          options={TRUST_OPTIONS}
+                          options={trustOptions}
                           onChange={(v) => void setTrust(repo.id, v as TrustLevel)}
                           triggerStyle={{
                             borderRadius: "var(--radius-sm)",
@@ -407,7 +408,7 @@ export function WorkspaceSettingsModal({
                         />
                         <label
                           className="ws-toggle"
-                          title={repo.isActive ? "Visible in git panel" : "Hidden from git panel"}
+                          title={repo.isActive ? t("repos.visible") : t("repos.hidden")}
                         >
                           <input
                             type="checkbox"
@@ -434,7 +435,7 @@ export function WorkspaceSettingsModal({
         {section !== "startup" && (
           <div className="ws-footer">
             <span className="ws-footer-meta">
-              {repos.length} {repos.length === 1 ? "repo" : "repos"}
+              {t("repos.count", { count: repos.length })}
             </span>
           </div>
         )}

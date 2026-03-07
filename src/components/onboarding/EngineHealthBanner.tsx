@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { AlertTriangle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useEngineStore } from "../../stores/engineStore";
 
 function isInformationalCodexWarning(warning: string): boolean {
@@ -20,6 +21,7 @@ function formatConfigWarningLocation(
 }
 
 export function EngineHealthBanner() {
+  const { t } = useTranslation("app");
   const { health, error } = useEngineStore();
   const codexState = useMemo(() => health.codex, [health]);
   const codexWarnings = codexState?.warnings ?? [];
@@ -37,22 +39,22 @@ export function EngineHealthBanner() {
   }
 
   const title = !codexState?.available
-    ? "Codex engine not detected"
+    ? t("engineHealth.missingTitle")
     : configWarning
-      ? "Codex config warning"
+      ? t("engineHealth.configWarningTitle")
       : diagnostics?.stale
-        ? "Codex runtime sync is stale"
-        : "Codex sandbox check failed";
+        ? t("engineHealth.staleTitle")
+        : t("engineHealth.sandboxTitle");
   const description = !codexState?.available
     ? codexState?.details ??
       error ??
-      "Install Codex CLI and authenticate before starting chat turns."
+      t("engineHealth.missingMessage")
     : configWarning
       ? configWarning.details ?? configWarning.summary
       : diagnostics?.stale
-        ? "Panes could not refresh the latest Codex capability snapshot. Runtime notifications may be delayed until the next successful reconnect."
+        ? t("engineHealth.staleMessage")
         : codexWarning ??
-          "Codex is installed, but the local OS sandbox check failed.";
+          t("engineHealth.sandboxMessage");
   const commandHint = !codexState?.available
     ? codexState?.fixes?.[0] ?? codexState?.checks?.[0]
     : configWarning
@@ -91,7 +93,7 @@ export function EngineHealthBanner() {
               whiteSpace: "pre-wrap",
             }}
           >
-            {configWarning ? "Location: " : "Run in Terminal: "}
+            {configWarning ? `${t("engineHealth.location")} ` : `${t("engineHealth.runInTerminal")} `}
             {commandHint}
           </p>
         )}

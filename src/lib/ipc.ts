@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { AppLocale } from "./locale";
 import type {
   ApprovalResponse,
   ActionOutputPayload,
@@ -46,6 +47,8 @@ import type {
 } from "../types";
 
 export const ipc = {
+  getAppLocale: () => invoke<AppLocale>("get_app_locale"),
+  setAppLocale: (locale: AppLocale) => invoke<AppLocale>("set_app_locale", { locale }),
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
   listArchivedWorkspaces: () => invoke<Workspace[]>("list_archived_workspaces"),
   openWorkspace: (path: string, scanDepth?: number) =>

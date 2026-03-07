@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import {
   RefreshCw,
   ArrowDown,
@@ -30,18 +31,11 @@ import { GitStashView } from "./GitStashView";
 import { GitFilesView } from "./GitFilesView";
 import { GitWorktreesView } from "./GitWorktreesView";
 
-const VIEW_OPTIONS = [
-  { value: "changes", label: "Changes", icon: <FileDiff size={13} /> },
-  { value: "branches", label: "Branches", icon: <GitBranchIcon size={13} /> },
-  { value: "commits", label: "Commits", icon: <GitCommitHorizontal size={13} /> },
-  { value: "stash", label: "Stash", icon: <Archive size={13} /> },
-  { value: "files", label: "Files", icon: <FolderTree size={13} /> },
-  { value: "worktrees", label: "Worktrees", icon: <GitFork size={13} /> },
-];
 const GIT_WATCHER_REFRESH_DEBOUNCE_MS_CHANGES = 550;
 const GIT_WATCHER_REFRESH_DEBOUNCE_MS_BACKGROUND = 1100;
 
 export function GitPanel() {
+  const { t } = useTranslation("git");
   const {
     workspaces,
     repos,
@@ -87,6 +81,17 @@ export function GitPanel() {
   const watcherRefreshTimerRef = useRef<number | null>(null);
   const watcherRefreshInFlightRef = useRef(false);
   const watcherRefreshQueuedRef = useRef(false);
+  const viewOptions = useMemo(
+    () => [
+      { value: "changes", label: t("panel.tabs.changes"), icon: <FileDiff size={13} /> },
+      { value: "branches", label: t("panel.tabs.branches"), icon: <GitBranchIcon size={13} /> },
+      { value: "commits", label: t("panel.tabs.commits"), icon: <GitCommitHorizontal size={13} /> },
+      { value: "stash", label: t("panel.tabs.stash"), icon: <Archive size={13} /> },
+      { value: "files", label: t("panel.tabs.files"), icon: <FolderTree size={13} /> },
+      { value: "worktrees", label: t("panel.tabs.worktrees"), icon: <GitFork size={13} /> },
+    ],
+    [t],
+  );
 
   const closeMoreMenu = useCallback(() => setMoreMenuOpen(false), []);
 
@@ -166,20 +171,20 @@ export function GitPanel() {
     try {
       if (action === "fetch") {
         await fetchRemote(effectiveRepoPath);
-        toast.success("Fetched from remote");
+        toast.success(t("panel.fetchedFromRemote"));
         return;
       }
       if (action === "pull") {
         await pullRemote(effectiveRepoPath);
-        toast.success("Pulled from remote");
+        toast.success(t("panel.pulledFromRemote"));
         return;
       }
       await pushRemote(effectiveRepoPath);
-      toast.success("Pushed to remote");
+      toast.success(t("panel.pushedToRemote"));
     } catch (syncError) {
       setLocalError(String(syncError));
     }
-  }, [effectiveRepoPath, fetchRemote, isActiveRepoSyncing, pullRemote, pushRemote]);
+  }, [effectiveRepoPath, fetchRemote, isActiveRepoSyncing, pullRemote, pushRemote, t]);
 
   const runSyncActionFromMore = useCallback((action: "fetch" | "pull" | "push") => {
     closeMoreMenu();
@@ -191,11 +196,11 @@ export function GitPanel() {
     try {
       setLocalError(undefined);
       await fetchRemote(effectiveRepoPath);
-      toast.success("Refreshed");
+      toast.success(t("panel.refreshed"));
     } catch (e) {
       setLocalError(String(e));
     }
-  }, [effectiveRepoPath, syncDisabled, fetchRemote]);
+  }, [effectiveRepoPath, syncDisabled, fetchRemote, t]);
 
   const onSoftResetLastCommit = useCallback(async () => {
     if (!effectiveRepoPath || syncDisabled) {
@@ -206,11 +211,11 @@ export function GitPanel() {
     setLocalError(undefined);
     try {
       await softResetLastCommit(effectiveRepoPath);
-      toast.success("Soft reset completed");
+      toast.success(t("panel.softResetCompleted"));
     } catch (e) {
       setLocalError(String(e));
     }
-  }, [effectiveRepoPath, syncDisabled, softResetLastCommit]);
+  }, [effectiveRepoPath, syncDisabled, softResetLastCommit, t]);
 
   // Auto-activate all repos when none are active
   useEffect(() => {
@@ -447,7 +452,7 @@ export function GitPanel() {
       >
         <div className="no-drag">
           <Dropdown
-            options={VIEW_OPTIONS}
+            options={viewOptions}
             value={activeView}
             onChange={(value) => {
               if (activeWorkspaceId) flushDrafts(activeWorkspaceId);
@@ -472,7 +477,7 @@ export function GitPanel() {
         {effectiveRepo && (
           <span className="git-branch-meta" title={effectiveRepo.path}>
             <GitBranchIcon size={11} />
-            <span>{status?.branch ?? "detached"}</span>
+            <span>{status?.branch ?? t("panel.detached")}</span>
             {((status?.ahead ?? 0) > 0 || (status?.behind ?? 0) > 0) && (
               <span className="git-ahead-behind">
                 {(status?.ahead ?? 0) > 0 && (
@@ -490,7 +495,7 @@ export function GitPanel() {
           type="button"
           className="git-toolbar-btn no-drag"
           disabled={syncDisabled}
-          title={isActiveRepoSyncing ? "Syncing..." : "Refresh & fetch"}
+          title={isActiveRepoSyncing ? t("panel.syncing") : t("panel.refreshAndFetch")}
           onClick={() => void onSyncClick()}
         >
           <RefreshCw size={14} className={isActiveRepoSyncing ? "git-spin" : ""} />
@@ -511,7 +516,7 @@ export function GitPanel() {
             }
             setMoreMenuOpen(true);
           }}
-          title="More actions"
+          title={t("panel.moreActions")}
         >
           <MoreHorizontal size={14} />
         </button>
@@ -550,7 +555,7 @@ export function GitPanel() {
               type="button"
               className="btn btn-ghost"
               style={{ padding: "2px 6px", fontSize: 11, marginLeft: 4 }}
-              title="Back to main repo"
+              title={t("panel.backToMainRepo")}
               onClick={() => {
                 if (activeRepo) {
                   setActiveRepoPath(activeRepo.path);
@@ -559,7 +564,7 @@ export function GitPanel() {
               }}
             >
               <CornerUpLeft size={11} />
-              Main repo
+              {t("panel.backToMainRepo")}
             </button>
           )}
         </div>
@@ -592,14 +597,14 @@ export function GitPanel() {
             <GitBranchIcon size={20} />
           </div>
           <p className="git-empty-title">
-            {reposLoading ? "Scanning repositories..." : "No repositories found"}
+            {reposLoading ? t("panel.scanningRepositories") : t("panel.noRepositories")}
           </p>
           <p className="git-empty-sub">
             {reposLoading
-              ? "Checking this workspace for git repositories"
+              ? t("panel.scanningHint")
               : initBlockedByRepoPath
-              ? `This workspace is already inside the Git repository at ${initBlockedByRepoPath}.`
-              : "Open a folder with a git repository"}
+              ? t("panel.blockedByRepo", { path: initBlockedByRepoPath })
+              : t("panel.openFolderHint")}
           </p>
           {!reposLoading &&
             activeWorkspaceId &&
@@ -616,7 +621,7 @@ export function GitPanel() {
                   try {
                     await ipc.initGitRepo(activeWorkspaceRootPath);
                     await rescanWorkspace(activeWorkspaceId);
-                    toast.success("Repository initialized");
+                    toast.success(t("panel.repositoryInitialized"));
                   } catch (e) {
                     toast.error(String(e));
                   } finally {
@@ -625,7 +630,7 @@ export function GitPanel() {
                 })();
               }}
             >
-              {initLoading ? "Initializing..." : "Initialize Repository"}
+              {initLoading ? t("panel.initializingRepository") : t("panel.initializeRepository")}
             </button>
           )}
         </div>
@@ -646,9 +651,9 @@ export function GitPanel() {
 
       <ConfirmDialog
         open={softResetConfirmOpen}
-        title="Undo last commit"
-        message="This will undo the latest commit and keep all its changes staged. This cannot be undone from Panes."
-        confirmLabel="Soft reset"
+        title={t("panel.undoLastCommit")}
+        message={t("panel.undoLastCommitMessage")}
+        confirmLabel={t("panel.softReset")}
         onConfirm={() => void onSoftResetLastCommit()}
         onCancel={() => setSoftResetConfirmOpen(false)}
       />
@@ -671,7 +676,7 @@ export function GitPanel() {
               disabled={syncDisabled}
             >
               <ArrowDown size={13} className={isActiveRepoSyncing && remoteSyncAction === "pull" ? "git-spin" : ""} />
-              <span style={{ flex: 1 }}>Pull</span>
+              <span style={{ flex: 1 }}>{t("panel.pull")}</span>
               <span className="git-sync-counter">↓{pullCount}</span>
             </button>
             <button
@@ -681,7 +686,7 @@ export function GitPanel() {
               disabled={syncDisabled}
             >
               <ArrowUp size={13} className={isActiveRepoSyncing && remoteSyncAction === "push" ? "git-spin" : ""} />
-              <span style={{ flex: 1 }}>Push</span>
+              <span style={{ flex: 1 }}>{t("panel.push")}</span>
               <span className="git-sync-counter">↑{pushCount}</span>
             </button>
             <div className="git-action-menu-divider" />
@@ -695,7 +700,7 @@ export function GitPanel() {
               disabled={syncDisabled}
             >
               <Undo2 size={13} />
-              <span style={{ flex: 1 }}>Undo last commit</span>
+              <span style={{ flex: 1 }}>{t("panel.undoLastCommit")}</span>
             </button>
           </div>,
           document.body,

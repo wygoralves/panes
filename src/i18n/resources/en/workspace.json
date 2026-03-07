@@ -1,0 +1,66 @@
+{
+  "errors": {
+    "notFound": "Workspace not found."
+  },
+  "actions": {
+    "back": "Back",
+    "reveal": "Reveal",
+    "rescan": "Rescan"
+  },
+  "nav": {
+    "general": "General",
+    "repositories": "Repositories",
+    "startup": "Startup"
+  },
+  "sections": {
+    "workspace": "Workspace",
+    "scanning": "Scanning",
+    "info": "Info"
+  },
+  "general": {
+    "workspaceFallback": "Workspace",
+    "name": "Name",
+    "path": "Path"
+  },
+  "scanning": {
+    "depth": "Depth",
+    "scanning": "Scanning..."
+  },
+  "info": {
+    "opened": "Opened",
+    "created": "Created"
+  },
+  "trust": {
+    "trusted": "Trusted",
+    "standard": "Standard",
+    "restricted": "Restricted"
+  },
+  "repos": {
+    "count_one": "{{count}} repo",
+    "count_other": "{{count}} repos",
+    "allTrusted": "All trusted",
+    "allStandard": "All standard",
+    "loading": "Loading...",
+    "emptyTitle": "No repositories found.",
+    "emptyHint": "Try increasing the scan depth in General.",
+    "manageRemotes": "Manage remotes",
+    "visible": "Visible in git panel",
+    "hidden": "Hidden from git panel",
+    "remotes": "Remotes"
+  },
+  "toasts": {
+    "rescanned": "Rescanned.",
+    "updateScanDepthFailed": "Failed to update scan depth.",
+    "reposRescanned": "Repos rescanned.",
+    "rescanFailed": "Rescan failed.",
+    "updateTrustFailed": "Failed to update trust level.",
+    "toggleVisibilityFailed": "Failed to toggle visibility.",
+    "updateTrustLevelsFailed": "Failed to update trust levels.",
+    "revealFailed": "Failed to reveal workspace in Finder."
+  },
+  "more": {
+    "options": "Workspace options",
+    "settings": "Workspace settings",
+    "archive": "Archive workspace"
+  }
+}

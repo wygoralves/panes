@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import {
   Columns2,
   SquareTerminal,
@@ -32,6 +34,7 @@ import {
   FolderGit2,
 } from "lucide-react";
 import { ipc, writeCommandToNewSession } from "../../lib/ipc";
+import { formatRelativeTime } from "../../lib/formatters";
 import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -176,14 +179,15 @@ interface ResultGroup {
 /*  Static commands                                                    */
 /* ------------------------------------------------------------------ */
 
-const STATIC_COMMANDS: CommandEntry[] = [
+function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
+  return [
   // Layout
   {
     id: "layout-chat",
-    label: "Switch to Chat",
+    label: t("commandPalette.commands.layoutChat"),
     icon: Columns2,
     group: "layout",
-    keywords: ["chat", "mode", "view"],
+    keywords: ["chat", "mode", "view", "conversa", "layout"],
     action: ({ activeWorkspaceId, close }) => {
       if (activeWorkspaceId) void useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "chat");
       close();
@@ -191,10 +195,10 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "layout-split",
-    label: "Switch to Split View",
+    label: t("commandPalette.commands.layoutSplit"),
     icon: SplitSquareHorizontal,
     group: "layout",
-    keywords: ["split", "terminal", "half"],
+    keywords: ["split", "terminal", "half", "dividir", "metade"],
     action: ({ activeWorkspaceId, close }) => {
       if (activeWorkspaceId) void useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "split");
       close();
@@ -202,10 +206,10 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "layout-terminal",
-    label: "Switch to Terminal",
+    label: t("commandPalette.commands.layoutTerminal"),
     icon: SquareTerminal,
     group: "layout",
-    keywords: ["terminal", "full", "shell"],
+    keywords: ["terminal", "full", "shell", "inteiro"],
     action: ({ activeWorkspaceId, close }) => {
       if (activeWorkspaceId) void useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "terminal");
       close();
@@ -213,10 +217,10 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "layout-editor",
-    label: "Switch to Editor",
+    label: t("commandPalette.commands.layoutEditor"),
     icon: FilePen,
     group: "layout",
-    keywords: ["editor", "code", "file"],
+    keywords: ["editor", "code", "file", "arquivo"],
     shortcut: "\u2318E",
     action: ({ activeWorkspaceId, close }) => {
       if (activeWorkspaceId) void useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "editor");
@@ -225,10 +229,10 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "toggle-sidebar",
-    label: "Toggle Sidebar",
+    label: t("commandPalette.commands.toggleSidebar"),
     icon: PanelLeft,
     group: "layout",
-    keywords: ["sidebar", "panel", "left"],
+    keywords: ["sidebar", "panel", "left", "barra"],
     shortcut: "\u2318B",
     action: ({ close }) => {
       useUiStore.getState().toggleSidebar();
@@ -237,10 +241,10 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "toggle-git-panel",
-    label: "Toggle Git Panel",
+    label: t("commandPalette.commands.toggleGitPanel"),
     icon: GitBranchIcon,
     group: "layout",
-    keywords: ["git", "panel", "right"],
+    keywords: ["git", "panel", "right", "painel"],
     shortcut: "\u2318\u21E7B",
     action: ({ close }) => {
       useUiStore.getState().toggleGitPanel();
@@ -249,10 +253,10 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "open-search",
-    label: "Search Messages",
+    label: t("commandPalette.commands.searchMessages"),
     icon: Search,
     group: "layout",
-    keywords: ["search", "find", "messages", "fts"],
+    keywords: ["search", "find", "messages", "fts", "buscar", "mensagens"],
     shortcut: "\u2318\u21E7F",
     action: ({ close }) => {
       close();
@@ -262,7 +266,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   // Git
   {
     id: "git-fetch",
-    label: "Git Fetch",
+    label: t("commandPalette.commands.gitFetch"),
     icon: RefreshCw,
     group: "git",
     keywords: ["fetch", "remote", "sync"],
@@ -272,15 +276,15 @@ const STATIC_COMMANDS: CommandEntry[] = [
       if (!activeRepoPath) return;
       try {
         await useGitStore.getState().fetchRemote(activeRepoPath);
-        toast.success("Fetch complete");
+        toast.success(t("commandPalette.toasts.fetchComplete"));
       } catch {
-        toast.error("Fetch failed");
+        toast.error(t("commandPalette.toasts.fetchFailed"));
       }
     },
   },
   {
     id: "git-pull",
-    label: "Git Pull",
+    label: t("commandPalette.commands.gitPull"),
     icon: ArrowDownToLine,
     group: "git",
     keywords: ["pull", "download", "sync"],
@@ -290,15 +294,15 @@ const STATIC_COMMANDS: CommandEntry[] = [
       if (!activeRepoPath) return;
       try {
         await useGitStore.getState().pullRemote(activeRepoPath);
-        toast.success("Pull complete");
+        toast.success(t("commandPalette.toasts.pullComplete"));
       } catch {
-        toast.error("Pull failed");
+        toast.error(t("commandPalette.toasts.pullFailed"));
       }
     },
   },
   {
     id: "git-push",
-    label: "Git Push",
+    label: t("commandPalette.commands.gitPush"),
     icon: ArrowUpFromLine,
     group: "git",
     keywords: ["push", "upload", "remote"],
@@ -308,15 +312,15 @@ const STATIC_COMMANDS: CommandEntry[] = [
       if (!activeRepoPath) return;
       try {
         await useGitStore.getState().pushRemote(activeRepoPath);
-        toast.success("Push complete");
+        toast.success(t("commandPalette.toasts.pushComplete"));
       } catch {
-        toast.error("Push failed");
+        toast.error(t("commandPalette.toasts.pushFailed"));
       }
     },
   },
   {
     id: "git-checkout-branch",
-    label: "Checkout Branch\u2026",
+    label: t("commandPalette.commands.checkoutBranch"),
     icon: GitBranchIcon,
     group: "git",
     keywords: ["checkout", "switch", "branch"],
@@ -327,7 +331,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "git-create-branch",
-    label: "Create Branch\u2026",
+    label: t("commandPalette.commands.createBranch"),
     icon: GitBranchPlus,
     group: "git",
     keywords: ["create", "new", "branch"],
@@ -338,7 +342,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "git-commit",
-    label: "Commit Staged Changes\u2026",
+    label: t("commandPalette.commands.commitStaged"),
     icon: GitCommitHorizontal,
     group: "git",
     keywords: ["commit", "save", "staged"],
@@ -349,7 +353,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "git-stash-push",
-    label: "Stash Changes\u2026",
+    label: t("commandPalette.commands.stashChanges"),
     icon: Archive,
     group: "git",
     keywords: ["stash", "save", "shelve"],
@@ -360,7 +364,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "git-stage-all",
-    label: "Stage All Files",
+    label: t("commandPalette.commands.stageAll"),
     icon: ListChecks,
     group: "git",
     keywords: ["stage", "add", "all"],
@@ -370,21 +374,21 @@ const STATIC_COMMANDS: CommandEntry[] = [
       const status = useGitStore.getState().status;
       const unstaged = status?.files.filter((f) => f.worktreeStatus) ?? [];
       if (unstaged.length === 0) {
-        toast.warning("No unstaged files");
+        toast.warning(t("commandPalette.toasts.noUnstagedFiles"));
         return;
       }
       close();
       try {
         await useGitStore.getState().stageMany(activeRepoPath, unstaged.map((f) => f.path));
-        toast.success(`Staged ${unstaged.length} file${unstaged.length === 1 ? "" : "s"}`);
+        toast.success(t("commandPalette.toasts.stagedFiles", { count: unstaged.length }));
       } catch {
-        toast.error("Stage failed");
+        toast.error(t("commandPalette.toasts.stageFailed"));
       }
     },
   },
   {
     id: "git-unstage-all",
-    label: "Unstage All Files",
+    label: t("commandPalette.commands.unstageAll"),
     icon: ListX,
     group: "git",
     keywords: ["unstage", "remove", "all"],
@@ -394,21 +398,21 @@ const STATIC_COMMANDS: CommandEntry[] = [
       const status = useGitStore.getState().status;
       const staged = status?.files.filter((f) => f.indexStatus) ?? [];
       if (staged.length === 0) {
-        toast.warning("No staged files");
+        toast.warning(t("commandPalette.toasts.noStagedFiles"));
         return;
       }
       close();
       try {
         await useGitStore.getState().unstageMany(activeRepoPath, staged.map((f) => f.path));
-        toast.success(`Unstaged ${staged.length} file${staged.length === 1 ? "" : "s"}`);
+        toast.success(t("commandPalette.toasts.unstagedFiles", { count: staged.length }));
       } catch {
-        toast.error("Unstage failed");
+        toast.error(t("commandPalette.toasts.unstageFailed"));
       }
     },
   },
   {
     id: "git-discard-all",
-    label: "Discard All Changes",
+    label: t("commandPalette.commands.discardAll"),
     icon: Trash2,
     group: "git",
     keywords: ["discard", "revert", "clean", "all"],
@@ -421,7 +425,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "git-apply-stash",
-    label: "Apply Stash\u2026",
+    label: t("commandPalette.commands.applyStash"),
     icon: Layers,
     group: "git",
     keywords: ["stash", "apply", "restore"],
@@ -432,7 +436,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "git-pop-stash",
-    label: "Pop Stash\u2026",
+    label: t("commandPalette.commands.popStash"),
     icon: Layers,
     group: "git",
     keywords: ["stash", "pop", "restore", "drop"],
@@ -443,7 +447,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "git-delete-branch",
-    label: "Delete Branch\u2026",
+    label: t("commandPalette.commands.deleteBranch"),
     icon: Trash2,
     group: "git",
     keywords: ["delete", "remove", "branch"],
@@ -454,7 +458,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "git-soft-reset",
-    label: "Soft Reset Last Commit",
+    label: t("commandPalette.commands.softReset"),
     icon: Undo2,
     group: "git",
     keywords: ["reset", "undo", "uncommit"],
@@ -464,15 +468,15 @@ const STATIC_COMMANDS: CommandEntry[] = [
       if (!activeRepoPath) return;
       try {
         await useGitStore.getState().softResetLastCommit(activeRepoPath);
-        toast.success("Last commit reset");
+        toast.success(t("commandPalette.toasts.lastCommitReset"));
       } catch {
-        toast.error("Reset failed");
+        toast.error(t("commandPalette.toasts.resetFailed"));
       }
     },
   },
   {
     id: "git-switch-repo",
-    label: "Switch Git Repo\u2026",
+    label: t("commandPalette.commands.switchRepo"),
     icon: FolderGit2,
     group: "git",
     keywords: ["repo", "repository", "switch", "multi"],
@@ -484,7 +488,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   // Navigation
   {
     id: "new-thread",
-    label: "New Thread",
+    label: t("commandPalette.commands.newThread"),
     icon: Plus,
     group: "navigation",
     keywords: ["new", "thread", "conversation", "chat"],
@@ -494,7 +498,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
       const threadId = await useThreadStore.getState().createThread({
         workspaceId: activeWorkspaceId,
         repoId: null,
-        title: "New Thread",
+        title: t("sidebar.newThreadTitle"),
       });
       if (threadId) {
         useThreadStore.getState().setActiveThread(threadId);
@@ -504,8 +508,8 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "switch-thread",
-    label: "Switch Thread\u2026",
-    description: "Search threads by name",
+    label: t("commandPalette.commands.switchThread"),
+    description: t("commandPalette.descriptions.switchThread"),
     icon: MessageSquare,
     group: "navigation",
     keywords: ["thread", "conversation", "switch"],
@@ -515,8 +519,8 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "switch-workspace",
-    label: "Switch Workspace\u2026",
-    description: "Search workspaces",
+    label: t("commandPalette.commands.switchWorkspace"),
+    description: t("commandPalette.descriptions.switchWorkspace"),
     icon: FolderOpen,
     group: "navigation",
     keywords: ["workspace", "project", "folder", "switch"],
@@ -527,7 +531,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   // View
   {
     id: "view-changes",
-    label: "Open Git Changes",
+    label: t("commandPalette.commands.viewChanges"),
     icon: ListTree,
     group: "view",
     keywords: ["changes", "status", "diff", "staged"],
@@ -540,7 +544,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "view-branches",
-    label: "Open Git Branches",
+    label: t("commandPalette.commands.viewBranches"),
     icon: GitBranchIcon,
     group: "view",
     keywords: ["branches", "branch", "list"],
@@ -553,7 +557,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "view-commits",
-    label: "Open Git Commits",
+    label: t("commandPalette.commands.viewCommits"),
     icon: History,
     group: "view",
     keywords: ["commits", "log", "history"],
@@ -566,7 +570,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "view-stash",
-    label: "Open Git Stash",
+    label: t("commandPalette.commands.viewStash"),
     icon: Layers,
     group: "view",
     keywords: ["stash", "shelve", "list"],
@@ -579,7 +583,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "view-files",
-    label: "Open Git Files",
+    label: t("commandPalette.commands.viewFiles"),
     icon: File,
     group: "view",
     keywords: ["files", "tree", "explorer"],
@@ -592,7 +596,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "view-worktrees",
-    label: "Open Git Worktrees",
+    label: t("commandPalette.commands.viewWorktrees"),
     icon: FolderGit2,
     group: "view",
     keywords: ["worktrees", "worktree", "working"],
@@ -605,7 +609,7 @@ const STATIC_COMMANDS: CommandEntry[] = [
   },
   {
     id: "view-harnesses",
-    label: "Open Agents Panel",
+    label: t("commandPalette.commands.viewHarnesses"),
     icon: Play,
     group: "view",
     keywords: ["agents", "harnesses", "tools", "ai"],
@@ -614,7 +618,8 @@ const STATIC_COMMANDS: CommandEntry[] = [
       close();
     },
   },
-];
+  ];
+}
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -632,17 +637,6 @@ function fileBaseName(path: string): string {
 function fileDirName(path: string): string {
   const idx = path.lastIndexOf("/");
   return idx >= 0 ? path.slice(0, idx + 1) : "";
-}
-
-function relativeTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(ms / 60_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -791,6 +785,7 @@ interface Props {
 }
 
 export function CommandPalette({ open, onClose }: Props) {
+  const { t, i18n } = useTranslation("app");
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const activeItemRef = useRef<HTMLButtonElement>(null);
@@ -850,8 +845,8 @@ export function CommandPalette({ open, onClose }: Props) {
 
   // Available commands filtered by context
   const availableCommands = useMemo(
-    () => STATIC_COMMANDS.filter((c) => !c.isAvailable || c.isAvailable(commandCtx)),
-    [commandCtx],
+    () => getStaticCommands(t).filter((c) => !c.isAvailable || c.isAvailable(commandCtx)),
+    [commandCtx, t],
   );
 
   /* ---- Reset on open/close ---- */
@@ -1729,7 +1724,11 @@ export function CommandPalette({ open, onClose }: Props) {
             <span style={{ overflow: "hidden" }}>
               <span style={STYLES.itemLabel}>{item.entry.title}</span>
             </span>
-            <span style={STYLES.itemDescription}>{relativeTime(item.entry.lastActivityAt)}</span>
+            <span style={STYLES.itemDescription}>
+              {formatRelativeTime(item.entry.lastActivityAt, i18n.language, {
+                style: "short-with-suffix",
+              })}
+            </span>
           </button>
         );
       }

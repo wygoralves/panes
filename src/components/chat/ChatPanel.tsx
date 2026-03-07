@@ -1,5 +1,6 @@
 import { FormEvent, Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { TFunction } from "i18next";
 import {
   Send,
   Square,
@@ -19,6 +20,7 @@ import {
   Clock,
   Zap,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useChatStore } from "../../stores/chatStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -109,12 +111,6 @@ const MODEL_TOKEN_LABELS: Record<string, string> = {
   nano: "Nano",
 };
 
-const REASONING_EFFORT_LABELS: Record<string, string> = {
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "XHigh",
-};
 type CodexThreadApprovalPolicyValue =
   | "inherit"
   | "untrusted"
@@ -137,131 +133,151 @@ type ThreadExecutionPolicyPatch = Partial<{
   networkPolicy: ThreadNetworkPolicyValue;
 }>;
 
-const TRUST_LEVEL_OPTIONS = [
-  {
-    value: "trusted",
-    label: "Trusted",
-    description: "Broad access with network enabled by default.",
-  },
-  {
-    value: "standard",
-    label: "Standard",
-    description: "Balanced access with network disabled by default.",
-  },
-  {
-    value: "restricted",
-    label: "Restricted",
-    description: "Tight approval handling and constrained execution.",
-  },
-] satisfies Array<{ value: TrustLevel; label: string; description: string }>;
+function getTrustLevelOptions(
+  t: TFunction<"chat">,
+): Array<{ value: TrustLevel; label: string; description: string }> {
+  return [
+    {
+      value: "trusted",
+      label: t("policy.trusted"),
+      description: t("policy.trustedDescription"),
+    },
+    {
+      value: "standard",
+      label: t("policy.standard"),
+      description: t("policy.standardDescription"),
+    },
+    {
+      value: "restricted",
+      label: t("policy.restricted"),
+      description: t("policy.restrictedDescription"),
+    },
+  ];
+}
 
-const CODEX_THREAD_APPROVAL_POLICY_OPTIONS = [
-  {
-    value: "inherit",
-    label: "Auto",
-    description: "Follow the repo trust policy.",
-  },
-  {
-    value: "untrusted",
-    label: "Untrusted",
-    description: "Force strict approval handling for the thread.",
-  },
-  {
-    value: "on-request",
-    label: "On-request",
-    description: "Ask before sensitive actions.",
-  },
-  {
-    value: "on-failure",
-    label: "On-failure",
-    description: "Only stop for approval after a failure.",
-  },
-  {
-    value: "never",
-    label: "Never",
-    description: "Continue automatically without approval prompts.",
-  },
-] satisfies Array<{
+function getCodexThreadApprovalPolicyOptions(
+  t: TFunction<"chat">,
+): Array<{
   value: CodexThreadApprovalPolicyValue;
   label: string;
   description: string;
-}>;
+}> {
+  return [
+    {
+      value: "inherit",
+      label: t("policy.auto"),
+      description: t("policy.autoRepoTrust"),
+    },
+    {
+      value: "untrusted",
+      label: t("policy.untrusted"),
+      description: t("policy.untrustedDescription"),
+    },
+    {
+      value: "on-request",
+      label: t("policy.onRequest"),
+      description: t("policy.onRequestDescription"),
+    },
+    {
+      value: "on-failure",
+      label: t("policy.onFailure"),
+      description: t("policy.onFailureDescription"),
+    },
+    {
+      value: "never",
+      label: t("policy.never"),
+      description: t("policy.neverDescription"),
+    },
+  ];
+}
 
-const CLAUDE_THREAD_PERMISSION_MODE_OPTIONS = [
-  {
-    value: "inherit",
-    label: "Auto",
-    description: "Follow the repo trust defaults for Claude.",
-  },
-  {
-    value: "restricted",
-    label: "Restricted",
-    description: "Require approval for every tool call.",
-  },
-  {
-    value: "standard",
-    label: "Standard",
-    description: "Auto-allow read-only tools and ask before risky ones.",
-  },
-  {
-    value: "trusted",
-    label: "Trusted",
-    description: "Skip approval prompts for allowed tools.",
-  },
-] satisfies Array<{
+function getClaudeThreadPermissionModeOptions(
+  t: TFunction<"chat">,
+): Array<{
   value: ClaudeThreadPermissionModeValue;
   label: string;
   description: string;
-}>;
+}> {
+  return [
+    {
+      value: "inherit",
+      label: t("policy.auto"),
+      description: t("policy.autoClaude"),
+    },
+    {
+      value: "restricted",
+      label: t("policy.restricted"),
+      description: t("policy.claudeRestrictedDescription"),
+    },
+    {
+      value: "standard",
+      label: t("policy.standard"),
+      description: t("policy.claudeStandardDescription"),
+    },
+    {
+      value: "trusted",
+      label: t("policy.trusted"),
+      description: t("policy.claudeTrustedDescription"),
+    },
+  ];
+}
 
-const THREAD_SANDBOX_MODE_OPTIONS = [
-  {
-    value: "inherit",
-    label: "Auto",
-    description: "Use the engine default sandbox.",
-  },
-  {
-    value: "read-only",
-    label: "Read-only",
-    description: "Allow reads only. No file writes.",
-  },
-  {
-    value: "workspace-write",
-    label: "Workspace-write",
-    description: "Allow writes inside the workspace only.",
-  },
-  {
-    value: "danger-full-access",
-    label: "Full access",
-    description: "Unrestricted filesystem access for the thread.",
-  },
-] satisfies Array<{
+function getThreadSandboxModeOptions(
+  t: TFunction<"chat">,
+): Array<{
   value: ThreadSandboxModeValue;
   label: string;
   description: string;
-}>;
+}> {
+  return [
+    {
+      value: "inherit",
+      label: t("policy.auto"),
+      description: t("policy.autoSandbox"),
+    },
+    {
+      value: "read-only",
+      label: t("policy.readOnly"),
+      description: t("policy.readOnlyDescription"),
+    },
+    {
+      value: "workspace-write",
+      label: t("policy.workspaceWrite"),
+      description: t("policy.workspaceWriteDescription"),
+    },
+    {
+      value: "danger-full-access",
+      label: t("policy.fullAccess"),
+      description: t("policy.fullAccessDescription"),
+    },
+  ];
+}
 
-const THREAD_NETWORK_POLICY_OPTIONS = [
-  {
-    value: "inherit",
-    label: "Auto",
-    description: "Follow the current thread and trust defaults.",
-  },
-  {
-    value: "enabled",
-    label: "Enabled",
-    description: "Allow network access for this thread.",
-  },
-  {
-    value: "restricted",
-    label: "Restricted",
-    description: "Block outbound network access for this thread.",
-  },
-] satisfies Array<{
+function getThreadNetworkPolicyOptions(
+  t: TFunction<"chat">,
+): Array<{
   value: ThreadNetworkPolicyValue;
   label: string;
   description: string;
-}>;
+}> {
+  return [
+    {
+      value: "inherit",
+      label: t("policy.auto"),
+      description: t("policy.autoNetwork"),
+    },
+    {
+      value: "enabled",
+      label: t("policy.enabled"),
+      description: t("policy.enabledDescription"),
+    },
+    {
+      value: "restricted",
+      label: t("policy.restricted"),
+      description: t("policy.networkRestrictedDescription"),
+    },
+  ];
+}
 
 function isCodexExternalSandboxWarning(message?: string): boolean {
   if (typeof message !== "string") {
@@ -369,25 +385,37 @@ interface AttachmentFilterConfig {
   imageExtensions: string[];
   title: string;
   warningMessage: string;
+  supportedLabel: string;
+  imagesLabel: string;
+  textFilesLabel: string;
 }
 
-function getAttachmentFilterConfig(engineId: string): AttachmentFilterConfig | null {
+function getAttachmentFilterConfig(
+  t: TFunction<"chat">,
+  engineId: string,
+): AttachmentFilterConfig | null {
   switch (engineId) {
     case "codex":
       return {
         supportedExtensions: CODEX_ATTACHMENT_EXTENSIONS,
         textExtensions: [...TEXT_ATTACHMENT_EXTENSIONS],
         imageExtensions: [...IMAGE_ATTACHMENT_EXTENSIONS],
-        title: "Attach files (images and text)",
-        warningMessage: "Only image and text attachments are supported for Codex turns.",
+        title: t("attachments.codexTitle"),
+        warningMessage: t("attachments.codexWarning"),
+        supportedLabel: t("attachments.filters.supportedFiles"),
+        imagesLabel: t("attachments.filters.images"),
+        textFilesLabel: t("attachments.filters.textFiles"),
       };
     case "claude":
       return {
         supportedExtensions: CLAUDE_ATTACHMENT_EXTENSIONS,
         textExtensions: CLAUDE_TEXT_ATTACHMENT_EXTENSIONS,
         imageExtensions: CLAUDE_IMAGE_ATTACHMENT_EXTENSIONS,
-        title: "Attach files (text, SVG, and supported images)",
-        warningMessage: "Only text files (including SVG) and PNG/JPEG/GIF/WEBP images are supported for Claude turns.",
+        title: t("attachments.claudeTitle"),
+        warningMessage: t("attachments.claudeWarning"),
+        supportedLabel: t("attachments.filters.supportedFiles"),
+        imagesLabel: t("attachments.filters.images"),
+        textFilesLabel: t("attachments.filters.textFiles"),
       };
     default:
       return null;
@@ -415,18 +443,30 @@ function formatModelName(modelName: string): string {
     .join("-");
 }
 
-function formatReasoningEffortLabel(effort?: string): string {
+function formatReasoningEffortLabel(
+  t: TFunction<"chat">,
+  effort?: string,
+): string {
   if (!effort) {
     return "";
   }
-  const knownLabel = REASONING_EFFORT_LABELS[effort.toLowerCase()];
-  if (knownLabel) {
-    return knownLabel;
+  switch (effort.toLowerCase()) {
+    case "low":
+      return t("modelPicker.effort.low");
+    case "medium":
+      return t("modelPicker.effort.medium");
+    case "high":
+      return t("modelPicker.effort.high");
+    case "xhigh":
+      return t("modelPicker.effort.xhigh");
+    default:
+      break;
   }
   return effort.charAt(0).toUpperCase() + effort.slice(1);
 }
 
 function formatEngineModelLabel(
+  t: TFunction<"chat">,
   engineName?: string,
   modelDisplayName?: string,
   reasoningEffort?: string,
@@ -434,8 +474,8 @@ function formatEngineModelLabel(
   const modelLabel = modelDisplayName ? formatModelName(modelDisplayName) : "";
   const baseLabel = engineName && modelLabel
     ? `${engineName} - ${modelLabel}`
-    : modelLabel || engineName || "Assistant";
-  const effortLabel = formatReasoningEffortLabel(reasoningEffort);
+    : modelLabel || engineName || t("panel.assistantFallback");
+  const effortLabel = formatReasoningEffortLabel(t, reasoningEffort);
   return effortLabel ? `${baseLabel} ${effortLabel}` : baseLabel;
 }
 
@@ -651,7 +691,7 @@ function parseMessageDate(raw?: string): Date | null {
   return date;
 }
 
-function formatMessageTimestamp(raw?: string): string {
+function formatMessageTimestamp(raw: string | undefined, locale: string): string {
   const date = parseMessageDate(raw);
   if (!date) {
     return "";
@@ -661,15 +701,35 @@ function formatMessageTimestamp(raw?: string): string {
   const sameDay = now.toDateString() === date.toDateString();
 
   if (sameDay) {
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
   }
 
-  return date.toLocaleString([], {
+  return date.toLocaleString(locale, {
     day: "2-digit",
     month: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatResetTime(
+  t: TFunction<"chat">,
+  isoDate: string | null,
+): string {
+  if (!isoDate) return "";
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) return "";
+  const now = new Date();
+  const diffMs = date.getTime() - now.getTime();
+  if (diffMs <= 0) return t("status.now");
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 60) return t("status.minutesShort", { count: diffMin });
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) {
+    return t("status.hoursMinutesShort", { hours: diffHr, minutes: diffMin % 60 });
+  }
+  const diffDays = Math.floor(diffHr / 24);
+  return t("status.daysHoursShort", { days: diffDays, hours: diffHr % 24 });
 }
 
 function estimateMessageOffset(
@@ -706,10 +766,11 @@ function MessageRowView({
   onApproval,
   onLoadActionOutput,
 }: MessageRowProps) {
+  const { t, i18n } = useTranslation("chat");
   const isUser = message.role === "user";
   const messageTimestamp = useMemo(
-    () => formatMessageTimestamp(message.createdAt),
-    [message.createdAt],
+    () => formatMessageTimestamp(message.createdAt, i18n.language),
+    [i18n.language, message.createdAt],
   );
   const userContent = useMemo(() => {
     if (message.content) {
@@ -792,7 +853,7 @@ function MessageRowView({
             {userPlanMode && (
               <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 6, fontSize: 10, color: "var(--text-3)" }}>
                 <ListChecks size={10} />
-                <span>Plan mode</span>
+                <span>{t("panel.planMode")}</span>
               </div>
             )}
             {userContent}
@@ -860,7 +921,7 @@ function MessageRowView({
                   className="thinking-icon-active"
                   style={{ color: "var(--info)" }}
                 />
-                <span>Thinking</span>
+                <span>{t("modelPicker.thinking")}</span>
                 <span className="chat-streaming-dots">
                   <span />
                   <span />
@@ -960,21 +1021,6 @@ function guessMimeType(fileName: string): string | undefined {
   return mimeMap[ext];
 }
 
-function formatResetTime(isoDate: string | null): string {
-  if (!isoDate) return "";
-  const date = new Date(isoDate);
-  if (Number.isNaN(date.getTime())) return "";
-  const now = new Date();
-  const diffMs = date.getTime() - now.getTime();
-  if (diffMs <= 0) return "now";
-  const diffMin = Math.floor(diffMs / 60000);
-  if (diffMin < 60) return `${diffMin}m`;
-  const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ${diffMin % 60}m`;
-  const diffDays = Math.floor(diffHr / 24);
-  return `${diffDays}d ${diffHr % 24}h`;
-}
-
 function formatUsagePercent(percent: number | null): string {
   if (typeof percent !== "number" || !Number.isFinite(percent)) {
     return "--";
@@ -990,6 +1036,7 @@ function usagePercentToWidth(percent: number | null): string {
 }
 
 export function ChatPanel() {
+  const { t } = useTranslation("chat");
   const renderStartedAtRef = useRef(performance.now());
   renderStartedAtRef.current = performance.now();
 
@@ -1101,6 +1148,23 @@ export function ChatPanel() {
     () => threads.find((t) => t.id === activeThreadId) ?? null,
     [threads, activeThreadId],
   );
+  const trustLevelOptions = useMemo(() => getTrustLevelOptions(t), [t]);
+  const codexThreadApprovalPolicyOptions = useMemo(
+    () => getCodexThreadApprovalPolicyOptions(t),
+    [t],
+  );
+  const claudeThreadPermissionModeOptions = useMemo(
+    () => getClaudeThreadPermissionModeOptions(t),
+    [t],
+  );
+  const threadSandboxModeOptionsAll = useMemo(
+    () => getThreadSandboxModeOptions(t),
+    [t],
+  );
+  const threadNetworkPolicyOptions = useMemo(
+    () => getThreadNetworkPolicyOptions(t),
+    [t],
+  );
 
   const selectedEngine = useMemo(
     () => engines.find((engine) => engine.id === selectedEngineId) ?? engines[0] ?? null,
@@ -1123,17 +1187,17 @@ export function ChatPanel() {
   const otherEngineGroups = useMemo(() => {
     return engines
       .filter((e) => e.id !== selectedEngineId)
-      .map((engine) => ({
-        label: engine.name,
-        options: engine.models
-          .filter((m) => !m.hidden)
-          .map((model) => ({
-            value: encodeModelOptionValue(engine.id, model.id),
-            label: formatEngineModelLabel(engine.name, model.displayName),
-          })),
+        .map((engine) => ({
+          label: engine.name,
+          options: engine.models
+            .filter((m) => !m.hidden)
+            .map((model) => ({
+              value: encodeModelOptionValue(engine.id, model.id),
+              label: formatEngineModelLabel(t, engine.name, model.displayName),
+            })),
       }))
       .filter((g) => g.options.length > 0);
-  }, [engines, selectedEngineId]);
+  }, [engines, selectedEngineId, t]);
 
   const selectedModel = useMemo(
     () => availableModels.find((model) => model.id === selectedModelId) ?? availableModels[0] ?? null,
@@ -1155,8 +1219,8 @@ export function ChatPanel() {
       ? activeThread.engineMetadata.reasoningEffort
       : undefined;
   const modelPickerLabel = useMemo(() => {
-    return formatEngineModelLabel(selectedEngine?.name, selectedModel?.displayName);
-  }, [selectedEngine?.name, selectedModel?.displayName]);
+    return formatEngineModelLabel(t, selectedEngine?.name, selectedModel?.displayName);
+  }, [t, selectedEngine?.name, selectedModel?.displayName]);
   const selectedModelOptionValue = useMemo(() => {
     if (!selectedEngineId || !selectedModelId) {
       return "";
@@ -1184,38 +1248,45 @@ export function ChatPanel() {
         : undefined;
 
     return {
-      label: formatEngineModelLabel(engineInfo?.name, modelDisplayName, messageReasoningEffort),
+      label: formatEngineModelLabel(
+        t,
+        engineInfo?.name,
+        modelDisplayName,
+        messageReasoningEffort,
+      ),
       engineId: messageEngineId,
     };
-  }, [activeThread?.engineId, activeThread?.modelId, engines, selectedEngine, selectedEngineId, selectedModel?.id]);
+  }, [activeThread?.engineId, activeThread?.modelId, engines, selectedEngine, selectedEngineId, selectedModel?.id, t]);
 
   function trustLevelTooltip(level: TrustLevel): string {
     return (
-      TRUST_LEVEL_OPTIONS.find((option) => option.value === level)?.description ??
-      "Permission policy"
+      trustLevelOptions.find((option) => option.value === level)?.description ??
+      t("policy.permissionPolicyFallback")
     );
   }
 
   const activeThreadApprovalPolicy = readThreadApprovalPolicyValue(activeThread);
   const activeThreadApprovalTitle =
-    activeThread?.engineId === "claude" ? "Permission mode" : "Approval policy";
+    activeThread?.engineId === "claude"
+      ? t("policy.approvalTitleClaude")
+      : t("permissionPicker.approvalPolicy");
   const activeThreadApprovalOptions =
     activeThread?.engineId === "claude"
-      ? CLAUDE_THREAD_PERMISSION_MODE_OPTIONS
-      : CODEX_THREAD_APPROVAL_POLICY_OPTIONS;
+      ? claudeThreadPermissionModeOptions
+      : codexThreadApprovalPolicyOptions;
   const activeThreadSandboxMode = readThreadSandboxModeValue(activeThread);
   const activeThreadNetworkPolicy = readThreadNetworkPolicyValue(activeThread);
   const threadSandboxModeOptions = useMemo(
     () =>
       codexExternalSandboxActive
-        ? THREAD_SANDBOX_MODE_OPTIONS.filter(
+        ? threadSandboxModeOptionsAll.filter(
             (option) =>
               option.value === "inherit" || option.value === "danger-full-access",
           )
-        : THREAD_SANDBOX_MODE_OPTIONS,
-    [codexExternalSandboxActive],
+        : threadSandboxModeOptionsAll,
+    [codexExternalSandboxActive, threadSandboxModeOptionsAll],
   );
-  const activeThreadSandboxModeOption = THREAD_SANDBOX_MODE_OPTIONS.find(
+  const activeThreadSandboxModeOption = threadSandboxModeOptionsAll.find(
     (option) => option.value === activeThreadSandboxMode,
   );
   const activeThreadSandboxModeSupported = threadSandboxModeOptions.some(
@@ -1283,7 +1354,7 @@ export function ChatPanel() {
       });
     }
 
-    const attachmentFilterConfig = getAttachmentFilterConfig(selectedEngineId);
+    const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId);
     if (attachmentFilterConfig) {
       const supportedExtensions = new Set(attachmentFilterConfig.supportedExtensions);
       const supportedAttachments = nextAttachments.filter((attachment) =>
@@ -1312,10 +1383,10 @@ export function ChatPanel() {
       }
       return merged;
     });
-  }, [activeWorkspaceId, selectedEngineId]);
+  }, [activeWorkspaceId, selectedEngineId, t]);
 
   useEffect(() => {
-    const attachmentFilterConfig = getAttachmentFilterConfig(selectedEngineId);
+    const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId);
     if (!attachmentFilterConfig) {
       return;
     }
@@ -1331,7 +1402,7 @@ export function ChatPanel() {
       toast.warning(attachmentFilterConfig.warningMessage);
       return supportedAttachments;
     });
-  }, [selectedEngineId]);
+  }, [selectedEngineId, t]);
 
   const isDropPositionInsideChatSection = useCallback((x: number, y: number): boolean => {
     const container = chatSectionRef.current;
@@ -1888,7 +1959,9 @@ export function ChatPanel() {
         repoId: activeScopeRepoId,
         engineId: selectedEngineId,
         modelId: selectedModelId,
-        title: activeRepo ? `${activeRepo.name} Chat` : "Workspace Chat",
+        title: activeRepo
+          ? t("panel.repoChatTitle", { name: activeRepo.name })
+          : t("panel.workspaceChatTitle"),
       });
       if (!createdThreadId) {
         return;
@@ -2035,13 +2108,13 @@ export function ChatPanel() {
       (patch.sandboxMode === "read-only" || patch.sandboxMode === "workspace-write")
     ) {
       toast.error(
-        "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode.",
+        t("panel.toasts.codexSandboxUnavailable"),
       );
       return;
     }
 
     if (!isCodexThread && patch.sandboxMode !== undefined) {
-      toast.error("Sandbox mode overrides are currently only available for Codex threads.");
+      toast.error(t("panel.toasts.codexOnlySandbox"));
       return;
     }
 
@@ -2055,7 +2128,7 @@ export function ChatPanel() {
         (patch.sandboxMode === "danger-full-access" &&
           currentStoredNetworkPolicy === "restricted")
       ) {
-        toast.warning("Full access sandbox temporarily enables network access.");
+        toast.warning(t("panel.toasts.fullAccessNetworkWarning"));
       }
     }
 
@@ -2082,7 +2155,7 @@ export function ChatPanel() {
         return;
       }
 
-      toast.error(`Failed to update thread execution policy: ${String(error)}`);
+      toast.error(t("panel.toasts.updateExecutionPolicyFailed", { error: String(error) }));
       await refreshThreads(currentThread.workspaceId);
     }
   }
@@ -2122,22 +2195,22 @@ export function ChatPanel() {
   async function handleAddAttachment() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const attachmentFilterConfig = getAttachmentFilterConfig(selectedEngineId);
+      const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId);
       const selected = await open({
         multiple: true,
-        title: attachmentFilterConfig?.title ?? "Attach files",
+        title: attachmentFilterConfig?.title ?? t("panel.attachFiles"),
         filters: attachmentFilterConfig
           ? [
               {
-                name: "Supported files",
+                name: attachmentFilterConfig.supportedLabel,
                 extensions: attachmentFilterConfig.supportedExtensions,
               },
               {
-                name: "Images",
+                name: attachmentFilterConfig.imagesLabel,
                 extensions: attachmentFilterConfig.imageExtensions,
               },
               {
-                name: "Text files",
+                name: attachmentFilterConfig.textFilesLabel,
                 extensions: attachmentFilterConfig.textExtensions,
               },
             ]
@@ -2418,7 +2491,7 @@ export function ChatPanel() {
               type="button"
               onClick={startThreadTitleEdit}
               disabled={!activeThread}
-              title={activeThread ? "Click to rename thread" : ""}
+              title={activeThread ? t("panel.renameThread") : ""}
               style={{
                 border: "none",
                 background: "transparent",
@@ -2444,10 +2517,10 @@ export function ChatPanel() {
               }}
             >
               {activeThread?.title || (
-                layoutMode === "terminal" ? "Terminal"
-                : layoutMode === "editor" ? "File Editor"
-                : layoutMode === "split" ? "New Chat"
-                : "New Chat"
+                layoutMode === "terminal" ? t("panel.threadTitle.terminal")
+                : layoutMode === "editor" ? t("panel.threadTitle.fileEditor")
+                : layoutMode === "split" ? t("panel.threadTitle.newChat")
+                : t("panel.threadTitle.newChat")
               )}
             </button>
           )}
@@ -2463,7 +2536,7 @@ export function ChatPanel() {
                   flexShrink: 0,
                 }}
               >
-                +{totalAdded} files
+                {t("panel.changedFiles", { count: totalAdded })}
               </span>
             </>
           )}
@@ -2474,7 +2547,7 @@ export function ChatPanel() {
           <div className="layout-mode-switcher">
             <button
               type="button"
-              title="Chat only"
+              title={t("panel.layout.chatOnly")}
               disabled={!activeWorkspaceId}
               onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "chat")}
               className={`layout-mode-btn ${layoutMode === "chat" ? "active" : ""}`}
@@ -2483,7 +2556,7 @@ export function ChatPanel() {
             </button>
             <button
               type="button"
-              title="Split view (Cmd+Shift+T)"
+              title={t("panel.layout.splitView")}
               disabled={!activeWorkspaceId}
               onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "split")}
               className={`layout-mode-btn ${layoutMode === "split" ? "active" : ""}`}
@@ -2492,7 +2565,7 @@ export function ChatPanel() {
             </button>
             <button
               type="button"
-              title="Terminal only"
+              title={t("panel.layout.terminalOnly")}
               disabled={!activeWorkspaceId}
               onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "terminal")}
               className={`layout-mode-btn ${layoutMode === "terminal" ? "active" : ""}`}
@@ -2501,7 +2574,7 @@ export function ChatPanel() {
             </button>
             <button
               type="button"
-              title="File editor (Cmd+E)"
+              title={t("panel.layout.fileEditor")}
               disabled={!activeWorkspaceId}
               onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "editor")}
               className={`layout-mode-btn ${layoutMode === "editor" ? "active" : ""}`}
@@ -2548,7 +2621,7 @@ export function ChatPanel() {
                   zIndex: 5,
                 }}
               >
-                Drop files to attach
+                {t("panel.dropFiles")}
               </div>
             )}
             {/* ── Messages ── */}
@@ -2591,10 +2664,10 @@ export function ChatPanel() {
             </div>
             <div>
               <p style={{ margin: "0 0 4px", fontSize: 14, fontWeight: 500, color: "var(--text-2)" }}>
-                Start a conversation
+                {t("panel.startConversation")}
               </p>
               <p style={{ margin: 0, fontSize: 12.5 }}>
-                Open a folder and send a message to begin
+                {t("panel.emptyHint")}
               </p>
             </div>
           </div>
@@ -2692,7 +2765,7 @@ export function ChatPanel() {
                 }}
               />
             )}
-            {streaming ? "New activity" : "Jump to latest"}
+            {streaming ? t("panel.newActivity") : t("panel.jumpToLatest")}
           </button>
         )}
             </div>
@@ -2720,7 +2793,7 @@ export function ChatPanel() {
                   <Shield size={11} />
                 </span>
                 <span className="approval-header-title">
-                  Approval required
+                  {t("panel.approvalBannerTitle")}
                 </span>
                 <span className="approval-header-spacer" />
                 {activeRepo && activeRepo.trustLevel !== "trusted" && (
@@ -2728,9 +2801,9 @@ export function ChatPanel() {
                     type="button"
                     className="approval-trust-btn"
                     onClick={() => void onRepoTrustLevelChange("trusted")}
-                    title="Set trusted policy for this repo (on-request approvals, network requested enabled)"
+                    title={t("panel.setRepoTrusted")}
                   >
-                    Trust repo
+                    {t("panel.trustRepo")}
                   </button>
                 )}
                 {!activeRepo && repos.length > 0 && workspaceTrustLevel !== "trusted" && (
@@ -2738,9 +2811,9 @@ export function ChatPanel() {
                     type="button"
                     className="approval-trust-btn"
                     onClick={() => void onWorkspaceTrustLevelChange("trusted")}
-                    title="Set trusted policy for all repositories (on-request approvals, network requested enabled)"
+                    title={t("panel.setWorkspaceTrusted")}
                   >
-                    Trust workspace
+                    {t("panel.trustWorkspace")}
                   </button>
                 )}
               </div>
@@ -2783,8 +2856,8 @@ export function ChatPanel() {
                         {isToolInputRequest || requiresCustomPayload ? (
                           <span className="approval-row-hint">
                             {isToolInputRequest
-                              ? "Respond in the approval card below."
-                              : "This request requires custom JSON. Respond in the approval card below."}
+                              ? t("panel.respondInCard")
+                              : t("panel.respondInCustomCard")}
                           </span>
                         ) : (
                           <>
@@ -2795,7 +2868,7 @@ export function ChatPanel() {
                                 void respondApproval(approval.approvalId, { decision: "cancel" })
                               }
                             >
-                              Cancel
+                              {t("panel.approvalActions.cancel")}
                             </button>
                             <button
                               type="button"
@@ -2806,7 +2879,7 @@ export function ChatPanel() {
                                 })
                               }
                             >
-                              Deny
+                              {t("panel.approvalActions.deny")}
                             </button>
                             <span className="approval-actions-gap" />
                             <button
@@ -2818,7 +2891,7 @@ export function ChatPanel() {
                                 })
                               }
                             >
-                              Allow session
+                              {t("panel.approvalActions.allowSession")}
                             </button>
                             {proposedExecpolicyAmendment.length > 0 && (
                               <button
@@ -2832,7 +2905,7 @@ export function ChatPanel() {
                                   })
                                 }
                               >
-                                Allow + policy
+                                {t("panel.allowWithPolicy")}
                               </button>
                             )}
                             {proposedNetworkPolicyAmendments.map((amendment) => (
@@ -2847,9 +2920,16 @@ export function ChatPanel() {
                                     },
                                   })
                                 }
-                                title={`${amendment.action} ${amendment.host} for future requests`}
+                                title={t("panel.approvalActions.hostActionTitle", {
+                                  action: amendment.action === "allow"
+                                    ? t("panel.approvalActions.allow")
+                                    : t("panel.approvalActions.block"),
+                                  host: amendment.host,
+                                })}
                               >
-                                {amendment.action === "allow" ? "Allow" : "Block"} host
+                                {amendment.action === "allow"
+                                  ? t("panel.approvalActions.allowHost")
+                                  : t("panel.approvalActions.blockHost")}
                               </button>
                             ))}
                             <button
@@ -2859,7 +2939,7 @@ export function ChatPanel() {
                                 void respondApproval(approval.approvalId, { decision: "accept" })
                               }
                             >
-                              Allow
+                              {t("panel.approvalActions.allow")}
                             </button>
                           </>
                         )}
@@ -2877,7 +2957,7 @@ export function ChatPanel() {
             {planMode && (
               <div className="chat-plan-mode-banner">
                 <ListChecks size={12} />
-                <span>Plan Mode — The agent will plan before executing</span>
+                <span>{t("panel.planModeBanner")}</span>
               </div>
             )}
 
@@ -2899,7 +2979,7 @@ export function ChatPanel() {
                         type="button"
                         className="chat-attachment-chip-remove"
                         onClick={() => removeAttachment(attachment.id)}
-                        title="Remove attachment"
+                        title={t("attachments.remove")}
                       >
                         <X size={10} />
                       </button>
@@ -2929,7 +3009,11 @@ export function ChatPanel() {
                   }
                 }
               }}
-              placeholder={planMode ? "Describe what you want to plan..." : "Ask for follow-up changes"}
+              placeholder={
+                planMode
+                  ? t("panel.placeholders.plan")
+                  : t("panel.placeholders.chat")
+              }
               disabled={!activeWorkspaceId}
               style={{
                 width: "100%",
@@ -2959,7 +3043,7 @@ export function ChatPanel() {
                 className="chat-toolbar-btn"
                 onClick={() => void handleAddAttachment()}
                 disabled={!activeWorkspaceId}
-                title="Attach files"
+                title={t("panel.attachFiles")}
               >
                 <Plus size={12} />
                 {attachments.length > 0 && (
@@ -2973,10 +3057,14 @@ export function ChatPanel() {
                 className={`chat-toolbar-btn chat-toolbar-btn-bordered ${planMode ? "chat-toolbar-btn-active" : ""}`}
                 onClick={() => setPlanMode((prev) => !prev)}
                 disabled={!activeWorkspaceId}
-                title={planMode ? "Disable plan mode (Shift+Tab)" : "Enable plan mode (Shift+Tab)"}
+                title={
+                  planMode
+                    ? t("panel.disablePlanMode")
+                    : t("panel.enablePlanMode")
+                }
               >
                 <ListChecks size={12} />
-                <span style={{ fontSize: 11 }}>Plan</span>
+                <span style={{ fontSize: 11 }}>{t("panel.planShort")}</span>
               </button>
 
               <div className="chat-toolbar-divider" />
@@ -3005,10 +3093,14 @@ export function ChatPanel() {
                   <div className="chat-toolbar-divider" />
                   <PermissionPicker
                     trustScopeLabel={
-                      activeRepo ? "Repo access" : repos.length > 0 ? "Workspace access" : undefined
+                      activeRepo
+                        ? t("panel.repoAccess")
+                        : repos.length > 0
+                          ? t("panel.workspaceAccess")
+                          : undefined
                     }
                     trustValue={activeRepo?.trustLevel ?? (repos.length > 0 ? workspaceTrustLevel : undefined)}
-                    trustOptions={TRUST_LEVEL_OPTIONS}
+                    trustOptions={trustLevelOptions}
                     onTrustChange={
                       activeRepo
                         ? (value) => void onRepoTrustLevelChange(value)
@@ -3058,12 +3150,12 @@ export function ChatPanel() {
                       activeThread?.engineId === "codex" &&
                       codexExternalSandboxActive &&
                       !activeThreadSandboxModeSupported
-                        ? `${activeThreadSandboxModeOption?.label ?? activeThreadSandboxMode} (unsupported)`
+                        ? `${activeThreadSandboxModeOption?.label ?? activeThreadSandboxMode} ${t("panel.unsupportedSuffix")}`
                         : undefined
                     }
                     sandboxNotice={
                       activeThread?.engineId === "codex" && codexExternalSandboxActive
-                        ? "Read-only and workspace-write overrides are unavailable while Codex is using external sandbox mode on this machine."
+                        ? t("policy.sandboxExternalNotice")
                         : null
                     }
                     networkValue={
@@ -3073,7 +3165,7 @@ export function ChatPanel() {
                     }
                     networkOptions={
                       activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
-                        ? THREAD_NETWORK_POLICY_OPTIONS
+                        ? threadNetworkPolicyOptions
                         : undefined
                     }
                     onNetworkChange={
@@ -3091,7 +3183,7 @@ export function ChatPanel() {
                     networkNotice={
                       activeThread?.engineId === "codex" &&
                       activeThreadSandboxMode === "danger-full-access"
-                        ? "Full access always enables network access."
+                        ? t("policy.fullAccessNotice")
                         : null
                     }
                   />
@@ -3120,7 +3212,7 @@ export function ChatPanel() {
                   }}
                 >
                   <Square size={11} fill="currentColor" />
-                  Stop
+                  {t("panel.stop")}
                 </button>
               ) : (
                 <button
@@ -3162,7 +3254,7 @@ export function ChatPanel() {
                 <>
                   <div className="chat-context-section">
                     <Zap size={10} />
-                    <span>Context</span>
+                    <span>{t("status.context")}</span>
                     <div className="chat-context-progress">
                       <div
                         className="chat-context-progress-fill"
@@ -3178,7 +3270,7 @@ export function ChatPanel() {
 
                   <div className="chat-context-section">
                     <Clock size={10} />
-                    <span>5h left</span>
+                    <span>{t("status.windowFiveHoursLeft")}</span>
                     <div className="chat-context-progress">
                       <div
                         className="chat-context-progress-fill chat-context-progress-fill-5h"
@@ -3190,7 +3282,9 @@ export function ChatPanel() {
                     </span>
                     {usageLimits.windowFiveHourResetsAt && (
                       <span className="chat-context-reset">
-                        resets {formatResetTime(usageLimits.windowFiveHourResetsAt)}
+                        {t("status.resets", {
+                          time: formatResetTime(t, usageLimits.windowFiveHourResetsAt),
+                        })}
                       </span>
                     )}
                   </div>
@@ -3199,7 +3293,7 @@ export function ChatPanel() {
 
                   <div className="chat-context-section">
                     <Clock size={10} />
-                    <span>Weekly left</span>
+                    <span>{t("status.windowWeeklyLeft")}</span>
                     <div className="chat-context-progress">
                       <div
                         className="chat-context-progress-fill chat-context-progress-fill-weekly"
@@ -3211,7 +3305,9 @@ export function ChatPanel() {
                     </span>
                     {usageLimits.windowWeeklyResetsAt && (
                       <span className="chat-context-reset">
-                        resets {formatResetTime(usageLimits.windowWeeklyResetsAt)}
+                        {t("status.resets", {
+                          time: formatResetTime(t, usageLimits.windowWeeklyResetsAt),
+                        })}
                       </span>
                     )}
                   </div>
@@ -3219,7 +3315,7 @@ export function ChatPanel() {
               ) : (
                 <div className="chat-context-section">
                   <Clock size={10} />
-                  <span>Usage limits unavailable from server</span>
+                  <span>{t("status.usageUnavailable")}</span>
                 </div>
               )
             )}
@@ -3284,7 +3380,7 @@ export function ChatPanel() {
                       color: "var(--text-3)",
                     }}
                   >
-                    Loading terminal...
+                    {t("panel.loadingTerminal")}
                   </div>
                 }
               >
@@ -3315,11 +3411,11 @@ export function ChatPanel() {
                     fontSize: 12,
                     color: "var(--text-3)",
                   }}
-                >
-                  Loading editor...
-                </div>
-              }
-            >
+                  >
+                    {t("panel.loadingEditor")}
+                  </div>
+                }
+              >
               <LazyFileEditorPanel />
             </Suspense>
           )}
@@ -3328,13 +3424,15 @@ export function ChatPanel() {
 
       <ConfirmDialog
         open={workspaceOptInPrompt !== null}
-        title="Enable multi-repo writes"
+        title={t("panel.multipleRepoWriteEnable")}
         message={
           workspaceOptInPrompt
-            ? `This workspace thread can write to multiple repositories (${workspaceOptInPrompt.repoNames}). Continue?`
+            ? t("panel.multipleRepoWriteMessage", {
+              repoNames: workspaceOptInPrompt.repoNames,
+            })
             : ""
         }
-        confirmLabel="Continue"
+        confirmLabel={t("panel.continue")}
         onConfirm={() => void executeWorkspaceOptInSend()}
         onCancel={() => setWorkspaceOptInPrompt(null)}
       />
