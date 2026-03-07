@@ -193,9 +193,7 @@ export function GitCommitsView({ repo }: Props) {
                         Loading diff...
                       </div>
                     ) : commitDiff ? (
-                      <div style={{ maxHeight: 400, overflow: "auto" }}>
-                        <DiffPanel diff={commitDiff} />
-                      </div>
+                      <DiffPanel diff={commitDiff} />
                     ) : (
                       <p
                         style={{

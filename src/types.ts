@@ -365,6 +365,13 @@ export interface GitStatus {
   behind: number;
 }
 
+export interface GitDiffPreview {
+  content: string;
+  truncated: boolean;
+  originalBytes: number;
+  returnedBytes: number;
+}
+
 export type GitBranchScope = "local" | "remote";
 
 export interface GitBranch {

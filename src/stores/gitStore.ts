@@ -3,6 +3,7 @@ import type {
   GitBranch,
   GitBranchScope,
   GitCommit,
+  GitDiffPreview,
   GitRemote,
   GitStash,
   GitStatus,
@@ -85,7 +86,7 @@ interface GitStatusCacheEntry {
 }
 
 interface GitDiffCacheEntry {
-  diff: string;
+  diff: GitDiffPreview;
   revision: number;
   updatedAt: number;
 }
@@ -94,7 +95,7 @@ const repoRevisionByPath = new Map<string, number>();
 const statusCacheByRepo = new Map<string, GitStatusCacheEntry>();
 const statusInFlightByRepo = new Map<string, Promise<GitStatus>>();
 const diffCacheByKey = new Map<string, GitDiffCacheEntry>();
-const diffInFlightByKey = new Map<string, Promise<string>>();
+const diffInFlightByKey = new Map<string, Promise<GitDiffPreview>>();
 const activeViewRefreshedAtByKey = new Map<string, number>();
 let statusCacheBytes = 0;
 let diffCacheBytes = 0;
@@ -111,7 +112,7 @@ function estimateStatusCacheEntryBytes(repoPath: string, entry: GitStatusCacheEn
 }
 
 function estimateDiffCacheEntryBytes(key: string, entry: GitDiffCacheEntry): number {
-  return (key.length + entry.diff.length) * 2 + 96;
+  return (key.length + entry.diff.content.length) * 2 + 128;
 }
 
 function removeStatusCacheEntry(repoPath: string) {
@@ -303,7 +304,7 @@ async function getGitDiffCached(
   filePath: string,
   staged: boolean,
   force = false,
-): Promise<string> {
+): Promise<GitDiffPreview> {
   const key = buildDiffCacheKey(repoPath, filePath, staged);
   const revision = getRepoRevision(repoPath);
   const now = performance.now();
@@ -351,7 +352,7 @@ interface GitState {
   status?: GitStatus;
   selectedFile?: string;
   selectedFileStaged?: boolean;
-  diff?: string;
+  diff?: GitDiffPreview;
   loading: boolean;
   error?: string;
   activeRepoPath: string | null;
@@ -376,7 +377,7 @@ interface GitState {
   remotesError?: string;
   mainRepoPath: string | null;
   selectedCommitHash?: string;
-  commitDiff?: string;
+  commitDiff?: GitDiffPreview;
   setActiveRepoPath: (repoPath: string | null) => void;
   refresh: (repoPath: string, options?: { force?: boolean }) => Promise<void>;
   invalidateRepoCache: (repoPath: string) => void;
@@ -526,7 +527,7 @@ export const useGitStore = create<GitState>((set, get) => {
       const currentState = get();
       const selectedFile = currentState.selectedFile;
       const selectedFileStaged = currentState.selectedFileStaged ?? false;
-      let selectedDiff: string | undefined = currentState.diff;
+      let selectedDiff: GitDiffPreview | undefined = currentState.diff;
       let nextSelectedFile = selectedFile;
       let nextSelectedFileStaged = currentState.selectedFileStaged;
       const shouldRefreshSelectedDiff = currentState.activeView === "changes";
@@ -732,6 +733,9 @@ export const useGitStore = create<GitState>((set, get) => {
           repoPath,
           filePath,
           staged,
+          truncated: diff.truncated,
+          returnedBytes: diff.returnedBytes,
+          originalBytes: diff.originalBytes,
         });
       } catch (error) {
         if (requestSeq === selectFileSeq && isRepoActive(repoPath)) {
@@ -992,6 +996,7 @@ export const useGitStore = create<GitState>((set, get) => {
       }
 
       const requestSeq = ++commitDiffSeq;
+      const startedAt = performance.now();
       set({ selectedCommitHash: commitHash, commitDiff: undefined });
       try {
         const diff = await ipc.getCommitDiff(repoPath, commitHash);
@@ -1002,6 +1007,13 @@ export const useGitStore = create<GitState>((set, get) => {
         ) {
           set({ commitDiff: diff });
         }
+        recordPerfMetric("git.file_diff.ms", performance.now() - startedAt, {
+          repoPath,
+          commitHash,
+          truncated: diff.truncated,
+          returnedBytes: diff.returnedBytes,
+          originalBytes: diff.originalBytes,
+        });
       } catch (error) {
         if (
           requestSeq === commitDiffSeq &&
@@ -1010,6 +1022,11 @@ export const useGitStore = create<GitState>((set, get) => {
         ) {
           set({ error: String(error), selectedCommitHash: undefined, commitDiff: undefined });
         }
+        recordPerfMetric("git.file_diff.ms", performance.now() - startedAt, {
+          repoPath,
+          commitHash,
+          failed: true,
+        });
       }
     },
     clearCommitSelection: () => {

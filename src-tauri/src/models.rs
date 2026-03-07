@@ -377,6 +377,15 @@ pub struct GitFileStatusDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDiffPreviewDto {
+    pub content: String,
+    pub truncated: bool,
+    pub original_bytes: usize,
+    pub returned_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GitBranchScopeDto {
     Local,
