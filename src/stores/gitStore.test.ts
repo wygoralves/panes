@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GitStatus, GitWorktree } from "../types";
+import type { GitDiffPreview, GitStatus, GitWorktree } from "../types";
 
 const mockIpc = vi.hoisted(() => ({
   getGitStatus: vi.fn(),
@@ -54,6 +54,15 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function makeDiffPreview(content = ""): GitDiffPreview {
+  return {
+    content,
+    truncated: false,
+    originalBytes: content.length,
+    returnedBytes: content.length,
+  };
+}
+
 async function flushPromises() {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -63,7 +72,7 @@ describe("gitStore", () => {
     vi.clearAllMocks();
 
     mockIpc.getGitStatus.mockResolvedValue(makeStatus("main"));
-    mockIpc.getFileDiff.mockResolvedValue("");
+    mockIpc.getFileDiff.mockResolvedValue(makeDiffPreview());
     mockIpc.stageFiles.mockResolvedValue(undefined);
     mockIpc.unstageFiles.mockResolvedValue(undefined);
     mockIpc.discardFiles.mockResolvedValue(undefined);
@@ -99,7 +108,7 @@ describe("gitStore", () => {
     mockIpc.listGitWorktrees.mockResolvedValue([]);
     mockIpc.removeGitWorktree.mockResolvedValue(undefined);
     mockIpc.pruneGitWorktrees.mockResolvedValue(undefined);
-    mockIpc.getCommitDiff.mockResolvedValue("");
+    mockIpc.getCommitDiff.mockResolvedValue(makeDiffPreview());
 
     useGitStore.setState({
       status: undefined,

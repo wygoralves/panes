@@ -6,7 +6,8 @@ use crate::{
     git::{repo, worktree},
     models::{
         FileTreeEntryDto, FileTreePageDto, GitBranchPageDto, GitBranchScopeDto, GitCommitPageDto,
-        GitInitRepoStatusDto, GitRemoteDto, GitStashDto, GitStatusDto, GitWorktreeDto,
+        GitDiffPreviewDto, GitInitRepoStatusDto, GitRemoteDto, GitStashDto, GitStatusDto,
+        GitWorktreeDto,
     },
     state::AppState,
 };
@@ -27,7 +28,7 @@ pub async fn get_file_diff(
     repo_path: String,
     file_path: String,
     staged: bool,
-) -> Result<String, String> {
+) -> Result<GitDiffPreviewDto, String> {
     tokio::task::spawn_blocking(move || {
         repo::get_file_diff(&repo_path, &file_path, staged).map_err(err_to_string)
     })
@@ -267,7 +268,7 @@ pub async fn get_commit_diff(
     _state: State<'_, AppState>,
     repo_path: String,
     commit_hash: String,
-) -> Result<String, String> {
+) -> Result<GitDiffPreviewDto, String> {
     tokio::task::spawn_blocking(move || {
         repo::get_commit_diff(&repo_path, &commit_hash).map_err(err_to_string)
     })

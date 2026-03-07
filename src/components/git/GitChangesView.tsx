@@ -12,13 +12,13 @@ import {
 } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
+import { VirtualizedDiffBody, useParsedDiff } from "../shared/DiffViewer";
 import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useFileStore } from "../../stores/fileStore";
 import { useTerminalStore } from "../../stores/terminalStore";
-import { parseDiff, LINE_CLASS } from "../../lib/parseDiff";
-import type { Repo, GitFileStatus } from "../../types";
+import type { GitDiffPreview, Repo, GitFileStatus } from "../../types";
 
 interface Props {
   repo: Repo;
@@ -164,22 +164,66 @@ function getStatusClass(status?: string): string {
   return "git-status-untracked";
 }
 
-export function DiffPanel({ diff }: { diff: string }) {
-  const parsed = useMemo(() => parseDiff(diff), [diff]);
+function formatDiffBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    const kb = bytes / 1024;
+    return `${kb >= 100 ? kb.toFixed(0) : kb.toFixed(1)} KB`;
+  }
+  const mb = bytes / (1024 * 1024);
+  return `${mb >= 100 ? mb.toFixed(0) : mb.toFixed(1)} MB`;
+}
+
+export function DiffPanel({
+  diff,
+  fillAvailableHeight = false,
+  emptyLabel = "No changes",
+}: {
+  diff: GitDiffPreview;
+  fillAvailableHeight?: boolean;
+  emptyLabel?: string;
+}) {
+  const {
+    parseResult,
+    loading,
+    parseAttempted,
+  } = useParsedDiff(diff.content);
 
   return (
-    <div className="git-diff-viewer" style={{ height: "100%", minHeight: 0 }}>
-      <div className="git-diff-scroll">
-        <pre style={{ margin: 0, padding: "4px 0" }}>
-          {parsed.map((line, idx) => (
-            <span key={idx} className={`git-diff-line ${LINE_CLASS[line.type]}`}>
-              <span className="git-diff-gutter">{line.gutter}</span>
-              <span className="git-diff-line-num">{line.lineNum}</span>
-              <span className="git-diff-line-content">{line.content}</span>
-            </span>
-          ))}
-        </pre>
-      </div>
+    <div
+      className="git-diff-viewer"
+      style={fillAvailableHeight ? { height: "100%", minHeight: 0 } : undefined}
+    >
+      {diff.truncated ? (
+        <div
+          style={{
+            borderBottom: "1px solid var(--border)",
+            padding: "8px 12px",
+            fontSize: 11.5,
+            color: "var(--text-3)",
+            background: "rgba(250, 204, 21, 0.05)",
+          }}
+        >
+          Preview truncated to {formatDiffBytes(diff.returnedBytes)} of{" "}
+          {formatDiffBytes(diff.originalBytes)} to keep the diff viewer responsive.
+        </div>
+      ) : null}
+      {!parseResult && (loading || !parseAttempted) ? (
+        <div style={{ padding: "10px 12px", fontSize: 11.5, color: "var(--text-3)" }}>
+          Parsing diff...
+        </div>
+      ) : parseResult && parseResult.parsed.length > 0 ? (
+        <VirtualizedDiffBody
+          parsed={parseResult.parsed}
+          fillAvailableHeight={fillAvailableHeight}
+        />
+      ) : (
+        <div style={{ padding: "10px 12px", fontSize: 11.5, color: "var(--text-3)" }}>
+          {emptyLabel}
+        </div>
+      )}
     </div>
   );
 }
@@ -267,6 +311,15 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
 
   const hasStagedFiles = stagedFiles.length > 0;
   const noChanges = unstagedFiles.length === 0 && !hasStagedFiles;
+  const selectedFileStatus = useMemo(
+    () => status?.files.find((file) => file.path === selectedFile),
+    [selectedFile, status],
+  );
+  const selectedFileEmptyLabel =
+    selectedFileStatus?.worktreeStatus === "untracked" &&
+    !Boolean(selectedFileStaged)
+      ? "Untracked file. Open it in the editor to review contents, or stage it to view the patch."
+      : "No changes";
   const showDiffPanel = Boolean(selectedFile && diff && showDiff);
   const hasBottomContent = showDiffPanel || hasStagedFiles;
 
@@ -718,7 +771,11 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
           </Panel>
           <PanelResizeHandle className="resize-handle-vertical" />
           <Panel defaultSize={50} minSize={15}>
-            <DiffPanel diff={diff!} />
+            <DiffPanel
+              diff={diff!}
+              fillAvailableHeight
+              emptyLabel={selectedFileEmptyLabel}
+            />
           </Panel>
         </PanelGroup>
       ) : (

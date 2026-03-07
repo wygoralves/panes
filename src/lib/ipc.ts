@@ -19,6 +19,7 @@ import type {
   EngineInfo,
   FileTreeEntry,
   FileTreePage,
+  GitDiffPreview,
   GitStatus,
   HarnessReport,
   InstallProgressEvent,
@@ -161,7 +162,7 @@ export const ipc = {
     }),
   getGitStatus: (repoPath: string) => invoke<GitStatus>("get_git_status", { repoPath }),
   getFileDiff: (repoPath: string, filePath: string, staged: boolean) =>
-    invoke<string>("get_file_diff", { repoPath, filePath, staged }),
+    invoke<GitDiffPreview>("get_file_diff", { repoPath, filePath, staged }),
   getFileTree: (repoPath: string) => invoke<FileTreeEntry[]>("get_file_tree", { repoPath }),
   getFileTreePage: (repoPath: string, offset?: number, limit?: number) =>
     invoke<FileTreePage>("get_file_tree_page", { repoPath, offset: offset ?? null, limit: limit ?? null }),
@@ -201,7 +202,7 @@ export const ipc = {
       limit: limit ?? null,
     }),
   getCommitDiff: (repoPath: string, commitHash: string) =>
-    invoke<string>("get_commit_diff", { repoPath, commitHash }),
+    invoke<GitDiffPreview>("get_commit_diff", { repoPath, commitHash }),
   listGitStashes: (repoPath: string) =>
     invoke<GitStash[]>("list_git_stashes", { repoPath }),
   pushGitStash: (repoPath: string, message?: string) =>

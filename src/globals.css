@@ -958,6 +958,12 @@ button, input, textarea, select {
 }
 .git-diff-hunk .git-diff-gutter,
 .git-diff-hunk .git-diff-line-num { opacity: 0; }
+.git-diff-meta .git-diff-gutter,
+.git-diff-meta .git-diff-line-num { opacity: 0; }
+.git-diff-meta .git-diff-line-content {
+  color: var(--text-3);
+  font-style: italic;
+}
 
 /* Commit area */
 .git-commit-area {

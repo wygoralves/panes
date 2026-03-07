@@ -746,35 +746,41 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
 
       <UpdateDialog open={updateDialogOpen} onClose={() => setUpdateDialogOpen(false)} />
 
-      <ConfirmDialog
-        open={archiveWorkspacePrompt !== null}
-        title="Archive workspace"
-        message={
-          archiveWorkspacePrompt
-            ? `Archive workspace "${archiveWorkspacePrompt.workspace.name}" and hide its repos/threads/messages from the sidebar? You can reopen this folder later to restore it.`
-            : ""
-        }
-        confirmLabel="Archive"
-        onConfirm={() => {
-          if (archiveWorkspacePrompt) void executeArchiveWorkspace(archiveWorkspacePrompt.workspace);
-        }}
-        onCancel={() => setArchiveWorkspacePrompt(null)}
-      />
+      {createPortal(
+        <ConfirmDialog
+          open={archiveWorkspacePrompt !== null}
+          title="Archive workspace"
+          message={
+            archiveWorkspacePrompt
+              ? `Archive workspace "${archiveWorkspacePrompt.workspace.name}" and hide its repos/threads/messages from the sidebar? You can reopen this folder later to restore it.`
+              : ""
+          }
+          confirmLabel="Archive"
+          onConfirm={() => {
+            if (archiveWorkspacePrompt) void executeArchiveWorkspace(archiveWorkspacePrompt.workspace);
+          }}
+          onCancel={() => setArchiveWorkspacePrompt(null)}
+        />,
+        document.body,
+      )}
 
-      <ConfirmDialog
-        open={archiveThreadPrompt !== null}
-        title="Archive thread"
-        message={
-          archiveThreadPrompt
-            ? `Archive thread "${archiveThreadPrompt.thread.title?.trim() || "Untitled thread"}"? It will be hidden from this project list.`
-            : ""
-        }
-        confirmLabel="Archive"
-        onConfirm={() => {
-          if (archiveThreadPrompt) void executeArchiveThread(archiveThreadPrompt.thread);
-        }}
-        onCancel={() => setArchiveThreadPrompt(null)}
-      />
+      {createPortal(
+        <ConfirmDialog
+          open={archiveThreadPrompt !== null}
+          title="Archive thread"
+          message={
+            archiveThreadPrompt
+              ? `Archive thread "${archiveThreadPrompt.thread.title?.trim() || "Untitled thread"}"? It will be hidden from this project list.`
+              : ""
+          }
+          confirmLabel="Archive"
+          onConfirm={() => {
+            if (archiveThreadPrompt) void executeArchiveThread(archiveThreadPrompt.thread);
+          }}
+          onCancel={() => setArchiveThreadPrompt(null)}
+        />,
+        document.body,
+      )}
 
       {error && (
         <div

@@ -11,8 +11,8 @@ use git2::{ErrorCode, Repository, Status, StatusOptions};
 
 use crate::models::{
     FileTreeEntryDto, FileTreePageDto, GitBranchDto, GitBranchPageDto, GitBranchScopeDto,
-    GitCommitDto, GitCommitPageDto, GitFileStatusDto, GitInitRepoStatusDto, GitStashDto,
-    GitStatusDto,
+    GitCommitDto, GitCommitPageDto, GitDiffPreviewDto, GitFileStatusDto, GitInitRepoStatusDto,
+    GitStashDto, GitStatusDto,
 };
 
 use super::cli_fallback::run_git;
@@ -25,6 +25,8 @@ const FILE_TREE_CACHE_TTL: Duration = Duration::from_secs(30);
 
 const GIT_BRANCH_MAX_PAGE_SIZE: usize = 1000;
 const GIT_COMMIT_MAX_PAGE_SIZE: usize = 200;
+const GIT_DIFF_PREVIEW_MAX_BYTES: usize = 512 * 1024;
+const GIT_DIFF_PREVIEW_MAX_LINES: usize = 10_000;
 
 const GIT_RECORD_SEPARATOR: char = '\u{1e}';
 const GIT_FIELD_SEPARATOR: char = '\u{1f}';
@@ -135,7 +137,11 @@ pub fn get_git_status(repo_path: &str) -> anyhow::Result<GitStatusDto> {
     })
 }
 
-pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> anyhow::Result<String> {
+pub fn get_file_diff(
+    repo_path: &str,
+    file_path: &str,
+    staged: bool,
+) -> anyhow::Result<GitDiffPreviewDto> {
     let mut args = vec!["diff"];
     if staged {
         args.push("--staged");
@@ -143,7 +149,8 @@ pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> anyhow::
     args.push("--");
     args.push(file_path);
 
-    run_git(repo_path, &args)
+    let raw = run_git(repo_path, &args)?;
+    Ok(build_diff_preview(raw))
 }
 
 pub fn stage_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
@@ -572,12 +579,113 @@ pub fn pop_git_stash(repo_path: &str, stash_index: usize) -> anyhow::Result<()> 
     Ok(())
 }
 
-pub fn get_commit_diff(repo_path: &str, commit_hash: &str) -> anyhow::Result<String> {
+pub fn get_commit_diff(repo_path: &str, commit_hash: &str) -> anyhow::Result<GitDiffPreviewDto> {
     anyhow::ensure!(
         !commit_hash.is_empty() && commit_hash.chars().all(|c| c.is_ascii_hexdigit()),
         "invalid commit hash"
     );
-    run_git(repo_path, &["diff-tree", "-p", commit_hash])
+    let raw = run_git(repo_path, &["diff-tree", "-p", commit_hash])?;
+    Ok(build_diff_preview(raw))
+}
+
+fn build_diff_preview(raw: String) -> GitDiffPreviewDto {
+    let original_bytes = raw.len();
+    if raw.is_empty() {
+        return GitDiffPreviewDto {
+            content: raw,
+            truncated: false,
+            original_bytes,
+            returned_bytes: 0,
+        };
+    }
+
+    let mut preview = String::with_capacity(original_bytes.min(GIT_DIFF_PREVIEW_MAX_BYTES));
+    let mut returned_bytes = 0;
+    let mut visible_lines = 0;
+    let mut truncated = false;
+
+    for segment in raw.split_inclusive('\n') {
+        if visible_lines >= GIT_DIFF_PREVIEW_MAX_LINES {
+            truncated = true;
+            break;
+        }
+
+        if returned_bytes + segment.len() > GIT_DIFF_PREVIEW_MAX_BYTES {
+            let remaining_bytes = GIT_DIFF_PREVIEW_MAX_BYTES.saturating_sub(returned_bytes);
+            let truncated_segment = truncate_utf8_prefix(segment, remaining_bytes);
+            if !truncated_segment.is_empty() {
+                preview.push_str(truncated_segment);
+                returned_bytes += truncated_segment.len();
+            }
+            truncated = true;
+            break;
+        }
+
+        preview.push_str(segment);
+        returned_bytes += segment.len();
+        if !is_diff_preview_metadata_line(segment.trim_end_matches('\n')) {
+            visible_lines += 1;
+        }
+    }
+
+    if !truncated && preview.len() == original_bytes {
+        return GitDiffPreviewDto {
+            content: raw,
+            truncated: false,
+            original_bytes,
+            returned_bytes: original_bytes,
+        };
+    }
+
+    if preview.is_empty() {
+        let truncated_raw = truncate_utf8_prefix(&raw, GIT_DIFF_PREVIEW_MAX_BYTES);
+        if !truncated_raw.is_empty() {
+            preview.push_str(truncated_raw);
+            returned_bytes = preview.len();
+        }
+        truncated = truncated_raw.len() < original_bytes;
+    }
+
+    GitDiffPreviewDto {
+        content: preview,
+        truncated,
+        original_bytes,
+        returned_bytes,
+    }
+}
+
+fn truncate_utf8_prefix(value: &str, max_bytes: usize) -> &str {
+    if max_bytes >= value.len() {
+        return value;
+    }
+
+    let mut safe_cut = max_bytes;
+    while safe_cut > 0 && !value.is_char_boundary(safe_cut) {
+        safe_cut -= 1;
+    }
+
+    &value[..safe_cut]
+}
+
+fn is_diff_preview_metadata_line(line: &str) -> bool {
+    line.starts_with("diff --git")
+        || line.starts_with("index ")
+        || is_diff_preview_file_header_line(line)
+        || line.starts_with("new file")
+        || line.starts_with("deleted file")
+        || line.starts_with("similarity")
+        || line.starts_with("dissimilarity")
+        || line.starts_with("rename")
+        || line.starts_with("copy ")
+        || line.starts_with("old mode")
+        || line.starts_with("new mode")
+}
+
+fn is_diff_preview_file_header_line(line: &str) -> bool {
+    line == "--- /dev/null"
+        || line == "+++ /dev/null"
+        || line.starts_with("--- a/")
+        || line.starts_with("+++ b/")
 }
 
 pub fn get_file_tree(
@@ -971,4 +1079,203 @@ pub fn rename_remote(repo_path: &str, old_name: &str, new_name: &str) -> anyhow:
     run_git(repo_path, &["remote", "rename", old_name, new_name])
         .context("failed to rename remote")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_diff_preview, is_diff_preview_metadata_line, truncate_utf8_prefix,
+        GIT_DIFF_PREVIEW_MAX_BYTES, GIT_DIFF_PREVIEW_MAX_LINES,
+    };
+
+    #[test]
+    fn keeps_small_diffs_untruncated() {
+        let raw = "diff --git a/file.txt b/file.txt\n@@ -1 +1 @@\n-old\n+new\n".to_string();
+        let preview = build_diff_preview(raw.clone());
+
+        assert!(!preview.truncated);
+        assert_eq!(preview.content, raw);
+        assert_eq!(preview.original_bytes, raw.len());
+        assert_eq!(preview.returned_bytes, raw.len());
+    }
+
+    #[test]
+    fn truncates_large_diffs_by_byte_limit() {
+        let raw = format!(
+            "diff --git a/file.txt b/file.txt\n{}",
+            "+0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"
+                .repeat((GIT_DIFF_PREVIEW_MAX_BYTES / 64) + 32)
+        );
+        let preview = build_diff_preview(raw);
+
+        assert!(preview.truncated);
+        assert!(preview.returned_bytes <= GIT_DIFF_PREVIEW_MAX_BYTES);
+        assert_eq!(preview.returned_bytes, preview.content.len());
+        assert!(preview.original_bytes > preview.returned_bytes);
+    }
+
+    #[test]
+    fn keeps_prefix_of_oversized_changed_line() {
+        let raw = format!(
+            "diff --git a/file.txt b/file.txt\n@@ -0,0 +1 @@\n+{}\n",
+            "x".repeat(GIT_DIFF_PREVIEW_MAX_BYTES)
+        );
+        let preview = build_diff_preview(raw);
+
+        assert!(preview.truncated);
+        assert!(preview.returned_bytes <= GIT_DIFF_PREVIEW_MAX_BYTES);
+        assert_eq!(preview.returned_bytes, preview.content.len());
+        assert!(preview.content.contains("@@ -0,0 +1 @@\n+"));
+        assert!(preview
+            .content
+            .lines()
+            .any(|line| line.starts_with('+') && line.len() > 1));
+    }
+
+    #[test]
+    fn truncates_large_diffs_by_line_limit() {
+        let mut raw = String::from("diff --git a/file.txt b/file.txt\n");
+        for index in 0..(GIT_DIFF_PREVIEW_MAX_LINES + 50) {
+            raw.push_str(&format!("+line-{index}\n"));
+        }
+
+        let preview = build_diff_preview(raw);
+
+        assert!(preview.truncated);
+        assert_eq!(
+            preview
+                .content
+                .lines()
+                .filter(|line| !is_diff_preview_metadata_line(line))
+                .count(),
+            GIT_DIFF_PREVIEW_MAX_LINES
+        );
+        assert!(preview.original_bytes > preview.returned_bytes);
+    }
+
+    #[test]
+    fn line_limit_ignores_copy_and_dissimilarity_metadata() {
+        let mut raw = String::from("diff --git a/file.txt b/file.txt\n");
+        for index in 0..(GIT_DIFF_PREVIEW_MAX_LINES + 50) {
+            match index % 3 {
+                0 => raw.push_str(&format!("copy from old-{index}\n")),
+                1 => raw.push_str(&format!("copy to new-{index}\n")),
+                _ => raw.push_str("dissimilarity index 99%\n"),
+            }
+        }
+        raw.push_str("@@ -0,0 +1,10050 @@\n");
+        for index in 0..(GIT_DIFF_PREVIEW_MAX_LINES + 50) {
+            raw.push_str(&format!("+line-{index}\n"));
+        }
+
+        let preview = build_diff_preview(raw);
+
+        assert!(preview.truncated);
+        assert!(preview.content.contains("@@ -0,0 +1,10050 @@"));
+        assert!(preview.content.contains("+line-0\n"));
+        assert_eq!(
+            preview
+                .content
+                .lines()
+                .filter(|line| !is_diff_preview_metadata_line(line))
+                .count(),
+            GIT_DIFF_PREVIEW_MAX_LINES
+        );
+    }
+
+    #[test]
+    fn line_limit_preserves_hunks_after_metadata_heavy_prefix() {
+        let mut raw = String::new();
+        for index in 0..(GIT_DIFF_PREVIEW_MAX_LINES + 50) {
+            raw.push_str(&format!("rename from old-{index}\n"));
+        }
+        raw.push_str("diff --git a/file.txt b/file.txt\n");
+        raw.push_str("index 1111111..2222222 100644\n");
+        raw.push_str("--- a/file.txt\n");
+        raw.push_str("+++ b/file.txt\n");
+        raw.push_str("@@ -0,0 +1,10050 @@\n");
+        for index in 0..(GIT_DIFF_PREVIEW_MAX_LINES + 50) {
+            raw.push_str(&format!("+line-{index}\n"));
+        }
+
+        let preview = build_diff_preview(raw);
+
+        assert!(preview.truncated);
+        assert!(preview.content.contains("@@ -0,0 +1,10050 @@"));
+        assert!(preview.content.contains("+line-0\n"));
+        assert_eq!(
+            preview
+                .content
+                .lines()
+                .filter(|line| !is_diff_preview_metadata_line(line))
+                .count(),
+            GIT_DIFF_PREVIEW_MAX_LINES
+        );
+    }
+
+    #[test]
+    fn utf8_prefix_truncation_stays_within_byte_budget() {
+        let value = "aé日";
+
+        assert_eq!(truncate_utf8_prefix(value, 0), "");
+        assert_eq!(truncate_utf8_prefix(value, 1), "a");
+        assert_eq!(truncate_utf8_prefix(value, 2), "a");
+        assert_eq!(truncate_utf8_prefix(value, 3), "aé");
+        assert_eq!(truncate_utf8_prefix(value, 5), "aé");
+        assert_eq!(truncate_utf8_prefix(value, 6), "aé日");
+    }
+
+    #[test]
+    fn line_limit_counts_changed_lines_starting_with_diff_markers() {
+        let mut raw = String::from("diff --git a/file.txt b/file.txt\n");
+        raw.push_str("@@ -1,10050 +1,10050 @@\n");
+        for _ in 0..((GIT_DIFF_PREVIEW_MAX_LINES / 2) + 50) {
+            raw.push_str("---i;\n");
+            raw.push_str("+++i;\n");
+        }
+
+        let preview = build_diff_preview(raw);
+
+        assert!(preview.truncated);
+        assert!(preview.content.contains("---i;\n"));
+        assert!(preview.content.contains("+++i;\n"));
+        assert!(!is_diff_preview_metadata_line("---i;"));
+        assert!(!is_diff_preview_metadata_line("+++i;"));
+        assert_eq!(
+            preview
+                .content
+                .lines()
+                .filter(|line| !is_diff_preview_metadata_line(line))
+                .count(),
+            GIT_DIFF_PREVIEW_MAX_LINES
+        );
+    }
+
+    #[test]
+    fn line_limit_counts_changed_lines_starting_with_file_header_markers() {
+        let mut raw = String::from("diff --git a/file.txt b/file.txt\n");
+        raw.push_str("@@ -1,10050 +1,10050 @@\n");
+        for _ in 0..((GIT_DIFF_PREVIEW_MAX_LINES / 2) + 50) {
+            raw.push_str("--- help\n");
+            raw.push_str("+++ title\n");
+        }
+
+        let preview = build_diff_preview(raw);
+
+        assert!(preview.truncated);
+        assert!(preview.content.contains("--- help\n"));
+        assert!(preview.content.contains("+++ title\n"));
+        assert!(!is_diff_preview_metadata_line("--- help"));
+        assert!(!is_diff_preview_metadata_line("+++ title"));
+        assert!(is_diff_preview_metadata_line("--- a/file.txt"));
+        assert!(is_diff_preview_metadata_line("+++ b/file.txt"));
+        assert_eq!(
+            preview
+                .content
+                .lines()
+                .filter(|line| !is_diff_preview_metadata_line(line))
+                .count(),
+            GIT_DIFF_PREVIEW_MAX_LINES
+        );
+    }
 }
