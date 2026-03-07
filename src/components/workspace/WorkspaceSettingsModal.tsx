@@ -9,7 +9,6 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
-import { open } from "@tauri-apps/plugin-shell";
 import { ipc } from "../../lib/ipc";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { toast } from "../../stores/toastStore";
@@ -180,6 +179,14 @@ export function WorkspaceSettingsModal({
     return p;
   }
 
+  async function revealWorkspace() {
+    try {
+      await ipc.revealPath(currentWorkspace.rootPath);
+    } catch {
+      toast.error("Failed to reveal workspace in Finder.");
+    }
+  }
+
   const name =
     currentWorkspace.name || currentWorkspace.rootPath.split("/").pop() || "Workspace";
 
@@ -258,7 +265,7 @@ export function WorkspaceSettingsModal({
                     <button
                       type="button"
                       className="ws-prop-btn"
-                      onClick={() => void open(currentWorkspace.rootPath)}
+                      onClick={() => void revealWorkspace()}
                     >
                       <FolderOpen size={11} />
                       Reveal

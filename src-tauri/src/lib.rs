@@ -150,6 +150,7 @@ pub fn run() {
             commands::files::list_dir,
             commands::files::read_file,
             commands::files::write_file,
+            commands::files::reveal_path,
             commands::git::watch_git_repo,
             commands::engines::list_engines,
             commands::engines::engine_health,

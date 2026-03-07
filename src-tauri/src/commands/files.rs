@@ -1,3 +1,5 @@
+use std::{path::PathBuf, process::Command};
+
 use tauri::State;
 
 use crate::{
@@ -52,6 +54,63 @@ pub async fn write_file(
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn reveal_path(path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || reveal_path_impl(PathBuf::from(path)).map_err(err_to_string))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn reveal_path_impl(path: PathBuf) -> anyhow::Result<()> {
+    if !path.exists() {
+        anyhow::bail!("path does not exist: {}", path.display());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("open");
+        if path.is_file() {
+            command.arg("-R");
+        }
+        command.arg(&path);
+        spawn_command(command, &path)?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut command = Command::new("explorer");
+        if path.is_file() {
+            command.arg(format!("/select,{}", path.display()));
+        } else {
+            command.arg(&path);
+        }
+        spawn_command(command, &path)?;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let target = if path.is_dir() {
+            path.clone()
+        } else {
+            path.parent()
+                .map(|parent| parent.to_path_buf())
+                .unwrap_or_else(|| path.clone())
+        };
+        let mut command = Command::new("xdg-open");
+        command.arg(&target);
+        spawn_command(command, &target)?;
+    }
+
+    Ok(())
+}
+
+fn spawn_command(mut command: Command, path: &std::path::Path) -> anyhow::Result<()> {
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| anyhow::anyhow!("failed to reveal {}: {error}", path.display()))
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {

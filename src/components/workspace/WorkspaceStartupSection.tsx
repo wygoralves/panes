@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Camera,
   ChevronDown,
   ChevronRight,
   Download,
-  Layers,
   Play,
   Plus,
-  Radio,
   Save,
+  Settings,
   Trash2,
   Upload,
   X,
@@ -210,7 +210,8 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
   const [advancedDraft, setAdvancedDraft] = useState("");
   const [pendingApplyPreset, setPendingApplyPreset] = useState<WorkspaceStartupPreset | null>(null);
   const [liveSessionCount, setLiveSessionCount] = useState(0);
-  const [expandedWorktrees, setExpandedWorktrees] = useState<Record<string, boolean>>({});
+  const [expandedTabs, setExpandedTabs] = useState<Record<string, boolean>>({});
+  const [expandedPanes, setExpandedPanes] = useState<Record<string, boolean>>({});
   const loadRequestIdRef = useRef(0);
   const applyInFlightRef = useRef(false);
   const mountedRef = useRef(true);
@@ -543,7 +544,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       setBuilderDraft(canonical);
       setAdvancedDraft(await serializeCurrentBuilder(advancedFormat, canonical));
       useTerminalStore.getState().setWorkspaceStartupPresetState(workspace.id, canonical);
-      toast.success("Current layout saved as workspace default.");
+      toast.success("Current layout saved as startup preset.");
     } catch (error) {
       toast.error(`Failed to save layout: ${String(error)}`);
     } finally {
@@ -663,106 +664,123 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
   /* ── Render ── */
 
   if (loading) {
-    return <div className="ws-startup-empty">Loading preset…</div>;
+    return (
+      <div className="wss-empty">
+        <span style={{ color: "var(--text-3)" }}>Loading startup preset...</span>
+      </div>
+    );
+  }
+
+  const harnessOptions = [
+    { value: "", label: "No agent" },
+    ...installedHarnesses.map((h) => ({ value: h.id, label: h.name })),
+  ];
+
+  function paneLabel(session: WorkspaceStartupSession, index: number): string {
+    if (session.title) return session.title;
+    const agent = installedHarnesses.find((h) => h.id === session.harnessId);
+    if (agent) return agent.name;
+    return `Shell ${index + 1}`;
   }
 
   return (
-    <div className="ws-startup">
-      {/* Quick actions */}
-      <div className="ws-startup-actions-bar">
+    <div className="wss">
+      {/* ── Snapshot CTA ── */}
+      <div className="wss-snapshot">
+        <div className="wss-snapshot-text">
+          <div className="wss-snapshot-title">Quick setup</div>
+          <div className="wss-snapshot-desc">
+            Save your current terminal layout as the default for this workspace.
+          </div>
+        </div>
         <button
           type="button"
-          className="ws-prop-btn"
+          className="ws-prop-btn ws-prop-btn-accent"
           onClick={() => void handleSaveCurrentLayout()}
           disabled={controlsDisabled || !isActiveWorkspace}
-          title={isActiveWorkspace ? "Snapshot current terminal layout" : "Switch to this workspace first"}
+          title={isActiveWorkspace ? undefined : "Switch to this workspace first"}
         >
-          <Layers size={11} />
-          Save current layout
-        </button>
-        <div style={{ flex: 1 }} />
-        <button
-          type="button"
-          className="ws-prop-btn"
-          onClick={() => void handleImport()}
-          disabled={controlsDisabled}
-        >
-          <Upload size={11} />
-          Import
-        </button>
-        <button
-          type="button"
-          className="ws-prop-btn"
-          onClick={() => void handleExport()}
-          disabled={controlsDisabled}
-        >
-          <Download size={11} />
-          Export
+          <Camera size={11} />
+          Snapshot layout
         </button>
       </div>
 
-      {/* Defaults */}
-      <div className="ws-section">
-        <div className="ws-section-label">Defaults</div>
-        <div className="ws-prop">
-          <span className="ws-prop-label">Default view</span>
-          <Dropdown
-            value={builderDraft.defaultView}
-            options={VIEW_OPTIONS.map((v) => ({
-              value: v,
-              label: v.charAt(0).toUpperCase() + v.slice(1),
-            }))}
-            triggerStyle={{ borderRadius: "var(--radius-sm)", minWidth: 120 }}
-            onChange={(v) => handleDefaultViewChange(v as WorkspaceDefaultView)}
-          />
-        </div>
-        <div className="ws-prop">
-          <span className="ws-prop-label">Split size</span>
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <input
-              className="ws-depth-input"
-              type="number"
-              min={15}
-              max={72}
-              value={builderDraft.splitPanelSize ?? DEFAULT_SPLIT_PANEL_SIZE}
-              onChange={(e) =>
-                updateDraft((c) => ({ ...c, splitPanelSize: Number(e.target.value) }))
-              }
+      {/* ── Default view ── */}
+      <div className="wsp-section">
+        <div className="wsp-section-label">When opening</div>
+        <div className="wsp-card">
+          <div className="wsp-field">
+            <span className="wsp-field-label">Start in</span>
+            <Dropdown
+              value={builderDraft.defaultView}
+              options={VIEW_OPTIONS.map((v) => ({
+                value: v,
+                label: v.charAt(0).toUpperCase() + v.slice(1),
+              }))}
+              triggerStyle={{ borderRadius: "var(--radius-sm)", minWidth: 120 }}
+              onChange={(v) => handleDefaultViewChange(v as WorkspaceDefaultView)}
             />
-            <span style={{ fontSize: 10, color: "var(--text-3)" }}>%</span>
           </div>
+          {(builderDraft.defaultView === "split" || builderDraft.defaultView === "terminal") && (
+            <>
+              <div className="wsp-field-divider" />
+              <div className="wsp-field">
+                <span className="wsp-field-label">Terminal size</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <input
+                    className="ws-depth-input"
+                    type="number"
+                    min={15}
+                    max={72}
+                    value={builderDraft.splitPanelSize ?? DEFAULT_SPLIT_PANEL_SIZE}
+                    onChange={(e) =>
+                      updateDraft((c) => ({ ...c, splitPanelSize: Number(e.target.value) }))
+                    }
+                  />
+                  <span style={{ fontSize: 10, color: "var(--text-3)" }}>%</span>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Terminal tabs */}
-      <div className="ws-section" style={{ marginBottom: 6 }}>
-        <div className="ws-startup-section-head">
+      {/* ── Terminal tabs builder ── */}
+      <div className="wsp-section">
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <div className="ws-section-label" style={{ paddingBottom: 2 }}>
-              Terminal tabs
+            <div className="wsp-section-label">Terminal tabs</div>
+            <div className="wss-hint">
+              Created automatically when no terminals are running.
             </div>
-            <div className="ws-startup-hint">Applied when workspace has no live sessions</div>
           </div>
-          <button type="button" className="ws-prop-btn" onClick={addGroup} disabled={controlsDisabled}>
+          <button
+            type="button"
+            className="ws-prop-btn"
+            onClick={addGroup}
+            disabled={controlsDisabled}
+          >
             <Plus size={11} />
             Add tab
           </button>
         </div>
 
         {!terminalDraft || terminalDraft.groups.length === 0 ? (
-          <div className="ws-startup-empty">
-            <p>No startup tabs configured.</p>
+          <div className="wss-empty">
+            <p>No terminal tabs configured yet.</p>
             <button
               type="button"
               className="ws-prop-btn ws-prop-btn-accent"
               onClick={ensureTerminal}
             >
-              Create startup layout
+              <Plus size={11} />
+              Add first tab
             </button>
           </div>
         ) : (
-          <div className="ws-startup-tabs">
+          <div className="wss-tabs">
             {terminalDraft.groups.map((group, gi) => {
+              const tabExpanded = expandedTabs[group.id] ?? false;
               const worktree: WorkspaceStartupWorktreeConfig = group.worktree ?? {
                 enabled: false,
                 repoMode: "active_repo",
@@ -771,25 +789,44 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                 baseDir: null,
                 branchPrefix: null,
               };
-              const wtOpen = expandedWorktrees[group.id] ?? false;
 
               return (
-                <div key={group.id} className="ws-startup-tab-card">
+                <div key={group.id} className="wss-tab">
                   {/* Tab header */}
-                  <div className="ws-startup-tab-header">
-                    <div className="ws-startup-tab-name">
-                      <span className="ws-startup-tab-index">{gi + 1}</span>
-                      <input
-                        className="ws-startup-tab-input"
-                        value={group.name}
-                        onChange={(e) =>
-                          updateGroup(group.id, (g) => ({ ...g, name: e.target.value }))
-                        }
-                        placeholder={`Tab ${gi + 1}`}
-                      />
-                    </div>
-                    <div className="ws-startup-tab-controls">
-                      <label className="ws-startup-checkbox" title="Broadcast input to all panes">
+                  <div className="wss-tab-header">
+                    <span className="wss-tab-index">{gi + 1}</span>
+                    <input
+                      className="wss-tab-name"
+                      value={group.name}
+                      onChange={(e) =>
+                        updateGroup(group.id, (g) => ({ ...g, name: e.target.value }))
+                      }
+                      placeholder={`Tab ${gi + 1}`}
+                    />
+                    <button
+                      type="button"
+                      className="wss-icon-btn"
+                      onClick={() =>
+                        setExpandedTabs((p) => ({ ...p, [group.id]: !p[group.id] }))
+                      }
+                      title="Tab settings"
+                    >
+                      <Settings size={11} />
+                    </button>
+                    <button
+                      type="button"
+                      className="wss-icon-btn wss-icon-btn-danger"
+                      onClick={() => removeGroup(group.id)}
+                      title="Remove tab"
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
+
+                  {/* Tab advanced settings (collapsed) */}
+                  {tabExpanded && (
+                    <div className="wss-tab-settings">
+                      <label className="wss-check">
                         <input
                           type="checkbox"
                           checked={Boolean(group.broadcastOnStart)}
@@ -810,159 +847,10 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                             })
                           }
                         />
-                        <Radio size={11} />
-                        Broadcast
+                        <span>Broadcast input to all panes</span>
                       </label>
-                      <button
-                        type="button"
-                        className="ws-startup-remove-btn"
-                        onClick={() => removeGroup(group.id)}
-                        title="Remove tab"
-                      >
-                        <X size={12} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Panes */}
-                  <div className="ws-startup-panes">
-                    {group.sessions.map((session, si) => (
-                      <div key={session.id} className="ws-startup-pane">
-                        <div className="ws-startup-pane-header">
-                          <span className="ws-startup-pane-label">Pane {si + 1}</span>
-                          <button
-                            type="button"
-                            className="ws-startup-remove-btn"
-                            onClick={() => removeSession(group.id, session.id)}
-                            disabled={group.sessions.length === 1}
-                            title="Remove pane"
-                          >
-                            <Trash2 size={10} />
-                          </button>
-                        </div>
-                        <div className="ws-startup-pane-fields">
-                          <div className="ws-startup-pane-row">
-                            <span className="ws-startup-row-label">Title</span>
-                            <input
-                              className="ws-startup-field-input"
-                              value={session.title ?? ""}
-                              onChange={(e) =>
-                                updateSession(group.id, session.id, (s) => ({
-                                  ...s,
-                                  title: e.target.value || null,
-                                }))
-                              }
-                              placeholder={`Pane ${si + 1}`}
-                            />
-                          </div>
-                          <div className="ws-startup-pane-row">
-                            <span className="ws-startup-row-label">Dir</span>
-                            <input
-                              className="ws-startup-field-input"
-                              style={{ flex: 1 }}
-                              value={session.cwd}
-                              onChange={(e) =>
-                                updateSession(group.id, session.id, (s) => ({
-                                  ...s,
-                                  cwd: e.target.value,
-                                }))
-                              }
-                              placeholder="."
-                            />
-                            <Dropdown
-                              value={session.cwdBase ?? "workspace"}
-                              options={PATH_BASE_OPTIONS.map((p) => ({
-                                value: p,
-                                label: p.charAt(0).toUpperCase() + p.slice(1),
-                              }))}
-                              triggerStyle={{
-                                borderRadius: "var(--radius-sm)",
-                                fontSize: 11,
-                                padding: "2px 6px",
-                                minWidth: 88,
-                              }}
-                              onChange={(v) =>
-                                updateSession(group.id, session.id, (s) => ({
-                                  ...s,
-                                  cwdBase: v as WorkspacePathBase,
-                                }))
-                              }
-                            />
-                          </div>
-                          <div className="ws-startup-pane-row">
-                            <span className="ws-startup-row-label">Agent</span>
-                            <Dropdown
-                              value={session.harnessId ?? ""}
-                              options={[
-                                { value: "", label: "None" },
-                                ...installedHarnesses.map((h) => ({
-                                  value: h.id,
-                                  label: h.name,
-                                })),
-                              ]}
-                              triggerStyle={{
-                                borderRadius: "var(--radius-sm)",
-                                fontSize: 11,
-                                padding: "2px 6px",
-                                minWidth: 110,
-                              }}
-                              onChange={(v) =>
-                                updateSession(group.id, session.id, (s) => ({
-                                  ...s,
-                                  harnessId: v || null,
-                                  launchHarnessOnCreate: v
-                                    ? (s.launchHarnessOnCreate ?? true)
-                                    : false,
-                                }))
-                              }
-                            />
-                            {session.harnessId && (
-                              <label className="ws-startup-checkbox">
-                                <input
-                                  type="checkbox"
-                                  checked={
-                                    session.launchHarnessOnCreate ?? Boolean(session.harnessId)
-                                  }
-                                  onChange={(e) =>
-                                    updateSession(group.id, session.id, (s) => ({
-                                      ...s,
-                                      launchHarnessOnCreate: e.target.checked,
-                                    }))
-                                  }
-                                />
-                                Auto-launch
-                              </label>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    <button
-                      type="button"
-                      className="ws-startup-add-pane"
-                      onClick={() => addSession(group.id)}
-                    >
-                      <Plus size={11} />
-                      Add pane
-                    </button>
-                  </div>
-
-                  {/* Worktree */}
-                  <div className="ws-startup-worktree">
-                    <button
-                      type="button"
-                      className="ws-startup-worktree-toggle"
-                      onClick={() =>
-                        setExpandedWorktrees((p) => ({ ...p, [group.id]: !p[group.id] }))
-                      }
-                    >
-                      {wtOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                      <span>Worktree</span>
-                      {worktree.enabled && <span className="ws-startup-badge">On</span>}
-                    </button>
-                    {wtOpen && (
-                      <div className="ws-startup-worktree-body">
-                        <label className="ws-startup-checkbox">
+                      <div className="wss-wt-section">
+                        <label className="wss-check">
                           <input
                             type="checkbox"
                             checked={worktree.enabled}
@@ -982,12 +870,12 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                               }))
                             }
                           />
-                          Enable per-pane worktrees
+                          <span>Create git worktree per pane</span>
                         </label>
                         {worktree.enabled && (
-                          <div className="ws-startup-wt-fields">
-                            <div className="ws-startup-pane-row">
-                              <span className="ws-startup-row-label">Repo</span>
+                          <div className="wss-wt-fields">
+                            <div className="wss-wt-row">
+                              <span className="wss-wt-label">Repo</span>
                               <Dropdown
                                 value={worktree.repoMode}
                                 options={[
@@ -1012,10 +900,10 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                               />
                             </div>
                             {worktree.repoMode === "fixed_repo" && (
-                              <div className="ws-startup-pane-row">
-                                <span className="ws-startup-row-label">Path</span>
+                              <div className="wss-wt-row">
+                                <span className="wss-wt-label">Path</span>
                                 <input
-                                  className="ws-startup-field-input"
+                                  className="wss-input"
                                   value={worktree.repoPath ?? ""}
                                   onChange={(e) =>
                                     updateGroup(group.id, (g) => ({
@@ -1032,10 +920,10 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                                 />
                               </div>
                             )}
-                            <div className="ws-startup-pane-row">
-                              <span className="ws-startup-row-label">Branch</span>
+                            <div className="wss-wt-row">
+                              <span className="wss-wt-label">Branch</span>
                               <input
-                                className="ws-startup-field-input"
+                                className="wss-input"
                                 value={worktree.baseBranch ?? ""}
                                 onChange={(e) =>
                                   updateGroup(group.id, (g) => ({
@@ -1050,10 +938,10 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                                 placeholder="main"
                               />
                             </div>
-                            <div className="ws-startup-pane-row">
-                              <span className="ws-startup-row-label">Dir</span>
+                            <div className="wss-wt-row">
+                              <span className="wss-wt-label">Directory</span>
                               <input
-                                className="ws-startup-field-input"
+                                className="wss-input"
                                 value={worktree.baseDir ?? ""}
                                 onChange={(e) =>
                                   updateGroup(group.id, (g) => ({
@@ -1068,10 +956,10 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                                 placeholder=".panes/worktrees"
                               />
                             </div>
-                            <div className="ws-startup-pane-row">
-                              <span className="ws-startup-row-label">Prefix</span>
+                            <div className="wss-wt-row">
+                              <span className="wss-wt-label">Prefix</span>
                               <input
-                                className="ws-startup-field-input"
+                                className="wss-input"
                                 value={worktree.branchPrefix ?? ""}
                                 onChange={(e) =>
                                   updateGroup(group.id, (g) => ({
@@ -1089,7 +977,139 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                           </div>
                         )}
                       </div>
-                    )}
+                    </div>
+                  )}
+
+                  {/* Panes */}
+                  <div className="wss-panes">
+                    {group.sessions.map((session, si) => {
+                      const paneExpanded = expandedPanes[session.id] ?? false;
+
+                      return (
+                        <div key={session.id} className="wss-pane">
+                          {/* Compact pane row */}
+                          <div className="wss-pane-row">
+                            <Dropdown
+                              value={session.harnessId ?? ""}
+                              options={harnessOptions}
+                              triggerStyle={{
+                                borderRadius: "var(--radius-sm)",
+                                fontSize: 11,
+                                padding: "2px 6px",
+                                minWidth: 100,
+                              }}
+                              onChange={(v) =>
+                                updateSession(group.id, session.id, (s) => ({
+                                  ...s,
+                                  harnessId: v || null,
+                                  launchHarnessOnCreate: v
+                                    ? (s.launchHarnessOnCreate ?? true)
+                                    : false,
+                                }))
+                              }
+                            />
+                            <span className="wss-pane-at">in</span>
+                            <input
+                              className="wss-input wss-pane-dir"
+                              value={session.cwd}
+                              onChange={(e) =>
+                                updateSession(group.id, session.id, (s) => ({
+                                  ...s,
+                                  cwd: e.target.value,
+                                }))
+                              }
+                              placeholder="."
+                              title={`Working directory for ${paneLabel(session, si)}`}
+                            />
+                            <button
+                              type="button"
+                              className={`wss-icon-btn ${paneExpanded ? "wss-icon-btn-active" : ""}`}
+                              onClick={() =>
+                                setExpandedPanes((p) => ({ ...p, [session.id]: !p[session.id] }))
+                              }
+                              title="More options"
+                            >
+                              <Settings size={10} />
+                            </button>
+                            <button
+                              type="button"
+                              className="wss-icon-btn wss-icon-btn-danger"
+                              onClick={() => removeSession(group.id, session.id)}
+                              disabled={group.sessions.length === 1}
+                              title="Remove pane"
+                            >
+                              <Trash2 size={10} />
+                            </button>
+                          </div>
+
+                          {/* Expanded pane details */}
+                          {paneExpanded && (
+                            <div className="wss-pane-details">
+                              <div className="wss-detail-row">
+                                <span className="wss-detail-label">Title</span>
+                                <input
+                                  className="wss-input"
+                                  value={session.title ?? ""}
+                                  onChange={(e) =>
+                                    updateSession(group.id, session.id, (s) => ({
+                                      ...s,
+                                      title: e.target.value || null,
+                                    }))
+                                  }
+                                  placeholder={paneLabel(session, si)}
+                                />
+                              </div>
+                              <div className="wss-detail-row">
+                                <span className="wss-detail-label">Path relative to</span>
+                                <Dropdown
+                                  value={session.cwdBase ?? "workspace"}
+                                  options={PATH_BASE_OPTIONS.map((p) => ({
+                                    value: p,
+                                    label: p.charAt(0).toUpperCase() + p.slice(1),
+                                  }))}
+                                  triggerStyle={{
+                                    borderRadius: "var(--radius-sm)",
+                                    fontSize: 11,
+                                    padding: "2px 6px",
+                                  }}
+                                  onChange={(v) =>
+                                    updateSession(group.id, session.id, (s) => ({
+                                      ...s,
+                                      cwdBase: v as WorkspacePathBase,
+                                    }))
+                                  }
+                                />
+                              </div>
+                              {session.harnessId && (
+                                <label className="wss-check">
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      session.launchHarnessOnCreate ?? Boolean(session.harnessId)
+                                    }
+                                    onChange={(e) =>
+                                      updateSession(group.id, session.id, (s) => ({
+                                        ...s,
+                                        launchHarnessOnCreate: e.target.checked,
+                                      }))
+                                    }
+                                  />
+                                  <span>Auto-launch agent on startup</span>
+                                </label>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      className="wss-add-pane"
+                      onClick={() => addSession(group.id)}
+                    >
+                      <Plus size={10} />
+                      Add pane
+                    </button>
                   </div>
                 </div>
               );
@@ -1098,19 +1118,40 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
         )}
       </div>
 
-      {/* Advanced editor */}
-      <div className="ws-section" style={{ marginBottom: 0 }}>
-        <button
-          type="button"
-          className="ws-startup-advanced-toggle"
-          onClick={() => void handleToggleAdvanced()}
-          disabled={controlsDisabled}
-        >
-          {advancedOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-          Advanced editor
-        </button>
+      {/* ── Advanced / Import-Export ── */}
+      <div className="wsp-section">
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button
+            type="button"
+            className="wss-disclosure"
+            onClick={() => void handleToggleAdvanced()}
+            disabled={controlsDisabled}
+          >
+            {advancedOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+            Edit as {advancedFormat.toUpperCase()}
+          </button>
+          <div style={{ flex: 1 }} />
+          <button
+            type="button"
+            className="ws-prop-btn"
+            onClick={() => void handleImport()}
+            disabled={controlsDisabled}
+          >
+            <Upload size={11} />
+            Import
+          </button>
+          <button
+            type="button"
+            className="ws-prop-btn"
+            onClick={() => void handleExport()}
+            disabled={controlsDisabled}
+          >
+            <Download size={11} />
+            Export
+          </button>
+        </div>
         {advancedOpen && (
-          <div className="ws-startup-advanced">
+          <div className="wss-advanced">
             <div style={{ marginBottom: 6 }}>
               <Dropdown
                 value={advancedFormat}
@@ -1126,7 +1167,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
               />
             </div>
             <textarea
-              className="ws-startup-advanced-editor"
+              className="wss-editor"
               value={advancedDraft}
               disabled={saving}
               onChange={(e) => setAdvancedDraft(e.target.value)}
@@ -1136,17 +1177,17 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
         )}
       </div>
 
-      {/* Footer / Apply confirmation */}
+      {/* ── Footer / Apply confirmation ── */}
       {pendingApplyPreset ? (
-        <div className="ws-startup-apply-confirm">
+        <div className="wss-confirm">
           <div>
-            <strong>Replace current terminal state?</strong>
+            <strong>Replace current terminal sessions?</strong>
             <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--text-3)" }}>
-              This will close existing terminal sessions.
-              {hasWorktrees ? " Choose whether to remove existing worktrees." : ""}
+              All running terminals will be closed.
+              {hasWorktrees ? " You can choose to keep or remove existing worktrees." : ""}
             </p>
           </div>
-          <div className="ws-startup-apply-actions">
+          <div className="wss-confirm-actions">
             <button
               type="button"
               className="ws-prop-btn"
@@ -1167,7 +1208,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                 </button>
                 <button
                   type="button"
-                  className="ws-prop-btn ws-startup-danger-btn"
+                  className="ws-prop-btn wss-danger-btn"
                   onClick={() => void performApply(true)}
                   disabled={saving}
                 >
@@ -1181,36 +1222,37 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                 onClick={() => void performApply(false)}
                 disabled={saving}
               >
-                Apply
+                Replace
               </button>
             )}
           </div>
         </div>
       ) : (
-        <div className="ws-startup-footer">
-          <div className="ws-startup-footer-meta">
-            <span>{savedPreset ? "Preset saved" : "Using defaults"}</span>
-            {liveSessionCount > 0 && <span> · {liveSessionCount} live</span>}
+        <div className="wss-footer">
+          <div className="wss-footer-status">
+            {savedPreset ? "Preset saved" : "Using defaults"}
+            {liveSessionCount > 0 && ` \u00b7 ${liveSessionCount} running`}
           </div>
-          <div className="ws-startup-footer-actions">
-            <button
-              type="button"
-              className="ws-prop-btn"
-              onClick={() => void handleClear()}
-              disabled={controlsDisabled}
-            >
-              <Trash2 size={10} />
-              Reset
-            </button>
+          <div className="wss-footer-actions">
+            {savedPreset && (
+              <button
+                type="button"
+                className="ws-prop-btn"
+                onClick={() => void handleClear()}
+                disabled={controlsDisabled}
+              >
+                Reset
+              </button>
+            )}
             <button
               type="button"
               className="ws-prop-btn"
               onClick={() => void handleApplyNow()}
               disabled={controlsDisabled || !isActiveWorkspace}
-              title={isActiveWorkspace ? "Apply preset now" : "Switch to this workspace first"}
+              title={isActiveWorkspace ? "Apply preset to running workspace" : "Switch to this workspace first"}
             >
               <Play size={10} />
-              Apply
+              Apply now
             </button>
             <button
               type="button"

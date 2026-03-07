@@ -2,11 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Archive,
-  FolderOpen,
   MoreHorizontal,
   Settings2,
 } from "lucide-react";
-import { open } from "@tauri-apps/plugin-shell";
 import type { Workspace } from "../../types";
 
 interface WorkspaceMoreMenuProps {
@@ -102,18 +100,6 @@ export function WorkspaceMoreMenu({
             >
               <Settings2 size={13} />
               Workspace settings
-            </button>
-            <button
-              type="button"
-              className="git-action-menu-item"
-              onClick={() =>
-                handleItem(() => {
-                  void open(workspace.rootPath);
-                })
-              }
-            >
-              <FolderOpen size={13} />
-              Reveal in Finder
             </button>
             <div style={{ height: 1, margin: "4px 0", background: "var(--border)" }} />
             <button

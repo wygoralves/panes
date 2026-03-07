@@ -8,7 +8,6 @@ import {
   Play,
   RefreshCw,
 } from "lucide-react";
-import { open } from "@tauri-apps/plugin-shell";
 import { ipc } from "../../lib/ipc";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
@@ -194,6 +193,15 @@ export function WorkspaceSettingsPage() {
     return p;
   }
 
+  async function revealWorkspace() {
+    if (!workspace) return;
+    try {
+      await ipc.revealPath(workspace.rootPath);
+    } catch {
+      toast.error("Failed to reveal workspace in Finder.");
+    }
+  }
+
   return (
     <div className="wsp-root">
       <div className="wsp-scroll">
@@ -263,7 +271,7 @@ export function WorkspaceSettingsPage() {
                       <button
                         type="button"
                         className="ws-prop-btn"
-                        onClick={() => void open(workspace.rootPath)}
+                        onClick={() => void revealWorkspace()}
                       >
                         <FolderOpen size={11} />
                         Reveal
