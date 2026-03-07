@@ -37,6 +37,9 @@
     "location": "Location:",
     "runInTerminal": "Run in Terminal:"
   },
+  "shared": {
+    "uiRuntimeError": "UI runtime error"
+  },
   "sidebar": {
     "pin": "Pin sidebar",
     "unpin": "Unpin sidebar",
@@ -263,10 +266,12 @@
       "noSessionForDiagnostics": "No terminal session available for diagnostics",
       "diagnosticsCopied": "Renderer diagnostics copied",
       "diagnosticsCopyFailed": "Failed to copy diagnostics: {{error}}",
+      "invalidStartupPresetIgnored": "Workspace startup preset was ignored because it is invalid.",
       "failedToCloseSessionsKept_one": "Failed to close {{count}} terminal session; worktrees were kept",
       "failedToCloseSessionsKept_other": "Failed to close {{count}} terminal sessions; worktrees were kept",
       "failedToCloseSessions_one": "Failed to close {{count}} terminal session",
-      "failedToCloseSessions_other": "Failed to close {{count}} terminal sessions"
+      "failedToCloseSessions_other": "Failed to close {{count}} terminal sessions",
+      "someWorktreesNotRemoved": "Some worktrees could not be removed: {{message}}"
     }
   },
   "harnesses": {

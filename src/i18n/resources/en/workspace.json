@@ -48,6 +48,117 @@
     "hidden": "Hidden from git panel",
     "remotes": "Remotes"
   },
+  "startup": {
+    "loading": "Loading startup preset...",
+    "fallbackTerminal": "Terminal {{index}}",
+    "whenOpening": "When opening",
+    "startIn": "Start in",
+    "splitPanelSize": "Split panel size",
+    "terminalTabs": "Terminal tabs",
+    "terminalTabsHint": "Created automatically when no terminals are running.",
+    "addTab": "Add tab",
+    "noTerminalTabs": "No terminal tabs configured yet.",
+    "addFirstTab": "Add first tab",
+    "tabSettings": "Tab settings",
+    "removeTab": "Remove tab",
+    "broadcastInput": "Broadcast input to all panes",
+    "createWorktreePerPane": "Create git worktree per pane",
+    "in": "in",
+    "moreOptions": "More options",
+    "removePane": "Remove pane",
+    "addPane": "Add pane",
+    "editAs": "Edit as {{format}}",
+    "import": "Import",
+    "export": "Export",
+    "reset": "Reset",
+    "applyNow": "Apply now",
+    "save": "Save",
+    "snapshot": {
+      "title": "Quick setup",
+      "description": "Save your current terminal layout as the default for this workspace.",
+      "action": "Snapshot layout"
+    },
+    "views": {
+      "chat": "Chat",
+      "split": "Split",
+      "terminal": "Terminal",
+      "editor": "Editor"
+    },
+    "pathBase": {
+      "workspace": "Workspace",
+      "worktree": "Worktree",
+      "absolute": "Absolute"
+    },
+    "harness": {
+      "none": "No agent"
+    },
+    "pane": {
+      "fallbackShell": "Shell {{index}}",
+      "title": "Title",
+      "pathRelativeTo": "Path relative to"
+    },
+    "worktree": {
+      "repo": "Repo",
+      "activeRepo": "Active repo",
+      "fixedRepo": "Fixed repo",
+      "path": "Path",
+      "branch": "Branch",
+      "directory": "Directory",
+      "prefix": "Prefix"
+    },
+    "autoLaunchAgent": "Auto-launch agent on startup",
+    "dialog": {
+      "importTitle": "Import startup preset",
+      "exportTitle": "Export startup preset",
+      "presetFiles": "Preset files"
+    },
+    "preview": {
+      "stagedHint_one": "({{count}} staged)",
+      "stagedHint_other": "({{count}} staged)"
+    },
+    "confirm": {
+      "replaceCurrentSessions": "Replace current terminal sessions?",
+      "runningTerminalsClosed": "All running terminals will be closed.",
+      "keepOrRemoveWorktrees": "You can choose to keep or remove existing worktrees.",
+      "cancel": "Cancel",
+      "keepWorktrees": "Keep worktrees",
+      "removeWorktrees": "Remove worktrees",
+      "replace": "Replace"
+    },
+    "footer": {
+      "presetSaved": "Preset saved",
+      "usingDefaults": "Using defaults",
+      "running_one": "{{count}} running",
+      "running_other": "{{count}} running"
+    },
+    "titles": {
+      "switchWorkspaceFirst": "Switch to this workspace first",
+      "workingDirectoryFor": "Working directory for {{name}}",
+      "applyPreset": "Apply preset to running workspace"
+    },
+    "errors": {
+      "switchWorkspaceFirst": "Switch to this workspace first",
+      "runtimeLayoutUnavailable": "Runtime layout is not available",
+      "presetCouldNotBeApplied": "The preset could not be applied"
+    },
+    "toasts": {
+      "loadFailed": "Failed to load preset: {{error}}",
+      "fixBeforeClosing": "Fix the preset before closing: {{error}}",
+      "switchFormatFailed": "Failed to switch format: {{error}}",
+      "saved": "Startup preset saved.",
+      "saveFailed": "Failed to save: {{error}}",
+      "cleared": "Startup preset cleared.",
+      "clearFailed": "Failed to clear: {{error}}",
+      "currentLayoutSaved": "Current layout saved as startup preset.",
+      "saveLayoutFailed": "Failed to save layout: {{error}}",
+      "applied": "Startup preset applied.",
+      "applyFailed": "Failed to apply: {{error}}",
+      "imported": "Preset imported.",
+      "importFailed": "Import failed: {{error}}",
+      "exported": "Preset exported.",
+      "exportFailed": "Export failed: {{error}}"
+    }
+  },
   "toasts": {
     "rescanned": "Rescanned.",
     "updateScanDepthFailed": "Failed to update scan depth.",

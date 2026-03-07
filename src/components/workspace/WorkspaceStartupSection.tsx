@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Camera,
   ChevronDown,
@@ -13,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { ipc } from "../../lib/ipc";
+import { t as translate } from "../../i18n";
 import { useHarnessStore } from "../../stores/harnessStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
@@ -187,10 +189,10 @@ function resolveBlankGroupNames(
     }
 
     let terminalNumber = 1;
-    let candidate = `Terminal ${terminalNumber}`;
+    let candidate = translate("workspace:startup.fallbackTerminal", { index: terminalNumber });
     while (usedNames.has(candidate)) {
       terminalNumber += 1;
-      candidate = `Terminal ${terminalNumber}`;
+      candidate = translate("workspace:startup.fallbackTerminal", { index: terminalNumber });
     }
     usedNames.add(candidate);
     return { ...group, name: candidate };
@@ -217,7 +219,8 @@ function groupNamePlaceholder(
   index: number,
   harnessNamesById: ReadonlyMap<string, string>,
 ): string {
-  return defaultGroupNameFromHarness(group, harnessNamesById) ?? `Terminal ${index + 1}`;
+  return defaultGroupNameFromHarness(group, harnessNamesById)
+    ?? translate("workspace:startup.fallbackTerminal", { index: index + 1 });
 }
 
 function updateGroupById(
@@ -269,6 +272,7 @@ interface WorkspaceStartupSectionProps {
 }
 
 export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionProps) {
+  const { t } = useTranslation("workspace");
   const harnesses = useHarnessStore((s) => s.harnesses);
   const isActiveWorkspace = useWorkspaceStore((s) => s.activeWorkspaceId === workspace.id);
   const runtimeWorkspace = useTerminalStore((s) => s.workspaces[workspace.id]);
@@ -355,11 +359,11 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       setLiveSessionCount(sessions.length);
     } catch (error) {
       if (requestId !== loadRequestIdRef.current || !mountedRef.current) return;
-      toast.error(`Failed to load preset: ${String(error)}`);
+      toast.error(t("startup.toasts.loadFailed", { error: String(error) }));
     } finally {
       if (requestId === loadRequestIdRef.current && mountedRef.current) setLoading(false);
     }
-  }, [serializeForEditor, workspace.id]);
+  }, [serializeForEditor, t, workspace.id]);
 
   useEffect(() => {
     void loadPreset();
@@ -525,9 +529,9 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       setBuilderDraft(normalizePresetDraft(normalized));
       setAdvancedOpen(false);
     } catch (error) {
-      toast.error(`Fix the preset before closing: ${String(error)}`);
+      toast.error(t("startup.toasts.fixBeforeClosing", { error: String(error) }));
     }
-  }, [advancedDraft, advancedFormat, advancedOpen, loading, syncAdvancedFromBuilder, workspace.id]);
+  }, [advancedDraft, advancedFormat, advancedOpen, loading, syncAdvancedFromBuilder, t, workspace.id]);
 
   const handleAdvancedFormatChange = useCallback(
     async (nextFormat: WorkspaceStartupPresetFormat) => {
@@ -546,7 +550,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
         }
         await syncAdvancedFromBuilder(nextFormat);
       } catch (error) {
-        toast.error(`Failed to switch format: ${String(error)}`);
+        toast.error(t("startup.toasts.switchFormatFailed", { error: String(error) }));
       }
     },
     [
@@ -556,6 +560,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       loading,
       serializeForEditor,
       syncAdvancedFromBuilder,
+      t,
       workspace.id,
     ],
   );
@@ -577,9 +582,9 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       setBuilderDraft(canonical);
       setAdvancedDraft(await serializeCurrentBuilder(advancedFormat, canonical));
       useTerminalStore.getState().setWorkspaceStartupPresetState(workspace.id, canonical);
-      toast.success("Startup preset saved.");
+      toast.success(t("startup.toasts.saved"));
     } catch (error) {
-      toast.error(`Failed to save: ${String(error)}`);
+      toast.error(t("startup.toasts.saveFailed", { error: String(error) }));
     } finally {
       setSaving(false);
     }
@@ -592,6 +597,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
     serializeCurrentBuilder,
     workspace.id,
     harnessNamesById,
+    t,
   ]);
 
   const handleClear = useCallback(async () => {
@@ -606,35 +612,35 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       setAdvancedDraft(await serializeCurrentBuilder("json", empty));
       setAdvancedOpen(false);
       useTerminalStore.getState().setWorkspaceStartupPresetState(workspace.id, null);
-      toast.success("Startup preset cleared.");
+      toast.success(t("startup.toasts.cleared"));
     } catch (error) {
-      toast.error(`Failed to clear: ${String(error)}`);
+      toast.error(t("startup.toasts.clearFailed", { error: String(error) }));
     } finally {
       setSaving(false);
     }
-  }, [loading, serializeCurrentBuilder, workspace.id]);
+  }, [loading, serializeCurrentBuilder, t, workspace.id]);
 
   const handleSaveCurrentLayout = useCallback(async () => {
     if (loading) return;
     setSaving(true);
     try {
-      if (!isActiveWorkspace) throw new Error("Switch to this workspace first");
+      if (!isActiveWorkspace) throw new Error(t("startup.errors.switchWorkspaceFirst"));
       const serialized =
         useTerminalStore.getState().serializeWorkspaceRuntimeAsStartupPreset(workspace.id);
-      if (!serialized) throw new Error("Runtime layout is not available");
+      if (!serialized) throw new Error(t("startup.errors.runtimeLayoutUnavailable"));
       const normalized = await ipc.setWorkspaceStartupPreset(workspace.id, serialized);
       const canonical = normalizePresetDraft(normalized);
       setSavedPreset(canonical);
       setBuilderDraft(canonical);
       setAdvancedDraft(await serializeCurrentBuilder(advancedFormat, canonical));
       useTerminalStore.getState().setWorkspaceStartupPresetState(workspace.id, canonical);
-      toast.success("Current layout saved as startup preset.");
+      toast.success(t("startup.toasts.currentLayoutSaved"));
     } catch (error) {
-      toast.error(`Failed to save layout: ${String(error)}`);
+      toast.error(t("startup.toasts.saveLayoutFailed", { error: String(error) }));
     } finally {
       setSaving(false);
     }
-  }, [advancedFormat, isActiveWorkspace, loading, serializeCurrentBuilder, workspace.id]);
+  }, [advancedFormat, isActiveWorkspace, loading, serializeCurrentBuilder, t, workspace.id]);
 
   const performApply = useCallback(
     async (removeWorktrees: boolean) => {
@@ -646,15 +652,15 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
         const applied = await useTerminalStore
           .getState()
           .applyWorkspaceStartupPresetNow(workspace.id, normalized, { removeWorktrees });
-        if (!applied) throw new Error("The preset could not be applied");
+        if (!applied) throw new Error(t("startup.errors.presetCouldNotBeApplied"));
         setPendingApplyPreset(null);
         const canonical = normalizePresetDraft(normalized);
         setBuilderDraft(canonical);
         setAdvancedDraft(await serializeCurrentBuilder(advancedFormat, canonical));
         await refreshLiveSessionCount();
-        toast.success("Startup preset applied.");
+        toast.success(t("startup.toasts.applied"));
       } catch (error) {
-        toast.error(`Failed to apply: ${String(error)}`);
+        toast.error(t("startup.toasts.applyFailed", { error: String(error) }));
       } finally {
         applyInFlightRef.current = false;
         setSaving(false);
@@ -667,6 +673,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       refreshLiveSessionCount,
       resolveCurrentPreset,
       serializeCurrentBuilder,
+      t,
       workspace.id,
     ],
   );
@@ -676,7 +683,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
     applyInFlightRef.current = true;
     setSaving(true);
     try {
-      if (!isActiveWorkspace) throw new Error("Switch to this workspace first");
+      if (!isActiveWorkspace) throw new Error(t("startup.errors.switchWorkspaceFirst"));
       const normalized = await resolveCurrentPreset();
       const count = await refreshLiveSessionCount();
       if (count > 0) {
@@ -686,16 +693,16 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       const applied = await useTerminalStore
         .getState()
         .applyWorkspaceStartupPresetNow(workspace.id, normalized);
-      if (!applied) throw new Error("The preset could not be applied");
+      if (!applied) throw new Error(t("startup.errors.presetCouldNotBeApplied"));
       await refreshLiveSessionCount();
-      toast.success("Startup preset applied.");
+      toast.success(t("startup.toasts.applied"));
     } catch (error) {
-      toast.error(`Failed to apply: ${String(error)}`);
+      toast.error(t("startup.toasts.applyFailed", { error: String(error) }));
     } finally {
       applyInFlightRef.current = false;
       setSaving(false);
     }
-  }, [isActiveWorkspace, loading, refreshLiveSessionCount, resolveCurrentPreset, workspace.id]);
+  }, [isActiveWorkspace, loading, refreshLiveSessionCount, resolveCurrentPreset, t, workspace.id]);
 
   const handleImport = useCallback(async () => {
     if (loading) return;
@@ -704,9 +711,9 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       const { readTextFile } = await import("@tauri-apps/plugin-fs");
       const selected = await openDialog({
         multiple: false,
-        title: "Import startup preset",
+        title: t("startup.dialog.importTitle"),
         filters: [
-          { name: "Preset files", extensions: ["json", "toml"] },
+          { name: t("startup.dialog.presetFiles"), extensions: ["json", "toml"] },
           { name: "JSON", extensions: ["json"] },
           { name: "TOML", extensions: ["toml"] },
         ],
@@ -718,11 +725,11 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       setBuilderDraft(normalizePresetDraft(normalized));
       setAdvancedFormat(format);
       setAdvancedDraft(raw);
-      toast.success("Preset imported.");
+      toast.success(t("startup.toasts.imported"));
     } catch (error) {
-      toast.error(`Import failed: ${String(error)}`);
+      toast.error(t("startup.toasts.importFailed", { error: String(error) }));
     }
-  }, [loading, workspace.id]);
+  }, [loading, t, workspace.id]);
 
   const handleExport = useCallback(async () => {
     if (loading) return;
@@ -733,30 +740,30 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       const { save } = await import("@tauri-apps/plugin-dialog");
       const { writeTextFile } = await import("@tauri-apps/plugin-fs");
       const target = await save({
-        title: "Export startup preset",
+        title: t("startup.dialog.exportTitle"),
         defaultPath: defaultExportFilename(workspace, format),
         filters: [{ name: format.toUpperCase(), extensions: [format] }],
       });
       if (!target) return;
       await writeTextFile(target, raw);
-      toast.success("Preset exported.");
+      toast.success(t("startup.toasts.exported"));
     } catch (error) {
-      toast.error(`Export failed: ${String(error)}`);
+      toast.error(t("startup.toasts.exportFailed", { error: String(error) }));
     }
-  }, [advancedFormat, loading, resolveCurrentPreset, serializeCurrentBuilder, workspace]);
+  }, [advancedFormat, loading, resolveCurrentPreset, serializeCurrentBuilder, t, workspace]);
 
   /* ── Render ── */
 
   if (loading) {
     return (
       <div className="wss-empty">
-        <span style={{ color: "var(--text-3)" }}>Loading startup preset...</span>
+        <span style={{ color: "var(--text-3)" }}>{t("startup.loading")}</span>
       </div>
     );
   }
 
   const harnessOptions = [
-    { value: "", label: "No agent" },
+    { value: "", label: t("startup.harness.none") },
     ...installedHarnesses.map((h) => ({ value: h.id, label: h.name })),
   ];
 
@@ -764,7 +771,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
     if (session.title) return session.title;
     const agent = installedHarnesses.find((h) => h.id === session.harnessId);
     if (agent) return agent.name;
-    return `Shell ${index + 1}`;
+    return t("startup.pane.fallbackShell", { index: index + 1 });
   }
 
   return (
@@ -772,9 +779,9 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       {/* ── Snapshot CTA ── */}
       <div className="wss-snapshot">
         <div className="wss-snapshot-text">
-          <div className="wss-snapshot-title">Quick setup</div>
+          <div className="wss-snapshot-title">{t("startup.snapshot.title")}</div>
           <div className="wss-snapshot-desc">
-            Save your current terminal layout as the default for this workspace.
+            {t("startup.snapshot.description")}
           </div>
         </div>
         <button
@@ -782,24 +789,24 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
           className="ws-prop-btn ws-prop-btn-accent"
           onClick={() => void handleSaveCurrentLayout()}
           disabled={controlsDisabled || !isActiveWorkspace}
-          title={isActiveWorkspace ? undefined : "Switch to this workspace first"}
+          title={isActiveWorkspace ? undefined : t("startup.titles.switchWorkspaceFirst")}
         >
           <Camera size={11} />
-          Snapshot layout
+          {t("startup.snapshot.action")}
         </button>
       </div>
 
       {/* ── Default view ── */}
       <div className="wsp-section">
-        <div className="wsp-section-label">When opening</div>
+        <div className="wsp-section-label">{t("startup.whenOpening")}</div>
         <div className="wsp-card">
           <div className="wsp-field">
-            <span className="wsp-field-label">Start in</span>
+            <span className="wsp-field-label">{t("startup.startIn")}</span>
             <Dropdown
               value={builderDraft.defaultView}
               options={VIEW_OPTIONS.map((v) => ({
                 value: v,
-                label: v.charAt(0).toUpperCase() + v.slice(1),
+                label: t(`startup.views.${v}`),
               }))}
               triggerStyle={{ borderRadius: "var(--radius-sm)", minWidth: 120 }}
               onChange={(v) => handleDefaultViewChange(v as WorkspaceDefaultView)}
@@ -809,7 +816,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
             <>
               <div className="wsp-field-divider" />
               <div className="wsp-field">
-                <span className="wsp-field-label">Split panel size</span>
+                <span className="wsp-field-label">{t("startup.splitPanelSize")}</span>
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <input
                     className="ws-depth-input"
@@ -833,9 +840,9 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       <div className="wsp-section">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <div className="wsp-section-label">Terminal tabs</div>
+            <div className="wsp-section-label">{t("startup.terminalTabs")}</div>
             <div className="wss-hint">
-              Created automatically when no terminals are running.
+              {t("startup.terminalTabsHint")}
             </div>
           </div>
           <button
@@ -845,20 +852,20 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
             disabled={controlsDisabled}
           >
             <Plus size={11} />
-            Add tab
+            {t("startup.addTab")}
           </button>
         </div>
 
         {!terminalDraft || terminalDraft.groups.length === 0 ? (
           <div className="wss-empty">
-            <p>No terminal tabs configured yet.</p>
+            <p>{t("startup.noTerminalTabs")}</p>
             <button
               type="button"
               className="ws-prop-btn ws-prop-btn-accent"
               onClick={ensureTerminal}
             >
               <Plus size={11} />
-              Add first tab
+              {t("startup.addFirstTab")}
             </button>
           </div>
         ) : (
@@ -893,7 +900,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                       onClick={() =>
                         setExpandedTabs((p) => ({ ...p, [group.id]: !p[group.id] }))
                       }
-                      title="Tab settings"
+                      title={t("startup.tabSettings")}
                     >
                       <Settings size={11} />
                     </button>
@@ -901,7 +908,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                       type="button"
                       className="wss-icon-btn wss-icon-btn-danger"
                       onClick={() => removeGroup(group.id)}
-                      title="Remove tab"
+                      title={t("startup.removeTab")}
                     >
                       <X size={11} />
                     </button>
@@ -931,7 +938,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                             })
                           }
                         />
-                        <span>Broadcast input to all panes</span>
+                        <span>{t("startup.broadcastInput")}</span>
                       </label>
                       <div className="wss-wt-section">
                         <label className="wss-check">
@@ -954,17 +961,17 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                               }))
                             }
                           />
-                          <span>Create git worktree per pane</span>
+                          <span>{t("startup.createWorktreePerPane")}</span>
                         </label>
                         {worktree.enabled && (
                           <div className="wss-wt-fields">
                             <div className="wss-wt-row">
-                              <span className="wss-wt-label">Repo</span>
+                              <span className="wss-wt-label">{t("startup.worktree.repo")}</span>
                               <Dropdown
                                 value={worktree.repoMode}
                                 options={[
-                                  { value: "active_repo", label: "Active repo" },
-                                  { value: "fixed_repo", label: "Fixed repo" },
+                                  { value: "active_repo", label: t("startup.worktree.activeRepo") },
+                                  { value: "fixed_repo", label: t("startup.worktree.fixedRepo") },
                                 ]}
                                 triggerStyle={{
                                   borderRadius: "var(--radius-sm)",
@@ -985,7 +992,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                             </div>
                             {worktree.repoMode === "fixed_repo" && (
                               <div className="wss-wt-row">
-                                <span className="wss-wt-label">Path</span>
+                                <span className="wss-wt-label">{t("startup.worktree.path")}</span>
                                 <input
                                   className="wss-input"
                                   value={worktree.repoPath ?? ""}
@@ -1004,8 +1011,8 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                                 />
                               </div>
                             )}
-                            <div className="wss-wt-row">
-                              <span className="wss-wt-label">Branch</span>
+                              <div className="wss-wt-row">
+                              <span className="wss-wt-label">{t("startup.worktree.branch")}</span>
                               <input
                                 className="wss-input"
                                 value={worktree.baseBranch ?? ""}
@@ -1023,7 +1030,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                               />
                             </div>
                             <div className="wss-wt-row">
-                              <span className="wss-wt-label">Directory</span>
+                              <span className="wss-wt-label">{t("startup.worktree.directory")}</span>
                               <input
                                 className="wss-input"
                                 value={worktree.baseDir ?? ""}
@@ -1041,7 +1048,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                               />
                             </div>
                             <div className="wss-wt-row">
-                              <span className="wss-wt-label">Prefix</span>
+                              <span className="wss-wt-label">{t("startup.worktree.prefix")}</span>
                               <input
                                 className="wss-input"
                                 value={worktree.branchPrefix ?? ""}
@@ -1089,7 +1096,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                                 }))
                               }
                             />
-                            <span className="wss-pane-at">in</span>
+                            <span className="wss-pane-at">{t("startup.in")}</span>
                             <input
                               className="wss-input wss-pane-dir"
                               value={session.cwd}
@@ -1100,7 +1107,9 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                                 }))
                               }
                               placeholder="."
-                              title={`Working directory for ${paneLabel(session, si)}`}
+                              title={t("startup.titles.workingDirectoryFor", {
+                                name: paneLabel(session, si),
+                              })}
                             />
                             <button
                               type="button"
@@ -1108,7 +1117,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                               onClick={() =>
                                 setExpandedPanes((p) => ({ ...p, [session.id]: !p[session.id] }))
                               }
-                              title="More options"
+                              title={t("startup.moreOptions")}
                             >
                               <Settings size={10} />
                             </button>
@@ -1117,7 +1126,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                               className="wss-icon-btn wss-icon-btn-danger"
                               onClick={() => removeSession(group.id, session.id)}
                               disabled={group.sessions.length === 1}
-                              title="Remove pane"
+                              title={t("startup.removePane")}
                             >
                               <Trash2 size={10} />
                             </button>
@@ -1127,7 +1136,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                           {paneExpanded && (
                             <div className="wss-pane-details">
                               <div className="wss-detail-row">
-                                <span className="wss-detail-label">Title</span>
+                                <span className="wss-detail-label">{t("startup.pane.title")}</span>
                                 <input
                                   className="wss-input"
                                   value={session.title ?? ""}
@@ -1141,12 +1150,12 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                                 />
                               </div>
                               <div className="wss-detail-row">
-                                <span className="wss-detail-label">Path relative to</span>
+                                <span className="wss-detail-label">{t("startup.pane.pathRelativeTo")}</span>
                                 <Dropdown
                                   value={session.cwdBase ?? "workspace"}
                                   options={PATH_BASE_OPTIONS.map((p) => ({
                                     value: p,
-                                    label: p.charAt(0).toUpperCase() + p.slice(1),
+                                    label: t(`startup.pathBase.${p}`),
                                   }))}
                                   triggerStyle={{
                                     borderRadius: "var(--radius-sm)",
@@ -1175,7 +1184,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                                       }))
                                     }
                                   />
-                                  <span>Auto-launch agent on startup</span>
+                                  <span>{t("startup.autoLaunchAgent")}</span>
                                 </label>
                               )}
                             </div>
@@ -1189,7 +1198,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                       onClick={() => addSession(group.id)}
                     >
                       <Plus size={10} />
-                      Add pane
+                      {t("startup.addPane")}
                     </button>
                   </div>
                 </div>
@@ -1209,7 +1218,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
             disabled={controlsDisabled}
           >
             {advancedOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-            Edit as {advancedFormat.toUpperCase()}
+            {t("startup.editAs", { format: advancedFormat.toUpperCase() })}
           </button>
           <div style={{ flex: 1 }} />
           <button
@@ -1219,7 +1228,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
             disabled={controlsDisabled}
           >
             <Upload size={11} />
-            Import
+            {t("startup.import")}
           </button>
           <button
             type="button"
@@ -1228,7 +1237,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
             disabled={controlsDisabled}
           >
             <Download size={11} />
-            Export
+            {t("startup.export")}
           </button>
         </div>
         {advancedOpen && (
@@ -1262,10 +1271,10 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       {pendingApplyPreset ? (
         <div className="wss-confirm">
           <div>
-            <strong>Replace current terminal sessions?</strong>
+            <strong>{t("startup.confirm.replaceCurrentSessions")}</strong>
             <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--text-3)" }}>
-              All running terminals will be closed.
-              {hasWorktrees ? " You can choose to keep or remove existing worktrees." : ""}
+              {t("startup.confirm.runningTerminalsClosed")}
+              {hasWorktrees ? ` ${t("startup.confirm.keepOrRemoveWorktrees")}` : ""}
             </p>
           </div>
           <div className="wss-confirm-actions">
@@ -1275,7 +1284,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
               onClick={() => setPendingApplyPreset(null)}
               disabled={saving}
             >
-              Cancel
+              {t("startup.confirm.cancel")}
             </button>
             {hasWorktrees ? (
               <>
@@ -1285,7 +1294,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                   onClick={() => void performApply(false)}
                   disabled={saving}
                 >
-                  Keep worktrees
+                  {t("startup.confirm.keepWorktrees")}
                 </button>
                 <button
                   type="button"
@@ -1293,7 +1302,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                   onClick={() => void performApply(true)}
                   disabled={saving}
                 >
-                  Remove worktrees
+                  {t("startup.confirm.removeWorktrees")}
                 </button>
               </>
             ) : (
@@ -1303,7 +1312,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                 onClick={() => void performApply(false)}
                 disabled={saving}
               >
-                Replace
+                {t("startup.confirm.replace")}
               </button>
             )}
           </div>
@@ -1311,8 +1320,8 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       ) : (
         <div className="wss-footer">
           <div className="wss-footer-status">
-            {savedPreset ? "Preset saved" : "Using defaults"}
-            {liveSessionCount > 0 && ` \u00b7 ${liveSessionCount} running`}
+            {savedPreset ? t("startup.footer.presetSaved") : t("startup.footer.usingDefaults")}
+            {liveSessionCount > 0 && ` \u00b7 ${t("startup.footer.running", { count: liveSessionCount })}`}
           </div>
           <div className="wss-footer-actions">
             {savedPreset && (
@@ -1322,7 +1331,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                 onClick={() => void handleClear()}
                 disabled={controlsDisabled}
               >
-                Reset
+                {t("startup.reset")}
               </button>
             )}
             <button
@@ -1330,10 +1339,10 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
               className="ws-prop-btn"
               onClick={() => void handleApplyNow()}
               disabled={controlsDisabled || !isActiveWorkspace}
-              title={isActiveWorkspace ? "Apply preset to running workspace" : "Switch to this workspace first"}
+              title={isActiveWorkspace ? t("startup.titles.applyPreset") : t("startup.titles.switchWorkspaceFirst")}
             >
               <Play size={10} />
-              Apply now
+              {t("startup.applyNow")}
             </button>
             <button
               type="button"
@@ -1342,7 +1351,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
               disabled={controlsDisabled}
             >
               <Save size={10} />
-              Save
+              {t("startup.save")}
             </button>
           </div>
         </div>

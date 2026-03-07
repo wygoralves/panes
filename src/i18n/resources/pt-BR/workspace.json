@@ -48,6 +48,117 @@
     "hidden": "Oculto no painel Git",
     "remotes": "Remotes"
   },
+  "startup": {
+    "loading": "Carregando preset de inicialização...",
+    "fallbackTerminal": "Terminal {{index}}",
+    "whenOpening": "Ao abrir",
+    "startIn": "Iniciar em",
+    "splitPanelSize": "Tamanho do painel dividido",
+    "terminalTabs": "Abas de terminal",
+    "terminalTabsHint": "Criadas automaticamente quando não há terminais em execução.",
+    "addTab": "Adicionar aba",
+    "noTerminalTabs": "Nenhuma aba de terminal configurada ainda.",
+    "addFirstTab": "Adicionar primeira aba",
+    "tabSettings": "Configurações da aba",
+    "removeTab": "Remover aba",
+    "broadcastInput": "Transmitir entrada para todos os painéis",
+    "createWorktreePerPane": "Criar git worktree por painel",
+    "in": "em",
+    "moreOptions": "Mais opções",
+    "removePane": "Remover painel",
+    "addPane": "Adicionar painel",
+    "editAs": "Editar como {{format}}",
+    "import": "Importar",
+    "export": "Exportar",
+    "reset": "Redefinir",
+    "applyNow": "Aplicar agora",
+    "save": "Salvar",
+    "snapshot": {
+      "title": "Configuração rápida",
+      "description": "Salve o layout atual do terminal como padrão para este workspace.",
+      "action": "Salvar snapshot do layout"
+    },
+    "views": {
+      "chat": "Chat",
+      "split": "Dividido",
+      "terminal": "Terminal",
+      "editor": "Editor"
+    },
+    "pathBase": {
+      "workspace": "Workspace",
+      "worktree": "Worktree",
+      "absolute": "Absoluto"
+    },
+    "harness": {
+      "none": "Nenhum agente"
+    },
+    "pane": {
+      "fallbackShell": "Shell {{index}}",
+      "title": "Título",
+      "pathRelativeTo": "Caminho relativo a"
+    },
+    "worktree": {
+      "repo": "Repo",
+      "activeRepo": "Repo ativo",
+      "fixedRepo": "Repo fixo",
+      "path": "Caminho",
+      "branch": "Branch",
+      "directory": "Diretório",
+      "prefix": "Prefixo"
+    },
+    "autoLaunchAgent": "Abrir agente automaticamente na inicialização",
+    "dialog": {
+      "importTitle": "Importar preset de inicialização",
+      "exportTitle": "Exportar preset de inicialização",
+      "presetFiles": "Arquivos de preset"
+    },
+    "preview": {
+      "stagedHint_one": "({{count}} preparado)",
+      "stagedHint_other": "({{count}} preparados)"
+    },
+    "confirm": {
+      "replaceCurrentSessions": "Substituir as sessões atuais do terminal?",
+      "runningTerminalsClosed": "Todos os terminais em execução serão fechados.",
+      "keepOrRemoveWorktrees": "Você pode escolher manter ou remover as worktrees existentes.",
+      "cancel": "Cancelar",
+      "keepWorktrees": "Manter worktrees",
+      "removeWorktrees": "Remover worktrees",
+      "replace": "Substituir"
+    },
+    "footer": {
+      "presetSaved": "Preset salvo",
+      "usingDefaults": "Usando padrões",
+      "running_one": "{{count}} em execução",
+      "running_other": "{{count}} em execução"
+    },
+    "titles": {
+      "switchWorkspaceFirst": "Troque para este workspace primeiro",
+      "workingDirectoryFor": "Diretório de trabalho de {{name}}",
+      "applyPreset": "Aplicar preset ao workspace em execução"
+    },
+    "errors": {
+      "switchWorkspaceFirst": "Troque para este workspace primeiro",
+      "runtimeLayoutUnavailable": "O layout em runtime não está disponível",
+      "presetCouldNotBeApplied": "Não foi possível aplicar o preset"
+    },
+    "toasts": {
+      "loadFailed": "Falha ao carregar preset: {{error}}",
+      "fixBeforeClosing": "Corrija o preset antes de fechar: {{error}}",
+      "switchFormatFailed": "Falha ao trocar o formato: {{error}}",
+      "saved": "Preset de inicialização salvo.",
+      "saveFailed": "Falha ao salvar: {{error}}",
+      "cleared": "Preset de inicialização limpo.",
+      "clearFailed": "Falha ao limpar: {{error}}",
+      "currentLayoutSaved": "Layout atual salvo como preset de inicialização.",
+      "saveLayoutFailed": "Falha ao salvar layout: {{error}}",
+      "applied": "Preset de inicialização aplicado.",
+      "applyFailed": "Falha ao aplicar: {{error}}",
+      "imported": "Preset importado.",
+      "importFailed": "Falha na importação: {{error}}",
+      "exported": "Preset exportado.",
+      "exportFailed": "Falha na exportação: {{error}}"
+    }
+  },
   "toasts": {
     "rescanned": "Reescaneado.",
     "updateScanDepthFailed": "Falha ao atualizar a profundidade de escaneamento.",

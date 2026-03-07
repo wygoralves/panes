@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { ipc, writeCommandToNewSession } from "../lib/ipc";
+import { t } from "../i18n";
 import { toast } from "./toastStore";
 import { useHarnessStore } from "./harnessStore";
 import { resolveActiveRepoId, useWorkspaceStore } from "./workspaceStore";
@@ -626,7 +627,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       });
     } catch (error) {
       const message = String(error);
-      toast.warning("Workspace startup preset was ignored because it is invalid.");
+      toast.warning(t("app:terminal.toasts.invalidStartupPresetIgnored"));
       set((state) => ({
         workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
           startupPreset: null,
@@ -1188,7 +1189,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       if (worktrees.length > 0) {
         const failures = await removeWorktreesSequential(worktrees);
         if (failures.length > 0) {
-          toast.warning(`Some worktrees could not be removed: ${failures[0]}`);
+          toast.warning(
+            t("app:terminal.toasts.someWorktreesNotRemoved", { message: failures[0] }),
+          );
         }
       }
       localStorage.setItem(LAYOUT_MODE_STORAGE_KEY(workspaceId), preset.defaultView);

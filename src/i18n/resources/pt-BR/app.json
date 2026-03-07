@@ -37,6 +37,9 @@
     "location": "Local:",
     "runInTerminal": "Executar no terminal:"
   },
+  "shared": {
+    "uiRuntimeError": "Erro de runtime da interface"
+  },
   "sidebar": {
     "pin": "Fixar sidebar",
     "unpin": "Desafixar sidebar",
@@ -263,10 +266,12 @@
       "noSessionForDiagnostics": "Nenhuma sessão de terminal disponível para diagnóstico",
       "diagnosticsCopied": "Diagnósticos do renderer copiados",
       "diagnosticsCopyFailed": "Falha ao copiar diagnósticos: {{error}}",
+      "invalidStartupPresetIgnored": "O preset de inicialização do workspace foi ignorado porque está inválido.",
       "failedToCloseSessionsKept_one": "Falha ao fechar {{count}} sessão de terminal; as worktrees foram mantidas",
       "failedToCloseSessionsKept_other": "Falha ao fechar {{count}} sessões de terminal; as worktrees foram mantidas",
       "failedToCloseSessions_one": "Falha ao fechar {{count}} sessão de terminal",
-      "failedToCloseSessions_other": "Falha ao fechar {{count}} sessões de terminal"
+      "failedToCloseSessions_other": "Falha ao fechar {{count}} sessões de terminal",
+      "someWorktreesNotRemoved": "Algumas worktrees não puderam ser removidas: {{message}}"
     }
   },
   "harnesses": {

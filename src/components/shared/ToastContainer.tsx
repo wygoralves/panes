@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { CheckCircle2, XCircle, AlertTriangle, Info, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useToastStore } from "../../stores/toastStore";
 
 const ICONS = {
@@ -23,6 +24,7 @@ function ToastItem({
   message: string;
   duration: number;
 }) {
+  const { t } = useTranslation("common");
   const dismissToast = useToastStore((s) => s.dismissToast);
   const exitingRef = useRef(false);
   const exitTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -58,7 +60,7 @@ function ToastItem({
       <div className="toast-accent" />
       <Icon size={16} className="toast-icon" />
       <span className="toast-message">{message}</span>
-      <button className="toast-dismiss" onClick={dismiss} aria-label="Dismiss">
+      <button className="toast-dismiss" onClick={dismiss} aria-label={t("actions.dismiss")}>
         <X size={12} />
       </button>
     </div>
