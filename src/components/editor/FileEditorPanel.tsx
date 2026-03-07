@@ -6,6 +6,7 @@ import { useTerminalStore } from "../../stores/terminalStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
+import { GitDiffEditorPanel } from "./GitDiffEditorPanel";
 
 export function FileEditorPanel() {
   const { t } = useTranslation("app");
@@ -108,6 +109,11 @@ export function FileEditorPanel() {
             >
               {activeTab.loadError}
             </div>
+          ) : activeTab.renderMode === "git-diff-editor" ? (
+            <GitDiffEditorPanel
+              tab={activeTab}
+              onChange={(content) => setTabContent(activeTab.id, content)}
+            />
           ) : activeTab.isBinary ? (
             <div
               style={{

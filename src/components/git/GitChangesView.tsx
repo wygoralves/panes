@@ -251,17 +251,17 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     pushCommitHistory,
   } = useGitStore();
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-  const openFile = useFileStore((s) => s.openFile);
+  const openGitDiffFile = useFileStore((s) => s.openGitDiffFile);
   const setLayoutMode = useTerminalStore((s) => s.setLayoutMode);
 
   const handleOpenInEditor = useCallback(
-    (filePath: string) => {
-      void openFile(repo.path, filePath);
+    (filePath: string, source: ChangeSection) => {
+      void openGitDiffFile(repo.path, filePath, { source });
       if (activeWorkspaceId) {
         void setLayoutMode(activeWorkspaceId, "editor");
       }
     },
-    [repo.path, openFile, activeWorkspaceId, setLayoutMode],
+    [repo.path, openGitDiffFile, activeWorkspaceId, setLayoutMode],
   );
 
   const commitMessage = drafts.commitMessage;
@@ -604,7 +604,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
           className="git-stage-btn git-open-btn"
           onClick={(e) => {
             e.stopPropagation();
-            handleOpenInEditor(row.file.path);
+            handleOpenInEditor(row.file.path, section);
           }}
           title={t("changes.openInEditor")}
         >

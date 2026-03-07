@@ -1,18 +1,18 @@
 use std::{
     collections::HashMap,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use anyhow::Context;
-use git2::{ErrorCode, Repository, Status, StatusOptions};
+use git2::{ErrorCode, ObjectType, Repository, Status, StatusOptions};
 
 use crate::models::{
     FileTreeEntryDto, FileTreePageDto, GitBranchDto, GitBranchPageDto, GitBranchScopeDto,
-    GitCommitDto, GitCommitPageDto, GitDiffPreviewDto, GitFileStatusDto, GitInitRepoStatusDto,
-    GitStashDto, GitStatusDto,
+    GitChangeTypeDto, GitCommitDto, GitCommitPageDto, GitCompareSourceDto, GitDiffPreviewDto,
+    GitFileCompareDto, GitFileStatusDto, GitInitRepoStatusDto, GitStashDto, GitStatusDto,
 };
 
 use super::cli_fallback::run_git;
@@ -27,6 +27,7 @@ const GIT_BRANCH_MAX_PAGE_SIZE: usize = 1000;
 const GIT_COMMIT_MAX_PAGE_SIZE: usize = 200;
 const GIT_DIFF_PREVIEW_MAX_BYTES: usize = 512 * 1024;
 const GIT_DIFF_PREVIEW_MAX_LINES: usize = 10_000;
+const GIT_COMPARE_BINARY_SCAN_SIZE: usize = 8192;
 
 const GIT_RECORD_SEPARATOR: char = '\u{1e}';
 const GIT_FIELD_SEPARATOR: char = '\u{1f}';
@@ -151,6 +152,59 @@ pub fn get_file_diff(
 
     let raw = run_git(repo_path, &args)?;
     Ok(build_diff_preview(raw))
+}
+
+pub fn get_git_file_compare(
+    repo_path: &str,
+    file_path: &str,
+    source: GitCompareSourceDto,
+) -> anyhow::Result<GitFileCompareDto> {
+    let repo = Repository::open(repo_path).context("failed to open repository")?;
+    let status = repo
+        .status_file(Path::new(file_path))
+        .unwrap_or_else(|_| Status::empty());
+    let has_staged_changes = index_status_label(status).is_some();
+    let has_unstaged_changes = worktree_status_label(status).is_some();
+    let change_type = git_change_type_for_source(status, source)
+        .or_else(|| git_change_type_from_status(status))
+        .unwrap_or(GitChangeTypeDto::Modified);
+
+    let (base_label, base_bytes) = match source {
+        GitCompareSourceDto::Changes => {
+            ("Index".to_string(), read_index_content(&repo, file_path)?)
+        }
+        GitCompareSourceDto::Staged => ("HEAD".to_string(), read_head_content(&repo, file_path)?),
+    };
+    let modified_label = "Working Tree".to_string();
+    let modified_bytes = read_worktree_content(repo_path, file_path)?;
+
+    let is_binary = base_bytes.as_deref().is_some_and(is_binary_content)
+        || modified_bytes.as_deref().is_some_and(is_binary_content);
+
+    let is_deleted = matches!(change_type, GitChangeTypeDto::Deleted);
+    let is_conflicted = matches!(change_type, GitChangeTypeDto::Conflicted);
+    let is_editable = !is_binary && !is_deleted && !is_conflicted;
+    let fallback_reason = if is_binary {
+        Some("Editable diff unavailable for binary files.".to_string())
+    } else if is_conflicted {
+        Some("Editable diff unavailable while this file is conflicted.".to_string())
+    } else {
+        None
+    };
+
+    Ok(GitFileCompareDto {
+        source,
+        base_content: decode_compare_content(base_bytes.as_deref()),
+        modified_content: decode_compare_content(modified_bytes.as_deref()),
+        base_label,
+        modified_label,
+        change_type,
+        has_staged_changes,
+        has_unstaged_changes,
+        is_binary,
+        is_editable: Some(is_editable),
+        fallback_reason,
+    })
 }
 
 pub fn stage_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
@@ -939,6 +993,146 @@ fn parse_branch_hint(stash_name: &str) -> Option<String> {
     }
 
     None
+}
+
+fn git_change_type_for_source(
+    status: Status,
+    source: GitCompareSourceDto,
+) -> Option<GitChangeTypeDto> {
+    match source {
+        GitCompareSourceDto::Changes => {
+            if status.contains(Status::CONFLICTED) {
+                return Some(GitChangeTypeDto::Conflicted);
+            }
+            if status.contains(Status::WT_NEW) {
+                return Some(GitChangeTypeDto::Untracked);
+            }
+            if status.contains(Status::WT_DELETED) {
+                return Some(GitChangeTypeDto::Deleted);
+            }
+            if status.contains(Status::WT_RENAMED) {
+                return Some(GitChangeTypeDto::Renamed);
+            }
+            if status.contains(Status::WT_MODIFIED) || status.contains(Status::WT_TYPECHANGE) {
+                return Some(GitChangeTypeDto::Modified);
+            }
+        }
+        GitCompareSourceDto::Staged => {
+            if status.contains(Status::CONFLICTED) {
+                return Some(GitChangeTypeDto::Conflicted);
+            }
+            if status.contains(Status::INDEX_NEW) {
+                return Some(GitChangeTypeDto::Added);
+            }
+            if status.contains(Status::INDEX_DELETED) {
+                return Some(GitChangeTypeDto::Deleted);
+            }
+            if status.contains(Status::INDEX_RENAMED) {
+                return Some(GitChangeTypeDto::Renamed);
+            }
+            if status.contains(Status::INDEX_MODIFIED) || status.contains(Status::INDEX_TYPECHANGE)
+            {
+                return Some(GitChangeTypeDto::Modified);
+            }
+        }
+    }
+    None
+}
+
+fn git_change_type_from_status(status: Status) -> Option<GitChangeTypeDto> {
+    if status.contains(Status::CONFLICTED) {
+        return Some(GitChangeTypeDto::Conflicted);
+    }
+    if status.contains(Status::WT_NEW) {
+        return Some(GitChangeTypeDto::Untracked);
+    }
+    if status.contains(Status::INDEX_NEW) {
+        return Some(GitChangeTypeDto::Added);
+    }
+    if status.contains(Status::WT_DELETED) || status.contains(Status::INDEX_DELETED) {
+        return Some(GitChangeTypeDto::Deleted);
+    }
+    if status.contains(Status::WT_RENAMED) || status.contains(Status::INDEX_RENAMED) {
+        return Some(GitChangeTypeDto::Renamed);
+    }
+    if status.contains(Status::WT_MODIFIED)
+        || status.contains(Status::WT_TYPECHANGE)
+        || status.contains(Status::INDEX_MODIFIED)
+        || status.contains(Status::INDEX_TYPECHANGE)
+    {
+        return Some(GitChangeTypeDto::Modified);
+    }
+    None
+}
+
+fn read_index_content(repo: &Repository, file_path: &str) -> anyhow::Result<Option<Vec<u8>>> {
+    let index = repo.index().context("failed to read git index")?;
+    let Some(entry) = index.get_path(Path::new(file_path), 0) else {
+        return Ok(None);
+    };
+    let blob = repo
+        .find_blob(entry.id)
+        .context("failed to read index blob")?;
+    Ok(Some(blob.content().to_vec()))
+}
+
+fn read_head_content(repo: &Repository, file_path: &str) -> anyhow::Result<Option<Vec<u8>>> {
+    let head = match repo.head() {
+        Ok(head) => head,
+        Err(error)
+            if error.code() == ErrorCode::UnbornBranch || error.code() == ErrorCode::NotFound =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error).context("failed to resolve HEAD"),
+    };
+    let tree = head.peel_to_tree().context("failed to resolve HEAD tree")?;
+    let entry = match tree.get_path(Path::new(file_path)) {
+        Ok(entry) => entry,
+        Err(error) if error.code() == ErrorCode::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("failed to read file from HEAD"),
+    };
+    if entry.kind() != Some(ObjectType::Blob) {
+        return Ok(None);
+    }
+    let blob = repo
+        .find_blob(entry.id())
+        .context("failed to read HEAD blob")?;
+    Ok(Some(blob.content().to_vec()))
+}
+
+fn read_worktree_content(repo_path: &str, file_path: &str) -> anyhow::Result<Option<Vec<u8>>> {
+    let repo_root = PathBuf::from(repo_path)
+        .canonicalize()
+        .context("failed to canonicalize repo path")?;
+    let target = repo_root.join(file_path);
+
+    if !target.exists() {
+        return Ok(None);
+    }
+
+    let canonical = target
+        .canonicalize()
+        .context("failed to resolve file path")?;
+    anyhow::ensure!(
+        canonical.starts_with(&repo_root),
+        "path traversal not allowed"
+    );
+    let bytes = fs::read(&canonical).context("failed to read working tree file")?;
+    Ok(Some(bytes))
+}
+
+fn is_binary_content(content: &[u8]) -> bool {
+    content
+        .iter()
+        .take(GIT_COMPARE_BINARY_SCAN_SIZE)
+        .any(|&byte| byte == 0)
+}
+
+fn decode_compare_content(content: Option<&[u8]>) -> String {
+    content
+        .map(|value| String::from_utf8_lossy(value).to_string())
+        .unwrap_or_default()
 }
 
 fn index_status_label(status: Status) -> Option<String> {

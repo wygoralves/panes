@@ -432,6 +432,29 @@ export interface GitDiffPreview {
   returnedBytes: number;
 }
 
+export type GitCompareSource = "changes" | "staged";
+export type GitChangeType =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "untracked"
+  | "conflicted";
+
+export interface GitFileCompare {
+  source: GitCompareSource;
+  baseContent: string;
+  modifiedContent: string;
+  baseLabel: string;
+  modifiedLabel: string;
+  changeType: GitChangeType;
+  hasStagedChanges: boolean;
+  hasUnstagedChanges: boolean;
+  isBinary: boolean;
+  isEditable?: boolean;
+  fallbackReason?: string | null;
+}
+
 export type GitBranchScope = "local" | "remote";
 
 export interface GitBranch {
@@ -523,6 +546,10 @@ export interface ReadFileResult {
   isBinary: boolean;
 }
 
+export type EditorRenderMode = "plain-editor" | "git-diff-editor";
+
+export interface GitEditorContext extends GitFileCompare {}
+
 export interface EditorTab {
   id: string;
   repoPath: string;
@@ -533,6 +560,8 @@ export interface EditorTab {
   isDirty: boolean;
   isLoading: boolean;
   isBinary: boolean;
+  renderMode: EditorRenderMode;
+  gitContext: GitEditorContext | null;
   loadError?: string;
 }
 

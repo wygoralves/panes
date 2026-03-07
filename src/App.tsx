@@ -213,9 +213,15 @@ export function App() {
             const wsFState = wsIdF ? useTerminalStore.getState().workspaces[wsIdF] : undefined;
             if (wsFState?.layoutMode === "editor") {
               e.preventDefault();
-              const activeTabId = useFileStore.getState().activeTabId;
+              const fileState = useFileStore.getState();
+              const activeTabId = fileState.activeTabId;
               if (activeTabId) {
-                const view = getActiveEditorView(activeTabId);
+                const activeTab = fileState.tabs.find((tab) => tab.id === activeTabId);
+                const editorId =
+                  activeTab?.renderMode === "git-diff-editor"
+                    ? `${activeTabId}:git-modified`
+                    : activeTabId;
+                const view = getActiveEditorView(editorId);
                 if (view) openSearchPanel(view);
               }
             }
@@ -233,9 +239,15 @@ export function App() {
           const wsHState = wsIdH ? useTerminalStore.getState().workspaces[wsIdH] : undefined;
           if (wsHState?.layoutMode !== "editor") return;
           e.preventDefault();
-          const activeTabIdH = useFileStore.getState().activeTabId;
+          const fileState = useFileStore.getState();
+          const activeTabIdH = fileState.activeTabId;
           if (activeTabIdH) {
-            const view = getActiveEditorView(activeTabIdH);
+            const activeTab = fileState.tabs.find((tab) => tab.id === activeTabIdH);
+            const editorId =
+              activeTab?.renderMode === "git-diff-editor"
+                ? `${activeTabIdH}:git-modified`
+                : activeTabIdH;
+            const view = getActiveEditorView(editorId);
             if (view) {
               openSearchPanel(view);
               requestAnimationFrame(() => {

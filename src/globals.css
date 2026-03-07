@@ -4572,6 +4572,132 @@ button, input, textarea, select {
   outline: none;
 }
 
+.git-diff-editor-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-1);
+}
+
+.git-diff-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+}
+
+.git-diff-editor-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.git-diff-editor-badge,
+.git-diff-editor-note,
+.git-diff-editor-pane-state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+}
+
+.git-diff-editor-note {
+  color: var(--text-3);
+}
+
+.git-diff-editor-callout,
+.git-editor-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  color: var(--text-3);
+  font-size: 12px;
+  text-align: center;
+}
+
+.git-diff-editor-callout {
+  border-bottom: 1px solid var(--border);
+  background: rgba(251, 191, 36, 0.05);
+}
+
+.git-editor-empty-state {
+  height: 100%;
+}
+
+.git-diff-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+
+.git-diff-editor-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.git-diff-editor-pane + .git-diff-editor-pane {
+  border-left: 1px solid var(--border);
+}
+
+.git-diff-editor-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+  font-size: 11px;
+  color: var(--text-2);
+  font-family: "JetBrains Mono", monospace;
+}
+
+.git-diff-editor-pane-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.git-diff-editor-overlay {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  max-width: 220px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: rgba(15, 15, 15, 0.92);
+  color: var(--text-2);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.cm-git-diff-line-added {
+  background: rgba(52, 211, 153, 0.1);
+}
+
+.cm-git-diff-line-removed {
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.cm-git-diff-line-changed {
+  background: rgba(251, 191, 36, 0.12);
+}
+
 /* ── Chat Attachments ──────────────────────────────────────────────── */
 
 .chat-attachments-bar {

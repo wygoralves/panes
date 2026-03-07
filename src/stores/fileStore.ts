@@ -4,14 +4,55 @@ import { t } from "../i18n";
 import { toast } from "./toastStore";
 import { useWorkspaceStore } from "./workspaceStore";
 import { useTerminalStore } from "./terminalStore";
+import { useGitStore } from "./gitStore";
 import { destroyCachedEditor } from "../components/editor/CodeMirrorEditor";
-import type { EditorTab } from "../types";
+import type { EditorTab, GitCompareSource, GitFileCompare } from "../types";
+
+function createPlainTab(id: string, repoPath: string, filePath: string): EditorTab {
+  return {
+    id,
+    repoPath,
+    filePath,
+    fileName: filePath.split("/").pop() ?? filePath,
+    content: "",
+    savedContent: "",
+    isDirty: false,
+    isLoading: true,
+    isBinary: false,
+    renderMode: "plain-editor",
+    gitContext: null,
+  };
+}
+
+function applyGitCompare(tab: EditorTab, compare: GitFileCompare): EditorTab {
+  const preserveDirtyContent = tab.isDirty;
+  const content = preserveDirtyContent ? tab.content : compare.modifiedContent;
+  const savedContent = preserveDirtyContent ? tab.savedContent : compare.modifiedContent;
+
+  return {
+    ...tab,
+    content,
+    savedContent,
+    isDirty: preserveDirtyContent ? tab.content !== tab.savedContent : false,
+    isLoading: false,
+    isBinary: compare.isBinary,
+    renderMode: "git-diff-editor",
+    gitContext: compare,
+    loadError: undefined,
+  };
+}
 
 interface FileStoreState {
   tabs: EditorTab[];
   activeTabId: string | null;
   pendingCloseTabId: string | null;
   openFile: (repoPath: string, filePath: string) => Promise<void>;
+  openGitDiffFile: (
+    repoPath: string,
+    filePath: string,
+    options: { source: GitCompareSource },
+  ) => Promise<void>;
+  refreshGitContext: (tabId: string, source?: GitCompareSource) => Promise<void>;
   closeTab: (tabId: string) => void;
   requestCloseTab: (tabId: string) => void;
   confirmCloseTab: () => void;
@@ -31,24 +72,26 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
       (t) => t.repoPath === repoPath && t.filePath === filePath,
     );
     if (existing) {
-      set({ activeTabId: existing.id });
+      destroyCachedEditor(`${existing.id}:git-base`);
+      destroyCachedEditor(`${existing.id}:git-modified`);
+      set((state) => ({
+        activeTabId: existing.id,
+        tabs: state.tabs.map((tab) =>
+          tab.id === existing.id
+            ? {
+                ...tab,
+                renderMode: "plain-editor",
+                gitContext: null,
+                loadError: undefined,
+              }
+            : tab,
+        ),
+      }));
       return;
     }
 
     const id = crypto.randomUUID();
-    const fileName = filePath.split("/").pop() ?? filePath;
-
-    const tab: EditorTab = {
-      id,
-      repoPath,
-      filePath,
-      fileName,
-      content: "",
-      savedContent: "",
-      isDirty: false,
-      isLoading: true,
-      isBinary: false,
-    };
+    const tab = createPlainTab(id, repoPath, filePath);
 
     set((state) => ({
       tabs: [...state.tabs, tab],
@@ -66,6 +109,9 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
                 savedContent: result.content,
                 isBinary: result.isBinary,
                 isLoading: false,
+                renderMode: "plain-editor",
+                gitContext: null,
+                loadError: undefined,
               }
             : t,
         ),
@@ -81,8 +127,75 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
     }
   },
 
+  openGitDiffFile: async (repoPath, filePath, options) => {
+    const existing = get().tabs.find(
+      (tab) => tab.repoPath === repoPath && tab.filePath === filePath,
+    );
+    const tabId = existing?.id ?? crypto.randomUUID();
+
+    if (existing) {
+      destroyCachedEditor(existing.id);
+      set((state) => ({
+        activeTabId: existing.id,
+        tabs: state.tabs.map((tab) =>
+          tab.id === existing.id
+            ? {
+                ...tab,
+                isLoading: true,
+                renderMode: "git-diff-editor",
+                loadError: undefined,
+              }
+            : tab,
+        ),
+      }));
+    } else {
+      const tab = {
+        ...createPlainTab(tabId, repoPath, filePath),
+        renderMode: "git-diff-editor" as const,
+      };
+      set((state) => ({
+        tabs: [...state.tabs, tab],
+        activeTabId: tabId,
+      }));
+    }
+
+    await get().refreshGitContext(tabId, options.source);
+  },
+
+  refreshGitContext: async (tabId, source) => {
+    const tab = get().tabs.find((item) => item.id === tabId);
+    if (!tab) return;
+
+    const compareSource = source ?? tab.gitContext?.source;
+    if (!compareSource) return;
+
+    try {
+      const compare = await ipc.getGitFileCompare(tab.repoPath, tab.filePath, compareSource);
+      set((state) => ({
+        tabs: state.tabs.map((item) =>
+          item.id === tabId ? applyGitCompare(item, compare) : item,
+        ),
+      }));
+    } catch (err) {
+      set((state) => ({
+        tabs: state.tabs.map((item) =>
+          item.id === tabId
+            ? {
+                ...item,
+                isLoading: false,
+                renderMode: "git-diff-editor",
+                loadError: String(err),
+              }
+            : item,
+        ),
+      }));
+    }
+  },
+
   closeTab: (tabId) => {
     destroyCachedEditor(tabId);
+    destroyCachedEditor(`${tabId}:git-base`);
+    destroyCachedEditor(`${tabId}:git-modified`);
     set((state) => {
       const index = state.tabs.findIndex((t) => t.id === tabId);
       if (index === -1) return state;
@@ -182,6 +295,18 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
             : t,
         ),
       }));
+
+      if (tab.gitContext) {
+        const gitStore = useGitStore.getState();
+        try {
+          gitStore.invalidateRepoCache(tab.repoPath);
+          await gitStore.refresh(tab.repoPath, { force: true });
+          await get().refreshGitContext(tabId, tab.gitContext.source);
+        } catch {
+          // Saving already succeeded; leave the editor usable even if the git refresh fails.
+        }
+      }
+
       toast.success(t("app:editor.toasts.saved", { name: tab.fileName }));
     } catch (err) {
       toast.error(t("app:editor.toasts.saveFailed", { error: String(err) }));

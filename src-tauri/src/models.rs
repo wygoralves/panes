@@ -385,6 +385,51 @@ pub struct GitDiffPreviewDto {
     pub returned_bytes: usize,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitCompareSourceDto {
+    Changes,
+    Staged,
+}
+
+impl GitCompareSourceDto {
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "staged" => Self::Staged,
+            _ => Self::Changes,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitChangeTypeDto {
+    Added,
+    Modified,
+    Deleted,
+    Renamed,
+    Untracked,
+    Conflicted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFileCompareDto {
+    pub source: GitCompareSourceDto,
+    pub base_content: String,
+    pub modified_content: String,
+    pub base_label: String,
+    pub modified_label: String,
+    pub change_type: GitChangeTypeDto,
+    pub has_staged_changes: bool,
+    pub has_unstaged_changes: bool,
+    pub is_binary: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_editable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GitBranchScopeDto {

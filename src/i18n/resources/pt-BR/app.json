@@ -308,6 +308,30 @@
     "unsavedChangesMessage": "\"{{name}}\" tem alterações não salvas. Descartá-las?",
     "discard": "Descartar",
     "cancel": "Cancelar",
+    "gitDiff": {
+      "unavailable": "A comparação Git não está disponível para esta aba.",
+      "sourceChanges": "Alterações",
+      "sourceStaged": "Preparado",
+      "untracked": "Não rastreado",
+      "alsoStaged": "Também em stage",
+      "workingTreeEditable": "Working tree editável",
+      "binaryUnavailable": "O diff editável não está disponível para arquivos binários.",
+      "deletedReadOnly": "Este arquivo foi removido da working tree. A comparação permanece somente leitura.",
+      "deletedNotice": "Este arquivo foi removido. O lado direito permanece vazio e somente leitura.",
+      "conflictedNotice": "Este arquivo está em conflito. A comparação permanece somente leitura até o conflito ser resolvido.",
+      "readOnly": "Somente leitura",
+      "readOnlyModified": "O lado modificado é somente leitura.",
+      "editable": "Editável",
+      "noDifferences": "Não há diferenças em relação à base atual da comparação.",
+      "changeTypes": {
+        "added": "Adicionado",
+        "modified": "Modificado",
+        "deleted": "Removido",
+        "renamed": "Renomeado",
+        "untracked": "Não rastreado",
+        "conflicted": "Em conflito"
+      }
+    },
     "toasts": {
       "modifiedExternally": "{{name}} foi modificado externamente. Salve novamente para sobrescrever.",
       "saved": "{{name}} salvo",

@@ -122,6 +122,7 @@ pub fn run() {
             commands::workspace::list_workspace_dirs,
             commands::git::get_git_status,
             commands::git::get_file_diff,
+            commands::git::get_git_file_compare,
             commands::git::stage_files,
             commands::git::unstage_files,
             commands::git::discard_files,

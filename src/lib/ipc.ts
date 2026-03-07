@@ -13,6 +13,8 @@ import type {
   GitBranchScope,
   GitCommitPage,
   GitInitRepoStatus,
+  GitCompareSource,
+  GitFileCompare,
   GitStash,
   GitRemote,
   GitWorktree,
@@ -212,6 +214,16 @@ export const ipc = {
   getGitStatus: (repoPath: string) => invoke<GitStatus>("get_git_status", { repoPath }),
   getFileDiff: (repoPath: string, filePath: string, staged: boolean) =>
     invoke<GitDiffPreview>("get_file_diff", { repoPath, filePath, staged }),
+  getGitFileCompare: (
+    repoPath: string,
+    filePath: string,
+    source: GitCompareSource,
+  ) =>
+    invoke<GitFileCompare>("get_git_file_compare", {
+      repoPath,
+      filePath,
+      source,
+    }),
   getFileTree: (repoPath: string) => invoke<FileTreeEntry[]>("get_file_tree", { repoPath }),
   getFileTreePage: (repoPath: string, offset?: number, limit?: number) =>
     invoke<FileTreePage>("get_file_tree_page", { repoPath, offset: offset ?? null, limit: limit ?? null }),

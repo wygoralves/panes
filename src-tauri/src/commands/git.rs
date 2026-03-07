@@ -6,8 +6,8 @@ use crate::{
     git::{repo, worktree},
     models::{
         FileTreeEntryDto, FileTreePageDto, GitBranchPageDto, GitBranchScopeDto, GitCommitPageDto,
-        GitDiffPreviewDto, GitInitRepoStatusDto, GitRemoteDto, GitStashDto, GitStatusDto,
-        GitWorktreeDto,
+        GitCompareSourceDto, GitDiffPreviewDto, GitFileCompareDto, GitInitRepoStatusDto,
+        GitRemoteDto, GitStashDto, GitStatusDto, GitWorktreeDto,
     },
     state::AppState,
 };
@@ -31,6 +31,21 @@ pub async fn get_file_diff(
 ) -> Result<GitDiffPreviewDto, String> {
     tokio::task::spawn_blocking(move || {
         repo::get_file_diff(&repo_path, &file_path, staged).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_git_file_compare(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    file_path: String,
+    source: String,
+) -> Result<GitFileCompareDto, String> {
+    let compare_source = GitCompareSourceDto::from_str(&source);
+    tokio::task::spawn_blocking(move || {
+        repo::get_git_file_compare(&repo_path, &file_path, compare_source).map_err(err_to_string)
     })
     .await
     .map_err(|error| error.to_string())?

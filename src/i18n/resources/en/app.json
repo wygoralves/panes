@@ -308,6 +308,30 @@
     "unsavedChangesMessage": "\"{{name}}\" has unsaved changes. Discard them?",
     "discard": "Discard",
     "cancel": "Cancel",
+    "gitDiff": {
+      "unavailable": "Git compare is unavailable for this tab.",
+      "sourceChanges": "Changes",
+      "sourceStaged": "Staged",
+      "untracked": "Untracked",
+      "alsoStaged": "Also staged",
+      "workingTreeEditable": "Working tree editable",
+      "binaryUnavailable": "Editable diff is unavailable for binary files.",
+      "deletedReadOnly": "This file was deleted in the working tree. The compare stays read-only.",
+      "deletedNotice": "This file was deleted. The right side remains empty and read-only.",
+      "conflictedNotice": "This file is conflicted. The compare stays read-only until the conflict is resolved.",
+      "readOnly": "Read-only",
+      "readOnlyModified": "Modified side is read-only.",
+      "editable": "Editable",
+      "noDifferences": "No differences against the current compare base.",
+      "changeTypes": {
+        "added": "Added",
+        "modified": "Modified",
+        "deleted": "Deleted",
+        "renamed": "Renamed",
+        "untracked": "Untracked",
+        "conflicted": "Conflicted"
+      }
+    },
     "toasts": {
       "modifiedExternally": "{{name}} was modified externally. Save again to overwrite.",
       "saved": "Saved {{name}}",

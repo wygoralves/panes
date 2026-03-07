@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightActiveLine, drawSelection, rectangularSelection, crosshairCursor, highlightSpecialChars } from "@codemirror/view";
-import { EditorState, type Extension } from "@codemirror/state";
+import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from "@codemirror/language";
 import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
@@ -21,7 +21,10 @@ interface Props {
   filePath: string;
   onChange: (content: string) => void;
   readOnly?: boolean;
+  extensions?: Extension[];
 }
+
+const EMPTY_EXTENSIONS: Extension[] = [];
 
 const darkVoidTheme = EditorView.theme(
   {
@@ -230,6 +233,7 @@ interface CachedEditor {
   view: EditorView;
   filePath: string;
   onChangeRef: { current: (content: string) => void };
+  extraExtensionsCompartment: Compartment;
   lastAccess: number;
 }
 
@@ -264,7 +268,15 @@ export function getActiveEditorView(tabId: string): EditorView | undefined {
 
 export { openSearchPanel } from "@codemirror/search";
 
-export function CodeMirrorEditor({ tabId, content, filePath, onChange, readOnly = false }: Props) {
+export function CodeMirrorEditor({
+  tabId,
+  content,
+  filePath,
+  onChange,
+  readOnly = false,
+  extensions: rawExtensions,
+}: Props) {
+  const extensions = rawExtensions ?? EMPTY_EXTENSIONS;
   const containerRef = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -296,8 +308,9 @@ export function CodeMirrorEditor({ tabId, content, filePath, onChange, readOnly 
     const lang = getLanguageExtension(filePath);
     const changeRef = onChangeRef;
     const externalRef = isExternalUpdate;
+    const extraExtensionsCompartment = new Compartment();
 
-    const extensions: Extension[] = [
+    const editorExtensions: Extension[] = [
       lineNumbers(),
       highlightActiveLineGutter(),
       highlightSpecialChars(),
@@ -331,6 +344,7 @@ export function CodeMirrorEditor({ tabId, content, filePath, onChange, readOnly 
           },
         },
       ]),
+      extraExtensionsCompartment.of(extensions),
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !externalRef.current) {
           changeRef.current(update.state.doc.toString());
@@ -338,13 +352,19 @@ export function CodeMirrorEditor({ tabId, content, filePath, onChange, readOnly 
       }),
     ];
 
-    if (lang) extensions.push(lang);
-    if (readOnly) extensions.push(EditorState.readOnly.of(true));
+    if (lang) editorExtensions.push(lang);
+    if (readOnly) editorExtensions.push(EditorState.readOnly.of(true));
 
-    const state = EditorState.create({ doc: content, extensions });
+    const state = EditorState.create({ doc: content, extensions: editorExtensions });
     const view = new EditorView({ state, parent: containerRef.current });
 
-    editorCache.set(tabId, { view, filePath, onChangeRef: changeRef, lastAccess: Date.now() });
+    editorCache.set(tabId, {
+      view,
+      filePath,
+      onChangeRef: changeRef,
+      extraExtensionsCompartment,
+      lastAccess: Date.now(),
+    });
     evictLruEditors(tabId);
 
     return () => {
@@ -369,6 +389,14 @@ export function CodeMirrorEditor({ tabId, content, filePath, onChange, readOnly 
       isExternalUpdate.current = false;
     }
   }, [tabId, content]);
+
+  useEffect(() => {
+    const cached = editorCache.get(tabId);
+    if (!cached) return;
+    cached.view.dispatch({
+      effects: cached.extraExtensionsCompartment.reconfigure(extensions),
+    });
+  }, [tabId, extensions]);
 
   return (
     <div
