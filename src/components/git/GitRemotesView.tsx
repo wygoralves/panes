@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { Link, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
 import { toast } from "../../stores/toastStore";
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export function GitRemotesView({ repo, onClose }: Props) {
+  const { t } = useTranslation("git");
   const {
     remotes,
     remotesRepoPath,
@@ -79,7 +81,7 @@ export function GitRemotesView({ repo, onClose }: Props) {
     setAddLoading(true);
     try {
       await addRemote(repo.path, trimmedName, trimmedUrl);
-      toast.success(`Remote "${trimmedName}" added`);
+      toast.success(t("remotes.toasts.added", { name: trimmedName }));
       setShowAdd(false);
       setAddName("origin");
       setAddUrl("");
@@ -95,7 +97,7 @@ export function GitRemotesView({ repo, onClose }: Props) {
       setConfirmDelete(null);
       try {
         await removeRemote(repo.path, name);
-        toast.success(`Remote "${name}" removed`);
+        toast.success(t("remotes.toasts.removed", { name }));
       } catch (e) {
         toast.error(String(e));
       }
@@ -114,7 +116,7 @@ export function GitRemotesView({ repo, onClose }: Props) {
       renameInFlightRef.current = true;
       try {
         await renameRemote(repo.path, oldName, newName);
-        toast.success(`Remote renamed to "${newName}"`);
+        toast.success(t("remotes.toasts.renamed", { name: newName }));
         setRenamingRemote(null);
       } catch (e) {
         toast.error(String(e));
@@ -135,7 +137,7 @@ export function GitRemotesView({ repo, onClose }: Props) {
       >
         <div className="git-remotes-header">
           <Link size={14} className="git-remotes-header-icon" />
-          <h3 className="git-remotes-title">Manage Remotes</h3>
+          <h3 className="git-remotes-title">{t("remotes.title")}</h3>
           <button type="button" className="btn btn-ghost git-remotes-close" onClick={onClose}>
             <X size={14} />
           </button>
@@ -143,7 +145,7 @@ export function GitRemotesView({ repo, onClose }: Props) {
 
         <div className="git-remotes-list">
           {remotesLoading && (
-            <p className="git-remotes-empty">Loading...</p>
+            <p className="git-remotes-empty">{t("remotes.loading")}</p>
           )}
 
           {!remotesLoading && remotesRepoPath === repo.path && remotesError && (
@@ -151,7 +153,7 @@ export function GitRemotesView({ repo, onClose }: Props) {
           )}
 
           {!remotesLoading && !remotesError && visibleRemotes.length === 0 && (
-            <p className="git-remotes-empty">No remotes configured.</p>
+            <p className="git-remotes-empty">{t("remotes.empty")}</p>
           )}
 
           {visibleRemotes.map((remote) => (
@@ -185,7 +187,7 @@ export function GitRemotesView({ repo, onClose }: Props) {
                     <button
                       type="button"
                       className="btn btn-ghost"
-                      title="Rename"
+                      title={t("remotes.rename")}
                       onClick={() => {
                         setRenamingRemote(remote.name);
                         setRenameValue(remote.name);
@@ -196,7 +198,7 @@ export function GitRemotesView({ repo, onClose }: Props) {
                     <button
                       type="button"
                       className="btn btn-ghost"
-                      title="Remove"
+                      title={t("remotes.remove")}
                       onClick={() => setConfirmDelete(remote.name)}
                     >
                       <Trash2 size={12} />
@@ -214,14 +216,14 @@ export function GitRemotesView({ repo, onClose }: Props) {
               <input
                 autoFocus
                 className="git-inline-input"
-                placeholder="Name"
+                placeholder={t("remotes.namePlaceholder")}
                 value={addName}
                 onChange={(e) => setAddName(e.target.value)}
                 style={{ width: 100, flexShrink: 0 }}
               />
               <input
                 className="git-inline-input"
-                placeholder="https://github.com/user/repo.git"
+                placeholder={t("remotes.urlPlaceholder")}
                 value={addUrl}
                 onChange={(e) => setAddUrl(e.target.value)}
                 onKeyDown={(e) => {
@@ -240,7 +242,7 @@ export function GitRemotesView({ repo, onClose }: Props) {
                   setAddUrl("");
                 }}
               >
-                Cancel
+                {t("common.cancel", { ns: "common" })}
               </button>
               <button
                 type="button"
@@ -248,17 +250,17 @@ export function GitRemotesView({ repo, onClose }: Props) {
                 disabled={addLoading || !addName.trim() || !addUrl.trim()}
                 onClick={() => void handleAdd()}
               >
-                {addLoading ? "Adding..." : "Add"}
+                {addLoading ? t("remotes.adding") : t("remotes.add")}
               </button>
             </div>
           </div>
         ) : (
           <button
             type="button"
-            className="btn btn-ghost git-remotes-add-btn"
-            onClick={() => setShowAdd(true)}
-          >
-            <Plus size={13} /> Add Remote
+          className="btn btn-ghost git-remotes-add-btn"
+          onClick={() => setShowAdd(true)}
+        >
+            <Plus size={13} /> {t("remotes.addRemote")}
           </button>
         )}
       </div>
@@ -266,9 +268,9 @@ export function GitRemotesView({ repo, onClose }: Props) {
       {createPortal(
         <ConfirmDialog
           open={confirmDelete !== null}
-          title={`Remove remote "${confirmDelete ?? ""}"`}
-          message={`This will remove the remote "${confirmDelete ?? ""}" from this repository. You can re-add it later.`}
-          confirmLabel="Remove"
+          title={t("remotes.removeTitle", { name: confirmDelete ?? "" })}
+          message={t("remotes.removeMessage", { name: confirmDelete ?? "" })}
+          confirmLabel={t("remotes.remove")}
           onConfirm={() => void handleDelete(confirmDelete!)}
           onCancel={() => setConfirmDelete(null)}
         />,

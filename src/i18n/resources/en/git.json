@@ -3,7 +3,7 @@
     "tabs": {
       "changes": "Changes",
       "branches": "Branches",
-      "commits": "Commits",
+      "commits": "History",
       "stash": "Stash",
       "files": "Files",
       "worktrees": "Worktrees"
@@ -31,5 +31,159 @@
     "softReset": "Soft reset",
     "pull": "Pull",
     "push": "Push"
+  },
+  "branches": {
+    "scope": {
+      "local": "Local",
+      "remote": "Remote"
+    },
+    "new": "New branch",
+    "branchNamePlaceholder": "Branch name...",
+    "create": "Create",
+    "creating": "Creating...",
+    "searchPlaceholder": "Search branches...",
+    "emptyTitle": "No branches found",
+    "emptyHint": "Create a branch to get started",
+    "emptyFiltered": "No matching branches",
+    "current": "Current",
+    "actionsTitle": "Branch actions",
+    "actions": {
+      "checkout": "Checkout",
+      "rename": "Rename",
+      "delete": "Delete",
+      "confirmDelete": "Confirm delete?"
+    },
+    "loadMore": "Load more ({{current}}/{{total}})",
+    "loadingMore": "Loading...",
+    "toasts": {
+      "switchedTo": "Switched to {{branchName}}",
+      "createdAndSwitched": "Created and switched to branch: {{branchName}}",
+      "renamed": "Renamed branch",
+      "deleted": "Deleted branch: {{branchName}}"
+    }
+  },
+  "commits": {
+    "title": "History",
+    "count": "{{count}} commits",
+    "filteredCount": "{{current}}/{{total}} commits",
+    "filterPlaceholder": "Filter commits...",
+    "emptyTitle": "No commits yet",
+    "emptyHint": "Commit changes to build history",
+    "emptyFiltered": "No matching commits",
+    "loadingDiff": "Loading diff...",
+    "noChanges": "No changes in this commit",
+    "loadMore": "Load more",
+    "loadingMore": "Loading..."
+  },
+  "stash": {
+    "messagePlaceholder": "Stash message (optional)",
+    "stash": "Stash",
+    "stashing": "Stashing...",
+    "filterPlaceholder": "Filter stashes...",
+    "emptyTitle": "No stashes",
+    "emptyHint": "Stashed changes will appear here",
+    "emptyFiltered": "No matching stashes",
+    "apply": "Apply",
+    "pop": "Pop",
+    "toasts": {
+      "saved": "Stash saved",
+      "applied": "Stash applied"
+    }
+  },
+  "files": {
+    "filterPlaceholder": "Filter files...",
+    "filterCount": "{{count}} files",
+    "filterCountTitle": "Only expanded folders are searched",
+    "loading": "Loading files...",
+    "emptyFiltered": "No files match filter",
+    "empty": "No files found"
+  },
+  "worktrees": {
+    "prune": "Prune",
+    "new": "New worktree",
+    "branchNamePlaceholder": "Branch name...",
+    "baseRefPlaceholder": "Base ref (HEAD)",
+    "create": "Create",
+    "creating": "Creating...",
+    "filterPlaceholder": "Filter worktrees...",
+    "emptyTitle": "No linked worktrees",
+    "emptyHint": "Create a worktree to work on parallel branches",
+    "emptyFiltered": "No matching worktrees",
+    "detached": "(detached)",
+    "main": "Main",
+    "locked": "Locked",
+    "prunable": "Prunable",
+    "actionsTitle": "Worktree actions",
+    "actions": {
+      "openInPanel": "Open in panel",
+      "remove": "Remove worktree",
+      "removeDeleteBranch": "Remove + delete branch",
+      "confirmRemove": "Confirm remove?"
+    },
+    "toasts": {
+      "created": "Created worktree: {{branchName}}",
+      "pruned": "Pruned stale worktrees",
+      "removed": "Worktree removed"
+    }
+  },
+  "changes": {
+    "section": {
+      "changes": "Changes",
+      "staged": "Staged"
+    },
+    "stageAll": "Stage all",
+    "staging": "Staging...",
+    "unstageAll": "Unstage all",
+    "unstaging": "Unstaging...",
+    "stage": "Stage",
+    "unstage": "Unstage",
+    "discard": "Discard",
+    "discardChanges": "Discard changes",
+    "discardAllChanges": "Discard all changes",
+    "discardFolderTitle": "Discard all changes in this folder",
+    "stageFolderTitle": "Stage all changes in this folder",
+    "unstageFolderTitle": "Unstage all changes in this folder",
+    "openInEditor": "Open in editor",
+    "noStagedChanges": "No staged changes",
+    "workingTreeClean": "Working tree clean",
+    "workingTreeCleanHint": "No uncommitted changes",
+    "noChanges": "No changes",
+    "untrackedFileHint": "Untracked file. Open it in the editor to review contents, or stage it to view the patch.",
+    "commitMessagePlaceholder": "Commit message...",
+    "commit": "Commit",
+    "committing": "Committing...",
+    "toasts": {
+      "committed": "Committed: {{message}}"
+    },
+    "discardPrompts": {
+      "fileMessage": "Discard all changes to \"{{name}}\"? This cannot be undone.",
+      "directoryMessage_one": "Discard all changes in \"{{name}}\"? {{count}} file will be reverted. This cannot be undone.",
+      "directoryMessage_other": "Discard all changes in \"{{name}}\"? {{count}} files will be reverted. This cannot be undone.",
+      "allMessage_one": "Discard all unstaged changes? {{count}} file will be reverted. This cannot be undone.",
+      "allMessage_other": "Discard all unstaged changes? {{count}} files will be reverted. This cannot be undone."
+    },
+    "diff": {
+      "previewTruncated": "Preview truncated to {{returned}} of {{original}} to keep the diff viewer responsive.",
+      "parsing": "Parsing diff..."
+    }
+  },
+  "remotes": {
+    "title": "Manage Remotes",
+    "loading": "Loading...",
+    "empty": "No remotes configured.",
+    "rename": "Rename",
+    "remove": "Remove",
+    "namePlaceholder": "Name",
+    "urlPlaceholder": "https://github.com/user/repo.git",
+    "add": "Add",
+    "adding": "Adding...",
+    "addRemote": "Add Remote",
+    "removeTitle": "Remove remote \"{{name}}\"",
+    "removeMessage": "This will remove the remote \"{{name}}\" from this repository. You can re-add it later.",
+    "toasts": {
+      "added": "Remote \"{{name}}\" added",
+      "removed": "Remote \"{{name}}\" removed",
+      "renamed": "Remote renamed to \"{{name}}\""
+    }
   }
 }

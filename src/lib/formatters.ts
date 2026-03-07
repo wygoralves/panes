@@ -127,6 +127,20 @@ export function formatDate(value: string | number | Date, locale?: string | null
   }).format(date);
 }
 
+export function formatDateTime(value: string | number | Date, locale?: string | null): string {
+  const date = toDate(value);
+  if (!date) {
+    return String(value);
+  }
+
+  return new Intl.DateTimeFormat(asLocale(locale), {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 export function formatTime(value: string | number | Date, locale?: string | null): string {
   const date = toDate(value);
   if (!date) {

@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ChevronDown,
   ChevronRight,
@@ -179,12 +180,13 @@ function formatDiffBytes(bytes: number): string {
 export function DiffPanel({
   diff,
   fillAvailableHeight = false,
-  emptyLabel = "No changes",
+  emptyLabel,
 }: {
   diff: GitDiffPreview;
   fillAvailableHeight?: boolean;
   emptyLabel?: string;
 }) {
+  const { t } = useTranslation("git");
   const {
     parseResult,
     loading,
@@ -206,13 +208,15 @@ export function DiffPanel({
             background: "rgba(250, 204, 21, 0.05)",
           }}
         >
-          Preview truncated to {formatDiffBytes(diff.returnedBytes)} of{" "}
-          {formatDiffBytes(diff.originalBytes)} to keep the diff viewer responsive.
+          {t("changes.diff.previewTruncated", {
+            returned: formatDiffBytes(diff.returnedBytes),
+            original: formatDiffBytes(diff.originalBytes),
+          })}
         </div>
       ) : null}
       {!parseResult && (loading || !parseAttempted) ? (
         <div style={{ padding: "10px 12px", fontSize: 11.5, color: "var(--text-3)" }}>
-          Parsing diff...
+          {t("changes.diff.parsing")}
         </div>
       ) : parseResult && parseResult.parsed.length > 0 ? (
         <VirtualizedDiffBody
@@ -221,7 +225,7 @@ export function DiffPanel({
         />
       ) : (
         <div style={{ padding: "10px 12px", fontSize: 11.5, color: "var(--text-3)" }}>
-          {emptyLabel}
+          {emptyLabel ?? t("changes.noChanges")}
         </div>
       )}
     </div>
@@ -229,6 +233,7 @@ export function DiffPanel({
 }
 
 export function GitChangesView({ repo, showDiff, onError }: Props) {
+  const { t } = useTranslation("git");
   const {
     status,
     diff,
@@ -318,8 +323,8 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
   const selectedFileEmptyLabel =
     selectedFileStatus?.worktreeStatus === "untracked" &&
     !Boolean(selectedFileStaged)
-      ? "Untracked file. Open it in the editor to review contents, or stage it to view the patch."
-      : "No changes";
+      ? t("changes.untrackedFileHint")
+      : t("changes.noChanges");
   const showDiffPanel = Boolean(selectedFile && diff && showDiff);
   const hasBottomContent = showDiffPanel || hasStagedFiles;
 
@@ -331,7 +336,9 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
       onError(undefined);
       await commit(repo.path, msg);
       if (activeWorkspaceId) pushCommitHistory(activeWorkspaceId, msg);
-      toast.success(`Committed: ${msg.split("\n")[0]}`);
+      toast.success(
+        t("changes.toasts.committed", { message: msg.split("\n")[0] }),
+      );
       histCursorRef.current = -1;
       liveDraftRef.current = "";
     } catch (e) {
@@ -425,8 +432,8 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     if (loadingKey !== null) return;
     const fileName = filePath.split("/").pop() ?? filePath;
     setDiscardPrompt({
-      title: "Discard changes",
-      message: `Discard all changes to "${fileName}"? This cannot be undone.`,
+      title: t("changes.discardChanges"),
+      message: t("changes.discardPrompts.fileMessage", { name: fileName }),
       files: [filePath],
     });
   }
@@ -436,8 +443,11 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     if (directoryFiles.length === 0 || loadingKey !== null) return;
     const dirName = dirPath.split("/").pop() ?? dirPath;
     setDiscardPrompt({
-      title: "Discard changes",
-      message: `Discard all changes in "${dirName}"? ${directoryFiles.length} file${directoryFiles.length === 1 ? "" : "s"} will be reverted. This cannot be undone.`,
+      title: t("changes.discardChanges"),
+      message: t("changes.discardPrompts.directoryMessage", {
+        name: dirName,
+        count: directoryFiles.length,
+      }),
       files: directoryFiles,
     });
   }
@@ -445,8 +455,10 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
   function onDiscardAll() {
     if (unstagedFiles.length === 0 || loadingKey !== null) return;
     setDiscardPrompt({
-      title: "Discard all changes",
-      message: `Discard all unstaged changes? ${unstagedFiles.length} file${unstagedFiles.length === 1 ? "" : "s"} will be reverted. This cannot be undone.`,
+      title: t("changes.discardAllChanges"),
+      message: t("changes.discardPrompts.allMessage", {
+        count: unstagedFiles.length,
+      }),
       files: unstagedFiles.map((f) => f.path),
     });
   }
@@ -509,7 +521,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
                 void onDiscardDirectory(row.path);
               }}
               disabled={directoryFileCount === 0 || loadingKey !== null}
-              title="Discard all changes in this folder"
+              title={t("changes.discardFolderTitle")}
               style={{
                 opacity: directoryFileCount === 0 || loadingKey !== null ? 0.35 : undefined,
                 cursor: directoryFileCount === 0 || loadingKey !== null ? "default" : "pointer",
@@ -528,8 +540,8 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
             disabled={directoryFileCount === 0 || loadingKey !== null}
             title={
               staged
-                ? "Unstage all changes in this folder"
-                : "Stage all changes in this folder"
+                ? t("changes.unstageFolderTitle")
+                : t("changes.stageFolderTitle")
             }
             style={{
               opacity: directoryFileCount === 0 || (loadingKey !== null && loadingKey !== `dir:${row.path}`) ? 0.35 : undefined,
@@ -579,7 +591,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
               void onDiscardFile(row.file.path);
             }}
             disabled={loadingKey !== null}
-            title="Discard changes"
+            title={t("changes.discardChanges")}
             style={{
               opacity: loadingKey !== null ? 0.35 : undefined,
             }}
@@ -594,7 +606,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
             e.stopPropagation();
             handleOpenInEditor(row.file.path);
           }}
-          title="Open in editor"
+          title={t("changes.openInEditor")}
         >
           <Eye size={13} />
         </button>
@@ -613,7 +625,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
             }
           }}
           disabled={loadingKey !== null}
-          title={staged ? "Unstage" : "Stage"}
+          title={staged ? t("changes.unstage") : t("changes.stage")}
           style={{
             opacity: loadingKey !== null && loadingKey !== `file:${row.file.path}` ? 0.35 : undefined,
           }}
@@ -667,22 +679,24 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
                   fontSize: 11,
                   opacity: files.length === 0 || loadingKey !== null ? 0.4 : 1,
                 }}
-              >
-                {loadingKey === "unstage-all" ? (
-                  <Loader2 size={11} className="git-spin" />
-                ) : (
-                  <RotateCcw size={11} />
-                )}
-                {loadingKey === "unstage-all" ? "Unstaging..." : "Unstage all"}
-              </button>
-            ) : (
+                >
+                  {loadingKey === "unstage-all" ? (
+                    <Loader2 size={11} className="git-spin" />
+                  ) : (
+                    <RotateCcw size={11} />
+                  )}
+                  {loadingKey === "unstage-all"
+                    ? t("changes.unstaging")
+                    : t("changes.unstageAll")}
+                </button>
+              ) : (
               <>
                 <button
                   type="button"
                   className="git-toolbar-btn git-discard-btn"
                   onClick={() => void onDiscardAll()}
                   disabled={files.length === 0 || loadingKey !== null}
-                  title="Discard all changes"
+                  title={t("changes.discardAllChanges")}
                   style={{
                     opacity: files.length === 0 || loadingKey !== null ? 0.35 : undefined,
                   }}
@@ -709,7 +723,9 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
                   ) : (
                     <Plus size={11} />
                   )}
-                  {loadingKey === "stage-all" ? "Staging..." : "Stage all"}
+                  {loadingKey === "stage-all"
+                    ? t("changes.staging")
+                    : t("changes.stageAll")}
                 </button>
               </>
             )}
@@ -720,7 +736,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
           <div>
             {rows.length === 0 ? (
               <p className="git-empty-inline">
-                {staged ? "No staged changes" : "Working tree clean"}
+                {staged ? t("changes.noStagedChanges") : t("changes.workingTreeClean")}
               </p>
             ) : (
               rows.map((row) => renderFileRow(row, section, staged))
@@ -736,15 +752,15 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
       <div className="git-empty-icon-box">
         <Check size={20} />
       </div>
-      <p className="git-empty-title">Working tree clean</p>
-      <p className="git-empty-sub">No uncommitted changes</p>
+      <p className="git-empty-title">{t("changes.workingTreeClean")}</p>
+      <p className="git-empty-sub">{t("changes.workingTreeCleanHint")}</p>
     </div>
   ) : (
     <>
       {unstagedFiles.length > 0 &&
         renderSection(
           "changes",
-          "Changes",
+          t("changes.section.changes"),
           unstagedRows,
           unstagedFiles,
           false,
@@ -752,7 +768,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
       {hasStagedFiles &&
         renderSection(
           "staged",
-          "Staged",
+          t("changes.section.staged"),
           stagedRows,
           stagedFiles,
           true,
@@ -793,7 +809,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
         open={discardPrompt !== null}
         title={discardPrompt?.title ?? ""}
         message={discardPrompt?.message ?? ""}
-        confirmLabel="Discard"
+        confirmLabel={t("changes.discard")}
         onConfirm={() => {
           if (discardPrompt) void executeDiscard(discardPrompt.files);
         }}
@@ -809,7 +825,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
               setCommitMessage(e.target.value);
               histCursorRef.current = -1;
             }}
-            placeholder="Commit message..."
+            placeholder={t("changes.commitMessagePlaceholder")}
             className="git-commit-input"
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -858,7 +874,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
             ) : (
               <Check size={13} />
             )}
-            {loadingKey === "commit" ? "Committing..." : "Commit"}
+            {loadingKey === "commit" ? t("changes.committing") : t("changes.commit")}
           </button>
         </div>
       )}

@@ -1,5 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { Archive, Loader2, Package, Search, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { formatDateTime } from "../../lib/formatters";
 import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import type { Repo } from "../../types";
@@ -9,19 +11,8 @@ interface Props {
   onError: (error: string | undefined) => void;
 }
 
-function formatDate(raw?: string): string {
-  if (!raw) return "";
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString([], {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 export function GitStashView({ repo, onError }: Props) {
+  const { t, i18n } = useTranslation("git");
   const { status, stashes, loadStashes, pushStash, applyStash, popStash } = useGitStore();
 
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
@@ -57,7 +48,7 @@ export function GitStashView({ repo, onError }: Props) {
       const msg = stashMessage.trim() || undefined;
       await pushStash(repo.path, msg);
       setStashMessage("");
-      toast.success("Stash saved");
+      toast.success(t("stash.toasts.saved"));
     } catch (e) {
       onError(String(e));
     } finally {
@@ -71,7 +62,7 @@ export function GitStashView({ repo, onError }: Props) {
     try {
       onError(undefined);
       await applyStash(repo.path, index);
-      toast.success("Stash applied");
+      toast.success(t("stash.toasts.applied"));
     } catch (e) {
       onError(String(e));
     } finally {
@@ -85,7 +76,7 @@ export function GitStashView({ repo, onError }: Props) {
     try {
       onError(undefined);
       await popStash(repo.path, index);
-      toast.success("Stash applied");
+      toast.success(t("stash.toasts.applied"));
     } catch (e) {
       onError(String(e));
     } finally {
@@ -106,7 +97,7 @@ export function GitStashView({ repo, onError }: Props) {
         <input
           type="text"
           className="git-inline-input"
-          placeholder="Stash message (optional)"
+          placeholder={t("stash.messagePlaceholder")}
           value={stashMessage}
           onChange={(e) => setStashMessage(e.target.value)}
           disabled={loadingKey !== null}
@@ -133,7 +124,7 @@ export function GitStashView({ repo, onError }: Props) {
           ) : (
             <Package size={12} />
           )}
-          {loadingKey === "push" ? "Stashing..." : "Stash"}
+          {loadingKey === "push" ? t("stash.stashing") : t("stash.stash")}
         </button>
       </div>
 
@@ -144,7 +135,7 @@ export function GitStashView({ repo, onError }: Props) {
             <input
               type="text"
               className="git-inline-input"
-              placeholder="Filter stashes..."
+              placeholder={t("stash.filterPlaceholder")}
               value={filterQuery}
               onChange={(e) => setFilterQuery(e.target.value)}
               style={{ padding: "3px 8px 3px 24px", fontSize: 11 }}
@@ -174,11 +165,11 @@ export function GitStashView({ repo, onError }: Props) {
             <div className="git-empty-icon-box">
               <Archive size={20} />
             </div>
-            <p className="git-empty-title">No stashes</p>
-            <p className="git-empty-sub">Stashed changes will appear here</p>
+            <p className="git-empty-title">{t("stash.emptyTitle")}</p>
+            <p className="git-empty-sub">{t("stash.emptyHint")}</p>
           </div>
         ) : filteredStashes.length === 0 ? (
-          <p className="git-empty-inline">No matching stashes</p>
+          <p className="git-empty-inline">{t("stash.emptyFiltered")}</p>
         ) : (
           filteredStashes.map((entry) => {
             const isLoading = loadingKey === `apply:${entry.index}` || loadingKey === `pop:${entry.index}`;
@@ -228,7 +219,7 @@ export function GitStashView({ repo, onError }: Props) {
                   >
                     {entry.branchHint && <span>{entry.branchHint}</span>}
                     {entry.createdAt && (
-                      <span>{formatDate(entry.createdAt)}</span>
+                      <span>{formatDateTime(entry.createdAt, i18n.language)}</span>
                     )}
                   </div>
                 </div>
@@ -247,7 +238,7 @@ export function GitStashView({ repo, onError }: Props) {
                     {loadingKey === `apply:${entry.index}` ? (
                       <Loader2 size={11} className="git-spin" />
                     ) : (
-                      "Apply"
+                      t("stash.apply")
                     )}
                   </button>
                   <button
@@ -260,7 +251,7 @@ export function GitStashView({ repo, onError }: Props) {
                     {loadingKey === `pop:${entry.index}` ? (
                       <Loader2 size={11} className="git-spin" />
                     ) : (
-                      "Pop"
+                      t("stash.pop")
                     )}
                   </button>
                 </div>

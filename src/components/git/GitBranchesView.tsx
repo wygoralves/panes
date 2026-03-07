@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { Plus, X, MoreHorizontal, GitBranch, GitBranchPlus, Pencil, Trash2, Loader2, Search } from "lucide-react";
+import { formatDateTime } from "../../lib/formatters";
 import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -11,18 +13,6 @@ interface Props {
   onError: (error: string | undefined) => void;
 }
 
-function formatDate(raw?: string): string {
-  if (!raw) return "";
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString([], {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 interface ActionMenuState {
   branchName: string;
   top: number;
@@ -30,6 +20,7 @@ interface ActionMenuState {
 }
 
 export function GitBranchesView({ repo, onError }: Props) {
+  const { t, i18n } = useTranslation("git");
   const {
     branchScope,
     setBranchScope,
@@ -159,7 +150,7 @@ export function GitBranchesView({ repo, onError }: Props) {
     try {
       onError(undefined);
       await checkoutBranch(repo.path, branchName, isRemote);
-      toast.success(`Switched to ${branchName}`);
+      toast.success(t("branches.toasts.switchedTo", { branchName }));
     } catch (e) {
       onError(String(e));
     } finally {
@@ -178,7 +169,7 @@ export function GitBranchesView({ repo, onError }: Props) {
       branchHistCursorRef.current = -1;
       branchLiveDraftRef.current = "";
       setShowNewBranch(false);
-      toast.success(`Created and switched to branch: ${name}`);
+      toast.success(t("branches.toasts.createdAndSwitched", { branchName: name }));
     } catch (e) {
       onError(String(e));
     } finally {
@@ -198,7 +189,7 @@ export function GitBranchesView({ repo, onError }: Props) {
       onError(undefined);
       await renameBranch(repo.path, oldName, newName);
       setRenamingBranch(null);
-      toast.success("Renamed branch");
+      toast.success(t("branches.toasts.renamed"));
     } catch (e) {
       onError(String(e));
     } finally {
@@ -217,11 +208,11 @@ export function GitBranchesView({ repo, onError }: Props) {
       onError(undefined);
       setConfirmingDelete(null);
       await deleteBranch(repo.path, branchName, false);
-      toast.success(`Deleted branch: ${branchName}`);
+      toast.success(t("branches.toasts.deleted", { branchName }));
     } catch (e) {
       try {
         await deleteBranch(repo.path, branchName, true);
-        toast.success(`Deleted branch: ${branchName}`);
+        toast.success(t("branches.toasts.deleted", { branchName }));
       } catch (e2) {
         onError(String(e2));
       }
@@ -257,7 +248,7 @@ export function GitBranchesView({ repo, onError }: Props) {
                 }}
               >
                 <GitBranchPlus size={13} />
-                Checkout
+                {t("branches.actions.checkout")}
               </button>
             )}
             {!menuBranch.isRemote && renamingBranch !== menuBranch.name && (
@@ -272,7 +263,7 @@ export function GitBranchesView({ repo, onError }: Props) {
                 }}
               >
                 <Pencil size={13} />
-                Rename
+                {t("branches.actions.rename")}
               </button>
             )}
             {!menuBranch.isRemote && !menuBranch.isCurrent && (
@@ -290,7 +281,9 @@ export function GitBranchesView({ repo, onError }: Props) {
                 }}
               >
                 <Trash2 size={13} />
-                {confirmingDelete === menuBranch.name ? "Confirm delete?" : "Delete"}
+                {confirmingDelete === menuBranch.name
+                  ? t("branches.actions.confirmDelete")
+                  : t("branches.actions.delete")}
               </button>
             )}
           </div>,
@@ -316,7 +309,9 @@ export function GitBranchesView({ repo, onError }: Props) {
               className={`git-scope-btn${branchScope === scope ? " git-scope-btn-active" : ""}`}
               onClick={() => setBranchScope(scope)}
             >
-              {scope === "local" ? "Local" : "Remote"}
+              {scope === "local"
+                ? t("branches.scope.local")
+                : t("branches.scope.remote")}
             </button>
           ))}
         </div>
@@ -333,7 +328,7 @@ export function GitBranchesView({ repo, onError }: Props) {
           }}
         >
           {showNewBranch ? <X size={11} /> : <Plus size={11} />}
-          {showNewBranch ? "Cancel" : "New branch"}
+          {showNewBranch ? t("common.cancel", { ns: "common" }) : t("branches.new")}
         </button>
       </div>
 
@@ -350,7 +345,7 @@ export function GitBranchesView({ repo, onError }: Props) {
             ref={newBranchInputRef}
             type="text"
             className="git-inline-input"
-            placeholder="Branch name..."
+            placeholder={t("branches.branchNamePlaceholder")}
             value={newBranchName}
             onChange={(e) => {
               setNewBranchName(e.target.value);
@@ -395,7 +390,7 @@ export function GitBranchesView({ repo, onError }: Props) {
             {loadingKey === "create" ? (
               <Loader2 size={11} className="git-spin" />
             ) : null}
-            {loadingKey === "create" ? "Creating..." : "Create"}
+            {loadingKey === "create" ? t("branches.creating") : t("branches.create")}
           </button>
         </div>
       )}
@@ -407,7 +402,7 @@ export function GitBranchesView({ repo, onError }: Props) {
             <input
               type="text"
               className="git-inline-input"
-              placeholder="Search branches..."
+              placeholder={t("branches.searchPlaceholder")}
               value={localSearch}
               onChange={(e) => onSearchChange(e.target.value)}
               style={{ padding: "3px 8px 3px 24px", fontSize: 11 }}
@@ -437,11 +432,11 @@ export function GitBranchesView({ repo, onError }: Props) {
             <div className="git-empty-icon-box">
               <GitBranch size={20} />
             </div>
-            <p className="git-empty-title">No branches found</p>
-            <p className="git-empty-sub">Create a branch to get started</p>
+            <p className="git-empty-title">{t("branches.emptyTitle")}</p>
+            <p className="git-empty-sub">{t("branches.emptyHint")}</p>
           </div>
         ) : branches.length === 0 ? (
-          <p className="git-empty-inline">No matching branches</p>
+          <p className="git-empty-inline">{t("branches.emptyFiltered")}</p>
         ) : (
           branches.map((branch) => {
             const isRenaming = renamingBranch === branch.name;
@@ -513,7 +508,7 @@ export function GitBranchesView({ repo, onError }: Props) {
 
                     {branch.isCurrent && !isRenaming && (
                       <span className="git-badge git-badge-accent">
-                        Current
+                        {t("branches.current")}
                       </span>
                     )}
                   </div>
@@ -536,7 +531,7 @@ export function GitBranchesView({ repo, onError }: Props) {
                         </span>
                       )}
                       {branch.lastCommitAt && (
-                        <span>{formatDate(branch.lastCommitAt)}</span>
+                        <span>{formatDateTime(branch.lastCommitAt, i18n.language)}</span>
                       )}
                     </div>
                   )}
@@ -549,7 +544,7 @@ export function GitBranchesView({ repo, onError }: Props) {
                       className="git-toolbar-btn"
                       style={{ padding: 3 }}
                       onClick={(e) => openActionMenu(branch.name, e)}
-                      title="Branch actions"
+                      title={t("branches.actionsTitle")}
                     >
                       <MoreHorizontal size={14} />
                     </button>
@@ -573,7 +568,12 @@ export function GitBranchesView({ repo, onError }: Props) {
               style={{ width: "100%", justifyContent: "center", fontSize: 12, opacity: loadingMore ? 0.6 : 1 }}
             >
               {loadingMore ? <Loader2 size={13} className="git-spin" /> : null}
-              {loadingMore ? "Loading..." : `Load more (${branches.length}/${branchesTotal})`}
+              {loadingMore
+                ? t("branches.loadingMore")
+                : t("branches.loadMore", {
+                    current: branches.length,
+                    total: branchesTotal,
+                  })}
             </button>
           </div>
         )}

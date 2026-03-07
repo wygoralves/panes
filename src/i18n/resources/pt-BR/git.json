@@ -3,7 +3,7 @@
     "tabs": {
       "changes": "Alterações",
       "branches": "Branches",
-      "commits": "Commits",
+      "commits": "Histórico",
       "stash": "Stash",
       "files": "Arquivos",
       "worktrees": "Worktrees"
@@ -12,7 +12,7 @@
     "syncing": "Sincronizando...",
     "refreshAndFetch": "Atualizar e buscar",
     "moreActions": "Mais ações",
-    "backToMainRepo": "Voltar ao repositório principal",
+    "backToMainRepo": "Voltar ao repo principal",
     "scanningRepositories": "Escaneando repositórios...",
     "noRepositories": "Nenhum repositório encontrado",
     "scanningHint": "Verificando este workspace em busca de repositórios git",
@@ -31,5 +31,159 @@
     "softReset": "Soft reset",
     "pull": "Pull",
     "push": "Push"
+  },
+  "branches": {
+    "scope": {
+      "local": "Local",
+      "remote": "Remoto"
+    },
+    "new": "Nova branch",
+    "branchNamePlaceholder": "Nome da branch...",
+    "create": "Criar",
+    "creating": "Criando...",
+    "searchPlaceholder": "Buscar branches...",
+    "emptyTitle": "Nenhuma branch encontrada",
+    "emptyHint": "Crie uma branch para começar",
+    "emptyFiltered": "Nenhuma branch correspondente",
+    "current": "Atual",
+    "actionsTitle": "Ações da branch",
+    "actions": {
+      "checkout": "Checkout",
+      "rename": "Renomear",
+      "delete": "Excluir",
+      "confirmDelete": "Confirmar exclusão?"
+    },
+    "loadMore": "Carregar mais ({{current}}/{{total}})",
+    "loadingMore": "Carregando...",
+    "toasts": {
+      "switchedTo": "Alternado para {{branchName}}",
+      "createdAndSwitched": "Branch criada e selecionada: {{branchName}}",
+      "renamed": "Branch renomeada",
+      "deleted": "Branch excluída: {{branchName}}"
+    }
+  },
+  "commits": {
+    "title": "Histórico",
+    "count": "{{count}} commits",
+    "filteredCount": "{{current}}/{{total}} commits",
+    "filterPlaceholder": "Filtrar commits...",
+    "emptyTitle": "Nenhum commit ainda",
+    "emptyHint": "Faça commits das alterações para montar o histórico",
+    "emptyFiltered": "Nenhum commit correspondente",
+    "loadingDiff": "Carregando diff...",
+    "noChanges": "Sem alterações neste commit",
+    "loadMore": "Carregar mais",
+    "loadingMore": "Carregando..."
+  },
+  "stash": {
+    "messagePlaceholder": "Mensagem do stash (opcional)",
+    "stash": "Stash",
+    "stashing": "Salvando stash...",
+    "filterPlaceholder": "Filtrar stashes...",
+    "emptyTitle": "Nenhum stash",
+    "emptyHint": "As alterações salvas em stash aparecerão aqui",
+    "emptyFiltered": "Nenhum stash correspondente",
+    "apply": "Aplicar",
+    "pop": "Pop",
+    "toasts": {
+      "saved": "Stash salvo",
+      "applied": "Stash aplicado"
+    }
+  },
+  "files": {
+    "filterPlaceholder": "Filtrar arquivos...",
+    "filterCount": "{{count}} arquivos",
+    "filterCountTitle": "Só pastas expandidas entram na busca",
+    "loading": "Carregando arquivos...",
+    "emptyFiltered": "Nenhum arquivo corresponde ao filtro",
+    "empty": "Nenhum arquivo encontrado"
+  },
+  "worktrees": {
+    "prune": "Limpar",
+    "new": "Nova worktree",
+    "branchNamePlaceholder": "Nome da branch...",
+    "baseRefPlaceholder": "Ref base (HEAD)",
+    "create": "Criar",
+    "creating": "Criando...",
+    "filterPlaceholder": "Filtrar worktrees...",
+    "emptyTitle": "Nenhuma worktree vinculada",
+    "emptyHint": "Crie uma worktree para trabalhar em branches paralelas",
+    "emptyFiltered": "Nenhuma worktree correspondente",
+    "detached": "(destacada)",
+    "main": "Principal",
+    "locked": "Bloqueada",
+    "prunable": "Removível",
+    "actionsTitle": "Ações da worktree",
+    "actions": {
+      "openInPanel": "Abrir no painel",
+      "remove": "Remover worktree",
+      "removeDeleteBranch": "Remover + excluir branch",
+      "confirmRemove": "Confirmar remoção?"
+    },
+    "toasts": {
+      "created": "Worktree criada: {{branchName}}",
+      "pruned": "Worktrees obsoletas removidas",
+      "removed": "Worktree removida"
+    }
+  },
+  "changes": {
+    "section": {
+      "changes": "Alterações",
+      "staged": "Staged"
+    },
+    "stageAll": "Stage all",
+    "staging": "Aplicando stage...",
+    "unstageAll": "Remover stage de tudo",
+    "unstaging": "Removendo stage...",
+    "stage": "Stage",
+    "unstage": "Remover stage",
+    "discard": "Descartar",
+    "discardChanges": "Descartar alterações",
+    "discardAllChanges": "Descartar todas as alterações",
+    "discardFolderTitle": "Descartar todas as alterações desta pasta",
+    "stageFolderTitle": "Aplicar stage em todas as alterações desta pasta",
+    "unstageFolderTitle": "Remover stage de todas as alterações desta pasta",
+    "openInEditor": "Abrir no editor",
+    "noStagedChanges": "Nenhuma alteração em stage",
+    "workingTreeClean": "Working tree limpo",
+    "workingTreeCleanHint": "Nenhuma alteração sem commit",
+    "noChanges": "Sem alterações",
+    "untrackedFileHint": "Arquivo não rastreado. Abra no editor para revisar o conteúdo ou aplique stage para ver o patch.",
+    "commitMessagePlaceholder": "Mensagem do commit...",
+    "commit": "Commit",
+    "committing": "Realizando commit...",
+    "toasts": {
+      "committed": "Commit realizado: {{message}}"
+    },
+    "discardPrompts": {
+      "fileMessage": "Descartar todas as alterações de \"{{name}}\"? Isso não pode ser desfeito.",
+      "directoryMessage_one": "Descartar todas as alterações em \"{{name}}\"? {{count}} arquivo será revertido. Isso não pode ser desfeito.",
+      "directoryMessage_other": "Descartar todas as alterações em \"{{name}}\"? {{count}} arquivos serão revertidos. Isso não pode ser desfeito.",
+      "allMessage_one": "Descartar todas as alterações sem stage? {{count}} arquivo será revertido. Isso não pode ser desfeito.",
+      "allMessage_other": "Descartar todas as alterações sem stage? {{count}} arquivos serão revertidos. Isso não pode ser desfeito."
+    },
+    "diff": {
+      "previewTruncated": "Prévia truncada para {{returned}} de {{original}} para manter o visualizador de diff responsivo.",
+      "parsing": "Processando diff..."
+    }
+  },
+  "remotes": {
+    "title": "Gerenciar remotos",
+    "loading": "Carregando...",
+    "empty": "Nenhum remoto configurado.",
+    "rename": "Renomear",
+    "remove": "Remover",
+    "namePlaceholder": "Nome",
+    "urlPlaceholder": "https://github.com/user/repo.git",
+    "add": "Adicionar",
+    "adding": "Adicionando...",
+    "addRemote": "Adicionar remoto",
+    "removeTitle": "Remover remoto \"{{name}}\"",
+    "removeMessage": "Isso removerá o remoto \"{{name}}\" deste repositório. Você pode adicioná-lo novamente depois.",
+    "toasts": {
+      "added": "Remoto \"{{name}}\" adicionado",
+      "removed": "Remoto \"{{name}}\" removido",
+      "renamed": "Remoto renomeado para \"{{name}}\""
+    }
   }
 }

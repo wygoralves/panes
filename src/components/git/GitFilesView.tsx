@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ChevronDown,
   ChevronRight,
@@ -69,6 +70,7 @@ function entryName(entry: FileTreeEntry): string {
 }
 
 export function GitFilesView({ repo }: Props) {
+  const { t } = useTranslation("git");
   // Map from dirPath -> children entries ("" = root)
   const [dirContents, setDirContents] = useState<Map<string, FileTreeEntry[]>>(new Map());
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
@@ -227,7 +229,7 @@ export function GitFilesView({ repo }: Props) {
             type="text"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter files..."
+            placeholder={t("files.filterPlaceholder")}
             style={{
               flex: 1,
               background: "transparent",
@@ -239,8 +241,13 @@ export function GitFilesView({ repo }: Props) {
             }}
           />
           {filter && (
-            <span style={{ fontSize: 10, color: "var(--text-3)" }} title="Only expanded folders are searched">
-              {rows.filter((r) => r.type === "file").length} files
+            <span
+              style={{ fontSize: 10, color: "var(--text-3)" }}
+              title={t("files.filterCountTitle")}
+            >
+              {t("files.filterCount", {
+                count: rows.filter((r) => r.type === "file").length,
+              })}
             </span>
           )}
         </div>
@@ -260,7 +267,7 @@ export function GitFilesView({ repo }: Props) {
             }}
           >
             <Loader2 size={14} className="animate-spin" style={{ marginRight: 6 }} />
-            Loading files...
+            {t("files.loading")}
           </div>
         ) : rows.length === 0 ? (
           <div
@@ -271,7 +278,7 @@ export function GitFilesView({ repo }: Props) {
               fontSize: 12,
             }}
           >
-            {filter ? "No files match filter" : "No files found"}
+            {filter ? t("files.emptyFiltered") : t("files.empty")}
           </div>
         ) : (
           rows.map((row) => (

@@ -1,5 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { GitCommitHorizontal, Loader2, Search, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { formatDateTime } from "../../lib/formatters";
 import { useGitStore } from "../../stores/gitStore";
 import { DiffPanel } from "./GitChangesView";
 import type { Repo } from "../../types";
@@ -8,19 +10,8 @@ interface Props {
   repo: Repo;
 }
 
-function formatDate(raw?: string): string {
-  if (!raw) return "";
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString([], {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 export function GitCommitsView({ repo }: Props) {
+  const { t, i18n } = useTranslation("git");
   const {
     commits,
     commitsHasMore,
@@ -77,11 +68,14 @@ export function GitCommitsView({ repo }: Props) {
           justifyContent: "space-between",
         }}
       >
-        <span>History</span>
+        <span>{t("commits.title")}</span>
         <span>
           {filterQuery
-            ? `${filteredCommits.length}/${commitsTotal} commits`
-            : `${commitsTotal} commits`}
+            ? t("commits.filteredCount", {
+                current: filteredCommits.length,
+                total: commitsTotal,
+              })
+            : t("commits.count", { count: commitsTotal })}
         </span>
       </div>
 
@@ -92,7 +86,7 @@ export function GitCommitsView({ repo }: Props) {
             <input
               type="text"
               className="git-inline-input"
-              placeholder="Filter commits..."
+              placeholder={t("commits.filterPlaceholder")}
               value={filterQuery}
               onChange={(e) => setFilterQuery(e.target.value)}
               style={{ padding: "3px 8px 3px 24px", fontSize: 11 }}
@@ -122,12 +116,12 @@ export function GitCommitsView({ repo }: Props) {
             <div className="git-empty-icon-box">
               <GitCommitHorizontal size={20} />
             </div>
-            <p className="git-empty-title">No commits yet</p>
-            <p className="git-empty-sub">Commit changes to build history</p>
+            <p className="git-empty-title">{t("commits.emptyTitle")}</p>
+            <p className="git-empty-sub">{t("commits.emptyHint")}</p>
           </div>
         ) : (
           filteredCommits.length === 0 ? (
-            <p className="git-empty-inline">No matching commits</p>
+            <p className="git-empty-inline">{t("commits.emptyFiltered")}</p>
           ) : filteredCommits.map((entry) => {
             const isSelected = selectedCommitHash === entry.hash;
             const isLoadingDiff = isSelected && !commitDiff;
@@ -159,7 +153,7 @@ export function GitCommitsView({ repo }: Props) {
                   <div className="git-commit-meta">
                     <span>{entry.authorName}</span>
                     <span>{"\u00B7"}</span>
-                    <span>{formatDate(entry.authoredAt)}</span>
+                    <span>{formatDateTime(entry.authoredAt, i18n.language)}</span>
                   </div>
                   {entry.body && (
                     <p
@@ -190,7 +184,7 @@ export function GitCommitsView({ repo }: Props) {
                         }}
                       >
                         <Loader2 size={13} className="git-spin" />
-                        Loading diff...
+                        {t("commits.loadingDiff")}
                       </div>
                     ) : commitDiff ? (
                       <DiffPanel diff={commitDiff} />
@@ -204,7 +198,7 @@ export function GitCommitsView({ repo }: Props) {
                           textAlign: "center",
                         }}
                       >
-                        No changes in this commit
+                        {t("commits.noChanges")}
                       </p>
                     )}
                   </div>
@@ -231,7 +225,7 @@ export function GitCommitsView({ repo }: Props) {
               {loadingMore ? (
                 <Loader2 size={13} className="git-spin" />
               ) : null}
-              {loadingMore ? "Loading..." : "Load more"}
+              {loadingMore ? t("commits.loadingMore") : t("commits.loadMore")}
             </button>
           </div>
         )}

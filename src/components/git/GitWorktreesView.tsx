@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import {
   Plus,
   X,
@@ -40,6 +41,7 @@ interface ActionMenuState {
 }
 
 export function GitWorktreesView({ repo, onError }: Props) {
+  const { t } = useTranslation("git");
   const {
     worktrees,
     loadWorktrees,
@@ -157,7 +159,7 @@ export function GitWorktreesView({ repo, onError }: Props) {
       setCreateBranch("");
       setCreateBaseRef("");
       setShowCreate(false);
-      toast.success(`Created worktree: ${branch}`);
+      toast.success(t("worktrees.toasts.created", { branchName: branch }));
     } catch (e) {
       onError(String(e));
     } finally {
@@ -171,7 +173,7 @@ export function GitWorktreesView({ repo, onError }: Props) {
     try {
       onError(undefined);
       await pruneWorktrees(repo.path);
-      toast.success("Pruned stale worktrees");
+      toast.success(t("worktrees.toasts.pruned"));
     } catch (e) {
       onError(String(e));
     } finally {
@@ -202,7 +204,7 @@ export function GitWorktreesView({ repo, onError }: Props) {
       setConfirmingRemoveWithBranch(null);
       closeMenu();
       await removeWorktree(repo.path, wtPath, false, branch, deleteBranch);
-      toast.success("Worktree removed");
+      toast.success(t("worktrees.toasts.removed"));
     } catch (e) {
       onError(String(e));
     } finally {
@@ -230,7 +232,7 @@ export function GitWorktreesView({ repo, onError }: Props) {
               onClick={() => onOpenInPanel(menuWt)}
             >
               <ExternalLink size={13} />
-              Open in panel
+              {t("worktrees.actions.openInPanel")}
             </button>
             <button
               type="button"
@@ -246,7 +248,9 @@ export function GitWorktreesView({ repo, onError }: Props) {
               }}
             >
               <Trash2 size={13} />
-              {confirmingRemove === menuWt.path ? "Confirm remove?" : "Remove worktree"}
+              {confirmingRemove === menuWt.path
+                ? t("worktrees.actions.confirmRemove")
+                : t("worktrees.actions.remove")}
             </button>
             {menuWt.branch && (
               <button
@@ -264,8 +268,8 @@ export function GitWorktreesView({ repo, onError }: Props) {
               >
                 <Trash2 size={13} />
                 {confirmingRemoveWithBranch === menuWt.path
-                  ? "Confirm remove?"
-                  : "Remove + delete branch"}
+                  ? t("worktrees.actions.confirmRemove")
+                  : t("worktrees.actions.removeDeleteBranch")}
               </button>
             )}
           </div>,
@@ -291,7 +295,7 @@ export function GitWorktreesView({ repo, onError }: Props) {
           onClick={() => void onPrune()}
         >
           {loadingKey === "prune" ? <Loader2 size={11} className="git-spin" /> : <Scissors size={11} />}
-          Prune
+          {t("worktrees.prune")}
         </button>
 
         <div style={{ flex: 1 }} />
@@ -309,7 +313,7 @@ export function GitWorktreesView({ repo, onError }: Props) {
           }}
         >
           {showCreate ? <X size={11} /> : <Plus size={11} />}
-          {showCreate ? "Cancel" : "New worktree"}
+          {showCreate ? t("common.cancel", { ns: "common" }) : t("worktrees.new")}
         </button>
       </div>
 
@@ -328,7 +332,7 @@ export function GitWorktreesView({ repo, onError }: Props) {
               ref={createBranchInputRef}
               type="text"
               className="git-inline-input"
-              placeholder="Branch name..."
+              placeholder={t("worktrees.branchNamePlaceholder")}
               value={createBranch}
               onChange={(e) => setCreateBranch(e.target.value)}
               onKeyDown={(e) => {
@@ -344,7 +348,7 @@ export function GitWorktreesView({ repo, onError }: Props) {
             <input
               type="text"
               className="git-inline-input"
-              placeholder="Base ref (HEAD)"
+              placeholder={t("worktrees.baseRefPlaceholder")}
               value={createBaseRef}
               onChange={(e) => setCreateBaseRef(e.target.value)}
               onKeyDown={(e) => {
@@ -360,7 +364,7 @@ export function GitWorktreesView({ repo, onError }: Props) {
               onClick={() => void onCreateWorktree()}
             >
               {loadingKey === "create" ? <Loader2 size={11} className="git-spin" /> : null}
-              {loadingKey === "create" ? "Creating..." : "Create"}
+              {loadingKey === "create" ? t("worktrees.creating") : t("worktrees.create")}
             </button>
           </div>
           {autoWorktreePath && (
@@ -378,7 +382,7 @@ export function GitWorktreesView({ repo, onError }: Props) {
             <input
               type="text"
               className="git-inline-input"
-              placeholder="Filter worktrees..."
+              placeholder={t("worktrees.filterPlaceholder")}
               value={filterQuery}
               onChange={(e) => setFilterQuery(e.target.value)}
               style={{ padding: "3px 8px 3px 24px", fontSize: 11 }}
@@ -408,13 +412,11 @@ export function GitWorktreesView({ repo, onError }: Props) {
             <div className="git-empty-icon-box">
               <GitFork size={20} />
             </div>
-            <p className="git-empty-title">No linked worktrees</p>
-            <p className="git-empty-sub">
-              Create a worktree to work on parallel branches
-            </p>
+            <p className="git-empty-title">{t("worktrees.emptyTitle")}</p>
+            <p className="git-empty-sub">{t("worktrees.emptyHint")}</p>
           </div>
         ) : filteredWorktrees.length === 0 ? (
-          <p className="git-empty-inline">No matching worktrees</p>
+          <p className="git-empty-inline">{t("worktrees.emptyFiltered")}</p>
         ) : (
           filteredWorktrees.map((wt) => {
             const isLoading = loadingKey === `remove:${wt.path}`;
@@ -445,17 +447,17 @@ export function GitWorktreesView({ repo, onError }: Props) {
                         fontWeight: wt.isMain ? 600 : 400,
                       }}
                     >
-                      {wt.branch ?? "(detached)"}
+                      {wt.branch ?? t("worktrees.detached")}
                     </span>
 
                     {wt.isMain && (
-                      <span className="git-badge git-badge-accent">Main</span>
+                      <span className="git-badge git-badge-accent">{t("worktrees.main")}</span>
                     )}
                     {wt.isLocked && (
-                      <span className="git-badge git-badge-muted">Locked</span>
+                      <span className="git-badge git-badge-muted">{t("worktrees.locked")}</span>
                     )}
                     {wt.isPrunable && (
-                      <span className="git-badge git-badge-warning">Prunable</span>
+                      <span className="git-badge git-badge-warning">{t("worktrees.prunable")}</span>
                     )}
                   </div>
 
@@ -500,7 +502,7 @@ export function GitWorktreesView({ repo, onError }: Props) {
                       className="git-toolbar-btn"
                       style={{ padding: 3 }}
                       onClick={(e) => openActionMenu(wt, e)}
-                      title="Worktree actions"
+                      title={t("worktrees.actionsTitle")}
                     >
                       <MoreHorizontal size={14} />
                     </button>

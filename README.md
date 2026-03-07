@@ -140,6 +140,15 @@ cargo clippy
 | `~/.agent-workspace/workspaces.db` | SQLite database |
 | `~/.agent-workspace/logs` | App log directory |
 
+### Localization
+
+User-facing frontend copy is localized with `i18next`/`react-i18next`. Treat i18n as part of the implementation of every new feature, not as cleanup work after the UI is already built.
+
+- Do not ship new visible UI strings hardcoded in components, dialogs, menus, toasts, or empty states
+- Add or update translation keys in both `src/i18n/resources/en/` and `src/i18n/resources/pt-BR/`
+- Reuse the existing namespace structure whenever possible and keep keys aligned across locales
+- Keep the i18n resource test passing when copy changes
+
 ## Architecture
 
 Panes uses a React + Zustand frontend running inside a Tauri shell, with a Rust backend that owns persistence, engine orchestration, git operations, terminal management, and filesystem-safe file access.
@@ -168,8 +177,9 @@ Contributions are welcome.
 1. Fork the repo
 2. Create your branch
 3. Make the change
-4. Run the relevant checks
-5. Open a pull request
+4. If the change adds or edits user-facing copy, update both locale resource sets as part of the same change
+5. Run the relevant checks
+6. Open a pull request
 
 ## License
 
