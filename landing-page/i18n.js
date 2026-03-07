@@ -70,7 +70,7 @@
       },
       integrations: {
         ariaLabel: "Supported integrations",
-        label: "Works with every agent",
+        label: "Works with your favorite agents",
       },
       story: {
         anyAgentTitle: "Talk to any agent.",
@@ -115,15 +115,15 @@
       meta: {
         title: "Panes | O Agent Development Environment",
         description:
-          "Seus agents escrevem o código. Você precisa de um cockpit. Chat, terminal, git e aprovações em uma janela nativa. Agnóstico de engine, open source, feito em Rust.",
+          "Os agentes escrevem o código. Você precisa de um cockpit. Chat, terminal, git e aprovações numa janela nativa. Funciona com qualquer engine, open source, feito em Rust.",
       },
       common: {
         skipToContent: "Ir para o conteúdo principal",
         languageSelector: "Seletor de idioma",
-        toggleMenu: "Alternar menu de navegação",
+        toggleMenu: "Abrir menu",
         downloadMac: "Baixar para macOS",
         downloadLinux: "Baixar para Linux",
-        features: "Recursos",
+        features: "Produto",
         integrations: "Integrações",
         download: "Baixar",
         product: "Produto",
@@ -145,60 +145,60 @@
       hero: {
         ariaLabel: "Introdução",
         titleHtml:
-          "Seus agents escrevem o código.<br><span class=\"hero-title-dim\">Você precisa de um cockpit.</span>",
+          "Os agentes escrevem o código.<br><span class=\"hero-title-dim\">Você precisa de um cockpit.</span>",
         subtitleHtml:
-          "Chat, terminal, git e aprovações em uma janela nativa.<br>Agnóstico de engine, open source, feito para a era dos agents.",
+          "Chat, terminal, git e aprovações numa janela nativa.<br>Qualquer engine, open source, feito pra era dos agentes.",
       },
       mock: {
         projects: "Projetos",
         primaryThread: "Refatorar integração Git",
         secondaryThread: "Adicionar tokens de dark mode",
-        heroPrompt: "Adicione tratamento de erro ao comando de git push com lógica de retry.",
+        heroPrompt: "Adiciona tratamento de erro no git push com lógica de retry.",
         followUpHtml:
-          "Peça ajustes adicionais<span class=\"input-cursor\"></span>",
-        unstaged: "Não preparadas (2)",
-        staged: "Preparadas (1)",
+          "Peça mais mudanças<span class=\"input-cursor\"></span>",
+        unstaged: "Unstaged (2)",
+        staged: "Staged (1)",
         commitPlaceholder: "Mensagem de commit...",
         commit: "Commit",
         reposLabel: "Projetos",
         broadcastTitle: "Multi-launch",
-        broadcastInput: "Transmitir entrada",
-        broadcastInputDescription: "Digite uma vez e envie para todos os painéis",
+        broadcastInput: "Broadcast input",
+        broadcastInputDescription: "Digita uma vez, manda pra todos",
         gitWorktrees: "Git worktrees",
-        gitWorktreesDescription: "Cada agent recebe sua própria branch",
+        gitWorktreesDescription: "Cada agente na sua própria branch",
         launchThree: "Abrir 3",
-        startupPreset: "Preset de inicialização",
-        startupSubtitle: "Configure o que acontece quando você abre este workspace",
-        defaultView: "Visualização padrão",
+        startupPreset: "Preset de startup",
+        startupSubtitle: "Configure o que acontece ao abrir esse workspace",
+        defaultView: "View padrão",
         twoPanes: "2 painéis",
         onePane: "1 painel",
         broadcast: "broadcast",
       },
       integrations: {
         ariaLabel: "Integrações suportadas",
-        label: "Funciona com qualquer agent",
+        label: "Funciona com seus agentes preferidos",
       },
       story: {
-        anyAgentTitle: "Converse com qualquer agent.",
+        anyAgentTitle: "Fale com qualquer agente.",
         anyAgentBody:
-          "Chat nativo para Codex e Claude através dos SDKs deles. Harness de terminal embutido para agents de CLI como Gemini CLI, Factory Droid, OpenCode e mais. Escolha a engine certa para a tarefa e siga.",
+          "Chat nativo pra Codex e Claude via SDK. Terminal integrado pra agentes de CLI como Gemini CLI, Factory Droid, OpenCode e outros. Escolhe a engine certa e vai.",
         gitTitle: "Git sem alt-tab.",
         gitBody:
-          "Revise diffs, prepare alterações e faça commit direto da saída do agent. Agents criam branch, fazem stash e push. Você aprova com contexto completo.",
+          "Revise diffs, stage mudanças e commite direto do output do agente. Agentes criam branch, stash e push. Você aprova com contexto completo.",
         workspaceTitle: "Todo repo, um workspace.",
         workspaceBody:
-          "Abra qualquer pasta e detecte automaticamente repositórios Git aninhados. Gerencie monorepos e arquiteturas com vários serviços com threads de chat por repo e contexto.",
-        raceTitle: "Coloque agents lado a lado.",
+          "Abre qualquer pasta, detecta repos Git automaticamente. Monorepos, multi-serviço — cada repo tem sua thread de chat com contexto próprio.",
+        raceTitle: "Rode agentes lado a lado.",
         raceBody:
-          "Abra vários agents de CLI em painéis divididos. Envie o mesmo prompt para todos ao mesmo tempo. Opcionalmente, dê a cada agent sua própria git worktree para que nunca colidam.",
-        startupTitle: "Seu workspace pronto ao abrir.",
+          "Abre vários agentes de CLI em split panes. Manda o mesmo prompt pra todos de uma vez. Cada agente pode ter sua própria worktree pra não ter conflito.",
+        startupTitle: "Workspace pronto ao abrir.",
         startupBody:
-          "Configure presets de inicialização: visualização padrão, grupos de terminal, agents atribuídos, layouts divididos e modo de broadcast. Abra um projeto e tudo já estará preparado.",
+          "Configure presets de startup: view padrão, grupos de terminal, agentes, layouts e broadcast. Abriu o projeto, tá tudo pronto.",
       },
       manifesto: {
         ariaLabel: "Filosofia do produto",
         textHtml:
-          "IDEs foram feitas para escrever código. Mas agora você não escreve tudo sozinho. Você orquestra, revisa e aprova. <strong>Panes é o cockpit para esse fluxo.</strong>",
+          "IDEs foram feitas pra escrever código. Mas você não escreve mais. Você orquestra, revisa e aprova. <strong>Panes é o cockpit desse fluxo.</strong>",
         orchestrate: "orquestrar",
         review: "revisar",
         approve: "aprovar",
@@ -208,9 +208,9 @@
       },
       cta: {
         ariaLabel: "Baixar",
-        title: "Comece em 30 segundos.",
+        title: "Começa em 30 segundos.",
         subtitleHtml:
-          "Baixe, abra uma pasta e comece a conversar.<br>Gratuito e open source.",
+          "Baixa, abre uma pasta e começa a usar.<br>Grátis e open source.",
       },
       footer: {
         tagline: "O Agent Development Environment open source.",
