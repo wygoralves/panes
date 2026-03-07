@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { ApprovalResponse } from "../../types";
 import {
   buildToolInputResponseFromSelections,
@@ -21,6 +22,7 @@ function buildQuestionSignature(questions: ReturnType<typeof parseToolInputQuest
 }
 
 export function ToolInputQuestionnaire({ details, onSubmit }: Props) {
+  const { t } = useTranslation("chat");
   const questions = useMemo(() => parseToolInputQuestions(details), [details]);
   const questionSignature = useMemo(() => buildQuestionSignature(questions), [questions]);
   const [selectedByQuestion, setSelectedByQuestion] = useState<Record<string, string>>(() =>
@@ -101,7 +103,7 @@ export function ToolInputQuestionnaire({ details, onSubmit }: Props) {
                 [question.id]: event.target.value,
               }))
             }
-            placeholder="Other answer (optional)"
+            placeholder={t("messageBlocks.toolInput.otherAnswerPlaceholder")}
             style={{
               marginTop: 8,
               width: "100%",
@@ -131,10 +133,9 @@ export function ToolInputQuestionnaire({ details, onSubmit }: Props) {
           }
           style={{ padding: "6px 12px", fontSize: 12, cursor: "pointer" }}
         >
-          Send answers
+          {t("messageBlocks.toolInput.sendAnswers")}
         </button>
       </div>
     </div>
   );
 }
-
