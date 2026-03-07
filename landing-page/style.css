@@ -536,6 +536,15 @@ button:focus-visible {
   transition: background 0.15s, color 0.15s;
 }
 
+.lm-btn[data-view] {
+  cursor: pointer;
+}
+
+.lm-btn[data-view]:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-2);
+}
+
 .lm-btn .icon { width: 12px; height: 12px; }
 
 .lm-btn:not(:last-child) {
@@ -552,6 +561,181 @@ button:focus-visible {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* ── View Switching ── */
+.mockup-views {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.mockup-view {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.mockup-view.mockup-view-active {
+  display: flex;
+}
+
+.content-card:not([data-active-view="split"]) .git-panel {
+  display: none;
+}
+
+/* Chat-only view */
+.mockup-view[data-view="chat"] .chat-panel {
+  flex: 1;
+}
+
+.mockup-view[data-view="chat"] .v-input-box {
+  margin: 0;
+}
+
+/* Terminal quad view */
+.mv-term-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.mv-broadcast-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+
+.mv-term-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.mv-term-pane {
+  background: var(--bg-terminal);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.mv-term-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 10px;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+  flex-shrink: 0;
+}
+
+.mv-term-pane-header .mv-agent-name {
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.mv-term-pane-header .mv-wt-badge {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 1px 6px;
+  border-radius: 99px;
+}
+
+.mv-term-pane-body {
+  flex: 1;
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--text-term);
+  overflow: hidden;
+}
+
+/* Editor view */
+.mv-editor-tabs {
+  display: flex;
+  align-items: flex-end;
+  height: 34px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  padding-left: 8px;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
+.mv-editor-tab {
+  height: 26px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 5px 5px 0 0;
+}
+
+.mv-editor-tab:not(.active) {
+  opacity: 0.55;
+}
+
+.mv-editor-tab.active {
+  height: 28px;
+  color: var(--text-2);
+  background: var(--bg-code);
+  border-top: 2px solid var(--accent);
+  margin-bottom: -1px;
+  z-index: 2;
+}
+
+.mv-editor-body {
+  flex: 1;
+  background: var(--bg-code);
+  padding: 12px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-code);
+  overflow: hidden;
+}
+
+.mv-editor-line {
+  display: flex;
+  padding: 0 16px;
+}
+
+.mv-editor-ln {
+  width: 28px;
+  text-align: right;
+  color: var(--text-3);
+  opacity: 0.4;
+  user-select: none;
+  flex-shrink: 0;
+  margin-right: 16px;
 }
 
 /* Chat */
@@ -2397,6 +2581,12 @@ button:focus-visible {
   animation: msg-in 0.5s var(--ease-out-expo) 0.75s forwards;
 }
 
+/* v-input-box inside mockup boots alongside input-card */
+.app-frame .v-input-box {
+  opacity: 0;
+  animation: msg-in 0.5s var(--ease-out-expo) 0.75s forwards;
+}
+
 
 /* ══════════════════════════════════════════════════
    Responsive
@@ -2514,7 +2704,8 @@ button:focus-visible {
     opacity: 1;
   }
 
-  .input-card {
+  .input-card,
+  .app-frame .v-input-box {
     opacity: 1;
   }
 }
