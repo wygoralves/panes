@@ -25,8 +25,6 @@ import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag
 import { UpdateDialog } from "../onboarding/UpdateDialog";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { WorkspaceMoreMenu } from "../workspace/WorkspaceMoreMenu";
-import { WorkspaceSettingsModal } from "../workspace/WorkspaceSettingsModal";
-import { WorkspaceStartupPresetModal } from "../workspace/WorkspaceStartupPresetModal";
 import type { Thread, Workspace } from "../../types";
 
 function relativeTime(dateStr: string): string {
@@ -96,6 +94,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const toggleSidebarPin = useUiStore((state) => state.toggleSidebarPin);
   const activeView = useUiStore((state) => state.activeView);
   const setActiveView = useUiStore((state) => state.setActiveView);
+  const openWorkspaceSettings = useUiStore((state) => state.openWorkspaceSettings);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
   const updateStatus = useUpdateStore((s) => s.status);
   const updateSnoozed = useUpdateStore((s) => s.snoozed);
@@ -120,8 +119,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const [archiveThreadPrompt, setArchiveThreadPrompt] = useState<{
     thread: Thread;
   } | null>(null);
-  const [startupPresetWorkspaceId, setStartupPresetWorkspaceId] = useState<string | null>(null);
-  const [settingsWorkspaceId, setSettingsWorkspaceId] = useState<string | null>(null);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [settingsMenuPos, setSettingsMenuPos] = useState({ top: 0, left: 0 });
   const settingsMenuRef = useRef<HTMLDivElement>(null);
@@ -249,22 +246,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   async function onRestoreThread(thread: Thread) {
     await restoreThread(thread.id);
   }
-
-  const startupPresetWorkspace = useMemo(
-    () =>
-      startupPresetWorkspaceId
-        ? workspaces.find((workspace) => workspace.id === startupPresetWorkspaceId) ?? null
-        : null,
-    [startupPresetWorkspaceId, workspaces],
-  );
-
-  const settingsWorkspace = useMemo(
-    () =>
-      settingsWorkspaceId
-        ? workspaces.find((workspace) => workspace.id === settingsWorkspaceId) ?? null
-        : null,
-    [settingsWorkspaceId, workspaces],
-  );
 
   return (
     <div
@@ -421,8 +402,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
 
                   <WorkspaceMoreMenu
                     workspace={project.workspace}
-                    onOpenSettings={() => setSettingsWorkspaceId(project.workspace.id)}
-                    onOpenStartupPreset={() => setStartupPresetWorkspaceId(project.workspace.id)}
+                    onOpenSettings={() => openWorkspaceSettings(project.workspace.id)}
                     onArchive={() => onDeleteWorkspace(project.workspace)}
                   />
                 </button>
@@ -682,26 +662,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             if (archiveThreadPrompt) void executeArchiveThread(archiveThreadPrompt.thread);
           }}
           onCancel={() => setArchiveThreadPrompt(null)}
-        />,
-        document.body,
-      )}
-
-      {settingsWorkspace && (
-        <WorkspaceSettingsModal
-          workspace={settingsWorkspace}
-          onClose={() => setSettingsWorkspaceId(null)}
-          onOpenStartupPreset={() => {
-            setSettingsWorkspaceId(null);
-            setStartupPresetWorkspaceId(settingsWorkspace.id);
-          }}
-        />
-      )}
-
-      {startupPresetWorkspace && createPortal(
-        <WorkspaceStartupPresetModal
-          open={startupPresetWorkspace !== null}
-          workspace={startupPresetWorkspace}
-          onClose={() => setStartupPresetWorkspaceId(null)}
         />,
         document.body,
       )}

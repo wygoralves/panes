@@ -8,7 +8,7 @@ interface MessageFocusTarget {
   requestedAt: number;
 }
 
-type ActiveView = "chat" | "harnesses";
+type ActiveView = "chat" | "harnesses" | "workspace-settings";
 
 interface UiState {
   showSidebar: boolean;
@@ -16,6 +16,7 @@ interface UiState {
   showGitPanel: boolean;
   searchOpen: boolean;
   activeView: ActiveView;
+  settingsWorkspaceId: string | null;
   commandPaletteOpen: boolean;
   commandPaletteInitialQuery: string | null;
   messageFocusTarget: MessageFocusTarget | null;
@@ -28,6 +29,7 @@ interface UiState {
   toggleGitPanel: () => void;
   setSearchOpen: (open: boolean) => void;
   setActiveView: (view: ActiveView) => void;
+  openWorkspaceSettings: (workspaceId: string) => void;
   setMessageFocusTarget: (target: { threadId: string; messageId: string }) => void;
   clearMessageFocusTarget: () => void;
 }
@@ -42,6 +44,7 @@ export const useUiStore = create<UiState>((set) => ({
   commandPaletteOpen: false,
   commandPaletteInitialQuery: null,
   activeView: "chat",
+  settingsWorkspaceId: null,
   messageFocusTarget: null,
   openCommandPalette: () => set({ commandPaletteOpen: true, commandPaletteInitialQuery: null }),
   openCommandPaletteWithQuery: (query) => set({ commandPaletteOpen: true, commandPaletteInitialQuery: query }),
@@ -67,6 +70,9 @@ export const useUiStore = create<UiState>((set) => ({
         void useHarnessStore.getState().scan();
       });
     }
+  },
+  openWorkspaceSettings: (workspaceId) => {
+    set({ activeView: "workspace-settings", settingsWorkspaceId: workspaceId });
   },
   setMessageFocusTarget: (target) =>
     set({

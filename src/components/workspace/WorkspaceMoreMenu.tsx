@@ -5,7 +5,6 @@ import {
   FolderOpen,
   MoreHorizontal,
   Settings2,
-  Terminal,
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-shell";
 import type { Workspace } from "../../types";
@@ -13,14 +12,12 @@ import type { Workspace } from "../../types";
 interface WorkspaceMoreMenuProps {
   workspace: Workspace;
   onOpenSettings: () => void;
-  onOpenStartupPreset: () => void;
   onArchive: () => void;
 }
 
 export function WorkspaceMoreMenu({
   workspace,
   onOpenSettings,
-  onOpenStartupPreset,
   onArchive,
 }: WorkspaceMoreMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -106,15 +103,6 @@ export function WorkspaceMoreMenu({
               <Settings2 size={13} />
               Workspace settings
             </button>
-            <button
-              type="button"
-              className="git-action-menu-item"
-              onClick={() => handleItem(onOpenStartupPreset)}
-            >
-              <Terminal size={13} />
-              Startup presets
-            </button>
-            <div style={{ height: 1, margin: "4px 0", background: "var(--border)" }} />
             <button
               type="button"
               className="git-action-menu-item"

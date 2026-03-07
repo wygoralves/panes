@@ -3,6 +3,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { Sidebar } from "../sidebar/Sidebar";
 import { ChatPanel } from "../chat/ChatPanel";
 import { HarnessPanel } from "../onboarding/HarnessPanel";
+import { WorkspaceSettingsPage } from "../workspace/WorkspaceSettingsPage";
 import { GitPanel } from "../git/GitPanel";
 import { useUiStore } from "../../stores/uiStore";
 
@@ -91,7 +92,13 @@ export function ThreeColumnLayout() {
         >
           <Panel defaultSize={centerDefaultSize} minSize={35}>
             <div className="content-panel" style={{ height: "100%" }}>
-              {activeView === "harnesses" ? <HarnessPanel /> : <ChatPanel />}
+              {activeView === "harnesses" ? (
+                <HarnessPanel />
+              ) : activeView === "workspace-settings" ? (
+                <WorkspaceSettingsPage />
+              ) : (
+                <ChatPanel />
+              )}
             </div>
           </Panel>
 

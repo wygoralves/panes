@@ -5,8 +5,8 @@ import {
   FolderOpen,
   GitBranch,
   Info,
+  Play,
   RefreshCw,
-  Terminal,
   X,
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-shell";
@@ -14,9 +14,10 @@ import { ipc } from "../../lib/ipc";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { toast } from "../../stores/toastStore";
 import { Dropdown } from "../shared/Dropdown";
+import { WorkspaceStartupSection } from "./WorkspaceStartupSection";
 import type { Repo, TrustLevel, Workspace } from "../../types";
 
-type Section = "general" | "repos";
+type Section = "general" | "repos" | "startup";
 
 const MIN_SCAN_DEPTH = 0;
 const MAX_SCAN_DEPTH = 12;
@@ -30,13 +31,11 @@ const TRUST_OPTIONS = [
 interface WorkspaceSettingsModalProps {
   workspace: Workspace;
   onClose: () => void;
-  onOpenStartupPreset: () => void;
 }
 
 export function WorkspaceSettingsModal({
   workspace,
   onClose,
-  onOpenStartupPreset,
 }: WorkspaceSettingsModalProps) {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
@@ -227,6 +226,14 @@ export function WorkspaceSettingsModal({
             <GitBranch size={13} className="ws-nav-icon" />
             Repositories
           </button>
+          <button
+            type="button"
+            className={`ws-nav-item ${section === "startup" ? "ws-nav-item-active" : ""}`}
+            onClick={() => setSection("startup")}
+          >
+            <Play size={13} className="ws-nav-icon" />
+            Startup
+          </button>
         </div>
 
         <div className="ws-divider" />
@@ -397,24 +404,20 @@ export function WorkspaceSettingsModal({
               )}
             </>
           )}
+
+          {section === "startup" && (
+            <WorkspaceStartupSection workspace={currentWorkspace} />
+          )}
         </div>
 
-        {/* Footer */}
-        <div className="ws-footer">
-          <span className="ws-footer-meta">
-            {repos.length} {repos.length === 1 ? "repo" : "repos"}
-          </span>
-          <div className="ws-footer-actions">
-            <button
-              type="button"
-              className="ws-prop-btn"
-              onClick={() => { close(); onOpenStartupPreset(); }}
-            >
-              <Terminal size={11} />
-              Startup Presets
-            </button>
+        {/* Footer — only for general/repos tabs */}
+        {section !== "startup" && (
+          <div className="ws-footer">
+            <span className="ws-footer-meta">
+              {repos.length} {repos.length === 1 ? "repo" : "repos"}
+            </span>
           </div>
-        </div>
+        )}
       </div>
     </div>,
     document.body,
