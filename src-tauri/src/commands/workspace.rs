@@ -8,14 +8,13 @@ use crate::{
     },
     state::AppState,
     workspace_startup::{
-        normalize_workspace_startup_preset as normalize_preset, parse_workspace_startup_preset_raw,
-        parse_persisted_workspace_startup_preset_json,
+        normalize_workspace_startup_preset as normalize_preset,
+        parse_persisted_workspace_startup_preset_json, parse_workspace_startup_preset_raw,
         resolve_workspace_path, serialize_workspace_startup_preset as serialize_preset,
         WorkspaceStartupPreset, WorkspaceStartupPresetFormat,
     },
 };
 
-const DEFAULT_SCAN_DEPTH: i64 = 3;
 const MIN_SCAN_DEPTH: i64 = 0;
 const MAX_SCAN_DEPTH: i64 = 12;
 
@@ -41,6 +40,11 @@ pub async fn open_workspace(
         let workspace = db::workspaces::upsert_workspace(db, &path, scan_depth)?;
         let repos =
             multi_repo::scan_git_repositories(&workspace.root_path, workspace.scan_depth as usize)?;
+        let repo_paths = repos
+            .iter()
+            .map(|repo| repo.path.clone())
+            .collect::<Vec<_>>();
+        db::repos::reconcile_workspace_repos(db, &workspace.id, &repo_paths)?;
         let selection_configured =
             db::workspaces::is_git_repo_selection_configured(db, &workspace.id)?;
 
@@ -323,8 +327,6 @@ fn load_workspace(db: &crate::db::Database, workspace_id: &str) -> anyhow::Resul
         .ok_or_else(|| anyhow::anyhow!("workspace not found: {workspace_id}"))
 }
 
-fn normalize_scan_depth(value: Option<i64>) -> i64 {
-    value
-        .unwrap_or(DEFAULT_SCAN_DEPTH)
-        .clamp(MIN_SCAN_DEPTH, MAX_SCAN_DEPTH)
+fn normalize_scan_depth(value: Option<i64>) -> Option<i64> {
+    value.map(|depth| depth.clamp(MIN_SCAN_DEPTH, MAX_SCAN_DEPTH))
 }

@@ -4,6 +4,7 @@ import type { Repo, Workspace } from "../types";
 const mockIpc = vi.hoisted(() => ({
   archiveWorkspace: vi.fn(),
   getRepos: vi.fn(),
+  openWorkspace: vi.fn(),
 }));
 
 const mockTerminalStoreState = vi.hoisted(() => ({
@@ -79,6 +80,10 @@ describe("workspaceStore.removeWorkspace", () => {
 
     mockIpc.archiveWorkspace.mockResolvedValue(undefined);
     mockIpc.getRepos.mockResolvedValue([]);
+    mockIpc.openWorkspace.mockImplementation(async (path: string, scanDepth?: number) => ({
+      ...makeWorkspace(path, path),
+      scanDepth: scanDepth ?? 3,
+    }));
     mockTerminalStoreState.prepareWorkspaceActivation.mockResolvedValue(undefined);
   });
 
@@ -106,5 +111,93 @@ describe("workspaceStore.removeWorkspace", () => {
     expect(mockIpc.getRepos).toHaveBeenCalledWith(workspaceB.id);
     expect(useWorkspaceStore.getState().activeWorkspaceId).toBe(workspaceB.id);
     expect(useWorkspaceStore.getState().repos).toEqual([repoB]);
+  });
+});
+
+describe("workspaceStore.rescanWorkspace", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+    });
+
+    useWorkspaceStore.setState({
+      workspaces: [],
+      archivedWorkspaces: [],
+      activeWorkspaceId: null,
+      repos: [],
+      activeRepoId: null,
+      reposLoading: false,
+      loading: false,
+      error: undefined,
+    });
+
+    mockIpc.getRepos.mockResolvedValue([]);
+    mockTerminalStoreState.prepareWorkspaceActivation.mockResolvedValue(undefined);
+  });
+
+  it("updates the workspace scan depth without switching the active workspace", async () => {
+    const activeWorkspace = makeWorkspace("ws-active", "/workspace/active");
+    const targetWorkspace = makeWorkspace("ws-target", "/workspace/target");
+    const updatedTargetWorkspace = {
+      ...targetWorkspace,
+      scanDepth: 7,
+      lastOpenedAt: new Date(1_000).toISOString(),
+    };
+
+    mockIpc.openWorkspace.mockResolvedValue(updatedTargetWorkspace);
+
+    useWorkspaceStore.setState({
+      workspaces: [activeWorkspace, targetWorkspace],
+      archivedWorkspaces: [],
+      activeWorkspaceId: activeWorkspace.id,
+      repos: [],
+      activeRepoId: null,
+      reposLoading: false,
+      loading: false,
+      error: undefined,
+    });
+
+    const result = await useWorkspaceStore.getState().rescanWorkspace(targetWorkspace.id, 7);
+
+    expect(mockIpc.openWorkspace).toHaveBeenCalledWith(targetWorkspace.rootPath, 7);
+    expect(mockIpc.getRepos).not.toHaveBeenCalled();
+    expect(result).toEqual(updatedTargetWorkspace);
+    expect(useWorkspaceStore.getState().activeWorkspaceId).toBe(activeWorkspace.id);
+    expect(useWorkspaceStore.getState().workspaces[0]).toEqual(updatedTargetWorkspace);
+  });
+
+  it("reloads repos when rescanning the active workspace", async () => {
+    const workspace = makeWorkspace("ws-active", "/workspace/active");
+    const updatedWorkspace = {
+      ...workspace,
+      scanDepth: 5,
+    };
+    const repos = [makeRepo("repo-a", workspace.id, "/workspace/active/repo-a")];
+
+    mockIpc.openWorkspace.mockResolvedValue(updatedWorkspace);
+    mockIpc.getRepos.mockResolvedValue(repos);
+
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      archivedWorkspaces: [],
+      activeWorkspaceId: workspace.id,
+      repos: [],
+      activeRepoId: null,
+      reposLoading: false,
+      loading: false,
+      error: undefined,
+    });
+
+    const result = await useWorkspaceStore.getState().rescanWorkspace(workspace.id, 5);
+
+    expect(mockIpc.openWorkspace).toHaveBeenCalledWith(workspace.rootPath, 5);
+    expect(mockIpc.getRepos).toHaveBeenCalledWith(workspace.id);
+    expect(result).toEqual(updatedWorkspace);
+    expect(useWorkspaceStore.getState().repos).toEqual(repos);
+    expect(useWorkspaceStore.getState().workspaces[0]).toEqual(updatedWorkspace);
   });
 });

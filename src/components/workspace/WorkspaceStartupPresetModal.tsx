@@ -15,6 +15,7 @@ import { ipc } from "../../lib/ipc";
 import { useHarnessStore } from "../../stores/harnessStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
+import { Dropdown } from "../shared/Dropdown";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import type {
   Workspace,
@@ -269,12 +270,14 @@ function StartupSplitNodeEditor({
     <div className="workspace-preset-tree-node">
       <div className="workspace-preset-inline-row">
         <span className="workspace-preset-tree-label">{label}</span>
-        <select
-          className="git-inline-input"
-          style={{ width: 140 }}
+        <Dropdown
           value={node.type}
-          onChange={(event) => {
-            const nextType = event.target.value as WorkspaceStartupSplitNode["type"];
+          options={[
+            { value: "leaf", label: "Leaf" },
+            { value: "split", label: "Split" },
+          ]}
+          triggerStyle={{ borderRadius: "var(--radius-sm)", minWidth: 120 }}
+          onChange={(nextType) => {
             if (nextType === node.type) {
               return;
             }
@@ -305,46 +308,38 @@ function StartupSplitNodeEditor({
               ],
             });
           }}
-        >
-          <option value="leaf">Leaf</option>
-          <option value="split">Split</option>
-        </select>
+        />
       </div>
 
       {node.type === "leaf" ? (
-        <select
-          className="git-inline-input"
+        <Dropdown
           value={node.sessionId}
-          onChange={(event) =>
+          options={sessionIds.map((sid) => ({ value: sid, label: sid }))}
+          triggerStyle={{ borderRadius: "var(--radius-sm)" }}
+          onChange={(sid) =>
             onChange({
               type: "leaf",
-              sessionId: event.target.value,
+              sessionId: sid,
             })
           }
-        >
-          {sessionIds.map((sessionId) => (
-            <option key={sessionId} value={sessionId}>
-              {sessionId}
-            </option>
-          ))}
-        </select>
+        />
       ) : (
         <>
           <div className="workspace-preset-inline-row">
-            <select
-              className="git-inline-input"
-              style={{ width: 160 }}
+            <Dropdown
               value={node.direction}
-              onChange={(event) =>
+              options={[
+                { value: "vertical", label: "Vertical split" },
+                { value: "horizontal", label: "Horizontal split" },
+              ]}
+              triggerStyle={{ borderRadius: "var(--radius-sm)", minWidth: 140 }}
+              onChange={(dir) =>
                 onChange({
                   ...node,
-                  direction: event.target.value as "horizontal" | "vertical",
+                  direction: dir as "horizontal" | "vertical",
                 })
               }
-            >
-              <option value="vertical">Vertical split</option>
-              <option value="horizontal">Horizontal split</option>
-            </select>
+            />
             <input
               className="git-inline-input"
               style={{ width: 96 }}
@@ -958,7 +953,14 @@ export function WorkspaceStartupPresetModal({
   }
 
   return (
-    <div className="confirm-dialog-backdrop" onMouseDown={onClose}>
+    <div
+      className="confirm-dialog-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
       <div className="workspace-preset-modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="workspace-preset-header">
           <div className="workspace-preset-header-copy">
@@ -997,18 +999,18 @@ export function WorkspaceStartupPresetModal({
 
           <div className="workspace-preset-toolbar-actions">
             {editorMode === "advanced" && (
-              <select
-                className="git-inline-input"
-                style={{ width: 92 }}
+              <Dropdown
                 value={advancedFormat}
+                options={[
+                  { value: "json", label: "JSON" },
+                  { value: "toml", label: "TOML" },
+                ]}
                 disabled={controlsDisabled}
-                onChange={(event) =>
-                  void handleAdvancedFormatChange(event.target.value as WorkspaceStartupPresetFormat)
+                triggerStyle={{ borderRadius: "var(--radius-sm)", minWidth: 80 }}
+                onChange={(v) =>
+                  void handleAdvancedFormatChange(v as WorkspaceStartupPresetFormat)
                 }
-              >
-                <option value="json">JSON</option>
-                <option value="toml">TOML</option>
-              </select>
+              />
             )}
             <button type="button" className="btn btn-ghost" onClick={() => void handleImport()} disabled={controlsDisabled}>
               <Upload size={12} />
@@ -1044,19 +1046,17 @@ export function WorkspaceStartupPresetModal({
                 <div className="workspace-preset-grid">
                   <label className="workspace-preset-field">
                     <span>Default view</span>
-                    <select
-                      className="git-inline-input"
+                    <Dropdown
                       value={builderDraft.defaultView}
-                      onChange={(event) =>
-                        handleDefaultViewChange(event.target.value as WorkspaceDefaultView)
+                      options={VIEW_OPTIONS.map((v) => ({
+                        value: v,
+                        label: v.charAt(0).toUpperCase() + v.slice(1),
+                      }))}
+                      triggerStyle={{ borderRadius: "var(--radius-sm)" }}
+                      onChange={(v) =>
+                        handleDefaultViewChange(v as WorkspaceDefaultView)
                       }
-                    >
-                      {VIEW_OPTIONS.map((view) => (
-                        <option key={view} value={view}>
-                          {view}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   </label>
                   <label className="workspace-preset-field">
                     <span>Split panel size</span>
@@ -1101,33 +1101,29 @@ export function WorkspaceStartupPresetModal({
                     <div className="workspace-preset-grid">
                       <label className="workspace-preset-field">
                         <span>Active tab on start</span>
-                        <select
-                          className="git-inline-input"
+                        <Dropdown
                           value={terminalDraft.activeGroupId ?? ""}
-                          onChange={(event) => setActiveGroupId(event.target.value)}
-                        >
-                          {terminalDraft.groups.map((group) => (
-                            <option key={group.id} value={group.id}>
-                              {group.name}
-                            </option>
-                          ))}
-                        </select>
+                          options={terminalDraft.groups.map((group) => ({
+                            value: group.id,
+                            label: group.name,
+                          }))}
+                          triggerStyle={{ borderRadius: "var(--radius-sm)" }}
+                          onChange={(v) => setActiveGroupId(v)}
+                        />
                       </label>
                       <label className="workspace-preset-field">
                         <span>Focused pane on start</span>
-                        <select
-                          className="git-inline-input"
+                        <Dropdown
                           value={terminalDraft.focusedSessionId ?? ""}
-                          onChange={(event) => setFocusedSessionId(event.target.value)}
-                        >
-                          {terminalDraft.groups.flatMap((group) =>
-                            group.sessions.map((session) => (
-                              <option key={`${group.id}:${session.id}`} value={session.id}>
-                                {group.name} / {session.id}
-                              </option>
-                            )),
+                          options={terminalDraft.groups.flatMap((group) =>
+                            group.sessions.map((session) => ({
+                              value: session.id,
+                              label: `${group.name} / ${session.title ?? session.id}`,
+                            })),
                           )}
-                        </select>
+                          triggerStyle={{ borderRadius: "var(--radius-sm)" }}
+                          onChange={(v) => setFocusedSessionId(v)}
+                        />
                       </label>
                     </div>
 
@@ -1238,23 +1234,24 @@ export function WorkspaceStartupPresetModal({
                                 <>
                                   <label className="workspace-preset-field">
                                     <span>Repo mode</span>
-                                    <select
-                                      className="git-inline-input"
+                                    <Dropdown
                                       value={worktree.repoMode}
-                                      onChange={(event) =>
+                                      options={[
+                                        { value: "active_repo", label: "Active repo" },
+                                        { value: "fixed_repo", label: "Fixed repo" },
+                                      ]}
+                                      triggerStyle={{ borderRadius: "var(--radius-sm)" }}
+                                      onChange={(v) =>
                                         updateGroup(group.id, (currentGroup) => ({
                                           ...currentGroup,
                                           worktree: {
                                             ...(currentGroup.worktree ?? worktree),
                                             enabled: true,
-                                            repoMode: event.target.value as "active_repo" | "fixed_repo",
+                                            repoMode: v as "active_repo" | "fixed_repo",
                                           },
                                         }))
                                       }
-                                    >
-                                      <option value="active_repo">Active repo</option>
-                                      <option value="fixed_repo">Fixed repo</option>
-                                    </select>
+                                    />
                                   </label>
                                   {worktree.repoMode === "fixed_repo" && (
                                     <label className="workspace-preset-field">
@@ -1385,45 +1382,43 @@ export function WorkspaceStartupPresetModal({
                                     </label>
                                     <label className="workspace-preset-field">
                                       <span>Path base</span>
-                                      <select
-                                        className="git-inline-input"
+                                      <Dropdown
                                         value={session.cwdBase ?? "workspace"}
-                                        onChange={(event) =>
+                                        options={PATH_BASE_OPTIONS.map((p) => ({
+                                          value: p,
+                                          label: p.charAt(0).toUpperCase() + p.slice(1),
+                                        }))}
+                                        triggerStyle={{ borderRadius: "var(--radius-sm)" }}
+                                        onChange={(v) =>
                                           updateSession(group.id, session.id, (currentSession) => ({
                                             ...currentSession,
-                                            cwdBase: event.target.value as WorkspacePathBase,
+                                            cwdBase: v as WorkspacePathBase,
                                           }))
                                         }
-                                      >
-                                        {PATH_BASE_OPTIONS.map((pathBase) => (
-                                          <option key={pathBase} value={pathBase}>
-                                            {pathBase}
-                                          </option>
-                                        ))}
-                                      </select>
+                                      />
                                     </label>
                                     <label className="workspace-preset-field">
                                       <span>Harness</span>
-                                      <select
-                                        className="git-inline-input"
+                                      <Dropdown
                                         value={session.harnessId ?? ""}
-                                        onChange={(event) =>
+                                        options={[
+                                          { value: "", label: "Plain terminal" },
+                                          ...installedHarnesses.map((h) => ({
+                                            value: h.id,
+                                            label: h.name,
+                                          })),
+                                        ]}
+                                        triggerStyle={{ borderRadius: "var(--radius-sm)" }}
+                                        onChange={(v) =>
                                           updateSession(group.id, session.id, (currentSession) => ({
                                             ...currentSession,
-                                            harnessId: event.target.value || null,
-                                            launchHarnessOnCreate: event.target.value
+                                            harnessId: v || null,
+                                            launchHarnessOnCreate: v
                                               ? currentSession.launchHarnessOnCreate ?? true
                                               : false,
                                           }))
                                         }
-                                      >
-                                        <option value="">Plain terminal</option>
-                                        {installedHarnesses.map((harness) => (
-                                          <option key={harness.id} value={harness.id}>
-                                            {harness.name}
-                                          </option>
-                                        ))}
-                                      </select>
+                                      />
                                     </label>
                                     <label className="workspace-preset-checkbox">
                                       <input

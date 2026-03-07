@@ -532,7 +532,7 @@ button, input, textarea, select {
 }
 
 .dropdown-menu {
-  z-index: 9999;
+  z-index: 10001;
   min-width: 160px;
   padding: 4px;
   border-radius: var(--radius-md);
@@ -2646,33 +2646,6 @@ button, input, textarea, select {
   font-style: italic;
 }
 
-/* Scan config */
-.sb-scan-config {
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--bg-2);
-  padding: 8px;
-  display: grid;
-  gap: 6px;
-  margin: 0 12px;
-}
-
-.sb-scan-input {
-  width: 100%;
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--bg-1);
-  color: var(--text-1);
-  font-size: 12px;
-  transition: border-color var(--duration-fast) var(--ease-out);
-}
-
-.sb-scan-input:focus {
-  border-color: var(--accent);
-  outline: none;
-}
-
 /* ── Chat Input ── */
 .chat-input-box {
   border-radius: var(--radius-lg);
@@ -3533,6 +3506,412 @@ button, input, textarea, select {
   .workspace-preset-apply-actions {
     flex-wrap: wrap;
   }
+}
+
+/* ── Workspace Settings ─────────────────────────────── */
+
+.ws-modal {
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--bg-2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 32px 80px rgba(0, 0, 0, 0.85),
+    0 0 0 1px rgba(255, 255, 255, 0.03);
+  animation: ws-enter 220ms var(--ease-out) both;
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes ws-enter {
+  from { opacity: 0; transform: scale(0.97) translateY(8px); }
+}
+
+/* ── Header ── */
+.ws-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 20px 0;
+  flex-shrink: 0;
+}
+
+.ws-header-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-dim);
+  border: 1px solid rgba(255, 107, 107, 0.12);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.ws-header-text {
+  flex: 1;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.ws-header-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.25;
+}
+
+.ws-header-path {
+  margin: 1px 0 0;
+  font-size: 10.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: -0.02em;
+}
+
+.ws-close {
+  padding: 4px;
+  margin: -2px -4px 0 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.ws-close:hover {
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ── Nav tabs ── */
+.ws-nav {
+  display: flex;
+  gap: 2px;
+  padding: 12px 20px 0;
+  flex-shrink: 0;
+}
+
+.ws-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.ws-nav-item:hover {
+  color: var(--text-2);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ws-nav-item-active {
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.ws-nav-icon {
+  opacity: 0.45;
+  flex-shrink: 0;
+}
+
+.ws-nav-item-active .ws-nav-icon {
+  opacity: 1;
+  color: var(--accent);
+}
+
+/* ── Divider ── */
+.ws-divider {
+  height: 1px;
+  margin: 10px 20px 0;
+  background: rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+/* ── Body ── */
+.ws-body {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 20px 20px;
+}
+
+/* ── Section ── */
+.ws-section {
+  margin-bottom: 18px;
+}
+
+.ws-section:last-child {
+  margin-bottom: 0;
+}
+
+.ws-section-label {
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-3);
+  padding-bottom: 6px;
+}
+
+/* ── Property rows ── */
+.ws-prop {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 5px 0;
+  gap: 12px;
+}
+
+.ws-prop + .ws-prop {
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.ws-prop-label {
+  width: 80px;
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.ws-prop-value {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-prop-mono {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: -0.02em;
+}
+
+.ws-prop-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.ws-prop-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.ws-prop-btn:hover {
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.ws-prop-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.ws-prop-btn:disabled:hover {
+  color: var(--text-2);
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Scan depth */
+.ws-depth-input {
+  width: 46px;
+  padding: 3px 4px;
+  font-size: 11.5px;
+  font-family: "JetBrains Mono", monospace;
+  text-align: center;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  transition: border-color var(--duration-fast) var(--ease-out),
+              box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.ws-depth-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.06);
+}
+
+/* ── Repo list ── */
+.ws-repos-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ws-repos-toolbar-count {
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-family: "JetBrains Mono", monospace;
+}
+
+.ws-repos-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.ws-repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ws-repo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.ws-repo:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ws-repo-icon {
+  flex-shrink: 0;
+}
+
+.ws-repo-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.ws-repo-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+
+.ws-repo-path {
+  font-size: 10px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: -0.02em;
+}
+
+.ws-repo-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ── Toggle ── */
+.ws-toggle {
+  position: relative;
+  width: 28px;
+  height: 16px;
+  flex-shrink: 0;
+  cursor: pointer;
+  display: inline-flex;
+}
+
+.ws-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.ws-toggle-track {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-5);
+  border-radius: 99px;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.ws-toggle input:checked + .ws-toggle-track {
+  background: var(--accent);
+}
+
+.ws-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  background: var(--text-1);
+  border-radius: 50%;
+  transition: transform var(--duration-fast) var(--ease-out);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+.ws-toggle input:checked ~ .ws-toggle-thumb {
+  transform: translateX(12px);
+}
+
+.ws-repo-empty {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+/* ── Footer ── */
+.ws-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.ws-footer-meta {
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-family: "JetBrains Mono", monospace;
+}
+
+.ws-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .git-remotes-header {

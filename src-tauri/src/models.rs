@@ -30,7 +30,7 @@ pub struct WorkspaceGitSelectionStatusDto {
     pub configured: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TrustLevelDto {
     Trusted,

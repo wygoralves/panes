@@ -8,10 +8,12 @@ use crate::models::WorkspaceDto;
 
 use super::Database;
 
+const DEFAULT_SCAN_DEPTH: i64 = 3;
+
 pub fn upsert_workspace(
     db: &Database,
     root_path: &str,
-    scan_depth: i64,
+    scan_depth: Option<i64>,
 ) -> anyhow::Result<WorkspaceDto> {
     let conn = db.connect()?;
     let canonical = Path::new(root_path)
@@ -32,7 +34,7 @@ pub fn upsert_workspace(
         conn.execute(
             "UPDATE workspaces
        SET last_opened_at = datetime('now'),
-           scan_depth = ?2,
+           scan_depth = COALESCE(?2, scan_depth),
            archived_at = NULL
        WHERE id = ?1",
             params![id, scan_depth],
@@ -41,6 +43,7 @@ pub fn upsert_workspace(
     } else {
         let id = Uuid::new_v4().to_string();
         let name = workspace_name_from_path(&canonical);
+        let scan_depth = scan_depth.unwrap_or(DEFAULT_SCAN_DEPTH);
         conn.execute(
             "INSERT INTO workspaces (id, name, root_path, scan_depth) VALUES (?1, ?2, ?3, ?4)",
             params![id, name, canonical, scan_depth],
@@ -98,7 +101,7 @@ pub fn ensure_default_workspace(db: &Database) -> anyhow::Result<WorkspaceDto> {
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
         .to_string_lossy()
         .to_string();
-    upsert_workspace(db, &cwd, 3)
+    upsert_workspace(db, &cwd, None)
 }
 
 pub fn delete_workspace(db: &Database, workspace_id: &str) -> anyhow::Result<()> {
@@ -299,4 +302,46 @@ fn map_workspace_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkspaceDto> 
         created_at: row.get(4)?,
         last_opened_at: row.get(5)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        sync::{Arc, Mutex},
+    };
+
+    use uuid::Uuid;
+
+    use crate::db::{ConnectionPool, SQLITE_POOL_MAX_IDLE};
+
+    use super::*;
+
+    fn test_db() -> Database {
+        let path = std::env::temp_dir().join(format!("panes-workspaces-{}.db", Uuid::new_v4()));
+        let db = Database {
+            path,
+            pool: Arc::new(ConnectionPool {
+                idle: Mutex::new(Vec::new()),
+                max_idle: SQLITE_POOL_MAX_IDLE,
+            }),
+        };
+        db.run_migrations().expect("failed to run test migrations");
+        db
+    }
+
+    #[test]
+    fn upsert_workspace_preserves_existing_scan_depth_when_none_is_provided() {
+        let db = test_db();
+        let root = std::env::temp_dir().join(format!("panes-workspace-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("failed to create temp workspace root");
+        let root = root.to_string_lossy().to_string();
+
+        let created = upsert_workspace(&db, &root, Some(7)).expect("failed to create workspace");
+        let reopened =
+            upsert_workspace(&db, &root, None).expect("failed to reopen workspace without depth");
+
+        assert_eq!(created.id, reopened.id);
+        assert_eq!(reopened.scan_depth, 7);
+    }
 }
