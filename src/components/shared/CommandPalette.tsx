@@ -269,7 +269,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.gitFetch"),
     icon: RefreshCw,
     group: "git",
-    keywords: ["fetch", "remote", "sync"],
+    keywords: ["fetch", "remote", "sync", "buscar", "sincronizar"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: async ({ activeRepoPath, close }) => {
       close();
@@ -287,7 +287,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.gitPull"),
     icon: ArrowDownToLine,
     group: "git",
-    keywords: ["pull", "download", "sync"],
+    keywords: ["pull", "download", "sync", "baixar", "sincronizar"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: async ({ activeRepoPath, close }) => {
       close();
@@ -305,7 +305,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.gitPush"),
     icon: ArrowUpFromLine,
     group: "git",
-    keywords: ["push", "upload", "remote"],
+    keywords: ["push", "upload", "remote", "enviar", "publicar"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: async ({ activeRepoPath, close }) => {
       close();
@@ -323,7 +323,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.checkoutBranch"),
     icon: GitBranchIcon,
     group: "git",
-    keywords: ["checkout", "switch", "branch"],
+    keywords: ["checkout", "switch", "branch", "trocar", "mudar"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: ({ openSubFlow }) => {
       openSubFlow({ type: "checkout-branch", query: "", branches: [], loading: true });
@@ -334,7 +334,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.createBranch"),
     icon: GitBranchPlus,
     group: "git",
-    keywords: ["create", "new", "branch"],
+    keywords: ["create", "new", "branch", "criar", "nova"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: ({ openSubFlow }) => {
       openSubFlow({ type: "create-branch", value: "" });
@@ -345,7 +345,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.commitStaged"),
     icon: GitCommitHorizontal,
     group: "git",
-    keywords: ["commit", "save", "staged"],
+    keywords: ["commit", "save", "staged", "preparado", "salvar"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: ({ openSubFlow }) => {
       openSubFlow({ type: "commit", value: "" });
@@ -356,7 +356,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.stashChanges"),
     icon: Archive,
     group: "git",
-    keywords: ["stash", "save", "shelve"],
+    keywords: ["stash", "save", "shelve", "guardar"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: ({ openSubFlow }) => {
       openSubFlow({ type: "stash", value: "" });
@@ -367,7 +367,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.stageAll"),
     icon: ListChecks,
     group: "git",
-    keywords: ["stage", "add", "all"],
+    keywords: ["stage", "add", "all", "preparar", "tudo"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: async ({ activeRepoPath, close }) => {
       if (!activeRepoPath) return;
@@ -391,7 +391,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.unstageAll"),
     icon: ListX,
     group: "git",
-    keywords: ["unstage", "remove", "all"],
+    keywords: ["unstage", "remove", "all", "retirar", "tudo"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: async ({ activeRepoPath, close }) => {
       if (!activeRepoPath) return;
@@ -415,7 +415,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.discardAll"),
     icon: Trash2,
     group: "git",
-    keywords: ["discard", "revert", "clean", "all"],
+    keywords: ["discard", "revert", "clean", "all", "descartar", "reverter"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: ({ close }) => {
       useGitStore.getState().setActiveView("changes");
@@ -428,7 +428,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.applyStash"),
     icon: Layers,
     group: "git",
-    keywords: ["stash", "apply", "restore"],
+    keywords: ["stash", "apply", "restore", "aplicar", "restaurar"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: ({ openSubFlow }) => {
       openSubFlow({ type: "apply-stash", query: "", stashes: [], loading: true });
@@ -439,7 +439,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.popStash"),
     icon: Layers,
     group: "git",
-    keywords: ["stash", "pop", "restore", "drop"],
+    keywords: ["stash", "pop", "restore", "drop", "restaurar"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: ({ openSubFlow }) => {
       openSubFlow({ type: "pop-stash", query: "", stashes: [], loading: true });
@@ -450,7 +450,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.deleteBranch"),
     icon: Trash2,
     group: "git",
-    keywords: ["delete", "remove", "branch"],
+    keywords: ["delete", "remove", "branch", "excluir", "apagar"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: ({ openSubFlow }) => {
       openSubFlow({ type: "delete-branch", query: "", branches: [], loading: true });
@@ -461,7 +461,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.softReset"),
     icon: Undo2,
     group: "git",
-    keywords: ["reset", "undo", "uncommit"],
+    keywords: ["reset", "undo", "uncommit", "desfazer"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: async ({ activeRepoPath, close }) => {
       close();
@@ -479,7 +479,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.switchRepo"),
     icon: FolderGit2,
     group: "git",
-    keywords: ["repo", "repository", "switch", "multi"],
+    keywords: ["repo", "repository", "switch", "multi", "repositório", "trocar"],
     isAvailable: (ctx) => ctx.repos.length > 1,
     action: ({ openSubFlow }) => {
       openSubFlow({ type: "switch-repo", query: "" });
@@ -491,7 +491,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.newThread"),
     icon: Plus,
     group: "navigation",
-    keywords: ["new", "thread", "conversation", "chat"],
+    keywords: ["new", "thread", "conversation", "chat", "nova", "conversa"],
     action: async ({ activeWorkspaceId, close }) => {
       close();
       if (!activeWorkspaceId) return;
@@ -512,7 +512,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     description: t("commandPalette.descriptions.switchThread"),
     icon: MessageSquare,
     group: "navigation",
-    keywords: ["thread", "conversation", "switch"],
+    keywords: ["thread", "conversation", "switch", "trocar", "conversa"],
     action: (_ctx) => {
       // Handled by the component — sets query to "@"
     },
@@ -523,7 +523,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     description: t("commandPalette.descriptions.switchWorkspace"),
     icon: FolderOpen,
     group: "navigation",
-    keywords: ["workspace", "project", "folder", "switch"],
+    keywords: ["workspace", "project", "folder", "switch", "projeto", "pasta", "trocar"],
     action: (_ctx) => {
       // Handled by the component — sets query to "#"
     },
@@ -534,7 +534,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.viewChanges"),
     icon: ListTree,
     group: "view",
-    keywords: ["changes", "status", "diff", "staged"],
+    keywords: ["changes", "status", "diff", "staged", "alterações"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: ({ close }) => {
       useGitStore.getState().setActiveView("changes");
@@ -547,7 +547,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.viewBranches"),
     icon: GitBranchIcon,
     group: "view",
-    keywords: ["branches", "branch", "list"],
+    keywords: ["branches", "branch", "list", "listar"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: ({ close }) => {
       useGitStore.getState().setActiveView("branches");
@@ -560,7 +560,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.viewCommits"),
     icon: History,
     group: "view",
-    keywords: ["commits", "log", "history"],
+    keywords: ["commits", "log", "history", "histórico"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: ({ close }) => {
       useGitStore.getState().setActiveView("commits");
@@ -573,7 +573,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.viewStash"),
     icon: Layers,
     group: "view",
-    keywords: ["stash", "shelve", "list"],
+    keywords: ["stash", "shelve", "list", "listar"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: ({ close }) => {
       useGitStore.getState().setActiveView("stash");
@@ -586,7 +586,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.viewFiles"),
     icon: File,
     group: "view",
-    keywords: ["files", "tree", "explorer"],
+    keywords: ["files", "tree", "explorer", "arquivos", "explorador"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: ({ close }) => {
       useGitStore.getState().setActiveView("files");
@@ -599,7 +599,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.viewWorktrees"),
     icon: FolderGit2,
     group: "view",
-    keywords: ["worktrees", "worktree", "working"],
+    keywords: ["worktrees", "worktree", "working", "árvore"],
     isAvailable: (ctx) => !!ctx.activeRepoPath,
     action: ({ close }) => {
       useGitStore.getState().setActiveView("worktrees");
@@ -612,7 +612,7 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     label: t("commandPalette.commands.viewHarnesses"),
     icon: Play,
     group: "view",
-    keywords: ["agents", "harnesses", "tools", "ai"],
+    keywords: ["agents", "harnesses", "tools", "ai", "agentes", "ferramentas"],
     action: ({ close }) => {
       useUiStore.getState().setActiveView("harnesses");
       close();
@@ -1053,48 +1053,59 @@ export function CommandPalette({ open, onClose }: Props) {
           entry: b,
         }));
         if (subFlow.loading && items.length === 0) {
-          return [{ label: "Branches", items: [{ type: "sub-action", label: "Loading branches\u2026" }] }];
+          return [{
+            label: t("commandPalette.commands.checkoutBranch"),
+            items: [{ type: "sub-action", label: t("commandPalette.status.loadingBranches") }],
+          }];
         }
         if (items.length === 0) {
-          return [{ label: "Branches", items: [{ type: "sub-action", label: "No branches found" }] }];
+          return [{
+            label: t("commandPalette.commands.checkoutBranch"),
+            items: [{ type: "sub-action", label: t("commandPalette.status.noBranchesFound") }],
+          }];
         }
-        return [{ label: "Branches", items }];
+        return [{ label: t("commandPalette.commands.checkoutBranch"), items }];
       }
       if (subFlow.type === "create-branch") {
         const valid = subFlow.value.length > 0 && !/\s/.test(subFlow.value);
         return [{
-          label: "Create Branch",
+          label: t("commandPalette.commands.createBranch"),
           items: [{
             type: "sub-action",
             label: valid
-              ? `Create branch "${subFlow.value}"`
+              ? t("commandPalette.preview.createBranchReady", { name: subFlow.value })
               : subFlow.value.length === 0
-                ? "Type a branch name\u2026"
-                : "Branch names cannot contain spaces",
+                ? t("commandPalette.preview.createBranchEmpty")
+                : t("commandPalette.preview.createBranchInvalid"),
           }],
         }];
       }
       if (subFlow.type === "commit") {
         const stagedCount = gitStatus?.files.filter((f) => f.indexStatus).length ?? 0;
-        const stagedHint = stagedCount > 0 ? `(${stagedCount} staged)` : "(no staged files)";
+        const stagedHint = stagedCount > 0
+          ? t("commandPalette.preview.stagedHint", { count: stagedCount })
+          : t("commandPalette.preview.noStagedHint");
         return [{
-          label: "Commit",
+          label: t("commandPalette.subFlow.commit"),
           items: [{
             type: "sub-action",
             label: subFlow.value.length > 0
-              ? `Commit with: "${subFlow.value}" ${stagedHint}`
-              : `Type a commit message\u2026 ${stagedHint}`,
+              ? t("commandPalette.preview.commitWithMessage", {
+                  message: subFlow.value,
+                  hint: stagedHint,
+                })
+              : t("commandPalette.preview.commitEmpty", { hint: stagedHint }),
           }],
         }];
       }
       if (subFlow.type === "stash") {
         return [{
-          label: "Stash",
+          label: t("commandPalette.subFlow.stash"),
           items: [{
             type: "sub-action",
             label: subFlow.value.length > 0
-              ? `Stash with message: "${subFlow.value}"`
-              : "Press Enter to stash (or type a message)",
+              ? t("commandPalette.preview.stashWithMessage", { message: subFlow.value })
+              : t("commandPalette.preview.stashEmpty"),
           }],
         }];
       }
@@ -1104,15 +1115,23 @@ export function CommandPalette({ open, onClose }: Props) {
           entry: b,
         }));
         if (subFlow.loading && items.length === 0) {
-          return [{ label: "Delete Branch", items: [{ type: "sub-action", label: "Loading branches\u2026" }] }];
+          return [{
+            label: t("commandPalette.commands.deleteBranch"),
+            items: [{ type: "sub-action", label: t("commandPalette.status.loadingBranches") }],
+          }];
         }
         if (items.length === 0) {
-          return [{ label: "Delete Branch", items: [{ type: "sub-action", label: "No branches found" }] }];
+          return [{
+            label: t("commandPalette.commands.deleteBranch"),
+            items: [{ type: "sub-action", label: t("commandPalette.status.noBranchesFound") }],
+          }];
         }
-        return [{ label: "Delete Branch", items }];
+        return [{ label: t("commandPalette.commands.deleteBranch"), items }];
       }
       if (subFlow.type === "apply-stash" || subFlow.type === "pop-stash") {
-        const label = subFlow.type === "apply-stash" ? "Apply Stash" : "Pop Stash";
+        const label = subFlow.type === "apply-stash"
+          ? t("commandPalette.commands.applyStash")
+          : t("commandPalette.commands.popStash");
         const filtered = subFlow.query
           ? subFlow.stashes.filter((s) => s.name.toLowerCase().includes(subFlow.query.toLowerCase()))
           : subFlow.stashes;
@@ -1121,10 +1140,10 @@ export function CommandPalette({ open, onClose }: Props) {
           entry: s,
         }));
         if (subFlow.loading && items.length === 0) {
-          return [{ label, items: [{ type: "sub-action", label: "Loading stashes\u2026" }] }];
+          return [{ label, items: [{ type: "sub-action", label: t("commandPalette.status.loadingStashes") }] }];
         }
         if (items.length === 0) {
-          return [{ label, items: [{ type: "sub-action", label: "No stashes found" }] }];
+          return [{ label, items: [{ type: "sub-action", label: t("commandPalette.status.noStashesFound") }] }];
         }
         return [{ label, items }];
       }
@@ -1137,9 +1156,12 @@ export function CommandPalette({ open, onClose }: Props) {
           entry: r,
         }));
         if (items.length === 0) {
-          return [{ label: "Switch Repo", items: [{ type: "sub-action", label: "No repos found" }] }];
+          return [{
+            label: t("commandPalette.group.switchRepo"),
+            items: [{ type: "sub-action", label: t("commandPalette.status.noReposFound") }],
+          }];
         }
-        return [{ label: "Switch Repo", items }];
+        return [{ label: t("commandPalette.group.switchRepo"), items }];
       }
     }
 
@@ -1151,12 +1173,14 @@ export function CommandPalette({ open, onClose }: Props) {
       const quickItems: ResultItem[] = availableCommands
         .filter((c) => quickIds.includes(c.id))
         .map((c) => ({ type: "command", entry: c }));
-      if (quickItems.length > 0) result.push({ label: "Quick Actions", items: quickItems });
+      if (quickItems.length > 0) {
+        result.push({ label: t("commandPalette.group.quickActions"), items: quickItems });
+      }
 
       // Installed harnesses
       if (installedHarnesses.length > 0) {
         result.push({
-          label: "Launch Agent",
+          label: t("commandPalette.group.launchAgent"),
           items: installedHarnesses.map((h) => ({ type: "harness", entry: h })),
         });
       }
@@ -1165,7 +1189,7 @@ export function CommandPalette({ open, onClose }: Props) {
       const recentThreads = workspaceThreads.slice(0, 5);
       if (recentThreads.length > 0) {
         result.push({
-          label: "Recent Threads",
+          label: t("commandPalette.group.recentThreads"),
           items: recentThreads.map((t) => ({ type: "thread", entry: t })),
         });
       }
@@ -1175,7 +1199,7 @@ export function CommandPalette({ open, onClose }: Props) {
       const gitItems: ResultItem[] = availableCommands
         .filter((c) => gitIds.includes(c.id))
         .map((c) => ({ type: "command", entry: c }));
-      if (gitItems.length > 0) result.push({ label: "Git", items: gitItems });
+      if (gitItems.length > 0) result.push({ label: t("commandPalette.group.git"), items: gitItems });
 
       return result;
     }
@@ -1192,11 +1216,11 @@ export function CommandPalette({ open, onClose }: Props) {
       }
 
       const groupOrder: Array<{ key: CommandGroup; label: string }> = [
-        { key: "layout", label: "Layout" },
-        { key: "navigation", label: "Navigation" },
-        { key: "git", label: "Git" },
-        { key: "view", label: "Views" },
-        { key: "harness", label: "Agents" },
+        { key: "layout", label: t("commandPalette.group.layout") },
+        { key: "navigation", label: t("commandPalette.group.navigation") },
+        { key: "git", label: t("commandPalette.group.git") },
+        { key: "view", label: t("commandPalette.group.views") },
+        { key: "harness", label: t("commandPalette.group.agents") },
       ];
 
       const result: ResultGroup[] = [];
@@ -1215,37 +1239,62 @@ export function CommandPalette({ open, onClose }: Props) {
     if (mode === "thread") {
       const filtered = fuzzyFilter(workspaceThreads, term, (t) => t.title, 15);
       if (filtered.length === 0) {
-        return [{ label: "Threads", items: [{ type: "sub-action", label: "No threads found" }] }];
+        return [{
+          label: t("commandPalette.group.threads"),
+          items: [{ type: "sub-action", label: t("commandPalette.status.noThreadsFound") }],
+        }];
       }
-      return [{ label: "Threads", items: filtered.map((t) => ({ type: "thread", entry: t })) }];
+      return [{
+        label: t("commandPalette.group.threads"),
+        items: filtered.map((t) => ({ type: "thread", entry: t })),
+      }];
     }
 
     if (mode === "workspace") {
       const filtered = fuzzyFilter(workspaces, term, (w) => w.name, 10);
       if (filtered.length === 0) {
-        return [{ label: "Workspaces", items: [{ type: "sub-action", label: "No workspaces found" }] }];
+        return [{
+          label: t("commandPalette.group.workspaces"),
+          items: [{ type: "sub-action", label: t("commandPalette.status.noWorkspacesFound") }],
+        }];
       }
       return [{
-        label: "Workspaces",
+        label: t("commandPalette.group.workspaces"),
         items: filtered.map((w) => ({ type: "workspace", entry: w })),
       }];
     }
 
     if (mode === "file") {
       if (!activeRepoPath) {
-        return [{ label: "Files", items: [{ type: "sub-action", label: "No active repo" }] }];
+        return [{
+          label: t("commandPalette.group.files"),
+          items: [{ type: "sub-action", label: t("commandPalette.status.noActiveRepo") }],
+        }];
       }
       if (fileLoading && fileEntries.length === 0) {
-        return [{ label: "Files", items: [{ type: "sub-action", label: "Loading files\u2026" }] }];
+        return [{
+          label: t("commandPalette.group.files"),
+          items: [{ type: "sub-action", label: t("commandPalette.status.loadingFiles") }],
+        }];
       }
       const filteredFiles = term.length > 0
         ? fuzzyFilter(fileEntries, term, (f) => f.path, 20)
         : fileEntries.slice(0, 20);
       if (filteredFiles.length === 0) {
-        return [{ label: "Files", items: [{ type: "sub-action", label: fileLoading ? "Loading files\u2026" : "No files found" }] }];
+        return [{
+          label: t("commandPalette.group.files"),
+          items: [{
+            type: "sub-action",
+            label: fileLoading
+              ? t("commandPalette.status.loadingFiles")
+              : t("commandPalette.status.noFilesFound"),
+          }],
+        }];
       }
       return [{
-        label: fileLoading ? "Files (loading\u2026)" : "Files",
+        label: fileLoading
+          ? t("commandPalette.status.loadingFilesGroup")
+          : t("commandPalette.group.files"),
         items: filteredFiles.map((f) => ({ type: "file", entry: f })),
       }];
     }
@@ -1266,7 +1315,9 @@ export function CommandPalette({ open, onClose }: Props) {
       const filteredFiles = fuzzyFilter(fileEntries, term, (f) => f.path, 10);
       if (filteredFiles.length > 0) {
         result.push({
-          label: fileLoading ? "Files (loading\u2026)" : "Files",
+          label: fileLoading
+            ? t("commandPalette.status.loadingFilesGroup")
+            : t("commandPalette.group.files"),
           items: filteredFiles.map((f) => ({ type: "file", entry: f })),
         });
       }
@@ -1276,7 +1327,7 @@ export function CommandPalette({ open, onClose }: Props) {
     const filteredCmds = fuzzyFilter(availableCommands, term, getCommandSearchText, 8);
     if (filteredCmds.length > 0) {
       result.push({
-        label: "Commands",
+        label: t("commandPalette.group.commands"),
         items: filteredCmds.map((c) => ({ type: "command", entry: c })),
       });
     }
@@ -1286,7 +1337,7 @@ export function CommandPalette({ open, onClose }: Props) {
       const filteredThreads = fuzzyFilter(workspaceThreads, term, (t) => t.title, 5);
       if (filteredThreads.length > 0) {
         result.push({
-          label: "Threads",
+          label: t("commandPalette.group.threads"),
           items: filteredThreads.map((t) => ({ type: "thread", entry: t })),
         });
       }
@@ -1297,7 +1348,7 @@ export function CommandPalette({ open, onClose }: Props) {
       const filteredHarnesses = fuzzyFilter(installedHarnesses, term, (h) => `${h.name} ${h.command}`, 4);
       if (filteredHarnesses.length > 0) {
         result.push({
-          label: "Agents",
+          label: t("commandPalette.group.agents"),
           items: filteredHarnesses.map((h) => ({ type: "harness", entry: h })),
         });
       }
@@ -1307,7 +1358,7 @@ export function CommandPalette({ open, onClose }: Props) {
   }, [
     mode, term, subFlow, availableCommands, workspaceThreads, workspaces,
     installedHarnesses, fileEntries, fileLoading, activeThread, gitStatus, repos,
-    showFilesInAuto, showThreadsInAuto, activeRepoPath,
+    showFilesInAuto, showThreadsInAuto, activeRepoPath, t,
   ]);
 
   // Flat items for keyboard navigation
@@ -1402,9 +1453,9 @@ export function CommandPalette({ open, onClose }: Props) {
             if (activeRepoPath) {
               try {
                 await useGitStore.getState().deleteBranch(activeRepoPath, item.entry.name, false);
-                toast.success(`Deleted ${item.entry.name}`);
+                toast.success(t("commandPalette.toasts.branchDeleted", { name: item.entry.name }));
               } catch {
-                toast.error("Branch not fully merged. Use the git panel to force-delete.");
+                toast.error(t("commandPalette.toasts.branchDeleteNotMerged"));
               }
             }
           } else {
@@ -1412,9 +1463,9 @@ export function CommandPalette({ open, onClose }: Props) {
             if (activeRepoPath) {
               try {
                 await useGitStore.getState().checkoutBranch(activeRepoPath, item.entry.name, item.entry.isRemote);
-                toast.success(`Checked out ${item.entry.name}`);
+                toast.success(t("commandPalette.toasts.branchCheckedOut", { name: item.entry.name }));
               } catch {
-                toast.error("Checkout failed");
+                toast.error(t("commandPalette.toasts.checkoutFailed"));
               }
             }
           }
@@ -1427,13 +1478,13 @@ export function CommandPalette({ open, onClose }: Props) {
             try {
               if (action === "pop") {
                 await useGitStore.getState().popStash(activeRepoPath, item.entry.index);
-                toast.success(`Popped stash: ${item.entry.name}`);
+                toast.success(t("commandPalette.toasts.stashPopped", { name: item.entry.name }));
               } else {
                 await useGitStore.getState().applyStash(activeRepoPath, item.entry.index);
-                toast.success(`Applied stash: ${item.entry.name}`);
+                toast.success(t("commandPalette.toasts.stashApplied", { name: item.entry.name }));
               }
             } catch {
-              toast.error(`Stash ${action} failed`);
+              toast.error(t("commandPalette.toasts.stashActionFailed", { action }));
             }
           }
           break;
@@ -1455,7 +1506,7 @@ export function CommandPalette({ open, onClose }: Props) {
           break;
       }
     },
-    [commandCtx, activeRepoPath, activeWorkspaceId, activeThreadId, onClose, launchHarness, subFlow],
+    [commandCtx, activeRepoPath, activeWorkspaceId, activeThreadId, onClose, launchHarness, subFlow, t],
   );
 
   const executeSubFlow = useCallback(async () => {
@@ -1481,9 +1532,9 @@ export function CommandPalette({ open, onClose }: Props) {
       onClose();
       try {
         await useGitStore.getState().createBranch(activeRepoPath, subFlow.value);
-        toast.success(`Created and switched to branch: ${subFlow.value}`);
+        toast.success(t("commandPalette.toasts.branchCreated", { name: subFlow.value }));
       } catch {
-        toast.error("Failed to create branch");
+        toast.error(t("commandPalette.toasts.createBranchFailed"));
       }
       return;
     }
@@ -1492,15 +1543,15 @@ export function CommandPalette({ open, onClose }: Props) {
       if (subFlow.value.length === 0) return;
       const stagedFiles = useGitStore.getState().status?.files.filter((f) => f.indexStatus) ?? [];
       if (stagedFiles.length === 0) {
-        toast.warning("No staged files to commit");
+        toast.warning(t("commandPalette.toasts.noStagedFilesToCommit"));
         return;
       }
       onClose();
       try {
         await useGitStore.getState().commit(activeRepoPath, subFlow.value);
-        toast.success("Committed");
+        toast.success(t("commandPalette.toasts.committed"));
       } catch {
-        toast.error("Commit failed");
+        toast.error(t("commandPalette.toasts.commitFailed"));
       }
       return;
     }
@@ -1509,13 +1560,13 @@ export function CommandPalette({ open, onClose }: Props) {
       onClose();
       try {
         await useGitStore.getState().pushStash(activeRepoPath, subFlow.value || undefined);
-        toast.success("Changes stashed");
+        toast.success(t("commandPalette.toasts.changesStashed"));
       } catch {
-        toast.error("Stash failed");
+        toast.error(t("commandPalette.toasts.stashFailed"));
       }
       return;
     }
-  }, [subFlow, activeRepoPath, onClose, flatItems, activeIndex, executeItem]);
+  }, [subFlow, activeRepoPath, onClose, flatItems, activeIndex, executeItem, t]);
 
   /* ---- Keyboard handler ---- */
 
@@ -1620,30 +1671,30 @@ export function CommandPalette({ open, onClose }: Props) {
 
   const getPlaceholder = (): string => {
     if (subFlow) {
-      if (subFlow.type === "checkout-branch") return "Search branches\u2026";
-      if (subFlow.type === "delete-branch") return "Search branches to delete\u2026";
-      if (subFlow.type === "create-branch") return "Enter branch name\u2026";
-      if (subFlow.type === "commit") return "Enter commit message\u2026";
-      if (subFlow.type === "stash") return "Stash message (optional)\u2026";
-      if (subFlow.type === "apply-stash") return "Search stashes\u2026";
-      if (subFlow.type === "pop-stash") return "Search stashes\u2026";
-      if (subFlow.type === "switch-repo") return "Search repos\u2026";
+      if (subFlow.type === "checkout-branch") return t("commandPalette.placeholders.checkoutBranch");
+      if (subFlow.type === "delete-branch") return t("commandPalette.placeholders.deleteBranch");
+      if (subFlow.type === "create-branch") return t("commandPalette.placeholders.createBranch");
+      if (subFlow.type === "commit") return t("commandPalette.placeholders.commit");
+      if (subFlow.type === "stash") return t("commandPalette.placeholders.stash");
+      if (subFlow.type === "apply-stash") return t("commandPalette.placeholders.applyStash");
+      if (subFlow.type === "pop-stash") return t("commandPalette.placeholders.popStash");
+      if (subFlow.type === "switch-repo") return t("commandPalette.placeholders.switchRepo");
     }
-    if (mode === "file") return "Search files\u2026";
-    return "Search files, commands, threads\u2026";
+    if (mode === "file") return t("commandPalette.placeholders.fileMode");
+    return t("commandPalette.placeholders.auto");
   };
 
   const getModeBadge = (): ReactNode => {
     if (subFlow) {
       const labels: Record<string, string> = {
-        "checkout-branch": "branch",
-        "create-branch": "new branch",
-        commit: "commit",
-        stash: "stash",
-        "delete-branch": "delete branch",
-        "apply-stash": "apply stash",
-        "pop-stash": "pop stash",
-        "switch-repo": "repo",
+        "checkout-branch": t("commandPalette.subFlow.checkoutBranch"),
+        "create-branch": t("commandPalette.subFlow.createBranch"),
+        commit: t("commandPalette.subFlow.commit"),
+        stash: t("commandPalette.subFlow.stash"),
+        "delete-branch": t("commandPalette.subFlow.deleteBranch"),
+        "apply-stash": t("commandPalette.subFlow.applyStash"),
+        "pop-stash": t("commandPalette.subFlow.popStash"),
+        "switch-repo": t("commandPalette.subFlow.switchRepo"),
       };
       return <span style={STYLES.modeBadge}>{labels[subFlow.type]}</span>;
     }
@@ -1774,8 +1825,8 @@ export function CommandPalette({ open, onClose }: Props) {
             <span style={STYLES.itemIcon(active)}><GitBranchIcon size={16} /></span>
             <span style={STYLES.itemLabel}>
               {item.entry.name}
-              {item.entry.isCurrent && <span style={{ color: "var(--accent)", marginLeft: 6, fontSize: 11 }}>current</span>}
-              {item.entry.isRemote && <span style={{ color: "var(--text-3)", marginLeft: 6, fontSize: 11 }}>remote</span>}
+              {item.entry.isCurrent && <span style={{ color: "var(--accent)", marginLeft: 6, fontSize: 11 }}>{t("commandPalette.status.current")}</span>}
+              {item.entry.isRemote && <span style={{ color: "var(--text-3)", marginLeft: 6, fontSize: 11 }}>{t("commandPalette.status.remote")}</span>}
             </span>
             <span />
           </button>
@@ -1823,7 +1874,7 @@ export function CommandPalette({ open, onClose }: Props) {
               <span style={{ ...STYLES.itemLabel, display: "flex", alignItems: "center", gap: 6 }}>
                 {item.entry.name}
                 {isCurrent && (
-                  <span style={{ color: "var(--accent)", fontSize: 11, flexShrink: 0 }}>current</span>
+                  <span style={{ color: "var(--accent)", fontSize: 11, flexShrink: 0 }}>{t("commandPalette.status.current")}</span>
                 )}
               </span>
               <span style={STYLES.itemDescription}>{item.entry.path}</span>
@@ -1844,7 +1895,9 @@ export function CommandPalette({ open, onClose }: Props) {
             <span style={STYLES.itemIcon(active)}><Send size={16} /></span>
             <span style={{ overflow: "hidden" }}>
               <span style={{ ...STYLES.itemLabel, fontSize: 12.5 }}>
-                Send to {activeThread?.title ?? "chat"}
+                {t("commandPalette.sendMessage.sendTo", {
+                  name: activeThread?.title ?? t("commandPalette.status.chatFallback"),
+                })}
               </span>
             </span>
             <span style={STYLES.itemShortcut}>Enter</span>
@@ -1925,7 +1978,7 @@ export function CommandPalette({ open, onClose }: Props) {
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => { setShowFilesInAuto((v) => !v); setActiveIndex(0); }}
               >
-                <File size={11} /> Files
+                <File size={11} /> {t("commandPalette.chips.files")}
               </button>
               <button
                 style={{
@@ -1946,13 +1999,15 @@ export function CommandPalette({ open, onClose }: Props) {
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => { setShowThreadsInAuto((v) => !v); setActiveIndex(0); }}
               >
-                <MessageSquare size={11} /> Threads
+                <MessageSquare size={11} /> {t("commandPalette.chips.threads")}
               </button>
             </div>
           )}
           {flatItems.length === 0 && (
             <p style={STYLES.emptyState}>
-              {!activeWorkspaceId ? "No active workspace" : "No results"}
+              {!activeWorkspaceId
+                ? t("commandPalette.status.noActiveWorkspace")
+                : t("commandPalette.empty.noResults")}
             </p>
           )}
           {groups.map((group, gi) => (
@@ -1969,10 +2024,10 @@ export function CommandPalette({ open, onClose }: Props) {
 
         {/* Footer */}
         <div style={STYLES.footer}>
-          <span><kbd style={STYLES.footerKbd}>{"\u2191\u2193"}</kbd> navigate</span>
-          <span><kbd style={STYLES.footerKbd}>{"\u21B5"}</kbd> select</span>
-          <span><kbd style={STYLES.footerKbd}>esc</kbd> {subFlow ? "back" : "close"}</span>
-          {!subFlow && <span><kbd style={STYLES.footerKbd}>tab</kbd> switch mode</span>}
+          <span><kbd style={STYLES.footerKbd}>{"\u2191\u2193"}</kbd> {t("commandPalette.footer.navigate")}</span>
+          <span><kbd style={STYLES.footerKbd}>{"\u21B5"}</kbd> {t("commandPalette.footer.select")}</span>
+          <span><kbd style={STYLES.footerKbd}>esc</kbd> {subFlow ? t("commandPalette.footer.back") : t("commandPalette.footer.close")}</span>
+          {!subFlow && <span><kbd style={STYLES.footerKbd}>tab</kbd> {t("commandPalette.footer.switchMode")}</span>}
         </div>
       </div>
     </div>,
