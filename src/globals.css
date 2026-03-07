@@ -1338,9 +1338,19 @@ button, input, textarea, select {
   overflow: hidden;
 }
 
-.chat-focus-safe-strip {
-  height: 32px;
+.chat-focus-header {
+  height: var(--panel-header-height);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chat-focus-header-leading {
+  flex-shrink: 0;
+  align-self: stretch;
 }
 
 /* Layout mode switcher */
