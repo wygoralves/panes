@@ -5,6 +5,10 @@
 <h1 align="center">Panes</h1>
 
 <p align="center">
+  <strong>English</strong> &bull; <a href="./README.pt-BR.md">Português (Brasil)</a>
+</p>
+
+<p align="center">
   <strong>The local-first cockpit for AI-assisted coding.</strong>
 </p>
 
