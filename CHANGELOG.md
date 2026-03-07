@@ -1,5 +1,12 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.27.0...vnull) (2026-03-07)
+
+### Features
+
+* improve ui of git panel more options ([09bfe0b](https://github.com/wygoralves/panes/commit/09bfe0b30ade03adb4fe7a7083f442814ae81f92))
+* improve usability for the workspace setup ([7f207f9](https://github.com/wygoralves/panes/commit/7f207f966d5f396eac6061daaf685f403148780b))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.26.0...vnull) (2026-03-07)
 
 ### Features
