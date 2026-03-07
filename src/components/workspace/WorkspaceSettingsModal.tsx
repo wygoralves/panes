@@ -5,6 +5,7 @@ import {
   FolderOpen,
   GitBranch,
   Info,
+  Link,
   Play,
   RefreshCw,
   X,
@@ -14,6 +15,7 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { toast } from "../../stores/toastStore";
 import { Dropdown } from "../shared/Dropdown";
 import { WorkspaceStartupSection } from "./WorkspaceStartupSection";
+import { GitRemotesView } from "../git/GitRemotesView";
 import type { Repo, TrustLevel, Workspace } from "../../types";
 
 type Section = "general" | "repos" | "startup";
@@ -55,6 +57,7 @@ export function WorkspaceSettingsModal({
   const [depthError, setDepthError] = useState<string | null>(null);
   const [localRepos, setLocalRepos] = useState<Repo[] | null>(null);
   const [reposLoading, setReposLoading] = useState(false);
+  const [remotesRepo, setRemotesRepo] = useState<Repo | null>(null);
 
   const repos = isActive ? storeRepos : (localRepos ?? []);
 
@@ -190,7 +193,9 @@ export function WorkspaceSettingsModal({
   const name =
     currentWorkspace.name || currentWorkspace.rootPath.split("/").pop() || "Workspace";
 
-  return createPortal(
+  return (
+    <>
+    {createPortal(
     <div
       className="confirm-dialog-backdrop"
       onMouseDown={(event) => {
@@ -381,6 +386,14 @@ export function WorkspaceSettingsModal({
                         <div className="ws-repo-path">{relPath(repo.path)}</div>
                       </div>
                       <div className="ws-repo-controls">
+                        <button
+                          type="button"
+                          className="ws-prop-btn"
+                          title="Manage remotes"
+                          onClick={() => setRemotesRepo(repo)}
+                        >
+                          <Link size={11} />
+                        </button>
                         <Dropdown
                           value={repo.trustLevel}
                           options={TRUST_OPTIONS}
@@ -428,5 +441,15 @@ export function WorkspaceSettingsModal({
       </div>
     </div>,
     document.body,
+  )}
+  {remotesRepo &&
+    createPortal(
+      <GitRemotesView
+        repo={remotesRepo}
+        onClose={() => setRemotesRepo(null)}
+      />,
+      document.body,
+    )}
+  </>
   );
 }

@@ -1266,6 +1266,7 @@ button, input, textarea, select {
   display: flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
   width: 100%;
   padding: 6px 12px;
   font-size: 12px;
@@ -1304,6 +1305,12 @@ button, input, textarea, select {
 .git-action-menu-item-danger:hover {
   color: var(--danger);
   background: rgba(248, 113, 113, 0.1);
+}
+
+.git-action-menu-divider {
+  height: 1px;
+  margin: 4px 8px;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .git-action-menu-item-danger-hover:not(:disabled):hover {

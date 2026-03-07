@@ -14,7 +14,6 @@ import {
   Archive,
   MoreHorizontal,
   CornerUpLeft,
-  Link,
 } from "lucide-react";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore, type GitPanelView } from "../../stores/gitStore";
@@ -30,7 +29,6 @@ import { GitCommitsView } from "./GitCommitsView";
 import { GitStashView } from "./GitStashView";
 import { GitFilesView } from "./GitFilesView";
 import { GitWorktreesView } from "./GitWorktreesView";
-import { GitRemotesView } from "./GitRemotesView";
 
 const VIEW_OPTIONS = [
   { value: "changes", label: "Changes", icon: <FileDiff size={13} /> },
@@ -81,7 +79,6 @@ export function GitPanel() {
   const [localError, setLocalError] = useState<string | undefined>();
   const [softResetConfirmOpen, setSoftResetConfirmOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
-  const [remotesOpen, setRemotesOpen] = useState(false);
   const [initLoading, setInitLoading] = useState(false);
   const [initRepoStatus, setInitRepoStatus] = useState<GitInitRepoStatus | null>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -510,7 +507,7 @@ export function GitPanel() {
             }
             const rect = moreTriggerRef.current?.getBoundingClientRect();
             if (rect) {
-              setMoreMenuPos({ top: rect.bottom + 4, left: rect.right - 160 });
+              setMoreMenuPos({ top: rect.bottom + 4, left: rect.right - 220 });
             }
             setMoreMenuOpen(true);
           }}
@@ -649,7 +646,7 @@ export function GitPanel() {
 
       <ConfirmDialog
         open={softResetConfirmOpen}
-        title="Soft reset last commit"
+        title="Undo last commit"
         message="This will undo the latest commit and keep all its changes staged. This cannot be undone from Panes."
         confirmLabel="Soft reset"
         onConfirm={() => void onSoftResetLastCommit()}
@@ -687,6 +684,7 @@ export function GitPanel() {
               <span style={{ flex: 1 }}>Push</span>
               <span className="git-sync-counter">↑{pushCount}</span>
             </button>
+            <div className="git-action-menu-divider" />
             <button
               type="button"
               className="git-action-menu-item git-action-menu-item-danger-hover"
@@ -697,32 +695,12 @@ export function GitPanel() {
               disabled={syncDisabled}
             >
               <Undo2 size={13} />
-              <span style={{ flex: 1 }}>Soft reset last commit</span>
-            </button>
-            <button
-              type="button"
-              className="git-action-menu-item"
-              onClick={() => {
-                closeMoreMenu();
-                setRemotesOpen(true);
-              }}
-              disabled={!effectiveRepoPath}
-            >
-              <Link size={13} />
-              <span style={{ flex: 1 }}>Manage Remotes...</span>
+              <span style={{ flex: 1 }}>Undo last commit</span>
             </button>
           </div>,
           document.body,
         )}
 
-      {remotesOpen && effectiveRepo &&
-        createPortal(
-          <GitRemotesView
-            repo={effectiveRepo}
-            onClose={() => setRemotesOpen(false)}
-          />,
-          document.body,
-        )}
     </div>
   );
 }

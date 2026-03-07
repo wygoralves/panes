@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowLeft,
   FolderGit2,
   FolderOpen,
   GitBranch,
   Info,
+  Link,
   Play,
   RefreshCw,
 } from "lucide-react";
@@ -14,6 +16,7 @@ import { useUiStore } from "../../stores/uiStore";
 import { toast } from "../../stores/toastStore";
 import { Dropdown } from "../shared/Dropdown";
 import { WorkspaceStartupSection } from "./WorkspaceStartupSection";
+import { GitRemotesView } from "../git/GitRemotesView";
 import type { Repo, TrustLevel } from "../../types";
 
 type Section = "general" | "repos" | "startup";
@@ -47,6 +50,7 @@ export function WorkspaceSettingsPage() {
   const [depthError, setDepthError] = useState<string | null>(null);
   const [localRepos, setLocalRepos] = useState<Repo[] | null>(null);
   const [reposLoading, setReposLoading] = useState(false);
+  const [remotesRepo, setRemotesRepo] = useState<Repo | null>(null);
 
   const repos = isActive ? storeRepos : (localRepos ?? []);
 
@@ -203,6 +207,7 @@ export function WorkspaceSettingsPage() {
   }
 
   return (
+    <>
     <div className="wsp-root">
       <div className="wsp-scroll">
         <div className="wsp-inner">
@@ -398,6 +403,14 @@ export function WorkspaceSettingsPage() {
                             <div className="wsp-repo-path">{relPath(repo.path)}</div>
                           </div>
                           <div className="wsp-repo-controls">
+                            <button
+                              type="button"
+                              className="ws-prop-btn"
+                              title="Manage remotes"
+                              onClick={() => setRemotesRepo(repo)}
+                            >
+                              <Link size={11} />
+                            </button>
                             <Dropdown
                               value={repo.trustLevel}
                               options={TRUST_OPTIONS}
@@ -437,5 +450,14 @@ export function WorkspaceSettingsPage() {
         </div>
       </div>
     </div>
+    {remotesRepo &&
+      createPortal(
+        <GitRemotesView
+          repo={remotesRepo}
+          onClose={() => setRemotesRepo(null)}
+        />,
+        document.body,
+      )}
+    </>
   );
 }
