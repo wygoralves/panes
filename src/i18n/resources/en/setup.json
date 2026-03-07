@@ -1,0 +1,76 @@
+{
+  "status": {
+    "detected": "Detected",
+    "detectedWithPath": "{{version}}{{path}}",
+    "at": "at"
+  },
+  "scanning": {
+    "checking": "Checking your system..."
+  },
+  "deps": {
+    "node": {
+      "auto": "Not found - will install via Homebrew",
+      "manual": "Not found - install Node.js 20+ manually"
+    },
+    "codex": {
+      "auto": "Not found - will install via npm",
+      "manual": "Not found - install with: npm install -g @openai/codex"
+    },
+    "git": {
+      "manual": "Not found - some git features will be unavailable"
+    }
+  },
+  "actions": {
+    "autoSetup": "Set up automatically",
+    "manualInstructions": "Manual setup instructions",
+    "getStarted": "Get Started",
+    "recheck": "Check again"
+  },
+  "manual": {
+    "title": "Manual installation",
+    "installNode": "Install Node.js",
+    "installCodex": "Install Codex CLI",
+    "nodeAltOrDownload": "Or download from https://nodejs.org",
+    "nodeAltInstall": "Install Node.js 20+ from https://nodejs.org",
+    "nodeAltPackageManager": "Install Node.js 20+ using your OS package manager or from https://nodejs.org",
+    "copied": "Copied"
+  },
+  "install": {
+    "waiting": "Waiting...",
+    "installing": "Installing {{name}}...",
+    "finishing": "Finishing up..."
+  },
+  "diagnostics": {
+    "title": "Codex diagnostics",
+    "methodsSummary": "{{available}} available, {{unsupported}} unsupported, {{errors}} errors",
+    "notFetched": "Runtime diagnostics have not been fetched yet.",
+    "notAvailable": "Codex is not available yet.",
+    "capabilitiesSummary": "{{experimental}} experimental features, {{apps}} apps, {{modes}} collaboration modes",
+    "capabilities": "Capabilities",
+    "methods": "Methods",
+    "lastConfigWarning": "Last config warning",
+    "lastAccountLogin": "Last account login",
+    "lastMcpOauth": "Last MCP OAuth",
+    "fetched": "Fetched",
+    "line": "line {{line}}",
+    "success": "Success",
+    "failed": "Failed",
+    "successLower": "success",
+    "failedLower": "failed",
+    "stale": "(stale)"
+  },
+  "error": {
+    "unexpected": "An unexpected error occurred during setup."
+  },
+  "header": {
+    "completeTitle": "Setup Complete",
+    "installingTitle": "Installing Dependencies",
+    "errorTitle": "Setup Error",
+    "systemTitle": "System Setup",
+    "completeSubtitle": "All checks passed. You are ready to go.",
+    "scanningSubtitle": "Checking your system...",
+    "installingSubtitle": "Installing missing dependencies.",
+    "errorSubtitle": "Review the setup error and retry.",
+    "planSubtitle": "Review the detected dependencies before continuing."
+  }
+}

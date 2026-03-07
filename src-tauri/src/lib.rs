@@ -4,6 +4,7 @@ mod db;
 mod engines;
 mod fs_ops;
 mod git;
+mod locale;
 mod models;
 mod state;
 mod terminal;
@@ -16,6 +17,7 @@ use db::Database;
 use engines::{CodexRuntimeEvent, EngineManager};
 use git::repo::FileTreeCache;
 use git::watcher::GitWatcherManager;
+use locale::{native_strings, resolve_app_locale};
 use models::{EngineRuntimeUpdatedDto, ThreadDto, ThreadStatusDto};
 use state::{AppState, TurnManager};
 use tauri::{
@@ -45,6 +47,7 @@ pub fn run() {
         }
     }
     let app_config = AppConfig::load_or_create().expect("failed to load config");
+    let app_locale = resolve_app_locale(app_config.general.locale.as_deref());
 
     let _ =
         db::workspaces::ensure_default_workspace(&db).expect("failed to ensure default workspace");
@@ -67,7 +70,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(app_state)
-        .menu(build_app_menu)
+        .menu(move |handle| build_app_menu(handle, app_locale))
         .setup(|app| {
             let handle = app.handle().clone();
             let resource_dir = app.path().resource_dir().ok();
@@ -87,6 +90,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::app::get_app_locale,
+            commands::app::set_app_locale,
             commands::chat::send_message,
             commands::chat::cancel_turn,
             commands::chat::respond_to_approval,
@@ -460,13 +465,15 @@ where
         .map_err(|error| error.to_string())
 }
 
-fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let app_menu = SubmenuBuilder::new(handle, "Panes")
+fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu<tauri::Wry>> {
+    let strings = native_strings(locale);
+
+    let app_menu = SubmenuBuilder::new(handle, strings.app_menu)
         .about(Some(AboutMetadata {
             name: Some("Panes".to_string()),
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
             authors: Some(vec!["Wygor Alves".to_string()]),
-            comments: Some("The open-source cockpit for AI-assisted coding".to_string()),
+            comments: Some(strings.about_comments.to_string()),
             copyright: Some("Copyright © 2026 Wygor Alves".to_string()),
             license: Some("MIT".to_string()),
             website: Some("https://github.com/wygoralves/panes".to_string()),
@@ -490,7 +497,7 @@ fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> 
         .quit()
         .build()?;
 
-    let edit_menu = SubmenuBuilder::new(handle, "Edit")
+    let edit_menu = SubmenuBuilder::new(handle, strings.edit_menu)
         .undo()
         .redo()
         .separator()
@@ -503,32 +510,32 @@ fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> 
     let toggle_sidebar = MenuItem::with_id(
         handle,
         "toggle-sidebar",
-        "Toggle Sidebar",
+        strings.toggle_sidebar,
         true,
         Some("CmdOrCtrl+B"),
     )?;
     let toggle_git_panel = MenuItem::with_id(
         handle,
         "toggle-git-panel",
-        "Toggle Git Panel",
+        strings.toggle_git_panel,
         true,
         Some("CmdOrCtrl+Shift+B"),
     )?;
     let toggle_search = MenuItem::with_id(
         handle,
         "toggle-search",
-        "Search",
+        strings.search,
         true,
         Some("CmdOrCtrl+Shift+F"),
     )?;
     let toggle_terminal = MenuItem::with_id(
         handle,
         "toggle-terminal",
-        "Toggle Terminal",
+        strings.toggle_terminal,
         true,
         Some("CmdOrCtrl+Shift+T"),
     )?;
-    let view_menu = SubmenuBuilder::new(handle, "View")
+    let view_menu = SubmenuBuilder::new(handle, strings.view_menu)
         .item(&toggle_sidebar)
         .item(&toggle_git_panel)
         .separator()
@@ -537,9 +544,14 @@ fn build_app_menu(handle: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> 
         .item(&toggle_terminal)
         .build()?;
 
-    let close_window =
-        MenuItem::with_id(handle, "close-window", "Close", true, Some("CmdOrCtrl+W"))?;
-    let window_menu = SubmenuBuilder::new(handle, "Window")
+    let close_window = MenuItem::with_id(
+        handle,
+        "close-window",
+        strings.close,
+        true,
+        Some("CmdOrCtrl+W"),
+    )?;
+    let window_menu = SubmenuBuilder::new(handle, strings.window_menu)
         .minimize()
         .item(&PredefinedMenuItem::maximize(handle, None)?)
         .separator()

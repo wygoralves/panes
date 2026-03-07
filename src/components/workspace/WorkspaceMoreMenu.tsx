@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import {
   Archive,
   MoreHorizontal,
@@ -18,6 +19,7 @@ export function WorkspaceMoreMenu({
   onOpenSettings,
   onArchive,
 }: WorkspaceMoreMenuProps) {
+  const { t } = useTranslation("workspace");
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<HTMLSpanElement>(null);
@@ -73,7 +75,7 @@ export function WorkspaceMoreMenu({
       <span
         ref={triggerRef}
         role="button"
-        title="Workspace options"
+        title={t("more.options")}
         className="sb-project-archive"
         onMouseDown={(e) => e.stopPropagation()}
         onClick={handleTriggerClick}
@@ -99,7 +101,7 @@ export function WorkspaceMoreMenu({
               onClick={() => handleItem(onOpenSettings)}
             >
               <Settings2 size={13} />
-              Workspace settings
+              {t("more.settings")}
             </button>
             <div style={{ height: 1, margin: "4px 0", background: "var(--border)" }} />
             <button
@@ -108,7 +110,7 @@ export function WorkspaceMoreMenu({
               onClick={() => handleItem(onArchive)}
             >
               <Archive size={13} />
-              Archive workspace
+              {t("more.archive")}
             </button>
           </div>,
           document.body,

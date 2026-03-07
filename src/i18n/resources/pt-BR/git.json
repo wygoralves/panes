@@ -1,0 +1,35 @@
+{
+  "panel": {
+    "tabs": {
+      "changes": "Alterações",
+      "branches": "Branches",
+      "commits": "Commits",
+      "stash": "Stash",
+      "files": "Arquivos",
+      "worktrees": "Worktrees"
+    },
+    "detached": "destacado",
+    "syncing": "Sincronizando...",
+    "refreshAndFetch": "Atualizar e buscar",
+    "moreActions": "Mais ações",
+    "backToMainRepo": "Voltar ao repositório principal",
+    "scanningRepositories": "Escaneando repositórios...",
+    "noRepositories": "Nenhum repositório encontrado",
+    "scanningHint": "Verificando este workspace em busca de repositórios git",
+    "blockedByRepo": "Este workspace já está dentro do repositório Git em {{path}}.",
+    "openFolderHint": "Abra uma pasta com um repositório git",
+    "initializeRepository": "Inicializar repositório",
+    "initializingRepository": "Inicializando...",
+    "repositoryInitialized": "Repositório inicializado",
+    "fetchedFromRemote": "Fetch realizado do remoto",
+    "pulledFromRemote": "Pull realizado do remoto",
+    "pushedToRemote": "Push realizado para o remoto",
+    "refreshed": "Atualizado",
+    "softResetCompleted": "Soft reset concluído",
+    "undoLastCommit": "Desfazer último commit",
+    "undoLastCommitMessage": "Isso desfaz o commit mais recente e mantém todas as alterações dele staged. Esta ação não pode ser desfeita pelo Panes.",
+    "softReset": "Soft reset",
+    "pull": "Pull",
+    "push": "Push"
+  }
+}

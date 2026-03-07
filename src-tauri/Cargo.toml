@@ -44,6 +44,7 @@ which = "6"
 git2 = "0.19"
 notify = "6"
 portable-pty = "0.8"
+sys-locale = "0.3"
 
 [features]
 default = ["custom-protocol"]

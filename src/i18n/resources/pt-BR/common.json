@@ -1,0 +1,22 @@
+{
+  "actions": {
+    "allow": "Permitir",
+    "cancel": "Cancelar",
+    "close": "Fechar",
+    "copy": "Copiar",
+    "discard": "Descartar",
+    "notNow": "Agora não",
+    "remove": "Remover",
+    "retry": "Tentar novamente",
+    "save": "Salvar"
+  },
+  "language": {
+    "label": "Idioma",
+    "changed": "Idioma atualizado. Os rótulos do menu nativo serão atualizados após reiniciar.",
+    "english": "English",
+    "portugueseBrazil": "Português (Brasil)"
+  },
+  "labels": {
+    "settings": "Configurações"
+  }
+}

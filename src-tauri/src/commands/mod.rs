@@ -1,3 +1,4 @@
+pub mod app;
 pub mod chat;
 pub mod engines;
 pub mod files;

@@ -1,0 +1,17 @@
+{
+  "app": {
+    "submenu": "Panes",
+    "aboutComment": "O cockpit open-source para programação assistida por IA",
+    "websiteLabel": "GitHub"
+  },
+  "menu": {
+    "edit": "Editar",
+    "view": "Visualizar",
+    "window": "Janela",
+    "toggleSidebar": "Alternar sidebar",
+    "toggleGitPanel": "Alternar painel Git",
+    "search": "Buscar",
+    "toggleTerminal": "Alternar terminal",
+    "close": "Fechar"
+  }
+}

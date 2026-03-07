@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { AlertTriangle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 interface Props {
   open: boolean;
@@ -16,14 +17,17 @@ export function ConfirmDialog({
   open,
   title,
   message,
-  confirmLabel = "Discard",
-  cancelLabel = "Cancel",
+  confirmLabel,
+  cancelLabel,
   onConfirm,
   onCancel,
   onDismiss,
 }: Props) {
+  const { t } = useTranslation("common");
   const confirmRef = useRef<HTMLButtonElement>(null);
   const handleDismiss = onDismiss ?? onCancel;
+  const resolvedConfirmLabel = confirmLabel ?? t("actions.discard");
+  const resolvedCancelLabel = cancelLabel ?? t("actions.cancel");
 
   useEffect(() => {
     if (!open) return;
@@ -62,7 +66,7 @@ export function ConfirmDialog({
             className="btn btn-ghost confirm-dialog-btn-cancel"
             onClick={onCancel}
           >
-            {cancelLabel}
+            {resolvedCancelLabel}
           </button>
           <button
             ref={confirmRef}
@@ -70,7 +74,7 @@ export function ConfirmDialog({
             className="confirm-dialog-btn-danger"
             onClick={onConfirm}
           >
-            {confirmLabel}
+            {resolvedConfirmLabel}
           </button>
         </div>
       </div>

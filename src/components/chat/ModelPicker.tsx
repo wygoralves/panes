@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, ChevronRight } from "lucide-react";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import type { EngineHealth, EngineInfo, EngineModel } from "../../types";
 
@@ -42,22 +44,22 @@ function formatModelName(name: string): string {
     .join(" ");
 }
 
-function shortEffortLabel(effort: string): string {
+function shortEffortLabel(t: TFunction<"chat">, effort: string): string {
   switch (effort) {
-    case "low": return "Lo";
-    case "medium": return "Med";
-    case "high": return "Hi";
-    case "xhigh": return "Max";
+    case "low": return t("modelPicker.effort.lowShort");
+    case "medium": return t("modelPicker.effort.mediumShort");
+    case "high": return t("modelPicker.effort.highShort");
+    case "xhigh": return t("modelPicker.effort.xhighShort");
     default: return effort.charAt(0).toUpperCase() + effort.slice(1);
   }
 }
 
-function effortDisplayLabel(effort: string): string {
+function effortDisplayLabel(t: TFunction<"chat">, effort: string): string {
   switch (effort) {
-    case "low": return "Low";
-    case "medium": return "Medium";
-    case "high": return "High";
-    case "xhigh": return "Max";
+    case "low": return t("modelPicker.effort.low");
+    case "medium": return t("modelPicker.effort.medium");
+    case "high": return t("modelPicker.effort.high");
+    case "xhigh": return t("modelPicker.effort.xhigh");
     default: return effort.charAt(0).toUpperCase() + effort.slice(1);
   }
 }
@@ -83,6 +85,7 @@ export function ModelPicker({
   onEffortChange,
   disabled = false,
 }: ModelPickerProps) {
+  const { t } = useTranslation("chat");
   const [open, setOpen] = useState(false);
   const [activeEngineId, setActiveEngineId] = useState(selectedEngineId);
   const [legacyExpanded, setLegacyExpanded] = useState(false);
@@ -164,7 +167,7 @@ export function ModelPicker({
   // Build trigger label
   const triggerLabel = currentModel
     ? formatModelName(currentModel.displayName)
-    : currentEngine?.name ?? "Select model";
+    : currentEngine?.name ?? t("modelPicker.selectModel");
 
   /* ── Trigger ── */
   const trigger = (
@@ -174,14 +177,14 @@ export function ModelPicker({
       className={`mp-trigger${open ? " mp-trigger-open" : ""}`}
       onClick={toggle}
       disabled={disabled}
-      title="Select model"
+      title={t("modelPicker.selectModel")}
     >
       <span className="mp-trigger-icon">
         {getHarnessIcon(selectedEngineId, 12)}
       </span>
       <span className="mp-trigger-label">{triggerLabel}</span>
       {selectedEffort && currentModel?.supportedReasoningEfforts?.length ? (
-        <span className="mp-trigger-effort">{shortEffortLabel(selectedEffort)}</span>
+        <span className="mp-trigger-effort">{shortEffortLabel(t, selectedEffort)}</span>
       ) : null}
       <ChevronDown
         size={10}
@@ -204,7 +207,7 @@ export function ModelPicker({
         >
           {/* Engine rail */}
           <div className="mp-rail">
-            <div className="mp-rail-label">Engine</div>
+            <div className="mp-rail-label">{t("modelPicker.engine")}</div>
             {engines.map((engine) => {
               const isActive = engine.id === activeEngineId;
               const engineHealth = health[engine.id];
@@ -231,7 +234,7 @@ export function ModelPicker({
           {/* Models panel */}
           <div className="mp-models">
             <div className="mp-models-header">
-              <span className="mp-models-title">Models</span>
+              <span className="mp-models-title">{t("modelPicker.models")}</span>
               <span className="mp-models-count">{activeModels.length}</span>
             </div>
 
@@ -260,7 +263,7 @@ export function ModelPicker({
                     onClick={() => setLegacyExpanded((prev) => !prev)}
                   >
                     <span className="mp-legacy-toggle-label">
-                      Legacy ({legacyModels.length})
+                      {t("modelPicker.legacy", { count: legacyModels.length })}
                     </span>
                     <ChevronRight
                       size={11}
@@ -319,6 +322,7 @@ function ModelRow({
   onSelect: (engineId: string, modelId: string) => void;
   onEffortChange: (effort: string) => void;
 }) {
+  const { t } = useTranslation("chat");
   const upgradeName = resolveUpgradeName(model.upgrade, allModels);
   const efforts = model.supportedReasoningEfforts ?? [];
 
@@ -335,7 +339,7 @@ function ModelRow({
               {formatModelName(model.displayName)}
             </span>
             {model.isDefault && (
-              <span className="mp-model-default">default</span>
+              <span className="mp-model-default">{t("modelPicker.default")}</span>
             )}
           </div>
           {model.description && (
@@ -350,7 +354,7 @@ function ModelRow({
       {/* Inline effort selector — only on selected model */}
       {isSelected && efforts.length > 0 && (
         <div className="mp-effort">
-          <span className="mp-effort-label">Thinking</span>
+          <span className="mp-effort-label">{t("modelPicker.thinking")}</span>
           <div className="mp-effort-pills">
             {efforts.map((opt) => {
               const active = opt.reasoningEffort === selectedEffort;
@@ -362,7 +366,7 @@ function ModelRow({
                   onClick={() => onEffortChange(opt.reasoningEffort)}
                   title={opt.description}
                 >
-                  {effortDisplayLabel(opt.reasoningEffort)}
+                  {effortDisplayLabel(t, opt.reasoningEffort)}
                 </button>
               );
             })}

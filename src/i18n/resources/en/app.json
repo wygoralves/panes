@@ -1,0 +1,108 @@
+{
+  "title": "Panes",
+  "search": {
+    "placeholder": "Search messages in current workspace...",
+    "shortcut": "Shortcut: Cmd/Ctrl+Shift+F",
+    "selectWorkspace": "Select a workspace to search.",
+    "minChars": "Type at least 2 characters.",
+    "searching": "Searching...",
+    "noResults": "No results for \"{{query}}\".",
+    "threadFallback": "Thread"
+  },
+  "updates": {
+    "checkingTitle": "Checking for updates",
+    "checkingMessage": "This should only take a moment.",
+    "availableTitle": "v{{version}} is available",
+    "availableMessage": "Download and install to get the latest features and fixes.",
+    "notNow": "Not now",
+    "install": "Install update",
+    "installingTitle": "Installing update...",
+    "installingMessage": "Please don't close the app.",
+    "restartingTitle": "Restarting...",
+    "failedTitle": "Update failed",
+    "failedMessage": "An unexpected error occurred.",
+    "idleTitle": "Panes",
+    "idleTitleWithVersion": "Panes v{{version}}",
+    "idleMessage": "You're on the latest version.",
+    "checkAgain": "Check again"
+  },
+  "engineHealth": {
+    "missingTitle": "Codex engine not detected",
+    "configWarningTitle": "Codex config warning",
+    "staleTitle": "Codex runtime sync is stale",
+    "sandboxTitle": "Codex sandbox check failed",
+    "missingMessage": "Install Codex CLI and authenticate before starting chat turns.",
+    "staleMessage": "Panes could not refresh the latest Codex capability snapshot. Runtime notifications may be delayed until the next successful reconnect.",
+    "sandboxMessage": "Codex is installed, but the local OS sandbox check failed.",
+    "location": "Location:",
+    "runInTerminal": "Run in Terminal:"
+  },
+  "sidebar": {
+    "pin": "Pin sidebar",
+    "unpin": "Unpin sidebar",
+    "newThread": "New thread",
+    "newThreadTitle": "New Thread",
+    "agents": "Agents",
+    "projects": "Projects",
+    "openProject": "Open project",
+    "noProjects": "No projects yet.",
+    "openFolder": "Open a folder to get started.",
+    "workspaceFallback": "Workspace",
+    "noThreads": "No threads",
+    "untitledThread": "Untitled thread",
+    "archiveThread": "Archive thread",
+    "showMore": "Show {{count}} more",
+    "archived": "Archived",
+    "restoreWorkspace": "Restore workspace",
+    "restoreThread": "Restore thread",
+    "nothingArchived": "Nothing archived.",
+    "settings": "Settings",
+    "engineSetup": "Engine setup",
+    "checkUpdates": "Check for updates",
+    "languageFailed": "Failed to update language.",
+    "archiveWorkspaceTitle": "Archive workspace",
+    "archiveWorkspaceMessage": "Archive workspace \"{{name}}\" and hide its repos/threads/messages from the sidebar? You can reopen this folder later to restore it.",
+    "archiveThreadTitle": "Archive thread",
+    "archiveThreadMessage": "Archive thread \"{{name}}\"? It will be hidden from this project list.",
+    "archive": "Archive"
+  },
+  "commandPalette": {
+    "placeholder": "Search commands, threads, workspaces, or files...",
+    "mode": {
+      "command": "Command",
+      "thread": "Thread",
+      "workspace": "Workspace",
+      "file": "File"
+    },
+    "group": {
+      "layout": "Layout",
+      "git": "Git",
+      "navigation": "Navigation",
+      "view": "View",
+      "files": "Files",
+      "threads": "Threads",
+      "workspaces": "Workspaces",
+      "agents": "Agents"
+    },
+    "empty": {
+      "noResults": "No results"
+    },
+    "footer": {
+      "select": "Select",
+      "open": "Open",
+      "run": "Run",
+      "dismiss": "Dismiss"
+    }
+  },
+  "engineHealth": {
+    "missingTitle": "Codex engine not detected",
+    "configWarningTitle": "Codex config warning",
+    "staleTitle": "Codex runtime sync is stale",
+    "sandboxTitle": "Codex sandbox check failed",
+    "missingMessage": "Install Codex CLI and authenticate before starting chat turns.",
+    "staleMessage": "Panes could not refresh the latest Codex capability snapshot. Runtime notifications may be delayed until the next successful reconnect.",
+    "sandboxMessage": "Codex is installed, but the local OS sandbox check failed.",
+    "location": "Location:",
+    "runInTerminal": "Run in Terminal:"
+  }
+}

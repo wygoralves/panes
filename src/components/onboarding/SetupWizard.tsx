@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -31,6 +32,7 @@ function DepCard({
   dep: DepStatus;
   description: string;
 }) {
+  const { t } = useTranslation("setup");
   const borderColor = dep.found
     ? "rgba(255, 107, 107, 0.25)"
     : "rgba(251, 191, 36, 0.25)";
@@ -88,7 +90,10 @@ function DepCard({
           }}
         >
           {dep.found
-            ? `${dep.version ?? "Detected"} ${dep.path ? `at ${dep.path}` : ""}`
+            ? t("status.detectedWithPath", {
+                version: dep.version ?? t("status.detected"),
+                path: dep.path ? ` ${t("status.at")} ${dep.path}` : "",
+              })
             : description}
         </p>
       </div>
@@ -97,6 +102,7 @@ function DepCard({
 }
 
 function InstallLogView({ log }: { log: { dep: string; line: string; stream: string }[] }) {
+  const { t } = useTranslation("setup");
   const logRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
@@ -125,7 +131,7 @@ function InstallLogView({ log }: { log: { dep: string; line: string; stream: str
       }}
     >
       {log.length === 0
-        ? "Waiting..."
+        ? t("install.waiting")
         : log.map((entry, i) => (
             <div
               key={i}
@@ -146,6 +152,7 @@ function InstallLogView({ log }: { log: { dep: string; line: string; stream: str
 }
 
 function ScanningPhase() {
+  const { t } = useTranslation("setup");
   return (
     <div
       style={{
@@ -161,13 +168,14 @@ function ScanningPhase() {
         style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }}
       />
       <p style={{ margin: 0, fontSize: 13, color: "var(--text-2)" }}>
-        Checking your system...
+        {t("scanning.checking")}
       </p>
     </div>
   );
 }
 
 function PlanPhase() {
+  const { t } = useTranslation("setup");
   const { report, installAll } = useSetupStore();
   const [showManual, setShowManual] = useState(false);
 
@@ -183,9 +191,9 @@ function PlanPhase() {
   const nodeManualAlt =
     report.platform === "macos"
       ? hasHomebrew
-        ? "Or download from https://nodejs.org"
-        : "Install Node.js 20+ from https://nodejs.org"
-      : "Install Node.js 20+ using your OS package manager or from https://nodejs.org";
+        ? t("manual.nodeAltOrDownload")
+        : t("manual.nodeAltInstall")
+      : t("manual.nodeAltPackageManager");
 
   return (
     <div style={{ display: "grid", gap: 10 }}>
@@ -194,8 +202,8 @@ function PlanPhase() {
         dep={report.node}
         description={
           report.node.canAutoInstall
-            ? "Not found — will install via Homebrew"
-            : "Not found — install Node.js 20+ manually"
+            ? t("deps.node.auto")
+            : t("deps.node.manual")
         }
       />
       <DepCard
@@ -203,14 +211,14 @@ function PlanPhase() {
         dep={report.codex}
         description={
           report.codex.canAutoInstall
-            ? "Not found — will install via npm"
-            : "Not found — install with: npm install -g @openai/codex"
+            ? t("deps.codex.auto")
+            : t("deps.codex.manual")
         }
       />
       <DepCard
         label="Git"
         dep={report.git}
-        description="Not found — some git features will be unavailable"
+        description={t("deps.git.manual")}
       />
 
       <div
@@ -238,7 +246,7 @@ function PlanPhase() {
               gap: 6,
             }}
           >
-            Set up automatically
+            {t("actions.autoSetup")}
           </button>
         )}
 
@@ -258,7 +266,7 @@ function PlanPhase() {
             color: "var(--text-3)",
           }}
         >
-          Manual setup instructions
+          {t("actions.manualInstructions")}
           <ChevronDown
             size={12}
             style={{
@@ -289,7 +297,7 @@ function PlanPhase() {
               color: "var(--text-3)",
             }}
           >
-            Manual installation
+            {t("manual.title")}
           </div>
           <div
             style={{
@@ -301,14 +309,14 @@ function PlanPhase() {
           >
             {!report.node.found && (
               <ManualStep
-                label="Install Node.js"
+                label={t("manual.installNode")}
                 command={nodeManualCommand}
                 alt={nodeManualAlt}
               />
             )}
             {!report.codex.found && (
               <ManualStep
-                label="Install Codex CLI"
+                label={t("manual.installCodex")}
                 command="npm install -g @openai/codex"
               />
             )}
@@ -328,6 +336,7 @@ function ManualStep({
   command: string | null;
   alt?: string;
 }) {
+  const { t } = useTranslation(["setup", "common"]);
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -382,7 +391,7 @@ function ManualStep({
               borderRadius: "var(--radius-sm)",
             }}
           >
-            {copied ? "Copied" : "Copy"}
+            {copied ? t("setup:manual.copied") : t("common:actions.copy")}
           </button>
         </div>
       )}
@@ -396,6 +405,7 @@ function ManualStep({
 }
 
 function InstallingPhase() {
+  const { t } = useTranslation("setup");
   const { installLog, installing } = useSetupStore();
 
   return (
@@ -415,8 +425,10 @@ function InstallingPhase() {
           style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }}
         />
         {installing
-          ? `Installing ${installing === "node" ? "Node.js" : installing === "codex" ? "Codex CLI" : installing}...`
-          : "Finishing up..."}
+          ? t("install.installing", {
+              name: installing === "node" ? "Node.js" : installing === "codex" ? "Codex CLI" : installing,
+            })
+          : t("install.finishing")}
       </div>
       <InstallLogView log={installLog} />
     </div>
@@ -424,6 +436,7 @@ function InstallingPhase() {
 }
 
 function CompletePhase() {
+  const { t } = useTranslation("setup");
   const { report, closeSetup } = useSetupStore();
   const loadEngines = useEngineStore((s) => s.load);
 
@@ -437,13 +450,13 @@ function CompletePhase() {
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ display: "grid", gap: 6 }}>
         {report?.node.found && (
-          <CheckItem label="Node.js" detail={report.node.version ?? "Detected"} />
+          <CheckItem label="Node.js" detail={report.node.version ?? t("status.detected")} />
         )}
         {report?.codex.found && (
-          <CheckItem label="Codex CLI" detail={report.codex.version ?? "Detected"} />
+          <CheckItem label="Codex CLI" detail={report.codex.version ?? t("status.detected")} />
         )}
         {report?.git.found && (
-          <CheckItem label="Git" detail={report.git.version ?? "Detected"} />
+          <CheckItem label="Git" detail={report.git.version ?? t("status.detected")} />
         )}
       </div>
       <button
@@ -459,7 +472,7 @@ function CompletePhase() {
           marginTop: 4,
         }}
       >
-        Get Started
+        {t("actions.getStarted")}
       </button>
     </div>
   );
@@ -532,10 +545,11 @@ function formatMethodSummary(diagnostics: CodexProtocolDiagnostics) {
   const available = methods.filter((item) => item.status === "available").length;
   const unsupported = methods.filter((item) => item.status === "unsupported").length;
   const errors = methods.filter((item) => item.status === "error").length;
-  return `${available} available, ${unsupported} unsupported, ${errors} errors`;
+  return { available, unsupported, errors };
 }
 
 function CodexDiagnosticsPanel({ health }: { health?: EngineHealth }) {
+  const { t } = useTranslation("setup");
   const diagnostics = health?.protocolDiagnostics;
   const [open, setOpen] = useState(false);
 
@@ -544,15 +558,19 @@ function CodexDiagnosticsPanel({ health }: { health?: EngineHealth }) {
   }
 
   const summary = diagnostics
-    ? formatMethodSummary(diagnostics)
+    ? t("diagnostics.methodsSummary", formatMethodSummary(diagnostics))
     : health.available
-      ? "Runtime diagnostics have not been fetched yet."
-      : health.details ?? "Codex is not available yet.";
+      ? t("diagnostics.notFetched")
+      : health.details ?? t("diagnostics.notAvailable");
   const configWarning = diagnostics?.lastConfigWarning;
   const accountLogin = diagnostics?.lastAccountLogin;
   const mcpOauth = diagnostics?.lastMcpOauth;
   const capabilitySummary = diagnostics
-    ? `${diagnostics.experimentalFeatures.length} experimental features, ${diagnostics.apps.length} apps, ${diagnostics.collaborationModes.length} collaboration modes`
+    ? t("diagnostics.capabilitiesSummary", {
+        experimental: diagnostics.experimentalFeatures.length,
+        apps: diagnostics.apps.length,
+        modes: diagnostics.collaborationModes.length,
+      })
     : null;
 
   return (
@@ -580,7 +598,7 @@ function CodexDiagnosticsPanel({ health }: { health?: EngineHealth }) {
         }}
       >
         <div style={{ display: "grid", gap: 3, textAlign: "left" }}>
-          <span style={{ fontSize: 12.5, fontWeight: 600 }}>Codex diagnostics</span>
+          <span style={{ fontSize: 12.5, fontWeight: 600 }}>{t("diagnostics.title")}</span>
           <span style={{ fontSize: 11.5, color: "var(--text-2)" }}>{summary}</span>
         </div>
         <ChevronDown
@@ -600,11 +618,11 @@ function CodexDiagnosticsPanel({ health }: { health?: EngineHealth }) {
           }}
         >
           {capabilitySummary && (
-            <DiagnosticsRow label="Capabilities" value={capabilitySummary} />
+            <DiagnosticsRow label={t("diagnostics.capabilities")} value={capabilitySummary} />
           )}
           {diagnostics?.methodAvailability?.length ? (
             <DiagnosticsRow
-              label="Methods"
+              label={t("diagnostics.methods")}
               value={diagnostics.methodAvailability
                 .map((item) => `${item.method}: ${item.status}`)
                 .join(" | ")}
@@ -612,11 +630,11 @@ function CodexDiagnosticsPanel({ health }: { health?: EngineHealth }) {
           ) : null}
           {configWarning ? (
             <DiagnosticsRow
-              label="Last config warning"
+              label={t("diagnostics.lastConfigWarning")}
               value={[
                 configWarning.summary,
                 configWarning.path,
-                configWarning.startLine ? `line ${configWarning.startLine}` : null,
+                configWarning.startLine ? t("diagnostics.line", { line: configWarning.startLine }) : null,
               ]
                 .filter(Boolean)
                 .join(" | ")}
@@ -624,20 +642,20 @@ function CodexDiagnosticsPanel({ health }: { health?: EngineHealth }) {
           ) : null}
           {accountLogin ? (
             <DiagnosticsRow
-              label="Last account login"
-              value={accountLogin.success ? "Success" : accountLogin.error ?? "Failed"}
+              label={t("diagnostics.lastAccountLogin")}
+              value={accountLogin.success ? t("diagnostics.success") : accountLogin.error ?? t("diagnostics.failed")}
             />
           ) : null}
           {mcpOauth ? (
             <DiagnosticsRow
-              label="Last MCP OAuth"
-              value={mcpOauth.success ? `${mcpOauth.name}: success` : `${mcpOauth.name}: ${mcpOauth.error ?? "failed"}`}
+              label={t("diagnostics.lastMcpOauth")}
+              value={mcpOauth.success ? `${mcpOauth.name}: ${t("diagnostics.successLower")}` : `${mcpOauth.name}: ${mcpOauth.error ?? t("diagnostics.failedLower")}`}
             />
           ) : null}
           {diagnostics?.fetchedAt ? (
             <DiagnosticsRow
-              label="Fetched"
-              value={`${diagnostics.fetchedAt}${diagnostics.stale ? " (stale)" : ""}`}
+              label={t("diagnostics.fetched")}
+              value={`${diagnostics.fetchedAt}${diagnostics.stale ? ` ${t("diagnostics.stale")}` : ""}`}
             />
           ) : null}
         </div>
@@ -647,6 +665,7 @@ function CodexDiagnosticsPanel({ health }: { health?: EngineHealth }) {
 }
 
 function ErrorPhase() {
+  const { t } = useTranslation(["setup", "common"]);
   const { error, verify } = useSetupStore();
 
   return (
@@ -667,7 +686,7 @@ function ErrorPhase() {
           style={{ color: "var(--warning)", flexShrink: 0, marginTop: 1 }}
         />
         <p style={{ margin: 0, fontSize: 12, color: "var(--text-1)", lineHeight: 1.5 }}>
-          {error ?? "An unexpected error occurred during setup."}
+          {error ?? t("setup:error.unexpected")}
         </p>
       </div>
       <button
@@ -682,7 +701,7 @@ function ErrorPhase() {
           width: "100%",
         }}
       >
-        Retry
+        {t("common:actions.retry")}
       </button>
     </div>
   );
@@ -704,6 +723,7 @@ function PhaseContent({ phase }: { phase: SetupPhase }) {
 }
 
 export function SetupWizard() {
+  const { t } = useTranslation(["setup", "common"]);
   const open = useSetupStore((s) => s.open);
   const phase = useSetupStore((s) => s.phase);
   const openSetup = useSetupStore((s) => s.openSetup);
@@ -746,22 +766,22 @@ export function SetupWizard() {
   const isComplete = phase === "complete";
 
   const title = isComplete
-    ? "Setup Complete"
+    ? t("setup:header.completeTitle")
     : phase === "installing"
-      ? "Installing Dependencies"
+      ? t("setup:header.installingTitle")
       : phase === "error"
-        ? "Setup Error"
-        : "System Setup";
+        ? t("setup:header.errorTitle")
+        : t("setup:header.systemTitle");
 
   const subtitle = isComplete
-    ? "All checks passed. You're ready to go."
+    ? t("setup:header.completeSubtitle")
     : phase === "scanning"
-      ? "Checking your system..."
+      ? t("setup:header.scanningSubtitle")
       : phase === "installing"
-        ? "Please wait while dependencies are installed."
+        ? t("setup:header.installingSubtitle")
         : phase === "error"
-          ? "Something went wrong during setup."
-          : "Review what needs to be set up.";
+          ? t("setup:header.errorSubtitle")
+          : t("setup:header.planSubtitle");
 
   function handleClose() {
     closeSetup();
@@ -865,7 +885,7 @@ export function SetupWizard() {
               transition: "all 0.12s",
             }}
             className="btn-ghost"
-            title="Close"
+            title={t("common:actions.close")}
           >
             <X size={14} />
           </button>
@@ -901,7 +921,7 @@ export function SetupWizard() {
                 gap: 6,
               }}
             >
-              Recheck
+              {t("setup:actions.recheck")}
             </button>
           </div>
         )}

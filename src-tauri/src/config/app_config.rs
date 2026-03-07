@@ -3,6 +3,7 @@ use std::{fs, path::PathBuf};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     pub general: GeneralConfig,
     pub ui: UiConfig,
@@ -10,13 +11,17 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GeneralConfig {
     pub theme: String,
     pub default_engine: String,
     pub default_model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct UiConfig {
     pub sidebar_width: u32,
     pub git_panel_width: u32,
@@ -24,28 +29,48 @@ pub struct UiConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DebugConfig {
     pub persist_engine_event_logs: bool,
     pub max_action_output_chars: usize,
 }
 
+impl Default for GeneralConfig {
+    fn default() -> Self {
+        Self {
+            theme: "dark".to_string(),
+            default_engine: "codex".to_string(),
+            default_model: "gpt-5.3-codex".to_string(),
+            locale: None,
+        }
+    }
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            sidebar_width: 260,
+            git_panel_width: 380,
+            font_size: 13,
+        }
+    }
+}
+
+impl Default for DebugConfig {
+    fn default() -> Self {
+        Self {
+            persist_engine_event_logs: false,
+            max_action_output_chars: 20_000,
+        }
+    }
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            general: GeneralConfig {
-                theme: "dark".to_string(),
-                default_engine: "codex".to_string(),
-                default_model: "gpt-5.3-codex".to_string(),
-            },
-            ui: UiConfig {
-                sidebar_width: 260,
-                git_panel_width: 380,
-                font_size: 13,
-            },
-            debug: DebugConfig {
-                persist_engine_event_logs: false,
-                max_action_output_chars: 20_000,
-            },
+            general: GeneralConfig::default(),
+            ui: UiConfig::default(),
+            debug: DebugConfig::default(),
         }
     }
 }
@@ -81,5 +106,40 @@ impl AppConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("."));
         home.join(".agent-workspace").join("config.toml")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppConfig;
+
+    #[test]
+    fn missing_locale_field_uses_none() {
+        let raw = r#"
+[general]
+theme = "dark"
+default_engine = "codex"
+default_model = "gpt-5.3-codex"
+
+[ui]
+sidebar_width = 260
+git_panel_width = 380
+font_size = 13
+
+[debug]
+persist_engine_event_logs = false
+max_action_output_chars = 20000
+"#;
+
+        let config = toml::from_str::<AppConfig>(raw).expect("config should deserialize");
+
+        assert_eq!(config.general.locale, None);
+    }
+
+    #[test]
+    fn default_config_omits_locale_from_toml() {
+        let raw = toml::to_string_pretty(&AppConfig::default()).expect("config should serialize");
+
+        assert!(!raw.contains("locale"));
     }
 }

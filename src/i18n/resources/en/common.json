@@ -1,0 +1,22 @@
+{
+  "actions": {
+    "allow": "Allow",
+    "cancel": "Cancel",
+    "close": "Close",
+    "copy": "Copy",
+    "discard": "Discard",
+    "notNow": "Not now",
+    "remove": "Remove",
+    "retry": "Try again",
+    "save": "Save"
+  },
+  "language": {
+    "label": "Language",
+    "changed": "Language updated. Native menu labels update after restart.",
+    "english": "English",
+    "portugueseBrazil": "Português (Brasil)"
+  },
+  "labels": {
+    "settings": "Settings"
+  }
+}
