@@ -1,97 +1,132 @@
 import { describe, expect, it } from "vitest";
-import { shouldCreateInitialTerminalSession } from "./terminalBootstrap";
+import { resolveTerminalBootstrapAction } from "./terminalBootstrap";
 
-describe("shouldCreateInitialTerminalSession", () => {
+describe("resolveTerminalBootstrapAction", () => {
   const workspaceId = "workspace-a";
 
-  it("returns true when listeners are ready and workspace is open without sessions", () => {
+  it("returns single_session when listeners are ready and workspace is open without sessions", () => {
     expect(
-      shouldCreateInitialTerminalSession({
+      resolveTerminalBootstrapAction({
         listenersReady: true,
         isOpen: true,
         layoutMode: "terminal",
         sessionCount: 0,
         workspaceId,
         createInFlightWorkspaceId: null,
+        hasPendingStartupPreset: false,
       }),
-    ).toBe(true);
+    ).toBe("single_session");
   });
 
-  it("returns false while listeners are not ready", () => {
+  it("returns preset when a startup preset is pending", () => {
     expect(
-      shouldCreateInitialTerminalSession({
+      resolveTerminalBootstrapAction({
+        listenersReady: true,
+        isOpen: true,
+        layoutMode: "split",
+        sessionCount: 0,
+        workspaceId,
+        createInFlightWorkspaceId: null,
+        hasPendingStartupPreset: true,
+      }),
+    ).toBe("preset");
+  });
+
+  it("returns none while listeners are not ready", () => {
+    expect(
+      resolveTerminalBootstrapAction({
         listenersReady: false,
         isOpen: true,
         layoutMode: "terminal",
         sessionCount: 0,
         workspaceId,
         createInFlightWorkspaceId: null,
+        hasPendingStartupPreset: false,
       }),
-    ).toBe(false);
+    ).toBe("none");
   });
 
-  it("returns false when workspace is closed", () => {
+  it("returns none when workspace is closed", () => {
     expect(
-      shouldCreateInitialTerminalSession({
+      resolveTerminalBootstrapAction({
         listenersReady: true,
         isOpen: false,
         layoutMode: "terminal",
         sessionCount: 0,
         workspaceId,
         createInFlightWorkspaceId: null,
+        hasPendingStartupPreset: false,
       }),
-    ).toBe(false);
+    ).toBe("none");
   });
 
-  it("returns false when a session already exists", () => {
+  it("returns none when a session already exists", () => {
     expect(
-      shouldCreateInitialTerminalSession({
+      resolveTerminalBootstrapAction({
         listenersReady: true,
         isOpen: true,
         layoutMode: "terminal",
         sessionCount: 1,
         workspaceId,
         createInFlightWorkspaceId: null,
+        hasPendingStartupPreset: false,
       }),
-    ).toBe(false);
+    ).toBe("none");
   });
 
-  it("returns false when initial creation is already in flight for the same workspace", () => {
+  it("returns none when initial creation is already in flight for the same workspace", () => {
     expect(
-      shouldCreateInitialTerminalSession({
+      resolveTerminalBootstrapAction({
         listenersReady: true,
         isOpen: true,
         layoutMode: "terminal",
         sessionCount: 0,
         workspaceId,
         createInFlightWorkspaceId: workspaceId,
+        hasPendingStartupPreset: false,
       }),
-    ).toBe(false);
+    ).toBe("none");
   });
 
-  it("returns true for a different workspace even if another bootstrap is in flight", () => {
+  it("returns single_session for a different workspace even if another bootstrap is in flight", () => {
     expect(
-      shouldCreateInitialTerminalSession({
+      resolveTerminalBootstrapAction({
         listenersReady: true,
         isOpen: true,
         layoutMode: "terminal",
         sessionCount: 0,
         workspaceId,
         createInFlightWorkspaceId: "workspace-b",
+        hasPendingStartupPreset: false,
       }),
-    ).toBe(true);
+    ).toBe("single_session");
   });
 
-  it("returns false when terminal is open in chat mode", () => {
+  it("returns preset when a startup preset is pending in chat mode", () => {
     expect(
-      shouldCreateInitialTerminalSession({
+      resolveTerminalBootstrapAction({
         listenersReady: true,
         isOpen: true,
         layoutMode: "chat",
         sessionCount: 0,
         workspaceId,
         createInFlightWorkspaceId: null,
+        hasPendingStartupPreset: true,
       }),
-    ).toBe(false);
+    ).toBe("preset");
+  });
+
+  it("returns none in chat mode without a pending preset", () => {
+    expect(
+      resolveTerminalBootstrapAction({
+        listenersReady: true,
+        isOpen: true,
+        layoutMode: "chat",
+        sessionCount: 0,
+        workspaceId,
+        createInFlightWorkspaceId: null,
+        hasPendingStartupPreset: false,
+      }),
+    ).toBe("none");
   });
 });

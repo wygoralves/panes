@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { Repo, TrustLevel, Workspace } from "../types";
 import { ipc } from "../lib/ipc";
 import { useGitStore } from "./gitStore";
+import { useTerminalStore } from "./terminalStore";
 
 interface SetActiveRepoOptions {
   remember?: boolean;
@@ -84,7 +85,7 @@ function rememberLastRepo(workspaceId: string, repoId: string): void {
   writeLastRepoByWorkspace(current);
 }
 
-function resolveActiveRepoId(
+export function resolveActiveRepoId(
   workspaceId: string,
   repos: Repo[],
   currentActiveRepoId: string | null,
@@ -122,6 +123,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const activeWorkspaceId = restored?.id ?? null;
       set({ workspaces, activeWorkspaceId, loading: false });
       if (activeWorkspaceId) {
+        await useTerminalStore.getState().prepareWorkspaceActivation(activeWorkspaceId);
         useGitStore.getState().loadDraftsForWorkspace(activeWorkspaceId);
         await get().loadRepos(activeWorkspaceId);
       }
@@ -150,6 +152,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeWorkspaceId: workspace.id,
         loading: false,
       }));
+      await useTerminalStore.getState().prepareWorkspaceActivation(workspace.id);
       await get().loadRepos(workspace.id);
     } catch (error) {
       set({ loading: false, error: String(error) });
@@ -159,10 +162,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ loading: true, error: undefined });
     try {
       await ipc.archiveWorkspace(workspaceId);
+      const wasActiveWorkspace = get().activeWorkspaceId === workspaceId;
       const removed = get().workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
       const remaining = get().workspaces.filter((workspace) => workspace.id !== workspaceId);
       const nextActive =
-        get().activeWorkspaceId === workspaceId
+        wasActiveWorkspace
           ? remaining[0]?.id ?? null
           : get().activeWorkspaceId;
 
@@ -179,6 +183,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }));
 
       if (nextActive) {
+        if (wasActiveWorkspace) {
+          await useTerminalStore.getState().prepareWorkspaceActivation(nextActive);
+        }
         await get().loadRepos(nextActive);
       } else {
         set({ repos: [], activeRepoId: null, reposLoading: false });
@@ -208,6 +215,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       });
 
       if (!get().activeWorkspaceId || get().activeWorkspaceId === restored.id) {
+        await useTerminalStore.getState().prepareWorkspaceActivation(restored.id);
         await get().loadRepos(restored.id);
       }
     } catch (error) {
@@ -257,6 +265,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
     localStorage.setItem(LAST_WORKSPACE_KEY, workspaceId);
     set({ activeWorkspaceId: workspaceId, activeRepoId: null, repos: [], error: undefined });
+    await useTerminalStore.getState().prepareWorkspaceActivation(workspaceId);
     await get().loadRepos(workspaceId);
     useGitStore.getState().loadDraftsForWorkspace(workspaceId);
   },

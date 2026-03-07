@@ -7,7 +7,7 @@ import { toast } from "../../stores/toastStore";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import { copyTextToClipboard } from "../../lib/clipboard";
-import { shouldCreateInitialTerminalSession } from "../../lib/terminalBootstrap";
+import { resolveTerminalBootstrapAction } from "../../lib/terminalBootstrap";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -15,11 +15,16 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { ImageAddon } from "@xterm/addon-image";
 import "@xterm/xterm/css/xterm.css";
 import { ipc, listenTerminalExit, listenTerminalForegroundChanged, listenTerminalOutput, writeCommandToNewSession } from "../../lib/ipc";
-import { useTerminalStore, collectSessionIds } from "../../stores/terminalStore";
+import {
+  useTerminalStore,
+  collectSessionIds,
+  getGroupDisplayHarness,
+} from "../../stores/terminalStore";
 import type {
   SplitNode,
   SplitContainer as SplitContainerType,
   TerminalRendererDiagnostics,
+  WorkspaceStartupWorktreeConfig,
 } from "../../types";
 
 interface TerminalPanelProps {
@@ -1754,8 +1759,12 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const groups = workspaceState?.groups ?? [];
   const activeGroupId = workspaceState?.activeGroupId ?? null;
   const focusedSessionId = workspaceState?.focusedSessionId ?? null;
+  const pendingStartupPreset = workspaceState?.pendingStartupPreset ?? null;
 
   const createSession = useTerminalStore((state) => state.createSession);
+  const materializeWorkspaceStartupPreset = useTerminalStore(
+    (state) => state.materializeWorkspaceStartupPreset,
+  );
   const closeSession = useTerminalStore((state) => state.closeSession);
   const handleSessionExit = useTerminalStore((state) => state.handleSessionExit);
   const setWorkspaceStatus = useTerminalStore((state) => state.setWorkspaceStatus);
@@ -1863,7 +1872,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   useEffect(() => () => clearFocusRetryTimer(), [clearFocusRetryTimer]);
 
   // ── Auto-detect harness in terminal tabs ──────────────────────────
-  const updateGroupHarness = useTerminalStore((state) => state.updateGroupHarness);
+  const updateSessionHarness = useTerminalStore((state) => state.updateSessionHarness);
   const allHarnessesForDetect = useHarnessStore((s) => s.harnesses);
 
   useEffect(() => {
@@ -1883,16 +1892,17 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       const group = groups.find((g) => collectSessionIds(g.root).includes(event.sessionId));
       if (!group) return;
 
+      const currentMeta = group.sessionMeta?.[event.sessionId];
       const match = event.name ? commandMap.get(event.name) : null;
-      if (match && group.harnessId !== match.id) {
-        updateGroupHarness(workspaceId, group.id, match.id, match.name, true);
-      } else if (!match && group.autoDetectedHarness && group.harnessId) {
-        updateGroupHarness(workspaceId, group.id, null, null, true);
+      if (match && currentMeta?.harnessId !== match.id) {
+        updateSessionHarness(workspaceId, event.sessionId, match.id, match.name, true);
+      } else if (!match && currentMeta?.autoDetectedHarness && currentMeta.harnessId) {
+        updateSessionHarness(workspaceId, event.sessionId, null, null, true);
       }
     }).then((fn) => { unlisten = fn; });
 
     return () => { unlisten?.(); };
-  }, [workspaceId, allHarnessesForDetect, updateGroupHarness]);
+  }, [workspaceId, allHarnessesForDetect, updateSessionHarness]);
 
   const commitRename = useCallback(
     (groupId: string) => {
@@ -1922,7 +1932,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     const group = groups.find((g) => g.id === groupId);
     if (!group) return;
     // If group has worktrees, ask user whether to keep or remove them
-    if (group.worktrees && Object.keys(group.worktrees).length > 0) {
+    if (getGroupWorktrees(workspaceId, groupId).length > 0) {
       setWorktreeCloseGroupId(groupId);
       return;
     }
@@ -2447,24 +2457,45 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
   useEffect(() => {
     const listenersReady = listenersReadyWorkspaceId === workspaceId;
-    if (!shouldCreateInitialTerminalSession({
+    const action = resolveTerminalBootstrapAction({
       listenersReady,
       isOpen,
       layoutMode,
       sessionCount: sessions.length,
       workspaceId,
       createInFlightWorkspaceId: bootstrapCreateInFlightWorkspaceRef.current,
-    })) {
+      hasPendingStartupPreset: Boolean(pendingStartupPreset),
+    });
+    if (action === "none") {
       return;
     }
 
     bootstrapCreateInFlightWorkspaceRef.current = workspaceId;
-    void createSession(workspaceId).finally(() => {
+    const runBootstrap = async () => {
+      if (action === "preset" && pendingStartupPreset) {
+        const applied = await materializeWorkspaceStartupPreset(workspaceId, pendingStartupPreset);
+        if (!applied) {
+          await createSession(workspaceId);
+        }
+        return;
+      }
+      await createSession(workspaceId);
+    };
+    void runBootstrap().finally(() => {
       if (bootstrapCreateInFlightWorkspaceRef.current === workspaceId) {
         bootstrapCreateInFlightWorkspaceRef.current = null;
       }
     });
-  }, [createSession, isOpen, layoutMode, listenersReadyWorkspaceId, sessions.length, workspaceId]);
+  }, [
+    createSession,
+    isOpen,
+    layoutMode,
+    listenersReadyWorkspaceId,
+    materializeWorkspaceStartupPreset,
+    pendingStartupPreset,
+    sessions.length,
+    workspaceId,
+  ]);
 
   useEffect(() => {
     for (const session of sessions) {
@@ -2629,14 +2660,17 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     if (harnessMeta.length === 0) return;
 
     // Build worktree config if a repo was selected
-    let worktreeConfig: { repoPath: string; baseBranch: string; baseDir: string } | null = null;
+    let worktreeConfig: WorkspaceStartupWorktreeConfig | null = null;
     if (worktreeRepoPath) {
       const repo = repos.find((r) => r.path === worktreeRepoPath);
       if (repo) {
         worktreeConfig = {
+          enabled: true,
+          repoMode: "fixed_repo",
           repoPath: repo.path,
           baseBranch: repo.defaultBranch,
-          baseDir: `${repo.path}/.panes/worktrees`,
+          baseDir: ".panes/worktrees",
+          branchPrefix: "panes/preset",
         };
       }
     }
@@ -2762,6 +2796,8 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
           {groups.map((group) => {
             const isActive = group.id === activeGroupId;
             const groupSessionIds = collectSessionIds(group.root);
+            const displayHarness = getGroupDisplayHarness(group);
+            const groupWorktrees = getGroupWorktrees(workspaceId, group.id);
             return (
               <button
                 key={group.id}
@@ -2777,7 +2813,9 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                   setCtxMenu({ groupId: group.id, x: e.clientX, y: e.clientY });
                 }}
               >
-                {group.harnessId ? getHarnessIcon(group.harnessId, 12) : <SquareTerminal size={12} />}
+                {displayHarness.harnessId
+                  ? getHarnessIcon(displayHarness.harnessId, 12)
+                  : <SquareTerminal size={12} />}
                 {renamingGroupId === group.id ? (
                   <input
                     ref={renameInputRef}
@@ -2804,8 +2842,8 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                     {group.name}
                   </span>
                 )}
-                {group.worktrees && Object.keys(group.worktrees).length > 0 && (
-                  <span className="terminal-worktree-badge" title={Object.values(group.worktrees).map((w) => w.branch).join(", ")}>
+                {groupWorktrees.length > 0 && (
+                  <span className="terminal-worktree-badge" title={groupWorktrees.map((worktree) => worktree.branch).join(", ")}>
                     <GitBranchIcon size={10} />
                   </span>
                 )}

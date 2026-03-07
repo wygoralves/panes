@@ -25,6 +25,7 @@ import { useUpdateStore } from "../../stores/updateStore";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { UpdateDialog } from "../onboarding/UpdateDialog";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
+import { WorkspaceStartupPresetModal } from "../workspace/WorkspaceStartupPresetModal";
 import type { Thread, Workspace } from "../../types";
 
 function relativeTime(dateStr: string): string {
@@ -128,6 +129,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const [archiveThreadPrompt, setArchiveThreadPrompt] = useState<{
     thread: Thread;
   } | null>(null);
+  const [startupPresetWorkspace, setStartupPresetWorkspace] = useState<Workspace | null>(null);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [settingsMenuPos, setSettingsMenuPos] = useState({ top: 0, left: 0 });
   const settingsMenuRef = useRef<HTMLDivElement>(null);
@@ -433,17 +435,31 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                     </span>
                   )}
 
-                  <span
-                    role="button"
-                    title="Archive workspace"
-                    className="sb-project-archive"
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void onDeleteWorkspace(project.workspace);
-                    }}
-                  >
-                    <Archive size={11} />
+                  <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                    <span
+                      role="button"
+                      title="Workspace startup preset"
+                      className="sb-project-archive"
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setStartupPresetWorkspace(project.workspace);
+                      }}
+                    >
+                      <Terminal size={11} />
+                    </span>
+                    <span
+                      role="button"
+                      title="Archive workspace"
+                      className="sb-project-archive"
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onDeleteWorkspace(project.workspace);
+                      }}
+                    >
+                      <Archive size={11} />
+                    </span>
                   </span>
                 </button>
 
@@ -778,6 +794,15 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             if (archiveThreadPrompt) void executeArchiveThread(archiveThreadPrompt.thread);
           }}
           onCancel={() => setArchiveThreadPrompt(null)}
+        />,
+        document.body,
+      )}
+
+      {startupPresetWorkspace && createPortal(
+        <WorkspaceStartupPresetModal
+          open={startupPresetWorkspace !== null}
+          workspace={startupPresetWorkspace}
+          onClose={() => setStartupPresetWorkspace(null)}
         />,
         document.body,
       )}

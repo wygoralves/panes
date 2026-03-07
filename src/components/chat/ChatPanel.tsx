@@ -2299,7 +2299,10 @@ export function ChatPanel() {
   const hasEditorMountedRef = useRef(false);
   // Set refs during render (not in an effect) so the conditional mount below
   // sees the updated value in the same render pass that triggers it.
-  if ((layoutMode === "split" || layoutMode === "terminal") && activeWorkspaceId) {
+  if (
+    activeWorkspaceId
+    && (layoutMode === "split" || layoutMode === "terminal" || terminalWorkspaceState?.isOpen)
+  ) {
     hasTerminalMountedRef.current = true;
   }
   if (layoutMode === "editor" && activeWorkspaceId) {

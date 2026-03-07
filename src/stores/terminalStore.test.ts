@@ -57,7 +57,7 @@ describe("nextTerminalNumber", () => {
   it("handles harness groups mixed with terminal groups", () => {
     const groups = [
       makeGroup("Terminal 1"),
-      { ...makeGroup("Codex CLI"), harnessId: "codex" },
+      makeGroup("Codex CLI"),
       makeGroup("Terminal 3"),
     ];
     expect(nextTerminalNumber(groups)).toBe(2);

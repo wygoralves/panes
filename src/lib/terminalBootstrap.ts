@@ -5,33 +5,40 @@ interface TerminalBootstrapDecisionInput {
   sessionCount: number;
   workspaceId: string;
   createInFlightWorkspaceId: string | null;
+  hasPendingStartupPreset: boolean;
 }
 
-export function shouldCreateInitialTerminalSession({
+export type TerminalBootstrapAction = "none" | "preset" | "single_session";
+
+export function resolveTerminalBootstrapAction({
   listenersReady,
   isOpen,
   layoutMode,
   sessionCount,
   workspaceId,
   createInFlightWorkspaceId,
-}: TerminalBootstrapDecisionInput): boolean {
+  hasPendingStartupPreset,
+}: TerminalBootstrapDecisionInput): TerminalBootstrapAction {
   if (!listenersReady) {
-    return false;
+    return "none";
   }
   if (!workspaceId) {
-    return false;
+    return "none";
   }
   if (!isOpen) {
-    return false;
-  }
-  if (layoutMode !== "terminal" && layoutMode !== "split") {
-    return false;
+    return "none";
   }
   if (sessionCount > 0) {
-    return false;
+    return "none";
   }
   if (createInFlightWorkspaceId === workspaceId) {
-    return false;
+    return "none";
   }
-  return true;
+  if (hasPendingStartupPreset) {
+    return "preset";
+  }
+  if (layoutMode !== "terminal" && layoutMode !== "split") {
+    return "none";
+  }
+  return "single_session";
 }

@@ -37,6 +37,8 @@ import type {
   TerminalRendererDiagnostics,
   TerminalResumeSession,
   TerminalSession,
+  WorkspaceStartupPreset,
+  WorkspaceStartupPresetFormat,
   Thread,
   TrustLevel,
   WorkspaceGitSelectionStatus,
@@ -63,6 +65,50 @@ export const ipc = {
     invoke<void>("set_workspace_git_active_repos", { workspaceId, repoIds }),
   hasWorkspaceGitSelection: (workspaceId: string) =>
     invoke<WorkspaceGitSelectionStatus>("has_workspace_git_selection", { workspaceId }),
+  getWorkspaceStartupPreset: (workspaceId: string) =>
+    invoke<WorkspaceStartupPreset | null>("get_workspace_startup_preset", { workspaceId }),
+  normalizeWorkspaceStartupPreset: (workspaceId: string, preset: WorkspaceStartupPreset) =>
+    invoke<WorkspaceStartupPreset>("normalize_workspace_startup_preset", { workspaceId, preset }),
+  serializeWorkspaceStartupPreset: (
+    workspaceId: string,
+    preset: WorkspaceStartupPreset,
+    format: WorkspaceStartupPresetFormat,
+  ) =>
+    invoke<string>("serialize_workspace_startup_preset", { workspaceId, preset, format }),
+  normalizeWorkspaceStartupPresetRaw: (
+    workspaceId: string,
+    format: WorkspaceStartupPresetFormat,
+    rawText: string,
+  ) =>
+    invoke<WorkspaceStartupPreset>("normalize_workspace_startup_preset_raw", {
+      workspaceId,
+      format,
+      rawText,
+    }),
+  setWorkspaceStartupPreset: (workspaceId: string, preset: WorkspaceStartupPreset) =>
+    invoke<WorkspaceStartupPreset>("set_workspace_startup_preset", { workspaceId, preset }),
+  setWorkspaceStartupPresetRaw: (
+    workspaceId: string,
+    format: WorkspaceStartupPresetFormat,
+    rawText: string,
+  ) =>
+    invoke<WorkspaceStartupPreset>("set_workspace_startup_preset_raw", {
+      workspaceId,
+      format,
+      rawText,
+    }),
+  clearWorkspaceStartupPreset: (workspaceId: string) =>
+    invoke<void>("clear_workspace_startup_preset", { workspaceId }),
+  exportWorkspaceStartupPreset: (
+    workspaceId: string,
+    format: WorkspaceStartupPresetFormat,
+  ) =>
+    invoke<string>("export_workspace_startup_preset", { workspaceId, format }),
+  listWorkspaceDirs: (workspaceId: string, dirPath?: string | null) =>
+    invoke<FileTreeEntry[]>("list_workspace_dirs", {
+      workspaceId,
+      dirPath: dirPath ?? null,
+    }),
   listThreads: (workspaceId: string) => invoke<Thread[]>("list_threads", { workspaceId }),
   listArchivedThreads: (workspaceId: string) =>
     invoke<Thread[]>("list_archived_threads", { workspaceId }),

@@ -116,6 +116,7 @@ impl Database {
             .context("failed to apply migrations")?;
         ensure_archived_columns(&conn)?;
         ensure_workspace_git_columns(&conn)?;
+        ensure_workspace_startup_columns(&conn)?;
         ensure_runtime_columns(&conn)?;
         ensure_messages_audit_columns(&conn)?;
         Ok(())
@@ -149,6 +150,12 @@ fn ensure_workspace_git_columns(conn: &Connection) -> anyhow::Result<()> {
         "git_repo_selection_configured",
         "INTEGER NOT NULL DEFAULT 0",
     )?;
+    Ok(())
+}
+
+fn ensure_workspace_startup_columns(conn: &Connection) -> anyhow::Result<()> {
+    ensure_column(conn, "workspaces", "startup_preset_json", "TEXT")?;
+    ensure_column(conn, "workspaces", "startup_preset_updated_at", "TEXT")?;
     Ok(())
 }
 

@@ -156,6 +156,57 @@ pub fn restore_workspace(db: &Database, workspace_id: &str) -> anyhow::Result<Wo
     get_workspace_by_id(&conn, workspace_id)
 }
 
+pub fn find_workspace_by_id(
+    db: &Database,
+    workspace_id: &str,
+) -> anyhow::Result<Option<WorkspaceDto>> {
+    let conn = db.connect()?;
+    get_workspace_by_id_optional(&conn, workspace_id)
+}
+
+pub fn get_workspace_startup_preset_json(
+    db: &Database,
+    workspace_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let conn = db.connect()?;
+    conn.query_row(
+        "SELECT startup_preset_json
+         FROM workspaces
+         WHERE id = ?1",
+        params![workspace_id],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .optional()
+    .context("failed to load workspace startup preset")
+    .map(|value| value.flatten())
+}
+
+pub fn set_workspace_startup_preset_json(
+    db: &Database,
+    workspace_id: &str,
+    startup_preset_json: Option<&str>,
+) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    let affected = conn
+        .execute(
+            "UPDATE workspaces
+             SET startup_preset_json = ?1,
+                 startup_preset_updated_at = CASE
+                     WHEN ?1 IS NULL THEN NULL
+                     ELSE datetime('now')
+                 END
+             WHERE id = ?2",
+            params![startup_preset_json, workspace_id],
+        )
+        .context("failed to persist workspace startup preset")?;
+
+    if affected == 0 {
+        anyhow::bail!("workspace not found: {workspace_id}");
+    }
+
+    Ok(())
+}
+
 pub fn is_git_repo_selection_configured(db: &Database, workspace_id: &str) -> anyhow::Result<bool> {
     let conn = db.connect()?;
     let configured = conn
@@ -212,6 +263,14 @@ fn get_workspace_by_id(
     conn: &rusqlite::Connection,
     workspace_id: &str,
 ) -> anyhow::Result<WorkspaceDto> {
+    get_workspace_by_id_optional(conn, workspace_id)?
+        .ok_or_else(|| anyhow::anyhow!("workspace not found: {workspace_id}"))
+}
+
+fn get_workspace_by_id_optional(
+    conn: &rusqlite::Connection,
+    workspace_id: &str,
+) -> anyhow::Result<Option<WorkspaceDto>> {
     conn.query_row(
         "SELECT id, name, root_path, scan_depth, created_at, last_opened_at
      FROM workspaces
@@ -219,6 +278,7 @@ fn get_workspace_by_id(
         params![workspace_id],
         map_workspace_row,
     )
+    .optional()
     .context("failed to load workspace by id")
 }
 

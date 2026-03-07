@@ -1,10 +1,18 @@
 use tauri::State;
 
 use crate::{
-    db,
+    db, fs_ops,
     git::multi_repo,
-    models::{RepoDto, TrustLevelDto, WorkspaceDto, WorkspaceGitSelectionStatusDto},
+    models::{
+        FileTreeEntryDto, RepoDto, TrustLevelDto, WorkspaceDto, WorkspaceGitSelectionStatusDto,
+    },
     state::AppState,
+    workspace_startup::{
+        normalize_workspace_startup_preset as normalize_preset, parse_workspace_startup_preset_raw,
+        parse_persisted_workspace_startup_preset_json,
+        resolve_workspace_path, serialize_workspace_startup_preset as serialize_preset,
+        WorkspaceStartupPreset, WorkspaceStartupPresetFormat,
+    },
 };
 
 const DEFAULT_SCAN_DEPTH: i64 = 3;
@@ -164,8 +172,155 @@ pub async fn restore_workspace(
     .await
 }
 
+#[tauri::command]
+pub async fn get_workspace_startup_preset(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<Option<WorkspaceStartupPreset>, String> {
+    run_db(state.db.clone(), move |db| {
+        load_workspace(db, &workspace_id)?;
+        db::workspaces::get_workspace_startup_preset_json(db, &workspace_id)?
+            .as_deref()
+            .map(parse_persisted_workspace_startup_preset_json)
+            .transpose()
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn normalize_workspace_startup_preset(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    preset: WorkspaceStartupPreset,
+) -> Result<WorkspaceStartupPreset, String> {
+    run_db(state.db.clone(), move |db| {
+        let workspace = load_workspace(db, &workspace_id)?;
+        let workspace_root = resolve_workspace_path(&workspace.root_path)?;
+        normalize_preset(preset, &workspace_root)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn serialize_workspace_startup_preset(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    preset: WorkspaceStartupPreset,
+    format: WorkspaceStartupPresetFormat,
+) -> Result<String, String> {
+    run_db(state.db.clone(), move |db| {
+        let workspace = load_workspace(db, &workspace_id)?;
+        let workspace_root = resolve_workspace_path(&workspace.root_path)?;
+        let normalized = normalize_preset(preset, &workspace_root)?;
+        serialize_preset(&normalized, format)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn normalize_workspace_startup_preset_raw(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    format: WorkspaceStartupPresetFormat,
+    raw_text: String,
+) -> Result<WorkspaceStartupPreset, String> {
+    run_db(state.db.clone(), move |db| {
+        let workspace = load_workspace(db, &workspace_id)?;
+        let workspace_root = resolve_workspace_path(&workspace.root_path)?;
+        let parsed = parse_workspace_startup_preset_raw(format, &raw_text)?;
+        normalize_preset(parsed, &workspace_root)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn set_workspace_startup_preset(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    preset: WorkspaceStartupPreset,
+) -> Result<WorkspaceStartupPreset, String> {
+    run_db(state.db.clone(), move |db| {
+        let workspace = load_workspace(db, &workspace_id)?;
+        let workspace_root = resolve_workspace_path(&workspace.root_path)?;
+        let normalized = normalize_preset(preset, &workspace_root)?;
+        let raw_json = serde_json::to_string(&normalized)
+            .map_err(|error| anyhow::anyhow!("failed to serialize startup preset JSON: {error}"))?;
+        db::workspaces::set_workspace_startup_preset_json(db, &workspace_id, Some(&raw_json))?;
+        Ok(normalized)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn set_workspace_startup_preset_raw(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    format: WorkspaceStartupPresetFormat,
+    raw_text: String,
+) -> Result<WorkspaceStartupPreset, String> {
+    run_db(state.db.clone(), move |db| {
+        let workspace = load_workspace(db, &workspace_id)?;
+        let workspace_root = resolve_workspace_path(&workspace.root_path)?;
+        let parsed = parse_workspace_startup_preset_raw(format, &raw_text)?;
+        let normalized = normalize_preset(parsed, &workspace_root)?;
+        let raw_json = serde_json::to_string(&normalized)
+            .map_err(|error| anyhow::anyhow!("failed to serialize startup preset JSON: {error}"))?;
+        db::workspaces::set_workspace_startup_preset_json(db, &workspace_id, Some(&raw_json))?;
+        Ok(normalized)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn clear_workspace_startup_preset(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<(), String> {
+    run_db(state.db.clone(), move |db| {
+        db::workspaces::set_workspace_startup_preset_json(db, &workspace_id, None)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn export_workspace_startup_preset(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    format: WorkspaceStartupPresetFormat,
+) -> Result<String, String> {
+    run_db(state.db.clone(), move |db| {
+        load_workspace(db, &workspace_id)?;
+        let raw_json = db::workspaces::get_workspace_startup_preset_json(db, &workspace_id)?
+            .ok_or_else(|| anyhow::anyhow!("workspace startup preset is not configured"))?;
+        let preset = parse_persisted_workspace_startup_preset_json(&raw_json)?;
+        serialize_preset(&preset, format)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_workspace_dirs(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    dir_path: Option<String>,
+) -> Result<Vec<FileTreeEntryDto>, String> {
+    run_db(state.db.clone(), move |db| {
+        let workspace = load_workspace(db, &workspace_id)?;
+        let mut entries =
+            fs_ops::list_dir(&workspace.root_path, dir_path.as_deref().unwrap_or(""))?;
+        entries.retain(|entry| entry.is_dir);
+        Ok(entries)
+    })
+    .await
+}
+
 fn err_to_string(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+fn load_workspace(db: &crate::db::Database, workspace_id: &str) -> anyhow::Result<WorkspaceDto> {
+    db::workspaces::find_workspace_by_id(db, workspace_id)?
+        .ok_or_else(|| anyhow::anyhow!("workspace not found: {workspace_id}"))
 }
 
 fn normalize_scan_depth(value: Option<i64>) -> i64 {

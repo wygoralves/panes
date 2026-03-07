@@ -3,6 +3,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
   name TEXT NOT NULL,
   root_path TEXT NOT NULL UNIQUE,
   scan_depth INTEGER NOT NULL DEFAULT 3,
+  startup_preset_json TEXT,
+  startup_preset_updated_at TEXT,
   archived_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_opened_at TEXT NOT NULL DEFAULT (datetime('now'))

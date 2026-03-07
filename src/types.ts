@@ -23,6 +23,66 @@ export interface WorkspaceGitSelectionStatus {
   configured: boolean;
 }
 
+export type WorkspaceStartupPresetFormat = "json" | "toml";
+export type WorkspaceDefaultView = "chat" | "split" | "terminal" | "editor";
+export type WorkspacePathBase = "workspace" | "worktree" | "absolute";
+export type WorkspaceStartupApplyWhen = "no_live_sessions";
+export type WorkspaceStartupRepoMode = "active_repo" | "fixed_repo";
+export type WorkspaceStartupSplitDirection = "horizontal" | "vertical";
+
+export interface WorkspaceStartupPreset {
+  version: 1;
+  defaultView: WorkspaceDefaultView;
+  splitPanelSize?: number | null;
+  terminal?: WorkspaceTerminalStartupPreset | null;
+}
+
+export interface WorkspaceTerminalStartupPreset {
+  applyWhen: WorkspaceStartupApplyWhen;
+  groups: WorkspaceStartupGroup[];
+  activeGroupId?: string | null;
+  focusedSessionId?: string | null;
+}
+
+export interface WorkspaceStartupGroup {
+  id: string;
+  name: string;
+  broadcastOnStart?: boolean;
+  worktree?: WorkspaceStartupWorktreeConfig | null;
+  sessions: WorkspaceStartupSession[];
+  root: WorkspaceStartupSplitNode;
+}
+
+export interface WorkspaceStartupWorktreeConfig {
+  enabled: boolean;
+  repoMode: WorkspaceStartupRepoMode;
+  repoPath?: string | null;
+  baseBranch?: string | null;
+  baseDir?: string | null;
+  branchPrefix?: string | null;
+}
+
+export interface WorkspaceStartupSession {
+  id: string;
+  title?: string | null;
+  cwd: string;
+  cwdBase?: WorkspacePathBase | null;
+  harnessId?: string | null;
+  launchHarnessOnCreate?: boolean | null;
+}
+
+export type WorkspaceStartupSplitNode =
+  | {
+      type: "leaf";
+      sessionId: string;
+    }
+  | {
+      type: "split";
+      direction: WorkspaceStartupSplitDirection;
+      ratio: number;
+      children: [WorkspaceStartupSplitNode, WorkspaceStartupSplitNode];
+    };
+
 export type ThreadStatus =
   | "idle"
   | "streaming"
@@ -593,13 +653,20 @@ export interface SplitContainer {
 
 export type SplitNode = SplitLeaf | SplitContainer;
 
+export interface TerminalSessionRuntimeMeta {
+  harnessId?: string | null;
+  harnessName?: string | null;
+  autoDetectedHarness?: boolean;
+  launchHarnessOnCreate?: boolean;
+  worktree?: WorktreeSessionInfo | null;
+}
+
 export interface TerminalGroup {
   id: string;
   root: SplitNode;
   name: string;
-  harnessId?: string;
-  autoDetectedHarness?: boolean;
-  worktrees?: Record<string, WorktreeSessionInfo>;
+  sessionMeta?: Record<string, TerminalSessionRuntimeMeta>;
+  worktreeConfig?: WorkspaceStartupWorktreeConfig | null;
 }
 
 // ── Setup / Onboarding ──────────────────────────────────────────────

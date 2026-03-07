@@ -7,6 +7,7 @@ mod git;
 mod models;
 mod state;
 mod terminal;
+mod workspace_startup;
 
 use std::sync::Arc;
 
@@ -105,6 +106,15 @@ pub fn run() {
             commands::workspace::archive_workspace,
             commands::workspace::restore_workspace,
             commands::workspace::delete_workspace,
+            commands::workspace::get_workspace_startup_preset,
+            commands::workspace::normalize_workspace_startup_preset,
+            commands::workspace::serialize_workspace_startup_preset,
+            commands::workspace::normalize_workspace_startup_preset_raw,
+            commands::workspace::set_workspace_startup_preset,
+            commands::workspace::set_workspace_startup_preset_raw,
+            commands::workspace::clear_workspace_startup_preset,
+            commands::workspace::export_workspace_startup_preset,
+            commands::workspace::list_workspace_dirs,
             commands::git::get_git_status,
             commands::git::get_file_diff,
             commands::git::stage_files,
