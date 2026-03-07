@@ -58,9 +58,11 @@ pub async fn write_file(
 
 #[tauri::command]
 pub async fn reveal_path(path: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || reveal_path_impl(PathBuf::from(path)).map_err(err_to_string))
-        .await
-        .map_err(|error| error.to_string())?
+    tokio::task::spawn_blocking(move || {
+        reveal_path_impl(PathBuf::from(path)).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn reveal_path_impl(path: PathBuf) -> anyhow::Result<()> {

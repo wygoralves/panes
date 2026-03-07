@@ -1,4 +1,12 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    env,
+    ffi::OsString,
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -119,15 +127,22 @@ struct ClaudeTransport {
 
 impl ClaudeTransport {
     async fn spawn(sidecar_path: PathBuf) -> anyhow::Result<Self> {
-        let node = which::which("node")
-            .context("node executable not found in PATH — required for the Claude engine")?;
+        let node_resolution = resolve_node_executable().await;
+        let node = node_resolution
+            .executable
+            .clone()
+            .with_context(|| node_unavailable_details(&node_resolution))?;
 
         let sidecar_dir = sidecar_path
             .parent()
             .map(|path| path.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
 
-        let mut child = Command::new(node)
+        let mut command = Command::new(&node);
+        if let Some(augmented_path) = executable_augmented_path(&node) {
+            command.env("PATH", augmented_path);
+        }
+        let mut child = command
             .arg(&sidecar_path)
             .current_dir(&sidecar_dir)
             .stdin(std::process::Stdio::piped())
@@ -290,6 +305,14 @@ pub struct ClaudeSidecarEngine {
     state: Arc<Mutex<ClaudeState>>,
 }
 
+#[derive(Debug, Clone)]
+struct NodeExecutableResolution {
+    executable: Option<PathBuf>,
+    source: &'static str,
+    app_path: Option<String>,
+    login_shell_executable: Option<PathBuf>,
+}
+
 impl ClaudeSidecarEngine {
     pub fn set_resource_dir(&self, resource_dir: Option<PathBuf>) {
         let mut state = self.state.blocking_lock();
@@ -374,7 +397,8 @@ impl ClaudeSidecarEngine {
             let state = self.state.lock().await;
             state.resource_dir.clone()
         };
-        let node_available = which::which("node").is_ok();
+        let node_resolution = resolve_node_executable().await;
+        let node_available = node_resolution.executable.is_some();
         let sidecar_exists = ClaudeTransport::resolve_sidecar_path(resource_dir.as_ref()).is_ok();
         let api_key_set = std::env::var("ANTHROPIC_API_KEY").is_ok();
 
@@ -382,10 +406,23 @@ impl ClaudeSidecarEngine {
         let mut warnings = Vec::new();
         let mut fixes = Vec::new();
 
-        if node_available {
-            checks.push("Node.js found in PATH".to_string());
+        checks.push("node --version".to_string());
+        checks.push("command -v node".to_string());
+        #[cfg(target_os = "macos")]
+        {
+            checks.push("echo \"$PATH\"".to_string());
+            checks.push("/bin/zsh -lic 'command -v node && node --version'".to_string());
+        }
+
+        if let Some(node_path) = node_resolution.executable.as_ref() {
+            checks.push(format!(
+                "Node.js resolved via {} at `{}`",
+                node_resolution.source,
+                node_path.display()
+            ));
         } else {
-            warnings.push("Node.js not found in PATH".to_string());
+            warnings.push(node_unavailable_details(&node_resolution));
+            fixes.extend(node_fix_commands(&node_resolution));
             fixes.push("Install Node.js 20+ from https://nodejs.org".to_string());
         }
 
@@ -419,6 +456,10 @@ impl ClaudeSidecarEngine {
             },
             details: if available {
                 "Claude Agent SDK engine is ready".to_string()
+            } else if !node_available {
+                node_unavailable_details(&node_resolution)
+            } else if !sidecar_exists {
+                "Claude Agent SDK sidecar script not found in bundled resources".to_string()
             } else {
                 "Claude Agent SDK engine has missing prerequisites".to_string()
             },
@@ -426,6 +467,200 @@ impl ClaudeSidecarEngine {
             checks,
             fixes,
         }
+    }
+}
+
+async fn resolve_node_executable() -> NodeExecutableResolution {
+    let app_path = std::env::var("PATH").ok();
+
+    if let Ok(path) = which::which("node") {
+        return NodeExecutableResolution {
+            executable: Some(path),
+            source: "app-path",
+            app_path,
+            login_shell_executable: None,
+        };
+    }
+
+    if let Some(path) = first_existing_executable_path(well_known_node_paths()) {
+        return NodeExecutableResolution {
+            executable: Some(path),
+            source: "well-known-path",
+            app_path,
+            login_shell_executable: None,
+        };
+    }
+
+    let login_shell_executable = detect_node_via_login_shell().await;
+    let executable = login_shell_executable.clone();
+
+    NodeExecutableResolution {
+        executable,
+        source: if login_shell_executable.is_some() {
+            "login-shell"
+        } else {
+            "unavailable"
+        },
+        app_path,
+        login_shell_executable,
+    }
+}
+
+fn node_unavailable_details(resolution: &NodeExecutableResolution) -> String {
+    let path_preview = resolution
+        .app_path
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "(empty)".to_string());
+
+    match resolution.login_shell_executable.as_ref() {
+        Some(shell_path) => format!(
+            "Node.js was found in your login shell at `{}`, but Panes does not see it in the app PATH. This is common when launching the app from Finder on macOS. App PATH: `{}`",
+            shell_path.display(),
+            path_preview
+        ),
+        None => format!(
+            "Node.js executable not found for the Claude engine. App PATH: `{}`",
+            path_preview
+        ),
+    }
+}
+
+fn node_fix_commands(resolution: &NodeExecutableResolution) -> Vec<String> {
+    let mut fixes = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    {
+        match resolution.login_shell_executable.as_ref() {
+            Some(shell_path) => {
+                if let Some(bin_dir) = shell_path.parent() {
+                    fixes.push(format!(
+                        "launchctl setenv PATH \"{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"",
+                        bin_dir.display()
+                    ));
+                    fixes.push("open -a Panes".to_string());
+                }
+            }
+            None => {
+                fixes.push("/bin/zsh -lic 'command -v node && node --version'".to_string());
+                fixes.push("open -a Panes".to_string());
+            }
+        }
+    }
+
+    fixes
+}
+
+fn executable_augmented_path(executable: &Path) -> Option<OsString> {
+    let executable_dir = executable.parent()?.to_path_buf();
+    let mut entries = vec![executable_dir.clone()];
+
+    if let Some(current_path) = env::var_os("PATH") {
+        for path in env::split_paths(&current_path) {
+            if path != executable_dir {
+                entries.push(path);
+            }
+        }
+    } else {
+        for fallback in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
+            let fallback_path = PathBuf::from(fallback);
+            if fallback_path != executable_dir {
+                entries.push(fallback_path);
+            }
+        }
+    }
+
+    env::join_paths(entries).ok()
+}
+
+fn well_known_node_paths() -> Vec<PathBuf> {
+    let mut candidates = vec![
+        PathBuf::from("/opt/homebrew/bin/node"),
+        PathBuf::from("/usr/local/bin/node"),
+        PathBuf::from("/opt/local/bin/node"),
+    ];
+
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        candidates.push(home.join(".volta/bin/node"));
+        candidates.push(home.join(".local/share/fnm/aliases/default/bin/node"));
+        candidates.push(home.join(".local/bin/node"));
+        candidates.extend(nvm_node_paths(&home));
+    }
+
+    candidates
+}
+
+fn nvm_node_paths(home: &Path) -> Vec<PathBuf> {
+    let versions_dir = home.join(".nvm/versions/node");
+    let Ok(entries) = fs::read_dir(versions_dir) else {
+        return Vec::new();
+    };
+
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("bin/node"))
+        .collect()
+}
+
+fn first_existing_executable_path(paths: Vec<PathBuf>) -> Option<PathBuf> {
+    paths.into_iter().find(|path| is_executable_file(path))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path)
+            .map(|metadata| metadata.is_file() && (metadata.permissions().mode() & 0o111 != 0))
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
+}
+
+async fn detect_node_via_login_shell() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        None
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            if !Path::new(shell).exists() {
+                continue;
+            }
+
+            let output = match Command::new(shell)
+                .args(["-lic", "command -v node"])
+                .output()
+                .await
+            {
+                Ok(output) if output.status.success() => output,
+                _ => continue,
+            };
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(path) = stdout
+                .lines()
+                .map(str::trim)
+                .find(|line| line.starts_with('/'))
+                .map(PathBuf::from)
+                .filter(|path| is_executable_file(path))
+            {
+                return Some(path);
+            }
+        }
+
+        None
     }
 }
 
@@ -523,7 +758,7 @@ impl Engine for ClaudeSidecarEngine {
     }
 
     async fn is_available(&self) -> bool {
-        which::which("node").is_ok() && {
+        resolve_node_executable().await.executable.is_some() && {
             let state = self.state.lock().await;
             ClaudeTransport::resolve_sidecar_path(state.resource_dir.as_ref()).is_ok()
         }
