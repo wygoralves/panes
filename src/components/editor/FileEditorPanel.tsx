@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { X, FileText, Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useFileStore } from "../../stores/fileStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -7,6 +8,7 @@ import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 
 export function FileEditorPanel() {
+  const { t } = useTranslation("app");
   const tabs = useFileStore((s) => s.tabs);
   const activeTabId = useFileStore((s) => s.activeTabId);
   const pendingCloseTabId = useFileStore((s) => s.pendingCloseTabId);
@@ -64,6 +66,7 @@ export function FileEditorPanel() {
                   e.stopPropagation();
                   requestCloseTab(tab.id);
                 }}
+                title={t("editor.closeTab")}
               >
                 <X size={10} />
               </button>
@@ -88,7 +91,7 @@ export function FileEditorPanel() {
               }}
             >
               <Loader2 size={14} className="animate-spin" />
-              Loading file...
+              {t("editor.loadingFile")}
             </div>
           ) : activeTab.loadError ? (
             <div
@@ -119,7 +122,7 @@ export function FileEditorPanel() {
               }}
             >
               <FileText size={32} />
-              Binary file — cannot display
+              {t("editor.binaryFile")}
             </div>
           ) : (
             <CodeMirrorEditor
@@ -142,9 +145,9 @@ export function FileEditorPanel() {
             }}
           >
             <FileText size={32} style={{ opacity: 0.3 }} />
-            <p style={{ fontSize: 13 }}>No files open</p>
+            <p style={{ fontSize: 13 }}>{t("editor.emptyTitle")}</p>
             <p style={{ fontSize: 11, opacity: 0.6 }}>
-              Open a file from the Files view in the Git panel
+              {t("editor.emptyHint")}
             </p>
           </div>
         )}
@@ -153,10 +156,12 @@ export function FileEditorPanel() {
       {/* Dirty close confirm dialog */}
       <ConfirmDialog
         open={pendingCloseTabId !== null}
-        title="Unsaved changes"
-        message={`"${tabs.find((t) => t.id === pendingCloseTabId)?.fileName ?? ""}" has unsaved changes. Discard them?`}
-        confirmLabel="Discard"
-        cancelLabel="Cancel"
+        title={t("editor.unsavedChangesTitle")}
+        message={t("editor.unsavedChangesMessage", {
+          name: tabs.find((tab) => tab.id === pendingCloseTabId)?.fileName ?? "",
+        })}
+        confirmLabel={t("editor.discard")}
+        cancelLabel={t("editor.cancel")}
         onConfirm={confirmCloseTab}
         onCancel={cancelCloseTab}
       />

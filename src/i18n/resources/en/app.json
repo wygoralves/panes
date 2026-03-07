@@ -146,6 +146,22 @@
     "loading": "Detecting installed harnesses...",
     "footerHint": "Installed harnesses appear as quick-launch options in your terminal + button"
   },
+  "editor": {
+    "closeTab": "Close file",
+    "loadingFile": "Loading file...",
+    "binaryFile": "Binary file - cannot display",
+    "emptyTitle": "No files open",
+    "emptyHint": "Open a file from the Files view in the Git panel",
+    "unsavedChangesTitle": "Unsaved changes",
+    "unsavedChangesMessage": "\"{{name}}\" has unsaved changes. Discard them?",
+    "discard": "Discard",
+    "cancel": "Cancel",
+    "toasts": {
+      "modifiedExternally": "{{name}} was modified externally. Save again to overwrite.",
+      "saved": "Saved {{name}}",
+      "saveFailed": "Failed to save: {{error}}"
+    }
+  },
   "engineHealth": {
     "missingTitle": "Codex engine not detected",
     "configWarningTitle": "Codex config warning",
