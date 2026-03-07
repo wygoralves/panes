@@ -1,0 +1,15 @@
+{
+  "version": "0.28.0",
+  "notes": "## [](https://github.com/wygoralves/panes/compare/v0.27.0...vnull) (2026-03-07)\n\n### Features\n\n* improve ui of git panel more options ([09bfe0b](https://github.com/wygoralves/panes/commit/09bfe0b30ade03adb4fe7a7083f442814ae81f92))\n* improve usability for the workspace setup ([7f207f9](https://github.com/wygoralves/panes/commit/7f207f966d5f396eac6061daaf685f403148780b))",
+  "pub_date": "2026-03-07T04:19:23Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cW55Mzg3SmdUalRpLzl4NlR3anZwbWtTbmU4M1BPUFlKZnNHR1psU2dnNGhkTk16WlNIbDhLcDFJSWJWeXNHZXFROGtpQ0Z1Q1FLY1hwREw4ck12K3dvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcyODU3NzQ4CWZpbGU6UGFuZXMuYXBwLnRhci5negprc0xBaVNwWitUK3kzZ2VXa2NvcHRiQ29LZGd1VC95bXdOSkZQeUlyV1BOTmJSQWhwbnlvK25TdUtPKzdNYm1ySHBtcDkvQlVVRXpYL2JzOWhIY2xBUT09Cg==",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.28.0/Panes.app.tar.gz"
+    },
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cXBBY2huRytxSzdqRFc2R1lMTHUzb3I1aFlBMzJzeGthUVFhR2hwdlBNei8rRXRaK0IzZ2V2cmRFMUVXY3I5YytyY1dSaTdVVlNxaEhSc1NKQ0diR1FJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcyODU3NjkwCWZpbGU6UGFuZXNfMC4yOC4wX2FtZDY0LkFwcEltYWdlCk1kTDQwdDVzUXZhaUdxWkZRMmp5Tlg3WURNSkE4dXhhQ1RlcGNwOFg2K0RRdDVib1Uwdkwvb1YrTHlERFRGZXQ5YUhtdHk2SnQyT2RGMERFOSsrcENnPT0K",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.28.0/Panes_0.28.0_amd64.AppImage"
+    }
+  }
+}
