@@ -1,5 +1,23 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.26.0...vnull) (2026-03-07)
+
+### Features
+
+* add metadata only resync path for title reconciliation ([8071ea7](https://github.com/wygoralves/panes/commit/8071ea7dd543fde78b2a1be250c53eaa03c064b1))
+* add workspace settings for terminal and preferences ([7cf5c45](https://github.com/wygoralves/panes/commit/7cf5c45b545d699e0397d6908edc18c1e568eecd))
+* cap git diff previews and reuse diff viewer ([7bd7436](https://github.com/wygoralves/panes/commit/7bd74361ffaec91963f6cd24635fa772fd69fef8))
+* filter out hidden repos according to workspace settings ([9bd2e8c](https://github.com/wygoralves/panes/commit/9bd2e8cb3f72db786c0c400793196a00b0d71f3c))
+* fix and cleanup workspace settings ([a1f0ea7](https://github.com/wygoralves/panes/commit/a1f0ea7fe6c02aaa8ebad86837d6be2a4c950350))
+* improve ui for workspace settings ([23f1673](https://github.com/wygoralves/panes/commit/23f16734734c78b4c44884379f2f0b023e9dea51))
+* overhaul workspace settings ui ([294895b](https://github.com/wygoralves/panes/commit/294895bdc31142ba0d49cb3d9134943dfb9b8841))
+
+### Bug Fixes
+
+* fix path for correct running of claude sidecar ([231e979](https://github.com/wygoralves/panes/commit/231e9792eaa4cb6a890135607a6b72fc6f6ec687))
+* fix stale codex models effort when resuming threads ([39e9793](https://github.com/wygoralves/panes/commit/39e97938d03d4a00ea04db2348eeac1f01fc2819))
+* fix UI styles for manage remotes dialog ([76e4bf7](https://github.com/wygoralves/panes/commit/76e4bf760ed356b99eeba071daa15088bcee749e))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.25.0...vnull) (2026-03-06)
 
 ### Features
