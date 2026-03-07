@@ -421,7 +421,7 @@ export function GitPanel() {
 
   const repoOptions = useMemo(() => {
     const options: { value: string; label: string }[] = [];
-    for (const repo of repos) {
+    for (const repo of controlledRepos) {
       options.push({ value: repo.id, label: repo.name });
       if (repo.id === activeRepo?.id) {
         const nonMain = worktrees.filter((wt) => !wt.isMain);
@@ -434,10 +434,10 @@ export function GitPanel() {
       }
     }
     return options;
-  }, [repos, activeRepo?.id, worktrees]);
+  }, [controlledRepos, activeRepo?.id, worktrees]);
 
   const showRepoPicker =
-    repos.length > 1 ||
+    controlledRepos.length > 1 ||
     worktrees.some((wt) => !wt.isMain) ||
     Boolean(mainRepoPath);
 
@@ -531,7 +531,7 @@ export function GitPanel() {
                 setActiveRepoPath(wtPath);
                 if (activeRepo) setMainRepoPath(activeRepo.path);
               } else {
-                const selectedRepo = repos.find((repo) => repo.id === value);
+                const selectedRepo = controlledRepos.find((repo) => repo.id === value);
                 setActiveRepo(value);
                 setMainRepoPath(null);
                 setActiveRepoPath(selectedRepo?.path ?? null);
