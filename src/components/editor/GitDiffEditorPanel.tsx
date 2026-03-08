@@ -1,98 +1,27 @@
-import { useEffect, useMemo } from "react";
-import { EditorState, StateField, type Extension } from "@codemirror/state";
-import { Decoration, EditorView } from "@codemirror/view";
-import { diffLines } from "diff";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { StateField, type Extension } from "@codemirror/state";
+import { Decoration, EditorView, keymap } from "@codemirror/view";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { CodeMirrorEditor, getActiveEditorView } from "./CodeMirrorEditor";
+import {
+  buildGitDiffModel,
+  getDiffHunkAnchor,
+  getDiffHunkLine,
+  hunkContainsAnchor,
+  pickClosestHunkIndex,
+  type DiffHunk,
+  type LineHighlightRange,
+} from "./gitDiffModel";
 import type { EditorTab } from "../../types";
 
-type LineHighlightKind = "added" | "removed";
-
-interface LineHighlightRange {
+interface DecoratedLineRange {
   fromLine: number;
   toLine: number;
-  kind: LineHighlightKind;
+  className: string;
 }
 
-export interface DiffHighlightResult {
-  base: LineHighlightRange[];
-  modified: LineHighlightRange[];
-}
-
-function splitLines(content: string): string[] {
-  if (content.length === 0) {
-    return [];
-  }
-
-  const normalized = content.replace(/\r\n?/g, "\n");
-  const lines = normalized.split("\n");
-  if (normalized.endsWith("\n")) {
-    lines.pop();
-  }
-  return lines;
-}
-
-function pushRange(
-  target: LineHighlightRange[],
-  fromLine: number,
-  toLine: number,
-  kind: LineHighlightKind,
-) {
-  if (toLine < fromLine) {
-    return;
-  }
-
-  const previous = target[target.length - 1];
-  if (previous && previous.kind === kind && previous.toLine + 1 >= fromLine) {
-    previous.toLine = Math.max(previous.toLine, toLine);
-    return;
-  }
-
-  target.push({ fromLine, toLine, kind });
-}
-
-function countChunkLines(value: string, fallbackCount?: number): number {
-  if (fallbackCount !== undefined) {
-    return fallbackCount;
-  }
-  return splitLines(value).length;
-}
-
-export function buildLineHighlights(
-  baseContent: string,
-  modifiedContent: string,
-): DiffHighlightResult {
-  const base: LineHighlightRange[] = [];
-  const modified: LineHighlightRange[] = [];
-  let baseLine = 1;
-  let modifiedLine = 1;
-
-  for (const chunk of diffLines(baseContent, modifiedContent)) {
-    const lineCount = countChunkLines(chunk.value, chunk.count);
-    if (lineCount === 0) {
-      continue;
-    }
-
-    if (chunk.added) {
-      pushRange(modified, modifiedLine, modifiedLine + lineCount - 1, "added");
-      modifiedLine += lineCount;
-      continue;
-    }
-
-    if (chunk.removed) {
-      pushRange(base, baseLine, baseLine + lineCount - 1, "removed");
-      baseLine += lineCount;
-      continue;
-    }
-
-    baseLine += lineCount;
-    modifiedLine += lineCount;
-  }
-
-  return { base, modified };
-}
-
-function createLineHighlightExtension(ranges: LineHighlightRange[]): Extension[] {
+function createLineClassExtension(ranges: DecoratedLineRange[]): Extension[] {
   if (ranges.length === 0) {
     return [];
   }
@@ -110,10 +39,7 @@ function createLineHighlightExtension(ranges: LineHighlightRange[]): Extension[]
   return [field];
 }
 
-function createDecorations(
-  state: EditorState,
-  ranges: LineHighlightRange[],
-) {
+function createDecorations(state: EditorView["state"], ranges: DecoratedLineRange[]) {
   const decorations = [];
   const maxLine = state.doc.lines;
 
@@ -129,7 +55,7 @@ function createDecorations(
       decorations.push(
         Decoration.line({
           attributes: {
-            class: `cm-git-diff-line cm-git-diff-line-${range.kind}`,
+            class: range.className,
           },
         }).range(state.doc.line(lineNumber).from),
       );
@@ -139,24 +65,61 @@ function createDecorations(
   return Decoration.set(decorations, true);
 }
 
-function getChangeTypeLabel(
-  changeType: string,
-  t: (key: string) => string,
-): string {
-  switch (changeType) {
-    case "added":
-      return t("editor.gitDiff.changeTypes.added");
-    case "deleted":
-      return t("editor.gitDiff.changeTypes.deleted");
-    case "renamed":
-      return t("editor.gitDiff.changeTypes.renamed");
-    case "untracked":
-      return t("editor.gitDiff.changeTypes.untracked");
-    case "conflicted":
-      return t("editor.gitDiff.changeTypes.conflicted");
-    default:
-      return t("editor.gitDiff.changeTypes.modified");
+function buildPassiveDecorationRanges(ranges: LineHighlightRange[]): DecoratedLineRange[] {
+  return ranges.map((range) => ({
+    fromLine: range.fromLine,
+    toLine: range.toLine,
+    className: `cm-git-diff-line cm-git-diff-line-${range.kind}`,
+  }));
+}
+
+function buildActiveDecorationRanges(
+  hunk: DiffHunk | null,
+  pane: "base" | "modified",
+): DecoratedLineRange[] {
+  const range = pane === "base" ? hunk?.baseRange : hunk?.modifiedRange;
+  if (!range) {
+    return [];
   }
+
+  return [
+    {
+      fromLine: range.fromLine,
+      toLine: range.toLine,
+      className: `cm-git-diff-line-active cm-git-diff-line-active-pane-${pane}`,
+    },
+  ];
+}
+
+function getPreferredPaneForHunk(hunk: DiffHunk): "base" | "modified" {
+  return hunk.modifiedRange ? "modified" : "base";
+}
+
+export function getFocusPaneForHunk(
+  hunk: DiffHunk,
+  readOnlyModified: boolean,
+): "base" | "modified" {
+  if (!readOnlyModified) {
+    return "modified";
+  }
+
+  return getPreferredPaneForHunk(hunk);
+}
+
+export function getRevealLine(
+  hunk: DiffHunk,
+  pane: "base" | "modified",
+): number {
+  return getDiffHunkLine(hunk, pane);
+}
+
+function centerLineInView(view: EditorView, lineNumber: number) {
+  const maxLine = view.state.doc.lines;
+  const safeLine = Math.min(Math.max(1, lineNumber), maxLine);
+  const position = view.state.doc.line(safeLine).from;
+  view.dispatch({
+    effects: EditorView.scrollIntoView(position, { y: "center" }),
+  });
 }
 
 export function GitDiffEditorPanel({
@@ -170,6 +133,83 @@ export function GitDiffEditorPanel({
   const context = tab.gitContext;
   const baseEditorId = `${tab.id}:git-base`;
   const modifiedEditorId = `${tab.id}:git-modified`;
+  const programmaticScrollRef = useRef(false);
+  const scrollUnlockFrameRef = useRef<number | null>(null);
+  const scrollUnlockNestedFrameRef = useRef<number | null>(null);
+  const activeHunkAnchorRef = useRef<ReturnType<typeof getDiffHunkAnchor> | null>(null);
+  const [activeHunkIndex, setActiveHunkIndex] = useState<number | null>(null);
+
+  function scheduleScrollUnlock() {
+    if (scrollUnlockFrameRef.current !== null) {
+      cancelAnimationFrame(scrollUnlockFrameRef.current);
+    }
+    if (scrollUnlockNestedFrameRef.current !== null) {
+      cancelAnimationFrame(scrollUnlockNestedFrameRef.current);
+    }
+
+    scrollUnlockFrameRef.current = requestAnimationFrame(() => {
+      scrollUnlockNestedFrameRef.current = requestAnimationFrame(() => {
+        programmaticScrollRef.current = false;
+        scrollUnlockFrameRef.current = null;
+        scrollUnlockNestedFrameRef.current = null;
+      });
+    });
+  }
+
+  function revealHunk(hunk: DiffHunk) {
+    const baseView = getActiveEditorView(baseEditorId);
+    const modifiedView = getActiveEditorView(modifiedEditorId);
+    if (!baseView || !modifiedView) {
+      return;
+    }
+
+    programmaticScrollRef.current = true;
+    centerLineInView(baseView, getRevealLine(hunk, "base"));
+    centerLineInView(modifiedView, getRevealLine(hunk, "modified"));
+
+    const focusPane = getFocusPaneForHunk(hunk, readOnlyModified);
+    if (focusPane === "modified") {
+      modifiedView.focus();
+    } else {
+      baseView.focus();
+    }
+
+    scheduleScrollUnlock();
+  }
+
+  function goToHunk(index: number) {
+    if (!context) {
+      return;
+    }
+
+    const clampedIndex = Math.min(Math.max(0, index), diffModel.hunks.length - 1);
+    const hunk = diffModel.hunks[clampedIndex];
+    if (!hunk) {
+      return;
+    }
+
+    activeHunkAnchorRef.current = getDiffHunkAnchor(hunk);
+    setActiveHunkIndex(clampedIndex);
+    revealHunk(hunk);
+  }
+
+  const diffModel = useMemo(
+    () =>
+      context
+        ? buildGitDiffModel(context.baseContent, tab.content)
+        : { highlights: { base: [], modified: [] }, hunks: [] },
+    [context, tab.content],
+  );
+  const activeHunk =
+    activeHunkIndex !== null ? diffModel.hunks[activeHunkIndex] ?? null : null;
+  const hasHunks = diffModel.hunks.length > 0;
+  const displayedActiveHunkIndex = hasHunks ? (activeHunkIndex ?? 0) : null;
+  const previousDisabled =
+    !hasHunks || displayedActiveHunkIndex === null || displayedActiveHunkIndex <= 0;
+  const nextDisabled =
+    !hasHunks
+    || displayedActiveHunkIndex === null
+    || displayedActiveHunkIndex >= diffModel.hunks.length - 1;
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
@@ -187,7 +227,7 @@ export function GitDiffEditorPanel({
         target: EditorView,
         side: "base" | "modified",
       ) => {
-        if (syncing === side) {
+        if (programmaticScrollRef.current || syncing === side) {
           return;
         }
         syncing = side;
@@ -215,21 +255,145 @@ export function GitDiffEditorPanel({
     };
   }, [baseEditorId, modifiedEditorId]);
 
-  const highlights = useMemo(
-    () =>
-      context
-        ? buildLineHighlights(context.baseContent, tab.content)
-        : { base: [], modified: [] },
-    [context, tab.content],
-  );
-  const baseExtensions = useMemo(
-    () => createLineHighlightExtension(highlights.base),
-    [highlights.base],
-  );
-  const modifiedExtensions = useMemo(
-    () => createLineHighlightExtension(highlights.modified),
-    [highlights.modified],
-  );
+  useEffect(() => {
+    if (diffModel.hunks.length === 0) {
+      setActiveHunkIndex(null);
+      activeHunkAnchorRef.current = null;
+      return;
+    }
+
+    const nextIndex = pickClosestHunkIndex(diffModel.hunks, activeHunkAnchorRef.current);
+    if (nextIndex === null) {
+      setActiveHunkIndex(null);
+      return;
+    }
+
+    const nextHunk = diffModel.hunks[nextIndex];
+    const shouldReveal =
+      !activeHunkAnchorRef.current
+      || !hunkContainsAnchor(nextHunk, activeHunkAnchorRef.current);
+
+    setActiveHunkIndex((currentIndex) => (currentIndex === nextIndex ? currentIndex : nextIndex));
+
+    if (shouldReveal) {
+      const frame = requestAnimationFrame(() => {
+        revealHunk(nextHunk);
+      });
+      return () => cancelAnimationFrame(frame);
+    }
+
+    return undefined;
+  }, [diffModel.hunks, baseEditorId, modifiedEditorId]);
+
+  useEffect(() => {
+    activeHunkAnchorRef.current = activeHunk ? getDiffHunkAnchor(activeHunk) : null;
+  }, [activeHunk]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollUnlockFrameRef.current !== null) {
+        cancelAnimationFrame(scrollUnlockFrameRef.current);
+      }
+      if (scrollUnlockNestedFrameRef.current !== null) {
+        cancelAnimationFrame(scrollUnlockNestedFrameRef.current);
+      }
+      programmaticScrollRef.current = false;
+    };
+  }, []);
+
+  const goToPreviousHunk = () => {
+    if (diffModel.hunks.length === 0) {
+      return;
+    }
+    if (activeHunkIndex === null) {
+      goToHunk(0);
+      return;
+    }
+    if (activeHunkIndex <= 0) {
+      return;
+    }
+    goToHunk(activeHunkIndex - 1);
+  };
+  const goToNextHunk = () => {
+    if (diffModel.hunks.length === 0) {
+      return;
+    }
+    if (activeHunkIndex === null) {
+      goToHunk(0);
+      return;
+    }
+    if (activeHunkIndex >= diffModel.hunks.length - 1) {
+      return;
+    }
+    goToHunk(activeHunkIndex + 1);
+  };
+
+  const baseExtensions = useMemo(() => {
+    const passive = createLineClassExtension(
+      buildPassiveDecorationRanges(diffModel.highlights.base),
+    );
+    const active = createLineClassExtension(
+      buildActiveDecorationRanges(activeHunk, "base"),
+    );
+    const shortcuts = keymap.of([
+      {
+        key: "Shift-F7",
+        run: () => {
+          goToPreviousHunk();
+          return diffModel.hunks.length > 0;
+        },
+      },
+      {
+        key: "F7",
+        run: () => {
+          goToNextHunk();
+          return diffModel.hunks.length > 0;
+        },
+      },
+    ]);
+
+    return [...passive, ...active, shortcuts];
+  }, [
+    diffModel.highlights.base,
+    diffModel.hunks.length,
+    activeHunk,
+    activeHunkIndex,
+    previousDisabled,
+    nextDisabled,
+  ]);
+  const modifiedExtensions = useMemo(() => {
+    const passive = createLineClassExtension(
+      buildPassiveDecorationRanges(diffModel.highlights.modified),
+    );
+    const active = createLineClassExtension(
+      buildActiveDecorationRanges(activeHunk, "modified"),
+    );
+    const shortcuts = keymap.of([
+      {
+        key: "Shift-F7",
+        run: () => {
+          goToPreviousHunk();
+          return diffModel.hunks.length > 0;
+        },
+      },
+      {
+        key: "F7",
+        run: () => {
+          goToNextHunk();
+          return diffModel.hunks.length > 0;
+        },
+      },
+    ]);
+
+    return [...passive, ...active, shortcuts];
+  }, [
+    diffModel.highlights.modified,
+    diffModel.hunks.length,
+    activeHunk,
+    activeHunkIndex,
+    previousDisabled,
+    nextDisabled,
+  ]);
 
   if (!context) {
     return (
@@ -239,8 +403,7 @@ export function GitDiffEditorPanel({
     );
   }
 
-  const statusBadges = [
-    getChangeTypeLabel(context.changeType, t),
+  const secondaryBadges = [
     context.source === "changes" && context.hasStagedChanges
       ? t("editor.gitDiff.alsoStaged")
       : null,
@@ -295,12 +458,50 @@ export function GitDiffEditorPanel({
 
         <section className="git-diff-editor-pane">
           <header className="git-diff-editor-pane-header">
-            <span>{context.modifiedLabel}</span>
-            <span className="git-diff-editor-pane-state">
-              {readOnlyModified
-                ? t("editor.gitDiff.readOnly")
-                : t("editor.gitDiff.editable")}
-            </span>
+            <div className="git-diff-editor-pane-label">
+              <span>{context.modifiedLabel}</span>
+              {secondaryBadges.map((badge) => (
+                <span key={badge} className="git-diff-editor-badge">
+                  {badge}
+                </span>
+              ))}
+            </div>
+            {hasHunks && displayedActiveHunkIndex !== null ? (
+              <div className="git-diff-editor-nav">
+                <button
+                  type="button"
+                  className="git-diff-editor-nav-button"
+                  onClick={goToPreviousHunk}
+                  disabled={previousDisabled}
+                  title={t("editor.gitDiff.previousDiff")}
+                  aria-label={t("editor.gitDiff.previousDiff")}
+                >
+                  <ChevronUp size={12} />
+                </button>
+                <span className="git-diff-editor-nav-counter" aria-live="polite">
+                  {t("editor.gitDiff.diffCounter", {
+                    current: displayedActiveHunkIndex + 1,
+                    total: diffModel.hunks.length,
+                  })}
+                </span>
+                <button
+                  type="button"
+                  className="git-diff-editor-nav-button"
+                  onClick={goToNextHunk}
+                  disabled={nextDisabled}
+                  title={t("editor.gitDiff.nextDiff")}
+                  aria-label={t("editor.gitDiff.nextDiff")}
+                >
+                  <ChevronDown size={12} />
+                </button>
+              </div>
+            ) : (
+              <span className="git-diff-editor-pane-state">
+                {readOnlyModified
+                  ? t("editor.gitDiff.readOnly")
+                  : t("editor.gitDiff.editable")}
+              </span>
+            )}
           </header>
           <div className="git-diff-editor-pane-body">
             <CodeMirrorEditor

@@ -329,6 +329,9 @@
       "readOnly": "Read-only",
       "readOnlyModified": "Modified side is read-only.",
       "editable": "Editable",
+      "previousDiff": "Previous diff",
+      "nextDiff": "Next diff",
+      "diffCounter": "{{current}} / {{total}}",
       "noDifferences": "No differences against the current compare base.",
       "changeTypes": {
         "added": "Added",

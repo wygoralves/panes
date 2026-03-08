@@ -4653,38 +4653,66 @@ button, input, textarea, select {
   background: var(--bg-1);
 }
 
-.git-diff-editor-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-2);
-}
-
-.git-diff-editor-labels {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.git-diff-editor-badge,
-.git-diff-editor-note,
-.git-diff-editor-pane-state {
+.git-diff-editor-badge {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  padding: 0 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  color: var(--text-2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--text-3);
   background: var(--bg-3);
-  border: 1px solid var(--border);
 }
 
-.git-diff-editor-note {
+.git-diff-editor-pane-state {
+  font-size: 10px;
   color: var(--text-3);
+}
+
+.git-diff-editor-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.git-diff-editor-nav-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
+}
+
+.git-diff-editor-nav-button:hover:not(:disabled) {
+  background: var(--bg-5);
+  color: var(--text-1);
+}
+
+.git-diff-editor-nav-button:active:not(:disabled) {
+  background: var(--bg-4);
+}
+
+.git-diff-editor-nav-button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.git-diff-editor-nav-counter {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 10px;
+  color: var(--text-2);
+  font-family: "JetBrains Mono", monospace;
+  user-select: none;
+  white-space: nowrap;
 }
 
 .git-diff-editor-callout,
@@ -4730,13 +4758,20 @@ button, input, textarea, select {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-height: 32px;
-  padding: 0 12px;
+  min-height: 30px;
+  padding: 0 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-2);
   font-size: 11px;
   color: var(--text-2);
   font-family: "JetBrains Mono", monospace;
+}
+
+.git-diff-editor-pane-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .git-diff-editor-pane-body {
@@ -4751,7 +4786,7 @@ button, input, textarea, select {
   bottom: 12px;
   max-width: 220px;
   padding: 8px 10px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: rgba(15, 15, 15, 0.92);
   color: var(--text-2);
@@ -4769,6 +4804,19 @@ button, input, textarea, select {
 
 .cm-git-diff-line-changed {
   background: rgba(251, 191, 36, 0.12);
+}
+
+.cm-git-diff-line-active {
+  position: relative;
+  box-shadow: inset 3px 0 0 var(--border-active);
+}
+
+.cm-git-diff-line-active-pane-base {
+  background: rgba(248, 113, 113, 0.18);
+}
+
+.cm-git-diff-line-active-pane-modified {
+  background: rgba(52, 211, 153, 0.22);
 }
 
 /* ── Chat Attachments ──────────────────────────────────────────────── */

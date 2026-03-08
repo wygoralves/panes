@@ -329,6 +329,9 @@
       "readOnly": "Somente leitura",
       "readOnlyModified": "O lado modificado é somente leitura.",
       "editable": "Editável",
+      "previousDiff": "Diff anterior",
+      "nextDiff": "Próximo diff",
+      "diffCounter": "{{current}} / {{total}}",
       "noDifferences": "Não há diferenças em relação à base atual da comparação.",
       "changeTypes": {
         "added": "Adicionado",
