@@ -1,5 +1,16 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.30.0...vnull) (2026-03-08)
+
+### Features
+
+* add hunk navigation to git diff editor ([ae9138b](https://github.com/wygoralves/panes/commit/ae9138badc4eae364813ab7a9a6b831dbf86baaa))
+* publish Homebrew cask for releases ([fbd9008](https://github.com/wygoralves/panes/commit/fbd9008e7b2613f4708ac794ae905157fff968e1))
+
+### Bug Fixes
+
+* fix chat titles not being correctly shown ([75299e7](https://github.com/wygoralves/panes/commit/75299e746ef326e240bcc239ef5f4bfa28e47dec))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.29.0...vnull) (2026-03-08)
 
 ### Features
