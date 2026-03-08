@@ -260,7 +260,7 @@ jobs:
 
   publish_homebrew_cask:
     name: Publish Homebrew Cask
-    if: github.event_name == 'push' && needs.release.outputs.should_release == 'true' && secrets.HOMEBREW_TAP_TOKEN != ''
+    if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
     needs: [release, release_bundles]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -269,17 +269,31 @@ jobs:
     env:
       HOMEBREW_TAP_REPO: wygoralves/homebrew-tap
     steps:
+      - name: Detect Homebrew tap token
+        id: tap_token
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout released tag
+        if: steps.tap_token.outputs.present == 'true'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ needs.release.outputs.released_tag }}
 
       - uses: actions/setup-node@v4
+        if: steps.tap_token.outputs.present == 'true'
         with:
           node-version: 20
 
       - name: Checkout tap repository
+        if: steps.tap_token.outputs.present == 'true'
         uses: actions/checkout@v4
         with:
           repository: ${{ env.HOMEBREW_TAP_REPO }}
@@ -287,13 +301,19 @@ jobs:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       - name: Generate panes cask
+        if: steps.tap_token.outputs.present == 'true'
         run: |
           mkdir -p homebrew-tap/Casks
           node scripts/generate-homebrew-cask.mjs "${{ needs.release.outputs.released_tag }}" --output homebrew-tap/Casks/panes.rb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Skip cask publish without tap token
+        if: steps.tap_token.outputs.present != 'true'
+        run: echo "HOMEBREW_TAP_TOKEN not configured; skipping Homebrew cask publish."
+
       - name: Commit and push cask update
+        if: steps.tap_token.outputs.present == 'true'
         working-directory: homebrew-tap
         run: |
           if [ -z "$(git status --porcelain)" ]; then
