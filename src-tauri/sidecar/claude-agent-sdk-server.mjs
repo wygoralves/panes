@@ -429,6 +429,7 @@ function buildPermissionHandler({
   context,
   cwd,
   writableRoots,
+  sandboxMode,
   allowNetwork,
   approvalPolicy,
 }) {
@@ -453,11 +454,22 @@ function buildPermissionHandler({
     }
 
     if (toolName === "Write" || toolName === "Edit") {
+      if (sandboxMode === "read-only") {
+        return {
+          behavior: "deny",
+          message: "File writes are disabled for this Claude thread.",
+        };
+      }
+
       const candidatePaths = collectCandidatePaths(toolName, toolInput, cwd);
-      if (
-        candidatePaths.length > 0 &&
-        !candidatePaths.every((candidate) => isWithinAnyRoot(normalizedRoots, candidate))
-      ) {
+      if (candidatePaths.length === 0) {
+        return {
+          behavior: "deny",
+          message: "Unable to verify the target path for this write operation.",
+        };
+      }
+
+      if (!candidatePaths.every((candidate) => isWithinAnyRoot(normalizedRoots, candidate))) {
         return {
           behavior: "deny",
           message: "This file path is outside the approved writable roots for the thread.",
@@ -473,9 +485,30 @@ function buildPermissionHandler({
   };
 }
 
+function normalizeApprovalDecision(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("Claude approval responses require an explicit decision.");
+  }
+
+  const normalized = value.trim().toLowerCase();
+  const compact = normalized.replaceAll("-", "").replaceAll("_", "");
+  if (compact === "accept") {
+    return "accept";
+  }
+  if (compact === "decline" || compact === "deny") {
+    return "decline";
+  }
+  if (compact === "acceptforsession") {
+    return "accept_for_session";
+  }
+
+  throw new Error(
+    "Unsupported Claude approval decision. Expected one of: accept, decline, deny, accept_for_session.",
+  );
+}
+
 function resolveApprovalDecision(response, suggestions = []) {
-  const decision =
-    typeof response?.decision === "string" ? response.decision : "";
+  const decision = normalizeApprovalDecision(response?.decision);
   if (decision === "accept") {
     return {
       behavior: "allow",
@@ -489,11 +522,68 @@ function resolveApprovalDecision(response, suggestions = []) {
         : {}),
     };
   }
-
   return {
     behavior: "deny",
     message: "Tool usage denied by the user.",
   };
+}
+
+function normalizeSandboxMode(value) {
+  if (value == null || value === "") {
+    return "workspace-write";
+  }
+
+  if (typeof value !== "string") {
+    throw new Error("Claude sandboxMode must be a string.");
+  }
+
+  const normalized = value.trim().toLowerCase();
+  const compact = normalized.replaceAll("-", "").replaceAll("_", "");
+  if (compact === "readonly") {
+    return "read-only";
+  }
+  if (compact === "workspacewrite") {
+    return "workspace-write";
+  }
+  if (compact === "dangerfullaccess") {
+    throw new Error(
+      "Claude does not support sandboxMode=danger-full-access. Use read-only or workspace-write.",
+    );
+  }
+
+  throw new Error(
+    "Unsupported Claude sandboxMode. Expected one of: read-only, workspace-write.",
+  );
+}
+
+function normalizeWritableRoots(cwd, writableRoots) {
+  const normalizedRoots = Array.isArray(writableRoots)
+    ? writableRoots
+    .map((root) => (typeof root === "string" && root.trim() ? path.resolve(root) : null))
+    .filter(Boolean)
+    : [];
+
+  if (normalizedRoots.length > 0) {
+    return normalizedRoots;
+  }
+
+  return [path.resolve(cwd)];
+}
+
+function additionalDirectoriesForSandbox(cwd, sandboxMode, writableRoots) {
+  if (sandboxMode !== "workspace-write") {
+    return [];
+  }
+
+  return writableRoots.filter((root) => root !== path.resolve(cwd));
+}
+
+function allowWriteRootsForSandbox(sandboxMode, writableRoots) {
+  if (sandboxMode !== "workspace-write") {
+    return [];
+  }
+
+  return writableRoots;
 }
 
 async function handleQuery(req) {
@@ -512,6 +602,7 @@ async function handleQuery(req) {
     approvalPolicy,
     allowNetwork,
     writableRoots = [],
+    sandboxMode,
     reasoningEffort,
   } = params;
 
@@ -529,50 +620,57 @@ async function handleQuery(req) {
   ];
 
   const sessionCwd = cwd || process.cwd();
-  const normalizedWritableRoots = writableRoots.length > 0
-    ? writableRoots.map((root) => path.resolve(root))
-    : [sessionCwd];
+  let actualSessionId = null;
+  try {
+    const normalizedSandboxMode = normalizeSandboxMode(sandboxMode);
+    const normalizedWritableRoots = normalizeWritableRoots(sessionCwd, writableRoots);
 
-  const options = {
-    cwd: sessionCwd,
-    additionalDirectories: normalizedWritableRoots.filter(
-      (root) => root !== path.resolve(sessionCwd),
-    ),
-    permissionMode: planMode ? "plan" : "dontAsk",
-    allowedTools: toolList,
-    canUseTool: buildPermissionHandler({
-      context,
+    const options = {
       cwd: sessionCwd,
-      writableRoots: normalizedWritableRoots,
-      allowNetwork: Boolean(allowNetwork),
-      approvalPolicy,
-    }),
-    settingSources: ["project"],
-    sandbox: {
-      enabled: true,
-      autoAllowBashIfSandboxed: true,
-      allowUnsandboxedCommands: false,
-      filesystem: {
-        allowWrite: normalizedWritableRoots,
+      additionalDirectories: additionalDirectoriesForSandbox(
+        sessionCwd,
+        normalizedSandboxMode,
+        normalizedWritableRoots,
+      ),
+      permissionMode: planMode ? "plan" : "dontAsk",
+      allowedTools: toolList,
+      canUseTool: buildPermissionHandler({
+        context,
+        cwd: sessionCwd,
+        writableRoots: normalizedWritableRoots,
+        sandboxMode: normalizedSandboxMode,
+        allowNetwork: Boolean(allowNetwork),
+        approvalPolicy,
+      }),
+      settingSources: ["project"],
+      sandbox: {
+        enabled: true,
+        autoAllowBashIfSandboxed: true,
+        allowUnsandboxedCommands: false,
+        filesystem: {
+          allowWrite: allowWriteRootsForSandbox(
+            normalizedSandboxMode,
+            normalizedWritableRoots,
+          ),
+        },
+        ...(allowNetwork
+          ? {}
+          : {
+              network: {
+                allowedDomains: [],
+                allowLocalBinding: false,
+                allowUnixSockets: [],
+              },
+            }),
       },
-      ...(allowNetwork
-        ? {}
-        : {
-            network: {
-              allowedDomains: [],
-              allowLocalBinding: false,
-              allowUnixSockets: [],
-            },
-          }),
-    },
-    settings: {
-      permissions: {
-        defaultMode: planMode ? "plan" : "dontAsk",
-        disableBypassPermissionsMode: "disable",
+      settings: {
+        permissions: {
+          defaultMode: planMode ? "plan" : "dontAsk",
+          disableBypassPermissionsMode: "disable",
+        },
       },
-    },
-    includePartialMessages: true,
-    hooks: {
+      includePartialMessages: true,
+      hooks: {
       PreToolUse: [
         {
           matcher: ".*",
@@ -666,18 +764,16 @@ async function handleQuery(req) {
           ],
         },
       ],
-    },
-  };
+      },
+    };
 
-  if (model) options.model = model;
-  if (systemPrompt) options.systemPrompt = systemPrompt;
-  if (resume) options.resume = resume;
-  if (sessionId) options.sessionId = sessionId;
-  if (maxTurns) options.maxTurns = maxTurns;
-  if (reasoningEffort) options.effort = reasoningEffort;
+    if (model) options.model = model;
+    if (systemPrompt) options.systemPrompt = systemPrompt;
+    if (resume) options.resume = resume;
+    if (sessionId) options.sessionId = sessionId;
+    if (maxTurns) options.maxTurns = maxTurns;
+    if (reasoningEffort) options.effort = reasoningEffort;
 
-  let actualSessionId = null;
-  try {
     emit({ id, type: "turn_started" });
 
     let sawTextDelta = false;
@@ -778,6 +874,21 @@ function handleCancel(params = {}) {
   context.query?.close();
 }
 
+function assertClaudeApprovalResponseShape(response) {
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    throw new Error("Claude approval response must be a JSON object.");
+  }
+
+  const keys = Object.keys(response);
+  if (keys.length !== 1 || !Object.prototype.hasOwnProperty.call(response, "decision")) {
+    throw new Error(
+      "Claude approval response must include only an explicit decision field.",
+    );
+  }
+
+  normalizeApprovalDecision(response.decision);
+}
+
 function handleApprovalResponse(params = {}) {
   const approvalId = params.approvalId || params.approval_id;
   if (!approvalId) {
@@ -789,10 +900,22 @@ function handleApprovalResponse(params = {}) {
     return;
   }
 
-  pendingApprovals.delete(approvalId);
-  const context = activeQueries.get(pending.queryId);
-  context?.pendingApprovalIds.delete(approvalId);
-  pending.resolve(resolveApprovalDecision(params.response || {}, pending.suggestions));
+  try {
+    const response = params.response || {};
+    assertClaudeApprovalResponseShape(response);
+    const permission = resolveApprovalDecision(response, pending.suggestions);
+    pendingApprovals.delete(approvalId);
+    const context = activeQueries.get(pending.queryId);
+    context?.pendingApprovalIds.delete(approvalId);
+    pending.resolve(permission);
+  } catch (error) {
+    emit({
+      id: pending.queryId,
+      type: "error",
+      message: error.message || String(error),
+      recoverable: true,
+    });
+  }
 }
 
 rl.on("line", (line) => {

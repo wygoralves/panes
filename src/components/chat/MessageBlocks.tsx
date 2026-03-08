@@ -56,6 +56,7 @@ const MarkdownContent = lazy(() => import("./MarkdownContent"));
 interface Props {
   blocks?: ContentBlock[];
   status?: MessageStatus;
+  engineId?: string;
   onApproval: (approvalId: string, response: ApprovalResponse) => void;
   onLoadActionOutput?: (actionId: string) => Promise<void>;
 }
@@ -541,22 +542,33 @@ function extractApprovalDetails(details: Record<string, unknown>) {
 
 function ApprovalCard({
   block,
+  engineId,
   onApproval,
 }: {
   block: ApprovalBlock;
+  engineId?: string;
   onApproval: (approvalId: string, response: ApprovalResponse) => void;
 }) {
   const { t } = useTranslation("chat");
   const isPending = block.status === "pending";
+  const isClaudeThread = engineId === "claude";
   const details = block.details ?? {};
   const isToolInputRequest = isRequestUserInputApproval(details);
   const isDynamicToolCall = isDynamicToolCallApproval(details);
   const requiresCustomPayload = requiresCustomApprovalPayload(details);
   const toolInputQuestions = isToolInputRequest ? parseToolInputQuestions(details) : [];
-  const showStructuredToolInput =
-    isPending && isToolInputRequest && toolInputQuestions.length > 0;
   const proposedExecpolicyAmendment = parseProposedExecpolicyAmendment(details);
   const proposedNetworkPolicyAmendments = parseProposedNetworkPolicyAmendments(details);
+  const showStructuredToolInput =
+    isPending && !isClaudeThread && isToolInputRequest && toolInputQuestions.length > 0;
+  const showClaudeUnsupportedApproval =
+    isPending &&
+    isClaudeThread &&
+    (isToolInputRequest ||
+      isDynamicToolCall ||
+      requiresCustomPayload ||
+      proposedExecpolicyAmendment.length > 0 ||
+      proposedNetworkPolicyAmendments.length > 0);
   const dynamicToolName = parseDynamicToolCallName(details);
   const dynamicToolArguments = parseDynamicToolCallArguments(details);
 
@@ -727,7 +739,24 @@ function ApprovalCard({
         </div>
       )}
 
-      {isPending && isDynamicToolCall && (
+      {showClaudeUnsupportedApproval && (
+        <div className="acard-section">
+          <p className="acard-reason">
+            {t("messageBlocks.approval.claudeUnsupported")}
+          </p>
+          <div className="acard-advanced-footer">
+            <button
+              type="button"
+              className="approval-btn approval-btn-deny"
+              onClick={() => onApproval(block.approvalId, { decision: "decline" })}
+            >
+              {t("panel.approvalActions.deny")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isPending && !isClaudeThread && isDynamicToolCall && (
         <div className="acard-section">
           <div className="acard-advanced" style={{ gap: 10 }}>
             <p className="acard-reason">
@@ -775,7 +804,7 @@ function ApprovalCard({
         </div>
       )}
 
-      {isPending && requiresCustomPayload && !showStructuredToolInput && (
+      {isPending && !isClaudeThread && requiresCustomPayload && !showStructuredToolInput && (
         <div className="acard-section">
           <p className="acard-reason">
             {t("messageBlocks.approval.customPayloadHint")}
@@ -786,7 +815,7 @@ function ApprovalCard({
       {/* Standard approval — no inline buttons; the approval banner handles it */}
 
       {/* Advanced JSON — only for custom payload requests */}
-      {isPending && requiresCustomPayload && (
+      {isPending && !isClaudeThread && requiresCustomPayload && (
         <div className="acard-section">
           <div className="acard-advanced">
             <textarea
@@ -821,7 +850,7 @@ function ApprovalCard({
 
 /* ── Main Component ── */
 
-function MessageBlocksView({ blocks = [], status, onApproval, onLoadActionOutput }: Props) {
+function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadActionOutput }: Props) {
   const safeBlocks = Array.isArray(blocks) ? blocks : [];
 
   const lastDiffIndex = useMemo(() => {
@@ -958,7 +987,14 @@ function MessageBlocksView({ blocks = [], status, onApproval, onLoadActionOutput
 
         /* ── Approval ── */
         if (block.type === "approval") {
-          return <ApprovalCard key={blockKey} block={block} onApproval={onApproval} />;
+          return (
+            <ApprovalCard
+              key={blockKey}
+              block={block}
+              engineId={engineId}
+              onApproval={onApproval}
+            />
+          );
         }
 
         /* ── Thinking ── */
@@ -1023,6 +1059,7 @@ export const MessageBlocks = memo(
   (prev, next) =>
     prev.blocks === next.blocks &&
     prev.status === next.status &&
+    prev.engineId === next.engineId &&
     prev.onApproval === next.onApproval &&
     prev.onLoadActionOutput === next.onLoadActionOutput,
 );

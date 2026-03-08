@@ -75,6 +75,7 @@
     "enabledDescription": "Permite acesso à rede para esta thread.",
     "networkRestrictedDescription": "Bloqueia o acesso de rede de saída para esta thread.",
     "sandboxExternalNotice": "As opções somente leitura e escrita no workspace ficam indisponíveis enquanto o Codex usa sandbox externo nesta máquina.",
+    "claudeSandboxNotice": "Claude suporta apenas os modos de sandbox somente leitura e escrita no workspace.",
     "fullAccessNotice": "Acesso total sempre habilita a rede.",
     "claudeRestrictedDescription": "A maioria das ações exige aprovações mais rigorosas.",
     "claudeStandardDescription": "Permissões equilibradas para o trabalho do dia a dia.",
@@ -89,6 +90,7 @@
     "approvalBannerTitle": "Aprovações pendentes",
     "respondInCard": "Responda no card de aprovação abaixo.",
     "respondInCustomCard": "Esta solicitação exige JSON personalizado. Responda no card de aprovação abaixo.",
+    "claudeApprovalUnsupported": "Esse tipo de approval do Claude ainda não é suportado no Panes.",
     "allowWithPolicy": "Permitir + política",
     "setRepoTrusted": "Definir política confiável para este repositório (aprovações sob demanda, rede habilitada por solicitação)",
     "setWorkspaceTrusted": "Definir política confiável para todos os repositórios (aprovações sob demanda, rede habilitada por solicitação)",
@@ -141,6 +143,7 @@
     "toasts": {
       "codexSandboxUnavailable": "As opções de sandbox somente leitura e escrita no workspace do Codex ficam indisponíveis enquanto o Panes usa sandbox externo.",
       "codexOnlySandbox": "As opções de sandbox só estão disponíveis para threads do Codex.",
+      "claudeSandboxUnsupported": "Claude suporta apenas os modos de sandbox somente leitura e escrita no workspace.",
       "fullAccessNetworkWarning": "O modo acesso total habilita temporariamente o acesso à rede.",
       "updateExecutionPolicyFailed": "Falha ao atualizar a política de execução da thread: {{error}}"
     }
@@ -185,6 +188,7 @@
       "dynamicToolPrompt": "Responda à chamada da ferramenta dinâmica sem escrever JSON manualmente.",
       "dynamicToolSuccess": "Sucesso",
       "dynamicToolFailure": "Falha",
+      "claudeUnsupported": "Esse payload de approval do Claude não é suportado pelo contrato atual do Panes.",
       "toolResponsePlaceholder": "Texto da resposta da ferramenta (opcional)",
       "imageUrlPlaceholder": "URL da imagem (opcional)",
       "sendToolResponse": "Enviar resposta da ferramenta",

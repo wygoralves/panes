@@ -75,6 +75,7 @@
     "enabledDescription": "Allow network access for this thread.",
     "networkRestrictedDescription": "Block outbound network access for this thread.",
     "sandboxExternalNotice": "Read-only and workspace-write overrides are unavailable while Codex is using external sandbox mode on this machine.",
+    "claudeSandboxNotice": "Claude supports only read-only and workspace-write sandbox modes.",
     "fullAccessNotice": "Full access always enables network access.",
     "claudeRestrictedDescription": "Most actions require stricter approval handling.",
     "claudeStandardDescription": "Balanced permissions for day-to-day work.",
@@ -89,6 +90,7 @@
     "approvalBannerTitle": "Pending approvals",
     "respondInCard": "Respond in the approval card below.",
     "respondInCustomCard": "This request requires custom JSON. Respond in the approval card below.",
+    "claudeApprovalUnsupported": "This Claude approval type is not supported in Panes yet.",
     "allowWithPolicy": "Allow + policy",
     "setRepoTrusted": "Set trusted policy for this repo (on-request approvals, network enabled by request)",
     "setWorkspaceTrusted": "Set trusted policy for all repositories (on-request approvals, network enabled by request)",
@@ -141,6 +143,7 @@
     "toasts": {
       "codexSandboxUnavailable": "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode.",
       "codexOnlySandbox": "Sandbox overrides are only available for Codex threads.",
+      "claudeSandboxUnsupported": "Claude supports only read-only and workspace-write sandbox modes.",
       "fullAccessNetworkWarning": "Full access sandbox temporarily enables network access.",
       "updateExecutionPolicyFailed": "Failed to update thread execution policy: {{error}}"
     }
@@ -185,6 +188,7 @@
       "dynamicToolPrompt": "Respond to the dynamic tool call without hand-writing JSON.",
       "dynamicToolSuccess": "Success",
       "dynamicToolFailure": "Failure",
+      "claudeUnsupported": "This Claude approval payload is not supported by the current Panes contract.",
       "toolResponsePlaceholder": "Tool response text (optional)",
       "imageUrlPlaceholder": "Image URL (optional)",
       "sendToolResponse": "Send tool response",

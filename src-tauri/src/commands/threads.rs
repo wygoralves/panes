@@ -4,6 +4,7 @@ use tauri::State;
 
 use crate::{
     db,
+    engines::validate_engine_sandbox_mode,
     models::{ThreadDto, ThreadStatusDto},
     state::AppState,
 };
@@ -72,16 +73,30 @@ pub async fn confirm_workspace_thread(
     writable_roots: Vec<String>,
 ) -> Result<(), String> {
     let db = state.db.clone();
-    let thread = run_db(db.clone(), {
+    let (thread, workspace_root, repo_paths) = run_db(db.clone(), {
         let thread_id = thread_id.clone();
-        move |db| db::threads::get_thread(db, &thread_id)
+        move |db| {
+            let thread = db::threads::get_thread(db, &thread_id)?
+                .ok_or_else(|| anyhow::anyhow!("thread not found: {thread_id}"))?;
+            let workspace = db::workspaces::list_workspaces(db)?
+                .into_iter()
+                .find(|item| item.id == thread.workspace_id)
+                .ok_or_else(|| anyhow::anyhow!("workspace not found for thread {thread_id}"))?;
+            let repo_paths = db::repos::get_repos(db, &thread.workspace_id)?
+                .into_iter()
+                .map(|repo| repo.path)
+                .collect::<Vec<_>>();
+            Ok((thread, workspace.root_path, repo_paths))
+        }
     })
-    .await?
-    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+    .await?;
 
     if thread.repo_id.is_some() {
         return Err("confirmation only applies to workspace threads".to_string());
     }
+
+    let normalized_writable_roots =
+        normalize_workspace_confirmation_roots(&writable_roots, &workspace_root, &repo_paths)?;
 
     let mut metadata = thread.engine_metadata.unwrap_or_else(|| json!({}));
     if !metadata.is_object() {
@@ -90,7 +105,10 @@ pub async fn confirm_workspace_thread(
 
     if let Some(object) = metadata.as_object_mut() {
         object.insert("workspaceWriteOptIn".to_string(), json!(true));
-        object.insert("workspaceWritableRoots".to_string(), json!(writable_roots));
+        object.insert(
+            "workspaceWritableRoots".to_string(),
+            json!(normalized_writable_roots),
+        );
         object.insert(
             "workspaceWriteConfirmedAt".to_string(),
             json!(Utc::now().to_rfc3339()),
@@ -380,6 +398,29 @@ pub async fn set_thread_execution_policy(
     update_allow_network: bool,
     allow_network: Option<bool>,
 ) -> Result<ThreadDto, String> {
+    set_thread_execution_policy_inner(
+        state.inner(),
+        thread_id,
+        update_approval_policy,
+        approval_policy,
+        update_sandbox_mode,
+        sandbox_mode,
+        update_allow_network,
+        allow_network,
+    )
+    .await
+}
+
+async fn set_thread_execution_policy_inner(
+    state: &AppState,
+    thread_id: String,
+    update_approval_policy: bool,
+    approval_policy: Option<String>,
+    update_sandbox_mode: bool,
+    sandbox_mode: Option<String>,
+    update_allow_network: bool,
+    allow_network: Option<bool>,
+) -> Result<ThreadDto, String> {
     let db = state.db.clone();
     let thread = run_db(db.clone(), {
         let thread_id = thread_id.clone();
@@ -394,18 +435,16 @@ pub async fn set_thread_execution_policy(
         None
     };
     let normalized_sandbox_mode = if update_sandbox_mode {
-        if thread.engine_id != "codex" {
-            return Err(
-                "sandbox mode overrides are currently only supported for Codex threads".to_string(),
-            );
-        }
-        normalize_thread_sandbox_mode(sandbox_mode)?
+        let normalized = normalize_thread_sandbox_mode(sandbox_mode)?;
+        validate_engine_sandbox_mode(thread.engine_id.as_str(), normalized.as_deref())?;
+        normalized
     } else {
         None
     };
     let external_sandbox_active = state.engines.codex_uses_external_sandbox().await;
 
     if external_sandbox_active
+        && thread.engine_id == "codex"
         && matches!(
             normalized_sandbox_mode.as_deref(),
             Some("read-only" | "workspace-write")
@@ -731,9 +770,88 @@ fn normalize_thread_title(raw: &str) -> Result<String, String> {
     Ok(title)
 }
 
+fn normalize_workspace_confirmation_roots(
+    writable_roots: &[String],
+    _workspace_root: &str,
+    repo_paths: &[String],
+) -> Result<Vec<String>, String> {
+    if writable_roots.is_empty() {
+        return Err(
+            "workspace writable roots must include at least one active repository".to_string(),
+        );
+    }
+
+    let allowed_roots: std::collections::HashSet<&str> =
+        repo_paths.iter().map(String::as_str).collect();
+    let mut normalized = Vec::with_capacity(writable_roots.len());
+    for root in writable_roots {
+        let root = root.trim();
+        if root.is_empty() {
+            return Err("workspace writable roots must be non-empty paths".to_string());
+        }
+        if !allowed_roots.contains(root) {
+            return Err(format!(
+                "workspace writable root `{root}` is not an active repository in this workspace"
+            ));
+        }
+        if !normalized.iter().any(|value: &String| value == root) {
+            normalized.push(root.to_string());
+        }
+    }
+
+    Ok(normalized)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::{fs, sync::Arc};
+
     use super::*;
+    use crate::{
+        config::app_config::AppConfig,
+        engines::EngineManager,
+        git::{repo::FileTreeCache, watcher::GitWatcherManager},
+        state::{AppState, TurnManager},
+        terminal::TerminalManager,
+    };
+    use uuid::Uuid;
+
+    fn test_app_state() -> AppState {
+        let root = std::env::temp_dir().join(format!("panes-threads-cmd-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let db = crate::db::Database::open(root.join("workspaces.db"))
+            .expect("failed to create test database");
+        AppState {
+            db,
+            config: Arc::new(AppConfig::default()),
+            engines: Arc::new(EngineManager::new()),
+            git_watchers: Arc::new(GitWatcherManager::default()),
+            terminals: Arc::new(TerminalManager::default()),
+            turns: Arc::new(TurnManager::default()),
+            file_tree_cache: Arc::new(FileTreeCache::new()),
+        }
+    }
+
+    fn test_thread(state: &AppState, engine_id: &str, model_id: &str) -> ThreadDto {
+        let workspace_root =
+            std::env::temp_dir().join(format!("panes-threads-workspace-{}", Uuid::new_v4()));
+        fs::create_dir_all(&workspace_root).expect("failed to create workspace root");
+        let workspace = crate::db::workspaces::upsert_workspace(
+            &state.db,
+            workspace_root.to_string_lossy().as_ref(),
+            Some(1),
+        )
+        .expect("failed to create workspace");
+        crate::db::threads::create_thread(
+            &state.db,
+            &workspace.id,
+            None,
+            engine_id,
+            model_id,
+            "Thread",
+        )
+        .expect("failed to create thread")
+    }
 
     #[test]
     fn thread_allow_network_reads_explicit_override_in_full_access_mode() {
@@ -778,6 +896,61 @@ mod tests {
             Some("on-request".to_string())
         )
         .is_err());
+    }
+
+    #[test]
+    fn normalize_workspace_confirmation_roots_rejects_unknown_paths() {
+        let error = normalize_workspace_confirmation_roots(
+            &[String::from("/workspace/unknown")],
+            "/workspace",
+            &[
+                String::from("/workspace/repo-a"),
+                String::from("/workspace/repo-b"),
+            ],
+        )
+        .expect_err("expected unknown path to be rejected");
+
+        assert!(error.contains("is not an active repository"));
+    }
+
+    #[test]
+    fn normalize_workspace_confirmation_roots_rejects_empty_lists() {
+        let error = normalize_workspace_confirmation_roots(
+            &[],
+            "/workspace",
+            &[
+                String::from("/workspace/repo-a"),
+                String::from("/workspace/repo-b"),
+            ],
+        )
+        .expect_err("expected empty roots to be rejected");
+
+        assert!(error.contains("must include at least one active repository"));
+    }
+
+    #[test]
+    fn normalize_workspace_confirmation_roots_deduplicates_confirmed_paths() {
+        let roots = normalize_workspace_confirmation_roots(
+            &[
+                String::from("/workspace/repo-a"),
+                String::from("/workspace/repo-a"),
+                String::from("/workspace/repo-b"),
+            ],
+            "/workspace",
+            &[
+                String::from("/workspace/repo-a"),
+                String::from("/workspace/repo-b"),
+            ],
+        )
+        .expect("expected roots to normalize");
+
+        assert_eq!(
+            roots,
+            vec![
+                String::from("/workspace/repo-a"),
+                String::from("/workspace/repo-b")
+            ]
+        );
     }
 
     #[test]
@@ -827,5 +1000,82 @@ mod tests {
             map_codex_thread_status_to_local(Some("active"), &[], true),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn set_thread_execution_policy_allows_claude_read_only() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+
+        let updated = set_thread_execution_policy_inner(
+            &state,
+            thread.id.clone(),
+            false,
+            None,
+            true,
+            Some("read-only".to_string()),
+            false,
+            None,
+        )
+        .await
+        .expect("expected read-only update to succeed");
+
+        assert_eq!(
+            updated
+                .engine_metadata
+                .as_ref()
+                .and_then(|value| value.get("sandboxMode"))
+                .and_then(serde_json::Value::as_str),
+            Some("read-only")
+        );
+    }
+
+    #[tokio::test]
+    async fn set_thread_execution_policy_allows_claude_workspace_write() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+
+        let updated = set_thread_execution_policy_inner(
+            &state,
+            thread.id.clone(),
+            false,
+            None,
+            true,
+            Some("workspace-write".to_string()),
+            false,
+            None,
+        )
+        .await
+        .expect("expected workspace-write update to succeed");
+
+        assert_eq!(
+            updated
+                .engine_metadata
+                .as_ref()
+                .and_then(|value| value.get("sandboxMode"))
+                .and_then(serde_json::Value::as_str),
+            Some("workspace-write")
+        );
+    }
+
+    #[tokio::test]
+    async fn set_thread_execution_policy_rejects_claude_danger_full_access() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+
+        let error = set_thread_execution_policy_inner(
+            &state,
+            thread.id.clone(),
+            false,
+            None,
+            true,
+            Some("danger-full-access".to_string()),
+            false,
+            None,
+        )
+        .await
+        .expect_err("expected danger-full-access to be rejected");
+
+        assert!(error.contains("Claude sandbox mode `danger-full-access` is not supported"));
     }
 }

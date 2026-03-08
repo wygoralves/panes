@@ -206,6 +206,18 @@ pub struct EngineInfoDto {
     pub id: String,
     pub name: String,
     pub models: Vec<EngineModelDto>,
+    pub capabilities: EngineCapabilitiesDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineCapabilitiesDto {
+    #[serde(default)]
+    pub permission_modes: Vec<String>,
+    #[serde(default)]
+    pub sandbox_modes: Vec<String>,
+    #[serde(default)]
+    pub approval_decisions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

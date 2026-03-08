@@ -74,6 +74,10 @@ impl Database {
         fs::create_dir_all(base_dir.join("logs")).context("failed to create app data dir")?;
 
         let path = base_dir.join("workspaces.db");
+        Self::open(path)
+    }
+
+    pub fn open(path: PathBuf) -> anyhow::Result<Self> {
         let db = Self {
             path,
             pool: Arc::new(ConnectionPool {

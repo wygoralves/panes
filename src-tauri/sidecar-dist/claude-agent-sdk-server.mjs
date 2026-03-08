@@ -163,7 +163,7 @@ function buildPromptInput(prompt, attachments, cwd, sessionIdHint) {
       `You can attach at most ${MAX_ATTACHMENTS_PER_TURN} files per Claude turn.`
     );
   }
-  return async function* promptWithAttachments() {
+  return (async function* promptWithAttachments() {
     const content = [];
     if (typeof prompt === "string" && prompt.length > 0) {
       content.push({ type: "text", text: prompt });
@@ -185,7 +185,7 @@ function buildPromptInput(prompt, attachments, cwd, sessionIdHint) {
       parent_tool_use_id: null,
       session_id: sessionIdHint || ""
     };
-  }();
+  })();
 }
 function mapToolNameToActionType(toolName) {
   switch (toolName) {
@@ -366,6 +366,7 @@ function buildPermissionHandler({
   context,
   cwd,
   writableRoots,
+  sandboxMode,
   allowNetwork,
   approvalPolicy
 }) {
@@ -386,8 +387,20 @@ function buildPermissionHandler({
       };
     }
     if (toolName === "Write" || toolName === "Edit") {
+      if (sandboxMode === "read-only") {
+        return {
+          behavior: "deny",
+          message: "File writes are disabled for this Claude thread."
+        };
+      }
       const candidatePaths = collectCandidatePaths(toolName, toolInput, cwd);
-      if (candidatePaths.length > 0 && !candidatePaths.every((candidate) => isWithinAnyRoot(normalizedRoots, candidate))) {
+      if (candidatePaths.length === 0) {
+        return {
+          behavior: "deny",
+          message: "Unable to verify the target path for this write operation."
+        };
+      }
+      if (!candidatePaths.every((candidate) => isWithinAnyRoot(normalizedRoots, candidate))) {
         return {
           behavior: "deny",
           message: "This file path is outside the approved writable roots for the thread."
@@ -400,8 +413,27 @@ function buildPermissionHandler({
     return requestApproval(context, toolName, toolInput, options?.suggestions);
   };
 }
+function normalizeApprovalDecision(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("Claude approval responses require an explicit decision.");
+  }
+  const normalized = value.trim().toLowerCase();
+  const compact = normalized.replaceAll("-", "").replaceAll("_", "");
+  if (compact === "accept") {
+    return "accept";
+  }
+  if (compact === "decline" || compact === "deny") {
+    return "decline";
+  }
+  if (compact === "acceptforsession") {
+    return "accept_for_session";
+  }
+  throw new Error(
+    "Unsupported Claude approval decision. Expected one of: accept, decline, deny, accept_for_session."
+  );
+}
 function resolveApprovalDecision(response, suggestions = []) {
-  const decision = typeof response?.decision === "string" ? response.decision : "";
+  const decision = normalizeApprovalDecision(response?.decision);
   if (decision === "accept") {
     return {
       behavior: "allow"
@@ -417,6 +449,49 @@ function resolveApprovalDecision(response, suggestions = []) {
     behavior: "deny",
     message: "Tool usage denied by the user."
   };
+}
+function normalizeSandboxMode(value) {
+  if (value == null || value === "") {
+    return "workspace-write";
+  }
+  if (typeof value !== "string") {
+    throw new Error("Claude sandboxMode must be a string.");
+  }
+  const normalized = value.trim().toLowerCase();
+  const compact = normalized.replaceAll("-", "").replaceAll("_", "");
+  if (compact === "readonly") {
+    return "read-only";
+  }
+  if (compact === "workspacewrite") {
+    return "workspace-write";
+  }
+  if (compact === "dangerfullaccess") {
+    throw new Error(
+      "Claude does not support sandboxMode=danger-full-access. Use read-only or workspace-write."
+    );
+  }
+  throw new Error(
+    "Unsupported Claude sandboxMode. Expected one of: read-only, workspace-write."
+  );
+}
+function normalizeWritableRoots(cwd, writableRoots) {
+  const normalizedRoots = Array.isArray(writableRoots) ? writableRoots.map((root) => typeof root === "string" && root.trim() ? path.resolve(root) : null).filter(Boolean) : [];
+  if (normalizedRoots.length > 0) {
+    return normalizedRoots;
+  }
+  return [path.resolve(cwd)];
+}
+function additionalDirectoriesForSandbox(cwd, sandboxMode, writableRoots) {
+  if (sandboxMode !== "workspace-write") {
+    return [];
+  }
+  return writableRoots.filter((root) => root !== path.resolve(cwd));
+}
+function allowWriteRootsForSandbox(sandboxMode, writableRoots) {
+  if (sandboxMode !== "workspace-write") {
+    return [];
+  }
+  return writableRoots;
 }
 async function handleQuery(req) {
   const { id, params = {} } = req;
@@ -434,6 +509,7 @@ async function handleQuery(req) {
     approvalPolicy,
     allowNetwork,
     writableRoots = [],
+    sandboxMode,
     reasoningEffort
   } = params;
   const context = createQueryContext(id);
@@ -448,132 +524,139 @@ async function handleQuery(req) {
     ...allowNetwork ? ["WebFetch"] : []
   ];
   const sessionCwd = cwd || process.cwd();
-  const normalizedWritableRoots = writableRoots.length > 0 ? writableRoots.map((root) => path.resolve(root)) : [sessionCwd];
-  const options = {
-    cwd: sessionCwd,
-    additionalDirectories: normalizedWritableRoots.filter(
-      (root) => root !== path.resolve(sessionCwd)
-    ),
-    permissionMode: planMode ? "plan" : "dontAsk",
-    allowedTools: toolList,
-    canUseTool: buildPermissionHandler({
-      context,
-      cwd: sessionCwd,
-      writableRoots: normalizedWritableRoots,
-      allowNetwork: Boolean(allowNetwork),
-      approvalPolicy
-    }),
-    settingSources: ["project"],
-    sandbox: {
-      enabled: true,
-      autoAllowBashIfSandboxed: true,
-      allowUnsandboxedCommands: false,
-      filesystem: {
-        allowWrite: normalizedWritableRoots
-      },
-      ...allowNetwork ? {} : {
-        network: {
-          allowedDomains: [],
-          allowLocalBinding: false,
-          allowUnixSockets: []
-        }
-      }
-    },
-    settings: {
-      permissions: {
-        defaultMode: planMode ? "plan" : "dontAsk",
-        disableBypassPermissionsMode: "disable"
-      }
-    },
-    includePartialMessages: true,
-    hooks: {
-      PreToolUse: [
-        {
-          matcher: ".*",
-          hooks: [
-            async (hookInput) => {
-              const actionId = `claude-action-${++context.actionCounter}`;
-              const toolName = hookInput?.tool_name || hookInput?.name || "unknown";
-              const toolInput = hookInput?.tool_input || hookInput?.input || {};
-              const toolUseId = hookInput?.tool_use_id || hookInput?.toolUseID || hookInput?.toolUseId;
-              if (typeof toolUseId === "string" && toolUseId.length > 0) {
-                context.actionIdsByToolUseId.set(toolUseId, actionId);
-              }
-              emit({
-                id,
-                type: "action_started",
-                actionId,
-                actionType: mapToolNameToActionType(toolName),
-                toolName,
-                summary: summarizeTool(toolName, toolInput),
-                details: toolInput
-              });
-              return {};
-            }
-          ]
-        }
-      ],
-      PostToolUse: [
-        {
-          matcher: ".*",
-          hooks: [
-            async (hookInput) => {
-              const toolUseId = hookInput?.tool_use_id || hookInput?.toolUseID || hookInput?.toolUseId;
-              const actionId = getActionIdForToolUse(context, toolUseId);
-              const output = hookInput?.tool_response ?? hookInput?.tool_result ?? hookInput?.result;
-              const outputStr = serializeToolOutput(output)?.slice(0, 4e3);
-              if (outputStr) {
-                emit({
-                  id,
-                  type: "action_output_delta",
-                  actionId,
-                  stream: "stdout",
-                  content: outputStr
-                });
-              }
-              emit({
-                id,
-                type: "action_completed",
-                actionId,
-                success: true,
-                output: outputStr,
-                durationMs: 0
-              });
-              return {};
-            }
-          ]
-        }
-      ],
-      PostToolUseFailure: [
-        {
-          matcher: ".*",
-          hooks: [
-            async (hookInput) => {
-              const toolUseId = hookInput?.tool_use_id || hookInput?.toolUseID || hookInput?.toolUseId;
-              const actionId = getActionIdForToolUse(context, toolUseId);
-              emit({
-                id,
-                type: "action_completed",
-                actionId,
-                success: false,
-                error: hookInput?.error?.message || hookInput?.error || "Tool execution failed",
-                durationMs: 0
-              });
-              return {};
-            }
-          ]
-        }
-      ]
-    }
-  };
-  if (model) options.model = model;
-  if (systemPrompt) options.systemPrompt = systemPrompt;
-  if (resume) options.resume = resume;
-  if (sessionId) options.sessionId = sessionId;
-  if (maxTurns) options.maxTurns = maxTurns;
-  if (reasoningEffort) options.effort = reasoningEffort;
   let actualSessionId = null;
   try {
+    const normalizedSandboxMode = normalizeSandboxMode(sandboxMode);
+    const normalizedWritableRoots = normalizeWritableRoots(sessionCwd, writableRoots);
+    const options = {
+      cwd: sessionCwd,
+      additionalDirectories: additionalDirectoriesForSandbox(
+        sessionCwd,
+        normalizedSandboxMode,
+        normalizedWritableRoots
+      ),
+      permissionMode: planMode ? "plan" : "dontAsk",
+      allowedTools: toolList,
+      canUseTool: buildPermissionHandler({
+        context,
+        cwd: sessionCwd,
+        writableRoots: normalizedWritableRoots,
+        sandboxMode: normalizedSandboxMode,
+        allowNetwork: Boolean(allowNetwork),
+        approvalPolicy
+      }),
+      settingSources: ["project"],
+      sandbox: {
+        enabled: true,
+        autoAllowBashIfSandboxed: true,
+        allowUnsandboxedCommands: false,
+        filesystem: {
+          allowWrite: allowWriteRootsForSandbox(
+            normalizedSandboxMode,
+            normalizedWritableRoots
+          )
+        },
+        ...allowNetwork ? {} : {
+          network: {
+            allowedDomains: [],
+            allowLocalBinding: false,
+            allowUnixSockets: []
+          }
+        }
+      },
+      settings: {
+        permissions: {
+          defaultMode: planMode ? "plan" : "dontAsk",
+          disableBypassPermissionsMode: "disable"
+        }
+      },
+      includePartialMessages: true,
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: ".*",
+            hooks: [
+              async (hookInput) => {
+                const actionId = `claude-action-${++context.actionCounter}`;
+                const toolName = hookInput?.tool_name || hookInput?.name || "unknown";
+                const toolInput = hookInput?.tool_input || hookInput?.input || {};
+                const toolUseId = hookInput?.tool_use_id || hookInput?.toolUseID || hookInput?.toolUseId;
+                if (typeof toolUseId === "string" && toolUseId.length > 0) {
+                  context.actionIdsByToolUseId.set(toolUseId, actionId);
+                }
+                emit({
+                  id,
+                  type: "action_started",
+                  actionId,
+                  actionType: mapToolNameToActionType(toolName),
+                  toolName,
+                  summary: summarizeTool(toolName, toolInput),
+                  details: toolInput
+                });
+                return {};
+              }
+            ]
+          }
+        ],
+        PostToolUse: [
+          {
+            matcher: ".*",
+            hooks: [
+              async (hookInput) => {
+                const toolUseId = hookInput?.tool_use_id || hookInput?.toolUseID || hookInput?.toolUseId;
+                const actionId = getActionIdForToolUse(context, toolUseId);
+                const output = hookInput?.tool_response ?? hookInput?.tool_result ?? hookInput?.result;
+                const outputStr = serializeToolOutput(output)?.slice(0, 4e3);
+                if (outputStr) {
+                  emit({
+                    id,
+                    type: "action_output_delta",
+                    actionId,
+                    stream: "stdout",
+                    content: outputStr
+                  });
+                }
+                emit({
+                  id,
+                  type: "action_completed",
+                  actionId,
+                  success: true,
+                  output: outputStr,
+                  durationMs: 0
+                });
+                return {};
+              }
+            ]
+          }
+        ],
+        PostToolUseFailure: [
+          {
+            matcher: ".*",
+            hooks: [
+              async (hookInput) => {
+                const toolUseId = hookInput?.tool_use_id || hookInput?.toolUseID || hookInput?.toolUseId;
+                const actionId = getActionIdForToolUse(context, toolUseId);
+                emit({
+                  id,
+                  type: "action_completed",
+                  actionId,
+                  success: false,
+                  error: hookInput?.error?.message || hookInput?.error || "Tool execution failed",
+                  durationMs: 0
+                });
+                return {};
+              }
+            ]
+          }
+        ]
+      }
+    };
+    if (model) options.model = model;
+    if (systemPrompt) options.systemPrompt = systemPrompt;
+    if (resume) options.resume = resume;
+    if (sessionId) options.sessionId = sessionId;
+    if (maxTurns) options.maxTurns = maxTurns;
+    if (reasoningEffort) options.effort = reasoningEffort;
     emit({ id, type: "turn_started" });
     let sawTextDelta = false;
     let terminalStatus = "completed";
@@ -656,6 +739,18 @@ function handleCancel(params = {}) {
   );
   context.query?.close();
 }
+function assertClaudeApprovalResponseShape(response) {
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    throw new Error("Claude approval response must be a JSON object.");
+  }
+  const keys = Object.keys(response);
+  if (keys.length !== 1 || !Object.prototype.hasOwnProperty.call(response, "decision")) {
+    throw new Error(
+      "Claude approval response must include only an explicit decision field."
+    );
+  }
+  normalizeApprovalDecision(response.decision);
+}
 function handleApprovalResponse(params = {}) {
   const approvalId = params.approvalId || params.approval_id;
   if (!approvalId) {
@@ -665,10 +760,22 @@ function handleApprovalResponse(params = {}) {
   if (!pending) {
     return;
   }
-  pendingApprovals.delete(approvalId);
-  const context = activeQueries.get(pending.queryId);
-  context?.pendingApprovalIds.delete(approvalId);
-  pending.resolve(resolveApprovalDecision(params.response || {}, pending.suggestions));
+  try {
+    const response = params.response || {};
+    assertClaudeApprovalResponseShape(response);
+    const permission = resolveApprovalDecision(response, pending.suggestions);
+    pendingApprovals.delete(approvalId);
+    const context = activeQueries.get(pending.queryId);
+    context?.pendingApprovalIds.delete(approvalId);
+    pending.resolve(permission);
+  } catch (error) {
+    emit({
+      id: pending.queryId,
+      type: "error",
+      message: error.message || String(error),
+      recoverable: true
+    });
+  }
 }
 rl.on("line", (line) => {
   let req;

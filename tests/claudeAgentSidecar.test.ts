@@ -182,7 +182,155 @@ afterEach(async () => {
   activeHarness = null;
 });
 
+function parseObservationResults(harness: SidecarHarness, queryId: string) {
+  const textEvent = harness.events.find(
+    (event) => event.id === queryId && event.type === "text_delta",
+  );
+  return JSON.parse(String(textEvent?.content ?? "[]")) as Array<{
+    type: string;
+    result: Record<string, unknown>;
+  }>;
+}
+
 describe("claude-agent-sdk-server sidecar", () => {
+  it("denies Write in read-only mode even when writableRoots are present", async () => {
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "permission",
+          toolName: "Write",
+          input: { file_path: path.join(repoRoot, "allowed.txt") },
+          toolUseID: "write-read-only",
+        },
+      ],
+      emitObservationResult: true,
+      sessionId: "session-read-only",
+    });
+
+    harness.send({
+      id: "query-read-only",
+      method: "query",
+      params: {
+        prompt: "attempt write",
+        cwd: repoRoot,
+        sandboxMode: "read-only",
+        writableRoots: [repoRoot],
+      },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-read-only" && event.type === "turn_completed",
+    );
+
+    const observations = parseObservationResults(harness, "query-read-only");
+    expect(observations).toHaveLength(1);
+    expect(observations[0]?.result.behavior).toBe("deny");
+    expect(observations[0]?.result.message).toBe("File writes are disabled for this Claude thread.");
+  });
+
+  it("workspace-write allows approved roots and denies paths outside them", async () => {
+    const outsidePath = path.join(path.dirname(repoRoot), "outside.txt");
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "permission",
+          toolName: "Write",
+          input: { file_path: path.join(repoRoot, "inside.txt") },
+          toolUseID: "write-inside",
+        },
+        {
+          type: "permission",
+          toolName: "Write",
+          input: { file_path: outsidePath },
+          toolUseID: "write-outside",
+        },
+      ],
+      emitObservationResult: true,
+      sessionId: "session-workspace-write",
+    });
+
+    harness.send({
+      id: "query-workspace-write",
+      method: "query",
+      params: {
+        prompt: "attempt writes",
+        cwd: repoRoot,
+        approvalPolicy: "trusted",
+        sandboxMode: "workspace-write",
+        writableRoots: [repoRoot],
+      },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-workspace-write" && event.type === "turn_completed",
+    );
+
+    const observations = parseObservationResults(harness, "query-workspace-write");
+    expect(observations).toHaveLength(2);
+    expect(observations[0]?.result.behavior).toBe("allow");
+    expect(observations[1]?.result.behavior).toBe("deny");
+    expect(observations[1]?.result.message).toBe(
+      "This file path is outside the approved writable roots for the thread.",
+    );
+  });
+
+  it("defaults workspace-write roots to cwd when writableRoots are omitted", async () => {
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "permission",
+          toolName: "Write",
+          input: { file_path: path.join(repoRoot, "inside-default-root.txt") },
+          toolUseID: "write-default-root",
+        },
+      ],
+      emitObservationResult: true,
+      sessionId: "session-default-root",
+    });
+
+    harness.send({
+      id: "query-default-root",
+      method: "query",
+      params: {
+        prompt: "attempt write",
+        cwd: repoRoot,
+        approvalPolicy: "trusted",
+      },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-default-root" && event.type === "turn_completed",
+    );
+
+    const observations = parseObservationResults(harness, "query-default-root");
+    expect(observations).toHaveLength(1);
+    expect(observations[0]?.result.behavior).toBe("allow");
+  });
+
+  it("rejects danger-full-access explicitly for Claude", async () => {
+    const harness = await spawnHarness({ steps: [] });
+
+    harness.send({
+      id: "query-full-access",
+      method: "query",
+      params: {
+        prompt: "invalid sandbox",
+        cwd: repoRoot,
+        sandboxMode: "danger-full-access",
+      },
+    });
+
+    const errorEvent = await harness.waitFor(
+      (event) => event.id === "query-full-access" && event.type === "error",
+    );
+    const completed = await harness.waitFor(
+      (event) => event.id === "query-full-access" && event.type === "turn_completed",
+    );
+
+    expect(errorEvent.message).toContain("does not support sandboxMode=danger-full-access");
+    expect(completed.status).toBe("failed");
+  });
+
   it("marks terminal SDK errors as failed turns", async () => {
     const harness = await spawnHarness({
       steps: [
@@ -352,6 +500,54 @@ describe("claude-agent-sdk-server sidecar", () => {
     expect(observations[0]?.type).toBe("permission_result");
     expect(observations[0]?.result.behavior).toBe("allow");
     expect(observations[0]?.result.updatedPermissions).toEqual(suggestions);
+  });
+
+  it("keeps approvals pending when Claude receives an invalid approval payload", async () => {
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "permission",
+          toolName: "Bash",
+          input: { command: "npm test" },
+          toolUseID: "permission-invalid-approval",
+        },
+      ],
+      emitObservationResult: true,
+      sessionId: "session-invalid-approval",
+    });
+
+    harness.send({
+      id: "query-invalid-approval",
+      method: "query",
+      params: {
+        prompt: "request approval",
+        cwd: repoRoot,
+        approvalPolicy: "restricted",
+      },
+    });
+
+    const approvalEvent = await harness.waitFor(
+      (event) => event.id === "query-invalid-approval" && event.type === "approval_requested",
+    );
+    harness.send({
+      method: "approval_response",
+      params: {
+        approvalId: approvalEvent.approvalId,
+        response: {},
+      },
+    });
+
+    const errorEvent = await harness.waitFor(
+      (event) => event.id === "query-invalid-approval" && event.type === "error",
+    );
+
+    expect(errorEvent.message).toContain("explicit decision field");
+    await expect(
+      harness.waitFor(
+        (event) => event.id === "query-invalid-approval" && event.type === "turn_completed",
+        250,
+      ),
+    ).rejects.toThrow("Timed out waiting for sidecar event");
   });
 
   it("matches tool completions by tool_use_id when hooks interleave", async () => {

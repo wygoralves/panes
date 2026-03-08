@@ -13,8 +13,8 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     db,
     engines::{
-        EngineEvent, OutputStream, SandboxPolicy, ThreadScope, TurnAttachment,
-        TurnCompletionStatus, TurnInput,
+        normalize_approval_response_for_engine, validate_engine_sandbox_mode, EngineEvent,
+        OutputStream, SandboxPolicy, ThreadScope, TurnAttachment, TurnCompletionStatus, TurnInput,
     },
     models::{
         ActionOutputDto, MessageDto, MessageStatusDto, MessageWindowCursorDto, MessageWindowDto,
@@ -220,6 +220,20 @@ pub async fn send_message(
     .await?;
 
     let workspace_root = workspace.root_path.clone();
+    let reasoning_effort = thread_reasoning_effort(thread.engine_metadata.as_ref());
+    let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref())?;
+    let sandbox_mode = sandbox_mode_override
+        .clone()
+        .unwrap_or_else(|| "workspace-write".to_string());
+    let workspace_writable_roots = if selected_repo.is_some() {
+        None
+    } else {
+        Some(resolve_workspace_writable_roots(
+            repos.iter().map(|repo| repo.path.as_str()),
+            workspace_root.as_str(),
+            thread.engine_metadata.as_ref(),
+        )?)
+    };
     let scope = if let Some(repo) = selected_repo.as_ref() {
         ThreadScope::Repo {
             repo_path: repo.path.clone(),
@@ -227,7 +241,10 @@ pub async fn send_message(
     } else {
         ThreadScope::Workspace {
             root_path: workspace_root,
-            writable_roots: repos.iter().map(|repo| repo.path.clone()).collect(),
+            writable_roots: workspace_writable_roots
+                .as_ref()
+                .map(|resolution| resolution.roots.clone())
+                .unwrap_or_default(),
         }
     };
 
@@ -235,11 +252,6 @@ pub async fn send_message(
         .as_ref()
         .map(|repo| repo.trust_level.clone())
         .unwrap_or_else(|| aggregate_workspace_trust_level(&repos));
-    let reasoning_effort = thread_reasoning_effort(thread.engine_metadata.as_ref());
-    let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref());
-    let sandbox_mode = sandbox_mode_override
-        .clone()
-        .unwrap_or_else(|| "workspace-write".to_string());
     let codex_external_sandbox_active = if thread.engine_id == "codex" {
         state.engines.codex_uses_external_sandbox().await
     } else {
@@ -255,15 +267,16 @@ pub async fn send_message(
         );
     }
 
-    if let ThreadScope::Workspace { writable_roots, .. } = &scope {
-        if writable_roots.len() > 1
-            && sandbox_mode_requires_workspace_opt_in(&sandbox_mode)
-            && !workspace_write_opt_in_enabled(thread.engine_metadata.as_ref())
-        {
-            return Err(
-                "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
-            );
-        }
+    validate_engine_sandbox_mode(thread.engine_id.as_str(), Some(sandbox_mode.as_str()))?;
+
+    if workspace_write_confirmation_required(
+        workspace_writable_roots.as_ref(),
+        sandbox_mode.as_str(),
+        workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
+    ) {
+        return Err(
+            "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
+        );
     }
 
     if requested_model_id.is_some() {
@@ -347,12 +360,13 @@ pub async fn send_message(
         }
     };
 
-    let allow_network = if sandbox_mode.eq_ignore_ascii_case("danger-full-access") {
-        true
-    } else {
-        thread_allow_network_override(thread.engine_metadata.as_ref())
-            .unwrap_or_else(|| allow_network_for_trust_level(&trust_level))
-    };
+    let allow_network =
+        if thread.engine_id == "codex" && sandbox_mode.eq_ignore_ascii_case("danger-full-access") {
+            true
+        } else {
+            thread_allow_network_override(thread.engine_metadata.as_ref())
+                .unwrap_or_else(|| allow_network_for_trust_level(&trust_level))
+        };
 
     let sandbox = SandboxPolicy {
         writable_roots,
@@ -489,6 +503,15 @@ pub async fn respond_to_approval(
     approval_id: String,
     response: Value,
 ) -> Result<(), String> {
+    respond_to_approval_inner(state.inner(), thread_id, approval_id, response).await
+}
+
+async fn respond_to_approval_inner(
+    state: &AppState,
+    thread_id: String,
+    approval_id: String,
+    response: Value,
+) -> Result<(), String> {
     if !response.is_object() {
         return Err("approval response must be a JSON object".to_string());
     }
@@ -500,14 +523,16 @@ pub async fn respond_to_approval(
     })
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+    let normalized_response =
+        normalize_approval_response_for_engine(thread.engine_id.as_str(), response)?;
 
     state
         .engines
-        .respond_to_approval(&thread, &approval_id, response.clone())
+        .respond_to_approval(&thread, &approval_id, normalized_response.clone())
         .await
         .map_err(err_to_string)?;
 
-    let decision = response
+    let decision = normalized_response
         .get("decision")
         .and_then(|value| value.as_str())
         .unwrap_or("custom");
@@ -2077,22 +2102,140 @@ fn thread_allow_network_override(metadata: Option<&Value>) -> Option<bool> {
         .and_then(Value::as_bool)
 }
 
-fn thread_sandbox_mode(metadata: Option<&Value>) -> Option<String> {
-    metadata
+fn thread_sandbox_mode(metadata: Option<&Value>) -> Result<Option<String>, String> {
+    let value = metadata
         .and_then(|value| value.get("sandboxMode"))
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|value| {
-            matches!(
-                *value,
-                "read-only" | "workspace-write" | "danger-full-access"
-            )
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    let normalized = match value.to_lowercase().as_str() {
+        "readonly" | "read-only" | "read_only" => "read-only",
+        "workspacewrite" | "workspace-write" | "workspace_write" => "workspace-write",
+        "dangerfullaccess" | "danger-full-access" | "danger_full_access" => {
+            "danger-full-access"
+        }
+        _ => {
+            return Err(format!(
+                "invalid sandbox mode `{value}` on thread metadata. expected one of: read-only, workspace-write, danger-full-access"
+            ))
+        }
+    };
+
+    Ok(Some(normalized.to_string()))
+}
+
+fn workspace_writable_roots_from_metadata(
+    metadata: Option<&Value>,
+) -> Result<Option<Vec<String>>, String> {
+    let Some(raw_roots) = metadata.and_then(|value| value.get("workspaceWritableRoots")) else {
+        return Ok(None);
+    };
+
+    let roots = raw_roots.as_array().ok_or_else(|| {
+        "invalid `workspaceWritableRoots` on thread metadata. expected an array of paths"
+            .to_string()
+    })?;
+
+    let mut normalized = Vec::with_capacity(roots.len());
+    for root in roots {
+        let root = root.as_str().map(str::trim).filter(|value| !value.is_empty()).ok_or_else(
+            || {
+                "invalid `workspaceWritableRoots` on thread metadata. expected non-empty string paths"
+                    .to_string()
+            },
+        )?;
+        normalized.push(root.to_string());
+    }
+
+    Ok(Some(normalized))
+}
+
+struct WorkspaceWritableRootsResolution {
+    roots: Vec<String>,
+    requires_confirmation: bool,
+}
+
+fn resolve_workspace_writable_roots<'a>(
+    repo_paths: impl IntoIterator<Item = &'a str>,
+    workspace_root: &str,
+    metadata: Option<&Value>,
+) -> Result<WorkspaceWritableRootsResolution, String> {
+    let available_roots: Vec<String> = repo_paths.into_iter().map(ToOwned::to_owned).collect();
+    let confirmed_roots = workspace_writable_roots_from_metadata(metadata)?;
+
+    if let Some(confirmed_roots) = confirmed_roots {
+        if confirmed_roots.is_empty() {
+            return Ok(WorkspaceWritableRootsResolution {
+                roots: vec![workspace_root.to_string()],
+                requires_confirmation: false,
+            });
+        }
+
+        let available_set: std::collections::HashSet<&str> =
+            available_roots.iter().map(String::as_str).collect();
+        let mut filtered_roots = Vec::with_capacity(confirmed_roots.len());
+        for root in confirmed_roots {
+            if available_set.contains(root.as_str()) {
+                filtered_roots.push(root);
+            }
+        }
+        if !filtered_roots.is_empty() {
+            return Ok(WorkspaceWritableRootsResolution {
+                roots: filtered_roots,
+                requires_confirmation: false,
+            });
+        }
+
+        return Ok(match available_roots.len() {
+            0 => WorkspaceWritableRootsResolution {
+                roots: vec![workspace_root.to_string()],
+                requires_confirmation: false,
+            },
+            1 => WorkspaceWritableRootsResolution {
+                roots: available_roots,
+                requires_confirmation: false,
+            },
+            _ => WorkspaceWritableRootsResolution {
+                roots: available_roots,
+                requires_confirmation: true,
+            },
+        });
+    }
+
+    if available_roots.is_empty() {
+        Ok(WorkspaceWritableRootsResolution {
+            roots: vec![workspace_root.to_string()],
+            requires_confirmation: false,
         })
-        .map(ToOwned::to_owned)
+    } else {
+        Ok(WorkspaceWritableRootsResolution {
+            roots: available_roots,
+            requires_confirmation: false,
+        })
+    }
 }
 
 fn sandbox_mode_requires_workspace_opt_in(mode: &str) -> bool {
     !mode.eq_ignore_ascii_case("read-only")
+}
+
+fn workspace_write_confirmation_required(
+    resolution: Option<&WorkspaceWritableRootsResolution>,
+    sandbox_mode: &str,
+    opt_in_enabled: bool,
+) -> bool {
+    let Some(resolution) = resolution else {
+        return false;
+    };
+
+    sandbox_mode_requires_workspace_opt_in(sandbox_mode)
+        && (resolution.requires_confirmation || (resolution.roots.len() > 1 && !opt_in_enabled))
 }
 
 fn unsupported_thread_sandbox_override_for_external_sandbox(
@@ -2111,7 +2254,97 @@ fn thread_reasoning_effort(metadata: Option<&Value>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, sync::Arc};
+
     use super::*;
+    use crate::{
+        config::app_config::AppConfig,
+        db,
+        engines::EngineManager,
+        git::{repo::FileTreeCache, watcher::GitWatcherManager},
+        state::{AppState, TurnManager},
+        terminal::TerminalManager,
+    };
+    use rusqlite::params;
+    use uuid::Uuid;
+
+    fn test_app_state() -> AppState {
+        let root = std::env::temp_dir().join(format!("panes-chat-cmd-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let db = crate::db::Database::open(root.join("workspaces.db"))
+            .expect("failed to create test database");
+        AppState {
+            db,
+            config: Arc::new(AppConfig::default()),
+            engines: Arc::new(EngineManager::new()),
+            git_watchers: Arc::new(GitWatcherManager::default()),
+            terminals: Arc::new(TerminalManager::default()),
+            turns: Arc::new(TurnManager::default()),
+            file_tree_cache: Arc::new(FileTreeCache::new()),
+        }
+    }
+
+    fn test_thread(state: &AppState, engine_id: &str, model_id: &str) -> ThreadDto {
+        let workspace_root =
+            std::env::temp_dir().join(format!("panes-chat-workspace-{}", Uuid::new_v4()));
+        fs::create_dir_all(&workspace_root).expect("failed to create workspace root");
+        let workspace = db::workspaces::upsert_workspace(
+            &state.db,
+            workspace_root.to_string_lossy().as_ref(),
+            Some(1),
+        )
+        .expect("failed to create workspace");
+        db::threads::create_thread(
+            &state.db,
+            &workspace.id,
+            None,
+            engine_id,
+            model_id,
+            "Thread",
+        )
+        .expect("failed to create thread")
+    }
+
+    fn insert_pending_approval(state: &AppState, thread: &ThreadDto, approval_id: &str) -> String {
+        let assistant_message = db::messages::insert_assistant_placeholder(
+            &state.db,
+            &thread.id,
+            Some(thread.engine_id.as_str()),
+            Some(thread.model_id.as_str()),
+            None,
+        )
+        .expect("failed to create assistant message");
+        db::actions::insert_approval(
+            &state.db,
+            approval_id,
+            &thread.id,
+            &assistant_message.id,
+            &crate::engines::events::ActionType::Command,
+            "Run command",
+            &serde_json::json!({ "command": "touch file.txt" }),
+        )
+        .expect("failed to insert approval");
+        db::threads::update_thread_status(&state.db, &thread.id, ThreadStatusDto::AwaitingApproval)
+            .expect("failed to set thread status");
+
+        let blocks = serde_json::json!([
+            {
+                "type": "approval",
+                "approvalId": approval_id,
+                "actionType": "command",
+                "summary": "Run command",
+                "details": { "command": "touch file.txt" },
+                "status": "pending"
+            }
+        ]);
+        let conn = state.db.connect().expect("failed to open db connection");
+        conn.execute(
+            "UPDATE messages SET blocks_json = ?1 WHERE id = ?2",
+            params![blocks.to_string(), assistant_message.id],
+        )
+        .expect("failed to persist approval block");
+        assistant_message.id
+    }
 
     #[test]
     fn external_sandbox_allows_default_workspace_write_mode() {
@@ -2132,6 +2365,80 @@ mod tests {
         ));
         assert!(!unsupported_thread_sandbox_override_for_external_sandbox(
             Some("danger-full-access"),
+            true,
+        ));
+    }
+
+    #[test]
+    fn resolve_workspace_writable_roots_prefers_confirmed_subset() {
+        let roots = resolve_workspace_writable_roots(
+            ["/workspace/repo-a", "/workspace/repo-b"],
+            "/workspace",
+            Some(&serde_json::json!({
+                "workspaceWritableRoots": ["/workspace/repo-b"]
+            })),
+        )
+        .expect("expected confirmed roots to resolve");
+
+        assert_eq!(roots.roots, vec![String::from("/workspace/repo-b")]);
+        assert!(!roots.requires_confirmation);
+    }
+
+    #[test]
+    fn resolve_workspace_writable_roots_drops_stale_confirmed_paths() {
+        let roots = resolve_workspace_writable_roots(
+            ["/workspace/repo-a", "/workspace/repo-b"],
+            "/workspace",
+            Some(&serde_json::json!({
+                "workspaceWritableRoots": ["/workspace/repo-b", "/workspace/repo-c"]
+            })),
+        )
+        .expect("expected stale confirmed roots to be ignored");
+
+        assert_eq!(roots.roots, vec![String::from("/workspace/repo-b")]);
+        assert!(!roots.requires_confirmation);
+    }
+
+    #[test]
+    fn resolve_workspace_writable_roots_requires_reconfirmation_when_all_confirmed_roots_are_stale()
+    {
+        let roots = resolve_workspace_writable_roots(
+            ["/workspace/repo-a", "/workspace/repo-b"],
+            "/workspace",
+            Some(&serde_json::json!({
+                "workspaceWritableRoots": ["/workspace/repo-c"]
+            })),
+        )
+        .expect("expected stale confirmed roots to resolve to current repos");
+
+        assert_eq!(
+            roots.roots,
+            vec![
+                String::from("/workspace/repo-a"),
+                String::from("/workspace/repo-b")
+            ]
+        );
+        assert!(roots.requires_confirmation);
+    }
+
+    #[test]
+    fn read_only_workspace_threads_ignore_stale_confirmation_requirements() {
+        let resolution = WorkspaceWritableRootsResolution {
+            roots: vec![
+                String::from("/workspace/repo-a"),
+                String::from("/workspace/repo-b"),
+            ],
+            requires_confirmation: true,
+        };
+
+        assert!(!workspace_write_confirmation_required(
+            Some(&resolution),
+            "read-only",
+            true,
+        ));
+        assert!(workspace_write_confirmation_required(
+            Some(&resolution),
+            "workspace-write",
             true,
         ));
     }
@@ -2265,6 +2572,68 @@ mod tests {
             }
             other => panic!("expected action block, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn invalid_claude_approval_response_keeps_approval_pending() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+        let approval_id = "approval-invalid";
+        let message_id = insert_pending_approval(&state, &thread, approval_id);
+
+        let error = respond_to_approval_inner(
+            &state,
+            thread.id.clone(),
+            approval_id.to_string(),
+            serde_json::json!({}),
+        )
+        .await
+        .expect_err("expected invalid approval payload to fail");
+
+        assert!(error.contains("explicit `decision`"));
+
+        let conn = state.db.connect().expect("failed to open db connection");
+        let approval_row = conn
+            .query_row(
+                "SELECT status, decision FROM approvals WHERE id = ?1",
+                params![approval_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .expect("failed to load approval row");
+        assert_eq!(approval_row.0, "pending");
+        assert_eq!(approval_row.1, None);
+
+        let thread_status = conn
+            .query_row(
+                "SELECT status FROM threads WHERE id = ?1",
+                params![thread.id],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("failed to load thread status");
+        assert_eq!(thread_status, "awaiting_approval");
+
+        let raw_blocks = conn
+            .query_row(
+                "SELECT blocks_json FROM messages WHERE id = ?1",
+                params![message_id],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("failed to load message blocks");
+        let blocks: Value =
+            serde_json::from_str(&raw_blocks).expect("message blocks should deserialize");
+        assert_eq!(
+            blocks
+                .as_array()
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("status"))
+                .and_then(Value::as_str),
+            Some("pending")
+        );
+        assert!(blocks
+            .as_array()
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("decision"))
+            .is_none());
     }
 }
 

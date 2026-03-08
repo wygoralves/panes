@@ -2,13 +2,17 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use async_trait::async_trait;
+use serde_json::{json, Value};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     engines::{claude_sidecar::ClaudeSidecarEngine, codex::CodexEngine},
-    models::{EngineHealthDto, EngineInfoDto, EngineModelDto, ReasoningEffortOptionDto, ThreadDto},
+    models::{
+        EngineCapabilitiesDto, EngineHealthDto, EngineInfoDto, EngineModelDto,
+        ReasoningEffortOptionDto, ThreadDto,
+    },
 };
 
 pub mod api_direct;
@@ -58,6 +62,131 @@ pub struct ModelInfo {
 pub struct ReasoningEffortOption {
     pub reasoning_effort: String,
     pub description: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct EngineCapabilities {
+    pub permission_modes: &'static [&'static str],
+    pub sandbox_modes: &'static [&'static str],
+    pub approval_decisions: &'static [&'static str],
+}
+
+const CODEX_CAPABILITIES: EngineCapabilities = EngineCapabilities {
+    permission_modes: &["untrusted", "on-failure", "on-request", "never"],
+    sandbox_modes: &["read-only", "workspace-write", "danger-full-access"],
+    approval_decisions: &["accept", "decline", "cancel", "accept_for_session"],
+};
+
+const CLAUDE_CAPABILITIES: EngineCapabilities = EngineCapabilities {
+    permission_modes: &["restricted", "standard", "trusted"],
+    sandbox_modes: &["read-only", "workspace-write"],
+    approval_decisions: &["accept", "decline", "accept_for_session"],
+};
+
+pub fn capabilities_for_engine(engine_id: &str) -> EngineCapabilities {
+    match engine_id {
+        "claude" => CLAUDE_CAPABILITIES,
+        _ => CODEX_CAPABILITIES,
+    }
+}
+
+pub fn engine_supports_sandbox_mode(engine_id: &str, sandbox_mode: &str) -> bool {
+    capabilities_for_engine(engine_id)
+        .sandbox_modes
+        .contains(&sandbox_mode)
+}
+
+pub fn validate_engine_sandbox_mode(
+    engine_id: &str,
+    sandbox_mode: Option<&str>,
+) -> Result<(), String> {
+    let Some(sandbox_mode) = sandbox_mode else {
+        return Ok(());
+    };
+
+    if engine_supports_sandbox_mode(engine_id, sandbox_mode) {
+        return Ok(());
+    }
+
+    let supported = capabilities_for_engine(engine_id).sandbox_modes.join(", ");
+    let engine_name = if engine_id.eq_ignore_ascii_case("claude") {
+        "Claude"
+    } else {
+        "engine"
+    };
+
+    Err(format!(
+        "{engine_name} sandbox mode `{sandbox_mode}` is not supported. expected one of: {supported}"
+    ))
+}
+
+pub fn normalize_approval_response_for_engine(
+    engine_id: &str,
+    response: Value,
+) -> Result<Value, String> {
+    if engine_id != "claude" {
+        return Ok(response);
+    }
+
+    let object = response
+        .as_object()
+        .ok_or_else(|| "Claude approval response must be a JSON object".to_string())?;
+
+    if object.len() != 1 || !object.contains_key("decision") {
+        return Err(
+            "Claude approval response must include only an explicit `decision` field".to_string(),
+        );
+    }
+
+    let raw_decision = object
+        .get("decision")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Claude approval response requires a non-empty `decision`".to_string())?;
+    let normalized_decision =
+        normalize_claude_approval_decision(raw_decision).ok_or_else(|| {
+            "unsupported Claude approval decision. expected one of: accept, decline, deny, accept_for_session"
+                .to_string()
+        })?;
+
+    Ok(json!({ "decision": normalized_decision }))
+}
+
+pub fn normalize_claude_approval_decision(value: &str) -> Option<&'static str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let normalized = trimmed.to_lowercase();
+    let compact = normalized.replace(['-', '_'], "");
+    match compact.as_str() {
+        "accept" => Some("accept"),
+        "decline" | "deny" => Some("decline"),
+        "acceptforsession" => Some("accept_for_session"),
+        _ => None,
+    }
+}
+
+fn map_engine_capabilities(capabilities: EngineCapabilities) -> EngineCapabilitiesDto {
+    EngineCapabilitiesDto {
+        permission_modes: capabilities
+            .permission_modes
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
+        sandbox_modes: capabilities
+            .sandbox_modes
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
+        approval_decisions: capabilities
+            .approval_decisions
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -161,11 +290,13 @@ impl EngineManager {
                 id: self.codex.id().to_string(),
                 name: self.codex.name().to_string(),
                 models: codex_models.into_iter().map(map_model_info).collect(),
+                capabilities: map_engine_capabilities(capabilities_for_engine(self.codex.id())),
             },
             EngineInfoDto {
                 id: self.claude.id().to_string(),
                 name: self.claude.name().to_string(),
                 models: claude_models.into_iter().map(map_model_info).collect(),
+                capabilities: map_engine_capabilities(capabilities_for_engine(self.claude.id())),
             },
         ])
     }
@@ -375,5 +506,61 @@ fn map_model_info(model: ModelInfo) -> EngineModelDto {
                 description: option.description,
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn claude_capabilities_expose_supported_contract() {
+        let capabilities = capabilities_for_engine("claude");
+
+        assert_eq!(
+            capabilities.permission_modes,
+            &["restricted", "standard", "trusted"]
+        );
+        assert_eq!(
+            capabilities.sandbox_modes,
+            &["read-only", "workspace-write"]
+        );
+        assert_eq!(
+            capabilities.approval_decisions,
+            &["accept", "decline", "accept_for_session"]
+        );
+    }
+
+    #[test]
+    fn validate_engine_sandbox_mode_rejects_unsupported_claude_full_access() {
+        assert!(validate_engine_sandbox_mode("claude", Some("danger-full-access")).is_err());
+        assert!(validate_engine_sandbox_mode("claude", Some("workspace-write")).is_ok());
+    }
+
+    #[test]
+    fn normalize_claude_approval_response_rejects_missing_and_extra_fields() {
+        assert!(normalize_approval_response_for_engine("claude", json!({})).is_err());
+        assert!(normalize_approval_response_for_engine(
+            "claude",
+            json!({ "decision": "accept", "extra": true })
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn normalize_claude_approval_response_accepts_aliases() {
+        assert_eq!(
+            normalize_approval_response_for_engine("claude", json!({ "decision": "deny" }))
+                .unwrap(),
+            json!({ "decision": "decline" })
+        );
+        assert_eq!(
+            normalize_approval_response_for_engine(
+                "claude",
+                json!({ "decision": "acceptForSession" })
+            )
+            .unwrap(),
+            json!({ "decision": "accept_for_session" })
+        );
     }
 }

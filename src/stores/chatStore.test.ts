@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { StreamEvent } from "../types";
+import type { ApprovalResponse, StreamEvent } from "../types";
 
 const mockIpc = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   getThreadMessagesWindow: vi.fn(),
+  respondApproval: vi.fn(),
   syncThreadFromEngine: vi.fn(),
 }));
 
@@ -352,5 +353,61 @@ describe("chatStore send", () => {
 
     expect(mockIpc.syncThreadFromEngine).toHaveBeenCalledWith("thread-1");
     expect(mockIpc.getThreadMessagesWindow).toHaveBeenCalledWith("thread-1", null, 120);
+  });
+
+  it("normalizes deny approvals to decline in optimistic state", async () => {
+    useChatStore.setState({
+      threadId: "thread-1",
+      messages: [
+        {
+          id: "assistant-1",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "completed",
+          schemaVersion: 1,
+          blocks: [
+            {
+              type: "approval",
+              approvalId: "approval-1",
+              actionType: "command",
+              summary: "Run command",
+              details: {},
+              status: "pending",
+            },
+          ],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: false,
+        },
+      ],
+      olderCursor: null,
+      hasOlderMessages: false,
+      loadingOlderMessages: false,
+      olderLoadBlockedUntil: 0,
+      status: "awaiting_approval",
+      streaming: false,
+      usageLimits: null,
+      error: undefined,
+      unlisten: undefined,
+    });
+
+    await useChatStore
+      .getState()
+      .respondApproval("approval-1", { decision: "deny" } as ApprovalResponse);
+
+    expect(mockIpc.respondApproval).toHaveBeenCalledWith("thread-1", "approval-1", {
+      decision: "deny",
+    });
+    expect(useChatStore.getState().messages[0]?.blocks).toEqual([
+      {
+        type: "approval",
+        approvalId: "approval-1",
+        actionType: "command",
+        summary: "Run command",
+        details: {},
+        status: "answered",
+        decision: "decline",
+      },
+    ]);
   });
 });

@@ -302,6 +302,13 @@ export interface EngineInfo {
   id: string;
   name: string;
   models: EngineModel[];
+  capabilities: EngineCapabilities;
+}
+
+export interface EngineCapabilities {
+  permissionModes: string[];
+  sandboxModes: string[];
+  approvalDecisions: string[];
 }
 
 export interface EngineModel {

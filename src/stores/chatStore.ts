@@ -154,7 +154,14 @@ function recordPendingTurnLatencyMetrics(threadId: string, event: StreamEvent) {
 
 function resolveApprovalDecision(response: ApprovalResponse): ApprovalBlock["decision"] {
   if ("decision" in response && typeof response.decision === "string") {
-    return String(response.decision) as ApprovalBlock["decision"];
+    const decision = String(response.decision).trim();
+    if (decision === "deny") {
+      return "decline";
+    }
+    if (decision === "acceptForSession") {
+      return "accept_for_session";
+    }
+    return decision as ApprovalBlock["decision"];
   }
   return "custom";
 }

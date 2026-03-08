@@ -32,6 +32,7 @@ import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { MessageBlocks } from "./MessageBlocks";
+import { resolveEngineCapabilities } from "./engineCapabilities";
 import {
   isRequestUserInputApproval,
   parseApprovalCommand,
@@ -537,6 +538,18 @@ function readThreadNetworkPolicyValue(thread: Thread | null): ThreadNetworkPolic
   return readThreadStoredNetworkPolicyValue(thread);
 }
 
+function readThreadWorkspaceWritableRoots(thread: Thread | null): string[] {
+  const value = thread?.engineMetadata?.workspaceWritableRoots;
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
 function readThreadExecutionPolicyState(thread: Thread | null): {
   approvalPolicy: ThreadApprovalPolicyValue;
   sandboxMode: ThreadSandboxModeValue;
@@ -577,15 +590,15 @@ function applyThreadExecutionPolicyPatch(
       nextState.approvalPolicy === "never"
     ) {
       metadata.sandboxApprovalPolicy = nextState.approvalPolicy;
-    } else {
-      delete metadata.sandboxApprovalPolicy;
-    }
+      } else {
+        delete metadata.sandboxApprovalPolicy;
+      }
+  }
 
-    if (nextState.sandboxMode === "inherit") {
-      delete metadata.sandboxMode;
-    } else {
-      metadata.sandboxMode = nextState.sandboxMode;
-    }
+  if (nextState.sandboxMode === "inherit") {
+    delete metadata.sandboxMode;
+  } else {
+    metadata.sandboxMode = nextState.sandboxMode;
   }
 
   if (nextState.networkPolicy === "inherit") {
@@ -902,6 +915,7 @@ function MessageRowView({
               <MessageBlocks
                 blocks={message.blocks}
                 status={message.status}
+                engineId={assistantEngineId}
                 onApproval={onApproval}
                 onLoadActionOutput={(actionId) => onLoadActionOutput(message.id, actionId)}
               />
@@ -1269,6 +1283,13 @@ export function ChatPanel() {
   }
 
   const activeThreadApprovalPolicy = readThreadApprovalPolicyValue(activeThread);
+  const activeThreadEngineInfo = useMemo(
+    () =>
+      activeThread?.engineId
+        ? engines.find((engine) => engine.id === activeThread.engineId) ?? null
+        : null,
+    [activeThread?.engineId, engines],
+  );
   const activeThreadApprovalTitle =
     activeThread?.engineId === "claude"
       ? t("policy.approvalTitleClaude")
@@ -1279,15 +1300,35 @@ export function ChatPanel() {
       : codexThreadApprovalPolicyOptions;
   const activeThreadSandboxMode = readThreadSandboxModeValue(activeThread);
   const activeThreadNetworkPolicy = readThreadNetworkPolicyValue(activeThread);
+  const activeThreadCapabilities = useMemo(
+    () => resolveEngineCapabilities(activeThread?.engineId, activeThreadEngineInfo?.capabilities),
+    [activeThread?.engineId, activeThreadEngineInfo?.capabilities],
+  );
+  const activeThreadSandboxCapabilities = activeThreadCapabilities.sandboxModes;
+  const activeThreadApprovalDecisionCapabilities = activeThreadCapabilities.approvalDecisions;
   const threadSandboxModeOptions = useMemo(
-    () =>
-      codexExternalSandboxActive
-        ? threadSandboxModeOptionsAll.filter(
-            (option) =>
-              option.value === "inherit" || option.value === "danger-full-access",
-          )
-        : threadSandboxModeOptionsAll,
-    [codexExternalSandboxActive, threadSandboxModeOptionsAll],
+    () => {
+      const supportedByEngine = threadSandboxModeOptionsAll.filter(
+        (option) =>
+          option.value === "inherit" ||
+          activeThreadSandboxCapabilities.includes(option.value),
+      );
+
+      if (activeThread?.engineId === "codex" && codexExternalSandboxActive) {
+        return supportedByEngine.filter(
+          (option) =>
+            option.value === "inherit" || option.value === "danger-full-access",
+        );
+      }
+
+      return supportedByEngine;
+    },
+    [
+      activeThread?.engineId,
+      activeThreadSandboxCapabilities,
+      codexExternalSandboxActive,
+      threadSandboxModeOptionsAll,
+    ],
   );
   const activeThreadSandboxModeOption = threadSandboxModeOptionsAll.find(
     (option) => option.value === activeThreadSandboxMode,
@@ -1295,9 +1336,20 @@ export function ChatPanel() {
   const activeThreadSandboxModeSupported = threadSandboxModeOptions.some(
     (option) => option.value === activeThreadSandboxMode,
   );
+  const activeThreadSandboxNotice =
+    activeThread?.engineId === "codex" && codexExternalSandboxActive
+      ? t("policy.sandboxExternalNotice")
+      : activeThread?.engineId === "claude" && !activeThreadSandboxModeSupported
+        ? t("policy.claudeSandboxNotice")
+        : null;
+  const activeThreadSandboxSelectedLabel =
+    !activeThreadSandboxModeSupported && activeThreadSandboxModeOption
+      ? `${activeThreadSandboxModeOption.label} ${t("panel.unsupportedSuffix")}`
+      : undefined;
   const threadPolicyCustomCount =
     activeThread?.engineId === "claude"
       ? (activeThreadApprovalPolicy !== "inherit" ? 1 : 0) +
+        (activeThreadSandboxMode !== "inherit" ? 1 : 0) +
         (activeThreadNetworkPolicy !== "inherit" ? 1 : 0)
       : (activeThreadApprovalPolicy !== "inherit" ? 1 : 0) +
         (activeThreadSandboxMode !== "inherit" ? 1 : 0) +
@@ -1984,14 +2036,19 @@ export function ChatPanel() {
       repos.length > 1 &&
       readThreadSandboxModeValue(currentThread) !== "read-only"
     ) {
+      const availableRepoPaths = repos.map((repo) => repo.path);
       const optIn = Boolean(currentThread.engineMetadata?.workspaceWriteOptIn);
-      if (!optIn) {
+      const confirmedWritableRoots = readThreadWorkspaceWritableRoots(currentThread);
+      const hasValidConfirmedRoots = confirmedWritableRoots.some((root) =>
+        availableRepoPaths.includes(root),
+      );
+      if (!optIn || !hasValidConfirmedRoots) {
         const repoNames = repos.map((repo) => repo.name).join(", ");
         setWorkspaceOptInPrompt({
           repoNames,
           workspaceId: activeWorkspaceId,
           threadId: targetThreadId,
-          threadPaths: repos.map((repo) => repo.path),
+          threadPaths: availableRepoPaths,
           text: input.trim(),
           attachments: [...attachments],
           planMode,
@@ -2116,7 +2173,19 @@ export function ChatPanel() {
       return;
     }
 
-    if (!isCodexThread && patch.sandboxMode !== undefined) {
+    if (
+      currentThread.engineId === "claude" &&
+      patch.sandboxMode === "danger-full-access"
+    ) {
+      toast.error(t("panel.toasts.claudeSandboxUnsupported"));
+      return;
+    }
+
+    if (
+      currentThread.engineId !== "codex" &&
+      currentThread.engineId !== "claude" &&
+      patch.sandboxMode !== undefined
+    ) {
       toast.error(t("panel.toasts.codexOnlySandbox"));
       return;
     }
@@ -2986,10 +3055,25 @@ export function ChatPanel() {
                   const details = approval.details ?? {};
                   const isToolInputRequest = isRequestUserInputApproval(details);
                   const requiresCustomPayload = requiresCustomApprovalPayload(details);
+                  const isClaudeApproval = activeThread?.engineId === "claude";
+                  const supportsDecline =
+                    activeThreadApprovalDecisionCapabilities.includes("decline");
+                  const supportsCancel =
+                    activeThreadApprovalDecisionCapabilities.includes("cancel");
+                  const supportsSession =
+                    activeThreadApprovalDecisionCapabilities.includes("accept_for_session");
+                  const supportsAccept =
+                    activeThreadApprovalDecisionCapabilities.includes("accept");
                   const proposedExecpolicyAmendment =
                     parseProposedExecpolicyAmendment(details);
                   const proposedNetworkPolicyAmendments =
                     parseProposedNetworkPolicyAmendments(details);
+                  const hasUnsupportedClaudePayload =
+                    isClaudeApproval &&
+                    (isToolInputRequest ||
+                      requiresCustomPayload ||
+                      proposedExecpolicyAmendment.length > 0 ||
+                      proposedNetworkPolicyAmendments.length > 0);
                   const command = parseApprovalCommand(details);
                   const reason = parseApprovalReason(details);
 
@@ -3016,7 +3100,26 @@ export function ChatPanel() {
                       </div>
 
                       <div className="approval-actions">
-                        {isToolInputRequest || requiresCustomPayload ? (
+                        {hasUnsupportedClaudePayload ? (
+                          <>
+                            <span className="approval-row-hint">
+                              {t("panel.claudeApprovalUnsupported")}
+                            </span>
+                            {supportsDecline && (
+                              <button
+                                type="button"
+                                className="approval-btn approval-btn-deny"
+                                onClick={() =>
+                                  void respondApproval(approval.approvalId, {
+                                    decision: "decline",
+                                  })
+                                }
+                              >
+                                {t("panel.approvalActions.deny")}
+                              </button>
+                            )}
+                          </>
+                        ) : isToolInputRequest || requiresCustomPayload ? (
                           <span className="approval-row-hint">
                             {isToolInputRequest
                               ? t("panel.respondInCard")
@@ -3024,39 +3127,45 @@ export function ChatPanel() {
                           </span>
                         ) : (
                           <>
-                            <button
-                              type="button"
-                              className="approval-btn approval-btn-cancel"
-                              onClick={() =>
-                                void respondApproval(approval.approvalId, { decision: "cancel" })
-                              }
-                            >
-                              {t("panel.approvalActions.cancel")}
-                            </button>
-                            <button
-                              type="button"
-                              className="approval-btn approval-btn-deny"
-                              onClick={() =>
-                                void respondApproval(approval.approvalId, {
-                                  decision: "decline",
-                                })
-                              }
-                            >
-                              {t("panel.approvalActions.deny")}
-                            </button>
+                            {supportsCancel && (
+                              <button
+                                type="button"
+                                className="approval-btn approval-btn-cancel"
+                                onClick={() =>
+                                  void respondApproval(approval.approvalId, { decision: "cancel" })
+                                }
+                              >
+                                {t("panel.approvalActions.cancel")}
+                              </button>
+                            )}
+                            {supportsDecline && (
+                              <button
+                                type="button"
+                                className="approval-btn approval-btn-deny"
+                                onClick={() =>
+                                  void respondApproval(approval.approvalId, {
+                                    decision: "decline",
+                                  })
+                                }
+                              >
+                                {t("panel.approvalActions.deny")}
+                              </button>
+                            )}
                             <span className="approval-actions-gap" />
-                            <button
-                              type="button"
-                              className="approval-btn approval-btn-session"
-                              onClick={() =>
-                                void respondApproval(approval.approvalId, {
-                                  decision: "accept_for_session",
-                                })
-                              }
-                            >
-                              {t("panel.approvalActions.allowSession")}
-                            </button>
-                            {proposedExecpolicyAmendment.length > 0 && (
+                            {supportsSession && (
+                              <button
+                                type="button"
+                                className="approval-btn approval-btn-session"
+                                onClick={() =>
+                                  void respondApproval(approval.approvalId, {
+                                    decision: "accept_for_session",
+                                  })
+                                }
+                              >
+                                {t("panel.approvalActions.allowSession")}
+                              </button>
+                            )}
+                            {!isClaudeApproval && proposedExecpolicyAmendment.length > 0 && (
                               <button
                                 type="button"
                                 className="approval-btn approval-btn-session"
@@ -3071,7 +3180,7 @@ export function ChatPanel() {
                                 {t("panel.allowWithPolicy")}
                               </button>
                             )}
-                            {proposedNetworkPolicyAmendments.map((amendment) => (
+                            {!isClaudeApproval && proposedNetworkPolicyAmendments.map((amendment) => (
                               <button
                                 key={`${amendment.action}:${amendment.host}`}
                                 type="button"
@@ -3095,15 +3204,17 @@ export function ChatPanel() {
                                   : t("panel.approvalActions.blockHost")}
                               </button>
                             ))}
-                            <button
-                              type="button"
-                              className="approval-btn approval-btn-allow"
-                              onClick={() =>
-                                void respondApproval(approval.approvalId, { decision: "accept" })
-                              }
-                            >
-                              {t("panel.approvalActions.allow")}
-                            </button>
+                            {supportsAccept && (
+                              <button
+                                type="button"
+                                className="approval-btn approval-btn-allow"
+                                onClick={() =>
+                                  void respondApproval(approval.approvalId, { decision: "accept" })
+                                }
+                              >
+                                {t("panel.approvalActions.allow")}
+                              </button>
+                            )}
                           </>
                         )}
                       </div>
@@ -3296,31 +3407,25 @@ export function ChatPanel() {
                         : undefined
                     }
                     sandboxValue={
-                      activeThread?.engineId === "codex" ? activeThreadSandboxMode : undefined
+                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                        ? activeThreadSandboxMode
+                        : undefined
                     }
                     sandboxOptions={
-                      activeThread?.engineId === "codex" ? threadSandboxModeOptions : undefined
+                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                        ? threadSandboxModeOptions
+                        : undefined
                     }
                     onSandboxChange={
-                      activeThread?.engineId === "codex"
+                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
                         ? (value) =>
                             void onThreadExecutionPolicyChange({
                               sandboxMode: value as ThreadSandboxModeValue,
                             })
                         : undefined
                     }
-                    sandboxSelectedLabel={
-                      activeThread?.engineId === "codex" &&
-                      codexExternalSandboxActive &&
-                      !activeThreadSandboxModeSupported
-                        ? `${activeThreadSandboxModeOption?.label ?? activeThreadSandboxMode} ${t("panel.unsupportedSuffix")}`
-                        : undefined
-                    }
-                    sandboxNotice={
-                      activeThread?.engineId === "codex" && codexExternalSandboxActive
-                        ? t("policy.sandboxExternalNotice")
-                        : null
-                    }
+                    sandboxSelectedLabel={activeThreadSandboxSelectedLabel}
+                    sandboxNotice={activeThreadSandboxNotice}
                     networkValue={
                       activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
                         ? activeThreadNetworkPolicy

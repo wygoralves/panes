@@ -20,8 +20,9 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{
-    ActionResult, ActionType, Engine, EngineEvent, EngineThread, ModelInfo, OutputStream,
-    ReasoningEffortOption, SandboxPolicy, ThreadScope, TurnCompletionStatus, TurnInput,
+    normalize_approval_response_for_engine, ActionResult, ActionType, Engine, EngineEvent,
+    EngineThread, ModelInfo, OutputStream, ReasoningEffortOption, SandboxPolicy, ThreadScope,
+    TurnCompletionStatus, TurnInput,
 };
 
 // ── Sidecar event protocol ────────────────────────────────────────────
@@ -865,6 +866,7 @@ impl Engine for ClaudeSidecarEngine {
             "approvalPolicy": thread_config.sandbox.approval_policy.clone(),
             "allowNetwork": thread_config.sandbox.allow_network,
             "writableRoots": thread_config.sandbox.writable_roots.clone(),
+            "sandboxMode": thread_config.sandbox.sandbox_mode.clone(),
             "reasoningEffort": thread_config.sandbox.reasoning_effort.clone(),
             "planMode": plan_mode,
         });
@@ -1101,13 +1103,15 @@ impl Engine for ClaudeSidecarEngine {
         approval_id: &str,
         response: serde_json::Value,
     ) -> Result<(), anyhow::Error> {
+        let normalized_response = normalize_approval_response_for_engine("claude", response)
+            .map_err(anyhow::Error::msg)?;
         let state = self.state.lock().await;
         if let Some(ref transport) = state.transport {
             let approval_cmd = serde_json::json!({
                 "method": "approval_response",
                 "params": {
                     "approvalId": approval_id,
-                    "response": response,
+                    "response": normalized_response,
                 },
             });
             transport.send_command(&approval_cmd).await?;
