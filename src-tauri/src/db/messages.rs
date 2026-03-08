@@ -408,7 +408,9 @@ pub fn search_messages(
      JOIN messages m ON m.rowid = messages_fts.rowid
      JOIN threads t ON t.id = m.thread_id
      JOIN workspaces w ON w.id = t.workspace_id
-     WHERE t.workspace_id = ?1 AND messages_fts MATCH ?2
+     WHERE t.workspace_id = ?1
+       AND t.archived_at IS NULL
+       AND messages_fts MATCH ?2
      ORDER BY rank
      LIMIT 50",
     )?;
@@ -1062,6 +1064,51 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert!(results[0].snippet.contains("CAFÉ marker"));
         assert!(!results[0].snippet.starts_with("opening prelude"));
+    }
+
+    #[test]
+    fn search_messages_excludes_archived_threads() {
+        let db = test_db();
+        let workspace_id = test_workspace(&db);
+        let active_thread =
+            threads::create_thread(&db, &workspace_id, None, "codex", "gpt-5.3-codex", "active")
+                .unwrap();
+        let archived_thread = threads::create_thread(
+            &db,
+            &workspace_id,
+            None,
+            "codex",
+            "gpt-5.3-codex",
+            "archived",
+        )
+        .unwrap();
+
+        insert_user_message(
+            &db,
+            &active_thread.id,
+            "shared search marker active",
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        insert_user_message(
+            &db,
+            &archived_thread.id,
+            "shared search marker archived",
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        threads::archive_thread(&db, &archived_thread.id).unwrap();
+
+        let results = search_messages(&db, &workspace_id, "shared").unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].thread_id, active_thread.id);
     }
 
     #[test]
