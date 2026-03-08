@@ -123,6 +123,8 @@ pnpm typecheck          # TypeScript no-emit check
 
 pnpm build:claude-sidecar   # bundle the runtime Claude sidecar
 pnpm build:desktop          # build frontend + bundled sidecar assets, not native app bundles
+pnpm prune:artifacts:check  # inspeciona artefatos gerados que podem ser removidos com segurança
+pnpm prune:artifacts        # remove artefatos locais gerados como src-tauri/target
 pnpm release:check          # evaluate whether a release should be cut
 pnpm release                # run release-it
 ```
@@ -135,6 +137,8 @@ cargo check
 cargo fmt
 cargo clippy
 ```
+
+Artefatos de build podem crescer rápido durante o desenvolvimento com Tauri/Rust. `pnpm prune:artifacts` remove apenas saída gerada localmente no repo e tudo é recriado com segurança no próximo build.
 
 ### Caminhos de Runtime
 

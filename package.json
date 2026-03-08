@@ -8,6 +8,8 @@
     "build": "tsc -b && vite build",
     "build:claude-sidecar": "node scripts/build-claude-sidecar.mjs",
     "build:desktop": "pnpm run build && pnpm run build:claude-sidecar",
+    "prune:artifacts:check": "node scripts/prune-local-artifacts.mjs --check",
+    "prune:artifacts": "node scripts/prune-local-artifacts.mjs --apply",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "test": "vitest run",

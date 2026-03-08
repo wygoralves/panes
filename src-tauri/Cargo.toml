@@ -49,3 +49,7 @@ sys-locale = "0.3"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+[profile.dev]
+# Keep local debug builds inspectable without letting `target/` explode as quickly.
+debug = 1
