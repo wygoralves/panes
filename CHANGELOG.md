@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.29.0...vnull) (2026-03-08)
+
+### Features
+
+* align Claude sandbox and approval contracts ([8b1386d](https://github.com/wygoralves/panes/commit/8b1386d777d7580da42339b62bd35c482f4fec6c))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.28.0...vnull) (2026-03-08)
 
 ### Features
