@@ -257,3 +257,52 @@ jobs:
           git add latest.json
           git commit -m "Update manifest for ${{ needs.release.outputs.released_tag }}"
           git push origin gh-pages-tmp:gh-pages --force
+
+  publish_homebrew_cask:
+    name: Publish Homebrew Cask
+    if: github.event_name == 'push' && needs.release.outputs.should_release == 'true' && secrets.HOMEBREW_TAP_TOKEN != ''
+    needs: [release, release_bundles]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      HOMEBREW_TAP_REPO: wygoralves/homebrew-tap
+    steps:
+      - name: Checkout released tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.release.outputs.released_tag }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HOMEBREW_TAP_REPO }}
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Generate panes cask
+        run: |
+          mkdir -p homebrew-tap/Casks
+          node scripts/generate-homebrew-cask.mjs "${{ needs.release.outputs.released_tag }}" --output homebrew-tap/Casks/panes.rb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit and push cask update
+        working-directory: homebrew-tap
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Tap repository already up to date."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/panes.rb
+          git commit -m "Update panes cask for ${{ needs.release.outputs.released_tag }}"
+          git push origin HEAD:main

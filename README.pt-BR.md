@@ -91,7 +91,19 @@ Já existe cobertura automatizada real, embora ainda seletiva. O repo também j�
 | Codex CLI | Obrigatório para a chat engine do Codex; o setup pode instalá-lo via npm |
 | Pré-requisitos do Tauri v2 | [Ver docs do Tauri](https://v2.tauri.app/start/prerequisites/) |
 
-### Instalar e Rodar
+### Instalar no macOS (Apple Silicon)
+
+```bash
+brew install --cask wygoralves/tap/panes
+```
+
+O Homebrew é o caminho principal de instalação do Panes pré-compilado no macOS. Depois disso, o updater do app cuida das próximas versões dentro do próprio app.
+
+O Panes ainda não é assinado nem notarizado pela Apple, então o Homebrew só reduz o atrito com o Gatekeeper; ele não elimina isso de vez. O tap aplica uma remoção best-effort da quarantine durante a instalação, mas o macOS ainda pode exigir confirmação manual na primeira abertura, dependendo da política da máquina. Se isso acontecer, use o fluxo "Abrir" pelo Finder ou baixe o DMG direto em [GitHub Releases](https://github.com/wygoralves/panes/releases/latest).
+
+Quem mantém o release pode ver a configuração do tap e da automação em [docs/homebrew-distribution.md](./docs/homebrew-distribution.md).
+
+### Instalar e Rodar a partir do código-fonte
 
 ```bash
 git clone https://github.com/wygoralves/panes.git

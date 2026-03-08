@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "build:claude-sidecar": "node scripts/build-claude-sidecar.mjs",
     "build:desktop": "pnpm run build && pnpm run build:claude-sidecar",
+    "generate:homebrew-cask": "node scripts/generate-homebrew-cask.mjs",
     "prune:artifacts:check": "node scripts/prune-local-artifacts.mjs --check",
     "prune:artifacts": "node scripts/prune-local-artifacts.mjs --apply",
     "preview": "vite preview",
