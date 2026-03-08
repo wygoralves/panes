@@ -24,6 +24,23 @@ function flattenKeys(value: unknown, prefix = ""): string[] {
   );
 }
 
+function readNestedString(
+  value: Record<string, unknown>,
+  path: string,
+): string | undefined {
+  const segments = path.split(".");
+  let current: unknown = value;
+
+  for (const segment of segments) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[segment];
+  }
+
+  return typeof current === "string" ? current : undefined;
+}
+
 describe("i18n resources", () => {
   it("keeps pt-BR keys aligned with en", () => {
     const enKeys = [
@@ -46,5 +63,12 @@ describe("i18n resources", () => {
     ].sort();
 
     expect(ptBrKeys).toEqual(enKeys);
+  });
+
+  it("defines fallback thread titles used by the chat panel", () => {
+    expect(readNestedString(chatEn, "panel.workspaceChatTitle")).toBeTruthy();
+    expect(readNestedString(chatEn, "panel.repoChatTitle")).toBeTruthy();
+    expect(readNestedString(chatPtBr, "panel.workspaceChatTitle")).toBeTruthy();
+    expect(readNestedString(chatPtBr, "panel.repoChatTitle")).toBeTruthy();
   });
 });

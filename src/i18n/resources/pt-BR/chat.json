@@ -86,6 +86,8 @@
     "assistantFallback": "Assistente",
     "emptyHint": "Abra uma pasta e envie uma mensagem para começar",
     "startConversation": "Comece uma conversa",
+    "workspaceChatTitle": "Chat do workspace",
+    "repoChatTitle": "Chat de {{name}}",
     "renameThread": "Clique para renomear a thread",
     "approvalBannerTitle": "Aprovações pendentes",
     "respondInCard": "Responda no card de aprovação abaixo.",

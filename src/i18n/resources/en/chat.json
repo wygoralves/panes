@@ -86,6 +86,8 @@
     "assistantFallback": "Assistant",
     "emptyHint": "Open a folder and send a message to begin",
     "startConversation": "Start a conversation",
+    "workspaceChatTitle": "Workspace Chat",
+    "repoChatTitle": "{{name}} Chat",
     "renameThread": "Click to rename thread",
     "approvalBannerTitle": "Pending approvals",
     "respondInCard": "Respond in the approval card below.",
