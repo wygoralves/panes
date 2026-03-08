@@ -1035,16 +1035,7 @@ mod tests {
             None,
         )
         .unwrap();
-        insert_user_message(
-            &db,
-            &thread.id,
-            "prefix bar suffix",
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        insert_user_message(&db, &thread.id, "prefix bar suffix", None, None, None, None).unwrap();
 
         let results = search_messages(&db, &workspace_id, "foo*").unwrap();
 
