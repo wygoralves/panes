@@ -392,24 +392,35 @@ pub fn search_messages(
     workspace_id: &str,
     query: &str,
 ) -> anyhow::Result<Vec<SearchResultDto>> {
+    let Some(search_query) = build_search_messages_query(query) else {
+        return Ok(Vec::new());
+    };
+
     let conn = db.connect()?;
     let mut stmt = conn.prepare(
         "SELECT m.thread_id,
+            t.title,
+            w.name,
+            t.repo_id,
             m.id,
-            snippet(messages_fts, 2, '[', ']', ' … ', 12)
+            COALESCE(m.content, '')
      FROM messages_fts
      JOIN messages m ON m.rowid = messages_fts.rowid
      JOIN threads t ON t.id = m.thread_id
+     JOIN workspaces w ON w.id = t.workspace_id
      WHERE t.workspace_id = ?1 AND messages_fts MATCH ?2
      ORDER BY rank
      LIMIT 50",
     )?;
 
-    let rows = stmt.query_map(params![workspace_id, query], |row| {
+    let rows = stmt.query_map(params![workspace_id, search_query], |row| {
         Ok(SearchResultDto {
             thread_id: row.get(0)?,
-            message_id: row.get(1)?,
-            snippet: row.get(2)?,
+            thread_title: row.get(1)?,
+            workspace_name: row.get(2)?,
+            repo_id: row.get(3)?,
+            message_id: row.get(4)?,
+            snippet: build_search_result_snippet(&row.get::<_, String>(5)?, query),
         })
     })?;
 
@@ -419,6 +430,161 @@ pub fn search_messages(
     }
 
     Ok(out)
+}
+
+fn build_search_messages_query(query: &str) -> Option<String> {
+    let tokens = tokenize_search_query(query)
+        .into_iter()
+        .filter_map(|token| format_search_messages_token(&token))
+        .collect::<Vec<_>>();
+
+    if tokens.is_empty() {
+        None
+    } else {
+        Some(tokens.join(" AND "))
+    }
+}
+
+fn format_search_messages_token(token: &str) -> Option<String> {
+    let wildcard_trimmed = token.trim_end_matches('*');
+    if wildcard_trimmed.is_empty() {
+        return None;
+    }
+
+    let escaped = wildcard_trimmed.replace('"', "\"\"");
+    let suffix = if wildcard_trimmed.len() < token.len() {
+        "*"
+    } else {
+        ""
+    };
+
+    Some(format!("\"{}\"{}", escaped, suffix))
+}
+
+fn build_search_result_snippet(content: &str, query: &str) -> String {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let terms = tokenize_search_query(query);
+    let match_index = terms
+        .iter()
+        .filter_map(|term| {
+            let snippet_term = term.trim_end_matches('*');
+            if snippet_term.is_empty() {
+                None
+            } else {
+                find_term_case_insensitive(trimmed, snippet_term)
+            }
+        })
+        .min()
+        .unwrap_or(0);
+
+    let context_before = 48usize;
+    let context_after = 120usize;
+    let start;
+    if match_index > context_before {
+        start = trimmed
+            .char_indices()
+            .take_while(|(idx, _)| *idx <= match_index.saturating_sub(context_before))
+            .last()
+            .map(|(idx, _)| idx)
+            .unwrap_or(0);
+    } else {
+        start = 0;
+    }
+
+    let end_target = (match_index + context_after).min(trimmed.len());
+    let end = trimmed
+        .char_indices()
+        .take_while(|(idx, _)| *idx <= end_target)
+        .last()
+        .map(|(idx, ch)| idx + ch.len_utf8())
+        .unwrap_or(trimmed.len());
+
+    let mut snippet = String::new();
+    if start > 0 {
+        snippet.push_str("… ");
+    }
+    snippet.push_str(trimmed[start..end].trim());
+    if end < trimmed.len() {
+        snippet.push_str(" …");
+    }
+    snippet
+}
+
+fn find_term_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+
+    let folded_needle = needle
+        .chars()
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    if folded_needle.is_empty() {
+        return Some(0);
+    }
+
+    let mut folded_haystack = String::with_capacity(haystack.len());
+    let mut byte_to_original = Vec::new();
+
+    for (idx, ch) in haystack.char_indices() {
+        for lower in ch.to_lowercase() {
+            let mut buffer = [0; 4];
+            let encoded = lower.encode_utf8(&mut buffer);
+            folded_haystack.push_str(encoded);
+            byte_to_original.extend(std::iter::repeat_n(idx, encoded.len()));
+        }
+    }
+
+    folded_haystack
+        .find(&folded_needle)
+        .and_then(|folded_idx| byte_to_original.get(folded_idx).copied())
+}
+
+fn tokenize_search_query(query: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+
+    for ch in query.chars() {
+        match ch {
+            '"' => {
+                if in_quotes {
+                    let token = current.trim();
+                    if !token.is_empty() {
+                        tokens.push(token.to_string());
+                    }
+                    current.clear();
+                    in_quotes = false;
+                } else {
+                    let token = current.trim();
+                    if !token.is_empty() {
+                        tokens.push(token.to_string());
+                        current.clear();
+                    }
+                    in_quotes = true;
+                }
+            }
+            ch if ch.is_whitespace() && !in_quotes => {
+                let token = current.trim();
+                if !token.is_empty() {
+                    tokens.push(token.to_string());
+                    current.clear();
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    let trailing = current.trim();
+    if !trailing.is_empty() {
+        tokens.push(trailing.to_string());
+    }
+
+    tokens
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -706,13 +872,18 @@ mod tests {
         db
     }
 
-    fn test_thread(db: &Database) -> String {
+    fn test_workspace(db: &Database) -> String {
         let root = std::env::temp_dir().join(format!("panes-workspace-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).expect("failed to create temp workspace root");
         let workspace =
             workspaces::upsert_workspace(db, root.to_string_lossy().as_ref(), Some(1)).unwrap();
+        workspace.id
+    }
+
+    fn test_thread(db: &Database) -> String {
+        let workspace_id = test_workspace(db);
         let thread =
-            threads::create_thread(db, &workspace.id, None, "codex", "gpt-5.3-codex", "test")
+            threads::create_thread(db, &workspace_id, None, "codex", "gpt-5.3-codex", "test")
                 .unwrap();
         thread.id
     }
@@ -737,6 +908,169 @@ mod tests {
             approval.get("status")?.as_str()?,
             approval.get("decision").and_then(Value::as_str),
         ))
+    }
+
+    #[test]
+    fn build_search_messages_query_quotes_free_text_terms() {
+        assert_eq!(
+            build_search_messages_query("foo bar:baz \"quoted\""),
+            Some("\"foo\" AND \"bar:baz\" AND \"quoted\"".to_string())
+        );
+    }
+
+    #[test]
+    fn build_search_messages_query_preserves_quoted_phrases() {
+        assert_eq!(
+            build_search_messages_query("\"foo bar\" baz"),
+            Some("\"foo bar\" AND \"baz\"".to_string())
+        );
+    }
+
+    #[test]
+    fn build_search_messages_query_tolerates_unterminated_quotes() {
+        assert_eq!(
+            build_search_messages_query("foo \"bar baz"),
+            Some("\"foo\" AND \"bar baz\"".to_string())
+        );
+    }
+
+    #[test]
+    fn build_search_messages_query_preserves_prefix_wildcards() {
+        assert_eq!(
+            build_search_messages_query("foo* bar*"),
+            Some("\"foo\"* AND \"bar\"*".to_string())
+        );
+    }
+
+    #[test]
+    fn search_messages_accepts_non_fts_user_input() {
+        let db = test_db();
+        let workspace_id = test_workspace(&db);
+        let thread =
+            threads::create_thread(&db, &workspace_id, None, "codex", "gpt-5.3-codex", "test")
+                .unwrap();
+        insert_user_message(
+            &db,
+            &thread.id,
+            "searchable payload",
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let results = search_messages(&db, &workspace_id, "foo:bar baz(");
+        assert!(results.is_ok());
+    }
+
+    #[test]
+    fn search_messages_snippet_tracks_case_insensitive_fts_match() {
+        let db = test_db();
+        let workspace_id = test_workspace(&db);
+        let thread =
+            threads::create_thread(&db, &workspace_id, None, "codex", "gpt-5.3-codex", "test")
+                .unwrap();
+        let content = format!(
+            "{} Workspace marker {}",
+            "opening prelude ".repeat(20),
+            "closing context ".repeat(10)
+        );
+        insert_user_message(&db, &thread.id, &content, None, None, None, None).unwrap();
+
+        let results = search_messages(&db, &workspace_id, "workspace").unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].snippet.contains("Workspace marker"));
+        assert!(!results[0].snippet.starts_with("opening prelude"));
+    }
+
+    #[test]
+    fn search_messages_preserves_phrase_queries() {
+        let db = test_db();
+        let workspace_id = test_workspace(&db);
+        let thread =
+            threads::create_thread(&db, &workspace_id, None, "codex", "gpt-5.3-codex", "test")
+                .unwrap();
+        insert_user_message(
+            &db,
+            &thread.id,
+            "prefix foo bar suffix",
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        insert_user_message(
+            &db,
+            &thread.id,
+            "prefix foo closing gap bar suffix",
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let results = search_messages(&db, &workspace_id, "\"foo bar\"").unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].snippet.contains("foo bar"));
+    }
+
+    #[test]
+    fn search_messages_preserves_prefix_queries() {
+        let db = test_db();
+        let workspace_id = test_workspace(&db);
+        let thread =
+            threads::create_thread(&db, &workspace_id, None, "codex", "gpt-5.3-codex", "test")
+                .unwrap();
+        insert_user_message(
+            &db,
+            &thread.id,
+            "prefix foobar suffix",
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        insert_user_message(
+            &db,
+            &thread.id,
+            "prefix bar suffix",
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let results = search_messages(&db, &workspace_id, "foo*").unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].snippet.contains("foobar"));
+    }
+
+    #[test]
+    fn search_messages_unicode_snippet_tracks_fts_match() {
+        let db = test_db();
+        let workspace_id = test_workspace(&db);
+        let thread =
+            threads::create_thread(&db, &workspace_id, None, "codex", "gpt-5.3-codex", "test")
+                .unwrap();
+        let content = format!(
+            "{} CAFÉ marker {}",
+            "opening prelude ".repeat(20),
+            "closing context ".repeat(10)
+        );
+        insert_user_message(&db, &thread.id, &content, None, None, None, None).unwrap();
+
+        let results = search_messages(&db, &workspace_id, "café").unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].snippet.contains("CAFÉ marker"));
+        assert!(!results[0].snippet.starts_with("opening prelude"));
     }
 
     #[test]

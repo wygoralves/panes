@@ -1,14 +1,5 @@
 {
   "title": "Panes",
-  "search": {
-    "placeholder": "Search messages in current workspace...",
-    "shortcut": "Shortcut: Cmd/Ctrl+Shift+F",
-    "selectWorkspace": "Select a workspace to search.",
-    "minChars": "Type at least 2 characters.",
-    "searching": "Searching...",
-    "noResults": "No results for \"{{query}}\".",
-    "threadFallback": "Thread"
-  },
   "updates": {
     "checkingTitle": "Checking for updates",
     "checkingMessage": "This should only take a moment.",
@@ -85,7 +76,7 @@
       "toggleSidebar": "Toggle Sidebar",
       "toggleGitPanel": "Toggle Git Panel",
       "toggleFocusMode": "Toggle Focus Mode",
-      "searchMessages": "Search Messages",
+      "searchWorkspace": "Search Workspace",
       "gitFetch": "Git Fetch",
       "gitPull": "Git Pull",
       "gitPush": "Git Push",
@@ -117,8 +108,10 @@
       "switchWorkspace": "Browse active workspaces"
     },
     "group": {
+      "search": "Search",
       "layout": "Layout",
       "git": "Git",
+      "messages": "Messages",
       "navigation": "Navigation",
       "view": "View",
       "files": "Files",
@@ -137,7 +130,9 @@
       "loadingStashes": "Loading stashes...",
       "loadingFiles": "Loading files...",
       "loadingFilesGroup": "Files (loading...)",
+      "searchingMessages": "Searching messages...",
       "noBranchesFound": "No branches found",
+      "noMessagesFound": "No messages found",
       "noThreadsFound": "No threads found",
       "noWorkspacesFound": "No workspaces found",
       "noReposFound": "No repos found",
@@ -145,8 +140,11 @@
       "noStashesFound": "No stashes found",
       "noActiveRepo": "No active repo",
       "noActiveWorkspace": "No active workspace",
+      "typeMoreToSearch": "Type at least 2 characters to search.",
       "current": "current",
       "remote": "remote",
+      "threadFallback": "Thread",
+      "workspaceFallback": "Workspace",
       "chatFallback": "chat"
     },
     "subFlow": {
@@ -180,6 +178,7 @@
       "applyStash": "Search stashes...",
       "popStash": "Search stashes...",
       "switchRepo": "Search repos...",
+      "search": "Search messages, files, or threads...",
       "fileMode": "Search files...",
       "auto": "Search files, commands, threads..."
     },
@@ -194,7 +193,14 @@
       "dismiss": "Dismiss",
       "back": "back",
       "close": "close",
-      "switchMode": "switch mode"
+      "switchMode": "switch mode",
+      "switchSearchScope": "switch scope"
+    },
+    "searchScopes": {
+      "all": "All",
+      "messages": "Messages",
+      "files": "Files",
+      "threads": "Threads"
     },
     "chips": {
       "files": "Files",

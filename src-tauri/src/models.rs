@@ -193,6 +193,9 @@ pub struct TokenUsageDto {
 #[serde(rename_all = "camelCase")]
 pub struct SearchResultDto {
     pub thread_id: String,
+    pub thread_title: String,
+    pub workspace_name: String,
+    pub repo_id: Option<String>,
     pub message_id: String,
     pub snippet: String,
 }

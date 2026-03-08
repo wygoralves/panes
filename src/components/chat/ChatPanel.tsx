@@ -2367,6 +2367,10 @@ export function ChatPanel() {
   const layoutMode: LayoutMode = activeWorkspaceId
     ? (terminalWorkspaceState?.layoutMode ?? "chat")
     : "chat";
+  const isChatLayoutActive = layoutMode === "chat";
+  const isSplitLayoutActive = layoutMode === "split";
+  const isTerminalLayoutActive = layoutMode === "terminal";
+  const isEditorLayoutActive = layoutMode === "editor";
   const showFocusModeHeader = focusMode && !showSidebar && (layoutMode === "chat" || layoutMode === "split");
   const terminalPanelSize = activeWorkspaceId
     ? terminalWorkspaceState?.panelSize ?? 32
@@ -2554,7 +2558,7 @@ export function ChatPanel() {
                 title={t("panel.layout.chatOnly")}
                 disabled={!activeWorkspaceId}
                 onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "chat")}
-                className={`layout-mode-btn ${layoutMode === "chat" ? "active" : ""}`}
+                className={`layout-mode-btn ${isChatLayoutActive ? "active" : ""}`}
               >
                 <MessageSquare size={12} />
               </button>
@@ -2563,7 +2567,7 @@ export function ChatPanel() {
                 title={t("panel.layout.splitView")}
                 disabled={!activeWorkspaceId}
                 onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "split")}
-                className={`layout-mode-btn ${layoutMode === "split" ? "active" : ""}`}
+                className={`layout-mode-btn ${isSplitLayoutActive ? "active" : ""}`}
               >
                 <Monitor size={12} />
               </button>
@@ -2572,7 +2576,7 @@ export function ChatPanel() {
                 title={t("panel.layout.terminalOnly")}
                 disabled={!activeWorkspaceId}
                 onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "terminal")}
-                className={`layout-mode-btn ${layoutMode === "terminal" ? "active" : ""}`}
+                className={`layout-mode-btn ${isTerminalLayoutActive ? "active" : ""}`}
               >
                 <SquareTerminal size={12} />
               </button>
@@ -2581,7 +2585,7 @@ export function ChatPanel() {
                 title={t("panel.layout.fileEditor")}
                 disabled={!activeWorkspaceId}
                 onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "editor")}
-                className={`layout-mode-btn ${layoutMode === "editor" ? "active" : ""}`}
+                className={`layout-mode-btn ${isEditorLayoutActive ? "active" : ""}`}
               >
                 <FilePen size={12} />
               </button>
@@ -2708,7 +2712,7 @@ export function ChatPanel() {
                 title={t("panel.layout.chatOnly")}
                 disabled={!activeWorkspaceId}
                 onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "chat")}
-                className={`layout-mode-btn ${layoutMode === "chat" ? "active" : ""}`}
+                className={`layout-mode-btn ${isChatLayoutActive ? "active" : ""}`}
               >
                 <MessageSquare size={12} />
               </button>
@@ -2717,7 +2721,7 @@ export function ChatPanel() {
                 title={t("panel.layout.splitView")}
                 disabled={!activeWorkspaceId}
                 onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "split")}
-                className={`layout-mode-btn ${layoutMode === "split" ? "active" : ""}`}
+                className={`layout-mode-btn ${isSplitLayoutActive ? "active" : ""}`}
               >
                 <Monitor size={12} />
               </button>
@@ -2726,7 +2730,7 @@ export function ChatPanel() {
                 title={t("panel.layout.terminalOnly")}
                 disabled={!activeWorkspaceId}
                 onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "terminal")}
-                className={`layout-mode-btn ${layoutMode === "terminal" ? "active" : ""}`}
+                className={`layout-mode-btn ${isTerminalLayoutActive ? "active" : ""}`}
               >
                 <SquareTerminal size={12} />
               </button>
@@ -2735,7 +2739,7 @@ export function ChatPanel() {
                 title={t("panel.layout.fileEditor")}
                 disabled={!activeWorkspaceId}
                 onClick={() => activeWorkspaceId && void setLayoutMode(activeWorkspaceId, "editor")}
-                className={`layout-mode-btn ${layoutMode === "editor" ? "active" : ""}`}
+                className={`layout-mode-btn ${isEditorLayoutActive ? "active" : ""}`}
               >
                 <FilePen size={12} />
               </button>

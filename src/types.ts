@@ -408,6 +408,9 @@ export interface EngineCheckResult {
 
 export interface SearchResult {
   threadId: string;
+  threadTitle: string;
+  workspaceName: string;
+  repoId: string | null;
   messageId: string;
   snippet: string;
 }

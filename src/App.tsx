@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
-import { SearchModal } from "./components/chat/SearchModal";
 import { CommandPalette } from "./components/shared/CommandPalette";
 import { EngineHealthBanner } from "./components/onboarding/EngineHealthBanner";
 import { SetupWizard } from "./components/onboarding/SetupWizard";
@@ -68,8 +67,6 @@ export function App() {
   const refreshAllThreads = useThreadStore((s) => s.refreshAllThreads);
   const refreshThreads = useThreadStore((s) => s.refreshThreads);
   const applyThreadUpdateLocal = useThreadStore((s) => s.applyThreadUpdateLocal);
-  const searchOpen = useUiStore((s) => s.searchOpen);
-  const setSearchOpen = useUiStore((s) => s.setSearchOpen);
   const commandPaletteOpen = useUiStore((s) => s.commandPaletteOpen);
   const closeCommandPalette = useUiStore((s) => s.closeCommandPalette);
   const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
@@ -234,9 +231,11 @@ export function App() {
             }
             return;
           }
-          // Cmd+Shift+F — global search modal
+          // Cmd+Shift+F — search-focused command palette
           e.preventDefault();
-          fireShortcut("toggle-search", () => useUiStore.getState().setSearchOpen(true));
+          fireShortcut("toggle-search", () =>
+            useUiStore.getState().openCommandPalette({ variant: "search", initialQuery: "?" })
+          );
           break;
         }
         case "h": {
@@ -317,14 +316,14 @@ export function App() {
           if (e.shiftKey) return;
           e.preventDefault();
           fireShortcut("open-command-palette-files", () =>
-            useUiStore.getState().openCommandPaletteWithQuery("%")
+            useUiStore.getState().openCommandPalette({ initialQuery: "%" })
           );
           break;
         case "k":
           e.preventDefault();
           if (e.shiftKey) {
             fireShortcut("open-command-palette-threads", () =>
-              useUiStore.getState().openCommandPaletteWithQuery("@")
+              useUiStore.getState().openCommandPalette({ initialQuery: "@" })
             );
           } else {
             fireShortcut("toggle-command-palette", () =>
@@ -353,7 +352,9 @@ export function App() {
           fireShortcut("toggle-focus-mode", () => useUiStore.getState().toggleFocusMode());
           break;
         case "toggle-search":
-          fireShortcut("toggle-search", () => useUiStore.getState().setSearchOpen(true));
+          fireShortcut("toggle-search", () =>
+            useUiStore.getState().openCommandPalette({ variant: "search", initialQuery: "?" })
+          );
           break;
         case "toggle-terminal":
           fireShortcut("toggle-terminal", () => {
@@ -390,7 +391,6 @@ export function App() {
           <EngineHealthBanner />
         </div>
       </div>
-      <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
       <CommandPalette open={commandPaletteOpen} onClose={closeCommandPalette} />
       <SetupWizard />
       <ToastContainer />

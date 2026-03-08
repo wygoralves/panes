@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { COMMAND_PALETTE_DEFAULT_LAUNCH } from "../lib/commandPalette";
 
 type UiStoreModule = typeof import("./uiStore");
 
@@ -31,11 +32,10 @@ describe("uiStore focus mode", () => {
       showGitPanel: true,
       focusMode: false,
       focusModeSnapshot: null,
-      searchOpen: false,
       activeView: "chat",
       settingsWorkspaceId: null,
       commandPaletteOpen: false,
-      commandPaletteInitialQuery: null,
+      commandPaletteLaunch: COMMAND_PALETTE_DEFAULT_LAUNCH,
       messageFocusTarget: null,
     });
   });
@@ -113,6 +113,30 @@ describe("uiStore focus mode", () => {
       showSidebar: false,
       showGitPanel: true,
       focusModeSnapshot: null,
+    });
+  });
+
+  it("opens the command palette with structured launch defaults", () => {
+    useUiStore.getState().openCommandPalette({ variant: "search", initialQuery: "?", searchScope: "threads" });
+
+    expect(useUiStore.getState()).toMatchObject({
+      commandPaletteOpen: true,
+      commandPaletteLaunch: {
+        variant: "search",
+        initialQuery: "?",
+        searchScope: "threads",
+      },
+    });
+  });
+
+  it("resets command palette launch state when closing", () => {
+    const state = useUiStore.getState();
+    state.openCommandPalette({ variant: "search", initialQuery: "?", searchScope: "files" });
+    state.closeCommandPalette();
+
+    expect(useUiStore.getState()).toMatchObject({
+      commandPaletteOpen: false,
+      commandPaletteLaunch: COMMAND_PALETTE_DEFAULT_LAUNCH,
     });
   });
 });

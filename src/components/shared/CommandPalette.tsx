@@ -35,6 +35,15 @@ import {
   FolderGit2,
 } from "lucide-react";
 import { ipc, writeCommandToNewSession } from "../../lib/ipc";
+import {
+  COMMAND_PALETTE_DEFAULT_LAUNCH,
+  detectCommandPaletteMode,
+  getNextCommandPalettePrefix,
+  getNextCommandPaletteSearchScope,
+  normalizeCommandPaletteInput,
+  shouldTabCycleCommandPaletteSearchScope,
+  type CommandPaletteSearchScope,
+} from "../../lib/commandPalette";
 import { formatRelativeTime } from "../../lib/formatters";
 import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -45,7 +54,7 @@ import { useTerminalStore } from "../../stores/terminalStore";
 import { useFileStore } from "../../stores/fileStore";
 import { useHarnessStore } from "../../stores/harnessStore";
 import { toast } from "../../stores/toastStore";
-import type { FileTreeEntry, GitBranch, GitStash, HarnessInfo, Repo, Thread, Workspace } from "../../types";
+import type { FileTreeEntry, GitBranch, GitStash, HarnessInfo, Repo, SearchResult, Thread, Workspace } from "../../types";
 
 const FILE_SEARCH_PAGE_SIZE = 500;
 const FILE_SEARCH_MAX_PAGES = 20; // 10,000 files ceiling
@@ -90,29 +99,6 @@ function fuzzyFilter<T>(
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
     .slice(0, limit)
     .map((entry) => entry.item);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Mode detection                                                     */
-/* ------------------------------------------------------------------ */
-
-type PaletteMode = "default" | "command" | "thread" | "workspace" | "file" | "auto";
-
-function detectMode(query: string): { mode: PaletteMode; term: string } {
-  if (query === "") return { mode: "default", term: "" };
-  if (query.startsWith(">") || query.startsWith("/")) {
-    return { mode: "command", term: query.slice(1).trimStart() };
-  }
-  if (query.startsWith("@")) {
-    return { mode: "thread", term: query.slice(1) };
-  }
-  if (query.startsWith("#")) {
-    return { mode: "workspace", term: query.slice(1) };
-  }
-  if (query.startsWith("%")) {
-    return { mode: "file", term: query.slice(1) };
-  }
-  return { mode: "auto", term: query };
 }
 
 /* ------------------------------------------------------------------ */
@@ -161,6 +147,7 @@ interface CommandEntry {
 
 type ResultItem =
   | { type: "command"; entry: CommandEntry }
+  | { type: "message-search"; entry: SearchResult }
   | { type: "file"; entry: FileTreeEntry }
   | { type: "thread"; entry: Thread }
   | { type: "workspace"; entry: Workspace }
@@ -266,14 +253,13 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
   },
   {
     id: "open-search",
-    label: t("commandPalette.commands.searchMessages"),
+    label: t("commandPalette.commands.searchWorkspace"),
     icon: Search,
     group: "layout",
-    keywords: ["search", "find", "messages", "fts", "buscar", "mensagens"],
+    keywords: ["search", "find", "workspace", "messages", "files", "threads", "buscar", "workspace"],
     shortcut: "\u2318\u21E7F",
-    action: ({ close }) => {
-      close();
-      useUiStore.getState().setSearchOpen(true);
+    action: () => {
+      useUiStore.getState().openCommandPalette({ variant: "search", initialQuery: "?" });
     },
   },
   // Git
@@ -804,10 +790,14 @@ export function CommandPalette({ open, onClose }: Props) {
   const activeItemRef = useRef<HTMLButtonElement>(null);
 
   const [query, setQuery] = useState("");
+  const [searchScope, setSearchScope] = useState<CommandPaletteSearchScope>("all");
   const [activeIndex, setActiveIndex] = useState(0);
   const [subFlow, setSubFlow] = useState<SubFlow | null>(null);
   const [fileEntries, setFileEntries] = useState<FileTreeEntry[]>([]);
   const [fileLoading, setFileLoading] = useState(false);
+  const [messageResults, setMessageResults] = useState<SearchResult[]>([]);
+  const [messageLoading, setMessageLoading] = useState(false);
+  const [messageError, setMessageError] = useState<string | null>(null);
   const [showFilesInAuto, setShowFilesInAuto] = useState(false);
   const [showThreadsInAuto, setShowThreadsInAuto] = useState(false);
 
@@ -815,16 +805,28 @@ export function CommandPalette({ open, onClose }: Props) {
 
   // Store selectors
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const setActiveRepo = useWorkspaceStore((s) => s.setActiveRepo);
   const repos = useWorkspaceStore((s) => s.repos);
   const activeRepoId = useWorkspaceStore((s) => s.activeRepoId);
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const threads = useThreadStore((s) => s.threads);
   const activeThreadId = useThreadStore((s) => s.activeThreadId);
+  const setActiveThread = useThreadStore((s) => s.setActiveThread);
   const harnesses = useHarnessStore((s) => s.harnesses);
+  const bindChatThread = useChatStore((s) => s.setActiveThread);
+  const setMessageFocusTarget = useUiStore((s) => s.setMessageFocusTarget);
+  const commandPaletteLaunch = useUiStore((s) => s.commandPaletteLaunch);
 
   const activeRepo = repos.find((r) => r.id === activeRepoId);
   const activeRepoPath = activeRepo?.path ?? null;
   const gitStatus = useGitStore((s) => s.status);
+  const workspaceNameById = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const workspace of workspaces) {
+      byId.set(workspace.id, workspace.name);
+    }
+    return byId;
+  }, [workspaces]);
 
   const workspaceThreads = useMemo(
     () => threads.filter((t) => t.workspaceId === activeWorkspaceId),
@@ -842,7 +844,12 @@ export function CommandPalette({ open, onClose }: Props) {
   );
 
   // Derived mode
-  const { mode, term } = useMemo(() => detectMode(query), [query]);
+  const { mode, term } = useMemo(() => detectCommandPaletteMode(query), [query]);
+  const trimmedTerm = term.trim();
+  const isSearchMode = mode === "search";
+  const shouldShowFileResultsInSearch = isSearchMode && (searchScope === "all" || searchScope === "files");
+  const shouldShowMessageResultsInSearch = isSearchMode && (searchScope === "all" || searchScope === "messages");
+  const shouldShowThreadResultsInSearch = isSearchMode && (searchScope === "all" || searchScope === "threads");
 
   // Context object for command actions
   const commandCtx = useMemo<CommandContext>(
@@ -866,37 +873,52 @@ export function CommandPalette({ open, onClose }: Props) {
   useEffect(() => {
     if (!open) {
       setQuery("");
+      setSearchScope(COMMAND_PALETTE_DEFAULT_LAUNCH.searchScope);
       setActiveIndex(0);
       setSubFlow(null);
       setFileEntries([]);
       setFileLoading(false);
+      setMessageResults([]);
+      setMessageLoading(false);
+      setMessageError(null);
       fileCacheRef.current.clear();
       setShowFilesInAuto(false);
       setShowThreadsInAuto(false);
       return;
     }
-    // Seed query from external shortcuts (e.g. Cmd+P → "%", Cmd+Shift+K → "@")
-    const initial = useUiStore.getState().commandPaletteInitialQuery;
-    if (initial !== null) {
-      setQuery(initial);
-    }
+    const nextQuery =
+      commandPaletteLaunch.variant === "search"
+        ? `?${commandPaletteLaunch.initialQuery.replace(/^\?/, "")}`
+        : commandPaletteLaunch.initialQuery;
+    setQuery(nextQuery);
+    setSearchScope(commandPaletteLaunch.searchScope);
+    setActiveIndex(0);
+    setSubFlow(null);
     const timer = window.setTimeout(() => inputRef.current?.focus(), 30);
     return () => window.clearTimeout(timer);
-  }, [open]);
+  }, [open, commandPaletteLaunch]);
 
   /* ---- File search (lazy, debounced, progressive) ---- */
   useEffect(() => {
-    const isFileMode = mode === "auto" || mode === "file";
+    const isFileMode =
+      mode === "auto" ||
+      mode === "file" ||
+      (mode === "search" && (searchScope === "all" || searchScope === "files"));
     if (!open || !isFileMode || !activeRepoPath) {
-      if (!isFileMode) setFileEntries([]);
+      setFileLoading(false);
+      if (!isFileMode || !activeRepoPath) setFileEntries([]);
       return;
     }
-    // In auto mode, require 2+ chars before loading; in file mode, load immediately
-    if (mode === "auto" && term.length < 2) return;
+    // In auto and search modes, require 2+ chars before loading; in file mode, load immediately.
+    if ((mode === "auto" || mode === "search") && trimmedTerm.length < 2) {
+      setFileLoading(false);
+      return;
+    }
 
     const cached = fileCacheRef.current.get(activeRepoPath);
     if (cached) {
       setFileEntries(cached);
+      setFileLoading(false);
       return;
     }
 
@@ -942,7 +964,53 @@ export function CommandPalette({ open, onClose }: Props) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [open, mode, term, activeRepoPath]);
+  }, [open, mode, trimmedTerm, activeRepoPath, searchScope]);
+
+  /* ---- Workspace message search ---- */
+  useEffect(() => {
+    if (!open || !shouldShowMessageResultsInSearch || !activeWorkspaceId) {
+      setMessageResults([]);
+      setMessageLoading(false);
+      setMessageError(null);
+      return;
+    }
+
+    if (trimmedTerm.length < 2) {
+      setMessageResults([]);
+      setMessageLoading(false);
+      setMessageError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setMessageResults([]);
+    setMessageLoading(true);
+    setMessageError(null);
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const found = await ipc.searchMessages(activeWorkspaceId, trimmedTerm);
+        if (cancelled) {
+          return;
+        }
+        setMessageResults(found);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setMessageError(String(error));
+      } finally {
+        if (!cancelled) {
+          setMessageLoading(false);
+        }
+      }
+    }, 180);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [open, activeWorkspaceId, shouldShowMessageResultsInSearch, trimmedTerm]);
 
   /* ---- Branch search for checkout sub-flow (local + remote) ---- */
   useEffect(() => {
@@ -1178,6 +1246,96 @@ export function CommandPalette({ open, onClose }: Props) {
       }
     }
 
+    if (mode === "search") {
+      if (!activeWorkspaceId) {
+        return [{
+          label: t("commandPalette.group.search"),
+          items: [{ type: "sub-action", label: t("commandPalette.status.noActiveWorkspace") }],
+        }];
+      }
+
+      if (trimmedTerm.length < 2) {
+        return [{
+          label: t("commandPalette.group.search"),
+          items: [{ type: "sub-action", label: t("commandPalette.status.typeMoreToSearch") }],
+        }];
+      }
+
+      const result: ResultGroup[] = [];
+
+      if (shouldShowMessageResultsInSearch) {
+        if (messageError) {
+          result.push({
+            label: t("commandPalette.group.messages"),
+            items: [{ type: "sub-action", label: messageError }],
+          });
+        } else if (messageLoading && messageResults.length === 0) {
+          result.push({
+            label: t("commandPalette.group.messages"),
+            items: [{ type: "sub-action", label: t("commandPalette.status.searchingMessages") }],
+          });
+        } else if (messageResults.length > 0) {
+          result.push({
+            label: t("commandPalette.group.messages"),
+            items: messageResults.map((entry) => ({ type: "message-search", entry })),
+          });
+        } else if (searchScope === "messages") {
+          result.push({
+            label: t("commandPalette.group.messages"),
+            items: [{ type: "sub-action", label: t("commandPalette.status.noMessagesFound") }],
+          });
+        }
+      }
+
+      if (shouldShowFileResultsInSearch) {
+        if (searchScope === "files" && !activeRepoPath) {
+          result.push({
+            label: t("commandPalette.group.files"),
+            items: [{ type: "sub-action", label: t("commandPalette.status.noActiveRepo") }],
+          });
+        } else if (activeRepoPath) {
+          if (fileLoading && fileEntries.length === 0) {
+            result.push({
+              label: t("commandPalette.group.files"),
+              items: [{ type: "sub-action", label: t("commandPalette.status.loadingFiles") }],
+            });
+          } else {
+            const filteredFiles = fuzzyFilter(fileEntries, trimmedTerm, (f) => f.path, searchScope === "files" ? 20 : 8);
+            if (filteredFiles.length > 0) {
+              result.push({
+                label: fileLoading
+                  ? t("commandPalette.status.loadingFilesGroup")
+                  : t("commandPalette.group.files"),
+                items: filteredFiles.map((f) => ({ type: "file", entry: f })),
+              });
+            } else if (searchScope === "files") {
+              result.push({
+                label: t("commandPalette.group.files"),
+                items: [{ type: "sub-action", label: t("commandPalette.status.noFilesFound") }],
+              });
+            }
+          }
+        }
+      }
+
+      if (shouldShowThreadResultsInSearch) {
+        const filteredThreads = fuzzyFilter(workspaceThreads, trimmedTerm, (thread) => thread.title, searchScope === "threads" ? 15 : 6);
+        if (filteredThreads.length > 0) {
+          result.push({
+            label: t("commandPalette.group.threads"),
+            items: filteredThreads.map((entry) => ({ type: "thread", entry })),
+          });
+        } else if (searchScope === "threads") {
+          result.push({
+            label: t("commandPalette.group.threads"),
+            items: [{ type: "sub-action", label: t("commandPalette.status.noThreadsFound") }],
+          });
+        }
+      }
+
+      return result;
+    }
+
     if (mode === "default") {
       const result: ResultGroup[] = [];
 
@@ -1379,7 +1537,10 @@ export function CommandPalette({ open, onClose }: Props) {
   }, [
     mode, term, subFlow, availableCommands, workspaceThreads, workspaces,
     installedHarnesses, fileEntries, fileLoading, activeThread, gitStatus, repos,
-    showFilesInAuto, showThreadsInAuto, activeRepoPath, t,
+    showFilesInAuto, showThreadsInAuto, activeRepoPath, t, searchScope,
+    trimmedTerm, shouldShowFileResultsInSearch, shouldShowMessageResultsInSearch,
+    shouldShowThreadResultsInSearch, messageError, messageLoading, messageResults,
+    activeWorkspaceId,
   ]);
 
   // Flat items for keyboard navigation
@@ -1418,6 +1579,45 @@ export function CommandPalette({ open, onClose }: Props) {
     [activeWorkspaceId],
   );
 
+  const openMessageResult = useCallback(
+    async (result: SearchResult) => {
+      if (!activeWorkspaceId) {
+        return;
+      }
+
+      await useThreadStore.getState().refreshThreads(activeWorkspaceId);
+      const targetThread = useThreadStore
+        .getState()
+        .threads.find((thread) => thread.id === result.threadId);
+      if (!targetThread) {
+        return;
+      }
+
+      await useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "chat");
+      setMessageFocusTarget({
+        threadId: targetThread.id,
+        messageId: result.messageId,
+      });
+      if (targetThread.repoId) {
+        setActiveRepo(targetThread.repoId);
+      } else {
+        setActiveRepo(null, { remember: false });
+      }
+      setActiveThread(targetThread.id);
+      await bindChatThread(targetThread.id);
+      useUiStore.getState().setActiveView("chat");
+      onClose();
+    },
+    [
+      activeWorkspaceId,
+      bindChatThread,
+      onClose,
+      setActiveRepo,
+      setActiveThread,
+      setMessageFocusTarget,
+    ],
+  );
+
   const executeItem = useCallback(
     async (item: ResultItem) => {
       switch (item.type) {
@@ -1437,6 +1637,10 @@ export function CommandPalette({ open, onClose }: Props) {
           await cmd.action(commandCtx);
           break;
         }
+        case "message-search": {
+          await openMessageResult(item.entry);
+          break;
+        }
         case "file": {
           onClose();
           if (activeRepoPath) {
@@ -1448,14 +1652,15 @@ export function CommandPalette({ open, onClose }: Props) {
           break;
         }
         case "thread": {
-          onClose();
           const thread = item.entry;
           if (thread.workspaceId !== activeWorkspaceId) {
             await useWorkspaceStore.getState().setActiveWorkspace(thread.workspaceId);
           }
+          await useTerminalStore.getState().setLayoutMode(thread.workspaceId, "chat");
           useThreadStore.getState().setActiveThread(thread.id);
           await useChatStore.getState().setActiveThread(thread.id);
           useUiStore.getState().setActiveView("chat");
+          onClose();
           break;
         }
         case "workspace": {
@@ -1527,7 +1732,7 @@ export function CommandPalette({ open, onClose }: Props) {
           break;
       }
     },
-    [commandCtx, activeRepoPath, activeWorkspaceId, activeThreadId, onClose, launchHarness, subFlow, t],
+    [commandCtx, activeRepoPath, activeWorkspaceId, activeThreadId, onClose, launchHarness, openMessageResult, subFlow, t],
   );
 
   const executeSubFlow = useCallback(async () => {
@@ -1631,17 +1836,17 @@ export function CommandPalette({ open, onClose }: Props) {
       if (e.key === "Tab") {
         e.preventDefault();
         if (subFlow) return;
-        // Cycle through mode prefixes
-        const currentPrefix = query.length > 0 && [">", "@", "#"].includes(query[0]) ? query[0] : "";
-        const prefixes = [">", "@", "#", "%", ""];
-        const currentIdx = prefixes.indexOf(currentPrefix);
-        const nextIdx = (currentIdx + 1) % prefixes.length;
-        setQuery(prefixes[nextIdx]);
+        if (shouldTabCycleCommandPaletteSearchScope(mode, term)) {
+          setSearchScope((current) => getNextCommandPaletteSearchScope(current));
+          setActiveIndex(0);
+          return;
+        }
+        setQuery(getNextCommandPalettePrefix(query));
         setActiveIndex(0);
         return;
       }
     },
-    [flatItems, activeIndex, subFlow, query, onClose, executeItem, executeSubFlow],
+    [flatItems, activeIndex, subFlow, query, onClose, executeItem, executeSubFlow, mode, term],
   );
 
   /* ---- Input change handler ---- */
@@ -1667,11 +1872,11 @@ export function CommandPalette({ open, onClose }: Props) {
         }
         setActiveIndex(0);
       } else {
-        setQuery(value);
+        setQuery(normalizeCommandPaletteInput(value, mode));
         setActiveIndex(0);
       }
     },
-    [subFlow],
+    [mode, subFlow],
   );
 
   /* ---- Render helpers ---- */
@@ -1687,6 +1892,7 @@ export function CommandPalette({ open, onClose }: Props) {
       if (subFlow.type === "pop-stash") return subFlow.query;
       if (subFlow.type === "switch-repo") return subFlow.query;
     }
+    if (mode === "search") return term;
     return query;
   };
 
@@ -1700,6 +1906,9 @@ export function CommandPalette({ open, onClose }: Props) {
       if (subFlow.type === "apply-stash") return t("commandPalette.placeholders.applyStash");
       if (subFlow.type === "pop-stash") return t("commandPalette.placeholders.popStash");
       if (subFlow.type === "switch-repo") return t("commandPalette.placeholders.switchRepo");
+    }
+    if (mode === "search") {
+      return t("commandPalette.placeholders.search");
     }
     if (mode === "file") return t("commandPalette.placeholders.fileMode");
     return t("commandPalette.placeholders.auto");
@@ -1723,6 +1932,7 @@ export function CommandPalette({ open, onClose }: Props) {
     if (mode === "thread") return <span style={STYLES.modeBadge}>@</span>;
     if (mode === "workspace") return <span style={STYLES.modeBadge}>#</span>;
     if (mode === "file") return <span style={STYLES.modeBadge}>%</span>;
+    if (mode === "search") return <span style={STYLES.modeBadge}>?</span>;
     return null;
   };
 
@@ -1763,6 +1973,28 @@ export function CommandPalette({ open, onClose }: Props) {
           </button>
         );
       }
+      case "message-search": {
+        return (
+          <button
+            key={key}
+            ref={active ? activeItemRef : undefined}
+            style={STYLES.item(active)}
+            onMouseEnter={() => setActiveIndex(index)}
+            onClick={() => void executeItem(item)}
+          >
+            <span style={STYLES.itemIcon(active)}><Search size={16} /></span>
+            <span style={{ overflow: "hidden" }}>
+              <span style={{ ...STYLES.itemLabel, display: "block" }}>
+                {item.entry.threadTitle || t("commandPalette.status.threadFallback")}
+              </span>
+              <span style={STYLES.itemDescription}>
+                {item.entry.workspaceName} · {item.entry.snippet}
+              </span>
+            </span>
+            <span />
+          </button>
+        );
+      }
       case "file": {
         const base = fileBaseName(item.entry.path);
         const dir = fileDirName(item.entry.path);
@@ -1784,6 +2016,8 @@ export function CommandPalette({ open, onClose }: Props) {
         );
       }
       case "thread": {
+        const workspaceName =
+          workspaceNameById.get(item.entry.workspaceId) ?? t("commandPalette.status.workspaceFallback");
         return (
           <button
             key={key}
@@ -1794,7 +2028,8 @@ export function CommandPalette({ open, onClose }: Props) {
           >
             <span style={STYLES.itemIcon(active)}><MessageSquare size={16} /></span>
             <span style={{ overflow: "hidden" }}>
-              <span style={STYLES.itemLabel}>{item.entry.title}</span>
+              <span style={{ ...STYLES.itemLabel, display: "block" }}>{item.entry.title}</span>
+              <span style={STYLES.itemDescription}>{workspaceName}</span>
             </span>
             <span style={STYLES.itemDescription}>
               {formatRelativeTime(item.entry.lastActivityAt, i18n.language, {
@@ -1972,6 +2207,45 @@ export function CommandPalette({ open, onClose }: Props) {
 
         {/* Results */}
         <div ref={resultsRef} style={STYLES.results}>
+          {mode === "search" && !subFlow && (
+            <div style={{
+              display: "flex",
+              gap: 6,
+              padding: "6px 14px",
+              borderBottom: "1px solid var(--border)",
+            }}>
+              {(["all", "messages", "files", "threads"] as const).map((scope) => {
+                const active = searchScope === scope;
+                return (
+                  <button
+                    key={scope}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      padding: "2px 8px",
+                      borderRadius: "var(--radius-sm, 4px)",
+                      fontSize: 11,
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      border: "none",
+                      fontFamily: "inherit",
+                      background: active ? "var(--accent-dim)" : "var(--bg-4)",
+                      color: active ? "var(--accent)" : "var(--text-3)",
+                      transition: "background 60ms ease, color 60ms ease",
+                    }}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      setSearchScope(scope);
+                      setActiveIndex(0);
+                    }}
+                  >
+                    {t(`commandPalette.searchScopes.${scope}`)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {/* Filter chips — auto mode only */}
           {mode === "auto" && term.length >= 1 && !subFlow && (
             <div style={{
@@ -2048,7 +2322,14 @@ export function CommandPalette({ open, onClose }: Props) {
           <span><kbd style={STYLES.footerKbd}>{"\u2191\u2193"}</kbd> {t("commandPalette.footer.navigate")}</span>
           <span><kbd style={STYLES.footerKbd}>{"\u21B5"}</kbd> {t("commandPalette.footer.select")}</span>
           <span><kbd style={STYLES.footerKbd}>esc</kbd> {subFlow ? t("commandPalette.footer.back") : t("commandPalette.footer.close")}</span>
-          {!subFlow && <span><kbd style={STYLES.footerKbd}>tab</kbd> {t("commandPalette.footer.switchMode")}</span>}
+          {!subFlow && (
+            <span>
+              <kbd style={STYLES.footerKbd}>tab</kbd>
+              {shouldTabCycleCommandPaletteSearchScope(mode, term)
+                ? t("commandPalette.footer.switchSearchScope")
+                : t("commandPalette.footer.switchMode")}
+            </span>
+          )}
         </div>
       </div>
     </div>,

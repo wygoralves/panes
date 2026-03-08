@@ -1,14 +1,5 @@
 {
   "title": "Panes",
-  "search": {
-    "placeholder": "Buscar mensagens no workspace atual...",
-    "shortcut": "Atalho: Cmd/Ctrl+Shift+F",
-    "selectWorkspace": "Selecione um workspace para buscar.",
-    "minChars": "Digite pelo menos 2 caracteres.",
-    "searching": "Buscando...",
-    "noResults": "Nenhum resultado para \"{{query}}\".",
-    "threadFallback": "Thread"
-  },
   "updates": {
     "checkingTitle": "Verificando atualizações",
     "checkingMessage": "Isso deve levar apenas um instante.",
@@ -85,7 +76,7 @@
       "toggleSidebar": "Alternar Sidebar",
       "toggleGitPanel": "Alternar painel Git",
       "toggleFocusMode": "Alternar modo foco",
-      "searchMessages": "Buscar mensagens",
+      "searchWorkspace": "Buscar no workspace",
       "gitFetch": "Git Fetch",
       "gitPull": "Git Pull",
       "gitPush": "Git Push",
@@ -117,8 +108,10 @@
       "switchWorkspace": "Navegue pelos workspaces ativos"
     },
     "group": {
+      "search": "Busca",
       "layout": "Layout",
       "git": "Git",
+      "messages": "Mensagens",
       "navigation": "Navegação",
       "view": "Painel",
       "files": "Arquivos",
@@ -137,7 +130,9 @@
       "loadingStashes": "Carregando stashes...",
       "loadingFiles": "Carregando arquivos...",
       "loadingFilesGroup": "Arquivos (carregando...)",
+      "searchingMessages": "Buscando mensagens...",
       "noBranchesFound": "Nenhuma branch encontrada",
+      "noMessagesFound": "Nenhuma mensagem encontrada",
       "noThreadsFound": "Nenhuma thread encontrada",
       "noWorkspacesFound": "Nenhum workspace encontrado",
       "noReposFound": "Nenhum repo encontrado",
@@ -145,8 +140,11 @@
       "noStashesFound": "Nenhum stash encontrado",
       "noActiveRepo": "Nenhum repo ativo",
       "noActiveWorkspace": "Nenhum workspace ativo",
+      "typeMoreToSearch": "Digite pelo menos 2 caracteres para buscar.",
       "current": "atual",
       "remote": "remota",
+      "threadFallback": "Thread",
+      "workspaceFallback": "Workspace",
       "chatFallback": "chat"
     },
     "subFlow": {
@@ -180,6 +178,7 @@
       "applyStash": "Busque stashes...",
       "popStash": "Busque stashes...",
       "switchRepo": "Busque repos...",
+      "search": "Busque mensagens, arquivos ou threads...",
       "fileMode": "Busque arquivos...",
       "auto": "Busque arquivos, comandos e threads..."
     },
@@ -194,7 +193,14 @@
       "dismiss": "Fechar",
       "back": "voltar",
       "close": "fechar",
-      "switchMode": "trocar modo"
+      "switchMode": "trocar modo",
+      "switchSearchScope": "trocar escopo"
+    },
+    "searchScopes": {
+      "all": "Tudo",
+      "messages": "Mensagens",
+      "files": "Arquivos",
+      "threads": "Threads"
     },
     "chips": {
       "files": "Arquivos",

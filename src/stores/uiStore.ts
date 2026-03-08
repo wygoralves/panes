@@ -1,4 +1,8 @@
 import { create } from "zustand";
+import {
+  COMMAND_PALETTE_DEFAULT_LAUNCH,
+  type CommandPaletteLaunchState,
+} from "../lib/commandPalette";
 
 const SIDEBAR_PINNED_KEY = "panes:sidebarPinned";
 
@@ -21,14 +25,12 @@ interface UiState {
   showGitPanel: boolean;
   focusMode: boolean;
   focusModeSnapshot: FocusModeSnapshot | null;
-  searchOpen: boolean;
   activeView: ActiveView;
   settingsWorkspaceId: string | null;
   commandPaletteOpen: boolean;
-  commandPaletteInitialQuery: string | null;
+  commandPaletteLaunch: CommandPaletteLaunchState;
   messageFocusTarget: MessageFocusTarget | null;
-  openCommandPalette: () => void;
-  openCommandPaletteWithQuery: (query: string) => void;
+  openCommandPalette: (launch?: Partial<CommandPaletteLaunchState>) => void;
   closeCommandPalette: () => void;
   toggleSidebar: () => void;
   toggleSidebarPin: () => void;
@@ -36,7 +38,6 @@ interface UiState {
   toggleGitPanel: () => void;
   setFocusMode: (enabled: boolean) => void;
   toggleFocusMode: () => void;
-  setSearchOpen: (open: boolean) => void;
   setActiveView: (view: ActiveView) => void;
   openWorkspaceSettings: (workspaceId: string) => void;
   setMessageFocusTarget: (target: { threadId: string; messageId: string }) => void;
@@ -57,15 +58,24 @@ export const useUiStore = create<UiState>((set) => ({
   showGitPanel: true,
   focusMode: false,
   focusModeSnapshot: null,
-  searchOpen: false,
   commandPaletteOpen: false,
-  commandPaletteInitialQuery: null,
+  commandPaletteLaunch: COMMAND_PALETTE_DEFAULT_LAUNCH,
   activeView: "chat",
   settingsWorkspaceId: null,
   messageFocusTarget: null,
-  openCommandPalette: () => set({ commandPaletteOpen: true, commandPaletteInitialQuery: null }),
-  openCommandPaletteWithQuery: (query) => set({ commandPaletteOpen: true, commandPaletteInitialQuery: query }),
-  closeCommandPalette: () => set({ commandPaletteOpen: false, commandPaletteInitialQuery: null }),
+  openCommandPalette: (launch) =>
+    set({
+      commandPaletteOpen: true,
+      commandPaletteLaunch: {
+        ...COMMAND_PALETTE_DEFAULT_LAUNCH,
+        ...launch,
+      },
+    }),
+  closeCommandPalette: () =>
+    set({
+      commandPaletteOpen: false,
+      commandPaletteLaunch: COMMAND_PALETTE_DEFAULT_LAUNCH,
+    }),
   toggleSidebar: () => set((state) => ({ showSidebar: !state.showSidebar })),
   toggleSidebarPin: () =>
     set((state) => {
@@ -135,7 +145,6 @@ export const useUiStore = create<UiState>((set) => ({
         showGitPanel: snapshot?.showGitPanel ?? state.showGitPanel,
       };
     }),
-  setSearchOpen: (open) => set({ searchOpen: open }),
   setActiveView: (view) => {
     set({ activeView: view });
     if (view === "harnesses") {
