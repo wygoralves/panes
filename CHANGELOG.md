@@ -1,5 +1,26 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.28.0...vnull) (2026-03-08)
+
+### Features
+
+* add desktop i18n with persisted locale ([bf3a992](https://github.com/wygoralves/panes/commit/bf3a992b0f4427d578a0bb0c7a738d40b8f52176))
+* add diff editing in file editor ([aa79e23](https://github.com/wygoralves/panes/commit/aa79e2304cd29b902193e5f16c384ee219df4d2d))
+* add focus mode ([20b614c](https://github.com/wygoralves/panes/commit/20b614cb93fc7173d23b04f052eaedc3627397e0))
+* expand i18n coverage on git panel ([40362d3](https://github.com/wygoralves/panes/commit/40362d3fe1a3b46658a26682cd9caec425c0fc34))
+* expand i18n coverage on the chat panel ([efb4301](https://github.com/wygoralves/panes/commit/efb4301bad7c3fafae5579c2143a65d448e8bb12))
+* expand i18n coverage on the command palette ([9a55b4f](https://github.com/wygoralves/panes/commit/9a55b4fcb5b92cd572b1918f522e1565ce6375e5))
+* expand i18n coverage on the file editor ([8fe028a](https://github.com/wygoralves/panes/commit/8fe028aeb45d30a50d39030fda456c6269957f99))
+* expand i18n coverage on the harnesses page ([6a82785](https://github.com/wygoralves/panes/commit/6a8278555417826374cdcebe2ea99a32c23395c1))
+* expand i18n coverage on the startup settings ([3875138](https://github.com/wygoralves/panes/commit/3875138154fea3f234dde6be2c8798d12ea0e540))
+* expand i18n coverage on the terminal panel ([82439c4](https://github.com/wygoralves/panes/commit/82439c4a8bfea61f2a0e156089aafacfb1beacdd))
+* expand i18n coverage on the workspace settings ([f578d69](https://github.com/wygoralves/panes/commit/f578d6973a6589aad56172329bcffee0cd2c8458))
+* expand i18n coverage to the lp and docs ([b411c36](https://github.com/wygoralves/panes/commit/b411c3667dadefa8fb8bbf0566f62592e11d6b9f))
+* improve ui for focus mode on chat view ([d450f36](https://github.com/wygoralves/panes/commit/d450f36f4f200f879c0da5b497d600521027f2c2))
+* improve UI for search and command palette ([47d4bd0](https://github.com/wygoralves/panes/commit/47d4bd0efe6614e3d9417e202b8b25aaf7bffb76))
+* move workspace search into command palette ([f708bd5](https://github.com/wygoralves/panes/commit/f708bd56cbccc9e264e1c6e0c8591957230901a6))
+* update terminology for stage related actions in i18n ([e5e6f17](https://github.com/wygoralves/panes/commit/e5e6f178431925c245f5dd6195d60661e6116aba))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.27.0...vnull) (2026-03-07)
 
 ### Features
