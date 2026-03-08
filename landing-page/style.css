@@ -582,9 +582,7 @@ button:focus-visible {
   display: flex;
 }
 
-.content-card:not([data-active-view="split"]) .git-panel {
-  display: none;
-}
+/* Git panel is always visible (all views) */
 
 /* Chat-only view */
 .mockup-view[data-view="chat"] .chat-panel {
@@ -2573,6 +2571,21 @@ button:focus-visible {
 @keyframes git-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+/* After initial boot, kill entry animations so view-switching is instant */
+.app-frame.booted .messages .msg-row,
+.app-frame.booted .term-line,
+.app-frame.booted .git-file-row,
+.app-frame.booted .git-section-label,
+.app-frame.booted .git-commit-area,
+.app-frame.booted .git-dir-group,
+.app-frame.booted .git-panel .git-header,
+.app-frame.booted .input-card,
+.app-frame.booted .v-input-box {
+  opacity: 1 !important;
+  transform: none !important;
+  animation: none !important;
 }
 
 /* Input card boot */

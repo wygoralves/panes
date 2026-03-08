@@ -1036,6 +1036,10 @@
       window.panesLandingI18n.init();
     }
 
+    // Mark mockup as booted after initial animations (~2s) so view-switching is instant
+    var appFrame = document.querySelector('.app-frame');
+    if (appFrame) setTimeout(function() { appFrame.classList.add('booted'); }, 2000);
+
     // View switcher in mockup
     var viewBtns = document.querySelectorAll('.layout-mode-pill .lm-btn[data-view]');
     var contentCard = document.querySelector('.content-card');
@@ -1043,6 +1047,8 @@
       btn.style.cursor = 'pointer';
       btn.addEventListener('click', function() {
         var view = btn.getAttribute('data-view');
+        // Mark as booted immediately on first interaction
+        if (appFrame) appFrame.classList.add('booted');
         // Update active button
         viewBtns.forEach(function(b) { b.classList.remove('lm-active'); });
         btn.classList.add('lm-active');
@@ -1052,7 +1058,7 @@
         });
         var target = document.querySelector('.mockup-view[data-view="' + view + '"]');
         if (target) target.classList.add('mockup-view-active');
-        // Toggle git panel
+        // Update data attribute for any remaining view-specific styles
         if (contentCard) contentCard.setAttribute('data-active-view', view);
       });
     });
