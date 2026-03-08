@@ -11,6 +11,7 @@ import {
 import { useSetupStore, type SetupPhase } from "../../stores/setupStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { copyTextToClipboard } from "../../lib/clipboard";
+import { getNodeManualGuidance } from "../../lib/setupGuidance";
 import type { CodexProtocolDiagnostics, DepStatus, EngineHealth } from "../../types";
 
 const SETUP_COMPLETED_KEY = "panes.setup.completed.v2";
@@ -185,15 +186,7 @@ function PlanPhase() {
     (!report.node.found && report.node.canAutoInstall) ||
     (!report.codex.found && report.codex.canAutoInstall);
 
-  const hasHomebrew = report.packageManagers.includes("homebrew");
-  const nodeManualCommand =
-    report.platform === "macos" && hasHomebrew ? "brew install node" : null;
-  const nodeManualAlt =
-    report.platform === "macos"
-      ? hasHomebrew
-        ? t("manual.nodeAltOrDownload")
-        : t("manual.nodeAltInstall")
-      : t("manual.nodeAltPackageManager");
+  const nodeManual = getNodeManualGuidance(report);
 
   return (
     <div style={{ display: "grid", gap: 10 }}>
@@ -310,8 +303,8 @@ function PlanPhase() {
             {!report.node.found && (
               <ManualStep
                 label={t("manual.installNode")}
-                command={nodeManualCommand}
-                alt={nodeManualAlt}
+                command={nodeManual.command}
+                alt={t(nodeManual.altKey, nodeManual.altVars)}
               />
             )}
             {!report.codex.found && (

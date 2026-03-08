@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     env,
     ffi::OsString,
-    fs,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -18,6 +17,8 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+use crate::runtime_env;
 
 use super::{
     normalize_approval_response_for_engine, ActionResult, ActionType, Engine, EngineEvent,
@@ -474,19 +475,10 @@ impl ClaudeSidecarEngine {
 async fn resolve_node_executable() -> NodeExecutableResolution {
     let app_path = std::env::var("PATH").ok();
 
-    if let Ok(path) = which::which("node") {
+    if let Some(path) = runtime_env::resolve_executable("node") {
         return NodeExecutableResolution {
             executable: Some(path),
             source: "app-path",
-            app_path,
-            login_shell_executable: None,
-        };
-    }
-
-    if let Some(path) = first_existing_executable_path(well_known_node_paths()) {
-        return NodeExecutableResolution {
-            executable: Some(path),
-            source: "well-known-path",
             app_path,
             login_shell_executable: None,
         };
@@ -553,78 +545,12 @@ fn node_fix_commands(resolution: &NodeExecutableResolution) -> Vec<String> {
 }
 
 fn executable_augmented_path(executable: &Path) -> Option<OsString> {
-    let executable_dir = executable.parent()?.to_path_buf();
-    let mut entries = vec![executable_dir.clone()];
-
-    if let Some(current_path) = env::var_os("PATH") {
-        for path in env::split_paths(&current_path) {
-            if path != executable_dir {
-                entries.push(path);
-            }
-        }
-    } else {
-        for fallback in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
-            let fallback_path = PathBuf::from(fallback);
-            if fallback_path != executable_dir {
-                entries.push(fallback_path);
-            }
-        }
-    }
-
-    env::join_paths(entries).ok()
-}
-
-fn well_known_node_paths() -> Vec<PathBuf> {
-    let mut candidates = vec![
-        PathBuf::from("/opt/homebrew/bin/node"),
-        PathBuf::from("/usr/local/bin/node"),
-        PathBuf::from("/opt/local/bin/node"),
-    ];
-
-    if let Ok(home) = std::env::var("HOME") {
-        let home = PathBuf::from(home);
-        candidates.push(home.join(".volta/bin/node"));
-        candidates.push(home.join(".local/share/fnm/aliases/default/bin/node"));
-        candidates.push(home.join(".local/bin/node"));
-        candidates.extend(nvm_node_paths(&home));
-    }
-
-    candidates
-}
-
-fn nvm_node_paths(home: &Path) -> Vec<PathBuf> {
-    let versions_dir = home.join(".nvm/versions/node");
-    let Ok(entries) = fs::read_dir(versions_dir) else {
-        return Vec::new();
-    };
-
-    entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path().join("bin/node"))
-        .collect()
-}
-
-fn first_existing_executable_path(paths: Vec<PathBuf>) -> Option<PathBuf> {
-    paths.into_iter().find(|path| is_executable_file(path))
-}
-
-fn is_executable_file(path: &Path) -> bool {
-    if !path.exists() {
-        return false;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path)
-            .map(|metadata| metadata.is_file() && (metadata.permissions().mode() & 0o111 != 0))
-            .unwrap_or(false)
-    }
-
-    #[cfg(not(unix))]
-    {
-        path.is_file()
-    }
+    runtime_env::augmented_path_with_prepend(
+        executable
+            .parent()
+            .into_iter()
+            .map(|value| value.to_path_buf()),
+    )
 }
 
 async fn detect_node_via_login_shell() -> Option<PathBuf> {
@@ -635,12 +561,8 @@ async fn detect_node_via_login_shell() -> Option<PathBuf> {
 
     #[cfg(not(target_os = "windows"))]
     {
-        for shell in ["/bin/zsh", "/bin/bash"] {
-            if !Path::new(shell).exists() {
-                continue;
-            }
-
-            let output = match Command::new(shell)
+        for shell in runtime_env::login_probe_shells() {
+            let output = match Command::new(&shell)
                 .args(["-lic", "command -v node"])
                 .output()
                 .await
@@ -655,7 +577,7 @@ async fn detect_node_via_login_shell() -> Option<PathBuf> {
                 .map(str::trim)
                 .find(|line| line.starts_with('/'))
                 .map(PathBuf::from)
-                .filter(|path| is_executable_file(path))
+                .filter(|path| runtime_env::is_executable_file(path))
             {
                 return Some(path);
             }

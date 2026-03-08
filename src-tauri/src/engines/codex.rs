@@ -3,7 +3,6 @@ use std::{
     collections::HashMap,
     env,
     ffi::OsString,
-    fs,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -25,6 +24,7 @@ use crate::models::{
     CodexMcpOauthCompletedDto, CodexMethodAvailabilityDto, CodexProtocolDiagnosticsDto,
     RuntimeToastDto,
 };
+use crate::runtime_env;
 
 use super::{
     codex_event_mapper::TurnEventMapper, codex_protocol::IncomingMessage,
@@ -62,12 +62,6 @@ const MAX_ATTACHMENT_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_TEXT_ATTACHMENT_CHARS: usize = 40_000;
 const PLAN_MODE_PROMPT_PREFIX: &str =
     "Plan the solution first. Do not execute commands or edit files until the plan is complete.";
-
-#[cfg(not(target_os = "windows"))]
-const LOGIN_SHELL_CLI_PROBES: &[(&str, &[&str])] = &[
-    ("/bin/zsh", &["-lic", "command -v codex"]),
-    ("/bin/bash", &["-lic", "command -v codex"]),
-];
 
 pub struct CodexEngine {
     state: Arc<Mutex<CodexState>>,
@@ -1592,19 +1586,10 @@ fn map_codex_model(value: CodexModel) -> ModelInfo {
 pub async fn resolve_codex_executable() -> CodexExecutableResolution {
     let app_path = std::env::var("PATH").ok();
 
-    if let Ok(path) = which::which("codex") {
+    if let Some(path) = runtime_env::resolve_executable("codex") {
         return CodexExecutableResolution {
             executable: Some(path),
             source: "app-path",
-            app_path,
-            login_shell_executable: None,
-        };
-    }
-
-    if let Some(path) = first_existing_executable_path(well_known_codex_paths()) {
-        return CodexExecutableResolution {
-            executable: Some(path),
-            source: "well-known-path",
             app_path,
             login_shell_executable: None,
         };
@@ -1749,25 +1734,12 @@ fn codex_fix_commands(
 }
 
 fn codex_augmented_path(executable: &Path) -> Option<OsString> {
-    let executable_dir = executable.parent()?.to_path_buf();
-    let mut entries = vec![executable_dir.clone()];
-
-    if let Some(current_path) = env::var_os("PATH") {
-        for path in env::split_paths(&current_path) {
-            if path != executable_dir {
-                entries.push(path);
-            }
-        }
-    } else {
-        for fallback in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
-            let fallback_path = PathBuf::from(fallback);
-            if fallback_path != executable_dir {
-                entries.push(fallback_path);
-            }
-        }
-    }
-
-    env::join_paths(entries).ok()
+    runtime_env::augmented_path_with_prepend(
+        executable
+            .parent()
+            .into_iter()
+            .map(|value| value.to_path_buf()),
+    )
 }
 
 fn codex_command(executable: &Path) -> Command {
@@ -1778,60 +1750,6 @@ fn codex_command(executable: &Path) -> Command {
     command
 }
 
-fn well_known_codex_paths() -> Vec<PathBuf> {
-    let mut candidates = vec![
-        PathBuf::from("/opt/homebrew/bin/codex"),
-        PathBuf::from("/usr/local/bin/codex"),
-        PathBuf::from("/opt/local/bin/codex"),
-    ];
-
-    if let Ok(home) = std::env::var("HOME") {
-        let home = PathBuf::from(home);
-        candidates.push(home.join(".local/bin/codex"));
-        candidates.push(home.join(".volta/bin/codex"));
-        candidates.push(home.join(".npm-global/bin/codex"));
-        candidates.push(home.join("bin/codex"));
-        candidates.extend(nvm_codex_paths(&home));
-    }
-
-    candidates
-}
-
-fn nvm_codex_paths(home: &Path) -> Vec<PathBuf> {
-    let versions_dir = home.join(".nvm/versions/node");
-    let Ok(entries) = fs::read_dir(versions_dir) else {
-        return Vec::new();
-    };
-
-    entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path().join("bin/codex"))
-        .collect()
-}
-
-fn first_existing_executable_path(paths: Vec<PathBuf>) -> Option<PathBuf> {
-    paths.into_iter().find(|path| is_executable_file(path))
-}
-
-fn is_executable_file(path: &Path) -> bool {
-    if !path.exists() {
-        return false;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path)
-            .map(|metadata| metadata.is_file() && (metadata.permissions().mode() & 0o111 != 0))
-            .unwrap_or(false)
-    }
-
-    #[cfg(not(unix))]
-    {
-        path.is_file()
-    }
-}
-
 async fn detect_codex_via_login_shell() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -1840,12 +1758,12 @@ async fn detect_codex_via_login_shell() -> Option<PathBuf> {
 
     #[cfg(not(target_os = "windows"))]
     {
-        for (shell, args) in LOGIN_SHELL_CLI_PROBES.iter().copied() {
-            if !Path::new(shell).exists() {
-                continue;
-            }
-
-            let output = match Command::new(shell).args(args).output().await {
+        for shell in runtime_env::login_probe_shells() {
+            let output = match Command::new(&shell)
+                .args(["-lic", "command -v codex"])
+                .output()
+                .await
+            {
                 Ok(output) if output.status.success() => output,
                 Ok(_) => continue,
                 Err(_) => continue,
@@ -1857,7 +1775,7 @@ async fn detect_codex_via_login_shell() -> Option<PathBuf> {
                 .map(str::trim)
                 .find(|line| line.starts_with('/'))
                 .map(PathBuf::from)
-                .filter(|path| is_executable_file(path))
+                .filter(|path| runtime_env::is_executable_file(path))
             {
                 return Some(path);
             }

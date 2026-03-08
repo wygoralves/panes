@@ -223,7 +223,7 @@
     "updateTrustFailed": "Falha ao atualizar o nível de confiança.",
     "toggleVisibilityFailed": "Falha ao alternar a visibilidade.",
     "updateTrustLevelsFailed": "Falha ao atualizar os níveis de confiança.",
-    "revealFailed": "Falha ao revelar o workspace no Finder."
+    "revealFailed": "Falha ao revelar o workspace no gerenciador de arquivos."
   },
   "more": {
     "options": "Opções do workspace",

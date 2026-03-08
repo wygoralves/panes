@@ -223,7 +223,7 @@
     "updateTrustFailed": "Failed to update trust level.",
     "toggleVisibilityFailed": "Failed to toggle visibility.",
     "updateTrustLevelsFailed": "Failed to update trust levels.",
-    "revealFailed": "Failed to reveal workspace in Finder."
+    "revealFailed": "Failed to reveal workspace in the file manager."
   },
   "more": {
     "options": "Workspace options",

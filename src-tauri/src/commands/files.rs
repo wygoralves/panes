@@ -100,9 +100,25 @@ fn reveal_path_impl(path: PathBuf) -> anyhow::Result<()> {
                 .map(|parent| parent.to_path_buf())
                 .unwrap_or_else(|| path.clone())
         };
-        let mut command = Command::new("xdg-open");
-        command.arg(&target);
-        spawn_command(command, &target)?;
+
+        if let Some(program) = crate::runtime_env::resolve_executable("xdg-open") {
+            let mut command = Command::new(program);
+            command.arg(&target);
+            spawn_command(command, &target)?;
+            return Ok(());
+        }
+
+        if let Some(program) = crate::runtime_env::resolve_executable("gio") {
+            let mut command = Command::new(program);
+            command.arg("open").arg(&target);
+            spawn_command(command, &target)?;
+            return Ok(());
+        }
+
+        anyhow::bail!(
+            "failed to reveal {}: neither xdg-open nor gio open is available",
+            target.display()
+        );
     }
 
     Ok(())

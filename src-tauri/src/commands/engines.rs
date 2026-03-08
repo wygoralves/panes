@@ -1,4 +1,4 @@
-use std::{path::Path, time::Instant};
+use std::time::Instant;
 
 use anyhow::Context;
 use tauri::State;
@@ -6,6 +6,7 @@ use tokio::process::Command;
 
 use crate::{
     models::{EngineCheckResultDto, EngineHealthDto, EngineInfoDto},
+    runtime_env,
     state::AppState,
 };
 
@@ -90,16 +91,17 @@ fn build_shell_command(command: &str) -> Command {
 
 #[cfg(not(target_os = "windows"))]
 fn build_shell_command(command: &str) -> Command {
-    let shell = if Path::new("/bin/zsh").exists() {
-        "/bin/zsh"
-    } else if Path::new("/bin/bash").exists() {
-        "/bin/bash"
-    } else {
-        "/bin/sh"
-    };
-
-    let mut cmd = Command::new(shell);
-    cmd.arg("-lc").arg(command);
+    let spec = runtime_env::command_shell_for_string(command);
+    let mut cmd = Command::new(&spec.program);
+    cmd.args(&spec.args);
+    if let Some(augmented_path) = runtime_env::augmented_path_with_prepend(
+        spec.program
+            .parent()
+            .into_iter()
+            .map(|value| value.to_path_buf()),
+    ) {
+        cmd.env("PATH", augmented_path);
+    }
     cmd
 }
 

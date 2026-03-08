@@ -1,8 +1,7 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    ffi::OsString,
+    collections::{HashMap, VecDeque},
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Condvar, Mutex,
@@ -24,6 +23,7 @@ use crate::models::{
     TerminalRendererDiagnosticsDto, TerminalReplayChunkDto, TerminalResizeSnapshotDto,
     TerminalResumeSessionDto, TerminalSessionDto,
 };
+use crate::runtime_env;
 
 const TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS: u64 = 16;
 const TERMINAL_OUTPUT_MAX_EMIT_BYTES: usize = 256 * 1024;
@@ -1068,8 +1068,9 @@ fn spawn_session(
     let env_snapshot = configure_terminal_env(&mut cmd);
     #[cfg(not(target_os = "windows"))]
     {
-        cmd.arg("-l");
-        cmd.arg("-i");
+        for arg in runtime_env::terminal_shell_args(Path::new(&shell)) {
+            cmd.arg(arg);
+        }
     }
     let child = pair
         .slave
@@ -1123,7 +1124,7 @@ fn default_shell() -> String {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+        runtime_env::terminal_shell().display().to_string()
     }
 }
 
@@ -1220,43 +1221,8 @@ fn configure_terminal_env(cmd: &mut CommandBuilder) -> TerminalEnvSnapshotDto {
     }
 }
 
-fn build_terminal_path(home: Option<&str>) -> Option<String> {
-    let mut entries: Vec<PathBuf> = read_non_empty_env("PATH")
-        .map(|raw| std::env::split_paths(&OsString::from(raw)).collect())
-        .unwrap_or_default();
-
-    #[cfg(target_os = "macos")]
-    {
-        entries.push(PathBuf::from("/opt/homebrew/bin"));
-        entries.push(PathBuf::from("/opt/homebrew/sbin"));
-        entries.push(PathBuf::from("/usr/local/bin"));
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        entries.push(PathBuf::from("/usr/bin"));
-        entries.push(PathBuf::from("/bin"));
-        entries.push(PathBuf::from("/usr/sbin"));
-        entries.push(PathBuf::from("/sbin"));
-    }
-
-    if let Some(home) = home {
-        let home = PathBuf::from(home);
-        entries.push(home.join(".local/bin"));
-        entries.push(home.join(".cargo/bin"));
-        entries.push(home.join(".deno/bin"));
-        entries.push(home.join("Library/pnpm"));
-    }
-
-    let mut seen = HashSet::new();
-    let mut deduped = Vec::with_capacity(entries.len());
-    for entry in entries {
-        if seen.insert(entry.clone()) {
-            deduped.push(entry);
-        }
-    }
-
-    let joined = std::env::join_paths(deduped).ok()?;
+fn build_terminal_path(_home: Option<&str>) -> Option<String> {
+    let joined = runtime_env::augmented_path()?;
     let rendered = joined.to_string_lossy().to_string();
     if rendered.trim().is_empty() {
         None

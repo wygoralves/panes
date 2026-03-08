@@ -6,6 +6,7 @@ mod fs_ops;
 mod git;
 mod locale;
 mod models;
+mod runtime_env;
 mod state;
 mod terminal;
 mod workspace_startup;

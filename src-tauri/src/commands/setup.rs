@@ -1,8 +1,4 @@
-use std::{
-    env,
-    ffi::OsString,
-    path::{Path, PathBuf},
-};
+use std::{ffi::OsString, path::Path};
 
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -10,6 +6,7 @@ use tokio::process::Command;
 
 use crate::engines::codex::resolve_codex_executable;
 use crate::models::{DepStatus, DependencyReport, InstallProgressEvent, InstallResult};
+use crate::runtime_env;
 
 // ---------------------------------------------------------------------------
 // check_dependencies
@@ -19,17 +16,7 @@ use crate::models::{DepStatus, DependencyReport, InstallProgressEvent, InstallRe
 pub async fn check_dependencies() -> Result<DependencyReport, String> {
     let (node, git, codex) = tokio::join!(detect_node(), detect_git(), detect_codex(),);
 
-    let has_homebrew = which::which("brew").is_ok()
-        || Path::new("/opt/homebrew/bin/brew").exists()
-        || Path::new("/usr/local/bin/brew").exists();
-
-    let mut package_managers = Vec::new();
-    if has_homebrew {
-        package_managers.push("homebrew".to_string());
-    }
-    if node.found {
-        package_managers.push("npm".to_string());
-    }
+    let package_managers = detect_package_managers(node.found).await;
 
     let platform = if cfg!(target_os = "macos") {
         "macos"
@@ -58,7 +45,8 @@ pub async fn install_dependency(
 ) -> Result<InstallResult, String> {
     let (program, args) = match (dependency.as_str(), method.as_str()) {
         ("node", "homebrew") => {
-            let brew = resolve_brew_path();
+            let brew =
+                resolve_brew_path().ok_or_else(|| "homebrew executable not found".to_string())?;
             (brew, vec!["install".to_string(), "node".to_string()])
         }
         ("codex", "npm_global") => {
@@ -87,8 +75,7 @@ pub async fn install_dependency(
 // ---------------------------------------------------------------------------
 
 async fn detect_node() -> DepStatus {
-    // Try which first (will only work if node is in the app's minimal PATH)
-    if let Ok(path) = which::which("node") {
+    if let Some(path) = runtime_env::resolve_executable("node") {
         if let Some(version) = get_command_version(&path, &["--version"]).await {
             return DepStatus {
                 found: true,
@@ -100,41 +87,6 @@ async fn detect_node() -> DepStatus {
         }
     }
 
-    // Well-known paths — covers Homebrew, system, Volta, fnm, nvm
-    let mut candidates = vec![
-        PathBuf::from("/opt/homebrew/bin/node"),
-        PathBuf::from("/usr/local/bin/node"),
-    ];
-    if let Ok(home) = std::env::var("HOME") {
-        let home = PathBuf::from(&home);
-        candidates.push(home.join(".volta/bin/node"));
-        candidates.push(home.join(".local/share/fnm/aliases/default/bin/node"));
-        candidates.push(home.join(".local/bin/node"));
-        // nvm: scan all installed versions
-        let nvm_dir = home.join(".nvm/versions/node");
-        if let Ok(entries) = std::fs::read_dir(nvm_dir) {
-            for entry in entries.filter_map(Result::ok) {
-                candidates.push(entry.path().join("bin/node"));
-            }
-        }
-    }
-
-    for path in &candidates {
-        if path.exists() {
-            if let Some(version) = get_command_version(path, &["--version"]).await {
-                return DepStatus {
-                    found: true,
-                    version: Some(version),
-                    path: Some(path.display().to_string()),
-                    can_auto_install: false,
-                    install_method: None,
-                };
-            }
-        }
-    }
-
-    // Login shell probe — the most reliable way on macOS .app bundles
-    // since the app inherits a minimal PATH
     if let Some((path, version)) = detect_via_login_shell("node", "--version").await {
         return DepStatus {
             found: true,
@@ -146,9 +98,7 @@ async fn detect_node() -> DepStatus {
     }
 
     // Not found — check if we can auto-install
-    let has_homebrew = which::which("brew").is_ok()
-        || Path::new("/opt/homebrew/bin/brew").exists()
-        || Path::new("/usr/local/bin/brew").exists();
+    let has_homebrew = resolve_brew_path().is_some();
 
     DepStatus {
         found: false,
@@ -164,25 +114,12 @@ async fn detect_node() -> DepStatus {
 }
 
 async fn detect_git() -> DepStatus {
-    if let Ok(path) = which::which("git") {
+    if let Some(path) = runtime_env::resolve_executable("git") {
         if let Some(version) = get_command_version(&path, &["--version"]).await {
             return DepStatus {
                 found: true,
                 version: Some(version),
                 path: Some(path.display().to_string()),
-                can_auto_install: false,
-                install_method: None,
-            };
-        }
-    }
-
-    if Path::new("/usr/bin/git").exists() {
-        if let Some(version) = get_command_version(Path::new("/usr/bin/git"), &["--version"]).await
-        {
-            return DepStatus {
-                found: true,
-                version: Some(version),
-                path: Some("/usr/bin/git".to_string()),
                 can_auto_install: false,
                 install_method: None,
             };
@@ -225,8 +162,7 @@ async fn detect_codex() -> DepStatus {
     // Not found — check if npm is available for auto-install.
     // On macOS .app, `which` won't find npm since the process PATH is minimal,
     // so check well-known paths and login shell too.
-    let npm_available = which::which("npm").is_ok()
-        || resolve_npm_from_well_known().is_some()
+    let npm_available = runtime_env::resolve_executable("npm").is_some()
         || detect_via_login_shell("npm", "--version").await.is_some();
 
     DepStatus {
@@ -269,7 +205,18 @@ async fn run_install_process(
         false,
     );
 
-    let mut child = build_login_shell_command(program, args)
+    let mut command = Command::new(program);
+    command.args(args);
+    if let Some(augmented_path) = runtime_env::augmented_path_with_prepend(
+        Path::new(program)
+            .parent()
+            .into_iter()
+            .map(|value| value.to_path_buf()),
+    ) {
+        command.env("PATH", augmented_path);
+    }
+
+    let mut child = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -378,36 +325,19 @@ async fn get_command_version_with_augmented_path(path: &Path, args: &[&str]) -> 
 }
 
 fn executable_augmented_path(executable: &Path) -> Option<OsString> {
-    let executable_dir = executable.parent()?.to_path_buf();
-    let mut entries = vec![executable_dir.clone()];
-
-    if let Some(current_path) = env::var_os("PATH") {
-        for path in env::split_paths(&current_path) {
-            if path != executable_dir {
-                entries.push(path);
-            }
-        }
-    } else {
-        for fallback in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
-            let fallback_path = PathBuf::from(fallback);
-            if fallback_path != executable_dir {
-                entries.push(fallback_path);
-            }
-        }
-    }
-
-    env::join_paths(entries).ok()
+    runtime_env::augmented_path_with_prepend(
+        executable
+            .parent()
+            .into_iter()
+            .map(|value| value.to_path_buf()),
+    )
 }
 
 #[cfg(not(target_os = "windows"))]
 async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(String, String)> {
-    for shell in &["/bin/zsh", "/bin/bash"] {
-        if !Path::new(shell).exists() {
-            continue;
-        }
-
+    for shell in runtime_env::login_probe_shells() {
         let probe_cmd = format!("command -v {command} && {command} {version_flag}");
-        let output = match Command::new(shell)
+        let output = match Command::new(&shell)
             .args(["-lic", &probe_cmd])
             .output()
             .await
@@ -435,111 +365,39 @@ async fn detect_via_login_shell(_command: &str, _version_flag: &str) -> Option<(
     None
 }
 
-fn resolve_brew_path() -> String {
-    if let Ok(path) = which::which("brew") {
-        return path.display().to_string();
-    }
-    if Path::new("/opt/homebrew/bin/brew").exists() {
-        return "/opt/homebrew/bin/brew".to_string();
-    }
-    if Path::new("/usr/local/bin/brew").exists() {
-        return "/usr/local/bin/brew".to_string();
-    }
-    "brew".to_string()
+fn resolve_brew_path() -> Option<String> {
+    runtime_env::resolve_executable("brew").map(|path| path.display().to_string())
 }
 
 async fn resolve_npm_path() -> String {
-    if let Ok(path) = which::which("npm") {
+    if let Some(path) = runtime_env::resolve_executable("npm") {
         return path.display().to_string();
     }
-    if let Some(path) = resolve_npm_from_well_known() {
+    if let Some((path, _version)) = detect_via_login_shell("npm", "--version").await {
         return path;
-    }
-    // Try login shell
-    #[cfg(not(target_os = "windows"))]
-    {
-        for shell in &["/bin/zsh", "/bin/bash"] {
-            if !Path::new(shell).exists() {
-                continue;
-            }
-            if let Ok(output) = Command::new(shell)
-                .args(["-lic", "command -v npm"])
-                .output()
-                .await
-            {
-                if output.status.success() {
-                    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if path.starts_with('/') {
-                        return path;
-                    }
-                }
-            }
-        }
     }
     "npm".to_string()
 }
 
-fn resolve_npm_from_well_known() -> Option<String> {
-    let mut candidates: Vec<PathBuf> = vec![
-        PathBuf::from("/opt/homebrew/bin/npm"),
-        PathBuf::from("/usr/local/bin/npm"),
-    ];
-    if let Ok(home) = std::env::var("HOME") {
-        let home = PathBuf::from(&home);
-        candidates.push(home.join(".volta/bin/npm"));
-        candidates.push(home.join(".local/share/fnm/aliases/default/bin/npm"));
-        candidates.push(home.join(".local/bin/npm"));
-        // nvm: scan all installed versions
-        let nvm_dir = home.join(".nvm/versions/node");
-        if let Ok(entries) = std::fs::read_dir(nvm_dir) {
-            for entry in entries.filter_map(Result::ok) {
-                candidates.push(entry.path().join("bin/npm"));
+async fn detect_package_managers(node_found: bool) -> Vec<String> {
+    let mut package_managers = Vec::new();
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if resolve_brew_path().is_some() {
+            package_managers.push("homebrew".to_string());
+        }
+        if node_found {
+            package_managers.push("npm".to_string());
+        }
+        if cfg!(target_os = "linux") {
+            for manager in ["apt", "dnf", "pacman", "zypper", "apk"] {
+                if runtime_env::resolve_executable(manager).is_some() {
+                    package_managers.push(manager.to_string());
+                }
             }
         }
     }
-    for path in &candidates {
-        if path.exists() {
-            return Some(path.display().to_string());
-        }
-    }
-    None
-}
 
-#[cfg(not(target_os = "windows"))]
-fn build_login_shell_command(program: &str, args: &[String]) -> Command {
-    let shell = if Path::new("/bin/zsh").exists() {
-        "/bin/zsh"
-    } else if Path::new("/bin/bash").exists() {
-        "/bin/bash"
-    } else {
-        "/bin/sh"
-    };
-
-    let full_command = format!(
-        "{} {}",
-        shell_escape(program),
-        args.iter()
-            .map(|a| shell_escape(a))
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
-
-    let mut cmd = Command::new(shell);
-    cmd.arg("-lc").arg(full_command);
-    cmd
-}
-
-#[cfg(target_os = "windows")]
-fn build_login_shell_command(program: &str, args: &[String]) -> Command {
-    let mut cmd = Command::new(program);
-    cmd.args(args);
-    cmd
-}
-
-fn shell_escape(s: &str) -> String {
-    if s.contains(' ') || s.contains('"') || s.contains('\'') || s.contains('$') {
-        format!("'{}'", s.replace('\'', "'\\''"))
-    } else {
-        s.to_string()
-    }
+    package_managers
 }

@@ -1,10 +1,11 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::models::{HarnessInfo, HarnessReport, InstallProgressEvent, InstallResult};
+use crate::runtime_env;
 
 // ---------------------------------------------------------------------------
 // Harness definitions
@@ -125,8 +126,7 @@ pub async fn check_harnesses() -> Result<HarnessReport, String> {
         harnesses.push(status);
     }
 
-    let npm_available = which::which("npm").is_ok()
-        || resolve_npm_from_well_known().is_some()
+    let npm_available = runtime_env::resolve_executable("npm").is_some()
         || detect_via_login_shell("npm", "--version").await.is_some();
 
     Ok(HarnessReport {
@@ -189,8 +189,7 @@ pub async fn launch_harness(harness_id: String) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
-    // Try `which` first
-    if let Ok(path) = which::which(def.command) {
+    if let Some(path) = runtime_env::resolve_executable(def.command) {
         if let Some(version) = get_command_version(&path, &[def.version_flag]).await {
             return HarnessInfo {
                 id: def.id.to_string(),
@@ -207,39 +206,6 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
         }
     }
 
-    // Well-known paths
-    let mut candidates: Vec<PathBuf> = vec![
-        PathBuf::from(format!("/opt/homebrew/bin/{}", def.command)),
-        PathBuf::from(format!("/usr/local/bin/{}", def.command)),
-    ];
-    if let Ok(home) = std::env::var("HOME") {
-        let home = PathBuf::from(&home);
-        candidates.push(home.join(format!(".local/bin/{}", def.command)));
-        candidates.push(home.join(format!(".volta/bin/{}", def.command)));
-        // npm global bin
-        candidates.push(home.join(format!(".npm-global/bin/{}", def.command)));
-    }
-
-    for path in &candidates {
-        if path.exists() {
-            if let Some(version) = get_command_version(path, &[def.version_flag]).await {
-                return HarnessInfo {
-                    id: def.id.to_string(),
-                    name: def.name.to_string(),
-                    description: def.description.to_string(),
-                    command: def.command.to_string(),
-                    found: true,
-                    version: Some(version),
-                    path: Some(path.display().to_string()),
-                    can_auto_install: def.install_command.is_some() || def.install_script.is_some(),
-                    website: def.website.to_string(),
-                    native: def.native,
-                };
-            }
-        }
-    }
-
-    // Login shell probe
     if let Some((path, version)) = detect_via_login_shell(def.command, def.version_flag).await {
         return HarnessInfo {
             id: def.id.to_string(),
@@ -295,7 +261,18 @@ async fn run_harness_install(
         false,
     );
 
-    let mut child = build_login_shell_command(program, args)
+    let mut command = Command::new(program);
+    command.args(args);
+    if let Some(augmented_path) = runtime_env::augmented_path_with_prepend(
+        Path::new(program)
+            .parent()
+            .into_iter()
+            .map(|value| value.to_path_buf()),
+    ) {
+        command.env("PATH", augmented_path);
+    }
+
+    let mut child = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -390,17 +367,19 @@ async fn run_harness_install_script(
 
     emit(format!("$ {script}"), "status".to_string(), false);
 
-    let shell = if Path::new("/bin/zsh").exists() {
-        "/bin/zsh"
-    } else if Path::new("/bin/bash").exists() {
-        "/bin/bash"
-    } else {
-        "/bin/sh"
-    };
+    let spec = runtime_env::command_shell_for_string(script);
+    let mut command = Command::new(&spec.program);
+    command.args(&spec.args);
+    if let Some(augmented_path) = runtime_env::augmented_path_with_prepend(
+        spec.program
+            .parent()
+            .into_iter()
+            .map(|value| value.to_path_buf()),
+    ) {
+        command.env("PATH", augmented_path);
+    }
 
-    let mut child = Command::new(shell)
-        .arg("-lc")
-        .arg(script)
+    let mut child = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -493,13 +472,9 @@ async fn get_command_version(path: &Path, args: &[&str]) -> Option<String> {
 
 #[cfg(not(target_os = "windows"))]
 async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(String, String)> {
-    for shell in &["/bin/zsh", "/bin/bash"] {
-        if !Path::new(shell).exists() {
-            continue;
-        }
-
+    for shell in runtime_env::login_probe_shells() {
         let probe_cmd = format!("command -v {command} && {command} {version_flag}");
-        let output = match Command::new(shell)
+        let output = match Command::new(&shell)
             .args(["-lic", &probe_cmd])
             .output()
             .await
@@ -528,95 +503,11 @@ async fn detect_via_login_shell(_command: &str, _version_flag: &str) -> Option<(
 }
 
 async fn resolve_npm_path() -> String {
-    if let Ok(path) = which::which("npm") {
+    if let Some(path) = runtime_env::resolve_executable("npm") {
         return path.display().to_string();
     }
-    if let Some(path) = resolve_npm_from_well_known() {
+    if let Some((path, _version)) = detect_via_login_shell("npm", "--version").await {
         return path;
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        for shell in &["/bin/zsh", "/bin/bash"] {
-            if !Path::new(shell).exists() {
-                continue;
-            }
-            if let Ok(output) = Command::new(shell)
-                .args(["-lic", "command -v npm"])
-                .output()
-                .await
-            {
-                if output.status.success() {
-                    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if path.starts_with('/') {
-                        return path;
-                    }
-                }
-            }
-        }
-    }
     "npm".to_string()
-}
-
-fn resolve_npm_from_well_known() -> Option<String> {
-    let mut candidates: Vec<PathBuf> = vec![
-        PathBuf::from("/opt/homebrew/bin/npm"),
-        PathBuf::from("/usr/local/bin/npm"),
-    ];
-    if let Ok(home) = std::env::var("HOME") {
-        let home = PathBuf::from(&home);
-        candidates.push(home.join(".volta/bin/npm"));
-        candidates.push(home.join(".local/share/fnm/aliases/default/bin/npm"));
-        candidates.push(home.join(".local/bin/npm"));
-        let nvm_dir = home.join(".nvm/versions/node");
-        if let Ok(entries) = std::fs::read_dir(nvm_dir) {
-            for entry in entries.filter_map(Result::ok) {
-                candidates.push(entry.path().join("bin/npm"));
-            }
-        }
-    }
-    for path in &candidates {
-        if path.exists() {
-            return Some(path.display().to_string());
-        }
-    }
-    None
-}
-
-#[cfg(not(target_os = "windows"))]
-fn build_login_shell_command(program: &str, args: &[String]) -> Command {
-    let shell = if Path::new("/bin/zsh").exists() {
-        "/bin/zsh"
-    } else if Path::new("/bin/bash").exists() {
-        "/bin/bash"
-    } else {
-        "/bin/sh"
-    };
-
-    let full_command = format!(
-        "{} {}",
-        shell_escape(program),
-        args.iter()
-            .map(|a| shell_escape(a))
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
-
-    let mut cmd = Command::new(shell);
-    cmd.arg("-lc").arg(full_command);
-    cmd
-}
-
-#[cfg(target_os = "windows")]
-fn build_login_shell_command(program: &str, args: &[String]) -> Command {
-    let mut cmd = Command::new(program);
-    cmd.args(args);
-    cmd
-}
-
-fn shell_escape(s: &str) -> String {
-    if s.contains(' ') || s.contains('"') || s.contains('\'') || s.contains('$') {
-        format!("'{}'", s.replace('\'', "'\\''"))
-    } else {
-        s.to_string()
-    }
 }

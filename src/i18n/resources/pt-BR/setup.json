@@ -32,6 +32,7 @@
     "installCodex": "Instalar Codex CLI",
     "nodeAltOrDownload": "Ou baixe em https://nodejs.org",
     "nodeAltInstall": "Instale o Node.js 20+ em https://nodejs.org",
+    "nodeAltPackageManagerDetected": "Instale o Node.js 20+ com {{manager}} ou em https://nodejs.org",
     "nodeAltPackageManager": "Instale o Node.js 20+ com o gerenciador de pacotes do seu sistema operacional ou em https://nodejs.org",
     "copied": "Copiado"
   },
