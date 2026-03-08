@@ -647,41 +647,54 @@ const STYLES = {
     position: "fixed" as const,
     inset: 0,
     zIndex: 10001,
-    background: "rgba(8, 9, 12, 0.65)",
-    backdropFilter: "blur(8px)",
-    WebkitBackdropFilter: "blur(8px)",
+    background: "rgba(0, 0, 0, 0.55)",
+    backdropFilter: "blur(16px)",
+    WebkitBackdropFilter: "blur(16px)",
     display: "flex",
     alignItems: "flex-start" as const,
     justifyContent: "center" as const,
-    padding: "12vh 20px 20px",
+    padding: "min(12vh, 120px) 20px 20px",
   },
   card: {
-    width: "min(680px, calc(100% - 40px))",
-    maxHeight: "72vh",
+    width: "min(640px, calc(100% - 40px))",
+    maxHeight: "min(520px, 72vh)",
     overflow: "hidden" as const,
     display: "grid",
     gridTemplateRows: "auto 1fr auto",
-    boxShadow: "0 22px 70px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04)",
-    animation: "slide-up 150ms cubic-bezier(0.16, 1, 0.3, 1) both",
+    borderRadius: "var(--radius-lg)",
+    background: "rgba(14, 14, 16, 0.95)",
+    boxShadow:
+      "0 0 0 1px rgba(255, 255, 255, 0.08), " +
+      "0 24px 68px rgba(0, 0, 0, 0.55)",
+    animation: "slide-up 180ms cubic-bezier(0.16, 1, 0.3, 1) both",
   },
   inputRow: {
     display: "flex",
     alignItems: "center" as const,
-    gap: 6,
-    padding: "14px 14px 12px",
+    gap: 10,
+    padding: "14px 16px",
     borderBottom: "1px solid var(--border)",
+  },
+  inputIcon: {
+    display: "flex",
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    color: "var(--text-2)",
+    flexShrink: 0,
   },
   modeBadge: {
     display: "inline-flex",
     alignItems: "center" as const,
-    padding: "2px 7px",
+    padding: "2px 8px",
     background: "var(--accent-dim)",
     color: "var(--accent)",
+    border: "1px solid var(--border-accent)",
     borderRadius: "var(--radius-sm)",
     fontSize: 11,
     fontWeight: 600,
     fontFamily: "monospace",
     flexShrink: 0,
+    letterSpacing: "0.02em",
   },
   input: {
     flex: 1,
@@ -689,43 +702,52 @@ const STYLES = {
     border: "none",
     outline: "none",
     color: "var(--text-1)",
-    fontSize: 14,
+    fontSize: 15,
     fontFamily: "inherit",
     lineHeight: 1.5,
+    minWidth: 0,
   },
   results: {
     overflowY: "auto" as const,
-    maxHeight: "calc(72vh - 100px)",
+    padding: "6px 0",
   },
   groupHeader: {
-    padding: "8px 12px 4px",
-    fontSize: 11,
+    padding: "10px 16px 4px",
+    fontSize: 10.5,
     fontWeight: 600,
     textTransform: "uppercase" as const,
     letterSpacing: "0.08em",
     color: "var(--text-3)",
     userSelect: "none" as const,
   },
+  groupDivider: {
+    height: 1,
+    margin: "4px 16px",
+    background: "var(--border)",
+  },
   item: (active: boolean) => ({
     display: "grid",
-    gridTemplateColumns: "28px 1fr auto",
+    gridTemplateColumns: "24px 1fr auto",
     alignItems: "center" as const,
     gap: 8,
     padding: "0 12px",
+    margin: "1px 6px",
     minHeight: 40,
-    width: "100%",
+    width: "calc(100% - 12px)",
     border: "none",
-    background: active ? "rgba(255, 107, 107, 0.08)" : "transparent",
+    borderRadius: "var(--radius-sm)",
+    background: active ? "rgba(255, 255, 255, 0.07)" : "transparent",
     cursor: "pointer",
     textAlign: "left" as const,
     fontFamily: "inherit",
-    transition: "background 60ms ease",
+    transition: "background 80ms ease-out",
   }),
   itemIcon: (active: boolean) => ({
     display: "flex",
     alignItems: "center" as const,
     justifyContent: "center" as const,
     color: active ? "var(--accent)" : "var(--text-3)",
+    transition: "color 80ms ease-out",
   }),
   itemLabel: {
     fontSize: 13,
@@ -742,32 +764,73 @@ const STYLES = {
     whiteSpace: "nowrap" as const,
   },
   itemShortcut: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: "var(--text-3)",
+    padding: "2px 6px",
+    background: "var(--bg-4)",
+    borderRadius: 4,
     fontFamily: "monospace",
     flexShrink: 0,
+    letterSpacing: "0.02em",
+  },
+  inlineBadge: {
+    fontSize: 10,
+    padding: "1px 6px",
+    borderRadius: 4,
+    background: "var(--bg-4)",
+    border: "1px solid var(--border)",
+    color: "var(--text-3)",
+    flexShrink: 0,
+  },
+  chip: (active: boolean) => ({
+    display: "inline-flex",
+    alignItems: "center" as const,
+    gap: 4,
+    padding: "3px 10px",
+    borderRadius: 20,
+    fontSize: 11,
+    fontWeight: 500,
+    cursor: "pointer",
+    border: "none",
+    fontFamily: "inherit",
+    background: active ? "var(--accent-dim)" : "var(--bg-4)",
+    color: active ? "var(--accent)" : "var(--text-3)",
+    transition: "background 100ms ease-out, color 100ms ease-out",
+  }),
+  chipBar: {
+    display: "flex" as const,
+    gap: 6,
+    padding: "8px 16px",
+    borderBottom: "1px solid var(--border)",
   },
   footer: {
     display: "flex",
     alignItems: "center" as const,
-    gap: 16,
-    padding: "7px 14px",
+    flexWrap: "wrap" as const,
+    gap: "6px 16px",
+    padding: "8px 16px",
     borderTop: "1px solid var(--border)",
     fontSize: 11,
     color: "var(--text-3)",
     userSelect: "none" as const,
   },
   footerKbd: {
+    display: "inline-flex" as const,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
     fontFamily: "monospace",
     fontSize: 10,
-    padding: "1px 4px",
-    borderRadius: 3,
+    lineHeight: 1,
+    padding: "2px 5px",
+    minWidth: 18,
+    borderRadius: 4,
     background: "var(--bg-4)",
+    border: "1px solid var(--border)",
     color: "var(--text-2)",
     marginRight: 3,
   },
   emptyState: {
-    padding: "32px 16px",
+    padding: "40px 16px",
     textAlign: "center" as const,
     color: "var(--text-3)",
     fontSize: 12.5,
@@ -1956,14 +2019,7 @@ export function CommandPalette({ open, onClose }: Props) {
             <span style={{ ...STYLES.itemLabel, display: "flex", alignItems: "center", gap: 6 }}>
               {item.entry.label}
               {showRepoBadge && (
-                <span style={{
-                  fontSize: 10,
-                  padding: "1px 5px",
-                  borderRadius: 3,
-                  background: "var(--bg-4)",
-                  color: "var(--text-3)",
-                  flexShrink: 0,
-                }}>{activeRepo.name}</span>
+                <span style={STYLES.inlineBadge}>{activeRepo.name}</span>
               )}
             </span>
             {item.entry.shortcut && <span style={STYLES.itemShortcut}>{item.entry.shortcut}</span>}
@@ -2081,8 +2137,8 @@ export function CommandPalette({ open, onClose }: Props) {
             <span style={STYLES.itemIcon(active)}><GitBranchIcon size={16} /></span>
             <span style={STYLES.itemLabel}>
               {item.entry.name}
-              {item.entry.isCurrent && <span style={{ color: "var(--accent)", marginLeft: 6, fontSize: 11 }}>{t("commandPalette.status.current")}</span>}
-              {item.entry.isRemote && <span style={{ color: "var(--text-3)", marginLeft: 6, fontSize: 11 }}>{t("commandPalette.status.remote")}</span>}
+              {item.entry.isCurrent && <span style={{ ...STYLES.inlineBadge, background: "var(--accent-dim)", color: "var(--accent)", border: "1px solid var(--border-accent)", marginLeft: 4 }}>{t("commandPalette.status.current")}</span>}
+              {item.entry.isRemote && <span style={{ ...STYLES.inlineBadge, marginLeft: 4 }}>{t("commandPalette.status.remote")}</span>}
             </span>
             <span />
           </button>
@@ -2101,14 +2157,7 @@ export function CommandPalette({ open, onClose }: Props) {
             <span style={{ ...STYLES.itemLabel, display: "flex", alignItems: "center", gap: 6 }}>
               {item.entry.name}
               {item.entry.branchHint && (
-                <span style={{
-                  fontSize: 10,
-                  padding: "1px 5px",
-                  borderRadius: 3,
-                  background: "var(--bg-4)",
-                  color: "var(--text-3)",
-                  flexShrink: 0,
-                }}>{item.entry.branchHint}</span>
+                <span style={STYLES.inlineBadge}>{item.entry.branchHint}</span>
               )}
             </span>
             <span />
@@ -2130,7 +2179,7 @@ export function CommandPalette({ open, onClose }: Props) {
               <span style={{ ...STYLES.itemLabel, display: "flex", alignItems: "center", gap: 6 }}>
                 {item.entry.name}
                 {isCurrent && (
-                  <span style={{ color: "var(--accent)", fontSize: 11, flexShrink: 0 }}>{t("commandPalette.status.current")}</span>
+                  <span style={{ ...STYLES.inlineBadge, background: "var(--accent-dim)", color: "var(--accent)", border: "1px solid var(--border-accent)" }}>{t("commandPalette.status.current")}</span>
                 )}
               </span>
               <span style={STYLES.itemDescription}>{item.entry.path}</span>
@@ -2150,7 +2199,7 @@ export function CommandPalette({ open, onClose }: Props) {
           >
             <span style={STYLES.itemIcon(active)}><Send size={16} /></span>
             <span style={{ overflow: "hidden" }}>
-              <span style={{ ...STYLES.itemLabel, fontSize: 12.5 }}>
+              <span style={STYLES.itemLabel}>
                 {t("commandPalette.sendMessage.sendTo", {
                   name: activeThread?.title ?? t("commandPalette.status.chatFallback"),
                 })}
@@ -2187,12 +2236,17 @@ export function CommandPalette({ open, onClose }: Props) {
     <div style={STYLES.backdrop} onClick={onClose}>
       <div
         className="surface"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
         style={STYLES.card}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Input row */}
         <div style={STYLES.inputRow}>
-          {getModeBadge()}
+          {getModeBadge() || (
+            <span style={STYLES.inputIcon}><Search size={18} /></span>
+          )}
           <input
             ref={inputRef}
             style={STYLES.input}
@@ -2202,95 +2256,41 @@ export function CommandPalette({ open, onClose }: Props) {
             placeholder={getPlaceholder()}
             spellCheck={false}
             autoComplete="off"
+            aria-label={getPlaceholder()}
           />
         </div>
 
         {/* Results */}
         <div ref={resultsRef} style={STYLES.results}>
           {mode === "search" && !subFlow && (
-            <div style={{
-              display: "flex",
-              gap: 6,
-              padding: "6px 14px",
-              borderBottom: "1px solid var(--border)",
-            }}>
-              {(["all", "messages", "files", "threads"] as const).map((scope) => {
-                const active = searchScope === scope;
-                return (
-                  <button
-                    key={scope}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 4,
-                      padding: "2px 8px",
-                      borderRadius: "var(--radius-sm, 4px)",
-                      fontSize: 11,
-                      fontWeight: 500,
-                      cursor: "pointer",
-                      border: "none",
-                      fontFamily: "inherit",
-                      background: active ? "var(--accent-dim)" : "var(--bg-4)",
-                      color: active ? "var(--accent)" : "var(--text-3)",
-                      transition: "background 60ms ease, color 60ms ease",
-                    }}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => {
-                      setSearchScope(scope);
-                      setActiveIndex(0);
-                    }}
-                  >
-                    {t(`commandPalette.searchScopes.${scope}`)}
-                  </button>
-                );
-              })}
+            <div style={STYLES.chipBar}>
+              {(["all", "messages", "files", "threads"] as const).map((scope) => (
+                <button
+                  key={scope}
+                  style={STYLES.chip(searchScope === scope)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    setSearchScope(scope);
+                    setActiveIndex(0);
+                  }}
+                >
+                  {t(`commandPalette.searchScopes.${scope}`)}
+                </button>
+              ))}
             </div>
           )}
           {/* Filter chips — auto mode only */}
           {mode === "auto" && term.length >= 1 && !subFlow && (
-            <div style={{
-              display: "flex",
-              gap: 6,
-              padding: "6px 14px",
-              borderBottom: "1px solid var(--border)",
-            }}>
+            <div style={STYLES.chipBar}>
               <button
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 4,
-                  padding: "2px 8px",
-                  borderRadius: "var(--radius-sm, 4px)",
-                  fontSize: 11,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  border: "none",
-                  fontFamily: "inherit",
-                  background: showFilesInAuto ? "var(--accent-dim)" : "var(--bg-4)",
-                  color: showFilesInAuto ? "var(--accent)" : "var(--text-3)",
-                  transition: "background 60ms ease, color 60ms ease",
-                }}
+                style={STYLES.chip(showFilesInAuto)}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => { setShowFilesInAuto((v) => !v); setActiveIndex(0); }}
               >
                 <File size={11} /> {t("commandPalette.chips.files")}
               </button>
               <button
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 4,
-                  padding: "2px 8px",
-                  borderRadius: "var(--radius-sm, 4px)",
-                  fontSize: 11,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  border: "none",
-                  fontFamily: "inherit",
-                  background: showThreadsInAuto ? "var(--accent-dim)" : "var(--bg-4)",
-                  color: showThreadsInAuto ? "var(--accent)" : "var(--text-3)",
-                  transition: "background 60ms ease, color 60ms ease",
-                }}
+                style={STYLES.chip(showThreadsInAuto)}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => { setShowThreadsInAuto((v) => !v); setActiveIndex(0); }}
               >
@@ -2307,6 +2307,7 @@ export function CommandPalette({ open, onClose }: Props) {
           )}
           {groups.map((group, gi) => (
             <div key={gi}>
+              {gi > 0 && group.label && <div style={STYLES.groupDivider} />}
               {group.label && <div style={STYLES.groupHeader}>{group.label}</div>}
               {group.items.map((item) => {
                 const node = renderItem(item, flatIndex);
