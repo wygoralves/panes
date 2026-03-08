@@ -101,6 +101,18 @@ Homebrew is the primary macOS install path for prebuilt Panes releases. The app 
 
 Panes is not currently signed and notarized with Apple, so Homebrew only reduces Gatekeeper friction; it does not eliminate it. The tap applies a best-effort quarantine removal step during install, but macOS may still require a manual first-launch confirmation depending on system policy. If that happens, use Finder's Open flow or download the DMG directly from [GitHub Releases](https://github.com/wygoralves/panes/releases/latest).
 
+If Gatekeeper blocks a direct DMG install, use these commands instead of disabling Gatekeeper globally:
+
+```bash
+# If macOS blocks the downloaded DMG itself
+xattr -d com.apple.quarantine ~/Downloads/Panes*.dmg
+open ~/Downloads/Panes*.dmg
+
+# After dragging Panes.app into /Applications, if first launch is blocked
+xattr -dr com.apple.quarantine /Applications/Panes.app
+open /Applications/Panes.app
+```
+
 Maintainers can find the tap/release automation setup in [docs/homebrew-distribution.md](./docs/homebrew-distribution.md).
 
 ### Install and Run from Source
