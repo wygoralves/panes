@@ -242,7 +242,7 @@ export function GitRemotesView({ repo, onClose }: Props) {
                   setAddUrl("");
                 }}
               >
-                {t("common.cancel", { ns: "common" })}
+                {t("actions.cancel", { ns: "common" })}
               </button>
               <button
                 type="button"

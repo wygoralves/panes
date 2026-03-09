@@ -328,7 +328,7 @@ export function GitBranchesView({ repo, onError }: Props) {
           }}
         >
           {showNewBranch ? <X size={11} /> : <Plus size={11} />}
-          {showNewBranch ? t("common.cancel", { ns: "common" }) : t("branches.new")}
+          {showNewBranch ? t("actions.cancel", { ns: "common" }) : t("branches.new")}
         </button>
       </div>
 

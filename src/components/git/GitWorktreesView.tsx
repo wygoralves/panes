@@ -313,7 +313,7 @@ export function GitWorktreesView({ repo, onError }: Props) {
           }}
         >
           {showCreate ? <X size={11} /> : <Plus size={11} />}
-          {showCreate ? t("common.cancel", { ns: "common" }) : t("worktrees.new")}
+          {showCreate ? t("actions.cancel", { ns: "common" }) : t("worktrees.new")}
         </button>
       </div>
 
