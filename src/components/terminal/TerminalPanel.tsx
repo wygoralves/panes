@@ -149,6 +149,7 @@ interface SessionTerminal {
   stdinFlushInFlight: boolean;
   stdinFlushTimer?: number;
   lastInputSentAt?: number;
+  lastInputDropWarnAt?: number;
   outputQueue: string[];
   outputQueueChars: number;
   lastAppliedSeq: number;
@@ -204,6 +205,8 @@ const DEFAULT_ROWS = 36;
 const FIT_DEBOUNCE_MS = 80;
 const INPUT_FLUSH_DELAY_MS = 4;
 const INPUT_BATCH_CHAR_LIMIT = 4096;
+const INPUT_QUEUE_MAX_CHARS = 256 * 1024;
+const INPUT_DROP_WARN_COOLDOWN_MS = 5000;
 const OUTPUT_FLUSH_DELAY_MS = 4;
 const OUTPUT_FLUSH_STALL_TIMEOUT_MS = 2500;
 const OUTPUT_BATCH_CHAR_LIMIT = 65536;
@@ -233,6 +236,7 @@ const IMAGE_ADDON_ERROR_PATTERNS = [
 ];
 
 let acceleratedTerminalRenderingEnabled = true;
+let acceleratedTerminalRenderingPreferenceLoaded = false;
 
 // Module-level cache — xterm instances survive component mount/unmount cycles.
 // This is what preserves terminal scrollback when switching workspaces.
@@ -405,7 +409,9 @@ function isLikelyImageAddonError(error: unknown): boolean {
 
 function createRendererDiagnostics(): FrontendRendererDiagnostics {
   return {
-    acceleratedRenderingEnabled: acceleratedTerminalRenderingEnabled,
+    acceleratedRenderingEnabled:
+      acceleratedTerminalRenderingPreferenceLoaded &&
+      acceleratedTerminalRenderingEnabled,
     stdinBatchingEnabled: true,
     imageAddonInitAttempted: false,
     imageAddonInitOk: false,
@@ -680,6 +686,7 @@ function applyAcceleratedRenderingPreference(
   session: SessionTerminal,
   enabled: boolean,
 ) {
+  acceleratedTerminalRenderingPreferenceLoaded = true;
   acceleratedTerminalRenderingEnabled = enabled;
   session.rendererDiagnostics.acceleratedRenderingEnabled = enabled;
 
@@ -825,6 +832,30 @@ function clearSessionTimers(session: SessionTerminal) {
     window.clearTimeout(session.flushTimer);
     session.flushTimer = undefined;
   }
+}
+
+function warnDroppedTerminalInput(
+  cacheKey: string,
+  session: SessionTerminal,
+  droppedChars: number,
+) {
+  if (droppedChars <= 0) {
+    return;
+  }
+  const now = Date.now();
+  if (
+    session.lastInputDropWarnAt !== undefined &&
+    now - session.lastInputDropWarnAt < INPUT_DROP_WARN_COOLDOWN_MS
+  ) {
+    return;
+  }
+  session.lastInputDropWarnAt = now;
+  logTerminalWarning("terminal-input-trimmed", {
+    cacheKey,
+    droppedChars,
+    queueChars: session.stdinQueueChars,
+    maxChars: INPUT_QUEUE_MAX_CHARS,
+  });
 }
 
 function getCellPixelSize(terminal: Terminal): { cellWidth: number; cellHeight: number } {
@@ -1092,8 +1123,25 @@ function enqueueTerminalInput(
     return;
   }
 
-  session.stdinQueue.push({ kind: "text", data });
-  session.stdinQueueChars += data.length;
+  const remainingChars = Math.max(0, INPUT_QUEUE_MAX_CHARS - session.stdinQueueChars);
+  if (remainingChars <= 0) {
+    warnDroppedTerminalInput(cacheKey, session, data.length);
+    scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, 0);
+    return;
+  }
+
+  const boundary = clampInputChunkBoundary(data, remainingChars);
+  const accepted = data.slice(0, boundary);
+  const droppedChars = data.length - accepted.length;
+  if (!accepted) {
+    warnDroppedTerminalInput(cacheKey, session, droppedChars);
+    scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, 0);
+    return;
+  }
+
+  session.stdinQueue.push({ kind: "text", data: accepted });
+  session.stdinQueueChars += accepted.length;
+  warnDroppedTerminalInput(cacheKey, session, droppedChars);
   const delayMs = shouldFlushInputImmediately(data) ? 0 : INPUT_FLUSH_DELAY_MS;
   scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, delayMs);
 }
@@ -1127,8 +1175,24 @@ function enqueueTerminalInputBytes(
     return;
   }
 
-  session.stdinQueue.push({ kind: "bytes", data });
-  session.stdinQueueChars += data.length;
+  const remainingChars = Math.max(0, INPUT_QUEUE_MAX_CHARS - session.stdinQueueChars);
+  if (remainingChars <= 0) {
+    warnDroppedTerminalInput(cacheKey, session, data.length);
+    scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, 0);
+    return;
+  }
+
+  const accepted = data.slice(0, remainingChars);
+  const droppedChars = data.length - accepted.length;
+  if (accepted.length === 0) {
+    warnDroppedTerminalInput(cacheKey, session, droppedChars);
+    scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, 0);
+    return;
+  }
+
+  session.stdinQueue.push({ kind: "bytes", data: accepted });
+  session.stdinQueueChars += accepted.length;
+  warnDroppedTerminalInput(cacheKey, session, droppedChars);
   scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, 0);
 }
 
@@ -2287,6 +2351,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         ) {
           return;
         }
+        acceleratedTerminalRenderingPreferenceLoaded = true;
         acceleratedTerminalRenderingEnabled = enabled;
         forEachWorkspaceCachedTerminal(workspaceId, (sessionId, session) => {
           applyAcceleratedRenderingPreference(
@@ -2306,6 +2371,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   useEffect(
     () =>
       listenTerminalAcceleratedRenderingChanged((enabled) => {
+        acceleratedTerminalRenderingPreferenceLoaded = true;
         acceleratedTerminalRenderingEnabled = enabled;
         forEachWorkspaceCachedTerminal(workspaceId, (sessionId, session) => {
           applyAcceleratedRenderingPreference(
@@ -2869,11 +2935,13 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       },
     };
     cachedTerminals.set(cacheKey, entry);
-    applyAcceleratedRenderingPreference(
-      cacheKey,
-      entry,
-      acceleratedTerminalRenderingEnabled,
-    );
+    if (acceleratedTerminalRenderingPreferenceLoaded) {
+      applyAcceleratedRenderingPreference(
+        cacheKey,
+        entry,
+        acceleratedTerminalRenderingEnabled,
+      );
+    }
     if (SHOW_TERMINAL_DIAGNOSTICS_UI) {
       void refreshBackendRendererDiagnostics(workspaceId, sessionId);
     }
