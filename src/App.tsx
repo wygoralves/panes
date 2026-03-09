@@ -17,6 +17,8 @@ import { toast } from "./stores/toastStore";
 import type { RuntimeToast, Thread } from "./types";
 import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMirrorEditor";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { LinuxWindowResizeHandles } from "./components/shared/LinuxWindowResizeHandles";
+import { isLinuxDesktop, requestWindowClose } from "./lib/windowActions";
 
 // Debounce guard: when both the JS keydown handler and the native menu-action
 // fire for the same shortcut, only the first one within 100ms takes effect.
@@ -388,14 +390,7 @@ export function App() {
           });
           break;
         case "close-window": {
-          const wsId = useWorkspaceStore.getState().activeWorkspaceId;
-          const wsState = wsId ? useTerminalStore.getState().workspaces[wsId] : undefined;
-          const fileState = useFileStore.getState();
-          if (wsState?.layoutMode === "editor" && fileState.activeTabId) {
-            fileState.requestCloseTab(fileState.activeTabId);
-          } else {
-            void getCurrentWindow().close();
-          }
+          void requestWindowClose();
           break;
         }
       }
@@ -410,6 +405,7 @@ export function App() {
 
   return (
     <div style={{ width: "100%", height: "100vh", position: "relative", zIndex: 1 }}>
+      {isLinuxDesktop() && <LinuxWindowResizeHandles />}
       <ThreeColumnLayout />
       <CommandPalette open={commandPaletteOpen} onClose={closeCommandPalette} />
       <SetupWizard />
