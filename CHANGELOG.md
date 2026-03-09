@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.34.0...vnull) (2026-03-09)
+
+### Bug Fixes
+
+* fix macos build crash ([2a9107b](https://github.com/wygoralves/panes/commit/2a9107b0130c458b95a6efb69b71a8f3db122a70))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.33.2...vnull) (2026-03-09)
 
 ### Features
