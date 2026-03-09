@@ -568,7 +568,9 @@ jobs:
             fi
             sleep 2
           done
-          kill "$SIDECAR_PID"
+          if kill -0 "$SIDECAR_PID" 2>/dev/null; then
+            kill "$SIDECAR_PID"
+          fi
 
           open -g /tmp/panes-app/Panes.app
           for attempt in 1 2 3 4 5; do
