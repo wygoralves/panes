@@ -1,5 +1,12 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.31.0...vnull) (2026-03-09)
+
+### Bug Fixes
+
+* add fallback to prevent crashes on cosmis ([ad0781c](https://github.com/wygoralves/panes/commit/ad0781c3fa31af2c897de11da0fbfbfedd37133e))
+* avoid transient appimage workspaces on linux ([3d09c50](https://github.com/wygoralves/panes/commit/3d09c50c07f4e76991a7d2d69ab6c9d08d16dcce))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.30.0...vnull) (2026-03-08)
 
 ### Features
