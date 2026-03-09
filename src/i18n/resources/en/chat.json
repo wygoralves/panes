@@ -209,7 +209,7 @@
     "context": "Context",
     "windowFiveHoursLeft": "5h left",
     "windowWeeklyLeft": "Weekly left",
-    "resets": "resets {{value}}",
+    "resets": "resets {{time}}",
     "usageUnavailable": "Usage limits unavailable from server"
   }
 }
