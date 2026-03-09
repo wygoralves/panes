@@ -30,7 +30,14 @@
     "undoLastCommitMessage": "This will undo the latest commit and keep all its changes staged. This cannot be undone from Panes.",
     "softReset": "Soft reset",
     "pull": "Pull",
-    "push": "Push"
+    "push": "Push",
+    "window": {
+      "section": "Window",
+      "minimize": "Minimize",
+      "maximize": "Maximize",
+      "restore": "Restore",
+      "close": "Close window"
+    }
   },
   "branches": {
     "scope": {

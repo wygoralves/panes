@@ -17,6 +17,7 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { writeCommandToNewSession } from "../../lib/ipc";
 import { copyTextToClipboard } from "../../lib/clipboard";
+import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import type { HarnessInfo } from "../../types";
 
@@ -172,7 +173,11 @@ export function HarnessPanel() {
         <div className="hp-inner">
           {/* Header */}
           <div className="hp-header">
-            <div className="hp-header-top">
+            <div
+              className="hp-header-top"
+              onMouseDown={handleDragMouseDown}
+              onDoubleClick={handleDragDoubleClick}
+            >
               <button type="button" className="wsp-back" onClick={goBack} title={t("workspace:actions.back")}>
                 <ArrowLeft size={14} />
               </button>

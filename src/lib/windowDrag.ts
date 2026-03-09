@@ -1,6 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-const INTERACTIVE = "button, input, textarea, select, a, .dropdown-menu";
+const INTERACTIVE = "button, input, textarea, select, a, .dropdown-menu, .no-drag";
 
 function isInteractive(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;

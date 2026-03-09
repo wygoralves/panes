@@ -75,6 +75,13 @@ pub fn run() {
         .manage(app_state)
         .menu(move |handle| build_app_menu(handle, app_locale))
         .setup(|app| {
+            #[cfg(target_os = "linux")]
+            if let Some(main_window) = app.get_webview_window("main") {
+                if let Err(error) = main_window.set_decorations(false) {
+                    log::warn!("failed to disable window decorations on linux: {error}");
+                }
+            }
+
             let handle = app.handle().clone();
             let resource_dir = app.path().resource_dir().ok();
             let state = app.state::<AppState>().inner().clone();

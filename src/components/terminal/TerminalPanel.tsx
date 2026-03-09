@@ -5,6 +5,8 @@ import { useTranslation } from "react-i18next";
 import { useHarnessStore } from "../../stores/harnessStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { toast } from "../../stores/toastStore";
+import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
+import { isLinuxDesktop } from "../../lib/windowActions";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import { copyTextToClipboard } from "../../lib/clipboard";
@@ -1771,6 +1773,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar && layoutMode === "terminal";
   const useFocusModeHeaderHeight = focusMode && showGitPanel;
+  const showLinuxDragStrip = isLinuxDesktop() && !showSidebar;
 
   const createSession = useTerminalStore((state) => state.createSession);
   const materializeWorkspaceStartupPreset = useTerminalStore(
@@ -2813,6 +2816,13 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       }`}
     >
       <div className="terminal-tabs-bar">
+        {showLinuxDragStrip && (
+          <div
+            className="window-drag-strip"
+            onMouseDown={handleDragMouseDown}
+            onDoubleClick={handleDragDoubleClick}
+          />
+        )}
         <div className="terminal-tabs-list" ref={tabsListRef}>
           {groups.map((group) => {
             const isActive = group.id === activeGroupId;

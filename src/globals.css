@@ -239,6 +239,83 @@ button, input, textarea, select {
   z-index: 4;
 }
 
+.window-drag-strip {
+  width: 44px;
+  flex-shrink: 0;
+  cursor: default;
+}
+
+.linux-window-resize-handle {
+  position: fixed;
+  z-index: 60;
+}
+
+.linux-window-resize-handle-north,
+.linux-window-resize-handle-south {
+  left: 10px;
+  right: 10px;
+  height: 4px;
+}
+
+.linux-window-resize-handle-east,
+.linux-window-resize-handle-west {
+  top: 10px;
+  bottom: 10px;
+  width: 4px;
+}
+
+.linux-window-resize-handle-north {
+  top: 0;
+  cursor: ns-resize;
+}
+
+.linux-window-resize-handle-south {
+  bottom: 0;
+  cursor: ns-resize;
+}
+
+.linux-window-resize-handle-east {
+  right: 0;
+  cursor: ew-resize;
+}
+
+.linux-window-resize-handle-west {
+  left: 0;
+  cursor: ew-resize;
+}
+
+.linux-window-resize-handle-north-west,
+.linux-window-resize-handle-north-east,
+.linux-window-resize-handle-south-west,
+.linux-window-resize-handle-south-east {
+  width: 10px;
+  height: 10px;
+}
+
+.linux-window-resize-handle-north-west {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.linux-window-resize-handle-north-east {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+
+.linux-window-resize-handle-south-west {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+.linux-window-resize-handle-south-east {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+
 .content-panel {
   position: relative;
   height: 100%;
@@ -1322,6 +1399,15 @@ button, input, textarea, select {
   height: 1px;
   margin: 4px 8px;
   background: rgba(255, 255, 255, 0.08);
+}
+
+.git-action-menu-section-label {
+  padding: 6px 12px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
 }
 
 .git-action-menu-item-danger-hover:not(:disabled):hover {
@@ -4561,6 +4647,10 @@ button, input, textarea, select {
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+.editor-tabs-bar .window-drag-strip {
+  border-right: 1px solid var(--border);
 }
 
 .editor-tabs-bar-titlebar-safe {

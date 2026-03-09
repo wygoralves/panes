@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { X, FileText, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
+import { isLinuxDesktop } from "../../lib/windowActions";
 import { useFileStore } from "../../stores/fileStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useUiStore } from "../../stores/uiStore";
@@ -22,6 +24,7 @@ export function FileEditorPanel() {
   const cancelCloseTab = useFileStore((s) => s.cancelCloseTab);
   const focusMode = useUiStore((s) => s.focusMode);
   const showSidebar = useUiStore((s) => s.showSidebar);
+  const showLinuxDragStrip = isLinuxDesktop() && !showSidebar;
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
@@ -50,6 +53,13 @@ export function FileEditorPanel() {
       {/* Tab bar */}
       {tabs.length > 0 && (
         <div className={`editor-tabs-bar${useTitlebarSafeInset ? " editor-tabs-bar-titlebar-safe" : ""}`}>
+          {showLinuxDragStrip && (
+            <div
+              className="window-drag-strip"
+              onMouseDown={handleDragMouseDown}
+              onDoubleClick={handleDragDoubleClick}
+            />
+          )}
           {tabs.map((tab) => (
             <div
               key={tab.id}
