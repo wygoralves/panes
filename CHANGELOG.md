@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.33.1...vnull) (2026-03-09)
+
+### Bug Fixes
+
+* fix ci breaking issue and fix cancel i18n tags references ([bb642fb](https://github.com/wygoralves/panes/commit/bb642fb330f23c3f5a83d1454b6e7ee680821097))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.33.0...vnull) (2026-03-09)
 
 ### Bug Fixes
