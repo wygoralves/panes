@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.32.0...vnull) (2026-03-09)
+
+### Bug Fixes
+
+* remove intrusive codex warning surfaces ([06b2923](https://github.com/wygoralves/panes/commit/06b292375474afa903066f5d8e2594dacfd55f7b))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.31.1...vnull) (2026-03-09)
 
 ### Features
