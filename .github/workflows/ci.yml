@@ -181,10 +181,51 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Released tag: $tag"
 
+  prepare_release_assets:
+    name: Prepare Release Desktop Assets
+    if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
+    needs: [release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout released tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.release.outputs.released_tag }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build desktop assets
+        run: pnpm run build:desktop
+
+      - name: Upload desktop artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-desktop-assets
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            dist
+            src-tauri/sidecar-dist
+
   release_bundles:
     name: Build Release Bundles (${{ matrix.platform }})
     if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
-    needs: [release]
+    needs: [release, prepare_release_assets]
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 60
     permissions:
@@ -200,6 +241,12 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.release.outputs.released_tag }}
+
+      - name: Download prebuilt desktop artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-desktop-assets
+          path: .
 
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -243,6 +290,7 @@ jobs:
         if: matrix.platform == 'macos-15'
         run: pnpm exec tauri build --target universal-apple-darwin
         env:
+          PANES_SKIP_DESKTOP_PREBUILD: "1"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
@@ -264,6 +312,7 @@ jobs:
         if: matrix.platform != 'macos-15'
         run: pnpm tauri:build
         env:
+          PANES_SKIP_DESKTOP_PREBUILD: "1"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 

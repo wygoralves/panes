@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -30,3 +30,10 @@ await build({
   legalComments: "none",
   logLevel: "info",
 });
+
+const output = await readFile(outFile, "utf8");
+if (output.includes('import("@anthropic-ai/claude-agent-sdk")')) {
+  throw new Error(
+    "Claude sidecar bundle still contains a runtime import for @anthropic-ai/claude-agent-sdk.",
+  );
+}

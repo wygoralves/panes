@@ -5,7 +5,7 @@
   "identifier": "com.panes.app",
   "build": {
     "beforeDevCommand": "pnpm run dev",
-    "beforeBuildCommand": "pnpm run build:desktop",
+    "beforeBuildCommand": "node scripts/build-desktop.mjs",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
