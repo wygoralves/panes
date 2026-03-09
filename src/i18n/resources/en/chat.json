@@ -74,7 +74,6 @@
     "enabled": "Enabled",
     "enabledDescription": "Allow network access for this thread.",
     "networkRestrictedDescription": "Block outbound network access for this thread.",
-    "sandboxExternalNotice": "Read-only and workspace-write overrides are unavailable while Codex is using external sandbox mode on this machine.",
     "claudeSandboxNotice": "Claude supports only read-only and workspace-write sandbox modes.",
     "fullAccessNotice": "Full access always enables network access.",
     "claudeRestrictedDescription": "Most actions require stricter approval handling.",

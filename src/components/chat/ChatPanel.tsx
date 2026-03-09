@@ -1337,9 +1337,7 @@ export function ChatPanel() {
     (option) => option.value === activeThreadSandboxMode,
   );
   const activeThreadSandboxNotice =
-    activeThread?.engineId === "codex" && codexExternalSandboxActive
-      ? t("policy.sandboxExternalNotice")
-      : activeThread?.engineId === "claude" && !activeThreadSandboxModeSupported
+    activeThread?.engineId === "claude" && !activeThreadSandboxModeSupported
         ? t("policy.claudeSandboxNotice")
         : null;
   const activeThreadSandboxSelectedLabel =

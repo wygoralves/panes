@@ -17,17 +17,6 @@
     "idleMessage": "Você está na versão mais recente.",
     "checkAgain": "Verificar novamente"
   },
-  "engineHealth": {
-    "missingTitle": "Engine Codex não detectada",
-    "configWarningTitle": "Aviso de config do Codex",
-    "staleTitle": "A sincronização de runtime do Codex está desatualizada",
-    "sandboxTitle": "Falha na verificação de sandbox do Codex",
-    "missingMessage": "Instale o Codex CLI e faça autenticação antes de iniciar threads de chat.",
-    "staleMessage": "O Panes não conseguiu atualizar o snapshot mais recente de capacidades do Codex. As notificações de runtime podem atrasar até a próxima reconexão bem-sucedida.",
-    "sandboxMessage": "Codex está instalado, mas a verificação local de sandbox do sistema falhou.",
-    "location": "Local:",
-    "runInTerminal": "Executar no terminal:"
-  },
   "shared": {
     "uiRuntimeError": "Erro de runtime da interface"
   },
@@ -347,16 +336,5 @@
       "saved": "{{name}} salvo",
       "saveFailed": "Falha ao salvar: {{error}}"
     }
-  },
-  "engineHealth": {
-    "missingTitle": "Engine Codex não detectada",
-    "configWarningTitle": "Aviso de configuração do Codex",
-    "staleTitle": "A sincronização do runtime do Codex está desatualizada",
-    "sandboxTitle": "Falha na verificação de sandbox do Codex",
-    "missingMessage": "Instale o Codex CLI e autentique-se antes de iniciar threads de chat.",
-    "staleMessage": "O Panes não conseguiu atualizar o snapshot mais recente de capacidades do Codex. Notificações do runtime podem atrasar até a próxima reconexão bem-sucedida.",
-    "sandboxMessage": "O Codex está instalado, mas a verificação local de sandbox do sistema operacional falhou.",
-    "location": "Local:",
-    "runInTerminal": "Executar no Terminal:"
   }
 }
