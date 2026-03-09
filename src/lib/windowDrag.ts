@@ -1,3 +1,4 @@
+import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const INTERACTIVE = "button, input, textarea, select, a, .dropdown-menu, .no-drag";
@@ -16,6 +17,7 @@ function reportWindowActionError(action: string, error: unknown) {
 export function handleDragMouseDown(e: React.MouseEvent) {
   if (e.button !== 0) return;
   if (isInteractive(e.target)) return;
+  if (!isTauri()) return;
   getCurrentWindow().startDragging().catch((error) => {
     reportWindowActionError("start dragging window", error);
   });
@@ -23,6 +25,7 @@ export function handleDragMouseDown(e: React.MouseEvent) {
 
 export function handleDragDoubleClick(e: React.MouseEvent) {
   if (isInteractive(e.target)) return;
+  if (!isTauri()) return;
   getCurrentWindow().toggleMaximize().catch((error) => {
     reportWindowActionError("toggle maximize window", error);
   });
