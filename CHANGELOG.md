@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.31.1...vnull) (2026-03-09)
+
+### Features
+
+* improve window visuals for linux ([c5f30b9](https://github.com/wygoralves/panes/commit/c5f30b91ca0f3a370c1ab9c0379c689e89bacf1b))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.31.0...vnull) (2026-03-09)
 
 ### Bug Fixes
