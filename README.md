@@ -73,12 +73,6 @@ Panes is not a full IDE, but it does ship with a built-in multi-tab editor for q
 - Update dialog with download/install flow
 - Crash recovery, toast notifications, and session persistence
 
-## Current State
-
-Panes is pre-MVP but already implements the core desktop workflow: chat engines, git panel, terminals, harness launch, built-in editing, setup, updates, and local persistence.
-
-There is real automated coverage now, but it is still selective. The repo already has GitHub Actions validation and release automation, including bundle and update-manifest publishing.
-
 ## Getting Started
 
 ### Prerequisites

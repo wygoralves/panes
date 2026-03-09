@@ -73,12 +73,6 @@ O Panes não é uma IDE completa, mas inclui um editor multiaba embutido para re
 - Update dialog com fluxo de download/instalação
 - Crash recovery, toasts e persistência de sessão
 
-## Estado Atual
-
-O Panes ainda está em fase pre-MVP, mas já implementa o fluxo principal do desktop: chat engines, painel de git, terminais, abertura de harnesses, edição embutida, setup, updates e persistência local.
-
-Já existe cobertura automatizada real, embora ainda seletiva. O repo também já possui automação de validação e release no GitHub Actions, incluindo publicação de bundles e de update manifests.
-
 ## Como Começar
 
 ### Pré-requisitos
