@@ -10,6 +10,11 @@
  */
 import { writeFileSync } from "node:fs";
 
+import {
+  buildStaticReleasePlatforms,
+  resolveUpdaterAssetPairs,
+} from "./lib/update-manifest.mjs";
+
 const tag = process.argv[2] || process.env.RELEASE_TAG;
 if (!tag) {
   console.error("Usage: generate-update-manifest.mjs <tag>");
@@ -44,26 +49,15 @@ const version = tag.replace(/^v/, "");
 const pub_date = release.published_at;
 const notes = release.body || "";
 
-// Map asset filenames to Tauri platform keys
-const platformMap = [
-  { match: /\.app\.tar\.gz$/, sigMatch: /\.app\.tar\.gz\.sig$/, platform: "darwin-aarch64" },
-  { match: /\.AppImage$/, sigMatch: /\.AppImage\.sig$/, platform: "linux-x86_64" },
-];
-
 const assets = release.assets || [];
-const platforms = {};
+const resolvedAssetPairs = resolveUpdaterAssetPairs(assets);
+const signatureByAssetName = {};
 
-for (const def of platformMap) {
-  const bundle = assets.find((a) => def.match.test(a.name));
-  const sig = assets.find((a) => def.sigMatch.test(a.name));
-  if (!bundle || !sig) continue;
-
-  const signature = await fetchText(sig.browser_download_url);
-  platforms[def.platform] = {
-    signature,
-    url: bundle.browser_download_url,
-  };
+for (const assetPair of resolvedAssetPairs) {
+  signatureByAssetName[assetPair.signature.name] = await fetchText(assetPair.signature.browser_download_url);
 }
+
+const platforms = buildStaticReleasePlatforms(resolvedAssetPairs, signatureByAssetName);
 
 if (Object.keys(platforms).length === 0) {
   console.error("No updater-compatible assets found in release", tag);
