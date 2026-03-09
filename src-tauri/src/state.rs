@@ -12,6 +12,7 @@ use crate::{
 pub struct AppState {
     pub db: Database,
     pub config: Arc<AppConfig>,
+    pub config_write_lock: Arc<tokio::sync::Mutex<()>>,
     pub engines: Arc<EngineManager>,
     pub git_watchers: Arc<GitWatcherManager>,
     pub terminals: Arc<TerminalManager>,

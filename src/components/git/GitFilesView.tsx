@@ -38,6 +38,11 @@ interface FileRow {
 
 type TreeRow = DirRow | FileRow;
 
+const TREE_ROW_HEIGHT = 24;
+const TREE_VERTICAL_PADDING = 4;
+const TREE_OVERSCAN_ROWS = 10;
+const TREE_VIRTUALIZATION_THRESHOLD = 200;
+
 const EXT_COLORS: Record<string, string> = {
   ts: "#3178c6",
   tsx: "#3178c6",
@@ -85,7 +90,10 @@ export function GitFilesView({ repo }: Props) {
   // Track repo path to reset on change
   const prevRepoPath = useRef(repo.path);
   const dirContentsRef = useRef(dirContents);
+  const treeViewportRef = useRef<HTMLDivElement>(null);
   dirContentsRef.current = dirContents;
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
 
   const loadDir = useCallback(
     async (dirPath: string) => {
@@ -209,6 +217,79 @@ export function GitFilesView({ repo }: Props) {
     return result;
   }, [dirContents, expandedDirs, filter]);
 
+  const filteredFileCount = useMemo(
+    () => rows.reduce((count, row) => count + (row.type === "file" ? 1 : 0), 0),
+    [rows],
+  );
+
+  useEffect(() => {
+    const viewport = treeViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const updateViewportHeight = () => {
+      setViewportHeight(viewport.clientHeight);
+    };
+
+    updateViewportHeight();
+
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => updateViewportHeight());
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const viewport = treeViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const maxScrollTop = Math.max(
+      0,
+      rows.length * TREE_ROW_HEIGHT + TREE_VERTICAL_PADDING * 2 - viewport.clientHeight,
+    );
+    if (viewport.scrollTop > maxScrollTop) {
+      viewport.scrollTop = maxScrollTop;
+      setScrollTop(maxScrollTop);
+    }
+  }, [rows.length]);
+
+  const virtualWindow = useMemo(() => {
+    const virtualizationEnabled = rows.length >= TREE_VIRTUALIZATION_THRESHOLD;
+    if (!virtualizationEnabled) {
+      return {
+        enabled: false,
+        startIndex: 0,
+        endIndexExclusive: rows.length,
+        totalHeight: rows.length * TREE_ROW_HEIGHT + TREE_VERTICAL_PADDING * 2,
+      };
+    }
+
+    const visibleRowCount = Math.max(1, Math.ceil(viewportHeight / TREE_ROW_HEIGHT));
+    const startIndex = Math.max(0, Math.floor(scrollTop / TREE_ROW_HEIGHT) - TREE_OVERSCAN_ROWS);
+    const endIndexExclusive = Math.min(
+      rows.length,
+      startIndex + visibleRowCount + TREE_OVERSCAN_ROWS * 2,
+    );
+
+    return {
+      enabled: true,
+      startIndex,
+      endIndexExclusive,
+      totalHeight: rows.length * TREE_ROW_HEIGHT + TREE_VERTICAL_PADDING * 2,
+    };
+  }, [rows, scrollTop, viewportHeight]);
+
+  const visibleRows = useMemo(
+    () => rows.slice(virtualWindow.startIndex, virtualWindow.endIndexExclusive),
+    [rows, virtualWindow.endIndexExclusive, virtualWindow.startIndex],
+  );
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {/* Search filter */}
@@ -246,7 +327,7 @@ export function GitFilesView({ repo }: Props) {
               title={t("files.filterCountTitle")}
             >
               {t("files.filterCount", {
-                count: rows.filter((r) => r.type === "file").length,
+                count: filteredFileCount,
               })}
             </span>
           )}
@@ -254,7 +335,11 @@ export function GitFilesView({ repo }: Props) {
       </div>
 
       {/* File tree */}
-      <div style={{ flex: 1, overflow: "auto", padding: "4px 0" }}>
+      <div
+        ref={treeViewportRef}
+        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+        style={{ flex: 1, overflow: "auto" }}
+      >
         {rootLoading && !dirContents.has("") ? (
           <div
             style={{
@@ -281,68 +366,83 @@ export function GitFilesView({ repo }: Props) {
             {filter ? t("files.emptyFiltered") : t("files.empty")}
           </div>
         ) : (
-          rows.map((row) => (
-            <div
-              key={row.key}
-              onClick={() =>
-                row.type === "dir"
-                  ? toggleDir(row.path)
-                  : handleFileClick(row.path)
-              }
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-                padding: "3px 10px",
-                paddingLeft: 10 + row.depth * 16,
-                cursor: "pointer",
-                fontSize: 12,
-                color: row.type === "dir" ? "var(--text-2)" : "var(--text-1)",
-                fontFamily: '"JetBrains Mono", monospace',
-              }}
-              className="git-file-row"
-            >
-              {row.type === "dir" ? (
-                <>
-                  {loadingDirs.has(row.path) ? (
-                    <Loader2 size={12} className="animate-spin" style={{ color: "var(--text-3)", flexShrink: 0 }} />
-                  ) : row.expanded ? (
-                    <ChevronDown size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+          <div
+            style={{
+              height: virtualWindow.totalHeight,
+              position: "relative",
+            }}
+          >
+            {visibleRows.map((row, index) => {
+              const absoluteIndex = virtualWindow.startIndex + index;
+              return (
+                <div
+                  key={row.key}
+                  onClick={() =>
+                    row.type === "dir"
+                      ? toggleDir(row.path)
+                      : handleFileClick(row.path)
+                  }
+                  style={{
+                    position: "absolute",
+                    top: TREE_VERTICAL_PADDING + absoluteIndex * TREE_ROW_HEIGHT,
+                    left: 0,
+                    right: 0,
+                    height: TREE_ROW_HEIGHT,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                    padding: "3px 10px",
+                    paddingLeft: 10 + row.depth * 16,
+                    cursor: "pointer",
+                    fontSize: 12,
+                    color: row.type === "dir" ? "var(--text-2)" : "var(--text-1)",
+                    fontFamily: '"JetBrains Mono", monospace',
+                  }}
+                  className="git-file-row"
+                >
+                  {row.type === "dir" ? (
+                    <>
+                      {loadingDirs.has(row.path) ? (
+                        <Loader2 size={12} className="animate-spin" style={{ color: "var(--text-3)", flexShrink: 0 }} />
+                      ) : row.expanded ? (
+                        <ChevronDown size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+                      ) : (
+                        <ChevronRight size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+                      )}
+                      {row.expanded ? (
+                        <FolderOpen size={13} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+                      ) : (
+                        <Folder size={13} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+                      )}
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {row.name}
+                      </span>
+                    </>
                   ) : (
-                    <ChevronRight size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+                    <>
+                      <span style={{ width: 12, flexShrink: 0 }} />
+                      <File
+                        size={13}
+                        style={{
+                          color: getExtColor(row.name) ?? "var(--text-3)",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <span
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {row.name}
+                      </span>
+                    </>
                   )}
-                  {row.expanded ? (
-                    <FolderOpen size={13} style={{ color: "var(--text-3)", flexShrink: 0 }} />
-                  ) : (
-                    <Folder size={13} style={{ color: "var(--text-3)", flexShrink: 0 }} />
-                  )}
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {row.name}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span style={{ width: 12, flexShrink: 0 }} />
-                  <File
-                    size={13}
-                    style={{
-                      color: getExtColor(row.name) ?? "var(--text-3)",
-                      flexShrink: 0,
-                    }}
-                  />
-                  <span
-                    style={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {row.name}
-                  </span>
-                </>
-              )}
-            </div>
-          ))
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>
