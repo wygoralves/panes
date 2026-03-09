@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.34.1...vnull) (2026-03-09)
+
+### Bug Fixes
+
+* reuse desktop artifacts in release bundles ([f302dc4](https://github.com/wygoralves/panes/commit/f302dc40c2c425b9531d609068f668c8f23e3f9c))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.34.0...vnull) (2026-03-09)
 
 ### Bug Fixes
