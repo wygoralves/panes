@@ -238,6 +238,52 @@ describe("keepAwakeStore", () => {
     });
   });
 
+  it("does not let a stale refresh overwrite a newer toggle result", async () => {
+    useKeepAwakeStore.setState({
+      state: {
+        supported: true,
+        enabled: true,
+        active: true,
+        message: null,
+      },
+      loading: false,
+      loadedOnce: true,
+    });
+    const refreshDeferred = createDeferred<{
+      supported: boolean;
+      enabled: boolean;
+      active: boolean;
+      message: string | null;
+    }>();
+    mockIpc.getKeepAwakeState.mockReturnValue(refreshDeferred.promise);
+    mockIpc.setKeepAwakeEnabled.mockResolvedValue({
+      supported: true,
+      enabled: false,
+      active: false,
+      message: null,
+    });
+
+    const refreshPromise = useKeepAwakeStore.getState().refresh();
+    const toggleResult = await useKeepAwakeStore.getState().toggle();
+
+    refreshDeferred.resolve({
+      supported: true,
+      enabled: true,
+      active: true,
+      message: null,
+    });
+    await refreshPromise;
+
+    expect(toggleResult).toMatchObject({
+      enabled: false,
+      active: false,
+    });
+    expect(useKeepAwakeStore.getState().state).toMatchObject({
+      enabled: false,
+      active: false,
+    });
+  });
+
   it("registers the keep awake command in the command palette", async () => {
     const { getStaticCommands } = await import("../components/shared/CommandPalette");
 
