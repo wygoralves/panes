@@ -241,7 +241,7 @@ jobs:
 
       - name: Build universal macOS bundles
         if: matrix.platform == 'macos-15'
-        run: pnpm tauri:build -- --target universal-apple-darwin
+        run: pnpm exec tauri build --target universal-apple-darwin
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
