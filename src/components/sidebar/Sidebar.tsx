@@ -22,6 +22,7 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useSetupStore } from "../../stores/setupStore";
 import { useUpdateStore } from "../../stores/updateStore";
+import { useKeepAwakeStore } from "../../stores/keepAwakeStore";
 import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { formatRelativeTime } from "../../lib/formatters";
@@ -95,6 +96,9 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const bindChatThread = useChatStore((s) => s.setActiveThread);
   const updateStatus = useUpdateStore((s) => s.status);
   const updateSnoozed = useUpdateStore((s) => s.snoozed);
+  const keepAwakeState = useKeepAwakeStore((s) => s.state);
+  const keepAwakeLoading = useKeepAwakeStore((s) => s.loading);
+  const toggleKeepAwake = useKeepAwakeStore((s) => s.toggle);
   const hasUpdate = updateStatus === "available" && !updateSnoozed;
 
   const projects = useMemo<ProjectGroup[]>(
@@ -268,6 +272,19 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   function getThreadLabel(thread: Thread) {
     return thread.title?.trim() || t("app:sidebar.untitledThread");
   }
+
+  const keepAwakeDescription = useMemo(() => {
+    if (!keepAwakeState) {
+      return t("app:sidebar.keepAwakeDescription");
+    }
+    if (!keepAwakeState?.supported) {
+      return t("app:sidebar.keepAwakeUnsupported");
+    }
+    if (keepAwakeState.enabled && !keepAwakeState.active) {
+      return t("app:sidebar.keepAwakeInactive");
+    }
+    return t("app:sidebar.keepAwakeDescription");
+  }, [keepAwakeState, t]);
 
   return (
     <div
@@ -644,6 +661,30 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                   }}
                 />
               )}
+            </button>
+            <button
+              type="button"
+              className="git-action-menu-item"
+              disabled={keepAwakeLoading || keepAwakeState?.supported === false}
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 10,
+                opacity: keepAwakeLoading || keepAwakeState?.supported === false ? 0.65 : 1,
+              }}
+              onClick={() => {
+                closeSettingsMenu();
+                void toggleKeepAwake();
+              }}
+            >
+              <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+                <span>{t("app:sidebar.keepAwake")}</span>
+                <span style={{ fontSize: 12, color: "var(--text-3)", textAlign: "left" }}>
+                  {keepAwakeDescription}
+                </span>
+              </span>
+              {keepAwakeState?.enabled ? <Check size={12} /> : null}
             </button>
             <div className="git-action-menu-divider" />
             <div

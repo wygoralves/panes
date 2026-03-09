@@ -9,6 +9,13 @@ export interface Workspace {
   lastOpenedAt: string;
 }
 
+export interface KeepAwakeState {
+  supported: boolean;
+  enabled: boolean;
+  active: boolean;
+  message?: string | null;
+}
+
 export interface Repo {
   id: string;
   workspaceId: string;
@@ -21,6 +28,13 @@ export interface Repo {
 
 export interface WorkspaceGitSelectionStatus {
   configured: boolean;
+}
+
+export interface KeepAwakeState {
+  supported: boolean;
+  enabled: boolean;
+  active: boolean;
+  message?: string | null;
 }
 
 export type WorkspaceStartupPresetFormat = "json" | "toml";

@@ -33,6 +33,7 @@ import {
   ListChecks,
   ListX,
   FolderGit2,
+  Power,
 } from "lucide-react";
 import { ipc, writeCommandToNewSession } from "../../lib/ipc";
 import {
@@ -53,6 +54,7 @@ import { useGitStore } from "../../stores/gitStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useFileStore } from "../../stores/fileStore";
 import { useHarnessStore } from "../../stores/harnessStore";
+import { useKeepAwakeStore } from "../../stores/keepAwakeStore";
 import { toast } from "../../stores/toastStore";
 import type { FileTreeEntry, GitBranch, GitStash, HarnessInfo, Repo, SearchResult, Thread, Workspace } from "../../types";
 
@@ -167,7 +169,7 @@ interface ResultGroup {
 /*  Static commands                                                    */
 /* ------------------------------------------------------------------ */
 
-function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
+export function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
   return [
   // Layout
   {
@@ -249,6 +251,17 @@ function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     action: ({ close }) => {
       useUiStore.getState().toggleFocusMode();
       close();
+    },
+  },
+  {
+    id: "toggle-keep-awake",
+    label: t("commandPalette.commands.toggleKeepAwake"),
+    icon: Power,
+    group: "layout",
+    keywords: ["keep", "awake", "sleep", "idle", "system", "manter", "acordado", "sleep"],
+    action: async ({ close }) => {
+      close();
+      await useKeepAwakeStore.getState().toggle();
     },
   },
   {

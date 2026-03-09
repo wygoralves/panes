@@ -8,6 +8,7 @@ pub struct AppConfig {
     pub general: GeneralConfig,
     pub ui: UiConfig,
     pub debug: DebugConfig,
+    pub power: PowerConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +34,12 @@ pub struct UiConfig {
 pub struct DebugConfig {
     pub persist_engine_event_logs: bool,
     pub max_action_output_chars: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PowerConfig {
+    pub keep_awake_enabled: bool,
 }
 
 impl Default for GeneralConfig {
@@ -65,12 +72,21 @@ impl Default for DebugConfig {
     }
 }
 
+impl Default for PowerConfig {
+    fn default() -> Self {
+        Self {
+            keep_awake_enabled: false,
+        }
+    }
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             general: GeneralConfig::default(),
             ui: UiConfig::default(),
             debug: DebugConfig::default(),
+            power: PowerConfig::default(),
         }
     }
 }
@@ -134,6 +150,7 @@ max_action_output_chars = 20000
         let config = toml::from_str::<AppConfig>(raw).expect("config should deserialize");
 
         assert_eq!(config.general.locale, None);
+        assert!(!config.power.keep_awake_enabled);
     }
 
     #[test]
@@ -141,5 +158,7 @@ max_action_output_chars = 20000
         let raw = toml::to_string_pretty(&AppConfig::default()).expect("config should serialize");
 
         assert!(!raw.contains("locale"));
+        assert!(raw.contains("[power]"));
+        assert!(raw.contains("keep_awake_enabled = false"));
     }
 }

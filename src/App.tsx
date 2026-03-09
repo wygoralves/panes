@@ -13,6 +13,7 @@ import { useThreadStore } from "./stores/threadStore";
 import { useGitStore } from "./stores/gitStore";
 import { useTerminalStore, collectSessionIds } from "./stores/terminalStore";
 import { useFileStore } from "./stores/fileStore";
+import { useKeepAwakeStore } from "./stores/keepAwakeStore";
 import { toast } from "./stores/toastStore";
 import type { RuntimeToast, Thread } from "./types";
 import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMirrorEditor";
@@ -82,6 +83,7 @@ export function App() {
   const loadEngines = useEngineStore((s) => s.load);
   const applyEngineRuntimeUpdate = useEngineStore((s) => s.applyRuntimeUpdate);
   const scanHarnesses = useHarnessStore((s) => s.scan);
+  const loadKeepAwake = useKeepAwakeStore((s) => s.load);
   const refreshAllThreads = useThreadStore((s) => s.refreshAllThreads);
   const refreshThreads = useThreadStore((s) => s.refreshThreads);
   const applyThreadUpdateLocal = useThreadStore((s) => s.applyThreadUpdateLocal);
@@ -93,7 +95,8 @@ export function App() {
     void loadWorkspaces();
     void loadEngines();
     void scanHarnesses();
-  }, [loadWorkspaces, loadEngines, scanHarnesses]);
+    void loadKeepAwake();
+  }, [loadWorkspaces, loadEngines, scanHarnesses, loadKeepAwake]);
 
   useEffect(() => {
     void refreshAllThreads(workspaces.map((workspace) => workspace.id));

@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     config::app_config::AppConfig, db::Database, engines::EngineManager, git::repo::FileTreeCache,
-    git::watcher::GitWatcherManager, terminal::TerminalManager,
+    git::watcher::GitWatcherManager, power::KeepAwakeManager, terminal::TerminalManager,
 };
 
 #[derive(Clone)]
@@ -15,6 +15,7 @@ pub struct AppState {
     pub engines: Arc<EngineManager>,
     pub git_watchers: Arc<GitWatcherManager>,
     pub terminals: Arc<TerminalManager>,
+    pub keep_awake: Arc<KeepAwakeManager>,
     pub turns: Arc<TurnManager>,
     pub file_tree_cache: Arc<FileTreeCache>,
 }
