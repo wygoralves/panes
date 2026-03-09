@@ -11,6 +11,7 @@
     "toggleSidebar": "Toggle Sidebar",
     "toggleGitPanel": "Toggle Git Panel",
     "toggleFocusMode": "Toggle Focus Mode",
+    "toggleFullscreen": "Toggle Full Screen",
     "search": "Search",
     "toggleTerminal": "Toggle Terminal",
     "close": "Close"

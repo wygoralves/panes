@@ -84,7 +84,8 @@ pub fn run() {
                 let id = event.id().as_ref();
                 match id {
                     "toggle-sidebar" | "toggle-git-panel" | "toggle-focus-mode"
-                    | "toggle-search" | "toggle-terminal" | "close-window" => {
+                    | "toggle-fullscreen" | "toggle-search" | "toggle-terminal"
+                    | "close-window" => {
                         let _ = handle.emit("menu-action", id);
                     }
                     _ => {}
@@ -532,6 +533,13 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
         true,
         Some("CmdOrCtrl+Alt+F"),
     )?;
+    let toggle_fullscreen = MenuItem::with_id(
+        handle,
+        "toggle-fullscreen",
+        strings.toggle_fullscreen,
+        true,
+        Some("F11"),
+    )?;
     let toggle_search = MenuItem::with_id(
         handle,
         "toggle-search",
@@ -550,6 +558,7 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
         .item(&toggle_sidebar)
         .item(&toggle_git_panel)
         .item(&toggle_focus_mode)
+        .item(&toggle_fullscreen)
         .separator()
         .item(&toggle_search)
         .separator()

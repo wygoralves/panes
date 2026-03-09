@@ -11,6 +11,7 @@
     "toggleSidebar": "Alternar sidebar",
     "toggleGitPanel": "Alternar painel Git",
     "toggleFocusMode": "Alternar modo foco",
+    "toggleFullscreen": "Alternar tela cheia",
     "search": "Buscar",
     "toggleTerminal": "Alternar terminal",
     "close": "Fechar"

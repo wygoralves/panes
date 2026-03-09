@@ -32,6 +32,18 @@ function fireShortcut(id: string, action: () => void) {
   action();
 }
 
+async function toggleWindowFullscreen() {
+  try {
+    const currentWindow = getCurrentWindow();
+    const isFullscreen = await currentWindow.isFullscreen();
+    await currentWindow.setFullscreen(!isFullscreen);
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn("[App] Failed to toggle fullscreen", error);
+    }
+  }
+}
+
 function isCodexSyncRequired(thread: Thread | null | undefined): boolean {
   return thread?.engineId === "codex" && thread.engineMetadata?.codexSyncRequired === true;
 }
@@ -162,11 +174,20 @@ export function App() {
   // prevents the second handler from re-toggling within 100ms.
   //
   // Cmd+Alt+F (focus mode) is intercepted before Cmd+F so it wins even in editors.
+  // F11 toggles native window fullscreen independently from focus mode.
   // Cmd+E (editor toggle) has no native menu item — JS-only.
   // Cmd+S always prevents the browser save-page dialog.
   // Cmd+W is handled solely via the native menu "close-window" action.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "F11") {
+        e.preventDefault();
+        fireShortcut("toggle-fullscreen", () => {
+          void toggleWindowFullscreen();
+        });
+        return;
+      }
+
       const meta = e.metaKey || e.ctrlKey;
       if (!meta) return;
 
@@ -350,6 +371,11 @@ export function App() {
           break;
         case "toggle-focus-mode":
           fireShortcut("toggle-focus-mode", () => useUiStore.getState().toggleFocusMode());
+          break;
+        case "toggle-fullscreen":
+          fireShortcut("toggle-fullscreen", () => {
+            void toggleWindowFullscreen();
+          });
           break;
         case "toggle-search":
           fireShortcut("toggle-search", () =>
