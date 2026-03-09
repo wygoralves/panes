@@ -39,6 +39,31 @@ let reposLoadSeq = 0;
 
 type LastRepoByWorkspace = Record<string, string>;
 
+function isTransientLinuxAppImageRoot(rootPath: string): boolean {
+  return /^\/(?:var\/tmp|tmp)\/\.mount_[^/]+(?:\/|$)/.test(rootPath);
+}
+
+function resolveStartupWorkspaceId(
+  workspaces: Workspace[],
+  savedId: string | null,
+): string | null {
+  const savedWorkspace = savedId
+    ? workspaces.find((workspace) => workspace.id === savedId) ?? null
+    : null;
+
+  if (savedWorkspace && !isTransientLinuxAppImageRoot(savedWorkspace.rootPath)) {
+    return savedWorkspace.id;
+  }
+
+  if (!savedId) {
+    return null;
+  }
+
+  return (
+    workspaces.find((workspace) => !isTransientLinuxAppImageRoot(workspace.rootPath))?.id ?? null
+  );
+}
+
 function readLastRepoByWorkspace(): LastRepoByWorkspace {
   try {
     const raw = localStorage.getItem(LAST_REPO_BY_WORKSPACE_KEY);
@@ -119,8 +144,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const workspaces = await ipc.listWorkspaces();
       const savedId = localStorage.getItem(LAST_WORKSPACE_KEY);
-      const restored = savedId ? workspaces.find((w) => w.id === savedId) : null;
-      const activeWorkspaceId = restored?.id ?? null;
+      const activeWorkspaceId = resolveStartupWorkspaceId(workspaces, savedId);
       set({ workspaces, activeWorkspaceId, loading: false });
       if (activeWorkspaceId) {
         await useTerminalStore.getState().prepareWorkspaceActivation(activeWorkspaceId);

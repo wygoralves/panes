@@ -145,6 +145,7 @@ fn augmented_path_entries_for(home: Option<&Path>, current_path: Option<&OsStr>)
 
     if let Some(home) = home {
         entries.push(home.join(".local/bin"));
+        entries.push(home.join(".local/share/npm/bin"));
         entries.push(home.join(".npm-global/bin"));
         entries.push(home.join(".volta/bin"));
         entries.push(home.join(".local/share/fnm/aliases/default/bin"));
@@ -345,6 +346,7 @@ mod tests {
         let current_path = OsStr::new("/usr/bin:/bin");
         let entries = augmented_path_entries_for(Some(home), Some(current_path));
 
+        assert!(entries.contains(&home.join(".local/share/npm/bin")));
         assert!(entries.contains(&home.join(".npm-global/bin")));
         assert!(entries.contains(&home.join(".volta/bin")));
         assert!(entries.contains(&home.join(".local/share/fnm/aliases/default/bin")));

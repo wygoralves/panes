@@ -93,15 +93,41 @@ pub fn list_archived_workspaces(db: &Database) -> anyhow::Result<Vec<WorkspaceDt
 }
 
 pub fn ensure_default_workspace(db: &Database) -> anyhow::Result<WorkspaceDto> {
-    if let Some(first) = list_workspaces(db)?.into_iter().next() {
+    if let Some(first) = list_workspaces(db)?
+        .into_iter()
+        .find(|workspace| is_viable_workspace_root(Path::new(&workspace.root_path)))
+    {
         return Ok(first);
     }
 
-    let cwd = std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-        .to_string_lossy()
-        .to_string();
-    upsert_workspace(db, &cwd, None)
+    let root = preferred_default_workspace_root();
+    let root = root.to_string_lossy().to_string();
+    upsert_workspace(db, &root, None)
+}
+
+fn preferred_default_workspace_root() -> std::path::PathBuf {
+    let cwd = std::env::current_dir().ok();
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    preferred_default_workspace_root_for(cwd.as_deref(), home.as_deref())
+}
+
+fn preferred_default_workspace_root_for(
+    cwd: Option<&Path>,
+    home: Option<&Path>,
+) -> std::path::PathBuf {
+    cwd.filter(|path| is_viable_workspace_root(path))
+        .or_else(|| home.filter(|path| is_viable_workspace_root(path)))
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+}
+
+fn is_viable_workspace_root(path: &Path) -> bool {
+    path.is_dir() && !is_transient_appimage_mount(path)
+}
+
+fn is_transient_appimage_mount(path: &Path) -> bool {
+    let rendered = path.to_string_lossy();
+    rendered.starts_with("/tmp/.mount_") || rendered.starts_with("/var/tmp/.mount_")
 }
 
 pub fn delete_workspace(db: &Database, workspace_id: &str) -> anyhow::Result<()> {
@@ -343,5 +369,28 @@ mod tests {
 
         assert_eq!(created.id, reopened.id);
         assert_eq!(reopened.scan_depth, 7);
+    }
+
+    #[test]
+    fn preferred_default_workspace_root_skips_transient_appimage_mounts() {
+        let home = std::env::temp_dir().join(format!("panes-home-{}", Uuid::new_v4()));
+        fs::create_dir_all(&home).expect("failed to create temp home");
+
+        let cwd = std::path::Path::new("/tmp/.mount_PanesTest/usr");
+        let selected = preferred_default_workspace_root_for(Some(cwd), Some(&home));
+
+        assert_eq!(selected, home);
+    }
+
+    #[test]
+    fn preferred_default_workspace_root_keeps_existing_directory_cwd() {
+        let cwd = std::env::temp_dir().join(format!("panes-cwd-{}", Uuid::new_v4()));
+        let home = std::env::temp_dir().join(format!("panes-home-{}", Uuid::new_v4()));
+        fs::create_dir_all(&cwd).expect("failed to create temp cwd");
+        fs::create_dir_all(&home).expect("failed to create temp home");
+
+        let selected = preferred_default_workspace_root_for(Some(&cwd), Some(&home));
+
+        assert_eq!(selected, cwd);
     }
 }
