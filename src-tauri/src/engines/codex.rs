@@ -1715,7 +1715,7 @@ fn codex_resolution_note(resolution: &CodexExecutableResolution) -> Option<Strin
 }
 
 fn codex_health_checks() -> Vec<String> {
-    let mut checks = vec![
+    let checks = vec![
         "codex --version".to_string(),
         "command -v codex".to_string(),
         "node --version".to_string(),
@@ -1724,11 +1724,13 @@ fn codex_health_checks() -> Vec<String> {
     ];
 
     #[cfg(target_os = "macos")]
-    {
+    let checks = {
+        let mut checks = checks;
         checks.push("echo \"$PATH\"".to_string());
         checks.push("/bin/zsh -lic 'command -v codex && codex --version'".to_string());
         checks.push("sandbox-exec -p '(version 1) (allow default)' /usr/bin/true".to_string());
-    }
+        checks
+    };
 
     checks
 }
@@ -1737,10 +1739,9 @@ fn codex_fix_commands(
     resolution: &CodexExecutableResolution,
     execution_error: Option<&str>,
 ) -> Vec<String> {
-    let mut fixes = Vec::new();
-
     #[cfg(target_os = "macos")]
     {
+        let mut fixes = Vec::new();
         if resolution.executable.is_none() {
             if let Some(shell_path) = &resolution.login_shell_executable {
                 if let Some(bin_dir) = shell_path.parent() {
@@ -1769,9 +1770,16 @@ fn codex_fix_commands(
             );
             fixes.push("open -a Panes".to_string());
         }
+
+        return fixes;
     }
 
-    fixes
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = resolution;
+        let _ = execution_error;
+        Vec::new()
+    }
 }
 
 fn codex_augmented_path(executable: &Path) -> Option<OsString> {

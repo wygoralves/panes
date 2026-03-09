@@ -3,6 +3,8 @@ use crate::{
     locale::{normalize_app_locale, resolve_app_locale},
     state::AppState,
 };
+#[cfg(target_os = "linux")]
+use tauri::Manager;
 use tauri::State;
 
 fn err_to_string(error: impl ToString) -> String {
