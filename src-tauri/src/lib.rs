@@ -4,6 +4,7 @@ mod db;
 mod engines;
 mod fs_ops;
 mod git;
+mod linux_webkit;
 mod locale;
 mod models;
 mod runtime_env;
@@ -31,6 +32,7 @@ use terminal::TerminalManager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
+    linux_webkit::apply_webkit_display_workarounds();
 
     let db = Database::init().expect("failed to initialize database");
     match db::threads::reconcile_runtime_state(&db) {
