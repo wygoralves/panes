@@ -85,13 +85,13 @@ Panes is not a full IDE, but it does ship with a built-in multi-tab editor for q
 | Codex CLI | Required for the Codex chat engine; setup can install it via npm |
 | Tauri v2 prerequisites | [See Tauri docs](https://v2.tauri.app/start/prerequisites/) |
 
-### Install on macOS (Apple Silicon)
+### Install on macOS
 
 ```bash
 brew install --cask wygoralves/tap/panes
 ```
 
-Homebrew is the primary macOS install path for prebuilt Panes releases. The app updater then handles later versions in-app.
+Homebrew is the primary macOS install path for prebuilt Panes releases. The macOS release is shipped as a universal app, so the same DMG works on both Apple Silicon and Intel Macs. The app updater then handles later versions in-app.
 
 Panes is not currently signed and notarized with Apple, so Homebrew only reduces Gatekeeper friction; it does not eliminate it. The tap applies a best-effort quarantine removal step during install, but macOS may still require a manual first-launch confirmation depending on system policy. If that happens, use Finder's Open flow or download the DMG directly from [GitHub Releases](https://github.com/wygoralves/panes/releases/latest).
 

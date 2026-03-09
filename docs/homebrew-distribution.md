@@ -25,4 +25,4 @@ After the main release workflow uploads the macOS bundle assets, it:
 3. Runs `node scripts/generate-homebrew-cask.mjs <tag> --output homebrew-tap/Casks/panes.rb`.
 4. Commits and pushes the cask update to the tap repository if the rendered file changed.
 
-The cask generator expects exactly one macOS `.dmg` asset in the release. If none or multiple DMGs are present, the job fails instead of publishing an ambiguous cask.
+The cask generator expects exactly one universal macOS `.dmg` asset in the release. If none or multiple DMGs are present, the job fails instead of publishing an ambiguous cask.
