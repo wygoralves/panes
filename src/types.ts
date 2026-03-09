@@ -651,6 +651,7 @@ export interface TerminalIoCounters {
   stdinWrites: number;
   stdinBytes: number;
   stdinCtrlC: number;
+  lastStdinWriteDurationMs: number | null;
   stdoutReads: number;
   stdoutBytes: number;
   stdoutEmits: number;
@@ -659,6 +660,11 @@ export interface TerminalIoCounters {
   lastStdinWriteAt: string | null;
   lastStdoutReadAt: string | null;
   lastStdoutEmitAt: string | null;
+}
+
+export interface TerminalLatencySnapshot {
+  stdinToStdoutReadMs: number | null;
+  stdoutReadToEmitMs: number | null;
 }
 
 export interface TerminalOutputThrottleSnapshot {
@@ -677,6 +683,7 @@ export interface TerminalRendererDiagnostics {
   envSnapshot: TerminalEnvSnapshot;
   lastResize: TerminalResizeSnapshot | null;
   ioCounters: TerminalIoCounters;
+  latency: TerminalLatencySnapshot;
   outputThrottle: TerminalOutputThrottleSnapshot;
 }
 

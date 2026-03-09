@@ -308,8 +308,20 @@ impl Engine for CodexEngine {
             start_params,
             DEFAULT_TIMEOUT,
         )
-        .await
-        .context("failed to create codex thread")?;
+        .await;
+
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                if is_auth_related_error(&error.to_string()) {
+                    self.invalidate_transport(
+                        "resetting codex transport after auth failure while creating thread",
+                    )
+                    .await;
+                }
+                return Err(error).context("failed to create codex thread");
+            }
+        };
 
         let engine_thread_id = extract_thread_id(&result)
             .ok_or_else(|| anyhow::anyhow!("missing thread id in thread/start response"))?;
@@ -402,7 +414,22 @@ impl Engine for CodexEngine {
               }
               response = &mut turn_task, if !turn_request_done => {
                 turn_request_done = true;
-                let result = response.context("turn/start task join failed")??;
+                let result = match response {
+                  Ok(Ok(result)) => result,
+                  Ok(Err(error)) => {
+                    if is_auth_related_error(&error.to_string()) {
+                      self
+                        .invalidate_transport(
+                          "resetting codex transport after auth failure while starting turn",
+                        )
+                        .await;
+                    }
+                    return Err(error).context("turn/start request failed");
+                  }
+                  Err(error) => {
+                    return Err(anyhow::Error::from(error).context("turn/start task join failed"));
+                  }
+                };
 
                 if let Some(turn_id) = extract_turn_id(&result) {
                   if expected_turn_id.is_none() {
@@ -414,6 +441,13 @@ impl Engine for CodexEngine {
                 for event in mapper.map_turn_result(&result) {
                   if event_indicates_sandbox_denial(&event) {
                     self.force_external_sandbox_for_thread(&thread_id).await;
+                  }
+                  if event_indicates_auth_failure(&event) {
+                    self
+                      .invalidate_transport(
+                        "resetting codex transport after auth failure during turn result",
+                      )
+                      .await;
                   }
                   if matches!(event, EngineEvent::TurnCompleted { .. }) {
                     completion_seen = true;
@@ -464,6 +498,13 @@ impl Engine for CodexEngine {
                     for event in mapped_events {
                       if event_indicates_sandbox_denial(&event) {
                         self.force_external_sandbox_for_thread(&thread_id).await;
+                      }
+                      if event_indicates_auth_failure(&event) {
+                        self
+                          .invalidate_transport(
+                            "resetting codex transport after auth failure during streamed turn event",
+                          )
+                          .await;
                       }
                       if matches!(event, EngineEvent::TurnCompleted { .. }) {
                         completion_seen = true;
@@ -1674,7 +1715,7 @@ fn codex_resolution_note(resolution: &CodexExecutableResolution) -> Option<Strin
 }
 
 fn codex_health_checks() -> Vec<String> {
-    let mut checks = vec![
+    let checks = vec![
         "codex --version".to_string(),
         "command -v codex".to_string(),
         "node --version".to_string(),
@@ -1683,11 +1724,13 @@ fn codex_health_checks() -> Vec<String> {
     ];
 
     #[cfg(target_os = "macos")]
-    {
+    let checks = {
+        let mut checks = checks;
         checks.push("echo \"$PATH\"".to_string());
         checks.push("/bin/zsh -lic 'command -v codex && codex --version'".to_string());
         checks.push("sandbox-exec -p '(version 1) (allow default)' /usr/bin/true".to_string());
-    }
+        checks
+    };
 
     checks
 }
@@ -1696,10 +1739,9 @@ fn codex_fix_commands(
     resolution: &CodexExecutableResolution,
     execution_error: Option<&str>,
 ) -> Vec<String> {
-    let mut fixes = Vec::new();
-
     #[cfg(target_os = "macos")]
     {
+        let mut fixes = Vec::new();
         if resolution.executable.is_none() {
             if let Some(shell_path) = &resolution.login_shell_executable {
                 if let Some(bin_dir) = shell_path.parent() {
@@ -1728,9 +1770,16 @@ fn codex_fix_commands(
             );
             fixes.push("open -a Panes".to_string());
         }
+
+        return fixes;
     }
 
-    fixes
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = resolution;
+        let _ = execution_error;
+        Vec::new()
+    }
 }
 
 fn codex_augmented_path(executable: &Path) -> Option<OsString> {
@@ -2295,6 +2344,18 @@ fn is_sandbox_denied_error(error: &str) -> bool {
             || value.contains("sandbox error"))
 }
 
+fn is_auth_related_error(error: &str) -> bool {
+    let value = error.to_lowercase();
+    value.contains("401")
+        || value.contains("unauthorized")
+        || value.contains("not logged in")
+        || value.contains("login required")
+        || value.contains("authentication required")
+        || value.contains("auth token")
+        || value.contains("invalid token")
+        || value.contains("expired token")
+}
+
 fn workspace_probe_result_indicates_failure(result: &serde_json::Value) -> bool {
     if result.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
         return true;
@@ -2425,6 +2486,13 @@ fn event_indicates_sandbox_denial(event: &EngineEvent) -> bool {
             false
         }
         EngineEvent::Error { message, .. } => is_sandbox_denied_error(message),
+        _ => false,
+    }
+}
+
+fn event_indicates_auth_failure(event: &EngineEvent) -> bool {
+    match event {
+        EngineEvent::Error { message, .. } => is_auth_related_error(message),
         _ => false,
     }
 }
@@ -3574,5 +3642,31 @@ mod tests {
         assert_eq!(approval_id.as_deref(), Some("approval-1"));
         let locked = state.lock().await;
         assert!(locked.approval_requests.is_empty());
+    }
+
+    #[test]
+    fn event_indicates_auth_failure_for_top_level_error() {
+        let event = EngineEvent::Error {
+            message: "401 Unauthorized".to_string(),
+            recoverable: false,
+        };
+
+        assert!(event_indicates_auth_failure(&event));
+    }
+
+    #[test]
+    fn event_indicates_auth_failure_ignores_failed_tool_output() {
+        let event = EngineEvent::ActionCompleted {
+            action_id: "action-1".to_string(),
+            result: ActionResult {
+                success: false,
+                output: Some("curl failed with 401 Unauthorized".to_string()),
+                error: Some("request failed".to_string()),
+                diff: None,
+                duration_ms: 10,
+            },
+        };
+
+        assert!(!event_indicates_auth_failure(&event));
     }
 }

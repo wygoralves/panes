@@ -11,6 +11,10 @@ import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import { copyTextToClipboard } from "../../lib/clipboard";
 import { resolveTerminalBootstrapAction } from "../../lib/terminalBootstrap";
+import {
+  getTerminalAcceleratedRenderingPreferenceVersion,
+  listenTerminalAcceleratedRenderingChanged,
+} from "../../lib/terminalRenderingSettings";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -56,6 +60,8 @@ interface FrontendResizeSnapshot {
 }
 
 interface FrontendRendererDiagnostics {
+  acceleratedRenderingEnabled: boolean;
+  stdinBatchingEnabled: boolean;
   imageAddonInitAttempted: boolean;
   imageAddonInitOk: boolean;
   imageAddonInitError?: string;
@@ -101,6 +107,11 @@ interface FrontendTerminalRuntimeSnapshot {
     droppedChunks: number;
     lastDropWarnAt: string | null;
   } | null;
+  stdinQueueChunks: number;
+  stdinQueueChars: number;
+  stdinFlushTimerActive: boolean;
+  stdinFlushInFlight: boolean;
+  lastInputSentAt: string | null;
 }
 
 interface RendererDiagnosticsExport {
@@ -125,9 +136,20 @@ interface SequencedOutputChunk {
   data: string;
 }
 
+type TerminalInputChunk =
+  | { kind: "text"; data: string }
+  | { kind: "protocol"; data: string }
+  | { kind: "bytes"; data: number[] };
+
 interface SessionTerminal {
   terminal: Terminal;
   fitAddon: FitAddon;
+  stdinQueue: TerminalInputChunk[];
+  stdinQueueChars: number;
+  stdinFlushInFlight: boolean;
+  stdinFlushTimer?: number;
+  lastInputSentAt?: number;
+  lastInputDropWarnAt?: number;
   outputQueue: string[];
   outputQueueChars: number;
   lastAppliedSeq: number;
@@ -154,6 +176,7 @@ interface SessionTerminal {
     lastLogAt: number;
   };
   rendererDiagnostics: FrontendRendererDiagnostics;
+  imageAddonCleanup?: () => void;
   webglCleanup?: () => void;
   dispose: () => void;
 }
@@ -180,6 +203,10 @@ interface InternalTerminal {
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 36;
 const FIT_DEBOUNCE_MS = 80;
+const INPUT_FLUSH_DELAY_MS = 4;
+const INPUT_BATCH_CHAR_LIMIT = 4096;
+const INPUT_QUEUE_MAX_CHARS = 256 * 1024;
+const INPUT_DROP_WARN_COOLDOWN_MS = 5000;
 const OUTPUT_FLUSH_DELAY_MS = 4;
 const OUTPUT_FLUSH_STALL_TIMEOUT_MS = 2500;
 const OUTPUT_BATCH_CHAR_LIMIT = 65536;
@@ -208,6 +235,9 @@ const IMAGE_ADDON_ERROR_PATTERNS = [
   "canvas",
 ];
 
+let acceleratedTerminalRenderingEnabled = true;
+let acceleratedTerminalRenderingPreferenceLoaded = false;
+
 // Module-level cache — xterm instances survive component mount/unmount cycles.
 // This is what preserves terminal scrollback when switching workspaces.
 const cachedTerminals = new Map<string, SessionTerminal>();
@@ -222,6 +252,7 @@ const pendingOutput = new Map<
   }
 >();
 const cachedBackendRendererDiagnostics = new Map<string, BackendRendererDiagnosticsEntry>();
+const backendDiagnosticsRefreshTimers = new Map<string, number>();
 
 function terminalCacheKey(workspaceId: string, sessionId: string): string {
   return `${workspaceId}::${sessionId}`;
@@ -378,6 +409,10 @@ function isLikelyImageAddonError(error: unknown): boolean {
 
 function createRendererDiagnostics(): FrontendRendererDiagnostics {
   return {
+    acceleratedRenderingEnabled:
+      acceleratedTerminalRenderingPreferenceLoaded &&
+      acceleratedTerminalRenderingEnabled,
+    stdinBatchingEnabled: true,
     imageAddonInitAttempted: false,
     imageAddonInitOk: false,
     imageAddonRuntimeErrorCount: 0,
@@ -447,7 +482,53 @@ function snapshotFrontendRuntime(
             : null,
         }
       : null,
+    stdinQueueChunks: session.stdinQueue.length,
+    stdinQueueChars: session.stdinQueueChars,
+    stdinFlushTimerActive: session.stdinFlushTimer !== undefined,
+    stdinFlushInFlight: session.stdinFlushInFlight,
+    lastInputSentAt: session.lastInputSentAt
+      ? new Date(session.lastInputSentAt).toISOString()
+      : null,
   };
+}
+
+function terminalInputChunkLength(chunk: TerminalInputChunk): number {
+  return chunk.data.length;
+}
+
+function isUtf16LowSurrogate(codeUnit: number): boolean {
+  return codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
+}
+
+function isUtf16HighSurrogate(codeUnit: number): boolean {
+  return codeUnit >= 0xd800 && codeUnit <= 0xdbff;
+}
+
+function clampInputChunkBoundary(data: string, maxCodeUnits: number): number {
+  const boundary = Math.min(maxCodeUnits, data.length);
+  if (boundary <= 0 || boundary >= data.length) {
+    return boundary;
+  }
+
+  const previous = data.charCodeAt(boundary - 1);
+  const next = data.charCodeAt(boundary);
+  if (isUtf16HighSurrogate(previous) && isUtf16LowSurrogate(next)) {
+    return boundary - 1;
+  }
+  return boundary;
+}
+
+function shouldFlushInputImmediately(data: string): boolean {
+  if (!data) {
+    return false;
+  }
+  for (let index = 0; index < data.length; index += 1) {
+    const code = data.charCodeAt(index);
+    if (code === 0x1b || code < 0x20 || code === 0x7f) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function refreshBackendRendererDiagnostics(
@@ -469,6 +550,25 @@ async function refreshBackendRendererDiagnostics(
   }
 }
 
+function scheduleBackendRendererDiagnosticsRefresh(
+  workspaceId: string,
+  sessionId: string,
+  delayMs: number = 750,
+) {
+  if (!SHOW_TERMINAL_DIAGNOSTICS_UI) {
+    return;
+  }
+  const cacheKey = terminalCacheKey(workspaceId, sessionId);
+  if (backendDiagnosticsRefreshTimers.has(cacheKey)) {
+    return;
+  }
+  const timer = window.setTimeout(() => {
+    backendDiagnosticsRefreshTimers.delete(cacheKey);
+    void refreshBackendRendererDiagnostics(workspaceId, sessionId);
+  }, delayMs);
+  backendDiagnosticsRefreshTimers.set(cacheKey, timer);
+}
+
 function recordImageAddonRuntimeError(
   cacheKey: string,
   session: SessionTerminal,
@@ -484,6 +584,33 @@ function recordImageAddonRuntimeError(
     count: session.rendererDiagnostics.imageAddonRuntimeErrorCount,
     reason: message,
   });
+}
+
+function setupImageAddon(
+  cacheKey: string,
+  terminal: Terminal,
+  diagnostics: FrontendRendererDiagnostics,
+): (() => void) | null {
+  diagnostics.imageAddonInitAttempted = true;
+  diagnostics.imageAddonInitError = undefined;
+  logTerminalDebug("image-addon:init:start", { cacheKey });
+  try {
+    const imageAddon = new ImageAddon(IMAGE_ADDON_OPTIONS);
+    terminal.loadAddon(imageAddon);
+    diagnostics.imageAddonInitOk = true;
+    logTerminalDebug("image-addon:init:ok", { cacheKey });
+    return () => {
+      imageAddon.dispose();
+    };
+  } catch (error) {
+    diagnostics.imageAddonInitOk = false;
+    diagnostics.imageAddonInitError = errorToMessage(error);
+    logTerminalWarning("image-addon:init:error", {
+      cacheKey,
+      reason: diagnostics.imageAddonInitError,
+    });
+    return null;
+  }
 }
 
 function setupWebglRenderer(
@@ -552,6 +679,62 @@ function degradeRendererToCanvas(
     cacheKey,
     reason,
   });
+}
+
+function applyAcceleratedRenderingPreference(
+  cacheKey: string,
+  session: SessionTerminal,
+  enabled: boolean,
+) {
+  acceleratedTerminalRenderingPreferenceLoaded = true;
+  acceleratedTerminalRenderingEnabled = enabled;
+  session.rendererDiagnostics.acceleratedRenderingEnabled = enabled;
+
+  if (!session.imageAddonCleanup) {
+    session.imageAddonCleanup = setupImageAddon(
+      cacheKey,
+      session.terminal,
+      session.rendererDiagnostics,
+    ) ?? undefined;
+  }
+
+  if (!enabled) {
+    session.webglCleanup?.();
+    session.webglCleanup = undefined;
+    session.rendererMode = "canvas";
+    session.rendererDegradedReason = "settings-disabled";
+    session.rendererDiagnostics.webglActive = false;
+    if (session.terminal.rows > 0) {
+      session.terminal.refresh(0, session.terminal.rows - 1);
+    }
+    return;
+  }
+
+  if (!session.webglCleanup) {
+    const webglCleanup = setupWebglRenderer(
+      cacheKey,
+      session.terminal,
+      session.rendererDiagnostics,
+      () => {
+        const latest = cachedTerminals.get(cacheKey);
+        if (!latest) {
+          return;
+        }
+        degradeRendererToCanvas(cacheKey, latest, "webgl-context-loss");
+      },
+    );
+    if (webglCleanup) {
+      session.webglCleanup = webglCleanup;
+      session.rendererMode = "webgl";
+      session.rendererDegradedReason = undefined;
+    } else {
+      session.rendererMode = "canvas";
+    }
+  }
+
+  if (session.terminal.rows > 0) {
+    session.terminal.refresh(0, session.terminal.rows - 1);
+  }
 }
 
 function registerFlushStall(cacheKey: string, session: SessionTerminal) {
@@ -629,6 +812,10 @@ function hasRenderableSize(container: HTMLElement): boolean {
 }
 
 function clearSessionTimers(session: SessionTerminal) {
+  if (session.stdinFlushTimer !== undefined) {
+    window.clearTimeout(session.stdinFlushTimer);
+    session.stdinFlushTimer = undefined;
+  }
   if (session.fitTimer !== undefined) {
     window.clearTimeout(session.fitTimer);
     session.fitTimer = undefined;
@@ -645,6 +832,30 @@ function clearSessionTimers(session: SessionTerminal) {
     window.clearTimeout(session.flushTimer);
     session.flushTimer = undefined;
   }
+}
+
+function warnDroppedTerminalInput(
+  cacheKey: string,
+  session: SessionTerminal,
+  droppedChars: number,
+) {
+  if (droppedChars <= 0) {
+    return;
+  }
+  const now = Date.now();
+  if (
+    session.lastInputDropWarnAt !== undefined &&
+    now - session.lastInputDropWarnAt < INPUT_DROP_WARN_COOLDOWN_MS
+  ) {
+    return;
+  }
+  session.lastInputDropWarnAt = now;
+  logTerminalWarning("terminal-input-trimmed", {
+    cacheKey,
+    droppedChars,
+    queueChars: session.stdinQueueChars,
+    maxChars: INPUT_QUEUE_MAX_CHARS,
+  });
 }
 
 function getCellPixelSize(terminal: Terminal): { cellWidth: number; cellHeight: number } {
@@ -688,6 +899,301 @@ function sendResizeIfNeeded(
       cellHeight * next.rows,
     )
     .catch(() => undefined);
+}
+
+function pullInputBatch(
+  inputQueue: TerminalInputChunk[],
+): { payload: string; charCount: number } | null {
+  if (inputQueue.length === 0) {
+    return null;
+  }
+
+  const firstChunk = inputQueue[0];
+  if (!firstChunk || firstChunk.kind !== "text") {
+    return null;
+  }
+
+  let totalChars = 0;
+  const chunks: string[] = [];
+  while (inputQueue.length > 0 && totalChars < INPUT_BATCH_CHAR_LIMIT) {
+    const chunk = inputQueue[0];
+    if (!chunk) {
+      inputQueue.shift();
+      continue;
+    }
+    if (chunk.kind !== "text") {
+      break;
+    }
+
+    const remainingChars = INPUT_BATCH_CHAR_LIMIT - totalChars;
+    if (chunk.data.length <= remainingChars) {
+      chunks.push(chunk.data);
+      totalChars += chunk.data.length;
+      inputQueue.shift();
+      continue;
+    }
+
+    const boundary = clampInputChunkBoundary(chunk.data, remainingChars);
+    if (boundary <= 0) {
+      break;
+    }
+    chunks.push(chunk.data.slice(0, boundary));
+    inputQueue[0] = {
+      kind: "text",
+      data: chunk.data.slice(boundary),
+    };
+    totalChars += boundary;
+  }
+
+  if (chunks.length === 0) {
+    return null;
+  }
+
+  return {
+    payload: chunks.join(""),
+    charCount: totalChars,
+  };
+}
+
+function pullInputChunk(inputQueue: TerminalInputChunk[]): TerminalInputChunk | null {
+  return inputQueue.shift() ?? null;
+}
+
+function pullProtocolInputChunk(
+  inputQueue: TerminalInputChunk[],
+): { payload: string; charCount: number } | null {
+  if (inputQueue.length === 0) {
+    return null;
+  }
+
+  const head = inputQueue[0];
+  if (!head || head.kind !== "protocol") {
+    return null;
+  }
+
+  inputQueue.shift();
+  return {
+    payload: head.data,
+    charCount: head.data.length,
+  };
+}
+
+function flushTerminalInputQueue(
+  cacheKey: string,
+  workspaceId: string,
+  sessionId: string,
+) {
+  const session = cachedTerminals.get(cacheKey);
+  if (!session || session.stdinFlushInFlight) {
+    return;
+  }
+
+  if (session.stdinQueue.length === 0) {
+    return;
+  }
+
+  const head = session.stdinQueue[0];
+  if (!head) {
+    session.stdinQueueChars = 0;
+    return;
+  }
+  session.stdinFlushInFlight = true;
+  const sentAt = Date.now();
+  session.lastInputSentAt = sentAt;
+
+  if (head.kind === "protocol") {
+    const protocolChunk = pullProtocolInputChunk(session.stdinQueue);
+    if (!protocolChunk) {
+      session.stdinFlushInFlight = false;
+      return;
+    }
+
+    session.stdinQueueChars = Math.max(0, session.stdinQueueChars - protocolChunk.charCount);
+    void ipc
+      .terminalWrite(workspaceId, sessionId, protocolChunk.payload)
+      .catch(() => undefined)
+      .finally(() => {
+        const latest = cachedTerminals.get(cacheKey);
+        if (!latest) {
+          return;
+        }
+        scheduleBackendRendererDiagnosticsRefresh(workspaceId, sessionId);
+        latest.stdinFlushInFlight = false;
+        if (latest.stdinQueue.length > 0) {
+          scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, 0);
+        }
+      });
+    return;
+  }
+
+  if (head.kind === "text") {
+    const batch = pullInputBatch(session.stdinQueue);
+    if (!batch) {
+      session.stdinFlushInFlight = false;
+      return;
+    }
+
+    session.stdinQueueChars = Math.max(0, session.stdinQueueChars - batch.charCount);
+    void ipc
+      .terminalWrite(workspaceId, sessionId, batch.payload)
+      .catch(() => undefined)
+      .finally(() => {
+        const latest = cachedTerminals.get(cacheKey);
+        if (!latest) {
+          return;
+        }
+        scheduleBackendRendererDiagnosticsRefresh(workspaceId, sessionId);
+        latest.stdinFlushInFlight = false;
+        if (latest.stdinQueue.length > 0) {
+          scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, 0);
+        }
+      });
+    return;
+  }
+
+  const chunk = pullInputChunk(session.stdinQueue);
+  if (!chunk || chunk.kind !== "bytes") {
+    session.stdinFlushInFlight = false;
+    return;
+  }
+
+  session.stdinQueueChars = Math.max(
+    0,
+    session.stdinQueueChars - terminalInputChunkLength(chunk),
+  );
+  void ipc
+    .terminalWriteBytes(workspaceId, sessionId, chunk.data)
+    .catch(() => undefined)
+    .finally(() => {
+      const latest = cachedTerminals.get(cacheKey);
+      if (!latest) {
+        return;
+      }
+      scheduleBackendRendererDiagnosticsRefresh(workspaceId, sessionId);
+      latest.stdinFlushInFlight = false;
+      if (latest.stdinQueue.length > 0) {
+        scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, 0);
+      }
+    });
+}
+
+function scheduleTerminalInputFlush(
+  cacheKey: string,
+  workspaceId: string,
+  sessionId: string,
+  delayMs: number,
+) {
+  const session = cachedTerminals.get(cacheKey);
+  if (!session) {
+    return;
+  }
+
+  if (delayMs <= 0) {
+    if (session.stdinFlushTimer !== undefined) {
+      window.clearTimeout(session.stdinFlushTimer);
+      session.stdinFlushTimer = undefined;
+    }
+    flushTerminalInputQueue(cacheKey, workspaceId, sessionId);
+    return;
+  }
+
+  if (session.stdinFlushTimer !== undefined) {
+    return;
+  }
+
+  session.stdinFlushTimer = window.setTimeout(() => {
+    const latest = cachedTerminals.get(cacheKey);
+    if (!latest) {
+      return;
+    }
+    latest.stdinFlushTimer = undefined;
+    flushTerminalInputQueue(cacheKey, workspaceId, sessionId);
+  }, delayMs);
+}
+
+function enqueueTerminalInput(
+  cacheKey: string,
+  workspaceId: string,
+  sessionId: string,
+  data: string,
+) {
+  const session = cachedTerminals.get(cacheKey);
+  if (!session) {
+    void ipc.terminalWrite(workspaceId, sessionId, data).catch(() => undefined);
+    return;
+  }
+
+  const remainingChars = Math.max(0, INPUT_QUEUE_MAX_CHARS - session.stdinQueueChars);
+  if (remainingChars <= 0) {
+    warnDroppedTerminalInput(cacheKey, session, data.length);
+    scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, 0);
+    return;
+  }
+
+  const boundary = clampInputChunkBoundary(data, remainingChars);
+  const accepted = data.slice(0, boundary);
+  const droppedChars = data.length - accepted.length;
+  if (!accepted) {
+    warnDroppedTerminalInput(cacheKey, session, droppedChars);
+    scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, 0);
+    return;
+  }
+
+  session.stdinQueue.push({ kind: "text", data: accepted });
+  session.stdinQueueChars += accepted.length;
+  warnDroppedTerminalInput(cacheKey, session, droppedChars);
+  const delayMs = shouldFlushInputImmediately(data) ? 0 : INPUT_FLUSH_DELAY_MS;
+  scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, delayMs);
+}
+
+function enqueueTerminalProtocolInput(
+  cacheKey: string,
+  workspaceId: string,
+  sessionId: string,
+  data: string,
+) {
+  const session = cachedTerminals.get(cacheKey);
+  if (!session) {
+    void ipc.terminalWrite(workspaceId, sessionId, data).catch(() => undefined);
+    return;
+  }
+
+  session.stdinQueue.push({ kind: "protocol", data });
+  session.stdinQueueChars += data.length;
+  scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, 0);
+}
+
+function enqueueTerminalInputBytes(
+  cacheKey: string,
+  workspaceId: string,
+  sessionId: string,
+  data: number[],
+) {
+  const session = cachedTerminals.get(cacheKey);
+  if (!session) {
+    void ipc.terminalWriteBytes(workspaceId, sessionId, data).catch(() => undefined);
+    return;
+  }
+
+  const remainingChars = Math.max(0, INPUT_QUEUE_MAX_CHARS - session.stdinQueueChars);
+  if (remainingChars <= 0) {
+    warnDroppedTerminalInput(cacheKey, session, data.length);
+    scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, 0);
+    return;
+  }
+
+  const accepted = data.slice(0, remainingChars);
+  const droppedChars = data.length - accepted.length;
+  if (accepted.length === 0) {
+    warnDroppedTerminalInput(cacheKey, session, droppedChars);
+    scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, 0);
+    return;
+  }
+
+  session.stdinQueue.push({ kind: "bytes", data: accepted });
+  session.stdinQueueChars += accepted.length;
+  warnDroppedTerminalInput(cacheKey, session, droppedChars);
+  scheduleTerminalInputFlush(cacheKey, workspaceId, sessionId, 0);
 }
 
 function trimOutputQueue(
@@ -1073,6 +1579,8 @@ function queueOutput(workspaceId: string, sessionId: string, chunk: SequencedOut
     return;
   }
 
+  scheduleBackendRendererDiagnosticsRefresh(workspaceId, sessionId);
+
   const result = enqueueOutputChunk(cacheKey, session, chunk);
   if (result === "duplicate") {
     return;
@@ -1217,6 +1725,11 @@ function markWorkspaceTerminalsDetached(workspaceId: string) {
 /** Permanently destroy a cached terminal (used when session is explicitly closed). */
 function destroyCachedTerminal(workspaceId: string, sessionId: string) {
   const key = terminalCacheKey(workspaceId, sessionId);
+  const refreshTimer = backendDiagnosticsRefreshTimers.get(key);
+  if (refreshTimer !== undefined) {
+    window.clearTimeout(refreshTimer);
+    backendDiagnosticsRefreshTimers.delete(key);
+  }
   const cached = cachedTerminals.get(key);
   if (cached) {
     clearSessionTimers(cached);
@@ -1827,6 +2340,51 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   }, [workspaceId]);
 
   useEffect(() => {
+    let cancelled = false;
+    const requestVersion = getTerminalAcceleratedRenderingPreferenceVersion();
+    ipc
+      .getTerminalAcceleratedRendering()
+      .then((enabled) => {
+        if (
+          cancelled ||
+          getTerminalAcceleratedRenderingPreferenceVersion() !== requestVersion
+        ) {
+          return;
+        }
+        acceleratedTerminalRenderingPreferenceLoaded = true;
+        acceleratedTerminalRenderingEnabled = enabled;
+        forEachWorkspaceCachedTerminal(workspaceId, (sessionId, session) => {
+          applyAcceleratedRenderingPreference(
+            terminalCacheKey(workspaceId, sessionId),
+            session,
+            enabled,
+          );
+        });
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
+  useEffect(
+    () =>
+      listenTerminalAcceleratedRenderingChanged((enabled) => {
+        acceleratedTerminalRenderingPreferenceLoaded = true;
+        acceleratedTerminalRenderingEnabled = enabled;
+        forEachWorkspaceCachedTerminal(workspaceId, (sessionId, session) => {
+          applyAcceleratedRenderingPreference(
+            terminalCacheKey(workspaceId, sessionId),
+            session,
+            enabled,
+          );
+        });
+      }),
+    [workspaceId],
+  );
+
+  useEffect(() => {
     if (renamingGroupId) {
       renameInputRef.current?.focus();
       renameInputRef.current?.select();
@@ -2191,7 +2749,9 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       cached.isAttached = true;
       scheduleTerminalFit(workspaceId, sessionId, 0);
       void resumeSessionOutput(workspaceId, sessionId, "attach");
-      void refreshBackendRendererDiagnostics(workspaceId, sessionId);
+      if (SHOW_TERMINAL_DIAGNOSTICS_UI) {
+        void refreshBackendRendererDiagnostics(workspaceId, sessionId);
+      }
       return;
     }
 
@@ -2221,21 +2781,6 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     terminal.unicode.activeVersion = "11";
 
     const rendererDiagnostics = createRendererDiagnostics();
-    rendererDiagnostics.imageAddonInitAttempted = true;
-    logTerminalDebug("image-addon:init:start", { cacheKey });
-    try {
-      const imageAddon = new ImageAddon(IMAGE_ADDON_OPTIONS);
-      terminal.loadAddon(imageAddon);
-      rendererDiagnostics.imageAddonInitOk = true;
-      logTerminalDebug("image-addon:init:ok", { cacheKey });
-    } catch (error) {
-      rendererDiagnostics.imageAddonInitOk = false;
-      rendererDiagnostics.imageAddonInitError = errorToMessage(error);
-      logTerminalWarning("image-addon:init:error", {
-        cacheKey,
-        reason: rendererDiagnostics.imageAddonInitError,
-      });
-    }
 
     terminal.open(container);
 
@@ -2267,22 +2812,22 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       const targetSessionIds = getBroadcastTargetSessionIds();
       if (targetSessionIds) {
         for (const id of targetSessionIds) {
-          void ipc.terminalWrite(workspaceId, id, data).catch(() => undefined);
+          enqueueTerminalInput(terminalCacheKey(workspaceId, id), workspaceId, id, data);
         }
         return;
       }
-      void ipc.terminalWrite(workspaceId, sessionId, data).catch(() => undefined);
+      enqueueTerminalInput(cacheKey, workspaceId, sessionId, data);
     }
 
     function broadcastWriteBytes(bytes: number[]) {
       const targetSessionIds = getBroadcastTargetSessionIds();
       if (targetSessionIds) {
         for (const id of targetSessionIds) {
-          void ipc.terminalWriteBytes(workspaceId, id, bytes).catch(() => undefined);
+          enqueueTerminalInputBytes(terminalCacheKey(workspaceId, id), workspaceId, id, bytes);
         }
         return;
       }
-      void ipc.terminalWriteBytes(workspaceId, sessionId, bytes).catch(() => undefined);
+      enqueueTerminalInputBytes(cacheKey, workspaceId, sessionId, bytes);
     }
 
     terminal.attachCustomKeyEventHandler((event) => {
@@ -2328,7 +2873,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     const writeDisposable = terminal.onData((data) => {
       if (isTerminalResponse(data)) {
         // Terminal protocol responses go only to the originating session
-        void ipc.terminalWrite(workspaceId, sessionId, data).catch(() => undefined);
+        enqueueTerminalProtocolInput(cacheKey, workspaceId, sessionId, data);
         return;
       }
       broadcastWrite(data);
@@ -2351,6 +2896,9 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     const entry: SessionTerminal = {
       terminal,
       fitAddon,
+      stdinQueue: [],
+      stdinQueueChars: 0,
+      stdinFlushInFlight: false,
       outputQueue: [],
       outputQueueChars: 0,
       lastAppliedSeq: 0,
@@ -2368,6 +2916,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         lastLogAt: Date.now(),
       },
       rendererDiagnostics,
+      imageAddonCleanup: undefined,
       webglCleanup: undefined,
       dispose: () => {
         if (disposed) {
@@ -2375,6 +2924,8 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         }
         disposed = true;
         clearSessionTimers(entry);
+        entry.imageAddonCleanup?.();
+        entry.imageAddonCleanup = undefined;
         entry.webglCleanup?.();
         entry.webglCleanup = undefined;
         writeDisposable.dispose();
@@ -2384,24 +2935,16 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       },
     };
     cachedTerminals.set(cacheKey, entry);
-    const webglCleanup = setupWebglRenderer(
-      cacheKey,
-      terminal,
-      rendererDiagnostics,
-      () => {
-        const latest = cachedTerminals.get(cacheKey);
-        if (!latest) {
-          return;
-        }
-        degradeRendererToCanvas(cacheKey, latest, "webgl-context-loss");
-      },
-    );
-    if (webglCleanup) {
-      entry.webglCleanup = webglCleanup;
-      entry.rendererMode = "webgl";
-      entry.rendererDegradedReason = undefined;
+    if (acceleratedTerminalRenderingPreferenceLoaded) {
+      applyAcceleratedRenderingPreference(
+        cacheKey,
+        entry,
+        acceleratedTerminalRenderingEnabled,
+      );
     }
-    void refreshBackendRendererDiagnostics(workspaceId, sessionId);
+    if (SHOW_TERMINAL_DIAGNOSTICS_UI) {
+      void refreshBackendRendererDiagnostics(workspaceId, sessionId);
+    }
 
     // Synchronous fit — ensures PTY gets correct size before first shell output
     fitAddon.fit();

@@ -23,6 +23,10 @@ pub struct GeneralConfig {
     pub default_model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub locale: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_window_decorations: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_accelerated_rendering: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +57,8 @@ impl Default for GeneralConfig {
             default_engine: "codex".to_string(),
             default_model: "gpt-5.3-codex".to_string(),
             locale: None,
+            native_window_decorations: None,
+            terminal_accelerated_rendering: None,
         }
     }
 }
@@ -96,6 +102,14 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    pub fn native_window_decorations_enabled(&self) -> bool {
+        self.general.native_window_decorations.unwrap_or(true)
+    }
+
+    pub fn terminal_accelerated_rendering_enabled(&self) -> bool {
+        self.general.terminal_accelerated_rendering.unwrap_or(true)
+    }
+
     pub fn load_or_create() -> anyhow::Result<Self> {
         let _guard = lock_config()?;
         Self::load_or_create_unlocked()
@@ -226,16 +240,21 @@ max_action_output_chars = 20000
         let config = toml::from_str::<AppConfig>(raw).expect("config should deserialize");
 
         assert_eq!(config.general.locale, None);
+        assert_eq!(config.general.native_window_decorations, None);
+        assert!(!config.power.keep_awake_enabled);
+        assert_eq!(config.general.terminal_accelerated_rendering, None);
         assert!(!config.power.keep_awake_enabled);
     }
 
     #[test]
-    fn default_config_omits_locale_from_toml() {
+    fn default_config_omits_optional_general_fields_from_toml() {
         let raw = toml::to_string_pretty(&AppConfig::default()).expect("config should serialize");
 
         assert!(!raw.contains("locale"));
+        assert!(!raw.contains("native_window_decorations"));
         assert!(raw.contains("[power]"));
         assert!(raw.contains("keep_awake_enabled = false"));
+        assert!(!raw.contains("terminal_accelerated_rendering"));
     }
 
     #[test]
@@ -254,5 +273,19 @@ max_action_output_chars = 20000
             assert_eq!(saved.general.locale.as_deref(), Some("pt-BR"));
             assert!(saved.power.keep_awake_enabled);
         });
+    }
+
+    #[test]
+    fn native_window_decorations_default_to_enabled() {
+        let config = AppConfig::default();
+
+        assert!(config.native_window_decorations_enabled());
+    }
+
+    #[test]
+    fn terminal_accelerated_rendering_defaults_to_enabled() {
+        let config = AppConfig::default();
+
+        assert!(config.terminal_accelerated_rendering_enabled());
     }
 }

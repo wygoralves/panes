@@ -520,10 +520,9 @@ fn node_unavailable_details(resolution: &NodeExecutableResolution) -> String {
 }
 
 fn node_fix_commands(resolution: &NodeExecutableResolution) -> Vec<String> {
-    let mut fixes = Vec::new();
-
     #[cfg(target_os = "macos")]
     {
+        let mut fixes = Vec::new();
         match resolution.login_shell_executable.as_ref() {
             Some(shell_path) => {
                 if let Some(bin_dir) = shell_path.parent() {
@@ -539,9 +538,15 @@ fn node_fix_commands(resolution: &NodeExecutableResolution) -> Vec<String> {
                 fixes.push("open -a Panes".to_string());
             }
         }
+
+        return fixes;
     }
 
-    fixes
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = resolution;
+        Vec::new()
+    }
 }
 
 fn executable_augmented_path(executable: &Path) -> Option<OsString> {

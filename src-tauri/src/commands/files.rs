@@ -77,7 +77,7 @@ fn reveal_path_impl(path: PathBuf) -> anyhow::Result<()> {
             command.arg("-R");
         }
         command.arg(&path);
-        spawn_command(command, &path)?;
+        return spawn_command(command, &path);
     }
 
     #[cfg(target_os = "windows")]
@@ -88,7 +88,7 @@ fn reveal_path_impl(path: PathBuf) -> anyhow::Result<()> {
         } else {
             command.arg(&path);
         }
-        spawn_command(command, &path)?;
+        return spawn_command(command, &path);
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -121,6 +121,7 @@ fn reveal_path_impl(path: PathBuf) -> anyhow::Result<()> {
         );
     }
 
+    #[cfg(not(any(target_os = "macos", target_os = "windows", unix)))]
     Ok(())
 }
 

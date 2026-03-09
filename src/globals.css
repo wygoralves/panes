@@ -1452,8 +1452,8 @@ button, input, textarea, select {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 26px;
+  width: 34px;
+  height: 32px;
   border: none;
   background: transparent;
   color: var(--text-3);
@@ -1557,9 +1557,10 @@ button, input, textarea, select {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 0 10px;
+  padding: 0 12px;
+  min-height: 100%;
   border-bottom: 2px solid transparent;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-3);
   cursor: pointer;
@@ -4665,8 +4666,8 @@ button, input, textarea, select {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 10px;
-  height: 32px;
+  padding: 0 12px;
+  min-height: 36px;
   font-size: 12px;
   color: var(--text-3);
   cursor: pointer;

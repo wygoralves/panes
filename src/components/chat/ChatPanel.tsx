@@ -46,6 +46,7 @@ import { PermissionPicker } from "./PermissionPicker";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { getHarnessIcon } from "../shared/HarnessLogos";
+import { shouldSubmitChatInput } from "./chatInputShortcuts";
 import type {
   ApprovalBlock,
   ApprovalResponse,
@@ -3267,7 +3268,13 @@ export function ChatPanel() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
-                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                if (shouldSubmitChatInput({
+                  key: e.key,
+                  ctrlKey: e.ctrlKey,
+                  metaKey: e.metaKey,
+                  shiftKey: e.shiftKey,
+                  isComposing: e.nativeEvent.isComposing,
+                })) {
                   e.preventDefault();
                   if (streaming) {
                     return;

@@ -19,9 +19,9 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::models::{
-    TerminalEnvSnapshotDto, TerminalIoCountersDto, TerminalOutputThrottleSnapshotDto,
-    TerminalRendererDiagnosticsDto, TerminalReplayChunkDto, TerminalResizeSnapshotDto,
-    TerminalResumeSessionDto, TerminalSessionDto,
+    TerminalEnvSnapshotDto, TerminalIoCountersDto, TerminalLatencySnapshotDto,
+    TerminalOutputThrottleSnapshotDto, TerminalRendererDiagnosticsDto, TerminalReplayChunkDto,
+    TerminalResizeSnapshotDto, TerminalResumeSessionDto, TerminalSessionDto,
 };
 use crate::runtime_env;
 
@@ -63,6 +63,7 @@ struct TerminalSessionIoCounters {
     stdin_writes: AtomicU64,
     stdin_bytes: AtomicU64,
     stdin_ctrl_c: AtomicU64,
+    last_stdin_write_duration_ms: AtomicU64,
     stdout_reads: AtomicU64,
     stdout_bytes: AtomicU64,
     stdout_emits: AtomicU64,
@@ -748,6 +749,11 @@ impl TerminalSessionHandle {
             stdin_writes: self.io_counters.stdin_writes.load(Ordering::Relaxed),
             stdin_bytes: self.io_counters.stdin_bytes.load(Ordering::Relaxed),
             stdin_ctrl_c: self.io_counters.stdin_ctrl_c.load(Ordering::Relaxed),
+            last_stdin_write_duration_ms: non_zero_u64(
+                self.io_counters
+                    .last_stdin_write_duration_ms
+                    .load(Ordering::Relaxed),
+            ),
             stdout_reads: self.io_counters.stdout_reads.load(Ordering::Relaxed),
             stdout_bytes: self.io_counters.stdout_bytes.load(Ordering::Relaxed),
             stdout_emits: self.io_counters.stdout_emits.load(Ordering::Relaxed),
@@ -759,6 +765,24 @@ impl TerminalSessionHandle {
             last_stdin_write_at,
             last_stdout_read_at,
             last_stdout_emit_at,
+        };
+
+        let last_stdin_write_at_ms = self
+            .io_counters
+            .last_stdin_write_at_ms
+            .load(Ordering::Relaxed);
+        let last_stdout_read_at_ms = self
+            .io_counters
+            .last_stdout_read_at_ms
+            .load(Ordering::Relaxed);
+        let last_stdout_emit_at_ms = self
+            .io_counters
+            .last_stdout_emit_at_ms
+            .load(Ordering::Relaxed);
+
+        let latency = TerminalLatencySnapshotDto {
+            stdin_to_stdout_read_ms: diff_u64(last_stdout_read_at_ms, last_stdin_write_at_ms),
+            stdout_read_to_emit_ms: diff_u64(last_stdout_emit_at_ms, last_stdout_read_at_ms),
         };
 
         let output_throttle = TerminalOutputThrottleSnapshotDto {
@@ -783,6 +807,7 @@ impl TerminalSessionHandle {
             env_snapshot,
             last_resize,
             io_counters,
+            latency,
             output_throttle,
         }
     }
@@ -864,6 +889,7 @@ impl TerminalSessionHandle {
     }
 
     fn write(&self, data: &str) -> anyhow::Result<()> {
+        let started_at = Instant::now();
         let mut process = self
             .process
             .lock()
@@ -872,10 +898,7 @@ impl TerminalSessionHandle {
             .writer
             .write_all(data.as_bytes())
             .context("failed writing to terminal stdin")?;
-        process
-            .writer
-            .flush()
-            .context("failed flushing terminal stdin")?;
+        let write_duration_ms = started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
 
         self.io_counters
             .stdin_writes
@@ -889,6 +912,9 @@ impl TerminalSessionHandle {
                 .stdin_ctrl_c
                 .fetch_add(ctrl_c, Ordering::Relaxed);
         }
+        self.io_counters
+            .last_stdin_write_duration_ms
+            .store(write_duration_ms, Ordering::Relaxed);
         let now_ms = Utc::now().timestamp_millis();
         if now_ms > 0 {
             self.io_counters
@@ -899,6 +925,7 @@ impl TerminalSessionHandle {
     }
 
     fn write_raw(&self, data: &[u8]) -> anyhow::Result<()> {
+        let started_at = Instant::now();
         let mut process = self
             .process
             .lock()
@@ -907,10 +934,7 @@ impl TerminalSessionHandle {
             .writer
             .write_all(data)
             .context("failed writing bytes to terminal stdin")?;
-        process
-            .writer
-            .flush()
-            .context("failed flushing terminal stdin")?;
+        let write_duration_ms = started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
 
         self.io_counters
             .stdin_writes
@@ -924,6 +948,9 @@ impl TerminalSessionHandle {
                 .stdin_ctrl_c
                 .fetch_add(ctrl_c, Ordering::Relaxed);
         }
+        self.io_counters
+            .last_stdin_write_duration_ms
+            .store(write_duration_ms, Ordering::Relaxed);
         let now_ms = Utc::now().timestamp_millis();
         if now_ms > 0 {
             self.io_counters
@@ -1255,6 +1282,22 @@ fn rfc3339_from_unix_ms(ms: u64) -> Option<String> {
         return None;
     }
     chrono::DateTime::<Utc>::from_timestamp_millis(ms as i64).map(|dt| dt.to_rfc3339())
+}
+
+fn non_zero_u64(value: u64) -> Option<u64> {
+    if value == 0 {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn diff_u64(later: u64, earlier: u64) -> Option<u64> {
+    if later == 0 || earlier == 0 || later < earlier {
+        None
+    } else {
+        Some(later - earlier)
+    }
 }
 
 fn emit_output(

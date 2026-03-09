@@ -69,6 +69,7 @@ pub fn run() {
     let app_state = AppState {
         db,
         config: Arc::new(app_config),
+        config_write_lock: Arc::new(tokio::sync::Mutex::new(())),
         engines: Arc::new(EngineManager::new()),
         git_watchers: Arc::new(GitWatcherManager::default()),
         terminals: Arc::new(TerminalManager::default()),
@@ -88,9 +89,15 @@ pub fn run() {
         .menu(move |handle| build_app_menu(handle, app_locale))
         .setup(|app| {
             #[cfg(target_os = "linux")]
-            if let Some(main_window) = app.get_webview_window("main") {
-                if let Err(error) = main_window.set_decorations(false) {
-                    log::warn!("failed to disable window decorations on linux: {error}");
+            if !app
+                .state::<AppState>()
+                .config
+                .native_window_decorations_enabled()
+            {
+                if let Some(main_window) = app.get_webview_window("main") {
+                    if let Err(error) = main_window.set_decorations(false) {
+                        log::warn!("failed to disable window decorations on linux: {error}");
+                    }
                 }
             }
 
@@ -117,6 +124,8 @@ pub fn run() {
             commands::app::set_app_locale,
             commands::power::get_keep_awake_state,
             commands::power::set_keep_awake_enabled,
+            commands::app::get_native_window_decorations,
+            commands::app::set_native_window_decorations,
             commands::chat::send_message,
             commands::chat::cancel_turn,
             commands::chat::respond_to_approval,
@@ -178,6 +187,8 @@ pub fn run() {
             commands::git::add_git_remote,
             commands::git::remove_git_remote,
             commands::git::rename_git_remote,
+            commands::app::get_terminal_accelerated_rendering,
+            commands::app::set_terminal_accelerated_rendering,
             commands::files::list_dir,
             commands::files::read_file,
             commands::files::write_file,
