@@ -1,7 +1,7 @@
 use std::{
     fs,
     path::PathBuf,
-    sync::{Mutex, OnceLock},
+    sync::{Mutex, MutexGuard, OnceLock},
 };
 
 use serde::{Deserialize, Serialize};
@@ -97,11 +97,30 @@ impl Default for AppConfig {
 
 impl AppConfig {
     pub fn load_or_create() -> anyhow::Result<Self> {
+        let _guard = lock_config()?;
+        Self::load_or_create_unlocked()
+    }
+
+    #[allow(dead_code)]
+    pub fn save(&self) -> anyhow::Result<()> {
+        let _guard = lock_config()?;
+        self.save_unlocked()
+    }
+
+    pub fn mutate<T>(f: impl FnOnce(&mut Self) -> anyhow::Result<T>) -> anyhow::Result<T> {
+        let _guard = lock_config()?;
+        let mut config = Self::load_or_create_unlocked()?;
+        let result = f(&mut config)?;
+        config.save_unlocked()?;
+        Ok(result)
+    }
+
+    fn load_or_create_unlocked() -> anyhow::Result<Self> {
         let path = Self::path();
 
         if !path.exists() {
             let config = Self::default();
-            config.save()?;
+            config.save_unlocked()?;
             return Ok(config);
         }
 
@@ -110,7 +129,7 @@ impl AppConfig {
         Ok(config)
     }
 
-    pub fn save(&self) -> anyhow::Result<()> {
+    fn save_unlocked(&self) -> anyhow::Result<()> {
         let path = Self::path();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -121,16 +140,6 @@ impl AppConfig {
         fs::write(&temp_path, raw)?;
         replace_file(&temp_path, &path)?;
         Ok(())
-    }
-
-    pub fn mutate<T>(f: impl FnOnce(&mut Self) -> anyhow::Result<T>) -> anyhow::Result<T> {
-        let _guard = config_lock()
-            .lock()
-            .map_err(|_| anyhow::anyhow!("config lock poisoned"))?;
-        let mut config = Self::load_or_create()?;
-        let result = f(&mut config)?;
-        config.save()?;
-        Ok(result)
     }
 
     pub fn path() -> PathBuf {
@@ -144,6 +153,12 @@ impl AppConfig {
 fn config_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn lock_config() -> anyhow::Result<MutexGuard<'static, ()>> {
+    config_lock()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("config lock poisoned"))
 }
 
 fn replace_file(temp_path: &std::path::Path, path: &std::path::Path) -> std::io::Result<()> {
