@@ -1,5 +1,19 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.35.0...vnull) (2026-03-09)
+
+### Features
+
+* batch terminal input and add renderer toggles ([781998d](https://github.com/wygoralves/panes/commit/781998dd0a67d39b9cd6a880b357f38c1656a229))
+* improve organization of the settings dropdown ([3b2ae67](https://github.com/wygoralves/panes/commit/3b2ae674551e4e741e56b2764af84585a3727c18))
+
+### Bug Fixes
+
+* fix config write races and Linux window decoration persistence ([178eca3](https://github.com/wygoralves/panes/commit/178eca32f97c1c494378fdce35f2636ad09e55ad))
+* fix limits strings not being replaced ([297f24e](https://github.com/wygoralves/panes/commit/297f24e104be82f7c165f0f336574f55905de09c))
+* fix renderer hydration regression ([fc5a736](https://github.com/wygoralves/panes/commit/fc5a73650b603920f53324f327a30be6aef646e5))
+* reset stale Codex transport after auth failures ([ba76251](https://github.com/wygoralves/panes/commit/ba762510ceeb9c1bb6e24a64584217f922e8fe1e))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.34.2...vnull) (2026-03-09)
 
 ### Features
