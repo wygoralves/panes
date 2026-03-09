@@ -617,6 +617,7 @@ pub struct TerminalRendererDiagnosticsDto {
     pub env_snapshot: TerminalEnvSnapshotDto,
     pub last_resize: Option<TerminalResizeSnapshotDto>,
     pub io_counters: TerminalIoCountersDto,
+    pub latency: TerminalLatencySnapshotDto,
     pub output_throttle: TerminalOutputThrottleSnapshotDto,
 }
 
@@ -626,6 +627,7 @@ pub struct TerminalIoCountersDto {
     pub stdin_writes: u64,
     pub stdin_bytes: u64,
     pub stdin_ctrl_c: u64,
+    pub last_stdin_write_duration_ms: Option<u64>,
     pub stdout_reads: u64,
     pub stdout_bytes: u64,
     pub stdout_emits: u64,
@@ -645,6 +647,13 @@ pub struct TerminalOutputThrottleSnapshotDto {
     pub buffer_cap_bytes: u64,
     pub buffer_peak_bytes: u64,
     pub buffer_trimmed_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalLatencySnapshotDto {
+    pub stdin_to_stdout_read_ms: Option<u64>,
+    pub stdout_read_to_emit_ms: Option<u64>,
 }
 
 // ── Git Remotes ─────────────────────────────────────────────────────

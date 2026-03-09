@@ -30,6 +30,10 @@ import { useKeepAwakeStore } from "../../stores/keepAwakeStore";
 import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { formatRelativeTime } from "../../lib/formatters";
+import {
+  emitTerminalAcceleratedRenderingChanged,
+  getTerminalAcceleratedRenderingPreferenceVersion,
+} from "../../lib/terminalRenderingSettings";
 import { isLinuxDesktop } from "../../lib/windowActions";
 import {
   normalizeAppLocale,
@@ -127,6 +131,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [settingsMenuPos, setSettingsMenuPos] = useState({ top: 0, left: 0 });
   const [nativeWindowDecorations, setNativeWindowDecorations] = useState(true);
+  const [terminalAcceleratedRendering, setTerminalAcceleratedRendering] = useState(true);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const activeLocale = normalizeAppLocale(i18n.language);
@@ -175,6 +180,26 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       cancelled = true;
     };
   }, [showNativeWindowDecorationsSetting]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const requestVersion = getTerminalAcceleratedRenderingPreferenceVersion();
+    ipc
+      .getTerminalAcceleratedRendering()
+      .then((enabled) => {
+        if (
+          !cancelled &&
+          getTerminalAcceleratedRenderingPreferenceVersion() === requestVersion
+        ) {
+          setTerminalAcceleratedRendering(enabled);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const archivedThreads = useMemo(
     () =>
@@ -296,6 +321,18 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       closeSettingsMenu();
     } catch {
       toast.error(t("app:sidebar.nativeWindowDecorationsFailed"));
+    }
+  }
+
+  async function onToggleTerminalAcceleratedRendering() {
+    const nextValue = !terminalAcceleratedRendering;
+
+    try {
+      const saved = await ipc.setTerminalAcceleratedRendering(nextValue);
+      setTerminalAcceleratedRendering(saved);
+      emitTerminalAcceleratedRenderingChanged(saved);
+    } catch {
+      toast.error(t("app:sidebar.terminalAcceleratedRenderingFailed"));
     }
   }
 
@@ -800,6 +837,29 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                   }}
                 />
               )}
+            </button>
+            <div className="git-action-menu-divider" />
+            <div
+              style={{
+                padding: "6px 10px 4px",
+                fontSize: 11,
+                color: "var(--text-3)",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+              }}
+            >
+              {t("app:sidebar.terminal")}
+            </div>
+            <button
+              type="button"
+              className="git-action-menu-item"
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+              onClick={() => {
+                void onToggleTerminalAcceleratedRendering();
+              }}
+            >
+              <span>{t("app:sidebar.terminalAcceleratedRendering")}</span>
+              {terminalAcceleratedRendering ? <Check size={12} /> : null}
             </button>
             <div className="git-action-menu-divider" />
             {showNativeWindowDecorationsSetting && (

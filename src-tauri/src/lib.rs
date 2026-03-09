@@ -187,6 +187,8 @@ pub fn run() {
             commands::git::add_git_remote,
             commands::git::remove_git_remote,
             commands::git::rename_git_remote,
+            commands::app::get_terminal_accelerated_rendering,
+            commands::app::set_terminal_accelerated_rendering,
             commands::files::list_dir,
             commands::files::read_file,
             commands::files::write_file,

@@ -25,6 +25,8 @@ pub struct GeneralConfig {
     pub locale: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_window_decorations: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_accelerated_rendering: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +58,7 @@ impl Default for GeneralConfig {
             default_model: "gpt-5.3-codex".to_string(),
             locale: None,
             native_window_decorations: None,
+            terminal_accelerated_rendering: None,
         }
     }
 }
@@ -101,6 +104,10 @@ impl Default for AppConfig {
 impl AppConfig {
     pub fn native_window_decorations_enabled(&self) -> bool {
         self.general.native_window_decorations.unwrap_or(true)
+    }
+
+    pub fn terminal_accelerated_rendering_enabled(&self) -> bool {
+        self.general.terminal_accelerated_rendering.unwrap_or(true)
     }
 
     pub fn load_or_create() -> anyhow::Result<Self> {
@@ -235,6 +242,8 @@ max_action_output_chars = 20000
         assert_eq!(config.general.locale, None);
         assert_eq!(config.general.native_window_decorations, None);
         assert!(!config.power.keep_awake_enabled);
+        assert_eq!(config.general.terminal_accelerated_rendering, None);
+        assert!(!config.power.keep_awake_enabled);
     }
 
     #[test]
@@ -245,6 +254,7 @@ max_action_output_chars = 20000
         assert!(!raw.contains("native_window_decorations"));
         assert!(raw.contains("[power]"));
         assert!(raw.contains("keep_awake_enabled = false"));
+        assert!(!raw.contains("terminal_accelerated_rendering"));
     }
 
     #[test]
@@ -270,5 +280,12 @@ max_action_output_chars = 20000
         let config = AppConfig::default();
 
         assert!(config.native_window_decorations_enabled());
+    }
+
+    #[test]
+    fn terminal_accelerated_rendering_defaults_to_enabled() {
+        let config = AppConfig::default();
+
+        assert!(config.terminal_accelerated_rendering_enabled());
     }
 }
