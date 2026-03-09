@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockClose = vi.hoisted(() => vi.fn());
 const mockRequestCloseTab = vi.hoisted(() => vi.fn());
+const mockIsTauri = vi.hoisted(() => vi.fn());
 
 const mockWorkspaceState = vi.hoisted(() => ({
   activeWorkspaceId: "ws-1" as string | null,
@@ -18,6 +19,10 @@ const mockTerminalState = vi.hoisted(() => ({
 const mockFileState = vi.hoisted(() => ({
   activeTabId: "tab-1" as string | null,
   requestCloseTab: mockRequestCloseTab,
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  isTauri: mockIsTauri,
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -44,11 +49,18 @@ vi.mock("../stores/fileStore", () => ({
   },
 }));
 
-import { closeCurrentWindow, requestWindowClose } from "./windowActions";
+import {
+  closeCurrentWindow,
+  isLinuxDesktop,
+  shouldHandleAppShortcutWhileTerminalFocused,
+  isTerminalInputFocused,
+  requestWindowClose,
+} from "./windowActions";
 
 describe("windowActions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsTauri.mockReturnValue(true);
     mockWorkspaceState.activeWorkspaceId = "ws-1";
     mockTerminalState.workspaces = {
       "ws-1": {
@@ -57,6 +69,50 @@ describe("windowActions", () => {
     };
     mockFileState.activeTabId = "tab-1";
     mockClose.mockResolvedValue(undefined);
+  });
+
+  it("treats Linux custom chrome as Tauri-only", () => {
+    const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { platform: "Linux x86_64" },
+    });
+
+    try {
+      expect(isLinuxDesktop()).toBe(true);
+
+      mockIsTauri.mockReturnValue(false);
+      expect(isLinuxDesktop()).toBe(false);
+    } finally {
+      if (originalNavigator) {
+        Object.defineProperty(globalThis, "navigator", originalNavigator);
+      } else {
+        Reflect.deleteProperty(globalThis, "navigator");
+      }
+    }
+  });
+
+  it("detects focused xterm input", () => {
+    expect(
+      isTerminalInputFocused({
+        activeElement: {
+          classList: {
+            contains: (className: string) => className === "xterm-helper-textarea",
+          },
+        } as unknown as HTMLElement,
+      } as unknown as Document),
+    ).toBe(true);
+  });
+
+  it("keeps app-owned shortcuts active while the terminal is focused", () => {
+    expect(shouldHandleAppShortcutWhileTerminalFocused("s", false)).toBe(true);
+    expect(shouldHandleAppShortcutWhileTerminalFocused("i", true)).toBe(true);
+    expect(shouldHandleAppShortcutWhileTerminalFocused("d", false)).toBe(true);
+    expect(shouldHandleAppShortcutWhileTerminalFocused("t", true)).toBe(true);
+    expect(shouldHandleAppShortcutWhileTerminalFocused("k", false)).toBe(true);
+    expect(shouldHandleAppShortcutWhileTerminalFocused("b", false)).toBe(false);
+    expect(shouldHandleAppShortcutWhileTerminalFocused("f", false)).toBe(false);
   });
 
   it("closes the active editor tab for generic close-window requests", async () => {
