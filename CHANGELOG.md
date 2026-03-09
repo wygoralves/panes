@@ -1,5 +1,23 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.34.2...vnull) (2026-03-09)
+
+### Features
+
+* add keep awake feature to linux and macos builds ([52d39b8](https://github.com/wygoralves/panes/commit/52d39b8f617c61eea7402ce36df3954fdaf388ef))
+* adjust settings dropdown styling ([830e5dc](https://github.com/wygoralves/panes/commit/830e5dc490df9f9e0cce1849b59047985f89e097))
+
+### Bug Fixes
+
+* avoid selfdeadlocking on app config ([87981de](https://github.com/wygoralves/panes/commit/87981de48a412a8f29876c095d6553191f55ffe3))
+* fix macos release smoke false negative ([38ee42e](https://github.com/wygoralves/panes/commit/38ee42e53830083252a117c73fde29452df9c048))
+* fix review findings ([974acfb](https://github.com/wygoralves/panes/commit/974acfbc05dfe8b43f06adf7300c977c203f5b4e))
+* harden keep-awake error-state handling ([eef98f4](https://github.com/wygoralves/panes/commit/eef98f4982fc94ef3c244886a5e106117adcf5f9))
+* harden keep-awake state persistence ([42ce9bc](https://github.com/wygoralves/panes/commit/42ce9bc0bf6b1105c6770cf8c80eccc599d39c1c))
+* harden keep-awake state transitions ([3df0c16](https://github.com/wygoralves/panes/commit/3df0c167a494da87c8a64d1cce2a36b3ccecb9a1))
+* harden rust helper persistance and fix frontend state errors ([0323f93](https://github.com/wygoralves/panes/commit/0323f93baeb1186b195a6cfbc5e4c68ed9c8f66c))
+* stop panes wake lock when app is no longer running ([641b4a6](https://github.com/wygoralves/panes/commit/641b4a68933e7bde80fd3e91cd05ebbd2af92e9c))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.34.1...vnull) (2026-03-09)
 
 ### Bug Fixes
