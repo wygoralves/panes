@@ -85,6 +85,8 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.ref_name }}
+          token: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
       - name: Fetch tags
         run: git fetch --force --tags origin
@@ -102,6 +104,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Evaluate release necessity
+        id: release_check
+        run: node scripts/should-release.mjs
+
       - name: Ensure clean working tree before release-it
         if: steps.release_check.outputs.should_release == 'true'
         run: |
@@ -111,10 +117,6 @@ jobs:
             git --no-pager diff --stat
             exit 1
           fi
-
-      - name: Evaluate release necessity
-        id: release_check
-        run: node scripts/should-release.mjs
 
       - name: Skip release (no release-worthy commits)
         if: steps.release_check.outputs.should_release != 'true'
@@ -136,6 +138,7 @@ jobs:
         env:
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
+          git config --local --unset-all http.https://github.com/.extraheader || true
           git remote set-url origin "https://x-access-token:${RELEASE_TOKEN}@github.com/${{ github.repository }}.git"
 
       - name: Configure git user for release commit
