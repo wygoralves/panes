@@ -15,6 +15,14 @@ import {
   getTerminalAcceleratedRenderingPreferenceVersion,
   listenTerminalAcceleratedRenderingChanged,
 } from "../../lib/terminalRenderingSettings";
+import {
+  createLinuxTerminalCompositionState,
+  filterLinuxTerminalCompositionData,
+  noteLinuxTerminalCompositionEnd,
+  noteLinuxTerminalCompositionStart,
+  noteLinuxTerminalCompositionText,
+  type LinuxTerminalCompositionState,
+} from "./linuxCompositionGuard";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -175,6 +183,7 @@ interface SessionTerminal {
     chars: number;
     lastLogAt: number;
   };
+  linuxComposition: LinuxTerminalCompositionState | null;
   rendererDiagnostics: FrontendRendererDiagnostics;
   imageAddonCleanup?: () => void;
   webglCleanup?: () => void;
@@ -2781,8 +2790,48 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     terminal.unicode.activeVersion = "11";
 
     const rendererDiagnostics = createRendererDiagnostics();
+    const linuxComposition = isLinuxDesktop()
+      ? createLinuxTerminalCompositionState()
+      : null;
 
     terminal.open(container);
+
+    const textarea = terminal.textarea;
+    const compositionListenerCleanup: Array<() => void> = [];
+    if (linuxComposition && textarea) {
+      const handleCompositionStart = () => {
+        noteLinuxTerminalCompositionStart(linuxComposition);
+      };
+      const handleCompositionEnd = () => {
+        noteLinuxTerminalCompositionEnd(linuxComposition);
+      };
+      const handleBeforeInput = (event: InputEvent) => {
+        noteLinuxTerminalCompositionText(
+          linuxComposition,
+          event.data,
+          event.inputType,
+        );
+      };
+      const handleInput = (event: InputEvent) => {
+        noteLinuxTerminalCompositionText(
+          linuxComposition,
+          event.data,
+          event.inputType,
+        );
+      };
+
+      textarea.addEventListener("compositionstart", handleCompositionStart);
+      textarea.addEventListener("compositionend", handleCompositionEnd);
+      textarea.addEventListener("beforeinput", handleBeforeInput as EventListener, true);
+      textarea.addEventListener("input", handleInput as EventListener, true);
+
+      compositionListenerCleanup.push(() => {
+        textarea.removeEventListener("compositionstart", handleCompositionStart);
+        textarea.removeEventListener("compositionend", handleCompositionEnd);
+        textarea.removeEventListener("beforeinput", handleBeforeInput as EventListener, true);
+        textarea.removeEventListener("input", handleInput as EventListener, true);
+      });
+    }
 
     // xterm.js fires onData for BOTH user keystrokes AND auto-generated
     // terminal protocol responses (DA1/DA2 device attributes, cursor position
@@ -2876,7 +2925,13 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         enqueueTerminalProtocolInput(cacheKey, workspaceId, sessionId, data);
         return;
       }
-      broadcastWrite(data);
+      const filteredData = linuxComposition
+        ? filterLinuxTerminalCompositionData(linuxComposition, data)
+        : data;
+      if (!filteredData) {
+        return;
+      }
+      broadcastWrite(filteredData);
     });
 
     const binaryDisposable = terminal.onBinary((data) => {
@@ -2915,6 +2970,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         chars: 0,
         lastLogAt: Date.now(),
       },
+      linuxComposition,
       rendererDiagnostics,
       imageAddonCleanup: undefined,
       webglCleanup: undefined,
@@ -2931,6 +2987,9 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         writeDisposable.dispose();
         binaryDisposable.dispose();
         resizeDisposable.dispose();
+        for (const cleanup of compositionListenerCleanup) {
+          cleanup();
+        }
         terminal.dispose();
       },
     };
