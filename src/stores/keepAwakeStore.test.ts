@@ -102,7 +102,7 @@ describe("keepAwakeStore", () => {
 
     expect(mockIpc.setKeepAwakeEnabled).toHaveBeenCalledWith(true);
     expect(result?.enabled).toBe(true);
-    expect(mockToast.success).toHaveBeenCalledWith("app:toasts.keepAwakeEnabled");
+    expect(mockToast.success).toHaveBeenCalledWith("app:commandPalette.toasts.keepAwakeEnabled");
   });
 
   it("warns when keep awake is unsupported", async () => {
@@ -117,7 +117,7 @@ describe("keepAwakeStore", () => {
 
     expect(result?.supported).toBe(false);
     expect(mockIpc.setKeepAwakeEnabled).not.toHaveBeenCalled();
-    expect(mockToast.warning).toHaveBeenCalledWith("app:toasts.keepAwakeUnsupported");
+    expect(mockToast.warning).toHaveBeenCalledWith("app:commandPalette.toasts.keepAwakeUnsupported");
   });
 
   it("shows an error toast when activation does not become active", async () => {
@@ -138,7 +138,7 @@ describe("keepAwakeStore", () => {
 
     expect(result?.enabled).toBe(true);
     expect(result?.active).toBe(false);
-    expect(mockToast.error).toHaveBeenCalledWith("app:toasts.keepAwakeEnableFailed");
+    expect(mockToast.error).toHaveBeenCalledWith("app:commandPalette.toasts.keepAwakeEnableFailed");
   });
 
   it("disables keep awake when preference is enabled but runtime is inactive", async () => {
@@ -166,7 +166,7 @@ describe("keepAwakeStore", () => {
       enabled: false,
       active: false,
     });
-    expect(mockToast.success).toHaveBeenCalledWith("app:toasts.keepAwakeDisabled");
+    expect(mockToast.success).toHaveBeenCalledWith("app:commandPalette.toasts.keepAwakeDisabled");
 
   });
 
@@ -196,7 +196,7 @@ describe("keepAwakeStore", () => {
       enabled: false,
       active: false,
     });
-    expect(mockToast.warning).toHaveBeenCalledWith("app:toasts.keepAwakeUnsupported");
+    expect(mockToast.warning).toHaveBeenCalledWith("app:commandPalette.toasts.keepAwakeUnsupported");
   });
 
   it("waits for an in-flight load before toggling", async () => {

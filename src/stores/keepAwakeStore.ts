@@ -4,6 +4,14 @@ import type { KeepAwakeState } from "../types";
 import { t } from "../i18n";
 import { toast } from "./toastStore";
 
+const KEEP_AWAKE_TOAST_KEYS = {
+  enabled: "app:commandPalette.toasts.keepAwakeEnabled",
+  disabled: "app:commandPalette.toasts.keepAwakeDisabled",
+  unsupported: "app:commandPalette.toasts.keepAwakeUnsupported",
+  enableFailed: "app:commandPalette.toasts.keepAwakeEnableFailed",
+  disableFailed: "app:commandPalette.toasts.keepAwakeDisableFailed",
+} as const;
+
 interface KeepAwakeStoreState {
   state: KeepAwakeState | null;
   loading: boolean;
@@ -15,23 +23,21 @@ interface KeepAwakeStoreState {
 
 function showKeepAwakeToast(nextState: KeepAwakeState, targetEnabled: boolean) {
   if (!nextState.supported) {
-    toast.warning(t("app:toasts.keepAwakeUnsupported"));
+    toast.warning(t(KEEP_AWAKE_TOAST_KEYS.unsupported));
     return;
   }
 
   if (targetEnabled && (!nextState.enabled || !nextState.active)) {
-    toast.error(t("app:toasts.keepAwakeEnableFailed"));
+    toast.error(t(KEEP_AWAKE_TOAST_KEYS.enableFailed));
     return;
   }
 
   if (!targetEnabled && (nextState.enabled || nextState.active)) {
-    toast.error(t("app:toasts.keepAwakeDisableFailed"));
+    toast.error(t(KEEP_AWAKE_TOAST_KEYS.disableFailed));
     return;
   }
 
-  toast.success(
-    targetEnabled ? t("app:toasts.keepAwakeEnabled") : t("app:toasts.keepAwakeDisabled"),
-  );
+  toast.success(t(targetEnabled ? KEEP_AWAKE_TOAST_KEYS.enabled : KEEP_AWAKE_TOAST_KEYS.disabled));
 }
 
 async function fetchKeepAwakeState() {
@@ -90,7 +96,7 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
     }
 
     if (!current.supported && !current.enabled) {
-      toast.warning(t("app:toasts.keepAwakeUnsupported"));
+      toast.warning(t(KEEP_AWAKE_TOAST_KEYS.unsupported));
       return current;
     }
 
@@ -108,9 +114,7 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
     } catch (error) {
       set({ loading: false });
       console.warn("[keepAwakeStore] Failed to toggle keep awake", error);
-      toast.error(
-        t(targetEnabled ? "app:toasts.keepAwakeEnableFailed" : "app:toasts.keepAwakeDisableFailed"),
-      );
+      toast.error(t(targetEnabled ? KEEP_AWAKE_TOAST_KEYS.enableFailed : KEEP_AWAKE_TOAST_KEYS.disableFailed));
       return get().state;
     }
   },

@@ -15,6 +15,10 @@ import {
   PinOff,
   Terminal,
   Check,
+  Cpu,
+  RefreshCw,
+  PillBottle,
+  Globe,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -250,15 +254,11 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   }
 
   async function onLocaleSelect(locale: AppLocale) {
-    if (locale === activeLocale) {
-      closeSettingsMenu();
-      return;
-    }
+    if (locale === activeLocale) return;
 
     try {
       const savedLocale = await ipc.setAppLocale(locale);
       await i18n.changeLanguage(savedLocale);
-      closeSettingsMenu();
       toast.info(t("common:language.changed"));
     } catch {
       toast.error(t("app:sidebar.languageFailed"));
@@ -627,9 +627,110 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               position: "fixed",
               bottom: window.innerHeight - settingsMenuPos.top,
               left: settingsMenuPos.left,
-              minWidth: 220,
+              minWidth: 260,
             }}
           >
+            {/* ── Preferences ── */}
+            <div
+              style={{
+                padding: "6px 12px 4px",
+                fontSize: 10,
+                color: "var(--text-3)",
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+              }}
+            >
+              {t("app:sidebar.preferences")}
+            </div>
+            <button
+              type="button"
+              className="git-action-menu-item"
+              disabled={keepAwakeLoading || (keepAwakeState?.supported === false && !keepAwakeState.enabled)}
+              title={keepAwakeDescription}
+              style={{
+                justifyContent: "space-between",
+                opacity:
+                  keepAwakeLoading || (keepAwakeState?.supported === false && !keepAwakeState.enabled)
+                    ? 0.5
+                    : 1,
+              }}
+              onClick={() => {
+                void toggleKeepAwake();
+              }}
+            >
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <PillBottle size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+                {t("app:sidebar.keepAwake")}
+              </span>
+              <span
+                style={{
+                  width: 28,
+                  height: 16,
+                  borderRadius: 8,
+                  background: keepAwakeState?.enabled ? "var(--accent)" : "rgba(255,255,255,0.12)",
+                  display: "flex",
+                  alignItems: "center",
+                  padding: "0 2px",
+                  flexShrink: 0,
+                  transition: "background 0.2s",
+                }}
+              >
+                <span
+                  style={{
+                    width: 12,
+                    height: 12,
+                    borderRadius: "50%",
+                    background: "white",
+                    transform: keepAwakeState?.enabled ? "translateX(12px)" : "translateX(0)",
+                    transition: "transform 0.2s",
+                    opacity: keepAwakeState?.enabled ? 1 : 0.6,
+                  }}
+                />
+              </span>
+            </button>
+            <div className="git-action-menu-item" style={{ justifyContent: "space-between", cursor: "default" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Globe size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+                {t("common:language.label")}
+              </span>
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  background: "rgba(255,255,255,0.06)",
+                  borderRadius: 6,
+                  padding: 2,
+                  gap: 2,
+                }}
+              >
+                {SUPPORTED_APP_LOCALES.map((locale) => (
+                  <button
+                    key={locale}
+                    type="button"
+                    onClick={() => { void onLocaleSelect(locale); }}
+                    style={{
+                      fontSize: 11,
+                      lineHeight: 1,
+                      padding: "3px 8px",
+                      borderRadius: 4,
+                      border: "none",
+                      cursor: "pointer",
+                      background: activeLocale === locale ? "var(--accent)" : "transparent",
+                      color: activeLocale === locale ? "#fff" : "var(--text-3)",
+                      fontWeight: activeLocale === locale ? 500 : 400,
+                      boxShadow: "none",
+                      transition: "background 0.15s, color 0.15s, box-shadow 0.15s",
+                    }}
+                  >
+                    {locale === "en" ? "EN-US" : "PT-BR"}
+                  </button>
+                ))}
+              </span>
+            </div>
+
+            <div className="git-action-menu-divider" />
+
+            {/* ── Actions ── */}
             <button
               type="button"
               className="git-action-menu-item"
@@ -638,18 +739,22 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 openEngineSetup();
               }}
             >
+              <Cpu size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
               {t("app:sidebar.engineSetup")}
             </button>
             <button
               type="button"
               className="git-action-menu-item"
-              style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+              style={{ justifyContent: "space-between" }}
               onClick={() => {
                 closeSettingsMenu();
                 setUpdateDialogOpen(true);
               }}
             >
-              <span>{t("app:sidebar.checkUpdates")}</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <RefreshCw size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+                {t("app:sidebar.checkUpdates")}
+              </span>
               {hasUpdate && (
                 <span
                   style={{
@@ -662,59 +767,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 />
               )}
             </button>
-            <button
-              type="button"
-              className="git-action-menu-item"
-              disabled={keepAwakeLoading || (keepAwakeState?.supported === false && !keepAwakeState.enabled)}
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                justifyContent: "space-between",
-                gap: 10,
-                opacity:
-                  keepAwakeLoading || (keepAwakeState?.supported === false && !keepAwakeState.enabled)
-                    ? 0.65
-                    : 1,
-              }}
-              onClick={() => {
-                closeSettingsMenu();
-                void toggleKeepAwake();
-              }}
-            >
-              <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
-                <span>{t("app:sidebar.keepAwake")}</span>
-                <span style={{ fontSize: 12, color: "var(--text-3)", textAlign: "left" }}>
-                  {keepAwakeDescription}
-                </span>
-              </span>
-              {keepAwakeState?.enabled ? <Check size={12} /> : null}
-            </button>
-            <div className="git-action-menu-divider" />
-            <div
-              style={{
-                padding: "6px 10px 4px",
-                fontSize: 11,
-                color: "var(--text-3)",
-                textTransform: "uppercase",
-                letterSpacing: "0.06em",
-              }}
-            >
-              {t("common:language.label")}
-            </div>
-            {SUPPORTED_APP_LOCALES.map((locale) => (
-              <button
-                key={locale}
-                type="button"
-                className="git-action-menu-item"
-                style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
-                onClick={() => {
-                  void onLocaleSelect(locale);
-                }}
-              >
-                <span>{getLocaleDisplayName(locale)}</span>
-                {activeLocale === locale ? <Check size={12} /> : null}
-              </button>
-            ))}
           </div>,
           document.body,
         )}

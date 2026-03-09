@@ -42,6 +42,7 @@
     "settings": "Settings",
     "engineSetup": "Engine setup",
     "checkUpdates": "Check for updates",
+    "preferences": "Preferences",
     "keepAwake": "Keep Awake",
     "keepAwakeDescription": "Prevent system sleep while Panes is open",
     "keepAwakeUnsupported": "Not supported on this device",
