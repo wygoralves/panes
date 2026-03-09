@@ -1760,7 +1760,10 @@ async fn detect_codex_via_login_shell() -> Option<PathBuf> {
     {
         for shell in runtime_env::login_probe_shells() {
             let output = match Command::new(&shell)
-                .args(["-lic", "command -v codex"])
+                .args(runtime_env::login_probe_shell_args(
+                    &shell,
+                    "command -v codex",
+                ))
                 .output()
                 .await
             {
