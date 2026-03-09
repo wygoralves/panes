@@ -45,6 +45,38 @@ async function fetchKeepAwakeState() {
 }
 
 let pendingKeepAwakeState: Promise<KeepAwakeState | null> | null = null;
+let keepAwakeRequestId = 0;
+let keepAwakeLastAppliedRequestId = 0;
+let keepAwakePendingRequests = 0;
+
+function beginKeepAwakeRequest(set: (partial: Partial<KeepAwakeStoreState>) => void) {
+  keepAwakePendingRequests += 1;
+  set({ loading: true });
+  keepAwakeRequestId += 1;
+  return keepAwakeRequestId;
+}
+
+function finishKeepAwakeRequest(set: (partial: Partial<KeepAwakeStoreState>) => void) {
+  keepAwakePendingRequests = Math.max(0, keepAwakePendingRequests - 1);
+  set({ loading: keepAwakePendingRequests > 0 });
+}
+
+function applyKeepAwakeState(
+  requestId: number,
+  set: (partial: Partial<KeepAwakeStoreState>) => void,
+  state: KeepAwakeState,
+) {
+  if (requestId < keepAwakeLastAppliedRequestId) {
+    return false;
+  }
+
+  keepAwakeLastAppliedRequestId = requestId;
+  set({
+    state,
+    loadedOnce: true,
+  });
+  return true;
+}
 
 function requestKeepAwakeState(
   set: (partial: Partial<KeepAwakeStoreState>) => void,
@@ -54,20 +86,18 @@ function requestKeepAwakeState(
     return pendingKeepAwakeState;
   }
 
-  set({ loading: true });
+  const requestId = beginKeepAwakeRequest(set);
   const request = (async () => {
     try {
       const state = await fetchKeepAwakeState();
-      set({
-        state,
-        loading: false,
-        loadedOnce: true,
-      });
+      applyKeepAwakeState(requestId, set, state);
       return state;
     } catch (error) {
       console.warn("[keepAwakeStore] Failed to load keep awake state", error);
-      set({ loading: false, loadedOnce: true });
+      set({ loadedOnce: true });
       return get().state;
+    } finally {
+      finishKeepAwakeRequest(set);
     }
   })();
 
@@ -101,21 +131,18 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
     }
 
     const targetEnabled = !current.enabled;
-    set({ loading: true });
+    const requestId = beginKeepAwakeRequest(set);
     try {
       const nextState = await ipc.setKeepAwakeEnabled(targetEnabled);
-      set({
-        state: nextState,
-        loading: false,
-        loadedOnce: true,
-      });
+      applyKeepAwakeState(requestId, set, nextState);
       showKeepAwakeToast(nextState, targetEnabled);
       return nextState;
     } catch (error) {
-      set({ loading: false });
       console.warn("[keepAwakeStore] Failed to toggle keep awake", error);
       toast.error(t(targetEnabled ? KEEP_AWAKE_TOAST_KEYS.enableFailed : KEEP_AWAKE_TOAST_KEYS.disableFailed));
       return get().state;
+    } finally {
+      finishKeepAwakeRequest(set);
     }
   },
 }));

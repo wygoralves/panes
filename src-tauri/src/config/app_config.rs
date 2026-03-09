@@ -119,7 +119,7 @@ impl AppConfig {
         let raw = toml::to_string_pretty(self)?;
         let temp_path = path.with_extension("toml.tmp");
         fs::write(&temp_path, raw)?;
-        fs::rename(temp_path, path)?;
+        replace_file(&temp_path, &path)?;
         Ok(())
     }
 
@@ -146,9 +146,49 @@ fn config_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+fn replace_file(temp_path: &std::path::Path, path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        if path.exists() {
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fs::rename(temp_path, path)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        sync::{Mutex, OnceLock},
+    };
+
     use super::AppConfig;
+    use uuid::Uuid;
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn with_temp_home<T>(f: impl FnOnce() -> T) -> T {
+        let _guard = env_lock().lock().expect("env lock poisoned");
+        let previous = std::env::var_os("HOME");
+        let root = std::env::temp_dir().join(format!("panes-app-config-home-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("temp home should exist");
+        std::env::set_var("HOME", &root);
+        let result = f();
+        match previous {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        result
+    }
 
     #[test]
     fn missing_locale_field_uses_none() {
@@ -181,5 +221,23 @@ max_action_output_chars = 20000
         assert!(!raw.contains("locale"));
         assert!(raw.contains("[power]"));
         assert!(raw.contains("keep_awake_enabled = false"));
+    }
+
+    #[test]
+    fn save_overwrites_existing_config() {
+        with_temp_home(|| {
+            let mut config = AppConfig::default();
+            config.general.locale = Some("en".to_string());
+            config.save().expect("initial config save should succeed");
+
+            let mut updated = AppConfig::load_or_create().expect("config should reload");
+            updated.general.locale = Some("pt-BR".to_string());
+            updated.power.keep_awake_enabled = true;
+            updated.save().expect("updated config save should succeed");
+
+            let saved = AppConfig::load_or_create().expect("config should reload after overwrite");
+            assert_eq!(saved.general.locale.as_deref(), Some("pt-BR"));
+            assert!(saved.power.keep_awake_enabled);
+        });
     }
 }
