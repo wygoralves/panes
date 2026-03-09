@@ -7,27 +7,27 @@ import { renderHomebrewCask, resolveMacOsDmgAsset } from "../scripts/lib/homebre
 describe("resolveMacOsDmgAsset", () => {
   it("returns the only macOS DMG asset", () => {
     const asset = resolveMacOsDmgAsset([
-      { name: "Panes_0.30.0_aarch64.dmg.sig" },
-      { name: "Panes_0.30.0_aarch64.dmg", browser_download_url: "https://example.com/Panes.dmg" },
+      { name: "Panes_0.30.0_universal.dmg.sig" },
+      { name: "Panes_0.30.0_universal.dmg", browser_download_url: "https://example.com/Panes.dmg" },
     ]);
 
     expect(asset).toEqual({
-      name: "Panes_0.30.0_aarch64.dmg",
+      name: "Panes_0.30.0_universal.dmg",
       browser_download_url: "https://example.com/Panes.dmg",
     });
   });
 
   it("throws when the release has no macOS DMG asset", () => {
     expect(() =>
-      resolveMacOsDmgAsset([{ name: "Panes_0.30.0_aarch64.dmg.sig" }]),
+      resolveMacOsDmgAsset([{ name: "Panes_0.30.0_universal.dmg.sig" }]),
     ).toThrow("Expected exactly one macOS DMG asset, found none.");
   });
 
   it("throws when the release has multiple macOS DMG assets", () => {
     expect(() =>
       resolveMacOsDmgAsset([
-        { name: "Panes_0.30.0_aarch64.dmg" },
-        { name: "Panes_0.30.0_x64.dmg" },
+        { name: "Panes_0.30.0_universal.dmg" },
+        { name: "Panes_0.30.0_backup.dmg" },
       ]),
     ).toThrow("Expected exactly one macOS DMG asset");
   });
@@ -47,12 +47,12 @@ describe("renderHomebrewCask", () => {
     const rendered = renderHomebrewCask(template, {
       version: "0.30.0",
       sha256: "abc123",
-      url: "https://example.com/Panes_0.30.0_aarch64.dmg",
+      url: "https://example.com/Panes_0.30.0_universal.dmg",
     });
 
     expect(rendered).toContain('version "0.30.0"');
     expect(rendered).toContain('sha256 "abc123"');
-    expect(rendered).toContain('url "https://example.com/Panes_0.30.0_aarch64.dmg"');
+    expect(rendered).toContain('url "https://example.com/Panes_0.30.0_universal.dmg"');
   });
 
   it("fails when the template is missing required placeholders", () => {
@@ -60,20 +60,20 @@ describe("renderHomebrewCask", () => {
       renderHomebrewCask('cask "panes" do\n  version "__VERSION__"\nend\n', {
         version: "0.30.0",
         sha256: "abc123",
-        url: "https://example.com/Panes_0.30.0_aarch64.dmg",
+        url: "https://example.com/Panes_0.30.0_universal.dmg",
       }),
     ).toThrow("Template is missing placeholder __SHA256__");
   });
 
-  it("keeps the shipped cask restricted to Apple Silicon", () => {
+  it("renders the shipped cask without an architecture restriction", () => {
     const template = readFileSync(new URL("../scripts/templates/homebrew-cask.rb.tpl", import.meta.url), "utf-8");
 
     const rendered = renderHomebrewCask(template, {
       version: "0.30.0",
       sha256: "abc123",
-      url: "https://example.com/Panes_0.30.0_aarch64.dmg",
+      url: "https://example.com/Panes_0.30.0_universal.dmg",
     });
 
-    expect(rendered).toContain("depends_on arch: :arm64");
+    expect(rendered).not.toContain("depends_on arch:");
   });
 });

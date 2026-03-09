@@ -67,10 +67,30 @@ jobs:
         working-directory: src-tauri
         run: cargo check
 
+  macos_compat:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust targets for macOS compatibility checks
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Ensure frontendDist placeholder
+        run: |
+          mkdir -p dist
+          if [ ! -f dist/index.html ]; then
+            echo "<!doctype html><html><body>CI placeholder</body></html>" > dist/index.html
+          fi
+      - name: Rust check for Intel macOS target
+        working-directory: src-tauri
+        run: cargo check --target x86_64-apple-darwin
+
   release:
     name: Automated Release
     if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master')
-    needs: [frontend, rust]
+    needs: [frontend, rust, macos_compat]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -172,7 +192,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-22.04]
+        platform: [macos-15, ubuntu-22.04]
 
     steps:
       - name: Checkout released tag
@@ -193,7 +213,14 @@ jobs:
             librsvg2-dev \
             patchelf
 
+      - name: Install Rust for universal macOS build
+        if: matrix.platform == 'macos-15'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
       - name: Install Rust
+        if: matrix.platform != 'macos-15'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
@@ -212,7 +239,29 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build universal macOS bundles
+        if: matrix.platform == 'macos-15'
+        run: pnpm tauri:build -- --target universal-apple-darwin
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Verify universal macOS app binary
+        if: matrix.platform == 'macos-15'
+        run: |
+          APP_BINARY="$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -path '*.app/Contents/MacOS/Panes' -print -quit)"
+          if [ -z "$APP_BINARY" ]; then
+            echo "Unable to locate bundled Panes app binary."
+            exit 1
+          fi
+
+          file "$APP_BINARY"
+          lipo -info "$APP_BINARY"
+          file "$APP_BINARY" | grep -Eq 'arm64|aarch64'
+          file "$APP_BINARY" | grep -q 'x86_64'
+
       - name: Build Tauri bundles
+        if: matrix.platform != 'macos-15'
         run: pnpm tauri:build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -233,15 +282,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Upload macOS assets to GitHub Release
-        if: matrix.platform == 'macos-latest'
+        if: matrix.platform == 'macos-15'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.release.outputs.released_tag }}
           files: |
-            src-tauri/target/release/bundle/dmg/*.dmg
-            src-tauri/target/release/bundle/macos/*.app.tar.gz
-            src-tauri/target/release/bundle/dmg/*.dmg.sig
-            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg.sig
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
           fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
@@ -346,3 +395,156 @@ jobs:
           git add Casks/panes.rb
           git commit -m "Update panes cask for ${{ needs.release.outputs.released_tag }}"
           git push origin HEAD:main
+
+  macos_intel_release_smoke:
+    name: macOS Intel Release Smoke
+    if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
+    needs: [release, update_manifest, publish_homebrew_cask]
+    runs-on: macos-15-intel
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ needs.release.outputs.released_tag }}
+      HOMEBREW_TAP_REPO: wygoralves/homebrew-tap
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download macOS release assets
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir artifacts --pattern "*.dmg" --pattern "*.app.tar.gz"
+          ls -al artifacts
+
+      - name: Validate published updater manifest
+        run: |
+          APP_ARCHIVE="$(find artifacts -maxdepth 1 -name '*.app.tar.gz' -print -quit)"
+          if [ -z "$APP_ARCHIVE" ]; then
+            echo "Universal macOS updater archive was not downloaded."
+            exit 1
+          fi
+
+          export APP_ARCHIVE_NAME="$(basename "$APP_ARCHIVE")"
+
+          for attempt in 1 2 3 4 5; do
+            curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/gh-pages/latest.json" -o latest.json && break
+            if [ "$attempt" -eq 5 ]; then
+              echo "Unable to fetch latest.json from gh-pages."
+              exit 1
+            fi
+            sleep 5
+          done
+
+          node - <<'NODE'
+          const fs = require("node:fs");
+
+          const manifest = JSON.parse(fs.readFileSync("latest.json", "utf8"));
+          const darwinArm = manifest.platforms?.["darwin-aarch64"];
+          const darwinIntel = manifest.platforms?.["darwin-x86_64"];
+
+          if (!darwinArm || !darwinIntel) {
+            throw new Error("latest.json must include darwin-aarch64 and darwin-x86_64.");
+          }
+
+          if (darwinArm.url !== darwinIntel.url || darwinArm.signature !== darwinIntel.signature) {
+            throw new Error("Both macOS updater targets must point to the same universal asset.");
+          }
+
+          if (!darwinArm.url.endsWith(process.env.APP_ARCHIVE_NAME)) {
+            throw new Error(`latest.json macOS URL does not reference ${process.env.APP_ARCHIVE_NAME}.`);
+          }
+          NODE
+
+      - name: Validate universal DMG install and bundled sidecar
+        run: |
+          DMG_PATH="$(find artifacts -maxdepth 1 -name '*.dmg' -print -quit)"
+          if [ -z "$DMG_PATH" ]; then
+            echo "Universal macOS DMG was not downloaded."
+            exit 1
+          fi
+
+          APP_ARCHIVE="$(find artifacts -maxdepth 1 -name '*.app.tar.gz' -print -quit)"
+          rm -rf /tmp/panes-app /tmp/panes-archive /tmp/panes-mount
+          mkdir -p /tmp/panes-app /tmp/panes-archive /tmp/panes-mount
+          tar -xzf "$APP_ARCHIVE" -C /tmp/panes-archive
+
+          ARCHIVE_BINARY="$(find /tmp/panes-archive -path '*.app/Contents/MacOS/Panes' -print -quit)"
+          if [ -z "$ARCHIVE_BINARY" ]; then
+            echo "Unable to locate Panes binary inside updater archive."
+            exit 1
+          fi
+
+          file "$ARCHIVE_BINARY"
+          lipo -info "$ARCHIVE_BINARY"
+          file "$ARCHIVE_BINARY" | grep -Eq 'arm64|aarch64'
+          file "$ARCHIVE_BINARY" | grep -q 'x86_64'
+
+          cleanup() {
+            if mount | grep -q "/tmp/panes-mount"; then
+              hdiutil detach /tmp/panes-mount -quiet || true
+            fi
+            pkill -f '/tmp/panes-app/Panes.app/Contents/MacOS/Panes' || true
+          }
+          trap cleanup EXIT
+
+          hdiutil attach "$DMG_PATH" -nobrowse -quiet -mountpoint /tmp/panes-mount
+          cp -R /tmp/panes-mount/Panes.app /tmp/panes-app/Panes.app
+
+          APP_BINARY="/tmp/panes-app/Panes.app/Contents/MacOS/Panes"
+          SIDECAR_PATH="$(find /tmp/panes-app/Panes.app/Contents/Resources -path '*claude-agent-sdk-server.mjs' -print -quit)"
+
+          file "$APP_BINARY"
+          lipo -info "$APP_BINARY"
+          file "$APP_BINARY" | grep -Eq 'arm64|aarch64'
+          file "$APP_BINARY" | grep -q 'x86_64'
+          test -n "$SIDECAR_PATH"
+          command -v git
+          command -v node
+
+          node "$SIDECAR_PATH" >/tmp/panes-sidecar.out 2>/tmp/panes-sidecar.err &
+          SIDECAR_PID=$!
+          for attempt in 1 2 3 4 5; do
+            if grep -q '"type":"ready"' /tmp/panes-sidecar.out; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              cat /tmp/panes-sidecar.out || true
+              cat /tmp/panes-sidecar.err || true
+              echo "Bundled Claude sidecar did not reach ready state."
+              exit 1
+            fi
+            sleep 2
+          done
+          kill "$SIDECAR_PID"
+
+          open -g /tmp/panes-app/Panes.app
+          for attempt in 1 2 3 4 5; do
+            if pgrep -f '/tmp/panes-app/Panes.app/Contents/MacOS/Panes' >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "Panes.app did not launch on the Intel macOS runner."
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Validate Homebrew install on Intel
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN not configured; skipping Homebrew smoke test."
+            exit 0
+          fi
+
+          brew tap wygoralves/tap
+          brew install --cask wygoralves/tap/panes
+          file /Applications/Panes.app/Contents/MacOS/Panes
+          lipo -info /Applications/Panes.app/Contents/MacOS/Panes
+          file /Applications/Panes.app/Contents/MacOS/Panes | grep -Eq 'arm64|aarch64'
+          file /Applications/Panes.app/Contents/MacOS/Panes | grep -q 'x86_64'
