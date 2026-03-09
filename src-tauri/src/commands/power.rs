@@ -39,14 +39,36 @@ pub async fn set_keep_awake_enabled(
     }
 
     if enabled {
-        save_enabled_preference(true).await?;
-        if let Err(error) = state.keep_awake.enable().await {
-            log::warn!("failed to enable keep awake: {error}");
+        state.keep_awake.enable().await?;
+        if let Err(error) = save_enabled_preference(true).await {
+            match state.keep_awake.disable().await {
+                Ok(()) => {
+                    return Err(format!(
+                        "failed to persist keep awake preference after enabling: {error}; runtime state reverted"
+                    ));
+                }
+                Err(rollback_error) => {
+                    return Err(format!(
+                        "failed to persist keep awake preference after enabling: {error}; failed to roll back runtime state: {rollback_error}"
+                    ));
+                }
+            }
         }
     } else {
-        save_enabled_preference(false).await?;
-        if let Err(error) = state.keep_awake.disable().await {
-            log::warn!("failed to disable keep awake cleanly: {error}");
+        state.keep_awake.disable().await?;
+        if let Err(error) = save_enabled_preference(false).await {
+            match state.keep_awake.enable().await {
+                Ok(()) => {
+                    return Err(format!(
+                        "failed to persist keep awake preference after disabling: {error}; runtime state reverted"
+                    ));
+                }
+                Err(rollback_error) => {
+                    return Err(format!(
+                        "failed to persist keep awake preference after disabling: {error}; failed to roll back runtime state: {rollback_error}"
+                    ));
+                }
+            }
         }
     }
 

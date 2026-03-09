@@ -49,6 +49,7 @@ struct PersistedKeepAwakeHelper {
     pid: u32,
     program: String,
     args: Vec<String>,
+    start_marker: Option<String>,
 }
 
 struct SpawnedKeepAwakeChild {
@@ -70,6 +71,7 @@ trait KeepAwakeSpawner: Send + Sync {
 
 trait KeepAwakeProcessOps: Send + Sync {
     fn read_command_line(&self, pid: u32) -> io::Result<Option<String>>;
+    fn read_start_marker(&self, pid: u32) -> io::Result<Option<String>>;
     fn terminate(&self, pid: u32) -> io::Result<()>;
 }
 
@@ -122,9 +124,15 @@ impl KeepAwakeManager {
                     helper.pid
                 )
             })?;
+        let start_marker = self.process_ops.read_start_marker(helper.pid).map_err(|error| {
+            format!(
+                "failed to inspect stale keep awake helper start marker {}: {error}",
+                helper.pid
+            )
+        })?;
 
-        if let Some(command_line) = command_line {
-            if command_line_matches_helper(command_line.as_str(), &helper) {
+        if let (Some(command_line), Some(start_marker)) = (command_line, start_marker) {
+            if process_matches_helper(command_line.as_str(), start_marker.as_str(), &helper) {
                 self.process_ops.terminate(helper.pid).map_err(|error| {
                     format!(
                         "failed to stop stale keep awake helper {}: {error}",
@@ -325,6 +333,17 @@ impl KeepAwakeSpawner for ProcessKeepAwakeSpawner {
                 .iter()
                 .map(|arg| arg.to_string_lossy().into_owned())
                 .collect(),
+            start_marker: read_process_start_marker(pid)
+                .map_err(|error| {
+                    log::warn!(
+                        "failed to read keep awake helper start marker for pid {}: {}",
+                        pid,
+                        error
+                    );
+                    error
+                })
+                .ok()
+                .flatten(),
         });
 
         Ok(SpawnedKeepAwakeChild {
@@ -337,6 +356,10 @@ impl KeepAwakeSpawner for ProcessKeepAwakeSpawner {
 impl KeepAwakeProcessOps for SystemKeepAwakeProcessOps {
     fn read_command_line(&self, pid: u32) -> io::Result<Option<String>> {
         read_process_command_line(pid)
+    }
+
+    fn read_start_marker(&self, pid: u32) -> io::Result<Option<String>> {
+        read_process_start_marker(pid)
     }
 
     fn terminate(&self, pid: u32) -> io::Result<()> {
@@ -380,7 +403,15 @@ fn clear_helper_state(path: &Path) -> Result<(), String> {
     }
 }
 
-fn command_line_matches_helper(command_line: &str, helper: &PersistedKeepAwakeHelper) -> bool {
+fn process_matches_helper(
+    command_line: &str,
+    start_marker: &str,
+    helper: &PersistedKeepAwakeHelper,
+) -> bool {
+    if helper.start_marker.as_deref() != Some(start_marker) {
+        return false;
+    }
+
     let program_name = Path::new(&helper.program)
         .file_name()
         .and_then(|name| name.to_str())
@@ -394,6 +425,52 @@ fn command_line_matches_helper(command_line: &str, helper: &PersistedKeepAwakeHe
         .iter()
         .filter(|arg| !arg.is_empty())
         .all(|arg| command_line.contains(arg))
+}
+
+fn read_process_start_marker(pid: u32) -> io::Result<Option<String>> {
+    #[cfg(target_os = "linux")]
+    {
+        let proc_stat = PathBuf::from(format!("/proc/{pid}/stat"));
+        match fs::read_to_string(&proc_stat) {
+            Ok(raw) => {
+                let Some(process_tail) = raw.rsplit_once(") ").map(|(_, tail)| tail) else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("unexpected stat format for pid {pid}"),
+                    ));
+                };
+                let fields = process_tail.split_whitespace().collect::<Vec<_>>();
+                let Some(start_time) = fields.get(19) else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("missing start time for pid {pid}"),
+                    ));
+                };
+                return Ok(Some((*start_time).to_string()));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        }
+    }
+
+    #[allow(unreachable_code)]
+    {
+        let ps = crate::runtime_env::resolve_executable("ps")
+            .unwrap_or_else(|| PathBuf::from("/bin/ps"));
+        let output = Command::new(ps)
+            .args(["-p", &pid.to_string(), "-o", "lstart="])
+            .output()?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+
+        let start_marker = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if start_marker.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(start_marker))
+        }
+    }
 }
 
 fn read_process_command_line(pid: u32) -> io::Result<Option<String>> {
@@ -516,6 +593,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct FakeProcessOps {
         commands: StdMutex<HashMap<u32, Option<String>>>,
+        start_markers: StdMutex<HashMap<u32, Option<String>>>,
         terminated: StdMutex<Vec<u32>>,
         terminate_error: StdMutex<Option<String>>,
     }
@@ -625,6 +703,16 @@ mod tests {
                 .push(pid);
             Ok(())
         }
+
+        fn read_start_marker(&self, pid: u32) -> io::Result<Option<String>> {
+            Ok(self
+                .start_markers
+                .lock()
+                .expect("fake start markers lock poisoned")
+                .get(&pid)
+                .cloned()
+                .flatten())
+        }
     }
 
     fn make_spawn(child: FakeChildHandle, pid: u32) -> SpawnedKeepAwakeChild {
@@ -634,6 +722,7 @@ mod tests {
                 pid,
                 program: "/usr/bin/caffeinate".to_string(),
                 args: vec!["-i".to_string()],
+                start_marker: Some(format!("start-{pid}")),
             }),
         }
     }
@@ -764,6 +853,7 @@ mod tests {
                 pid: 404,
                 program: "/usr/bin/caffeinate".to_string(),
                 args: vec!["-i".to_string()],
+                start_marker: Some("start-404".to_string()),
             },
         )
         .expect("helper state should save");
@@ -774,6 +864,11 @@ mod tests {
             .lock()
             .expect("fake commands lock poisoned")
             .insert(404, Some("/usr/bin/caffeinate -i".to_string()));
+        process_ops
+            .start_markers
+            .lock()
+            .expect("fake start markers lock poisoned")
+            .insert(404, Some("start-404".to_string()));
         let manager = KeepAwakeManager::with_dependencies(
             Arc::new(FakeSpawner {
                 support: SupportStatus {
@@ -797,6 +892,57 @@ mod tests {
                 .expect("fake terminated lock poisoned")
                 .as_slice(),
             &[404]
+        );
+        assert!(!state_path.exists());
+    }
+
+    #[test]
+    fn reclaim_stale_helper_skips_pid_reuse_when_start_marker_differs() {
+        let state_path = temp_state_path();
+        save_helper_state(
+            &state_path,
+            &PersistedKeepAwakeHelper {
+                pid: 505,
+                program: "/usr/bin/caffeinate".to_string(),
+                args: vec!["-i".to_string()],
+                start_marker: Some("start-505".to_string()),
+            },
+        )
+        .expect("helper state should save");
+
+        let process_ops = Arc::new(FakeProcessOps::default());
+        process_ops
+            .commands
+            .lock()
+            .expect("fake commands lock poisoned")
+            .insert(505, Some("/usr/bin/caffeinate -i".to_string()));
+        process_ops
+            .start_markers
+            .lock()
+            .expect("fake start markers lock poisoned")
+            .insert(505, Some("reused-505".to_string()));
+        let manager = KeepAwakeManager::with_dependencies(
+            Arc::new(FakeSpawner {
+                support: SupportStatus {
+                    supported: true,
+                    message: None,
+                },
+                next_spawn: StdMutex::new(Vec::new()),
+            }),
+            process_ops.clone(),
+            state_path.clone(),
+        );
+
+        manager
+            .reclaim_stale_helper()
+            .expect("stale helper reclaim should succeed");
+
+        assert!(
+            process_ops
+                .terminated
+                .lock()
+                .expect("fake terminated lock poisoned")
+                .is_empty()
         );
         assert!(!state_path.exists());
     }

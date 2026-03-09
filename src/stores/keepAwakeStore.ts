@@ -96,7 +96,7 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
       return current;
     }
 
-    const targetEnabled = !current.enabled || !current.active;
+    const targetEnabled = !current.enabled;
     set({ loading: true });
     try {
       const nextState = await ipc.setKeepAwakeEnabled(targetEnabled);

@@ -141,7 +141,7 @@ describe("keepAwakeStore", () => {
     expect(mockToast.error).toHaveBeenCalledWith("app:commandPalette.toasts.keepAwakeEnableFailed");
   });
 
-  it("retries enable when preference is enabled but runtime is inactive", async () => {
+  it("disables keep awake when preference is enabled but runtime is inactive", async () => {
     useKeepAwakeStore.setState({
       state: {
         supported: true,
@@ -154,19 +154,19 @@ describe("keepAwakeStore", () => {
     });
     mockIpc.setKeepAwakeEnabled.mockResolvedValue({
       supported: true,
-      enabled: true,
-      active: true,
+      enabled: false,
+      active: false,
       message: null,
     });
 
     const result = await useKeepAwakeStore.getState().toggle();
 
-    expect(mockIpc.setKeepAwakeEnabled).toHaveBeenCalledWith(true);
+    expect(mockIpc.setKeepAwakeEnabled).toHaveBeenCalledWith(false);
     expect(result).toMatchObject({
-      enabled: true,
-      active: true,
+      enabled: false,
+      active: false,
     });
-    expect(mockToast.success).toHaveBeenCalledWith("app:commandPalette.toasts.keepAwakeEnabled");
+    expect(mockToast.success).toHaveBeenCalledWith("app:commandPalette.toasts.keepAwakeDisabled");
   });
 
   it("waits for an in-flight load before toggling", async () => {
