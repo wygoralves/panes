@@ -1,5 +1,15 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.32.1...vnull) (2026-03-09)
+
+### Features
+
+* add Linux custom window chrome ([3d502d2](https://github.com/wygoralves/panes/commit/3d502d2a43cedaf113b1391518520816424a2adf))
+
+### Bug Fixes
+
+* fix regressions brought by custom window decoration ([8e1d942](https://github.com/wygoralves/panes/commit/8e1d942e30a3003ec815af4fe3b4d2d3931e1353))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.32.0...vnull) (2026-03-09)
 
 ### Bug Fixes
