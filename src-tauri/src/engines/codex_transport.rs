@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap, env, ffi::OsString, path::Path, process::Stdio, sync::Arc, time::Duration,
+    collections::HashMap, ffi::OsString, path::Path, process::Stdio, sync::Arc, time::Duration,
 };
 
 use anyhow::Context;
@@ -8,6 +8,8 @@ use tokio::{
     process::{Child, ChildStdin, Command},
     sync::{broadcast, oneshot, Mutex},
 };
+
+use crate::runtime_env;
 
 use super::codex_protocol::{
     notification_payload, parse_incoming, request_payload, response_error_payload,
@@ -253,23 +255,5 @@ impl CodexTransport {
 }
 
 fn codex_augmented_path(executable: &str) -> Option<OsString> {
-    let executable_dir = Path::new(executable).parent()?.to_path_buf();
-    let mut entries = vec![executable_dir.clone()];
-
-    if let Some(current) = env::var_os("PATH") {
-        for path in env::split_paths(&current) {
-            if path != executable_dir {
-                entries.push(path);
-            }
-        }
-    } else {
-        for fallback in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
-            let fallback_path = Path::new(fallback).to_path_buf();
-            if fallback_path != executable_dir {
-                entries.push(fallback_path);
-            }
-        }
-    }
-
-    env::join_paths(entries).ok()
+    runtime_env::augmented_path_with_prepend([Path::new(executable).parent()?.to_path_buf()])
 }
