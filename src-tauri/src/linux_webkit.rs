@@ -43,11 +43,14 @@ fn plan_webkit_workarounds(env: &WebkitDisplayEnv<'_>) -> WebkitWorkaroundPlan {
 pub fn apply_webkit_display_workarounds() {
     use std::env;
 
+    let xdg_session_type = env::var("XDG_SESSION_TYPE").ok();
+    let xdg_current_desktop = env::var("XDG_CURRENT_DESKTOP").ok();
+    let desktop_session = env::var("DESKTOP_SESSION").ok();
     let env_snapshot = WebkitDisplayEnv {
-        xdg_session_type: env::var("XDG_SESSION_TYPE").ok().as_deref(),
+        xdg_session_type: xdg_session_type.as_deref(),
         wayland_display_present: env::var_os("WAYLAND_DISPLAY").is_some(),
-        xdg_current_desktop: env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
-        desktop_session: env::var("DESKTOP_SESSION").ok().as_deref(),
+        xdg_current_desktop: xdg_current_desktop.as_deref(),
+        desktop_session: desktop_session.as_deref(),
         dmabuf_renderer_configured: env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_some(),
         compositing_mode_configured: env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_some(),
     };
