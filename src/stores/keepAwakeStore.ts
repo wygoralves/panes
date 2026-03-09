@@ -15,24 +15,22 @@ interface KeepAwakeStoreState {
 
 function showKeepAwakeToast(nextState: KeepAwakeState, targetEnabled: boolean) {
   if (!nextState.supported) {
-    toast.warning(t("app:commandPalette.toasts.keepAwakeUnsupported"));
+    toast.warning(t("app:toasts.keepAwakeUnsupported"));
     return;
   }
 
   if (targetEnabled && (!nextState.enabled || !nextState.active)) {
-    toast.error(t("app:commandPalette.toasts.keepAwakeEnableFailed"));
+    toast.error(t("app:toasts.keepAwakeEnableFailed"));
     return;
   }
 
   if (!targetEnabled && (nextState.enabled || nextState.active)) {
-    toast.error(t("app:commandPalette.toasts.keepAwakeDisableFailed"));
+    toast.error(t("app:toasts.keepAwakeDisableFailed"));
     return;
   }
 
   toast.success(
-    targetEnabled
-      ? t("app:commandPalette.toasts.keepAwakeEnabled")
-      : t("app:commandPalette.toasts.keepAwakeDisabled"),
+    targetEnabled ? t("app:toasts.keepAwakeEnabled") : t("app:toasts.keepAwakeDisabled"),
   );
 }
 
@@ -91,8 +89,8 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
       return null;
     }
 
-    if (!current.supported) {
-      toast.warning(t("app:commandPalette.toasts.keepAwakeUnsupported"));
+    if (!current.supported && !current.enabled) {
+      toast.warning(t("app:toasts.keepAwakeUnsupported"));
       return current;
     }
 
@@ -111,11 +109,7 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
       set({ loading: false });
       console.warn("[keepAwakeStore] Failed to toggle keep awake", error);
       toast.error(
-        t(
-          targetEnabled
-            ? "app:commandPalette.toasts.keepAwakeEnableFailed"
-            : "app:commandPalette.toasts.keepAwakeDisableFailed",
-        ),
+        t(targetEnabled ? "app:toasts.keepAwakeEnableFailed" : "app:toasts.keepAwakeDisableFailed"),
       );
       return get().state;
     }

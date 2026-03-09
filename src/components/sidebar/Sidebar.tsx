@@ -665,13 +665,16 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             <button
               type="button"
               className="git-action-menu-item"
-              disabled={keepAwakeLoading || keepAwakeState?.supported === false}
+              disabled={keepAwakeLoading || (keepAwakeState?.supported === false && !keepAwakeState.enabled)}
               style={{
                 display: "flex",
                 alignItems: "flex-start",
                 justifyContent: "space-between",
                 gap: 10,
-                opacity: keepAwakeLoading || keepAwakeState?.supported === false ? 0.65 : 1,
+                opacity:
+                  keepAwakeLoading || (keepAwakeState?.supported === false && !keepAwakeState.enabled)
+                    ? 0.65
+                    : 1,
               }}
               onClick={() => {
                 closeSettingsMenu();
