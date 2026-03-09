@@ -30,13 +30,6 @@ export interface WorkspaceGitSelectionStatus {
   configured: boolean;
 }
 
-export interface KeepAwakeState {
-  supported: boolean;
-  enabled: boolean;
-  active: boolean;
-  message?: string | null;
-}
-
 export type WorkspaceStartupPresetFormat = "json" | "toml";
 export type WorkspaceDefaultView = "chat" | "split" | "terminal" | "editor";
 export type WorkspacePathBase = "workspace" | "worktree" | "absolute";

@@ -44,10 +44,10 @@ pub async fn set_keep_awake_enabled(
             log::warn!("failed to enable keep awake: {error}");
         }
     } else {
+        save_enabled_preference(false).await?;
         if let Err(error) = state.keep_awake.disable().await {
             log::warn!("failed to disable keep awake cleanly: {error}");
         }
-        save_enabled_preference(false).await?;
     }
 
     let runtime = state.keep_awake.status().await;
