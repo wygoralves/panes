@@ -7,6 +7,10 @@ export function isLinuxDesktop(): boolean {
   return typeof navigator !== "undefined" && navigator.platform.toLowerCase().includes("linux");
 }
 
+export async function closeCurrentWindow(): Promise<void> {
+  await getCurrentWindow().close();
+}
+
 export async function requestWindowClose(): Promise<void> {
   const wsId = useWorkspaceStore.getState().activeWorkspaceId;
   const wsState = wsId ? useTerminalStore.getState().workspaces[wsId] : undefined;
@@ -17,5 +21,5 @@ export async function requestWindowClose(): Promise<void> {
     return;
   }
 
-  await getCurrentWindow().close();
+  await closeCurrentWindow();
 }

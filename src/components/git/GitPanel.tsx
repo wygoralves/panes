@@ -23,7 +23,7 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore, type GitPanelView } from "../../stores/gitStore";
 import { ipc, listenGitRepoChanged } from "../../lib/ipc";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
-import { isLinuxDesktop, requestWindowClose } from "../../lib/windowActions";
+import { closeCurrentWindow, isLinuxDesktop } from "../../lib/windowActions";
 import { toast } from "../../stores/toastStore";
 import { Dropdown } from "../shared/Dropdown";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
@@ -206,7 +206,7 @@ export function GitPanel() {
         ? currentWindow.minimize()
         : action === "toggle-maximize"
         ? currentWindow.toggleMaximize()
-        : requestWindowClose();
+        : closeCurrentWindow();
     operation.catch((error) => {
       setLocalError(String(error));
     });

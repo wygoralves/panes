@@ -239,6 +239,12 @@ button, input, textarea, select {
   z-index: 4;
 }
 
+.window-drag-strip {
+  width: 44px;
+  flex-shrink: 0;
+  cursor: default;
+}
+
 .linux-window-resize-handle {
   position: fixed;
   z-index: 60;
@@ -4641,6 +4647,10 @@ button, input, textarea, select {
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+.editor-tabs-bar .window-drag-strip {
+  border-right: 1px solid var(--border);
 }
 
 .editor-tabs-bar-titlebar-safe {
