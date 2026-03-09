@@ -78,9 +78,11 @@ pub async fn set_keep_awake_enabled(
 
 async fn save_enabled_preference(enabled: bool) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        let mut config = AppConfig::load_or_create().map_err(err_to_string)?;
-        config.power.keep_awake_enabled = enabled;
-        config.save().map_err(err_to_string)
+        AppConfig::mutate(|config| {
+            config.power.keep_awake_enabled = enabled;
+            Ok(())
+        })
+        .map_err(err_to_string)
     })
     .await
     .map_err(err_to_string)?

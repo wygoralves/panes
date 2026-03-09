@@ -1,4 +1,8 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::{Mutex, OnceLock},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -113,8 +117,20 @@ impl AppConfig {
         }
 
         let raw = toml::to_string_pretty(self)?;
-        fs::write(path, raw)?;
+        let temp_path = path.with_extension("toml.tmp");
+        fs::write(&temp_path, raw)?;
+        fs::rename(temp_path, path)?;
         Ok(())
+    }
+
+    pub fn mutate<T>(f: impl FnOnce(&mut Self) -> anyhow::Result<T>) -> anyhow::Result<T> {
+        let _guard = config_lock()
+            .lock()
+            .map_err(|_| anyhow::anyhow!("config lock poisoned"))?;
+        let mut config = Self::load_or_create()?;
+        let result = f(&mut config)?;
+        config.save()?;
+        Ok(result)
     }
 
     pub fn path() -> PathBuf {
@@ -123,6 +139,11 @@ impl AppConfig {
             .unwrap_or_else(|_| PathBuf::from("."));
         home.join(".agent-workspace").join("config.toml")
     }
+}
+
+fn config_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 #[cfg(test)]

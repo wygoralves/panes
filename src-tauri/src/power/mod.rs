@@ -128,7 +128,19 @@ impl KeepAwakeManager {
 
     pub fn reclaim_stale_helpers(&self) -> Result<(), String> {
         for state_path in list_helper_state_paths(&self.state_dir)? {
-            let Some(helper) = load_helper_state(&state_path)? else {
+            let helper = match load_helper_state(&state_path) {
+                Ok(helper) => helper,
+                Err(error) => {
+                    log::warn!(
+                        "failed to load keep awake helper state {}: {}",
+                        state_path.display(),
+                        error
+                    );
+                    clear_helper_state(&state_path)?;
+                    continue;
+                }
+            };
+            let Some(helper) = helper else {
                 continue;
             };
             if self.owner_may_still_be_running(&helper.owner)? {
@@ -277,12 +289,15 @@ impl KeepAwakeManager {
     }
 
     fn owner_may_still_be_running(&self, owner: &ProcessIdentity) -> Result<bool, String> {
-        let current_start_marker = self.process_ops.read_start_marker(owner.pid).map_err(|error| {
-            format!(
-                "failed to inspect keep awake owner start marker {}: {error}",
-                owner.pid
-            )
-        })?;
+        let current_start_marker =
+            self.process_ops
+                .read_start_marker(owner.pid)
+                .map_err(|error| {
+                    format!(
+                        "failed to inspect keep awake owner start marker {}: {error}",
+                        owner.pid
+                    )
+                })?;
         if let Some(current_start_marker) = current_start_marker {
             return Ok(match owner.start_marker.as_deref() {
                 Some(saved_start_marker) => saved_start_marker == current_start_marker,
@@ -290,9 +305,12 @@ impl KeepAwakeManager {
             });
         }
 
-        let command_line = self.process_ops.read_command_line(owner.pid).map_err(|error| {
-            format!("failed to inspect keep awake owner {}: {error}", owner.pid)
-        })?;
+        let command_line = self
+            .process_ops
+            .read_command_line(owner.pid)
+            .map_err(|error| {
+                format!("failed to inspect keep awake owner {}: {error}", owner.pid)
+            })?;
         Ok(command_line.is_some())
     }
 
@@ -481,7 +499,14 @@ fn save_helper_state(path: &Path, helper: &PersistedKeepAwakeHelper) -> Result<(
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let raw = serde_json::to_vec(helper).map_err(|error| error.to_string())?;
-    fs::write(path, raw).map_err(|error| error.to_string())
+    let temp_path = path.with_extension(format!(
+        "{}.tmp",
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("")
+    ));
+    fs::write(&temp_path, raw).map_err(|error| error.to_string())?;
+    fs::rename(&temp_path, path).map_err(|error| error.to_string())
 }
 
 fn load_helper_state(path: &Path) -> Result<Option<PersistedKeepAwakeHelper>, String> {
@@ -657,26 +682,26 @@ fn exit_status_message(status: ExitStatus) -> String {
 fn resolve_backend_spec() -> Result<BackendSpec, String> {
     #[cfg(target_os = "macos")]
     {
+        let owner_pid = std::process::id();
         let caffeinate = crate::runtime_env::resolve_executable("caffeinate")
             .ok_or_else(|| "macOS keep awake requires the `caffeinate` utility".to_string())?;
-        let sleep = crate::runtime_env::resolve_executable("sleep")
-            .ok_or_else(|| "macOS keep awake requires the `sleep` utility".to_string())?;
         return Ok(BackendSpec {
             program: caffeinate,
             args: vec![
                 OsString::from("-i"),
-                sleep.into_os_string(),
-                OsString::from("2147483647"),
+                OsString::from("-w"),
+                OsString::from(owner_pid.to_string()),
             ],
         });
     }
 
     #[cfg(target_os = "linux")]
     {
+        let owner_pid = std::process::id();
         let systemd_inhibit = crate::runtime_env::resolve_executable("systemd-inhibit")
             .ok_or_else(|| "Linux keep awake requires `systemd-inhibit`".to_string())?;
-        let sleep = crate::runtime_env::resolve_executable("sleep")
-            .ok_or_else(|| "Linux keep awake requires the `sleep` utility".to_string())?;
+        let tail = crate::runtime_env::resolve_executable("tail")
+            .ok_or_else(|| "Linux keep awake requires the `tail` utility".to_string())?;
         return Ok(BackendSpec {
             program: systemd_inhibit,
             args: vec![
@@ -684,8 +709,10 @@ fn resolve_backend_spec() -> Result<BackendSpec, String> {
                 OsString::from("--mode=block"),
                 OsString::from("--who=Panes"),
                 OsString::from("--why=Keep system awake while Panes is open"),
-                sleep.into_os_string(),
-                OsString::from("2147483647"),
+                tail.into_os_string(),
+                OsString::from(format!("--pid={owner_pid}")),
+                OsString::from("-f"),
+                OsString::from("/dev/null"),
             ],
         });
     }
@@ -1010,7 +1037,10 @@ mod tests {
             .commands
             .lock()
             .expect("fake commands lock poisoned")
-            .insert(10, Some("/Applications/Panes.app/Contents/MacOS/Panes".to_string()));
+            .insert(
+                10,
+                Some("/Applications/Panes.app/Contents/MacOS/Panes".to_string()),
+            );
         process_ops
             .start_markers
             .lock()
@@ -1020,7 +1050,10 @@ mod tests {
             .commands
             .lock()
             .expect("fake commands lock poisoned")
-            .insert(404, Some("/usr/bin/caffeinate -i /bin/sleep 2147483647".to_string()));
+            .insert(
+                404,
+                Some("/usr/bin/caffeinate -i /bin/sleep 2147483647".to_string()),
+            );
         process_ops
             .start_markers
             .lock()
@@ -1043,13 +1076,11 @@ mod tests {
             .reclaim_stale_helpers()
             .expect("live helper should not be reclaimed");
 
-        assert!(
-            process_ops
-                .terminated
-                .lock()
-                .expect("fake terminated lock poisoned")
-                .is_empty()
-        );
+        assert!(process_ops
+            .terminated
+            .lock()
+            .expect("fake terminated lock poisoned")
+            .is_empty());
         assert!(state_path.exists());
     }
 
@@ -1080,7 +1111,10 @@ mod tests {
             .commands
             .lock()
             .expect("fake commands lock poisoned")
-            .insert(405, Some("/usr/bin/caffeinate -i /bin/sleep 2147483647".to_string()));
+            .insert(
+                405,
+                Some("/usr/bin/caffeinate -i /bin/sleep 2147483647".to_string()),
+            );
         process_ops
             .start_markers
             .lock()
@@ -1141,7 +1175,10 @@ mod tests {
             .commands
             .lock()
             .expect("fake commands lock poisoned")
-            .insert(406, Some("/usr/bin/caffeinate -i /bin/sleep 2147483647".to_string()));
+            .insert(
+                406,
+                Some("/usr/bin/caffeinate -i /bin/sleep 2147483647".to_string()),
+            );
         process_ops
             .start_markers
             .lock()
@@ -1175,9 +1212,78 @@ mod tests {
         assert!(!state_path.exists());
     }
 
+    #[test]
+    fn reclaim_stale_helpers_skips_invalid_state_files() {
+        let state_dir = temp_state_dir();
+        let invalid_state_path = state_file_path(&state_dir, 12);
+        fs::create_dir_all(&state_dir).expect("state dir should exist");
+        fs::write(&invalid_state_path, b"{not-json").expect("invalid helper state should save");
+
+        let valid_state_path = state_file_path(&state_dir, 13);
+        save_helper_state(
+            &valid_state_path,
+            &PersistedKeepAwakeHelper {
+                owner: test_process(13),
+                helper: KeepAwakeHelperState {
+                    pid: 407,
+                    program: "/usr/bin/caffeinate".to_string(),
+                    args: vec![
+                        "-i".to_string(),
+                        "/bin/sleep".to_string(),
+                        "2147483647".to_string(),
+                    ],
+                    start_marker: Some("start-407".to_string()),
+                },
+            },
+        )
+        .expect("valid helper state should save");
+
+        let process_ops = Arc::new(FakeProcessOps::default());
+        process_ops
+            .commands
+            .lock()
+            .expect("fake commands lock poisoned")
+            .insert(
+                407,
+                Some("/usr/bin/caffeinate -i /bin/sleep 2147483647".to_string()),
+            );
+        process_ops
+            .start_markers
+            .lock()
+            .expect("fake start markers lock poisoned")
+            .insert(407, Some("start-407".to_string()));
+        let manager = KeepAwakeManager::with_dependencies(
+            Arc::new(FakeSpawner {
+                support: SupportStatus {
+                    supported: true,
+                    message: None,
+                },
+                next_spawn: StdMutex::new(Vec::new()),
+            }),
+            process_ops.clone(),
+            state_dir,
+            test_process(99),
+        );
+
+        manager
+            .reclaim_stale_helpers()
+            .expect("reclaim should continue past invalid state");
+
+        assert_eq!(
+            process_ops
+                .terminated
+                .lock()
+                .expect("fake terminated lock poisoned")
+                .as_slice(),
+            &[407]
+        );
+        assert!(!invalid_state_path.exists());
+        assert!(!valid_state_path.exists());
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
-    fn linux_backend_blocks_sleep_and_idle() {
+    fn linux_backend_blocks_sleep_and_idle_for_current_process() {
         let spec = resolve_backend_spec().expect("linux backend should resolve");
         let args = spec
             .args
@@ -1185,6 +1291,11 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert!(args.iter().any(|arg| arg == "--what=idle:sleep"));
+        assert!(args.iter().any(|arg| arg == "-f"));
+        assert!(args.iter().any(|arg| arg == "/dev/null"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == format!("--pid={}", std::process::id())));
     }
 
     fn exit_status_from_code(code: i32) -> ExitStatus {
