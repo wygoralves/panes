@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Panes",
-  "version": "0.33.2",
+  "version": "0.34.1",
   "identifier": "com.panes.app",
   "build": {
     "beforeDevCommand": "pnpm run dev",
-    "beforeBuildCommand": "pnpm run build:desktop",
+    "beforeBuildCommand": "node scripts/build-desktop.mjs",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },

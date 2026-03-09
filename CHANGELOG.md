@@ -1,5 +1,17 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.34.0...vnull) (2026-03-09)
+
+### Bug Fixes
+
+* fix macos build crash ([2a9107b](https://github.com/wygoralves/panes/commit/2a9107b0130c458b95a6efb69b71a8f3db122a70))
+
+## [](https://github.com/wygoralves/panes/compare/v0.33.2...vnull) (2026-03-09)
+
+### Features
+
+* add universal macOS release support ([012f7b6](https://github.com/wygoralves/panes/commit/012f7b65e628e712280233ec1e4bafc2d80e1b1b))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.33.1...vnull) (2026-03-09)
 
 ### Bug Fixes
