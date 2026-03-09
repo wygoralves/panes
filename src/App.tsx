@@ -18,7 +18,12 @@ import type { RuntimeToast, Thread } from "./types";
 import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMirrorEditor";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LinuxWindowResizeHandles } from "./components/shared/LinuxWindowResizeHandles";
-import { isLinuxDesktop, requestWindowClose } from "./lib/windowActions";
+import {
+  isLinuxDesktop,
+  isTerminalInputFocused,
+  requestWindowClose,
+  shouldHandleAppShortcutWhileTerminalFocused,
+} from "./lib/windowActions";
 
 // Debounce guard: when both the JS keydown handler and the native menu-action
 // fire for the same shortcut, only the first one within 100ms takes effect.
@@ -195,6 +200,9 @@ export function App() {
       // On macOS/WebKit, e.key is lowercase even when Shift is held with Cmd,
       // so normalize to lowercase and use e.shiftKey to differentiate.
       const key = e.key.toLowerCase();
+      const allowWhileTerminalFocused = shouldHandleAppShortcutWhileTerminalFocused(key, e.shiftKey);
+
+      if (isTerminalInputFocused() && !allowWhileTerminalFocused) return;
 
       // Always prevent Cmd+S from opening the browser save dialog
       if (key === "s" && !e.shiftKey) {

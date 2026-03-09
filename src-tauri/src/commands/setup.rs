@@ -338,7 +338,7 @@ async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(St
     for shell in runtime_env::login_probe_shells() {
         let probe_cmd = format!("command -v {command} && {command} {version_flag}");
         let output = match Command::new(&shell)
-            .args(["-lic", &probe_cmd])
+            .args(runtime_env::login_probe_shell_args(&shell, &probe_cmd))
             .output()
             .await
         {
@@ -347,13 +347,9 @@ async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(St
         };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut lines = stdout.lines().map(str::trim).filter(|l| !l.is_empty());
-
-        let path = match lines.next() {
-            Some(p) if p.starts_with('/') => p.to_string(),
-            _ => continue,
+        let Some((path, version)) = runtime_env::parse_login_probe_output(&stdout) else {
+            continue;
         };
-        let version = lines.next().unwrap_or("").to_string();
 
         return Some((path, version));
     }

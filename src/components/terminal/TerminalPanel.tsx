@@ -2289,8 +2289,12 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       if (event.type !== "keydown") return true;
       // Block broadcast shortcut from reaching the shell
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i") return false;
-      if ((event.metaKey || event.ctrlKey) && event.key === "Backspace") {
+      if (event.metaKey && !event.ctrlKey && event.key === "Backspace") {
         broadcastWrite("\x15");
+        return false;
+      }
+      if (event.ctrlKey && !event.metaKey && event.key === "Backspace") {
+        broadcastWrite("\x17");
         return false;
       }
       const k = event.key.toLowerCase();
