@@ -30,6 +30,7 @@ import {
 // fire for the same shortcut, only the first one within 100ms takes effect.
 const shortcutLastFired = new Map<string, number>();
 const SHORTCUT_DEBOUNCE_MS = 100;
+const KEEP_AWAKE_REFRESH_MS = 15000;
 
 function fireShortcut(id: string, action: () => void) {
   const now = Date.now();
@@ -84,6 +85,8 @@ export function App() {
   const applyEngineRuntimeUpdate = useEngineStore((s) => s.applyRuntimeUpdate);
   const scanHarnesses = useHarnessStore((s) => s.scan);
   const loadKeepAwake = useKeepAwakeStore((s) => s.load);
+  const refreshKeepAwake = useKeepAwakeStore((s) => s.refresh);
+  const keepAwakeEnabled = useKeepAwakeStore((s) => s.state?.enabled ?? false);
   const refreshAllThreads = useThreadStore((s) => s.refreshAllThreads);
   const refreshThreads = useThreadStore((s) => s.refreshThreads);
   const applyThreadUpdateLocal = useThreadStore((s) => s.applyThreadUpdateLocal);
@@ -101,6 +104,18 @@ export function App() {
   useEffect(() => {
     void refreshAllThreads(workspaces.map((workspace) => workspace.id));
   }, [workspaces, refreshAllThreads]);
+
+  useEffect(() => {
+    if (!keepAwakeEnabled) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshKeepAwake();
+    }, KEEP_AWAKE_REFRESH_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [keepAwakeEnabled, refreshKeepAwake]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;

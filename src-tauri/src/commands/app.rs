@@ -22,10 +22,11 @@ pub async fn set_app_locale(locale: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let normalized =
             normalize_app_locale(&locale).ok_or_else(|| format!("unsupported locale: {locale}"))?;
-        let mut config = AppConfig::load_or_create().map_err(err_to_string)?;
-        config.general.locale = Some(normalized.to_string());
-        config.save().map_err(err_to_string)?;
-        Ok(normalized.to_string())
+        AppConfig::mutate(|config| {
+            config.general.locale = Some(normalized.to_string());
+            Ok(normalized.to_string())
+        })
+        .map_err(err_to_string)
     })
     .await
     .map_err(err_to_string)?
