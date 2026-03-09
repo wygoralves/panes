@@ -85,7 +85,6 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.ref_name }}
-          token: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Fetch tags
         run: git fetch --force --tags origin
@@ -121,6 +120,24 @@ jobs:
         if: steps.release_check.outputs.should_release != 'true'
         run: 'echo "Skipping release: ${{ steps.release_check.outputs.reason }}"'
 
+      - name: Require release token for protected branch push
+        if: steps.release_check.outputs.should_release == 'true'
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "RELEASE_TOKEN is required for automated releases on a protected branch."
+            echo "Create a fine-grained PAT for a bypass-authorized account and save it as the RELEASE_TOKEN Actions secret."
+            exit 1
+          fi
+
+      - name: Configure authenticated remote for release push
+        if: steps.release_check.outputs.should_release == 'true'
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          git remote set-url origin "https://x-access-token:${RELEASE_TOKEN}@github.com/${{ github.repository }}.git"
+
       - name: Configure git user for release commit
         if: steps.release_check.outputs.should_release == 'true'
         run: |
@@ -131,7 +148,7 @@ jobs:
         if: steps.release_check.outputs.should_release == 'true'
         run: pnpm release -- --ci
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Capture released tag
         id: release_meta
