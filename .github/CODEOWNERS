@@ -1,0 +1,7 @@
+# Default ownership stays with the maintainer so outside contributors can send PRs
+# without gaining merge authority.
+* @wygoralves
+
+# Repository automation and contribution policy should always route through the maintainer.
+/.github/ @wygoralves
+/docs/ @wygoralves

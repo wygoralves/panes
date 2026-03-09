@@ -192,14 +192,9 @@ Atualmente o app expõe Codex e Claude como chat engines. O Codex se conecta a `
 
 ## Contribuindo
 
-Contribuições são bem-vindas.
+Contribuições são bem-vindas. Use o fluxo de pull request descrito em [CONTRIBUTING.md](./CONTRIBUTING.md).
 
-1. Faça um fork do repo
-2. Crie sua branch
-3. Faça a mudança
-4. Se a mudança adicionar ou editar copy visível ao usuário, atualize os dois conjuntos de locale no mesmo change
-5. Rode os checks relevantes
-6. Abra um pull request
+Toda mudança externa deve passar por um pull request revisado. Se a mudança adicionar ou editar copy visível ao usuário, atualize os dois conjuntos de locale no mesmo change.
 
 ## Licença
 

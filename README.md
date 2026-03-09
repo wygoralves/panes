@@ -204,14 +204,9 @@ The app currently exposes Codex and Claude as chat engines. Codex talks to `code
 
 ## Contributing
 
-Contributions are welcome.
+Contributions are welcome. Use the pull request flow described in [CONTRIBUTING.md](./CONTRIBUTING.md).
 
-1. Fork the repo
-2. Create your branch
-3. Make the change
-4. If the change adds or edits user-facing copy, update both locale resource sets as part of the same change
-5. Run the relevant checks
-6. Open a pull request
+All external changes should go through a reviewed pull request. If the change adds or edits user-facing copy, update both locale resource sets as part of the same change.
 
 ## License
 
