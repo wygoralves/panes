@@ -800,6 +800,29 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             </div>
 
             <div className="git-action-menu-divider" />
+            <div
+              style={{
+                padding: "6px 10px 4px",
+                fontSize: 11,
+                color: "var(--text-3)",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+              }}
+            >
+              {t("app:sidebar.terminal")}
+            </div>
+            <button
+              type="button"
+              className="git-action-menu-item"
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+              onClick={() => {
+                void onToggleTerminalAcceleratedRendering();
+              }}
+            >
+              <span>{t("app:sidebar.terminalAcceleratedRendering")}</span>
+              {terminalAcceleratedRendering ? <Check size={12} /> : null}
+            </button>
+            <div className="git-action-menu-divider" />
 
             {/* ── Actions ── */}
             <button
@@ -837,29 +860,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                   }}
                 />
               )}
-            </button>
-            <div className="git-action-menu-divider" />
-            <div
-              style={{
-                padding: "6px 10px 4px",
-                fontSize: 11,
-                color: "var(--text-3)",
-                textTransform: "uppercase",
-                letterSpacing: "0.06em",
-              }}
-            >
-              {t("app:sidebar.terminal")}
-            </div>
-            <button
-              type="button"
-              className="git-action-menu-item"
-              style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
-              onClick={() => {
-                void onToggleTerminalAcceleratedRendering();
-              }}
-            >
-              <span>{t("app:sidebar.terminalAcceleratedRendering")}</span>
-              {terminalAcceleratedRendering ? <Check size={12} /> : null}
             </button>
             <div className="git-action-menu-divider" />
             {showNativeWindowDecorationsSetting && (
