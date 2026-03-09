@@ -27,6 +27,7 @@ import type {
   HarnessReport,
   InstallProgressEvent,
   InstallResult,
+  KeepAwakeState,
   Message,
   MessageWindow,
   MessageWindowCursor,
@@ -51,6 +52,9 @@ import type {
 export const ipc = {
   getAppLocale: () => invoke<AppLocale>("get_app_locale"),
   setAppLocale: (locale: AppLocale) => invoke<AppLocale>("set_app_locale", { locale }),
+  getKeepAwakeState: () => invoke<KeepAwakeState>("get_keep_awake_state"),
+  setKeepAwakeEnabled: (enabled: boolean) =>
+    invoke<KeepAwakeState>("set_keep_awake_enabled", { enabled }),
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
   listArchivedWorkspaces: () => invoke<Workspace[]>("list_archived_workspaces"),
   openWorkspace: (path: string, scanDepth?: number) =>

@@ -7,6 +7,7 @@ mod git;
 mod linux_webkit;
 mod locale;
 mod models;
+mod power;
 mod runtime_env;
 mod state;
 mod terminal;
@@ -21,6 +22,7 @@ use git::repo::FileTreeCache;
 use git::watcher::GitWatcherManager;
 use locale::{native_strings, resolve_app_locale};
 use models::{EngineRuntimeUpdatedDto, ThreadDto, ThreadStatusDto};
+use power::KeepAwakeManager;
 use state::{AppState, TurnManager};
 use tauri::{
     image::Image,
@@ -51,6 +53,15 @@ pub fn run() {
     }
     let app_config = AppConfig::load_or_create().expect("failed to load config");
     let app_locale = resolve_app_locale(app_config.general.locale.as_deref());
+    let keep_awake = Arc::new(KeepAwakeManager::new());
+    if let Err(error) = keep_awake.reclaim_stale_helpers() {
+        log::warn!("failed to reclaim stale keep awake helper: {error}");
+    }
+    if app_config.power.keep_awake_enabled {
+        if let Err(error) = tauri::async_runtime::block_on(keep_awake.enable()) {
+            log::warn!("failed to reapply keep awake on startup: {error}");
+        }
+    }
 
     let _ =
         db::workspaces::ensure_default_workspace(&db).expect("failed to ensure default workspace");
@@ -61,6 +72,7 @@ pub fn run() {
         engines: Arc::new(EngineManager::new()),
         git_watchers: Arc::new(GitWatcherManager::default()),
         terminals: Arc::new(TerminalManager::default()),
+        keep_awake,
         turns: Arc::new(TurnManager::default()),
         file_tree_cache: Arc::new(FileTreeCache::new()),
     };
@@ -103,6 +115,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::app::get_app_locale,
             commands::app::set_app_locale,
+            commands::power::get_keep_awake_state,
+            commands::power::set_keep_awake_enabled,
             commands::chat::send_message,
             commands::chat::cancel_turn,
             commands::chat::respond_to_approval,
@@ -205,7 +219,11 @@ pub fn run() {
     app.run(|app_handle, event| match event {
         RunEvent::ExitRequested { .. } | RunEvent::Exit => {
             let terminals = app_handle.state::<AppState>().terminals.clone();
+            let keep_awake = app_handle.state::<AppState>().keep_awake.clone();
             tauri::async_runtime::block_on(async move {
+                if let Err(error) = keep_awake.shutdown().await {
+                    log::warn!("failed to release keep awake on shutdown: {error}");
+                }
                 terminals.shutdown().await;
             });
         }

@@ -811,6 +811,7 @@ mod tests {
         config::app_config::AppConfig,
         engines::EngineManager,
         git::{repo::FileTreeCache, watcher::GitWatcherManager},
+        power::KeepAwakeManager,
         state::{AppState, TurnManager},
         terminal::TerminalManager,
     };
@@ -827,6 +828,7 @@ mod tests {
             engines: Arc::new(EngineManager::new()),
             git_watchers: Arc::new(GitWatcherManager::default()),
             terminals: Arc::new(TerminalManager::default()),
+            keep_awake: Arc::new(KeepAwakeManager::new()),
             turns: Arc::new(TurnManager::default()),
             file_tree_cache: Arc::new(FileTreeCache::new()),
         }
