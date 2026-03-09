@@ -54,7 +54,7 @@ pub fn run() {
     let app_config = AppConfig::load_or_create().expect("failed to load config");
     let app_locale = resolve_app_locale(app_config.general.locale.as_deref());
     let keep_awake = Arc::new(KeepAwakeManager::new());
-    if let Err(error) = keep_awake.reclaim_stale_helper() {
+    if let Err(error) = keep_awake.reclaim_stale_helpers() {
         log::warn!("failed to reclaim stale keep awake helper: {error}");
     }
     if app_config.power.keep_awake_enabled {

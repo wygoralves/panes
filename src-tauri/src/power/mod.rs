@@ -23,7 +23,8 @@ pub struct KeepAwakeStatus {
 pub struct KeepAwakeManager {
     spawner: Arc<dyn KeepAwakeSpawner>,
     process_ops: Arc<dyn KeepAwakeProcessOps>,
-    state_path: PathBuf,
+    state_dir: PathBuf,
+    current_process: ProcessIdentity,
     runtime: Arc<Mutex<KeepAwakeRuntime>>,
 }
 
@@ -45,16 +46,28 @@ struct BackendSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct PersistedKeepAwakeHelper {
+struct ProcessIdentity {
+    pid: u32,
+    start_marker: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct KeepAwakeHelperState {
     pid: u32,
     program: String,
     args: Vec<String>,
     start_marker: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PersistedKeepAwakeHelper {
+    owner: ProcessIdentity,
+    helper: KeepAwakeHelperState,
+}
+
 struct SpawnedKeepAwakeChild {
     child: Box<dyn KeepAwakeChild>,
-    persisted_helper: Option<PersistedKeepAwakeHelper>,
+    helper: Option<KeepAwakeHelperState>,
 }
 
 #[async_trait]
@@ -90,19 +103,22 @@ impl KeepAwakeManager {
         Self::with_dependencies(
             Arc::new(ProcessKeepAwakeSpawner),
             Arc::new(SystemKeepAwakeProcessOps),
-            default_state_path(),
+            default_state_dir(),
+            current_process_identity(),
         )
     }
 
     fn with_dependencies(
         spawner: Arc<dyn KeepAwakeSpawner>,
         process_ops: Arc<dyn KeepAwakeProcessOps>,
-        state_path: PathBuf,
+        state_dir: PathBuf,
+        current_process: ProcessIdentity,
     ) -> Self {
         Self {
             spawner,
             process_ops,
-            state_path,
+            state_dir,
+            current_process,
             runtime: Arc::new(Mutex::new(KeepAwakeRuntime {
                 child: None,
                 last_error: None,
@@ -110,39 +126,18 @@ impl KeepAwakeManager {
         }
     }
 
-    pub fn reclaim_stale_helper(&self) -> Result<(), String> {
-        let Some(helper) = load_helper_state(&self.state_path)? else {
-            return Ok(());
-        };
-
-        let command_line = self
-            .process_ops
-            .read_command_line(helper.pid)
-            .map_err(|error| {
-                format!(
-                    "failed to inspect stale keep awake helper {}: {error}",
-                    helper.pid
-                )
-            })?;
-        let start_marker = self.process_ops.read_start_marker(helper.pid).map_err(|error| {
-            format!(
-                "failed to inspect stale keep awake helper start marker {}: {error}",
-                helper.pid
-            )
-        })?;
-
-        if let (Some(command_line), Some(start_marker)) = (command_line, start_marker) {
-            if process_matches_helper(command_line.as_str(), start_marker.as_str(), &helper) {
-                self.process_ops.terminate(helper.pid).map_err(|error| {
-                    format!(
-                        "failed to stop stale keep awake helper {}: {error}",
-                        helper.pid
-                    )
-                })?;
+    pub fn reclaim_stale_helpers(&self) -> Result<(), String> {
+        for state_path in list_helper_state_paths(&self.state_dir)? {
+            let Some(helper) = load_helper_state(&state_path)? else {
+                continue;
+            };
+            if self.owner_may_still_be_running(&helper.owner)? {
+                continue;
             }
+            self.reclaim_helper_state(&state_path, &helper)?;
         }
 
-        clear_helper_state(&self.state_path)
+        Ok(())
     }
 
     pub async fn status(&self) -> KeepAwakeStatus {
@@ -182,8 +177,12 @@ impl KeepAwakeManager {
 
         match self.spawner.spawn() {
             Ok(spawned) => {
-                if let Some(helper) = spawned.persisted_helper.as_ref() {
-                    if let Err(error) = save_helper_state(&self.state_path, helper) {
+                if let Some(helper) = spawned.helper.as_ref() {
+                    let helper = PersistedKeepAwakeHelper {
+                        owner: self.current_process.clone(),
+                        helper: helper.clone(),
+                    };
+                    if let Err(error) = save_helper_state(&self.state_path(), &helper) {
                         log::warn!("failed to persist keep awake helper state: {error}");
                     }
                 }
@@ -206,13 +205,13 @@ impl KeepAwakeManager {
 
         let Some(mut child) = runtime.child.take() else {
             drop(runtime);
-            return clear_helper_state(&self.state_path);
+            return clear_helper_state(&self.state_path());
         };
 
         match child.try_wait() {
             Ok(Some(_)) => {
                 drop(runtime);
-                clear_helper_state(&self.state_path)?;
+                clear_helper_state(&self.state_path())?;
                 Ok(())
             }
             Ok(None) => {
@@ -233,7 +232,7 @@ impl KeepAwakeManager {
 
                 runtime.last_error = None;
                 drop(runtime);
-                clear_helper_state(&self.state_path)?;
+                clear_helper_state(&self.state_path())?;
                 Ok(())
             }
             Err(error) => {
@@ -255,7 +254,7 @@ impl KeepAwakeManager {
             Some(Ok(Some(status))) => {
                 runtime.child = None;
                 runtime.last_error = Some(exit_status_message(status));
-                if let Err(error) = clear_helper_state(&self.state_path) {
+                if let Err(error) = clear_helper_state(&self.state_path()) {
                     log::warn!("failed to clear keep awake helper state: {error}");
                 }
             }
@@ -265,11 +264,101 @@ impl KeepAwakeManager {
                 runtime.last_error = Some(format!(
                     "failed to inspect keep awake helper state: {error}"
                 ));
-                if let Err(clear_error) = clear_helper_state(&self.state_path) {
+                if let Err(clear_error) = clear_helper_state(&self.state_path()) {
                     log::warn!("failed to clear keep awake helper state: {clear_error}");
                 }
             }
             None => {}
+        }
+    }
+
+    fn state_path(&self) -> PathBuf {
+        state_file_path(&self.state_dir, self.current_process.pid)
+    }
+
+    fn owner_may_still_be_running(&self, owner: &ProcessIdentity) -> Result<bool, String> {
+        let current_start_marker = self.process_ops.read_start_marker(owner.pid).map_err(|error| {
+            format!(
+                "failed to inspect keep awake owner start marker {}: {error}",
+                owner.pid
+            )
+        })?;
+        if let Some(current_start_marker) = current_start_marker {
+            return Ok(match owner.start_marker.as_deref() {
+                Some(saved_start_marker) => saved_start_marker == current_start_marker,
+                None => true,
+            });
+        }
+
+        let command_line = self.process_ops.read_command_line(owner.pid).map_err(|error| {
+            format!("failed to inspect keep awake owner {}: {error}", owner.pid)
+        })?;
+        Ok(command_line.is_some())
+    }
+
+    fn reclaim_helper_state(
+        &self,
+        state_path: &Path,
+        persisted: &PersistedKeepAwakeHelper,
+    ) -> Result<(), String> {
+        let command_line = self
+            .process_ops
+            .read_command_line(persisted.helper.pid)
+            .map_err(|error| {
+                format!(
+                    "failed to inspect stale keep awake helper {}: {error}",
+                    persisted.helper.pid
+                )
+            })?;
+        let start_marker = self
+            .process_ops
+            .read_start_marker(persisted.helper.pid)
+            .map_err(|error| {
+                format!(
+                    "failed to inspect stale keep awake helper start marker {}: {error}",
+                    persisted.helper.pid
+                )
+            })?;
+
+        let Some(command_line) = command_line else {
+            return clear_helper_state(state_path);
+        };
+        if !helper_command_matches(command_line.as_str(), &persisted.helper) {
+            return clear_helper_state(state_path);
+        }
+
+        match persisted.helper.start_marker.as_deref() {
+            Some(saved_start_marker) => match start_marker.as_deref() {
+                Some(current_start_marker) if current_start_marker == saved_start_marker => {
+                    self.process_ops
+                        .terminate(persisted.helper.pid)
+                        .map_err(|error| {
+                            format!(
+                                "failed to stop stale keep awake helper {}: {error}",
+                                persisted.helper.pid
+                            )
+                        })?;
+                    clear_helper_state(state_path)
+                }
+                Some(_) => clear_helper_state(state_path),
+                None => Ok(()),
+            },
+            None => {
+                if let Some(current_start_marker) = start_marker {
+                    let mut refreshed = persisted.clone();
+                    refreshed.helper.start_marker = Some(current_start_marker);
+                    save_helper_state(state_path, &refreshed)?;
+                }
+                self.process_ops
+                    .terminate(persisted.helper.pid)
+                    .map_err(|error| {
+                        format!(
+                            "failed to stop stale keep awake helper {}: {error}",
+                            persisted.helper.pid
+                        )
+                    })?;
+                clear_helper_state(state_path)
+            }
         }
     }
 }
@@ -325,7 +414,7 @@ impl KeepAwakeSpawner for ProcessKeepAwakeSpawner {
                 spec.program.display()
             )
         })?;
-        let persisted_helper = child.id().map(|pid| PersistedKeepAwakeHelper {
+        let helper = child.id().map(|pid| KeepAwakeHelperState {
             pid,
             program: spec.program.display().to_string(),
             args: spec
@@ -348,7 +437,7 @@ impl KeepAwakeSpawner for ProcessKeepAwakeSpawner {
 
         Ok(SpawnedKeepAwakeChild {
             child: Box::new(TokioKeepAwakeChild { child }),
-            persisted_helper,
+            helper,
         })
     }
 }
@@ -367,12 +456,24 @@ impl KeepAwakeProcessOps for SystemKeepAwakeProcessOps {
     }
 }
 
-fn default_state_path() -> PathBuf {
+fn default_state_dir() -> PathBuf {
     AppConfig::path()
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("keep-awake-helper.json")
+        .join("keep-awake-helpers")
+}
+
+fn current_process_identity() -> ProcessIdentity {
+    let pid = std::process::id();
+    ProcessIdentity {
+        pid,
+        start_marker: read_process_start_marker(pid).ok().flatten(),
+    }
+}
+
+fn state_file_path(state_dir: &Path, pid: u32) -> PathBuf {
+    state_dir.join(format!("{pid}.json"))
 }
 
 fn save_helper_state(path: &Path, helper: &PersistedKeepAwakeHelper) -> Result<(), String> {
@@ -403,15 +504,25 @@ fn clear_helper_state(path: &Path) -> Result<(), String> {
     }
 }
 
-fn process_matches_helper(
-    command_line: &str,
-    start_marker: &str,
-    helper: &PersistedKeepAwakeHelper,
-) -> bool {
-    if helper.start_marker.as_deref() != Some(start_marker) {
-        return false;
-    }
+fn list_helper_state_paths(state_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = match fs::read_dir(state_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.to_string()),
+    };
 
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) == Some("json") {
+            paths.push(path);
+        }
+    }
+    Ok(paths)
+}
+
+fn helper_command_matches(command_line: &str, helper: &KeepAwakeHelperState) -> bool {
     let program_name = Path::new(&helper.program)
         .file_name()
         .and_then(|name| name.to_str())
@@ -548,9 +659,15 @@ fn resolve_backend_spec() -> Result<BackendSpec, String> {
     {
         let caffeinate = crate::runtime_env::resolve_executable("caffeinate")
             .ok_or_else(|| "macOS keep awake requires the `caffeinate` utility".to_string())?;
+        let sleep = crate::runtime_env::resolve_executable("sleep")
+            .ok_or_else(|| "macOS keep awake requires the `sleep` utility".to_string())?;
         return Ok(BackendSpec {
             program: caffeinate,
-            args: vec![OsString::from("-i")],
+            args: vec![
+                OsString::from("-i"),
+                sleep.into_os_string(),
+                OsString::from("2147483647"),
+            ],
         });
     }
 
@@ -718,21 +835,33 @@ mod tests {
     fn make_spawn(child: FakeChildHandle, pid: u32) -> SpawnedKeepAwakeChild {
         SpawnedKeepAwakeChild {
             child: Box::new(child),
-            persisted_helper: Some(PersistedKeepAwakeHelper {
+            helper: Some(KeepAwakeHelperState {
                 pid,
                 program: "/usr/bin/caffeinate".to_string(),
-                args: vec!["-i".to_string()],
+                args: vec![
+                    "-i".to_string(),
+                    "/bin/sleep".to_string(),
+                    "2147483647".to_string(),
+                ],
                 start_marker: Some(format!("start-{pid}")),
             }),
         }
     }
 
-    fn temp_state_path() -> PathBuf {
-        std::env::temp_dir().join(format!("panes-keep-awake-{}.json", Uuid::new_v4()))
+    fn test_process(pid: u32) -> ProcessIdentity {
+        ProcessIdentity {
+            pid,
+            start_marker: Some(format!("owner-{pid}")),
+        }
+    }
+
+    fn temp_state_dir() -> PathBuf {
+        std::env::temp_dir().join(format!("panes-keep-awake-{}", Uuid::new_v4()))
     }
 
     #[tokio::test]
     async fn reports_unsupported_runtime() {
+        let current_process = test_process(1);
         let manager = KeepAwakeManager::with_dependencies(
             Arc::new(FakeSpawner {
                 support: SupportStatus {
@@ -742,7 +871,8 @@ mod tests {
                 next_spawn: StdMutex::new(Vec::new()),
             }),
             Arc::new(FakeProcessOps::default()),
-            temp_state_path(),
+            temp_state_dir(),
+            current_process,
         );
 
         let status = manager.status().await;
@@ -755,7 +885,9 @@ mod tests {
     #[tokio::test]
     async fn enable_and_disable_are_idempotent() {
         let (child, _state) = FakeChildHandle::new(0);
-        let state_path = temp_state_path();
+        let current_process = test_process(2);
+        let state_dir = temp_state_dir();
+        let state_path = state_file_path(&state_dir, current_process.pid);
         let manager = KeepAwakeManager::with_dependencies(
             Arc::new(FakeSpawner {
                 support: SupportStatus {
@@ -765,7 +897,8 @@ mod tests {
                 next_spawn: StdMutex::new(vec![Ok(make_spawn(child, 101))]),
             }),
             Arc::new(FakeProcessOps::default()),
-            state_path.clone(),
+            state_dir,
+            current_process,
         );
 
         manager.enable().await.expect("enable should succeed");
@@ -789,7 +922,9 @@ mod tests {
     #[tokio::test]
     async fn status_reflects_unexpected_child_exit() {
         let (child, state) = FakeChildHandle::new(17);
-        let state_path = temp_state_path();
+        let current_process = test_process(3);
+        let state_dir = temp_state_dir();
+        let state_path = state_file_path(&state_dir, current_process.pid);
         let manager = KeepAwakeManager::with_dependencies(
             Arc::new(FakeSpawner {
                 support: SupportStatus {
@@ -799,7 +934,8 @@ mod tests {
                 next_spawn: StdMutex::new(vec![Ok(make_spawn(child, 202))]),
             }),
             Arc::new(FakeProcessOps::default()),
-            state_path.clone(),
+            state_dir,
+            current_process,
         );
 
         manager.enable().await.expect("enable should succeed");
@@ -821,7 +957,9 @@ mod tests {
             .lock()
             .expect("fake child state lock poisoned")
             .kill_error = Some("permission denied".to_string());
-        let state_path = temp_state_path();
+        let current_process = test_process(4);
+        let state_dir = temp_state_dir();
+        let state_path = state_file_path(&state_dir, current_process.pid);
         let manager = KeepAwakeManager::with_dependencies(
             Arc::new(FakeSpawner {
                 support: SupportStatus {
@@ -831,7 +969,8 @@ mod tests {
                 next_spawn: StdMutex::new(vec![Ok(make_spawn(child, 303))]),
             }),
             Arc::new(FakeProcessOps::default()),
-            state_path.clone(),
+            state_dir,
+            current_process,
         );
 
         manager.enable().await.expect("enable should succeed");
@@ -845,15 +984,23 @@ mod tests {
     }
 
     #[test]
-    fn reclaim_stale_helper_terminates_matching_process() {
-        let state_path = temp_state_path();
+    fn reclaim_stale_helpers_skip_live_owner_processes() {
+        let state_dir = temp_state_dir();
+        let state_path = state_file_path(&state_dir, 10);
         save_helper_state(
             &state_path,
             &PersistedKeepAwakeHelper {
-                pid: 404,
-                program: "/usr/bin/caffeinate".to_string(),
-                args: vec!["-i".to_string()],
-                start_marker: Some("start-404".to_string()),
+                owner: test_process(10),
+                helper: KeepAwakeHelperState {
+                    pid: 404,
+                    program: "/usr/bin/caffeinate".to_string(),
+                    args: vec![
+                        "-i".to_string(),
+                        "/bin/sleep".to_string(),
+                        "2147483647".to_string(),
+                    ],
+                    start_marker: Some("start-404".to_string()),
+                },
             },
         )
         .expect("helper state should save");
@@ -863,7 +1010,17 @@ mod tests {
             .commands
             .lock()
             .expect("fake commands lock poisoned")
-            .insert(404, Some("/usr/bin/caffeinate -i".to_string()));
+            .insert(10, Some("/Applications/Panes.app/Contents/MacOS/Panes".to_string()));
+        process_ops
+            .start_markers
+            .lock()
+            .expect("fake start markers lock poisoned")
+            .insert(10, Some("owner-10".to_string()));
+        process_ops
+            .commands
+            .lock()
+            .expect("fake commands lock poisoned")
+            .insert(404, Some("/usr/bin/caffeinate -i /bin/sleep 2147483647".to_string()));
         process_ops
             .start_markers
             .lock()
@@ -878,34 +1035,42 @@ mod tests {
                 next_spawn: StdMutex::new(Vec::new()),
             }),
             process_ops.clone(),
-            state_path.clone(),
+            state_dir,
+            test_process(99),
         );
 
         manager
-            .reclaim_stale_helper()
-            .expect("stale helper reclaim should succeed");
+            .reclaim_stale_helpers()
+            .expect("live helper should not be reclaimed");
 
-        assert_eq!(
+        assert!(
             process_ops
                 .terminated
                 .lock()
                 .expect("fake terminated lock poisoned")
-                .as_slice(),
-            &[404]
+                .is_empty()
         );
-        assert!(!state_path.exists());
+        assert!(state_path.exists());
     }
 
     #[test]
-    fn reclaim_stale_helper_skips_pid_reuse_when_start_marker_differs() {
-        let state_path = temp_state_path();
+    fn reclaim_stale_helpers_terminates_matching_process() {
+        let state_dir = temp_state_dir();
+        let state_path = state_file_path(&state_dir, 11);
         save_helper_state(
             &state_path,
             &PersistedKeepAwakeHelper {
-                pid: 505,
-                program: "/usr/bin/caffeinate".to_string(),
-                args: vec!["-i".to_string()],
-                start_marker: Some("start-505".to_string()),
+                owner: test_process(11),
+                helper: KeepAwakeHelperState {
+                    pid: 405,
+                    program: "/usr/bin/caffeinate".to_string(),
+                    args: vec![
+                        "-i".to_string(),
+                        "/bin/sleep".to_string(),
+                        "2147483647".to_string(),
+                    ],
+                    start_marker: Some("start-405".to_string()),
+                },
             },
         )
         .expect("helper state should save");
@@ -915,12 +1080,12 @@ mod tests {
             .commands
             .lock()
             .expect("fake commands lock poisoned")
-            .insert(505, Some("/usr/bin/caffeinate -i".to_string()));
+            .insert(405, Some("/usr/bin/caffeinate -i /bin/sleep 2147483647".to_string()));
         process_ops
             .start_markers
             .lock()
             .expect("fake start markers lock poisoned")
-            .insert(505, Some("reused-505".to_string()));
+            .insert(405, Some("start-405".to_string()));
         let manager = KeepAwakeManager::with_dependencies(
             Arc::new(FakeSpawner {
                 support: SupportStatus {
@@ -930,19 +1095,82 @@ mod tests {
                 next_spawn: StdMutex::new(Vec::new()),
             }),
             process_ops.clone(),
-            state_path.clone(),
+            state_dir,
+            test_process(99),
         );
 
         manager
-            .reclaim_stale_helper()
+            .reclaim_stale_helpers()
             .expect("stale helper reclaim should succeed");
 
-        assert!(
+        assert_eq!(
             process_ops
                 .terminated
                 .lock()
                 .expect("fake terminated lock poisoned")
-                .is_empty()
+                .as_slice(),
+            &[405]
+        );
+        assert!(!state_path.exists());
+    }
+
+    #[test]
+    fn reclaim_stale_helpers_terminate_when_saved_start_marker_is_missing() {
+        let state_dir = temp_state_dir();
+        let state_path = state_file_path(&state_dir, 12);
+        save_helper_state(
+            &state_path,
+            &PersistedKeepAwakeHelper {
+                owner: test_process(12),
+                helper: KeepAwakeHelperState {
+                    pid: 406,
+                    program: "/usr/bin/caffeinate".to_string(),
+                    args: vec![
+                        "-i".to_string(),
+                        "/bin/sleep".to_string(),
+                        "2147483647".to_string(),
+                    ],
+                    start_marker: None,
+                },
+            },
+        )
+        .expect("helper state should save");
+
+        let process_ops = Arc::new(FakeProcessOps::default());
+        process_ops
+            .commands
+            .lock()
+            .expect("fake commands lock poisoned")
+            .insert(406, Some("/usr/bin/caffeinate -i /bin/sleep 2147483647".to_string()));
+        process_ops
+            .start_markers
+            .lock()
+            .expect("fake start markers lock poisoned")
+            .insert(406, Some("start-406".to_string()));
+        let manager = KeepAwakeManager::with_dependencies(
+            Arc::new(FakeSpawner {
+                support: SupportStatus {
+                    supported: true,
+                    message: None,
+                },
+                next_spawn: StdMutex::new(Vec::new()),
+            }),
+            process_ops.clone(),
+            state_dir,
+            test_process(99),
+        );
+
+        manager
+            .reclaim_stale_helpers()
+            .expect("stale helper reclaim should succeed");
+
+        assert_eq!(
+            process_ops
+                .terminated
+                .lock()
+                .expect("fake terminated lock poisoned")
+                .as_slice(),
+            &[406]
         );
         assert!(!state_path.exists());
     }
