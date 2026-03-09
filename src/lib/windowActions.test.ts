@@ -72,21 +72,25 @@ describe("windowActions", () => {
   });
 
   it("treats Linux custom chrome as Tauri-only", () => {
-    const originalPlatform = navigator.platform;
+    const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
 
-    Object.defineProperty(navigator, "platform", {
+    Object.defineProperty(globalThis, "navigator", {
       configurable: true,
-      value: "Linux x86_64",
+      value: { platform: "Linux x86_64" },
     });
-    expect(isLinuxDesktop()).toBe(true);
 
-    mockIsTauri.mockReturnValue(false);
-    expect(isLinuxDesktop()).toBe(false);
+    try {
+      expect(isLinuxDesktop()).toBe(true);
 
-    Object.defineProperty(navigator, "platform", {
-      configurable: true,
-      value: originalPlatform,
-    });
+      mockIsTauri.mockReturnValue(false);
+      expect(isLinuxDesktop()).toBe(false);
+    } finally {
+      if (originalNavigator) {
+        Object.defineProperty(globalThis, "navigator", originalNavigator);
+      } else {
+        Reflect.deleteProperty(globalThis, "navigator");
+      }
+    }
   });
 
   it("detects focused xterm input", () => {
