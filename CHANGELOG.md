@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.33.0...vnull) (2026-03-09)
+
+### Bug Fixes
+
+* preserve terminal shortcuts and robust shell probes ([e7de0ed](https://github.com/wygoralves/panes/commit/e7de0ed4bb8d9b928220a5e60e397e6c73160493))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.32.1...vnull) (2026-03-09)
 
 ### Features
