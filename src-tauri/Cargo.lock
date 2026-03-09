@@ -12,6 +12,7 @@ dependencies = [
  "env_logger",
  "futures",
  "git2",
+ "libc",
  "log",
  "notify",
  "portable-pty",

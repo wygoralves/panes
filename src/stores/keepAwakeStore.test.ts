@@ -42,6 +42,15 @@ function createStorageStub() {
   };
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    void rej;
+  });
+  return { promise, resolve };
+}
+
 describe("keepAwakeStore", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -158,6 +167,45 @@ describe("keepAwakeStore", () => {
       active: true,
     });
     expect(mockToast.success).toHaveBeenCalledWith("app:commandPalette.toasts.keepAwakeEnabled");
+  });
+
+  it("waits for an in-flight load before toggling", async () => {
+    const deferred = createDeferred<{
+      supported: boolean;
+      enabled: boolean;
+      active: boolean;
+      message: string | null;
+    }>();
+    mockIpc.getKeepAwakeState.mockReturnValue(deferred.promise);
+    mockIpc.setKeepAwakeEnabled.mockResolvedValue({
+      supported: true,
+      enabled: true,
+      active: true,
+      message: null,
+    });
+
+    const loadPromise = useKeepAwakeStore.getState().load();
+    const togglePromise = useKeepAwakeStore.getState().toggle();
+
+    expect(useKeepAwakeStore.getState().loading).toBe(true);
+    expect(mockIpc.setKeepAwakeEnabled).not.toHaveBeenCalled();
+
+    deferred.resolve({
+      supported: true,
+      enabled: false,
+      active: false,
+      message: null,
+    });
+
+    await loadPromise;
+    const result = await togglePromise;
+
+    expect(mockIpc.getKeepAwakeState).toHaveBeenCalledTimes(1);
+    expect(mockIpc.setKeepAwakeEnabled).toHaveBeenCalledWith(true);
+    expect(result).toMatchObject({
+      enabled: true,
+      active: true,
+    });
   });
 
   it("registers the keep awake command in the command palette", async () => {

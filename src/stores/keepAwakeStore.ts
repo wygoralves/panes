@@ -40,17 +40,18 @@ async function fetchKeepAwakeState() {
   return ipc.getKeepAwakeState();
 }
 
-export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
-  state: null,
-  loading: false,
-  loadedOnce: false,
+let pendingKeepAwakeState: Promise<KeepAwakeState | null> | null = null;
 
-  load: async () => {
-    if (get().loading) {
-      return get().state;
-    }
+function requestKeepAwakeState(
+  set: (partial: Partial<KeepAwakeStoreState>) => void,
+  get: () => KeepAwakeStoreState,
+) {
+  if (pendingKeepAwakeState) {
+    return pendingKeepAwakeState;
+  }
 
-    set({ loading: true });
+  set({ loading: true });
+  const request = (async () => {
     try {
       const state = await fetchKeepAwakeState();
       set({
@@ -64,24 +65,25 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
       set({ loading: false, loadedOnce: true });
       return get().state;
     }
-  },
+  })();
 
-  refresh: async () => {
-    set({ loading: true });
-    try {
-      const state = await fetchKeepAwakeState();
-      set({
-        state,
-        loading: false,
-        loadedOnce: true,
-      });
-      return state;
-    } catch (error) {
-      console.warn("[keepAwakeStore] Failed to refresh keep awake state", error);
-      set({ loading: false, loadedOnce: true });
-      return get().state;
+  pendingKeepAwakeState = request;
+  request.finally(() => {
+    if (pendingKeepAwakeState === request) {
+      pendingKeepAwakeState = null;
     }
-  },
+  });
+  return request;
+}
+
+export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
+  state: null,
+  loading: false,
+  loadedOnce: false,
+
+  load: async () => requestKeepAwakeState(set, get),
+
+  refresh: async () => requestKeepAwakeState(set, get),
 
   toggle: async () => {
     const current = get().state ?? await get().load();
