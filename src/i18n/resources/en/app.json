@@ -17,17 +17,6 @@
     "idleMessage": "You're on the latest version.",
     "checkAgain": "Check again"
   },
-  "engineHealth": {
-    "missingTitle": "Codex engine not detected",
-    "configWarningTitle": "Codex config warning",
-    "staleTitle": "Codex runtime sync is stale",
-    "sandboxTitle": "Codex sandbox check failed",
-    "missingMessage": "Install Codex CLI and authenticate before starting chat turns.",
-    "staleMessage": "Panes could not refresh the latest Codex capability snapshot. Runtime notifications may be delayed until the next successful reconnect.",
-    "sandboxMessage": "Codex is installed, but the local OS sandbox check failed.",
-    "location": "Location:",
-    "runInTerminal": "Run in Terminal:"
-  },
   "shared": {
     "uiRuntimeError": "UI runtime error"
   },
@@ -347,16 +336,5 @@
       "saved": "Saved {{name}}",
       "saveFailed": "Failed to save: {{error}}"
     }
-  },
-  "engineHealth": {
-    "missingTitle": "Codex engine not detected",
-    "configWarningTitle": "Codex config warning",
-    "staleTitle": "Codex runtime sync is stale",
-    "sandboxTitle": "Codex sandbox check failed",
-    "missingMessage": "Install Codex CLI and authenticate before starting chat turns.",
-    "staleMessage": "Panes could not refresh the latest Codex capability snapshot. Runtime notifications may be delayed until the next successful reconnect.",
-    "sandboxMessage": "Codex is installed, but the local OS sandbox check failed.",
-    "location": "Location:",
-    "runInTerminal": "Run in Terminal:"
   }
 }

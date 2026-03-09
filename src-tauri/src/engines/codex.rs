@@ -2959,11 +2959,8 @@ async fn update_protocol_diagnostics_with_mcp_oauth(
     Some(diagnostics.clone())
 }
 
-fn build_config_warning_toast(params: &serde_json::Value) -> Option<RuntimeToastDto> {
-    extract_any_string(params, &["summary"]).map(|summary| RuntimeToastDto {
-        variant: "warning".to_string(),
-        message: summary,
-    })
+fn build_config_warning_toast(_params: &serde_json::Value) -> Option<RuntimeToastDto> {
+    None
 }
 
 fn build_account_login_toast(params: &serde_json::Value) -> Option<RuntimeToastDto> {

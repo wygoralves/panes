@@ -74,7 +74,6 @@
     "enabled": "Habilitado",
     "enabledDescription": "Permite acesso à rede para esta thread.",
     "networkRestrictedDescription": "Bloqueia o acesso de rede de saída para esta thread.",
-    "sandboxExternalNotice": "As opções somente leitura e escrita no workspace ficam indisponíveis enquanto o Codex usa sandbox externo nesta máquina.",
     "claudeSandboxNotice": "Claude suporta apenas os modos de sandbox somente leitura e escrita no workspace.",
     "fullAccessNotice": "Acesso total sempre habilita a rede.",
     "claudeRestrictedDescription": "A maioria das ações exige aprovações mais rigorosas.",
