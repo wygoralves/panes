@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 const INTERACTIVE = "button, input, textarea, select, a, .dropdown-menu, .no-drag";
 
 function isInteractive(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
+  if (!(target instanceof Element)) return false;
   return target.closest(INTERACTIVE) !== null;
 }
 
