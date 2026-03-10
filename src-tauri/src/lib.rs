@@ -4,6 +4,8 @@ mod db;
 mod engines;
 mod fs_ops;
 mod git;
+#[cfg(any(target_os = "linux", test))]
+mod linux_appimage;
 mod linux_webkit;
 mod locale;
 mod models;
@@ -89,17 +91,40 @@ pub fn run() {
         .menu(move |handle| build_app_menu(handle, app_locale))
         .setup(|app| {
             #[cfg(target_os = "linux")]
-            if !app
-                .state::<AppState>()
-                .config
-                .native_window_decorations_enabled()
-            {
-                if let Some(main_window) = app.get_webview_window("main") {
+            if let Some(main_window) = app.get_webview_window("main") {
+                if let Ok(icon) = Image::from_bytes(include_bytes!("../icons/icon.png")) {
+                    if let Err(error) = main_window.set_icon(icon) {
+                        log::warn!("failed to apply linux window icon: {error}");
+                    }
+                }
+
+                if !app
+                    .state::<AppState>()
+                    .config
+                    .native_window_decorations_enabled()
+                {
                     if let Err(error) = main_window.set_decorations(false) {
                         log::warn!("failed to disable window decorations on linux: {error}");
                     }
                 }
             }
+
+            #[cfg(target_os = "linux")]
+            tauri::async_runtime::spawn_blocking(|| {
+                match linux_appimage::ensure_appimage_desktop_integration() {
+                    Ok(status) => {
+                        if !matches!(
+                            status,
+                            linux_appimage::AppImageIntegrationStatus::SkippedNotAppImage
+                        ) {
+                            log::info!("linux AppImage desktop integration status: {status:?}");
+                        }
+                    }
+                    Err(error) => {
+                        log::warn!("failed to ensure linux AppImage desktop integration: {error}");
+                    }
+                }
+            });
 
             let handle = app.handle().clone();
             let resource_dir = app.path().resource_dir().ok();
