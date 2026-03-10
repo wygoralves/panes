@@ -20,6 +20,12 @@
   "shared": {
     "uiRuntimeError": "Erro de runtime da interface"
   },
+  "windowControls": {
+    "minimize": "Minimizar janela",
+    "maximize": "Maximizar janela",
+    "restore": "Restaurar janela",
+    "close": "Fechar janela"
+  },
   "sidebar": {
     "pin": "Fixar sidebar",
     "unpin": "Desafixar sidebar",
@@ -50,9 +56,6 @@
     "terminal": "Terminal",
     "terminalAcceleratedRendering": "Renderização acelerada",
     "terminalAcceleratedRenderingFailed": "Falha ao atualizar a renderização do terminal.",
-    "window": "Janela",
-    "nativeWindowDecorations": "Decorações nativas da janela",
-    "nativeWindowDecorationsFailed": "Falha ao atualizar as decorações da janela.",
     "languageFailed": "Falha ao atualizar o idioma.",
     "archiveWorkspaceTitle": "Arquivar workspace",
     "archiveWorkspaceMessage": "Arquivar o workspace \"{{name}}\" e ocultar seus repositórios/threads/mensagens da sidebar? Você poderá reabrir esta pasta depois para restaurá-lo.",

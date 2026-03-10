@@ -55,9 +55,6 @@ export const ipc = {
   getKeepAwakeState: () => invoke<KeepAwakeState>("get_keep_awake_state"),
   setKeepAwakeEnabled: (enabled: boolean) =>
     invoke<KeepAwakeState>("set_keep_awake_enabled", { enabled }),
-  getNativeWindowDecorations: () => invoke<boolean>("get_native_window_decorations"),
-  setNativeWindowDecorations: (enabled: boolean) =>
-    invoke<boolean>("set_native_window_decorations", { enabled }),
   getTerminalAcceleratedRendering: () =>
     invoke<boolean>("get_terminal_accelerated_rendering"),
   setTerminalAcceleratedRendering: (enabled: boolean) =>

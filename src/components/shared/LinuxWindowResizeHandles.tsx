@@ -1,7 +1,5 @@
-import { useEffect, useState, type MouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { UnlistenFn } from "@tauri-apps/api/event";
-import { isLinuxDesktop } from "../../lib/windowActions";
+import type { MouseEvent } from "react";
 
 type ResizeDirection =
   | "East"
@@ -34,52 +32,11 @@ function handleResizeMouseDown(direction: ResizeDirection, event: MouseEvent<HTM
   });
 }
 
-export function LinuxWindowResizeHandles() {
-  const [canResize, setCanResize] = useState(false);
+interface LinuxWindowResizeHandlesProps {
+  canResize: boolean;
+}
 
-  useEffect(() => {
-    if (!isLinuxDesktop()) {
-      setCanResize(false);
-      return;
-    }
-
-    let disposed = false;
-    let unlistenResize: UnlistenFn | null = null;
-    const currentWindow = getCurrentWindow();
-
-    const syncWindowResizeState = async () => {
-      try {
-        const [maximized, fullscreen] = await Promise.all([
-          currentWindow.isMaximized(),
-          currentWindow.isFullscreen(),
-        ]);
-        if (!disposed) {
-          setCanResize(!(maximized || fullscreen));
-        }
-      } catch {
-        if (!disposed) {
-          setCanResize(false);
-        }
-      }
-    };
-
-    void syncWindowResizeState();
-    void currentWindow.onResized(() => {
-      void syncWindowResizeState();
-    }).then((unlisten) => {
-      if (disposed) {
-        unlisten();
-        return;
-      }
-      unlistenResize = unlisten;
-    });
-
-    return () => {
-      disposed = true;
-      unlistenResize?.();
-    };
-  }, []);
-
+export function LinuxWindowResizeHandles({ canResize }: LinuxWindowResizeHandlesProps) {
   if (!canResize) {
     return null;
   }

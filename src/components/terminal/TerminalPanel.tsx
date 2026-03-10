@@ -2300,7 +2300,6 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar && layoutMode === "terminal";
   const useFocusModeHeaderHeight = focusMode && showGitPanel;
   const linuxDesktop = isLinuxDesktop();
-  const showLinuxDragStrip = linuxDesktop && !showSidebar;
 
   const createSession = useTerminalStore((state) => state.createSession);
   const materializeWorkspaceStartupPreset = useTerminalStore(
@@ -3520,13 +3519,6 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       }`}
     >
       <div className="terminal-tabs-bar">
-        {showLinuxDragStrip && (
-          <div
-            className="window-drag-strip"
-            onMouseDown={handleDragMouseDown}
-            onDoubleClick={handleDragDoubleClick}
-          />
-        )}
         <div className="terminal-tabs-list" ref={tabsListRef}>
           {groups.map((group) => {
             const isActive = group.id === activeGroupId;
