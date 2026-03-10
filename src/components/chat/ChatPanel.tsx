@@ -31,6 +31,7 @@ import { useTerminalStore, type LayoutMode } from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
+import { isLinuxDesktop } from "../../lib/windowActions";
 import { MessageBlocks } from "./MessageBlocks";
 import { resolveEngineCapabilities } from "./engineCapabilities";
 import {
@@ -1087,6 +1088,7 @@ export function ChatPanel() {
   const focusMode = useUiStore((s) => s.focusMode);
   const showSidebar = useUiStore((s) => s.showSidebar);
   const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+  const isLinux = isLinuxDesktop();
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar;
   const engines = useEngineStore((s) => s.engines);
   const health = useEngineStore((s) => s.health);
@@ -2507,7 +2509,7 @@ export function ChatPanel() {
           style={{
             height: "var(--panel-header-height)",
             padding: "0 16px",
-            paddingLeft: showSidebar ? 16 : 80,
+            paddingLeft: showSidebar ? 16 : (isLinux ? 16 : 80),
             display: "flex",
             alignItems: "center",
             gap: 8,

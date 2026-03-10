@@ -23,9 +23,10 @@ import {
   runFocusedEditorHistoryAction,
 } from "./components/editor/CodeMirrorEditor";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { LinuxWindowResizeHandles } from "./components/shared/LinuxWindowResizeHandles";
+import { LinuxWindowFrame } from "./components/shared/LinuxWindowFrame";
 import { readTextFromClipboard } from "./lib/clipboard";
 import { type EditMenuAction, shouldDispatchTerminalEditAction } from "./lib/editMenu";
+import { useLinuxWindowFrameState } from "./lib/linuxWindowFrame";
 import {
   isLinuxDesktop,
   isTerminalInputFocused,
@@ -249,6 +250,8 @@ export function App() {
   const commandPaletteOpen = useUiStore((s) => s.commandPaletteOpen);
   const closeCommandPalette = useUiStore((s) => s.closeCommandPalette);
   const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
+  const linuxDesktop = isLinuxDesktop();
+  const linuxWindowFrameState = useLinuxWindowFrameState();
 
   useEffect(() => {
     void loadWorkspaces();
@@ -598,9 +601,15 @@ export function App() {
   }, []);
 
   return (
-    <div style={{ width: "100%", height: "100vh", position: "relative", zIndex: 1 }}>
-      {isLinuxDesktop() && <LinuxWindowResizeHandles />}
-      <ThreeColumnLayout />
+    <div
+      className={`app-shell${linuxDesktop ? " app-shell-linux" : ""}${
+        linuxWindowFrameState.isMaximized ? " app-shell-linux-maximized" : ""
+      }${linuxWindowFrameState.isFullscreen ? " app-shell-linux-fullscreen" : ""}`}
+    >
+      {linuxDesktop && <LinuxWindowFrame frameState={linuxWindowFrameState} />}
+      <div className="app-shell-body">
+        <ThreeColumnLayout />
+      </div>
       <CommandPalette open={commandPaletteOpen} onClose={closeCommandPalette} />
       <SetupWizard />
       <ToastContainer />

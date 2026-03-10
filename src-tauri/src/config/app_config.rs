@@ -24,8 +24,6 @@ pub struct GeneralConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub locale: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub native_window_decorations: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_accelerated_rendering: Option<bool>,
 }
 
@@ -57,7 +55,6 @@ impl Default for GeneralConfig {
             default_engine: "codex".to_string(),
             default_model: "gpt-5.3-codex".to_string(),
             locale: None,
-            native_window_decorations: None,
             terminal_accelerated_rendering: None,
         }
     }
@@ -102,10 +99,6 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    pub fn native_window_decorations_enabled(&self) -> bool {
-        self.general.native_window_decorations.unwrap_or(true)
-    }
-
     pub fn terminal_accelerated_rendering_enabled(&self) -> bool {
         self.general.terminal_accelerated_rendering.unwrap_or(true)
     }
@@ -240,7 +233,6 @@ max_action_output_chars = 20000
         let config = toml::from_str::<AppConfig>(raw).expect("config should deserialize");
 
         assert_eq!(config.general.locale, None);
-        assert_eq!(config.general.native_window_decorations, None);
         assert!(!config.power.keep_awake_enabled);
         assert_eq!(config.general.terminal_accelerated_rendering, None);
         assert!(!config.power.keep_awake_enabled);
@@ -251,7 +243,6 @@ max_action_output_chars = 20000
         let raw = toml::to_string_pretty(&AppConfig::default()).expect("config should serialize");
 
         assert!(!raw.contains("locale"));
-        assert!(!raw.contains("native_window_decorations"));
         assert!(raw.contains("[power]"));
         assert!(raw.contains("keep_awake_enabled = false"));
         assert!(!raw.contains("terminal_accelerated_rendering"));
@@ -276,10 +267,28 @@ max_action_output_chars = 20000
     }
 
     #[test]
-    fn native_window_decorations_default_to_enabled() {
-        let config = AppConfig::default();
+    fn legacy_native_window_decorations_field_is_ignored() {
+        let raw = r#"
+[general]
+theme = "dark"
+default_engine = "codex"
+default_model = "gpt-5.3-codex"
+native_window_decorations = false
 
-        assert!(config.native_window_decorations_enabled());
+[ui]
+sidebar_width = 260
+git_panel_width = 380
+font_size = 13
+
+[debug]
+persist_engine_event_logs = false
+max_action_output_chars = 20000
+"#;
+
+        let config = toml::from_str::<AppConfig>(raw).expect("legacy config should deserialize");
+
+        assert_eq!(config.general.locale, None);
+        assert_eq!(config.general.terminal_accelerated_rendering, None);
     }
 
     #[test]

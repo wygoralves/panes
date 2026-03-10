@@ -20,6 +20,12 @@
   "shared": {
     "uiRuntimeError": "UI runtime error"
   },
+  "windowControls": {
+    "minimize": "Minimize window",
+    "maximize": "Maximize window",
+    "restore": "Restore window",
+    "close": "Close window"
+  },
   "sidebar": {
     "pin": "Pin sidebar",
     "unpin": "Unpin sidebar",
@@ -50,9 +56,6 @@
     "terminal": "Terminal",
     "terminalAcceleratedRendering": "Accelerated rendering",
     "terminalAcceleratedRenderingFailed": "Failed to update terminal rendering.",
-    "window": "Window",
-    "nativeWindowDecorations": "Native window decorations",
-    "nativeWindowDecorationsFailed": "Failed to update window decorations.",
     "languageFailed": "Failed to update language.",
     "archiveWorkspaceTitle": "Archive workspace",
     "archiveWorkspaceMessage": "Archive workspace \"{{name}}\" and hide its repos/threads/messages from the sidebar? You can reopen this folder later to restore it.",

@@ -100,6 +100,13 @@ pub fn run() {
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("main window config not found"))?;
 
+            #[cfg(target_os = "linux")]
+            let main_window_config = {
+                let mut main_window_config = main_window_config;
+                main_window_config.decorations = false;
+                main_window_config
+            };
+
             let main_window = WebviewWindowBuilder::from_config(app.handle(), &main_window_config)?
                 .enable_clipboard_access()
                 .build()?;
@@ -111,16 +118,6 @@ pub fn run() {
                 if let Ok(icon) = Image::from_bytes(include_bytes!("../icons/icon.png")) {
                     if let Err(error) = main_window.set_icon(icon) {
                         log::warn!("failed to apply linux window icon: {error}");
-                    }
-                }
-
-                if !app
-                    .state::<AppState>()
-                    .config
-                    .native_window_decorations_enabled()
-                {
-                    if let Err(error) = main_window.set_decorations(false) {
-                        log::warn!("failed to disable window decorations on linux: {error}");
                     }
                 }
             }
@@ -166,8 +163,6 @@ pub fn run() {
             commands::app::set_app_locale,
             commands::power::get_keep_awake_state,
             commands::power::set_keep_awake_enabled,
-            commands::app::get_native_window_decorations,
-            commands::app::set_native_window_decorations,
             commands::chat::send_message,
             commands::chat::cancel_turn,
             commands::chat::respond_to_approval,
@@ -585,29 +580,15 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
     // their standard shortcuts through the webview, and the menu items remain
     // clickable.
     #[cfg(target_os = "linux")]
-    let edit_undo =
-        MenuItem::with_id(handle, "edit-undo", strings.undo, true, None::<&str>)?;
+    let edit_undo = MenuItem::with_id(handle, "edit-undo", strings.undo, true, None::<&str>)?;
     #[cfg(target_os = "linux")]
-    let edit_redo = MenuItem::with_id(
-        handle,
-        "edit-redo",
-        strings.redo,
-        true,
-        None::<&str>,
-    )?;
+    let edit_redo = MenuItem::with_id(handle, "edit-redo", strings.redo, true, None::<&str>)?;
     #[cfg(target_os = "linux")]
     let edit_cut = MenuItem::with_id(handle, "edit-cut", strings.cut, true, None::<&str>)?;
     #[cfg(target_os = "linux")]
-    let edit_copy =
-        MenuItem::with_id(handle, "edit-copy", strings.copy, true, None::<&str>)?;
+    let edit_copy = MenuItem::with_id(handle, "edit-copy", strings.copy, true, None::<&str>)?;
     #[cfg(target_os = "linux")]
-    let edit_paste = MenuItem::with_id(
-        handle,
-        "edit-paste",
-        strings.paste,
-        true,
-        None::<&str>,
-    )?;
+    let edit_paste = MenuItem::with_id(handle, "edit-paste", strings.paste, true, None::<&str>)?;
     #[cfg(target_os = "linux")]
     let edit_select_all = MenuItem::with_id(
         handle,

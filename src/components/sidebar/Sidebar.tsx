@@ -34,7 +34,6 @@ import {
   emitTerminalAcceleratedRenderingChanged,
   getTerminalAcceleratedRenderingPreferenceVersion,
 } from "../../lib/terminalRenderingSettings";
-import { isLinuxDesktop } from "../../lib/windowActions";
 import {
   normalizeAppLocale,
   SUPPORTED_APP_LOCALES,
@@ -130,12 +129,10 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   } | null>(null);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [settingsMenuPos, setSettingsMenuPos] = useState({ top: 0, left: 0 });
-  const [nativeWindowDecorations, setNativeWindowDecorations] = useState(true);
   const [terminalAcceleratedRendering, setTerminalAcceleratedRendering] = useState(true);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const activeLocale = normalizeAppLocale(i18n.language);
-  const showNativeWindowDecorationsSetting = isLinuxDesktop();
 
   const closeSettingsMenu = useCallback(() => setSettingsMenuOpen(false), []);
 
@@ -160,26 +157,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       document.removeEventListener("keydown", onKeyDown, true);
     };
   }, [settingsMenuOpen, closeSettingsMenu]);
-
-  useEffect(() => {
-    if (!showNativeWindowDecorationsSetting) {
-      return;
-    }
-
-    let cancelled = false;
-    ipc
-      .getNativeWindowDecorations()
-      .then((enabled) => {
-        if (!cancelled) {
-          setNativeWindowDecorations(enabled);
-        }
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [showNativeWindowDecorationsSetting]);
 
   useEffect(() => {
     let cancelled = false;
@@ -309,18 +286,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       toast.info(t("common:language.changed"));
     } catch {
       toast.error(t("app:sidebar.languageFailed"));
-    }
-  }
-
-  async function onToggleNativeWindowDecorations() {
-    const nextValue = !nativeWindowDecorations;
-
-    try {
-      const saved = await ipc.setNativeWindowDecorations(nextValue);
-      setNativeWindowDecorations(saved);
-      closeSettingsMenu();
-    } catch {
-      toast.error(t("app:sidebar.nativeWindowDecorationsFailed"));
     }
   }
 
@@ -861,34 +826,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 />
               )}
             </button>
-            <div className="git-action-menu-divider" />
-            {showNativeWindowDecorationsSetting && (
-              <>
-                <div
-                  style={{
-                    padding: "6px 10px 4px",
-                    fontSize: 11,
-                    color: "var(--text-3)",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.06em",
-                  }}
-                >
-                  {t("app:sidebar.window")}
-                </div>
-                <button
-                  type="button"
-                  className="git-action-menu-item"
-                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
-                  onClick={() => {
-                    void onToggleNativeWindowDecorations();
-                  }}
-                >
-                  <span>{t("app:sidebar.nativeWindowDecorations")}</span>
-                  {nativeWindowDecorations ? <Check size={12} /> : null}
-                </button>
-                <div className="git-action-menu-divider" />
-              </>
-            )}
           </div>,
           document.body,
         )}
