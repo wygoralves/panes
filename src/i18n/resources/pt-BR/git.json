@@ -30,14 +30,7 @@
     "undoLastCommitMessage": "Isso desfaz o commit mais recente e mantém todas as alterações dele staged. Esta ação não pode ser desfeita pelo Panes.",
     "softReset": "Soft reset",
     "pull": "Pull",
-    "push": "Push",
-    "window": {
-      "section": "Janela",
-      "minimize": "Minimizar",
-      "maximize": "Maximizar",
-      "restore": "Restaurar",
-      "close": "Fechar janela"
-    }
+    "push": "Push"
   },
   "branches": {
     "scope": {

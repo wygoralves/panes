@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   RefreshCw,
   ArrowDown,
@@ -16,14 +15,12 @@ import {
   Archive,
   MoreHorizontal,
   CornerUpLeft,
-  Minus,
-  Square,
 } from "lucide-react";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore, type GitPanelView } from "../../stores/gitStore";
 import { ipc, listenGitRepoChanged } from "../../lib/ipc";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
-import { closeCurrentWindow, isLinuxDesktop } from "../../lib/windowActions";
+import { isLinuxDesktop } from "../../lib/windowActions";
 import { toast } from "../../stores/toastStore";
 import { Dropdown } from "../shared/Dropdown";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
@@ -82,12 +79,11 @@ export function GitPanel() {
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const moreTriggerRef = useRef<HTMLButtonElement>(null);
   const [moreMenuPos, setMoreMenuPos] = useState({ top: 0, left: 0 });
-  const [windowIsMaximized, setWindowIsMaximized] = useState(false);
   const watcherRefreshTimerRef = useRef<number | null>(null);
   const watcherRefreshInFlightRef = useRef(false);
   const watcherRefreshQueuedRef = useRef(false);
   const linuxDesktop = isLinuxDesktop();
-  const moreMenuWidth = linuxDesktop ? 240 : 220;
+  const moreMenuWidth = 220;
   const viewOptions = useMemo(
     () => [
       { value: "changes", label: t("panel.tabs.changes"), icon: <FileDiff size={13} /> },
@@ -197,20 +193,6 @@ export function GitPanel() {
     closeMoreMenu();
     void runSyncAction(action);
   }, [closeMoreMenu, runSyncAction]);
-
-  const runWindowActionFromMore = useCallback((action: "minimize" | "toggle-maximize" | "close") => {
-    closeMoreMenu();
-    const currentWindow = getCurrentWindow();
-    const operation =
-      action === "minimize"
-        ? currentWindow.minimize()
-        : action === "toggle-maximize"
-        ? currentWindow.toggleMaximize()
-        : closeCurrentWindow();
-    operation.catch((error) => {
-      setLocalError(String(error));
-    });
-  }, [closeMoreMenu]);
 
   const onSyncClick = useCallback(async () => {
     if (!effectiveRepoPath || syncDisabled) return;
@@ -535,12 +517,6 @@ export function GitPanel() {
             if (rect) {
               setMoreMenuPos({ top: rect.bottom + 4, left: rect.right - moreMenuWidth });
             }
-            if (linuxDesktop) {
-              void getCurrentWindow()
-                .isMaximized()
-                .then((value) => setWindowIsMaximized(value))
-                .catch(() => setWindowIsMaximized(false));
-            }
             setMoreMenuOpen(true);
           }}
           title={t("panel.moreActions")}
@@ -729,40 +705,6 @@ export function GitPanel() {
               <Undo2 size={13} />
               <span style={{ flex: 1 }}>{t("panel.undoLastCommit")}</span>
             </button>
-            {linuxDesktop && (
-              <>
-                <div className="git-action-menu-divider" />
-                <div className="git-action-menu-section-label">
-                  {t("panel.window.section")}
-                </div>
-                <button
-                  type="button"
-                  className="git-action-menu-item"
-                  onClick={() => runWindowActionFromMore("minimize")}
-                >
-                  <Minus size={13} />
-                  <span style={{ flex: 1 }}>{t("panel.window.minimize")}</span>
-                </button>
-                <button
-                  type="button"
-                  className="git-action-menu-item"
-                  onClick={() => runWindowActionFromMore("toggle-maximize")}
-                >
-                  <Square size={12} />
-                  <span style={{ flex: 1 }}>
-                    {windowIsMaximized ? t("panel.window.restore") : t("panel.window.maximize")}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="git-action-menu-item git-action-menu-item-danger-hover"
-                  onClick={() => runWindowActionFromMore("close")}
-                >
-                  <X size={13} />
-                  <span style={{ flex: 1 }}>{t("panel.window.close")}</span>
-                </button>
-              </>
-            )}
           </div>,
           document.body,
         )}
