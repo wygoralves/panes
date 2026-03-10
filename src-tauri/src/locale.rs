@@ -10,6 +10,18 @@ pub struct NativeStrings {
     pub app_menu: &'static str,
     pub about_comments: &'static str,
     pub edit_menu: &'static str,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub undo: &'static str,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub redo: &'static str,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub cut: &'static str,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub copy: &'static str,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub paste: &'static str,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub select_all: &'static str,
     pub view_menu: &'static str,
     pub window_menu: &'static str,
     pub toggle_sidebar: &'static str,
@@ -77,6 +89,12 @@ pub fn native_strings(locale: &str) -> NativeStrings {
             app_menu: "Panes",
             about_comments: "O cockpit open-source para programacao com assistencia de IA",
             edit_menu: "Editar",
+            undo: "Desfazer",
+            redo: "Refazer",
+            cut: "Recortar",
+            copy: "Copiar",
+            paste: "Colar",
+            select_all: "Selecionar tudo",
             view_menu: "Visualizar",
             window_menu: "Janela",
             toggle_sidebar: "Alternar barra lateral",
@@ -91,6 +109,12 @@ pub fn native_strings(locale: &str) -> NativeStrings {
             app_menu: "Panes",
             about_comments: "The open-source cockpit for AI-assisted coding",
             edit_menu: "Edit",
+            undo: "Undo",
+            redo: "Redo",
+            cut: "Cut",
+            copy: "Copy",
+            paste: "Paste",
+            select_all: "Select All",
             view_menu: "View",
             window_menu: "Window",
             toggle_sidebar: "Toggle Sidebar",

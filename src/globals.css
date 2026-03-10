@@ -661,6 +661,16 @@ button, input, textarea, select {
   color: var(--text-1);
 }
 
+.dropdown-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dropdown-item:disabled:hover {
+  background: transparent;
+  color: var(--text-2);
+}
+
 .dropdown-item-selected {
   color: var(--text-1);
 }

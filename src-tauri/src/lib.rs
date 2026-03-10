@@ -152,7 +152,8 @@ pub fn run() {
                 match id {
                     "toggle-sidebar" | "toggle-git-panel" | "toggle-focus-mode"
                     | "toggle-fullscreen" | "toggle-search" | "toggle-terminal"
-                    | "close-window" => {
+                    | "close-window" | "edit-undo" | "edit-redo" | "edit-cut" | "edit-copy"
+                    | "edit-paste" | "edit-select-all" => {
                         let _ = handle.emit("menu-action", id);
                     }
                     _ => {}
@@ -579,6 +580,51 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
         .quit()
         .build()?;
 
+    #[cfg(target_os = "linux")]
+    let edit_undo =
+        MenuItem::with_id(handle, "edit-undo", strings.undo, true, Some("CmdOrCtrl+Z"))?;
+    #[cfg(target_os = "linux")]
+    let edit_redo = MenuItem::with_id(
+        handle,
+        "edit-redo",
+        strings.redo,
+        true,
+        Some("CmdOrCtrl+Shift+Z"),
+    )?;
+    #[cfg(target_os = "linux")]
+    let edit_cut = MenuItem::with_id(handle, "edit-cut", strings.cut, true, Some("CmdOrCtrl+X"))?;
+    #[cfg(target_os = "linux")]
+    let edit_copy =
+        MenuItem::with_id(handle, "edit-copy", strings.copy, true, Some("CmdOrCtrl+C"))?;
+    #[cfg(target_os = "linux")]
+    let edit_paste = MenuItem::with_id(
+        handle,
+        "edit-paste",
+        strings.paste,
+        true,
+        Some("CmdOrCtrl+V"),
+    )?;
+    #[cfg(target_os = "linux")]
+    let edit_select_all = MenuItem::with_id(
+        handle,
+        "edit-select-all",
+        strings.select_all,
+        true,
+        Some("CmdOrCtrl+A"),
+    )?;
+
+    #[cfg(target_os = "linux")]
+    let edit_menu = SubmenuBuilder::new(handle, strings.edit_menu)
+        .item(&edit_undo)
+        .item(&edit_redo)
+        .separator()
+        .item(&edit_cut)
+        .item(&edit_copy)
+        .item(&edit_paste)
+        .item(&edit_select_all)
+        .build()?;
+
+    #[cfg(not(target_os = "linux"))]
     let edit_menu = SubmenuBuilder::new(handle, strings.edit_menu)
         .undo()
         .redo()

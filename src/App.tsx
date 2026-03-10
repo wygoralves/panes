@@ -16,7 +16,11 @@ import { useFileStore } from "./stores/fileStore";
 import { useKeepAwakeStore } from "./stores/keepAwakeStore";
 import { toast } from "./stores/toastStore";
 import type { RuntimeToast, Thread } from "./types";
-import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMirrorEditor";
+import {
+  getActiveEditorView,
+  openSearchPanel,
+  runFocusedEditorHistoryAction,
+} from "./components/editor/CodeMirrorEditor";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LinuxWindowResizeHandles } from "./components/shared/LinuxWindowResizeHandles";
 import {
@@ -31,6 +35,9 @@ import {
 const shortcutLastFired = new Map<string, number>();
 const SHORTCUT_DEBOUNCE_MS = 100;
 const KEEP_AWAKE_REFRESH_MS = 15000;
+export const TERMINAL_EDIT_EVENT = "panes:terminal-edit-action";
+
+type TerminalEditAction = "copy" | "paste" | "select-all";
 
 function fireShortcut(id: string, action: () => void) {
   const now = Date.now();
@@ -38,6 +45,127 @@ function fireShortcut(id: string, action: () => void) {
   if (now - last < SHORTCUT_DEBOUNCE_MS) return;
   shortcutLastFired.set(id, now);
   action();
+}
+
+function dispatchTerminalEditAction(action: TerminalEditAction) {
+  window.dispatchEvent(new CustomEvent<TerminalEditAction>(TERMINAL_EDIT_EVENT, {
+    detail: action,
+  }));
+}
+
+function getFocusedEditableElement():
+  | HTMLInputElement
+  | HTMLTextAreaElement
+  | HTMLElement
+  | null {
+  const activeElement = document.activeElement;
+  if (activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement) {
+    return activeElement;
+  }
+  if (activeElement instanceof HTMLElement && activeElement.isContentEditable) {
+    return activeElement;
+  }
+  return null;
+}
+
+function replaceTextInInput(
+  element: HTMLInputElement | HTMLTextAreaElement,
+  text: string,
+) {
+  const start = element.selectionStart ?? element.value.length;
+  const end = element.selectionEnd ?? start;
+  element.setRangeText(text, start, end, "end");
+  element.dispatchEvent(new InputEvent("input", {
+    bubbles: true,
+    data: text,
+    inputType: "insertFromPaste",
+  }));
+}
+
+function insertTextIntoContentEditable(element: HTMLElement, text: string): boolean {
+  element.focus();
+  if (document.execCommand("insertText", false, text)) {
+    return true;
+  }
+
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) {
+    return false;
+  }
+
+  const range = selection.getRangeAt(0);
+  range.deleteContents();
+  const node = document.createTextNode(text);
+  range.insertNode(node);
+  range.setStartAfter(node);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  element.dispatchEvent(new InputEvent("input", {
+    bubbles: true,
+    data: text,
+    inputType: "insertFromPaste",
+  }));
+  return true;
+}
+
+async function runEditMenuAction(action: string): Promise<void> {
+  if (isTerminalInputFocused()) {
+    switch (action) {
+      case "edit-copy":
+        dispatchTerminalEditAction("copy");
+        return;
+      case "edit-paste":
+        dispatchTerminalEditAction("paste");
+        return;
+      case "edit-select-all":
+        dispatchTerminalEditAction("select-all");
+        return;
+      default:
+        return;
+    }
+  }
+
+  const activeElement = getFocusedEditableElement();
+
+  switch (action) {
+    case "edit-undo":
+      if (!runFocusedEditorHistoryAction("undo")) {
+        document.execCommand("undo");
+      }
+      return;
+    case "edit-redo":
+      if (!runFocusedEditorHistoryAction("redo")) {
+        document.execCommand("redo");
+      }
+      return;
+    case "edit-cut":
+      document.execCommand("cut");
+      return;
+    case "edit-copy":
+      document.execCommand("copy");
+      return;
+    case "edit-select-all":
+      document.execCommand("selectAll");
+      return;
+    case "edit-paste": {
+      if (!activeElement) {
+        return;
+      }
+      const text = await navigator.clipboard.readText();
+      if (!text) {
+        return;
+      }
+      if (activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement) {
+        replaceTextInInput(activeElement, text);
+        return;
+      }
+      insertTextIntoContentEditable(activeElement, text);
+      return;
+    }
+    default:
+      return;
+  }
 }
 
 async function toggleWindowFullscreen() {
@@ -419,6 +547,18 @@ export function App() {
           void requestWindowClose();
           break;
         }
+        case "edit-undo":
+        case "edit-redo":
+        case "edit-cut":
+        case "edit-copy":
+        case "edit-paste":
+        case "edit-select-all":
+          void runEditMenuAction(action).catch((error) => {
+            if (import.meta.env.DEV) {
+              console.warn("[App] Failed to execute edit menu action", action, error);
+            }
+          });
+          break;
       }
     }).then((fn) => {
       unlisten = fn;
