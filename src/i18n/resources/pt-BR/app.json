@@ -232,6 +232,7 @@
       "unstageFailed": "Falha ao retirar arquivos do stage",
       "lastCommitReset": "Último commit resetado",
       "resetFailed": "Falha no reset",
+      "clipboardReadFailed": "Falha ao colar: {{error}}",
       "branchDeleted": "Branch {{name}} excluída",
       "branchDeleteNotMerged": "A branch não foi totalmente integrada. Use o painel Git para forçar a exclusão.",
       "branchCheckedOut": "Checkout feito para {{name}}",

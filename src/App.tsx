@@ -3,6 +3,7 @@ import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
 import { CommandPalette } from "./components/shared/CommandPalette";
 import { SetupWizard } from "./components/onboarding/SetupWizard";
 import { ToastContainer } from "./components/shared/ToastContainer";
+import { t } from "./i18n";
 import { useUpdateStore } from "./stores/updateStore";
 import { useHarnessStore } from "./stores/harnessStore";
 import { ipc, listenEngineRuntimeUpdated, listenMenuAction, listenThreadUpdated } from "./lib/ipc";
@@ -23,6 +24,8 @@ import {
 } from "./components/editor/CodeMirrorEditor";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LinuxWindowResizeHandles } from "./components/shared/LinuxWindowResizeHandles";
+import { readTextFromClipboard } from "./lib/clipboard";
+import { type EditMenuAction, shouldDispatchTerminalEditAction } from "./lib/editMenu";
 import {
   isLinuxDesktop,
   isTerminalInputFocused,
@@ -51,6 +54,19 @@ function dispatchTerminalEditAction(action: TerminalEditAction) {
   window.dispatchEvent(new CustomEvent<TerminalEditAction>(TERMINAL_EDIT_EVENT, {
     detail: action,
   }));
+}
+
+function hasFocusedTerminalSession(): boolean {
+  const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+  if (!workspaceId) {
+    return false;
+  }
+
+  const workspace = useTerminalStore.getState().workspaces[workspaceId];
+  return Boolean(
+    workspace?.focusedSessionId
+      && (workspace.layoutMode === "terminal" || workspace.layoutMode === "split"),
+  );
 }
 
 function getFocusedEditableElement():
@@ -109,8 +125,14 @@ function insertTextIntoContentEditable(element: HTMLElement, text: string): bool
   return true;
 }
 
-async function runEditMenuAction(action: string): Promise<void> {
-  if (isTerminalInputFocused()) {
+async function runEditMenuAction(action: EditMenuAction): Promise<void> {
+  const activeElement = getFocusedEditableElement();
+  if (shouldDispatchTerminalEditAction({
+    action,
+    hasFocusedEditableElement: activeElement !== null,
+    hasFocusedTerminalSession: hasFocusedTerminalSession(),
+    isTerminalFocused: isTerminalInputFocused(),
+  })) {
     switch (action) {
       case "edit-copy":
         dispatchTerminalEditAction("copy");
@@ -125,8 +147,6 @@ async function runEditMenuAction(action: string): Promise<void> {
         return;
     }
   }
-
-  const activeElement = getFocusedEditableElement();
 
   switch (action) {
     case "edit-undo":
@@ -152,7 +172,15 @@ async function runEditMenuAction(action: string): Promise<void> {
       if (!activeElement) {
         return;
       }
-      const text = await navigator.clipboard.readText();
+      let text = "";
+      try {
+        text = await readTextFromClipboard();
+      } catch (error) {
+        toast.error(t("app:toasts.clipboardReadFailed", {
+          error: error instanceof Error ? error.message : String(error),
+        }));
+        return;
+      }
       if (!text) {
         return;
       }

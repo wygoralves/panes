@@ -232,6 +232,7 @@
       "unstageFailed": "Unstage failed",
       "lastCommitReset": "Last commit reset",
       "resetFailed": "Reset failed",
+      "clipboardReadFailed": "Failed to paste: {{error}}",
       "branchDeleted": "Deleted {{name}}",
       "branchDeleteNotMerged": "Branch not fully merged. Use the Git panel to force-delete.",
       "branchCheckedOut": "Checked out {{name}}",

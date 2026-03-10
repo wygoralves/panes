@@ -580,29 +580,33 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
         .quit()
         .build()?;
 
+    // Linux terminals rely on Ctrl-based control sequences, so avoid wiring
+    // those chords to native edit accelerators. DOM text inputs still keep
+    // their standard shortcuts through the webview, and the menu items remain
+    // clickable.
     #[cfg(target_os = "linux")]
     let edit_undo =
-        MenuItem::with_id(handle, "edit-undo", strings.undo, true, Some("CmdOrCtrl+Z"))?;
+        MenuItem::with_id(handle, "edit-undo", strings.undo, true, None::<&str>)?;
     #[cfg(target_os = "linux")]
     let edit_redo = MenuItem::with_id(
         handle,
         "edit-redo",
         strings.redo,
         true,
-        Some("CmdOrCtrl+Shift+Z"),
+        None::<&str>,
     )?;
     #[cfg(target_os = "linux")]
-    let edit_cut = MenuItem::with_id(handle, "edit-cut", strings.cut, true, Some("CmdOrCtrl+X"))?;
+    let edit_cut = MenuItem::with_id(handle, "edit-cut", strings.cut, true, None::<&str>)?;
     #[cfg(target_os = "linux")]
     let edit_copy =
-        MenuItem::with_id(handle, "edit-copy", strings.copy, true, Some("CmdOrCtrl+C"))?;
+        MenuItem::with_id(handle, "edit-copy", strings.copy, true, None::<&str>)?;
     #[cfg(target_os = "linux")]
     let edit_paste = MenuItem::with_id(
         handle,
         "edit-paste",
         strings.paste,
         true,
-        Some("CmdOrCtrl+V"),
+        None::<&str>,
     )?;
     #[cfg(target_os = "linux")]
     let edit_select_all = MenuItem::with_id(
@@ -610,7 +614,7 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
         "edit-select-all",
         strings.select_all,
         true,
-        Some("CmdOrCtrl+A"),
+        None::<&str>,
     )?;
 
     #[cfg(target_os = "linux")]
