@@ -6,6 +6,12 @@
   },
   "menu": {
     "edit": "Editar",
+    "undo": "Desfazer",
+    "redo": "Refazer",
+    "cut": "Recortar",
+    "copy": "Copiar",
+    "paste": "Colar",
+    "selectAll": "Selecionar tudo",
     "view": "Visualizar",
     "window": "Janela",
     "toggleSidebar": "Alternar sidebar",

@@ -17,21 +17,15 @@ import { useFileStore } from "./stores/fileStore";
 import { useKeepAwakeStore } from "./stores/keepAwakeStore";
 import { toast } from "./stores/toastStore";
 import type { RuntimeToast, Thread } from "./types";
-import {
-  getActiveEditorView,
-  openSearchPanel,
-  runFocusedEditorHistoryAction,
-} from "./components/editor/CodeMirrorEditor";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMirrorEditor";
 import { LinuxWindowFrame } from "./components/shared/LinuxWindowFrame";
-import { readTextFromClipboard } from "./lib/clipboard";
-import { type EditMenuAction, shouldDispatchTerminalEditAction } from "./lib/editMenu";
 import { useLinuxWindowFrameState } from "./lib/linuxWindowFrame";
+import { runEditMenuAction } from "./lib/nativeEditActions";
 import {
   isLinuxDesktop,
   isTerminalInputFocused,
   requestWindowClose,
-  shouldHandleAppShortcutWhileTerminalFocused,
+  shouldHandleAppShortcutWhileTerminalFocused, toggleWindowFullscreen,
 } from "./lib/windowActions";
 
 // Debounce guard: when both the JS keydown handler and the native menu-action
@@ -39,9 +33,6 @@ import {
 const shortcutLastFired = new Map<string, number>();
 const SHORTCUT_DEBOUNCE_MS = 100;
 const KEEP_AWAKE_REFRESH_MS = 15000;
-export const TERMINAL_EDIT_EVENT = "panes:terminal-edit-action";
-
-type TerminalEditAction = "copy" | "paste" | "select-all";
 
 function fireShortcut(id: string, action: () => void) {
   const now = Date.now();
@@ -49,164 +40,6 @@ function fireShortcut(id: string, action: () => void) {
   if (now - last < SHORTCUT_DEBOUNCE_MS) return;
   shortcutLastFired.set(id, now);
   action();
-}
-
-function dispatchTerminalEditAction(action: TerminalEditAction) {
-  window.dispatchEvent(new CustomEvent<TerminalEditAction>(TERMINAL_EDIT_EVENT, {
-    detail: action,
-  }));
-}
-
-function hasFocusedTerminalSession(): boolean {
-  const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
-  if (!workspaceId) {
-    return false;
-  }
-
-  const workspace = useTerminalStore.getState().workspaces[workspaceId];
-  return Boolean(
-    workspace?.focusedSessionId
-      && (workspace.layoutMode === "terminal" || workspace.layoutMode === "split"),
-  );
-}
-
-function getFocusedEditableElement():
-  | HTMLInputElement
-  | HTMLTextAreaElement
-  | HTMLElement
-  | null {
-  const activeElement = document.activeElement;
-  if (activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement) {
-    return activeElement;
-  }
-  if (activeElement instanceof HTMLElement && activeElement.isContentEditable) {
-    return activeElement;
-  }
-  return null;
-}
-
-function replaceTextInInput(
-  element: HTMLInputElement | HTMLTextAreaElement,
-  text: string,
-) {
-  const start = element.selectionStart ?? element.value.length;
-  const end = element.selectionEnd ?? start;
-  element.setRangeText(text, start, end, "end");
-  element.dispatchEvent(new InputEvent("input", {
-    bubbles: true,
-    data: text,
-    inputType: "insertFromPaste",
-  }));
-}
-
-function insertTextIntoContentEditable(element: HTMLElement, text: string): boolean {
-  element.focus();
-  if (document.execCommand("insertText", false, text)) {
-    return true;
-  }
-
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) {
-    return false;
-  }
-
-  const range = selection.getRangeAt(0);
-  range.deleteContents();
-  const node = document.createTextNode(text);
-  range.insertNode(node);
-  range.setStartAfter(node);
-  range.collapse(true);
-  selection.removeAllRanges();
-  selection.addRange(range);
-  element.dispatchEvent(new InputEvent("input", {
-    bubbles: true,
-    data: text,
-    inputType: "insertFromPaste",
-  }));
-  return true;
-}
-
-async function runEditMenuAction(action: EditMenuAction): Promise<void> {
-  const activeElement = getFocusedEditableElement();
-  if (shouldDispatchTerminalEditAction({
-    action,
-    hasFocusedEditableElement: activeElement !== null,
-    hasFocusedTerminalSession: hasFocusedTerminalSession(),
-    isTerminalFocused: isTerminalInputFocused(),
-  })) {
-    switch (action) {
-      case "edit-copy":
-        dispatchTerminalEditAction("copy");
-        return;
-      case "edit-paste":
-        dispatchTerminalEditAction("paste");
-        return;
-      case "edit-select-all":
-        dispatchTerminalEditAction("select-all");
-        return;
-      default:
-        return;
-    }
-  }
-
-  switch (action) {
-    case "edit-undo":
-      if (!runFocusedEditorHistoryAction("undo")) {
-        document.execCommand("undo");
-      }
-      return;
-    case "edit-redo":
-      if (!runFocusedEditorHistoryAction("redo")) {
-        document.execCommand("redo");
-      }
-      return;
-    case "edit-cut":
-      document.execCommand("cut");
-      return;
-    case "edit-copy":
-      document.execCommand("copy");
-      return;
-    case "edit-select-all":
-      document.execCommand("selectAll");
-      return;
-    case "edit-paste": {
-      if (!activeElement) {
-        return;
-      }
-      let text = "";
-      try {
-        text = await readTextFromClipboard();
-      } catch (error) {
-        toast.error(t("app:toasts.clipboardReadFailed", {
-          error: error instanceof Error ? error.message : String(error),
-        }));
-        return;
-      }
-      if (!text) {
-        return;
-      }
-      if (activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement) {
-        replaceTextInInput(activeElement, text);
-        return;
-      }
-      insertTextIntoContentEditable(activeElement, text);
-      return;
-    }
-    default:
-      return;
-  }
-}
-
-async function toggleWindowFullscreen() {
-  try {
-    const currentWindow = getCurrentWindow();
-    const isFullscreen = await currentWindow.isFullscreen();
-    await currentWindow.setFullscreen(!isFullscreen);
-  } catch (error) {
-    if (import.meta.env.DEV) {
-      console.warn("[App] Failed to toggle fullscreen", error);
-    }
-  }
 }
 
 function isCodexSyncRequired(thread: Thread | null | undefined): boolean {
@@ -360,7 +193,8 @@ export function App() {
   // F11 toggles native window fullscreen independently from focus mode.
   // Cmd+E (editor toggle) has no native menu item — JS-only.
   // Cmd+S always prevents the browser save-page dialog.
-  // Cmd+W is handled solely via the native menu "close-window" action.
+  // Cmd+W is debounced like the native menu path so Linux can use the same
+  // close behavior even without a native menubar.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "F11") {
@@ -487,6 +321,13 @@ export function App() {
               void useTerminalStore.getState().createSession(wsId);
             });
           }
+          break;
+        case "w":
+          if (e.shiftKey) return;
+          e.preventDefault();
+          fireShortcut("close-window", () => {
+            void requestWindowClose();
+          });
           break;
         case "i":
           if (!e.shiftKey) return;

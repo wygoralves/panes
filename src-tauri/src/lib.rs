@@ -544,6 +544,12 @@ where
 }
 
 fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu<tauri::Wry>> {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = locale;
+        return Menu::with_items(handle, &[]);
+    }
+
     let strings = native_strings(locale);
 
     let app_menu = SubmenuBuilder::new(handle, strings.app_menu)
