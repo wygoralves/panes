@@ -49,6 +49,12 @@ export async function toggleCurrentWindowMaximize(): Promise<void> {
   await getCurrentWindow().toggleMaximize();
 }
 
+export async function toggleWindowFullscreen(): Promise<void> {
+  const currentWindow = getCurrentWindow();
+  const isFullscreen = await currentWindow.isFullscreen();
+  await currentWindow.setFullscreen(!isFullscreen);
+}
+
 export async function requestWindowClose(): Promise<void> {
   const wsId = useWorkspaceStore.getState().activeWorkspaceId;
   const wsState = wsId ? useTerminalStore.getState().workspaces[wsId] : undefined;
