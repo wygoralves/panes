@@ -1,7 +1,14 @@
 import { useEffect, useRef } from "react";
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightActiveLine, drawSelection, rectangularSelection, crosshairCursor, highlightSpecialChars } from "@codemirror/view";
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+  redo,
+  undo,
+} from "@codemirror/commands";
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from "@codemirror/language";
 import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
 import { javascript } from "@codemirror/lang-javascript";
@@ -264,6 +271,25 @@ export function destroyCachedEditor(tabId: string): void {
 
 export function getActiveEditorView(tabId: string): EditorView | undefined {
   return editorCache.get(tabId)?.view;
+}
+
+export function getFocusedEditorView(): EditorView | undefined {
+  const activeElement = globalThis.document?.activeElement;
+  for (const cached of editorCache.values()) {
+    if (cached.view.hasFocus || (activeElement instanceof Node && cached.view.dom.contains(activeElement))) {
+      return cached.view;
+    }
+  }
+  return undefined;
+}
+
+export function runFocusedEditorHistoryAction(action: "undo" | "redo"): boolean {
+  const view = getFocusedEditorView();
+  if (!view) {
+    return false;
+  }
+
+  return action === "undo" ? undo(view) : redo(view);
 }
 
 export { openSearchPanel } from "@codemirror/search";
