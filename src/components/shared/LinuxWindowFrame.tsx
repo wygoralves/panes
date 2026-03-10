@@ -46,20 +46,20 @@ export function LinuxWindowFrame({ frameState }: LinuxWindowFrameProps) {
     { value: "close-app", label: t("native:menu.close") },
   ];
   const editMenuOptions = [
-    { value: "edit-undo", label: t("native:menu.undo") },
-    { value: "edit-redo", label: t("native:menu.redo") },
-    { value: "edit-cut", label: t("native:menu.cut") },
-    { value: "edit-copy", label: t("native:menu.copy") },
-    { value: "edit-paste", label: t("native:menu.paste") },
-    { value: "edit-select-all", label: t("native:menu.selectAll") },
+    { value: "edit-undo", label: t("native:menu.undo"), shortcut: "Ctrl+Z" },
+    { value: "edit-redo", label: t("native:menu.redo"), shortcut: "Ctrl+Shift+Z" },
+    { value: "edit-cut", label: t("native:menu.cut"), shortcut: "Ctrl+X" },
+    { value: "edit-copy", label: t("native:menu.copy"), shortcut: "Ctrl+C" },
+    { value: "edit-paste", label: t("native:menu.paste"), shortcut: "Ctrl+V" },
+    { value: "edit-select-all", label: t("native:menu.selectAll"), shortcut: "Ctrl+A" },
   ];
   const viewMenuOptions = [
-    { value: "toggle-sidebar", label: t("native:menu.toggleSidebar") },
-    { value: "toggle-git-panel", label: t("native:menu.toggleGitPanel") },
-    { value: "toggle-focus-mode", label: t("native:menu.toggleFocusMode") },
-    { value: "toggle-fullscreen", label: t("native:menu.toggleFullscreen") },
-    { value: "toggle-search", label: t("native:menu.search") },
-    { value: "toggle-terminal", label: t("native:menu.toggleTerminal") },
+    { value: "toggle-sidebar", label: t("native:menu.toggleSidebar"), shortcut: "Ctrl+B" },
+    { value: "toggle-git-panel", label: t("native:menu.toggleGitPanel"), shortcut: "Ctrl+Shift+B" },
+    { value: "toggle-focus-mode", label: t("native:menu.toggleFocusMode"), shortcut: "Ctrl+Alt+F" },
+    { value: "toggle-fullscreen", label: t("native:menu.toggleFullscreen"), shortcut: "F11" },
+    { value: "toggle-search", label: t("native:menu.search"), shortcut: "Ctrl+Shift+F" },
+    { value: "toggle-terminal", label: t("native:menu.toggleTerminal"), shortcut: "Ctrl+Shift+T" },
   ];
   const windowMenuOptions = [
     { value: "window-minimize", label: t("app:windowControls.minimize") },
@@ -67,7 +67,7 @@ export function LinuxWindowFrame({ frameState }: LinuxWindowFrameProps) {
       value: "window-maximize",
       label: t(frameState.isMaximized ? "app:windowControls.restore" : "app:windowControls.maximize"),
     },
-    { value: "window-close", label: t("app:windowControls.close") },
+    { value: "window-close", label: t("app:windowControls.close"), shortcut: "Ctrl+W" },
   ];
 
   function handleAppMenuAction(value: string) {

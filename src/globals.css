@@ -263,13 +263,11 @@ button, input, textarea, select {
 }
 
 .linux-window-chrome {
-  height: calc(var(--linux-forehead-height) - 4px);
-  margin-top: 4px;
+  height: var(--linux-forehead-height);
   display: flex;
   align-items: center;
   padding: 0 12px 0 10px;
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--border);
+  background: var(--sidebar-bg);
   position: relative;
   z-index: 70;
 }
@@ -823,6 +821,14 @@ button, input, textarea, select {
 
 .dropdown-item-label {
   flex: 1;
+}
+
+.dropdown-item-shortcut {
+  flex-shrink: 0;
+  color: var(--text-3);
+  font-size: 10px;
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: 0.02em;
 }
 
 .dropdown-item-icon {
