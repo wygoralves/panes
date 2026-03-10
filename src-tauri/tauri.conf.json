@@ -13,6 +13,7 @@
     "enableGTKAppId": true,
     "windows": [
       {
+        "create": false,
         "title": "Panes",
         "width": 1460,
         "height": 920,

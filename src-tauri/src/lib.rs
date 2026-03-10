@@ -29,7 +29,7 @@ use state::{AppState, TurnManager};
 use tauri::{
     image::Image,
     menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, SubmenuBuilder},
-    Emitter, Manager, RunEvent,
+    Emitter, Manager, RunEvent, WebviewWindowBuilder,
 };
 use terminal::TerminalManager;
 
@@ -90,8 +90,24 @@ pub fn run() {
         .manage(app_state)
         .menu(move |handle| build_app_menu(handle, app_locale))
         .setup(|app| {
+            let main_window_config = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|window| window.label == "main")
+                .or_else(|| app.config().app.windows.first())
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("main window config not found"))?;
+
+            let main_window = WebviewWindowBuilder::from_config(app.handle(), &main_window_config)?
+                .enable_clipboard_access()
+                .build()?;
+            #[cfg(not(target_os = "linux"))]
+            let _ = &main_window;
+
             #[cfg(target_os = "linux")]
-            if let Some(main_window) = app.get_webview_window("main") {
+            {
                 if let Ok(icon) = Image::from_bytes(include_bytes!("../icons/icon.png")) {
                     if let Err(error) = main_window.set_icon(icon) {
                         log::warn!("failed to apply linux window icon: {error}");
