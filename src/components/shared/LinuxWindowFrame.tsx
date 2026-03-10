@@ -61,14 +61,6 @@ export function LinuxWindowFrame({ frameState }: LinuxWindowFrameProps) {
     { value: "toggle-search", label: t("native:menu.search"), shortcut: "Ctrl+Shift+F" },
     { value: "toggle-terminal", label: t("native:menu.toggleTerminal"), shortcut: "Ctrl+Shift+T" },
   ];
-  const windowMenuOptions = [
-    { value: "window-minimize", label: t("app:windowControls.minimize") },
-    {
-      value: "window-maximize",
-      label: t(frameState.isMaximized ? "app:windowControls.restore" : "app:windowControls.maximize"),
-    },
-    { value: "window-close", label: t("app:windowControls.close"), shortcut: "Ctrl+W" },
-  ];
 
   function handleAppMenuAction(value: string) {
     switch (value) {
@@ -122,22 +114,6 @@ export function LinuxWindowFrame({ frameState }: LinuxWindowFrameProps) {
     }
   }
 
-  function handleWindowAction(value: string) {
-    switch (value) {
-      case "window-minimize":
-        void minimizeCurrentWindow();
-        return;
-      case "window-maximize":
-        void toggleCurrentWindowMaximize();
-        return;
-      case "window-close":
-        void requestWindowClose();
-        return;
-      default:
-        return;
-    }
-  }
-
   return (
     <>
       {showChrome && (
@@ -166,13 +142,6 @@ export function LinuxWindowFrame({ frameState }: LinuxWindowFrameProps) {
               value={MENU_SENTINEL}
               onChange={handleViewAction}
               selectedLabel={t("native:menu.view")}
-              triggerStyle={LINUX_MENU_TRIGGER_STYLE}
-            />
-            <Dropdown
-              options={windowMenuOptions}
-              value={MENU_SENTINEL}
-              onChange={handleWindowAction}
-              selectedLabel={t("native:menu.window")}
               triggerStyle={LINUX_MENU_TRIGGER_STYLE}
             />
           </div>

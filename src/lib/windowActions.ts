@@ -38,11 +38,27 @@ export function shouldHandleAppShortcutWhileTerminalFocused(key: string, shiftKe
 }
 
 export async function closeCurrentWindow(): Promise<void> {
-  await getCurrentWindow().close();
+  const currentWindow = getCurrentWindow();
+  try {
+    await currentWindow.close();
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn("[windowActions] Failed to close current window, forcing destroy", error);
+    }
+    await currentWindow.destroy();
+  }
 }
 
 export async function minimizeCurrentWindow(): Promise<void> {
-  await getCurrentWindow().minimize();
+  const currentWindow = getCurrentWindow();
+  try {
+    await currentWindow.minimize();
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn("[windowActions] Failed to minimize current window, falling back to hide", error);
+    }
+    await currentWindow.hide();
+  }
 }
 
 export async function toggleCurrentWindowMaximize(): Promise<void> {
