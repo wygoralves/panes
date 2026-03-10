@@ -3,6 +3,7 @@ import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
 import { CommandPalette } from "./components/shared/CommandPalette";
 import { SetupWizard } from "./components/onboarding/SetupWizard";
 import { ToastContainer } from "./components/shared/ToastContainer";
+import { t } from "./i18n";
 import { useUpdateStore } from "./stores/updateStore";
 import { useHarnessStore } from "./stores/harnessStore";
 import { ipc, listenEngineRuntimeUpdated, listenMenuAction, listenThreadUpdated } from "./lib/ipc";
@@ -17,13 +18,14 @@ import { useKeepAwakeStore } from "./stores/keepAwakeStore";
 import { toast } from "./stores/toastStore";
 import type { RuntimeToast, Thread } from "./types";
 import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMirrorEditor";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { LinuxWindowResizeHandles } from "./components/shared/LinuxWindowResizeHandles";
+import { LinuxWindowFrame } from "./components/shared/LinuxWindowFrame";
+import { useLinuxWindowFrameState } from "./lib/linuxWindowFrame";
+import { runEditMenuAction } from "./lib/nativeEditActions";
 import {
   isLinuxDesktop,
   isTerminalInputFocused,
   requestWindowClose,
-  shouldHandleAppShortcutWhileTerminalFocused,
+  shouldHandleAppShortcutWhileTerminalFocused, toggleWindowFullscreen,
 } from "./lib/windowActions";
 
 // Debounce guard: when both the JS keydown handler and the native menu-action
@@ -38,18 +40,6 @@ function fireShortcut(id: string, action: () => void) {
   if (now - last < SHORTCUT_DEBOUNCE_MS) return;
   shortcutLastFired.set(id, now);
   action();
-}
-
-async function toggleWindowFullscreen() {
-  try {
-    const currentWindow = getCurrentWindow();
-    const isFullscreen = await currentWindow.isFullscreen();
-    await currentWindow.setFullscreen(!isFullscreen);
-  } catch (error) {
-    if (import.meta.env.DEV) {
-      console.warn("[App] Failed to toggle fullscreen", error);
-    }
-  }
 }
 
 function isCodexSyncRequired(thread: Thread | null | undefined): boolean {
@@ -93,6 +83,8 @@ export function App() {
   const commandPaletteOpen = useUiStore((s) => s.commandPaletteOpen);
   const closeCommandPalette = useUiStore((s) => s.closeCommandPalette);
   const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
+  const linuxDesktop = isLinuxDesktop();
+  const linuxWindowFrameState = useLinuxWindowFrameState();
 
   useEffect(() => {
     void loadWorkspaces();
@@ -201,7 +193,8 @@ export function App() {
   // F11 toggles native window fullscreen independently from focus mode.
   // Cmd+E (editor toggle) has no native menu item — JS-only.
   // Cmd+S always prevents the browser save-page dialog.
-  // Cmd+W is handled solely via the native menu "close-window" action.
+  // Cmd+W is debounced like the native menu path so Linux can use the same
+  // close behavior even without a native menubar.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "F11") {
@@ -329,6 +322,13 @@ export function App() {
             });
           }
           break;
+        case "w":
+          if (e.shiftKey) return;
+          e.preventDefault();
+          fireShortcut("close-window", () => {
+            void requestWindowClose();
+          });
+          break;
         case "i":
           if (!e.shiftKey) return;
           e.preventDefault();
@@ -419,6 +419,18 @@ export function App() {
           void requestWindowClose();
           break;
         }
+        case "edit-undo":
+        case "edit-redo":
+        case "edit-cut":
+        case "edit-copy":
+        case "edit-paste":
+        case "edit-select-all":
+          void runEditMenuAction(action).catch((error) => {
+            if (import.meta.env.DEV) {
+              console.warn("[App] Failed to execute edit menu action", action, error);
+            }
+          });
+          break;
       }
     }).then((fn) => {
       unlisten = fn;
@@ -430,9 +442,15 @@ export function App() {
   }, []);
 
   return (
-    <div style={{ width: "100%", height: "100vh", position: "relative", zIndex: 1 }}>
-      {isLinuxDesktop() && <LinuxWindowResizeHandles />}
-      <ThreeColumnLayout />
+    <div
+      className={`app-shell${linuxDesktop ? " app-shell-linux" : ""}${
+        linuxWindowFrameState.isMaximized ? " app-shell-linux-maximized" : ""
+      }${linuxWindowFrameState.isFullscreen ? " app-shell-linux-fullscreen" : ""}`}
+    >
+      {linuxDesktop && <LinuxWindowFrame frameState={linuxWindowFrameState} />}
+      <div className="app-shell-body">
+        <ThreeColumnLayout />
+      </div>
       <CommandPalette open={commandPaletteOpen} onClose={closeCommandPalette} />
       <SetupWizard />
       <ToastContainer />

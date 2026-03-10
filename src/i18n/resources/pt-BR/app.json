@@ -20,6 +20,12 @@
   "shared": {
     "uiRuntimeError": "Erro de runtime da interface"
   },
+  "windowControls": {
+    "minimize": "Minimizar janela",
+    "maximize": "Maximizar janela",
+    "restore": "Restaurar janela",
+    "close": "Fechar janela"
+  },
   "sidebar": {
     "pin": "Fixar sidebar",
     "unpin": "Desafixar sidebar",
@@ -50,9 +56,6 @@
     "terminal": "Terminal",
     "terminalAcceleratedRendering": "Renderização acelerada",
     "terminalAcceleratedRenderingFailed": "Falha ao atualizar a renderização do terminal.",
-    "window": "Janela",
-    "nativeWindowDecorations": "Decorações nativas da janela",
-    "nativeWindowDecorationsFailed": "Falha ao atualizar as decorações da janela.",
     "languageFailed": "Falha ao atualizar o idioma.",
     "archiveWorkspaceTitle": "Arquivar workspace",
     "archiveWorkspaceMessage": "Arquivar o workspace \"{{name}}\" e ocultar seus repositórios/threads/mensagens da sidebar? Você poderá reabrir esta pasta depois para restaurá-lo.",
@@ -232,6 +235,7 @@
       "unstageFailed": "Falha ao retirar arquivos do stage",
       "lastCommitReset": "Último commit resetado",
       "resetFailed": "Falha no reset",
+      "clipboardReadFailed": "Falha ao colar: {{error}}",
       "branchDeleted": "Branch {{name}} excluída",
       "branchDeleteNotMerged": "A branch não foi totalmente integrada. Use o painel Git para forçar a exclusão.",
       "branchCheckedOut": "Checkout feito para {{name}}",
@@ -261,6 +265,8 @@
     "emptyStarting": "Iniciando terminal...",
     "emptyTitle": "Nenhuma sessão de terminal",
     "emptyHint": "Abra um novo terminal para começar",
+    "copy": "Copiar",
+    "paste": "Colar",
     "rename": "Renomear",
     "close": "Fechar",
     "copyDiagnostics": "Copiar diagnósticos",
@@ -279,6 +285,8 @@
       "noSessionForDiagnostics": "Nenhuma sessão de terminal disponível para diagnóstico",
       "diagnosticsCopied": "Diagnósticos do renderer copiados",
       "diagnosticsCopyFailed": "Falha ao copiar diagnósticos: {{error}}",
+      "clipboardWriteFailed": "Falha ao copiar a seleção do terminal: {{error}}",
+      "clipboardReadFailed": "Falha ao colar no terminal: {{error}}",
       "invalidStartupPresetIgnored": "O preset de inicialização do workspace foi ignorado porque está inválido.",
       "failedToCloseSessionsKept_one": "Falha ao fechar {{count}} sessão de terminal; as worktrees foram mantidas",
       "failedToCloseSessionsKept_other": "Falha ao fechar {{count}} sessões de terminal; as worktrees foram mantidas",

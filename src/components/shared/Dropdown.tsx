@@ -7,6 +7,7 @@ export interface DropdownOption {
   value: string;
   label: string;
   icon?: ReactNode;
+  shortcut?: string;
 }
 
 export interface DropdownGroup {
@@ -210,6 +211,9 @@ export function Dropdown({
                   <span className="dropdown-item-icon">{option.icon}</span>
                 )}
                 <span className="dropdown-item-label">{option.label}</span>
+                {option.shortcut && (
+                  <span className="dropdown-item-shortcut">{option.shortcut}</span>
+                )}
                 {isSelected && (
                   <Check size={12} className="dropdown-item-check" />
                 )}
@@ -266,6 +270,9 @@ export function Dropdown({
                     <span className="dropdown-item-icon">{option.icon}</span>
                   )}
                   <span className="dropdown-item-label">{option.label}</span>
+                  {option.shortcut && (
+                    <span className="dropdown-item-shortcut">{option.shortcut}</span>
+                  )}
                   {isSelected && (
                     <Check size={12} className="dropdown-item-check" />
                   )}

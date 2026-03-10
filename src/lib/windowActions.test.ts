@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockClose = vi.hoisted(() => vi.fn());
+const mockMinimize = vi.hoisted(() => vi.fn());
+const mockToggleMaximize = vi.hoisted(() => vi.fn());
 const mockRequestCloseTab = vi.hoisted(() => vi.fn());
 const mockIsTauri = vi.hoisted(() => vi.fn());
 
@@ -28,6 +30,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     close: mockClose,
+    minimize: mockMinimize,
+    toggleMaximize: mockToggleMaximize,
   }),
 }));
 
@@ -52,9 +56,11 @@ vi.mock("../stores/fileStore", () => ({
 import {
   closeCurrentWindow,
   isLinuxDesktop,
+  minimizeCurrentWindow,
   shouldHandleAppShortcutWhileTerminalFocused,
   isTerminalInputFocused,
   requestWindowClose,
+  toggleCurrentWindowMaximize,
 } from "./windowActions";
 
 describe("windowActions", () => {
@@ -69,6 +75,8 @@ describe("windowActions", () => {
     };
     mockFileState.activeTabId = "tab-1";
     mockClose.mockResolvedValue(undefined);
+    mockMinimize.mockResolvedValue(undefined);
+    mockToggleMaximize.mockResolvedValue(undefined);
   });
 
   it("treats Linux custom chrome as Tauri-only", () => {
@@ -127,6 +135,18 @@ describe("windowActions", () => {
 
     expect(mockClose).toHaveBeenCalledTimes(1);
     expect(mockRequestCloseTab).not.toHaveBeenCalled();
+  });
+
+  it("minimizes the native window", async () => {
+    await minimizeCurrentWindow();
+
+    expect(mockMinimize).toHaveBeenCalledTimes(1);
+  });
+
+  it("toggles maximize state for the native window", async () => {
+    await toggleCurrentWindowMaximize();
+
+    expect(mockToggleMaximize).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to closing the native window when no editor tab is active", async () => {

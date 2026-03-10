@@ -10,8 +10,10 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "enableGTKAppId": true,
     "windows": [
       {
+        "create": false,
         "title": "Panes",
         "width": 1460,
         "height": 920,
@@ -33,7 +35,10 @@
     "resources": ["sidecar-dist/claude-agent-sdk-server.mjs"],
     "icon": [
       "icons/32x32.png",
+      "icons/64x64.png",
       "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
       "icons/icon.icns",
       "icons/icon.ico"
     ],

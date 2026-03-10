@@ -20,6 +20,12 @@
   "shared": {
     "uiRuntimeError": "UI runtime error"
   },
+  "windowControls": {
+    "minimize": "Minimize window",
+    "maximize": "Maximize window",
+    "restore": "Restore window",
+    "close": "Close window"
+  },
   "sidebar": {
     "pin": "Pin sidebar",
     "unpin": "Unpin sidebar",
@@ -50,9 +56,6 @@
     "terminal": "Terminal",
     "terminalAcceleratedRendering": "Accelerated rendering",
     "terminalAcceleratedRenderingFailed": "Failed to update terminal rendering.",
-    "window": "Window",
-    "nativeWindowDecorations": "Native window decorations",
-    "nativeWindowDecorationsFailed": "Failed to update window decorations.",
     "languageFailed": "Failed to update language.",
     "archiveWorkspaceTitle": "Archive workspace",
     "archiveWorkspaceMessage": "Archive workspace \"{{name}}\" and hide its repos/threads/messages from the sidebar? You can reopen this folder later to restore it.",
@@ -232,6 +235,7 @@
       "unstageFailed": "Unstage failed",
       "lastCommitReset": "Last commit reset",
       "resetFailed": "Reset failed",
+      "clipboardReadFailed": "Failed to paste: {{error}}",
       "branchDeleted": "Deleted {{name}}",
       "branchDeleteNotMerged": "Branch not fully merged. Use the Git panel to force-delete.",
       "branchCheckedOut": "Checked out {{name}}",
@@ -261,6 +265,8 @@
     "emptyStarting": "Starting terminal...",
     "emptyTitle": "No terminal session",
     "emptyHint": "Open a new terminal to get started",
+    "copy": "Copy",
+    "paste": "Paste",
     "rename": "Rename",
     "close": "Close",
     "copyDiagnostics": "Copy diagnostics",
@@ -279,6 +285,8 @@
       "noSessionForDiagnostics": "No terminal session available for diagnostics",
       "diagnosticsCopied": "Renderer diagnostics copied",
       "diagnosticsCopyFailed": "Failed to copy diagnostics: {{error}}",
+      "clipboardWriteFailed": "Failed to copy terminal selection: {{error}}",
+      "clipboardReadFailed": "Failed to paste into terminal: {{error}}",
       "invalidStartupPresetIgnored": "Workspace startup preset was ignored because it is invalid.",
       "failedToCloseSessionsKept_one": "Failed to close {{count}} terminal session; worktrees were kept",
       "failedToCloseSessionsKept_other": "Failed to close {{count}} terminal sessions; worktrees were kept",

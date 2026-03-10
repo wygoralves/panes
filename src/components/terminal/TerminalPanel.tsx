@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Columns2, Copy, Folder, GitBranch as GitBranchIcon, Minus, Pencil, Plus, Radio, Rows2, SquareTerminal, Trash2, X } from "lucide-react";
+import { ClipboardCopy, ClipboardPaste, Columns2, Copy, Folder, GitBranch as GitBranchIcon, Minus, Pencil, Plus, Radio, Rows2, SquareTerminal, Trash2, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useHarnessStore } from "../../stores/harnessStore";
@@ -9,7 +9,11 @@ import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag
 import { isLinuxDesktop } from "../../lib/windowActions";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { getHarnessIcon } from "../shared/HarnessLogos";
-import { copyTextToClipboard } from "../../lib/clipboard";
+import { copyTextToClipboard, readTextFromClipboard } from "../../lib/clipboard";
+import {
+  isTerminalCopyShortcut,
+  isTerminalPasteShortcut,
+} from "../../lib/terminalClipboard";
 import { resolveTerminalBootstrapAction } from "../../lib/terminalBootstrap";
 import {
   getTerminalAcceleratedRenderingPreferenceVersion,
@@ -214,6 +218,7 @@ const OUTPUT_QUEUE_MAX_CHARS_ATTACHED = 64 * 1024 * 1024;
 const OUTPUT_QUEUE_MAX_CHARS_DETACHED = 1024 * 1024;
 const PENDING_OUTPUT_MAX_CHARS = 512 * 1024;
 const OUTPUT_DROP_WARN_COOLDOWN_MS = 5000;
+const TERMINAL_EDIT_EVENT = "panes:terminal-edit-action";
 const OUTPUT_FLUSH_STALL_FALLBACK_WINDOW_MS = 30000;
 const OUTPUT_FLUSH_STALL_FALLBACK_THRESHOLD = 3;
 const OUTPUT_RESUME_RETRY_BASE_MS = 125;
@@ -1752,6 +1757,7 @@ interface SplitPaneViewProps {
   onFocus: (sessionId: string) => void;
   onTerminalFocus: (sessionId: string) => void;
   onTerminalBlur: (sessionId: string) => void;
+  onPaneContextMenu?: (sessionId: string, event: React.MouseEvent<HTMLDivElement>) => void;
   onClose: (sessionId: string) => void;
   onRatioChange: (containerId: string, ratio: number) => void;
   ensureTerminal: (sessionId: string) => void;
@@ -1772,6 +1778,7 @@ function SplitPaneView({
   onFocus,
   onTerminalFocus,
   onTerminalBlur,
+  onPaneContextMenu,
   onClose,
   onRatioChange,
   ensureTerminal,
@@ -1819,6 +1826,7 @@ function SplitPaneView({
           }}
           className="terminal-viewport"
           style={{ position: "absolute", inset: 0 }}
+          onContextMenu={(event) => onPaneContextMenu?.(node.sessionId, event)}
         />
         {showCloseButton && (
           <button
@@ -1848,6 +1856,7 @@ function SplitPaneView({
       onFocus={onFocus}
       onTerminalFocus={onTerminalFocus}
       onTerminalBlur={onTerminalBlur}
+      onPaneContextMenu={onPaneContextMenu}
       onClose={onClose}
       onRatioChange={onRatioChange}
       ensureTerminal={ensureTerminal}
@@ -1865,6 +1874,7 @@ interface SplitContainerViewProps {
   onFocus: (sessionId: string) => void;
   onTerminalFocus: (sessionId: string) => void;
   onTerminalBlur: (sessionId: string) => void;
+  onPaneContextMenu?: (sessionId: string, event: React.MouseEvent<HTMLDivElement>) => void;
   onClose: (sessionId: string) => void;
   onRatioChange: (containerId: string, ratio: number) => void;
   ensureTerminal: (sessionId: string) => void;
@@ -1909,6 +1919,7 @@ function SplitContainerView({
   onFocus,
   onTerminalFocus,
   onTerminalBlur,
+  onPaneContextMenu,
   onClose,
   onRatioChange,
   ensureTerminal,
@@ -1979,6 +1990,7 @@ function SplitContainerView({
           onFocus={onFocus}
           onTerminalFocus={onTerminalFocus}
           onTerminalBlur={onTerminalBlur}
+          onPaneContextMenu={onPaneContextMenu}
           onClose={onClose}
           onRatioChange={onRatioChange}
           ensureTerminal={ensureTerminal}
@@ -1997,6 +2009,7 @@ function SplitContainerView({
           onFocus={onFocus}
           onTerminalFocus={onTerminalFocus}
           onTerminalBlur={onTerminalBlur}
+          onPaneContextMenu={onPaneContextMenu}
           onClose={onClose}
           onRatioChange={onRatioChange}
           ensureTerminal={ensureTerminal}
@@ -2286,7 +2299,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar && layoutMode === "terminal";
   const useFocusModeHeaderHeight = focusMode && showGitPanel;
-  const showLinuxDragStrip = isLinuxDesktop() && !showSidebar;
+  const linuxDesktop = isLinuxDesktop();
 
   const createSession = useTerminalStore((state) => state.createSession);
   const materializeWorkspaceStartupPreset = useTerminalStore(
@@ -2319,7 +2332,13 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const tabsListRef = useRef<HTMLDivElement>(null);
 
   const [ctxMenu, setCtxMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
-  const ctxMenuRef = useRef<HTMLDivElement>(null);
+  const [terminalCtxMenu, setTerminalCtxMenu] = useState<{
+    sessionId: string;
+    x: number;
+    y: number;
+    selectionText: string;
+  } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [listenersReadyWorkspaceId, setListenersReadyWorkspaceId] = useState<string | null>(null);
   const bootstrapCreateInFlightWorkspaceRef = useRef<string | null>(null);
   const [domFocusedSessionId, setDomFocusedSessionId] = useState<string | null>(null);
@@ -2398,11 +2417,12 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   }, [groups, renamingGroupId]);
 
   useEffect(() => {
-    if (!ctxMenu) return;
+    if (!ctxMenu && !terminalCtxMenu) return;
     const handleClose = (e: MouseEvent | KeyboardEvent) => {
       if (e instanceof KeyboardEvent && e.key !== "Escape") return;
-      if (e instanceof MouseEvent && ctxMenuRef.current?.contains(e.target as Node)) return;
+      if (e instanceof MouseEvent && menuRef.current?.contains(e.target as Node)) return;
       setCtxMenu(null);
+      setTerminalCtxMenu(null);
     };
     document.addEventListener("mousedown", handleClose);
     document.addEventListener("keydown", handleClose);
@@ -2410,7 +2430,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       document.removeEventListener("mousedown", handleClose);
       document.removeEventListener("keydown", handleClose);
     };
-  }, [ctxMenu]);
+  }, [ctxMenu, terminalCtxMenu]);
 
   useEffect(() => {
     setDomFocusedSessionId(null);
@@ -2512,6 +2532,111 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       void closeSession(workspaceId, id);
     }
   }, [groups, closeSession, workspaceId]);
+
+  const openTerminalContextMenu = useCallback(
+    (sessionId: string, event: React.MouseEvent<HTMLDivElement>) => {
+      if (!linuxDesktop) {
+        return;
+      }
+
+      event.preventDefault();
+      setFocusedSession(workspaceId, sessionId);
+      setCtxMenu(null);
+
+      const cached = cachedTerminals.get(terminalCacheKey(workspaceId, sessionId));
+      setTerminalCtxMenu({
+        sessionId,
+        x: event.clientX,
+        y: event.clientY,
+        selectionText: cached?.terminal.getSelection() ?? "",
+      });
+    },
+    [linuxDesktop, setFocusedSession, workspaceId],
+  );
+
+  const copyTerminalSelection = useCallback(
+    async (sessionId: string, selectionText: string) => {
+      setTerminalCtxMenu(null);
+      if (!selectionText) {
+        return;
+      }
+
+      try {
+        await copyTextToClipboard(selectionText);
+      } catch (error) {
+        toast.error(
+          t("terminal.toasts.clipboardWriteFailed", {
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      }
+    },
+    [t],
+  );
+
+  const pasteIntoTerminal = useCallback(
+    async (sessionId: string) => {
+      setTerminalCtxMenu(null);
+      const cached = cachedTerminals.get(terminalCacheKey(workspaceId, sessionId));
+      if (!cached) {
+        return;
+      }
+
+      try {
+        const text = await readTextFromClipboard();
+        if (text) {
+          cached.terminal.paste(text);
+        }
+      } catch (error) {
+        toast.error(
+          t("terminal.toasts.clipboardReadFailed", {
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      }
+    },
+    [t, workspaceId],
+  );
+
+  const selectAllInTerminal = useCallback((sessionId: string) => {
+    const cached = cachedTerminals.get(terminalCacheKey(workspaceId, sessionId));
+    cached?.terminal.selectAll();
+  }, [workspaceId]);
+
+  useEffect(() => {
+    const handleTerminalEdit = (event: Event) => {
+      const detail = (event as CustomEvent<"copy" | "paste" | "select-all">).detail;
+      const sessionId = domFocusedSessionId ?? focusedSessionId;
+      if (!sessionId) {
+        return;
+      }
+
+      switch (detail) {
+        case "copy": {
+          const cached = cachedTerminals.get(terminalCacheKey(workspaceId, sessionId));
+          const selectionText = cached?.terminal.getSelection() ?? "";
+          void copyTerminalSelection(sessionId, selectionText);
+          return;
+        }
+        case "paste":
+          void pasteIntoTerminal(sessionId);
+          return;
+        case "select-all":
+          selectAllInTerminal(sessionId);
+          return;
+      }
+    };
+
+    window.addEventListener(TERMINAL_EDIT_EVENT, handleTerminalEdit);
+    return () => window.removeEventListener(TERMINAL_EDIT_EVENT, handleTerminalEdit);
+  }, [
+    copyTerminalSelection,
+    domFocusedSessionId,
+    focusedSessionId,
+    pasteIntoTerminal,
+    selectAllInTerminal,
+    workspaceId,
+  ]);
 
   const handleWorktreeCloseConfirm = useCallback(async () => {
     if (!worktreeCloseGroupId) return;
@@ -2832,6 +2957,37 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
+      if (isTerminalCopyShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        const selection = terminal.getSelection();
+        if (selection) {
+          void copyTextToClipboard(selection).catch((error) => {
+            logTerminalWarning("terminal-copy-shortcut-failed", {
+              cacheKey,
+              reason: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
+        return false;
+      }
+      if (isTerminalPasteShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        void readTextFromClipboard()
+          .then((text) => {
+            if (text) {
+              terminal.paste(text);
+            }
+          })
+          .catch((error) => {
+            logTerminalWarning("terminal-paste-shortcut-failed", {
+              cacheKey,
+              reason: error instanceof Error ? error.message : String(error),
+            });
+          });
+        return false;
+      }
       // Block broadcast shortcut from reaching the shell
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i") return false;
       if (event.metaKey && !event.ctrlKey && event.key === "Backspace") {
@@ -3363,13 +3519,6 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       }`}
     >
       <div className="terminal-tabs-bar">
-        {showLinuxDragStrip && (
-          <div
-            className="window-drag-strip"
-            onMouseDown={handleDragMouseDown}
-            onDoubleClick={handleDragDoubleClick}
-          />
-        )}
         <div className="terminal-tabs-list" ref={tabsListRef}>
           {groups.map((group) => {
             const isActive = group.id === activeGroupId;
@@ -3388,6 +3537,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                 onPointerDown={(e) => handleTabPointerDown(e, group.id)}
                 onContextMenu={(e) => {
                   e.preventDefault();
+                  setTerminalCtxMenu(null);
                   setCtxMenu({ groupId: group.id, x: e.clientX, y: e.clientY });
                 }}
               >
@@ -3582,6 +3732,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                   onFocus={setTerminalSessionFocus}
                   onTerminalFocus={handleTerminalDomFocus}
                   onTerminalBlur={handleTerminalDomBlur}
+                  onPaneContextMenu={openTerminalContextMenu}
                   onClose={(id) => void closeSession(workspaceId, id)}
                   onRatioChange={(containerId, ratio) =>
                     updateGroupRatio(workspaceId, group.id, containerId, ratio)
@@ -3609,7 +3760,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
       {ctxMenu && createPortal(
         <div
-          ref={ctxMenuRef}
+          ref={menuRef}
           className="dropdown-menu"
           style={{ position: "fixed", top: ctxMenu.y, left: ctxMenu.x }}
         >
@@ -3642,6 +3793,37 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
               {t("terminal.copyDiagnostics")}
             </button>
           )}
+        </div>,
+        document.body,
+      )}
+
+      {terminalCtxMenu && createPortal(
+        <div
+          ref={menuRef}
+          className="dropdown-menu"
+          style={{ position: "fixed", top: terminalCtxMenu.y, left: terminalCtxMenu.x }}
+        >
+          <button
+            type="button"
+            className="dropdown-item"
+            disabled={terminalCtxMenu.selectionText.length === 0}
+            onClick={() =>
+              void copyTerminalSelection(
+                terminalCtxMenu.sessionId,
+                terminalCtxMenu.selectionText,
+              )}
+          >
+            <ClipboardCopy size={12} />
+            {t("terminal.copy")}
+          </button>
+          <button
+            type="button"
+            className="dropdown-item"
+            onClick={() => void pasteIntoTerminal(terminalCtxMenu.sessionId)}
+          >
+            <ClipboardPaste size={12} />
+            {t("terminal.paste")}
+          </button>
         </div>,
         document.body,
       )}

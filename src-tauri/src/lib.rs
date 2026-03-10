@@ -4,6 +4,8 @@ mod db;
 mod engines;
 mod fs_ops;
 mod git;
+#[cfg(any(target_os = "linux", test))]
+mod linux_appimage;
 mod linux_webkit;
 mod locale;
 mod models;
@@ -27,7 +29,7 @@ use state::{AppState, TurnManager};
 use tauri::{
     image::Image,
     menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, SubmenuBuilder},
-    Emitter, Manager, RunEvent,
+    Emitter, Manager, RunEvent, WebviewWindowBuilder,
 };
 use terminal::TerminalManager;
 
@@ -88,18 +90,54 @@ pub fn run() {
         .manage(app_state)
         .menu(move |handle| build_app_menu(handle, app_locale))
         .setup(|app| {
+            let main_window_config = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|window| window.label == "main")
+                .or_else(|| app.config().app.windows.first())
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("main window config not found"))?;
+
             #[cfg(target_os = "linux")]
-            if !app
-                .state::<AppState>()
-                .config
-                .native_window_decorations_enabled()
+            let main_window_config = {
+                let mut main_window_config = main_window_config;
+                main_window_config.decorations = false;
+                main_window_config
+            };
+
+            let main_window = WebviewWindowBuilder::from_config(app.handle(), &main_window_config)?
+                .enable_clipboard_access()
+                .build()?;
+            #[cfg(not(target_os = "linux"))]
+            let _ = &main_window;
+
+            #[cfg(target_os = "linux")]
             {
-                if let Some(main_window) = app.get_webview_window("main") {
-                    if let Err(error) = main_window.set_decorations(false) {
-                        log::warn!("failed to disable window decorations on linux: {error}");
+                if let Ok(icon) = Image::from_bytes(include_bytes!("../icons/icon.png")) {
+                    if let Err(error) = main_window.set_icon(icon) {
+                        log::warn!("failed to apply linux window icon: {error}");
                     }
                 }
             }
+
+            #[cfg(target_os = "linux")]
+            tauri::async_runtime::spawn_blocking(|| {
+                match linux_appimage::ensure_appimage_desktop_integration() {
+                    Ok(status) => {
+                        if !matches!(
+                            status,
+                            linux_appimage::AppImageIntegrationStatus::SkippedNotAppImage
+                        ) {
+                            log::info!("linux AppImage desktop integration status: {status:?}");
+                        }
+                    }
+                    Err(error) => {
+                        log::warn!("failed to ensure linux AppImage desktop integration: {error}");
+                    }
+                }
+            });
 
             let handle = app.handle().clone();
             let resource_dir = app.path().resource_dir().ok();
@@ -111,7 +149,8 @@ pub fn run() {
                 match id {
                     "toggle-sidebar" | "toggle-git-panel" | "toggle-focus-mode"
                     | "toggle-fullscreen" | "toggle-search" | "toggle-terminal"
-                    | "close-window" => {
+                    | "close-window" | "edit-undo" | "edit-redo" | "edit-cut" | "edit-copy"
+                    | "edit-paste" | "edit-select-all" => {
                         let _ = handle.emit("menu-action", id);
                     }
                     _ => {}
@@ -124,8 +163,6 @@ pub fn run() {
             commands::app::set_app_locale,
             commands::power::get_keep_awake_state,
             commands::power::set_keep_awake_enabled,
-            commands::app::get_native_window_decorations,
-            commands::app::set_native_window_decorations,
             commands::chat::send_message,
             commands::chat::cancel_turn,
             commands::chat::respond_to_approval,
@@ -507,6 +544,12 @@ where
 }
 
 fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu<tauri::Wry>> {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = locale;
+        return Menu::with_items(handle, &[]);
+    }
+
     let strings = native_strings(locale);
 
     let app_menu = SubmenuBuilder::new(handle, strings.app_menu)
@@ -538,6 +581,41 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
         .quit()
         .build()?;
 
+    // Linux terminals rely on Ctrl-based control sequences, so avoid wiring
+    // those chords to native edit accelerators. DOM text inputs still keep
+    // their standard shortcuts through the webview, and the menu items remain
+    // clickable.
+    #[cfg(target_os = "linux")]
+    let edit_undo = MenuItem::with_id(handle, "edit-undo", strings.undo, true, None::<&str>)?;
+    #[cfg(target_os = "linux")]
+    let edit_redo = MenuItem::with_id(handle, "edit-redo", strings.redo, true, None::<&str>)?;
+    #[cfg(target_os = "linux")]
+    let edit_cut = MenuItem::with_id(handle, "edit-cut", strings.cut, true, None::<&str>)?;
+    #[cfg(target_os = "linux")]
+    let edit_copy = MenuItem::with_id(handle, "edit-copy", strings.copy, true, None::<&str>)?;
+    #[cfg(target_os = "linux")]
+    let edit_paste = MenuItem::with_id(handle, "edit-paste", strings.paste, true, None::<&str>)?;
+    #[cfg(target_os = "linux")]
+    let edit_select_all = MenuItem::with_id(
+        handle,
+        "edit-select-all",
+        strings.select_all,
+        true,
+        None::<&str>,
+    )?;
+
+    #[cfg(target_os = "linux")]
+    let edit_menu = SubmenuBuilder::new(handle, strings.edit_menu)
+        .item(&edit_undo)
+        .item(&edit_redo)
+        .separator()
+        .item(&edit_cut)
+        .item(&edit_copy)
+        .item(&edit_paste)
+        .item(&edit_select_all)
+        .build()?;
+
+    #[cfg(not(target_os = "linux"))]
     let edit_menu = SubmenuBuilder::new(handle, strings.edit_menu)
         .undo()
         .redo()
