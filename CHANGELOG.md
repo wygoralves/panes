@@ -1,5 +1,24 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.36.0...vnull) (2026-03-10)
+
+### Features
+
+* add context menu in linux for terminal copy and paste actions ([459b08c](https://github.com/wygoralves/panes/commit/459b08c9740d689fc4156d914d38e61e685398b4))
+* add custom linux chrome ([607b020](https://github.com/wygoralves/panes/commit/607b0203cbb767e53c08163c65aaf7aab503c72e))
+* add linux AppImage desktop integration ([d745123](https://github.com/wygoralves/panes/commit/d745123a7015588c34498933fadd4c6b4d03946c))
+* update visuals for bar ([eba175e](https://github.com/wygoralves/panes/commit/eba175ecee2a9b5a6626c91538334712fe5b7a9a))
+* update visuals for custom linux bar ([75b5093](https://github.com/wygoralves/panes/commit/75b5093161df9bea8e84c1012e03a0627a386d3d))
+
+### Bug Fixes
+
+* enable clipboard access on main webview ([7c7555c](https://github.com/wygoralves/panes/commit/7c7555c9b1bb1f6d9aa368fc313540bd57b8fb1e))
+* fix backend issue for window controls ([4ac5769](https://github.com/wygoralves/panes/commit/4ac576988fa593139b10f2f9a1155e1315f39137))
+* fix possible regressions on other places native commands on linux ([4bbdece](https://github.com/wygoralves/panes/commit/4bbdecee22ae8ee67e64ab5ab03b577780675eee))
+* fix window controls on linux custom bar ([872fff5](https://github.com/wygoralves/panes/commit/872fff5411ac15d7206941564d0cfa0a278a52c9))
+* remove unnecessary  window controls from gitpanel ([4fee23f](https://github.com/wygoralves/panes/commit/4fee23f5c2ea64e6a4b9d1558d9e8a36cdfb6405))
+* wire terminal clipboard shortcuts ([03b4f39](https://github.com/wygoralves/panes/commit/03b4f39016ccf6cb1ce18ffe3d5e21ad9e2305cf))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.35.0...vnull) (2026-03-09)
 
 ### Features
