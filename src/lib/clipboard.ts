@@ -13,6 +13,14 @@ export async function copyTextToClipboard(text: string): Promise<void> {
   throw new Error("Clipboard API unavailable");
 }
 
+export async function readTextFromClipboard(): Promise<string> {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.readText) {
+    return navigator.clipboard.readText();
+  }
+
+  throw new Error("Clipboard read API unavailable");
+}
+
 function tryExecCommandCopy(text: string): boolean {
   const textarea = document.createElement("textarea");
   textarea.value = text;

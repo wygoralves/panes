@@ -9,7 +9,11 @@ import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag
 import { isLinuxDesktop } from "../../lib/windowActions";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { getHarnessIcon } from "../shared/HarnessLogos";
-import { copyTextToClipboard } from "../../lib/clipboard";
+import { copyTextToClipboard, readTextFromClipboard } from "../../lib/clipboard";
+import {
+  isTerminalCopyShortcut,
+  isTerminalPasteShortcut,
+} from "../../lib/terminalClipboard";
 import { resolveTerminalBootstrapAction } from "../../lib/terminalBootstrap";
 import {
   getTerminalAcceleratedRenderingPreferenceVersion,
@@ -2832,6 +2836,33 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
+      if (isTerminalCopyShortcut(event)) {
+        const selection = terminal.getSelection();
+        if (selection) {
+          void copyTextToClipboard(selection).catch((error) => {
+            logTerminalWarning("terminal-copy-shortcut-failed", {
+              cacheKey,
+              reason: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
+        return false;
+      }
+      if (isTerminalPasteShortcut(event)) {
+        void readTextFromClipboard()
+          .then((text) => {
+            if (text) {
+              terminal.paste(text);
+            }
+          })
+          .catch((error) => {
+            logTerminalWarning("terminal-paste-shortcut-failed", {
+              cacheKey,
+              reason: error instanceof Error ? error.message : String(error),
+            });
+          });
+        return false;
+      }
       // Block broadcast shortcut from reaching the shell
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i") return false;
       if (event.metaKey && !event.ctrlKey && event.key === "Backspace") {
