@@ -13,6 +13,8 @@ export interface KeepAwakeState {
   supported: boolean;
   enabled: boolean;
   active: boolean;
+  supportsClosedDisplay?: boolean | null;
+  closedDisplayActive?: boolean | null;
   message?: string | null;
 }
 

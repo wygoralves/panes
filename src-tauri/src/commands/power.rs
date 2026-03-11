@@ -10,6 +10,10 @@ pub struct KeepAwakeStateDto {
     pub enabled: bool,
     pub active: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_closed_display: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub closed_display_active: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
 
@@ -93,6 +97,8 @@ fn dto_from_runtime(status: KeepAwakeStatus, enabled: bool) -> KeepAwakeStateDto
         supported: status.supported,
         enabled,
         active: status.active,
+        supports_closed_display: status.supports_closed_display,
+        closed_display_active: status.closed_display_active,
         message: status.message,
     }
 }
@@ -143,5 +149,26 @@ mod tests {
                 assert!(config.power.keep_awake_enabled);
             });
         });
+    }
+
+    #[test]
+    fn dto_from_runtime_preserves_closed_display_state() {
+        let dto = dto_from_runtime(
+            KeepAwakeStatus {
+                supported: true,
+                active: true,
+                supports_closed_display: Some(false),
+                closed_display_active: Some(false),
+                message: Some("limited".to_string()),
+            },
+            true,
+        );
+
+        assert!(dto.supported);
+        assert!(dto.enabled);
+        assert!(dto.active);
+        assert_eq!(dto.supports_closed_display, Some(false));
+        assert_eq!(dto.closed_display_active, Some(false));
+        assert_eq!(dto.message.as_deref(), Some("limited"));
     }
 }

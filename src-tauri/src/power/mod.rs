@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
     sync::Arc,
+    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -16,7 +17,15 @@ use crate::config::app_config::AppConfig;
 pub struct KeepAwakeStatus {
     pub supported: bool,
     pub active: bool,
+    pub supports_closed_display: Option<bool>,
+    pub closed_display_active: Option<bool>,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct ClosedDisplayDiagnostics {
+    supports_closed_display: Option<bool>,
+    closed_display_active: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -30,6 +39,7 @@ pub struct KeepAwakeManager {
 
 struct KeepAwakeRuntime {
     child: Option<Box<dyn KeepAwakeChild>>,
+    helper: Option<KeepAwakeHelperState>,
     last_error: Option<String>,
 }
 
@@ -98,6 +108,8 @@ struct TokioKeepAwakeChild {
     child: Child,
 }
 
+const KEEP_AWAKE_SPAWN_GRACE_PERIOD: Duration = Duration::from_millis(150);
+
 impl KeepAwakeManager {
     pub fn new() -> Self {
         Self::with_dependencies(
@@ -121,6 +133,7 @@ impl KeepAwakeManager {
             current_process,
             runtime: Arc::new(Mutex::new(KeepAwakeRuntime {
                 child: None,
+                helper: None,
                 last_error: None,
             })),
         }
@@ -154,18 +167,28 @@ impl KeepAwakeManager {
 
     pub async fn status(&self) -> KeepAwakeStatus {
         let support = self.spawner.support_status();
-        let mut runtime = self.runtime.lock().await;
-        self.sync_child_state(&mut runtime);
+        let (active, helper_pid, last_error) = {
+            let mut runtime = self.runtime.lock().await;
+            self.sync_child_state(&mut runtime);
+            (
+                runtime.child.is_some(),
+                runtime.helper.as_ref().map(|helper| helper.pid),
+                runtime.last_error.clone(),
+            )
+        };
+        let closed_display = closed_display_diagnostics(active, helper_pid).await;
 
         KeepAwakeStatus {
             supported: support.supported,
-            active: runtime.child.is_some(),
+            active,
+            supports_closed_display: closed_display.supports_closed_display,
+            closed_display_active: closed_display.closed_display_active,
             message: if !support.supported {
                 support.message
-            } else if runtime.child.is_some() {
+            } else if active {
                 None
             } else {
-                runtime.last_error.clone()
+                last_error
             },
         }
     }
@@ -197,10 +220,32 @@ impl KeepAwakeManager {
                     if let Err(error) = save_helper_state(&self.state_path(), &helper) {
                         log::warn!("failed to persist keep awake helper state: {error}");
                     }
+                    log::info!(
+                        "keep awake helper started: pid={}, program={}, args={:?}",
+                        helper.helper.pid,
+                        helper.helper.program,
+                        helper.helper.args
+                    );
                 }
                 runtime.child = Some(spawned.child);
+                runtime.helper = spawned.helper;
                 runtime.last_error = None;
-                Ok(())
+                drop(runtime);
+
+                tokio::time::sleep(KEEP_AWAKE_SPAWN_GRACE_PERIOD).await;
+
+                let mut runtime = self.runtime.lock().await;
+                self.sync_child_state(&mut runtime);
+                if runtime.child.is_some() {
+                    Ok(())
+                } else {
+                    let message = runtime
+                        .last_error
+                        .clone()
+                        .unwrap_or_else(|| "keep awake helper exited unexpectedly".to_string());
+                    log::warn!("keep awake failed immediately after enable: {message}");
+                    Err(message)
+                }
             }
             Err(error) => {
                 let message = error.to_string();
@@ -216,6 +261,7 @@ impl KeepAwakeManager {
         runtime.last_error = None;
 
         let Some(mut child) = runtime.child.take() else {
+            runtime.helper = None;
             drop(runtime);
             return clear_helper_state(&self.state_path());
         };
@@ -243,6 +289,7 @@ impl KeepAwakeManager {
                 }
 
                 runtime.last_error = None;
+                runtime.helper = None;
                 drop(runtime);
                 clear_helper_state(&self.state_path())?;
                 Ok(())
@@ -265,7 +312,11 @@ impl KeepAwakeManager {
         match outcome {
             Some(Ok(Some(status))) => {
                 runtime.child = None;
+                runtime.helper = None;
                 runtime.last_error = Some(exit_status_message(status));
+                if let Some(message) = runtime.last_error.as_deref() {
+                    log::warn!("{message}");
+                }
                 if let Err(error) = clear_helper_state(&self.state_path()) {
                     log::warn!("failed to clear keep awake helper state: {error}");
                 }
@@ -273,9 +324,13 @@ impl KeepAwakeManager {
             Some(Ok(None)) => {}
             Some(Err(error)) => {
                 runtime.child = None;
+                runtime.helper = None;
                 runtime.last_error = Some(format!(
                     "failed to inspect keep awake helper state: {error}"
                 ));
+                if let Some(message) = runtime.last_error.as_deref() {
+                    log::warn!("{message}");
+                }
                 if let Err(clear_error) = clear_helper_state(&self.state_path()) {
                     log::warn!("failed to clear keep awake helper state: {clear_error}");
                 }
@@ -679,6 +734,25 @@ fn exit_status_message(status: ExitStatus) -> String {
     }
 }
 
+#[cfg(target_os = "macos")]
+async fn closed_display_diagnostics(
+    _keep_awake_active: bool,
+    _helper_pid: Option<u32>,
+) -> ClosedDisplayDiagnostics {
+    // This backend uses public caffeinate assertions only. Real-world validation on macOS
+    // shows that these assertions do not reliably prove clamshell behavior, so the UI
+    // must keep closed-display status as unknown unless a stronger backend is added.
+    ClosedDisplayDiagnostics::default()
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn closed_display_diagnostics(
+    _keep_awake_active: bool,
+    _helper_pid: Option<u32>,
+) -> ClosedDisplayDiagnostics {
+    ClosedDisplayDiagnostics::default()
+}
+
 fn resolve_backend_spec() -> Result<BackendSpec, String> {
     #[cfg(target_os = "macos")]
     {
@@ -867,8 +941,8 @@ mod tests {
                 program: "/usr/bin/caffeinate".to_string(),
                 args: vec![
                     "-i".to_string(),
-                    "/bin/sleep".to_string(),
-                    "2147483647".to_string(),
+                    "-w".to_string(),
+                    "1".to_string(),
                 ],
                 start_marker: Some(format!("start-{pid}")),
             }),
@@ -943,6 +1017,41 @@ mod tests {
             .expect("second disable should be a no-op");
         assert!(!manager.status().await.active);
         assert_eq!(manager.status().await.message, None);
+        assert!(!state_path.exists());
+    }
+
+    #[tokio::test]
+    async fn enable_fails_when_helper_exits_immediately() {
+        let (child, state) = FakeChildHandle::new(23);
+        state.lock().expect("fake child state lock poisoned").alive = false;
+        let current_process = test_process(22);
+        let state_dir = temp_state_dir();
+        let state_path = state_file_path(&state_dir, current_process.pid);
+        let manager = KeepAwakeManager::with_dependencies(
+            Arc::new(FakeSpawner {
+                support: SupportStatus {
+                    supported: true,
+                    message: None,
+                },
+                next_spawn: StdMutex::new(vec![Ok(make_spawn(child, 222))]),
+            }),
+            Arc::new(FakeProcessOps::default()),
+            state_dir,
+            current_process,
+        );
+
+        let error = manager
+            .enable()
+            .await
+            .expect_err("enable should fail when helper exits immediately");
+        assert!(error.contains("status code 23"));
+
+        let status = manager.status().await;
+        assert!(!status.active);
+        assert_eq!(
+            status.message.as_deref(),
+            Some("keep awake helper exited unexpectedly with status code 23")
+        );
         assert!(!state_path.exists());
     }
 
@@ -1023,8 +1132,8 @@ mod tests {
                     program: "/usr/bin/caffeinate".to_string(),
                     args: vec![
                         "-i".to_string(),
-                        "/bin/sleep".to_string(),
-                        "2147483647".to_string(),
+                        "-w".to_string(),
+                        "1".to_string(),
                     ],
                     start_marker: Some("start-404".to_string()),
                 },
@@ -1052,7 +1161,7 @@ mod tests {
             .expect("fake commands lock poisoned")
             .insert(
                 404,
-                Some("/usr/bin/caffeinate -i /bin/sleep 2147483647".to_string()),
+                Some("/usr/bin/caffeinate -i -w 1".to_string()),
             );
         process_ops
             .start_markers
@@ -1097,8 +1206,8 @@ mod tests {
                     program: "/usr/bin/caffeinate".to_string(),
                     args: vec![
                         "-i".to_string(),
-                        "/bin/sleep".to_string(),
-                        "2147483647".to_string(),
+                        "-w".to_string(),
+                        "1".to_string(),
                     ],
                     start_marker: Some("start-405".to_string()),
                 },
@@ -1113,7 +1222,7 @@ mod tests {
             .expect("fake commands lock poisoned")
             .insert(
                 405,
-                Some("/usr/bin/caffeinate -i /bin/sleep 2147483647".to_string()),
+                Some("/usr/bin/caffeinate -i -w 1".to_string()),
             );
         process_ops
             .start_markers
@@ -1161,8 +1270,8 @@ mod tests {
                     program: "/usr/bin/caffeinate".to_string(),
                     args: vec![
                         "-i".to_string(),
-                        "/bin/sleep".to_string(),
-                        "2147483647".to_string(),
+                        "-w".to_string(),
+                        "1".to_string(),
                     ],
                     start_marker: None,
                 },
@@ -1177,7 +1286,7 @@ mod tests {
             .expect("fake commands lock poisoned")
             .insert(
                 406,
-                Some("/usr/bin/caffeinate -i /bin/sleep 2147483647".to_string()),
+                Some("/usr/bin/caffeinate -i -w 1".to_string()),
             );
         process_ops
             .start_markers
@@ -1229,8 +1338,8 @@ mod tests {
                     program: "/usr/bin/caffeinate".to_string(),
                     args: vec![
                         "-i".to_string(),
-                        "/bin/sleep".to_string(),
-                        "2147483647".to_string(),
+                        "-w".to_string(),
+                        "1".to_string(),
                     ],
                     start_marker: Some("start-407".to_string()),
                 },
@@ -1245,7 +1354,7 @@ mod tests {
             .expect("fake commands lock poisoned")
             .insert(
                 407,
-                Some("/usr/bin/caffeinate -i /bin/sleep 2147483647".to_string()),
+                Some("/usr/bin/caffeinate -i -w 1".to_string()),
             );
         process_ops
             .start_markers
@@ -1279,6 +1388,32 @@ mod tests {
         );
         assert!(!invalid_state_path.exists());
         assert!(!valid_state_path.exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_backend_waits_on_the_owner_process() {
+        let spec = resolve_backend_spec().expect("macOS backend should resolve");
+        let args = spec
+            .args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert!(args.iter().any(|arg| arg == "-i"));
+        assert!(args.iter().any(|arg| arg == "-w"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == &std::process::id().to_string()));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn macos_closed_display_diagnostics_remain_unknown() {
+        let diagnostics = closed_display_diagnostics(true, Some(101)).await;
+
+        assert_eq!(diagnostics.supports_closed_display, None);
+        assert_eq!(diagnostics.closed_display_active, None);
     }
 
     #[cfg(target_os = "linux")]

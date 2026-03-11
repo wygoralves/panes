@@ -105,6 +105,32 @@ describe("keepAwakeStore", () => {
     expect(mockToast.success).toHaveBeenCalledWith("app:commandPalette.toasts.keepAwakeEnabled");
   });
 
+  it("warns when keep awake enables without closed-display protection", async () => {
+    mockIpc.getKeepAwakeState.mockResolvedValue({
+      supported: true,
+      enabled: false,
+      active: false,
+      message: null,
+    });
+    mockIpc.setKeepAwakeEnabled.mockResolvedValue({
+      supported: true,
+      enabled: true,
+      active: true,
+      supportsClosedDisplay: false,
+      closedDisplayActive: false,
+      message: null,
+    });
+
+    const result = await useKeepAwakeStore.getState().toggle();
+
+    expect(result?.enabled).toBe(true);
+    expect(result?.supportsClosedDisplay).toBe(false);
+    expect(result?.closedDisplayActive).toBe(false);
+    expect(mockToast.warning).toHaveBeenCalledWith(
+      "app:commandPalette.toasts.keepAwakeEnabledLimited",
+    );
+  });
+
   it("warns when keep awake is unsupported", async () => {
     mockIpc.getKeepAwakeState.mockResolvedValue({
       supported: false,

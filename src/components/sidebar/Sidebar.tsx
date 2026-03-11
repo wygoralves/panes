@@ -319,6 +319,14 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     if (keepAwakeState.enabled && !keepAwakeState.active) {
       return t("app:sidebar.keepAwakeInactive");
     }
+    if (
+      keepAwakeState.enabled &&
+      keepAwakeState.active &&
+      keepAwakeState.supportsClosedDisplay === false &&
+      keepAwakeState.closedDisplayActive === false
+    ) {
+      return t("app:sidebar.keepAwakeLimited");
+    }
     return t("app:sidebar.keepAwakeDescription");
   }, [keepAwakeState, t]);
 

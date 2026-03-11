@@ -6,6 +6,7 @@ import { toast } from "./toastStore";
 
 const KEEP_AWAKE_TOAST_KEYS = {
   enabled: "app:commandPalette.toasts.keepAwakeEnabled",
+  enabledLimited: "app:commandPalette.toasts.keepAwakeEnabledLimited",
   disabled: "app:commandPalette.toasts.keepAwakeDisabled",
   unsupported: "app:commandPalette.toasts.keepAwakeUnsupported",
   enableFailed: "app:commandPalette.toasts.keepAwakeEnableFailed",
@@ -21,6 +22,10 @@ interface KeepAwakeStoreState {
   toggle: () => Promise<KeepAwakeState | null>;
 }
 
+function hasClosedDisplayLimitation(state: KeepAwakeState) {
+  return state.supportsClosedDisplay === false && state.closedDisplayActive === false;
+}
+
 function showKeepAwakeToast(nextState: KeepAwakeState, targetEnabled: boolean) {
   if (!nextState.supported) {
     toast.warning(t(KEEP_AWAKE_TOAST_KEYS.unsupported));
@@ -34,6 +39,11 @@ function showKeepAwakeToast(nextState: KeepAwakeState, targetEnabled: boolean) {
 
   if (!targetEnabled && (nextState.enabled || nextState.active)) {
     toast.error(t(KEEP_AWAKE_TOAST_KEYS.disableFailed));
+    return;
+  }
+
+  if (targetEnabled && hasClosedDisplayLimitation(nextState)) {
+    toast.warning(t(KEEP_AWAKE_TOAST_KEYS.enabledLimited));
     return;
   }
 
