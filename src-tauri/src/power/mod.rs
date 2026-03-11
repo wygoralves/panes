@@ -939,11 +939,7 @@ mod tests {
             helper: Some(KeepAwakeHelperState {
                 pid,
                 program: "/usr/bin/caffeinate".to_string(),
-                args: vec![
-                    "-i".to_string(),
-                    "-w".to_string(),
-                    "1".to_string(),
-                ],
+                args: vec!["-i".to_string(), "-w".to_string(), "1".to_string()],
                 start_marker: Some(format!("start-{pid}")),
             }),
         }
@@ -1130,11 +1126,7 @@ mod tests {
                 helper: KeepAwakeHelperState {
                     pid: 404,
                     program: "/usr/bin/caffeinate".to_string(),
-                    args: vec![
-                        "-i".to_string(),
-                        "-w".to_string(),
-                        "1".to_string(),
-                    ],
+                    args: vec!["-i".to_string(), "-w".to_string(), "1".to_string()],
                     start_marker: Some("start-404".to_string()),
                 },
             },
@@ -1159,10 +1151,7 @@ mod tests {
             .commands
             .lock()
             .expect("fake commands lock poisoned")
-            .insert(
-                404,
-                Some("/usr/bin/caffeinate -i -w 1".to_string()),
-            );
+            .insert(404, Some("/usr/bin/caffeinate -i -w 1".to_string()));
         process_ops
             .start_markers
             .lock()
@@ -1204,11 +1193,7 @@ mod tests {
                 helper: KeepAwakeHelperState {
                     pid: 405,
                     program: "/usr/bin/caffeinate".to_string(),
-                    args: vec![
-                        "-i".to_string(),
-                        "-w".to_string(),
-                        "1".to_string(),
-                    ],
+                    args: vec!["-i".to_string(), "-w".to_string(), "1".to_string()],
                     start_marker: Some("start-405".to_string()),
                 },
             },
@@ -1220,10 +1205,7 @@ mod tests {
             .commands
             .lock()
             .expect("fake commands lock poisoned")
-            .insert(
-                405,
-                Some("/usr/bin/caffeinate -i -w 1".to_string()),
-            );
+            .insert(405, Some("/usr/bin/caffeinate -i -w 1".to_string()));
         process_ops
             .start_markers
             .lock()
@@ -1268,11 +1250,7 @@ mod tests {
                 helper: KeepAwakeHelperState {
                     pid: 406,
                     program: "/usr/bin/caffeinate".to_string(),
-                    args: vec![
-                        "-i".to_string(),
-                        "-w".to_string(),
-                        "1".to_string(),
-                    ],
+                    args: vec!["-i".to_string(), "-w".to_string(), "1".to_string()],
                     start_marker: None,
                 },
             },
@@ -1284,10 +1262,7 @@ mod tests {
             .commands
             .lock()
             .expect("fake commands lock poisoned")
-            .insert(
-                406,
-                Some("/usr/bin/caffeinate -i -w 1".to_string()),
-            );
+            .insert(406, Some("/usr/bin/caffeinate -i -w 1".to_string()));
         process_ops
             .start_markers
             .lock()
@@ -1336,11 +1311,7 @@ mod tests {
                 helper: KeepAwakeHelperState {
                     pid: 407,
                     program: "/usr/bin/caffeinate".to_string(),
-                    args: vec![
-                        "-i".to_string(),
-                        "-w".to_string(),
-                        "1".to_string(),
-                    ],
+                    args: vec!["-i".to_string(), "-w".to_string(), "1".to_string()],
                     start_marker: Some("start-407".to_string()),
                 },
             },
@@ -1352,10 +1323,7 @@ mod tests {
             .commands
             .lock()
             .expect("fake commands lock poisoned")
-            .insert(
-                407,
-                Some("/usr/bin/caffeinate -i -w 1".to_string()),
-            );
+            .insert(407, Some("/usr/bin/caffeinate -i -w 1".to_string()));
         process_ops
             .start_markers
             .lock()
