@@ -48,7 +48,7 @@ interface ChatState {
 
 let activeThreadBindSeq = 0;
 const STREAM_EVENT_BATCH_WINDOW_MS = 16;
-const MESSAGE_WINDOW_INITIAL_LIMIT = 120;
+const MESSAGE_WINDOW_INITIAL_LIMIT = 80;
 const OLDER_MESSAGES_RETRY_BACKOFF_MS = 2_000;
 const MAX_FULLY_HYDRATED_MESSAGES = 80;
 const ACTION_OUTPUT_MAX_CHARS = 180_000;
@@ -555,8 +555,9 @@ function applyHydrationWindow(messages: Message[]): Message[] {
   }
 
   const summarizeUntil = Math.max(0, messages.length - MAX_FULLY_HYDRATED_MESSAGES);
-  let changed = false;
-  const nextMessages = messages.map((message, index) => {
+  let nextMessages = messages;
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
     const nextMessage =
       index < summarizeUntil
         ? summarizeMessageForMemory(message)
@@ -564,26 +565,43 @@ function applyHydrationWindow(messages: Message[]): Message[] {
           ? message
           : markMessageAsFullyHydrated(message);
     if (nextMessage !== message) {
-      changed = true;
+      if (nextMessages === messages) {
+        nextMessages = [...messages];
+      }
+      nextMessages[index] = nextMessage;
     }
-    return nextMessage;
-  });
+  }
 
-  return changed ? nextMessages : messages;
+  return nextMessages;
 }
 
 function normalizeMessages(messages: Message[]): Message[] {
-  return messages.map((message) => {
+  let nextMessages = messages;
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
     const normalizedBlocks = normalizeBlocks(message.blocks);
-    return markMessageAsFullyHydrated({
-      ...message,
-      content:
-        message.role === "user" && normalizedBlocks && typeof message.content === "string"
-          ? undefined
-          : message.content,
-      blocks: normalizedBlocks,
-    });
-  });
+    const normalizedContent =
+      message.role === "user" && normalizedBlocks && typeof message.content === "string"
+        ? undefined
+        : message.content;
+    const normalizedMessage =
+      normalizedBlocks === message.blocks && normalizedContent === message.content
+        ? message
+        : {
+            ...message,
+            content: normalizedContent,
+            blocks: normalizedBlocks,
+          };
+    const nextMessage = markMessageAsFullyHydrated(normalizedMessage);
+    if (nextMessage !== message) {
+      if (nextMessages === messages) {
+        nextMessages = [...messages];
+      }
+      nextMessages[index] = nextMessage;
+    }
+  }
+
+  return nextMessages;
 }
 
 function toIsoTimestamp(value: number | null | undefined): string | null {

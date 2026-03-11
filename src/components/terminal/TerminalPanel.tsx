@@ -19,6 +19,11 @@ import {
   getTerminalAcceleratedRenderingPreferenceVersion,
   listenTerminalAcceleratedRenderingChanged,
 } from "../../lib/terminalRenderingSettings";
+import {
+  collectDetachedTerminalEvictionKeys,
+  markPaneTerminalDetached,
+  markWorkspaceTerminalDetached,
+} from "./terminalCacheLifecycle";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -171,9 +176,14 @@ interface SessionTerminal {
   flushStallCount: number;
   flushTimer?: number;
   fitTimer?: number;
+  evictionTimer?: number;
   isAttached: boolean;
+  lastAccessedAt: number;
+  detachedAt?: number;
   lastOutputDropWarnAt?: number;
   lastResizeSent?: TerminalSize;
+  needsResumeOnAttach: boolean;
+  requiresColdReattach: boolean;
   debugSample: {
     chunks: number;
     chars: number;
@@ -214,10 +224,12 @@ const INPUT_DROP_WARN_COOLDOWN_MS = 5000;
 const OUTPUT_FLUSH_DELAY_MS = 4;
 const OUTPUT_FLUSH_STALL_TIMEOUT_MS = 2500;
 const OUTPUT_BATCH_CHAR_LIMIT = 65536;
-const OUTPUT_QUEUE_MAX_CHARS_ATTACHED = 64 * 1024 * 1024;
-const OUTPUT_QUEUE_MAX_CHARS_DETACHED = 1024 * 1024;
-const PENDING_OUTPUT_MAX_CHARS = 512 * 1024;
+const OUTPUT_QUEUE_MAX_CHARS_ATTACHED = 8 * 1024 * 1024;
+const OUTPUT_QUEUE_MAX_CHARS_DETACHED = 512 * 1024;
+const PENDING_OUTPUT_MAX_CHARS = 256 * 1024;
 const OUTPUT_DROP_WARN_COOLDOWN_MS = 5000;
+const TERMINAL_SCROLLBACK_LINES = 2000;
+const DETACHED_TERMINAL_IDLE_EVICTION_MS = 2 * 60 * 1000;
 const TERMINAL_EDIT_EVENT = "panes:terminal-edit-action";
 const OUTPUT_FLUSH_STALL_FALLBACK_WINDOW_MS = 30000;
 const OUTPUT_FLUSH_STALL_FALLBACK_THRESHOLD = 3;
@@ -294,7 +306,14 @@ function parseTerminalCacheKey(
   };
 }
 
+function touchCachedTerminal(session: SessionTerminal) {
+  session.lastAccessedAt = Date.now();
+}
+
 function refreshTerminalCursor(session: SessionTerminal) {
+  if (!session.isAttached) {
+    return;
+  }
   const lastRow = session.terminal.rows - 1;
   if (lastRow < 0) {
     return;
@@ -304,6 +323,9 @@ function refreshTerminalCursor(session: SessionTerminal) {
 
 function setTerminalFocusState(session: SessionTerminal, focused: boolean) {
   session.terminal.element?.classList.toggle("focus", focused);
+  if (focused) {
+    touchCachedTerminal(session);
+  }
 
   const internal = session.terminal as unknown as InternalTerminal;
   const coreBrowserService = internal._core?._coreBrowserService;
@@ -837,6 +859,10 @@ function clearSessionTimers(session: SessionTerminal) {
     window.clearTimeout(session.flushTimer);
     session.flushTimer = undefined;
   }
+  if (session.evictionTimer !== undefined) {
+    window.clearTimeout(session.evictionTimer);
+    session.evictionTimer = undefined;
+  }
 }
 
 function warnDroppedTerminalInput(
@@ -1264,6 +1290,9 @@ function capSessionOutputQueue(cacheKey: string, session: SessionTerminal) {
   if (result.droppedChars <= 0) {
     return;
   }
+  if (!session.isAttached) {
+    session.requiresColdReattach = true;
+  }
   session.rendererDiagnostics.outputDroppedCharCount += result.droppedChars;
   session.rendererDiagnostics.outputDroppedChunkCount += result.droppedChunks;
   session.rendererDiagnostics.lastOutputDropAt = new Date().toISOString();
@@ -1282,6 +1311,9 @@ function capSessionOutputQueue(cacheKey: string, session: SessionTerminal) {
     attached: session.isAttached,
     maxChars,
   });
+  if (!session.isAttached) {
+    pruneDetachedTerminalCache();
+  }
 }
 
 function capPendingOutput(
@@ -1513,30 +1545,41 @@ async function resumeSessionOutput(
   if (!session || session.resumeInFlight) {
     return;
   }
+  const sessionRef = session;
   session.resumeInFlight = true;
 
   try {
-    const fromSeq = session.lastAppliedSeq > 0 ? session.lastAppliedSeq : null;
+    const fromSeq = sessionRef.lastAppliedSeq > 0 ? sessionRef.lastAppliedSeq : null;
     const resume = await ipc.terminalResumeSession(workspaceId, sessionId, fromSeq);
     const latest = cachedTerminals.get(cacheKey);
-    if (!latest) {
+    if (!latest || latest !== sessionRef) {
       return;
     }
     resetResumeRetry(latest);
 
-    if (resume.gap && resume.chunks.length > 0 && latest.lastAppliedSeq > 0) {
-      latest.lastAppliedSeq = Math.max(0, resume.chunks[0].seq - 1);
+    if (resume.gap && latest.lastAppliedSeq > 0) {
       logTerminalWarning("terminal-replay-gap", {
         cacheKey,
         reason,
         fromSeq: fromSeq ?? undefined,
         oldestAvailableSeq: resume.oldestAvailableSeq ?? undefined,
       });
+      if (latest.isAttached) {
+        const container = latest.terminal.element?.parentElement;
+        if (container instanceof HTMLElement) {
+          destroyCachedTerminal(workspaceId, sessionId);
+          createCachedTerminal(workspaceId, sessionId, container);
+          return;
+        }
+      }
+      latest.requiresColdReattach = true;
+      latest.needsResumeOnAttach = true;
+      return;
     }
 
     for (const chunk of resume.chunks) {
       const current = cachedTerminals.get(cacheKey);
-      if (!current) {
+      if (!current || current !== sessionRef) {
         return;
       }
       const result = enqueueOutputChunk(cacheKey, current, chunk);
@@ -1551,11 +1594,15 @@ async function resumeSessionOutput(
         break;
       }
     }
+    if (reason === "attach") {
+      latest.needsResumeOnAttach = false;
+      latest.requiresColdReattach = false;
+    }
   } catch (error) {
     const latest = cachedTerminals.get(cacheKey);
     const hasPendingReplayChunks =
       (pendingOutput.get(cacheKey)?.chunks.length ?? 0) > 0;
-    if (latest && (reason === "live-gap" || hasPendingReplayChunks)) {
+    if (latest && latest === sessionRef && (reason === "live-gap" || hasPendingReplayChunks)) {
       scheduleResumeRetry(workspaceId, sessionId, latest, reason);
     }
     logTerminalWarning("terminal-replay-resume-failed", {
@@ -1565,10 +1612,13 @@ async function resumeSessionOutput(
     });
   } finally {
     const latest = cachedTerminals.get(cacheKey);
-    if (!latest) {
+    if (!latest || latest !== sessionRef) {
       return;
     }
     latest.resumeInFlight = false;
+    if (latest.requiresColdReattach) {
+      return;
+    }
     drainPendingOutput(cacheKey, latest);
     if (latest.isAttached && latest.outputQueue.length > 0) {
       scheduleOutputFlush(cacheKey, latest, 0);
@@ -1708,13 +1758,44 @@ function scheduleTerminalFit(
   }, delayMs);
 }
 
+function scheduleDetachedTerminalEviction(
+  workspaceId: string,
+  sessionId: string,
+  session: SessionTerminal,
+) {
+  if (session.evictionTimer !== undefined) {
+    window.clearTimeout(session.evictionTimer);
+    session.evictionTimer = undefined;
+  }
+  if (session.isAttached || session.detachedAt === undefined) {
+    return;
+  }
+
+  const detachedAt = session.detachedAt;
+  const elapsed = Date.now() - detachedAt;
+  const delayMs = Math.max(0, DETACHED_TERMINAL_IDLE_EVICTION_MS - elapsed);
+  session.evictionTimer = window.setTimeout(() => {
+    const cacheKey = terminalCacheKey(workspaceId, sessionId);
+    const latest = cachedTerminals.get(cacheKey);
+    if (!latest) {
+      return;
+    }
+    latest.evictionTimer = undefined;
+    if (latest.isAttached || latest.detachedAt !== detachedAt) {
+      return;
+    }
+    destroyCachedTerminal(workspaceId, sessionId);
+  }, delayMs);
+}
+
 function markWorkspaceTerminalsDetached(workspaceId: string) {
   const workspacePrefix = terminalWorkspacePrefix(workspaceId);
+  const detachedAt = Date.now();
   for (const [cacheKey, session] of cachedTerminals) {
     if (!cacheKey.startsWith(workspacePrefix)) {
       continue;
     }
-    session.isAttached = false;
+    markWorkspaceTerminalDetached(session, detachedAt);
     if (session.fitTimer !== undefined) {
       window.clearTimeout(session.fitTimer);
       session.fitTimer = undefined;
@@ -1724,7 +1805,28 @@ function markWorkspaceTerminalsDetached(workspaceId: string) {
       session.flushTimer = undefined;
     }
     capSessionOutputQueue(cacheKey, session);
+    const sessionId = cacheKey.slice(workspacePrefix.length);
+    scheduleDetachedTerminalEviction(workspaceId, sessionId, session);
   }
+  pruneDetachedTerminalCache();
+}
+
+function markCachedTerminalDetached(cacheKey: string, session: SessionTerminal) {
+  markPaneTerminalDetached(session, Date.now());
+  if (session.fitTimer !== undefined) {
+    window.clearTimeout(session.fitTimer);
+    session.fitTimer = undefined;
+  }
+  if (session.flushTimer !== undefined) {
+    window.clearTimeout(session.flushTimer);
+    session.flushTimer = undefined;
+  }
+  capSessionOutputQueue(cacheKey, session);
+  const parsed = parseTerminalCacheKey(cacheKey);
+  if (!parsed) {
+    return;
+  }
+  scheduleDetachedTerminalEviction(parsed.workspaceId, parsed.sessionId, session);
 }
 
 /** Permanently destroy a cached terminal (used when session is explicitly closed). */
@@ -1743,6 +1845,268 @@ function destroyCachedTerminal(workspaceId: string, sessionId: string) {
   }
   pendingOutput.delete(key);
   cachedBackendRendererDiagnostics.delete(key);
+}
+
+function pruneDetachedTerminalCache() {
+  const now = Date.now();
+  const staleKeys = collectDetachedTerminalEvictionKeys(
+    [...cachedTerminals.entries()].map(([cacheKey, session]) => ({
+      cacheKey,
+      isAttached: session.isAttached,
+      detachedAt: session.detachedAt,
+      lastAccessedAt: session.lastAccessedAt,
+    })),
+    now,
+    DETACHED_TERMINAL_IDLE_EVICTION_MS,
+  );
+  for (const cacheKey of staleKeys) {
+    const parsed = parseTerminalCacheKey(cacheKey);
+    if (!parsed) {
+      continue;
+    }
+    destroyCachedTerminal(parsed.workspaceId, parsed.sessionId);
+  }
+}
+
+function createCachedTerminal(
+  workspaceId: string,
+  sessionId: string,
+  container: HTMLElement,
+): SessionTerminal {
+  const cacheKey = terminalCacheKey(workspaceId, sessionId);
+  const terminal = new Terminal({
+    allowProposedApi: true,
+    convertEol: false,
+    cursorBlink: true,
+    cursorInactiveStyle: "none",
+    fontFamily: '"JetBrains Mono", monospace',
+    fontSize: 12,
+    lineHeight: 1.3,
+    scrollback: TERMINAL_SCROLLBACK_LINES,
+    theme: {
+      background: "#050505",
+      foreground: "#f5f5f5",
+      selectionBackground: "rgba(255, 107, 107, 0.28)",
+      cursor: "#FF6B6B",
+    },
+  });
+
+  const fitAddon = new FitAddon();
+  terminal.loadAddon(fitAddon);
+
+  const unicode11 = new Unicode11Addon();
+  terminal.loadAddon(unicode11);
+  terminal.unicode.activeVersion = "11";
+
+  const rendererDiagnostics = createRendererDiagnostics();
+
+  terminal.open(container);
+
+  // xterm.js fires onData for BOTH user keystrokes AND auto-generated
+  // terminal protocol responses (DA1/DA2 device attributes, cursor position
+  // reports, OSC color query responses, focus in/out events). These responses
+  // must NOT be broadcast to other terminals — they would appear as garbage.
+  const RE_TERMINAL_RESPONSE = /^\x1b(\[\?[\d;]*c|\[>[\d;]*c|\[\d+;\d+R|\]\d+;|\[I\b|\[O\b)/;
+  function isTerminalResponse(data: string): boolean {
+    return data.length >= 3 && data.charCodeAt(0) === 0x1b && RE_TERMINAL_RESPONSE.test(data);
+  }
+
+  // Broadcast-aware write: only fan out when the broadcasting group is
+  // currently active. This prevents cross-tab input leakage.
+  function getBroadcastTargetSessionIds(): string[] | null {
+    const ws = useTerminalStore.getState().workspaces[workspaceId];
+    const bgId = ws?.broadcastGroupId;
+    if (!bgId || ws.activeGroupId !== bgId) {
+      return null;
+    }
+    const group = ws.groups.find((g) => g.id === bgId);
+    if (!group) {
+      return null;
+    }
+    return collectSessionIds(group.root);
+  }
+
+  function broadcastWrite(data: string) {
+    const targetSessionIds = getBroadcastTargetSessionIds();
+    if (targetSessionIds) {
+      for (const id of targetSessionIds) {
+        enqueueTerminalInput(terminalCacheKey(workspaceId, id), workspaceId, id, data);
+      }
+      return;
+    }
+    enqueueTerminalInput(cacheKey, workspaceId, sessionId, data);
+  }
+
+  function broadcastWriteBytes(bytes: number[]) {
+    const targetSessionIds = getBroadcastTargetSessionIds();
+    if (targetSessionIds) {
+      for (const id of targetSessionIds) {
+        enqueueTerminalInputBytes(terminalCacheKey(workspaceId, id), workspaceId, id, bytes);
+      }
+      return;
+    }
+    enqueueTerminalInputBytes(cacheKey, workspaceId, sessionId, bytes);
+  }
+
+  terminal.attachCustomKeyEventHandler((event) => {
+    if (event.type !== "keydown") return true;
+    if (isTerminalCopyShortcut(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const selection = terminal.getSelection();
+      if (selection) {
+        void copyTextToClipboard(selection).catch((error) => {
+          logTerminalWarning("terminal-copy-shortcut-failed", {
+            cacheKey,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
+      return false;
+    }
+    if (isTerminalPasteShortcut(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      void readTextFromClipboard()
+        .then((text) => {
+          if (text) {
+            terminal.paste(text);
+          }
+        })
+        .catch((error) => {
+          logTerminalWarning("terminal-paste-shortcut-failed", {
+            cacheKey,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return false;
+    }
+    // Block broadcast shortcut from reaching the shell
+    if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i") return false;
+    if (event.metaKey && !event.ctrlKey && event.key === "Backspace") {
+      broadcastWrite("\x15");
+      return false;
+    }
+    if (event.ctrlKey && !event.metaKey && event.key === "Backspace") {
+      broadcastWrite("\x17");
+      return false;
+    }
+    const k = event.key.toLowerCase();
+    if (event.metaKey && (k === "d" || k === "t")) return false;
+    if (event.ctrlKey && k === "t") return false;
+    // Cmd+Arrow (macOS) / Home/End (Linux/Windows) → line navigation
+    const isMac = navigator.platform.startsWith("Mac");
+    if (isMac && event.metaKey) {
+      switch (event.key) {
+        case "ArrowLeft":
+          // Beginning of line (Ctrl+A)
+          broadcastWrite("\x01");
+          return false;
+        case "ArrowRight":
+          // End of line (Ctrl+E)
+          broadcastWrite("\x05");
+          return false;
+        case "ArrowUp":
+          // Scroll to top (Ctrl+Home)
+          broadcastWrite("\x1b[1;5H");
+          return false;
+        case "ArrowDown":
+          // Scroll to bottom (Ctrl+End)
+          broadcastWrite("\x1b[1;5F");
+          return false;
+      }
+    }
+    // Home/End keys work natively on Linux/Windows — no extra mapping needed
+    return true;
+  });
+  const writeDisposable = terminal.onData((data) => {
+    if (isTerminalResponse(data)) {
+      // Terminal protocol responses go only to the originating session
+      enqueueTerminalProtocolInput(cacheKey, workspaceId, sessionId, data);
+      return;
+    }
+    broadcastWrite(data);
+  });
+
+  const binaryDisposable = terminal.onBinary((data) => {
+    const bytes = Array.from(data, (c) => c.charCodeAt(0));
+    broadcastWriteBytes(bytes);
+  });
+
+  const resizeDisposable = terminal.onResize(({ cols, rows }) => {
+    const current = cachedTerminals.get(cacheKey);
+    if (!current) {
+      return;
+    }
+    sendResizeIfNeeded(workspaceId, sessionId, current, cols, rows);
+  });
+
+  let disposed = false;
+  const entry: SessionTerminal = {
+    terminal,
+    fitAddon,
+    stdinQueue: [],
+    stdinQueueChars: 0,
+    stdinFlushInFlight: false,
+    outputQueue: [],
+    outputQueueChars: 0,
+    lastAppliedSeq: 0,
+    resumeInFlight: false,
+    resumeRetryAttempts: 0,
+    rendererMode: "canvas",
+    flushInProgress: false,
+    flushNonce: 0,
+    flushStallCount: 0,
+    flushTimeoutWindowCount: 0,
+    isAttached: true,
+    evictionTimer: undefined,
+    lastAccessedAt: Date.now(),
+    detachedAt: undefined,
+    needsResumeOnAttach: true,
+    requiresColdReattach: false,
+    debugSample: {
+      chunks: 0,
+      chars: 0,
+      lastLogAt: Date.now(),
+    },
+    rendererDiagnostics,
+    imageAddonCleanup: undefined,
+    webglCleanup: undefined,
+    dispose: () => {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
+      clearSessionTimers(entry);
+      entry.imageAddonCleanup?.();
+      entry.imageAddonCleanup = undefined;
+      entry.webglCleanup?.();
+      entry.webglCleanup = undefined;
+      writeDisposable.dispose();
+      binaryDisposable.dispose();
+      resizeDisposable.dispose();
+      terminal.dispose();
+    },
+  };
+  cachedTerminals.set(cacheKey, entry);
+  if (acceleratedTerminalRenderingPreferenceLoaded) {
+    applyAcceleratedRenderingPreference(
+      cacheKey,
+      entry,
+      acceleratedTerminalRenderingEnabled,
+    );
+  }
+  if (SHOW_TERMINAL_DIAGNOSTICS_UI) {
+    void refreshBackendRendererDiagnostics(workspaceId, sessionId);
+  }
+
+  // Synchronous fit — ensures PTY gets correct size before first shell output
+  fitAddon.fit();
+  sendResizeIfNeeded(workspaceId, sessionId, entry, terminal.cols, terminal.rows);
+
+  void resumeSessionOutput(workspaceId, sessionId, "attach");
+  scheduleTerminalFit(workspaceId, sessionId, 0);
+  return entry;
 }
 
 // ── Split pane components ───────────────────────────────────────────
@@ -1808,16 +2172,10 @@ function SplitPaneView({
           ref={(el) => {
             if (!el) {
               containerRefs.current.delete(node.sessionId);
-              const cached = cachedTerminals.get(
-                terminalCacheKey(workspaceId, node.sessionId)
-              );
+              const cacheKey = terminalCacheKey(workspaceId, node.sessionId);
+              const cached = cachedTerminals.get(cacheKey);
               if (cached) {
-                cached.isAttached = false;
-                capSessionOutputQueue(terminalCacheKey(workspaceId, node.sessionId), cached);
-                if (cached.fitTimer !== undefined) {
-                  window.clearTimeout(cached.fitTimer);
-                  cached.fitTimer = undefined;
-                }
+                markCachedTerminalDetached(cacheKey, cached);
               }
               return;
             }
@@ -2353,6 +2711,9 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
   const syncCursorIndicator = useCallback(() => {
     forEachWorkspaceCachedTerminal(workspaceId, (_sessionId, session) => {
+      if (!session.isAttached) {
+        return;
+      }
       session.terminal.options.cursorInactiveStyle = "none";
       session.terminal.options.cursorBlink = true;
     });
@@ -2451,6 +2812,9 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   useEffect(() => {
     const handleWindowBlur = () => {
       forEachWorkspaceCachedTerminal(workspaceId, (_sessionId, session) => {
+        if (!session.isAttached) {
+          return;
+        }
         session.terminal.blur();
         setTerminalFocusState(session, false);
         refreshTerminalCursor(session);
@@ -2762,7 +3126,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       return;
     }
     forEachWorkspaceCachedTerminal(workspaceId, (currentSessionId, session) => {
-      if (currentSessionId !== sessionId) {
+      if (currentSessionId !== sessionId && session.isAttached) {
         session.terminal.blur();
         setTerminalFocusState(session, false);
         refreshTerminalCursor(session);
@@ -2814,7 +3178,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     const broadcastIds = broadcastGroup ? new Set(collectSessionIds(broadcastGroup.root)) : null;
 
     forEachWorkspaceCachedTerminal(workspaceId, (sid, session) => {
-      if (broadcastIds?.has(sid)) {
+      if (broadcastIds?.has(sid) && session.isAttached) {
         lockTerminalFocus(session);
       } else {
         unlockTerminalFocus(session);
@@ -2831,7 +3195,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     }
 
     forEachWorkspaceCachedTerminal(workspaceId, (currentSessionId, session) => {
-      if (currentSessionId === sessionId) return;
+      if (currentSessionId === sessionId || !session.isAttached) return;
       setTerminalFocusState(session, false);
       refreshTerminalCursor(session);
     });
@@ -2860,7 +3224,13 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
     // Check module-level cache first — re-attach if the instance already exists
     const cached = cachedTerminals.get(cacheKey);
-    if (cached) {
+    if (cached?.requiresColdReattach) {
+      destroyCachedTerminal(workspaceId, sessionId);
+    } else if (cached) {
+      if (cached.evictionTimer !== undefined) {
+        window.clearTimeout(cached.evictionTimer);
+        cached.evictionTimer = undefined;
+      }
       cached.terminal.options.cursorInactiveStyle = "none";
       cached.terminal.options.cursorBlink = true;
       const el = cached.terminal.element;
@@ -2872,242 +3242,21 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         container.appendChild(el);
       }
       cached.isAttached = true;
+      cached.detachedAt = undefined;
+      touchCachedTerminal(cached);
       scheduleTerminalFit(workspaceId, sessionId, 0);
-      void resumeSessionOutput(workspaceId, sessionId, "attach");
+      if (cached.needsResumeOnAttach) {
+        void resumeSessionOutput(workspaceId, sessionId, "attach");
+      } else if (cached.outputQueue.length > 0) {
+        scheduleOutputFlush(cacheKey, cached, 0);
+      }
       if (SHOW_TERMINAL_DIAGNOSTICS_UI) {
         void refreshBackendRendererDiagnostics(workspaceId, sessionId);
       }
       return;
     }
 
-    // No cached instance — create a fresh terminal
-    const terminal = new Terminal({
-      allowProposedApi: true,
-      convertEol: false,
-      cursorBlink: true,
-      cursorInactiveStyle: "none",
-      fontFamily: '"JetBrains Mono", monospace',
-      fontSize: 12,
-      lineHeight: 1.3,
-      scrollback: 5000,
-      theme: {
-        background: "#050505",
-        foreground: "#f5f5f5",
-        selectionBackground: "rgba(255, 107, 107, 0.28)",
-        cursor: "#FF6B6B",
-      },
-    });
-
-    const fitAddon = new FitAddon();
-    terminal.loadAddon(fitAddon);
-
-    const unicode11 = new Unicode11Addon();
-    terminal.loadAddon(unicode11);
-    terminal.unicode.activeVersion = "11";
-
-    const rendererDiagnostics = createRendererDiagnostics();
-
-    terminal.open(container);
-
-    // xterm.js fires onData for BOTH user keystrokes AND auto-generated
-    // terminal protocol responses (DA1/DA2 device attributes, cursor position
-    // reports, OSC color query responses, focus in/out events). These responses
-    // must NOT be broadcast to other terminals — they would appear as garbage.
-    const RE_TERMINAL_RESPONSE = /^\x1b(\[\?[\d;]*c|\[>[\d;]*c|\[\d+;\d+R|\]\d+;|\[I\b|\[O\b)/;
-    function isTerminalResponse(data: string): boolean {
-      return data.length >= 3 && data.charCodeAt(0) === 0x1b && RE_TERMINAL_RESPONSE.test(data);
-    }
-
-    // Broadcast-aware write: only fan out when the broadcasting group is
-    // currently active. This prevents cross-tab input leakage.
-    function getBroadcastTargetSessionIds(): string[] | null {
-      const ws = useTerminalStore.getState().workspaces[workspaceId];
-      const bgId = ws?.broadcastGroupId;
-      if (!bgId || ws.activeGroupId !== bgId) {
-        return null;
-      }
-      const group = ws.groups.find((g) => g.id === bgId);
-      if (!group) {
-        return null;
-      }
-      return collectSessionIds(group.root);
-    }
-
-    function broadcastWrite(data: string) {
-      const targetSessionIds = getBroadcastTargetSessionIds();
-      if (targetSessionIds) {
-        for (const id of targetSessionIds) {
-          enqueueTerminalInput(terminalCacheKey(workspaceId, id), workspaceId, id, data);
-        }
-        return;
-      }
-      enqueueTerminalInput(cacheKey, workspaceId, sessionId, data);
-    }
-
-    function broadcastWriteBytes(bytes: number[]) {
-      const targetSessionIds = getBroadcastTargetSessionIds();
-      if (targetSessionIds) {
-        for (const id of targetSessionIds) {
-          enqueueTerminalInputBytes(terminalCacheKey(workspaceId, id), workspaceId, id, bytes);
-        }
-        return;
-      }
-      enqueueTerminalInputBytes(cacheKey, workspaceId, sessionId, bytes);
-    }
-
-    terminal.attachCustomKeyEventHandler((event) => {
-      if (event.type !== "keydown") return true;
-      if (isTerminalCopyShortcut(event)) {
-        event.preventDefault();
-        event.stopPropagation();
-        const selection = terminal.getSelection();
-        if (selection) {
-          void copyTextToClipboard(selection).catch((error) => {
-            logTerminalWarning("terminal-copy-shortcut-failed", {
-              cacheKey,
-              reason: error instanceof Error ? error.message : String(error),
-            });
-          });
-        }
-        return false;
-      }
-      if (isTerminalPasteShortcut(event)) {
-        event.preventDefault();
-        event.stopPropagation();
-        void readTextFromClipboard()
-          .then((text) => {
-            if (text) {
-              terminal.paste(text);
-            }
-          })
-          .catch((error) => {
-            logTerminalWarning("terminal-paste-shortcut-failed", {
-              cacheKey,
-              reason: error instanceof Error ? error.message : String(error),
-            });
-          });
-        return false;
-      }
-      // Block broadcast shortcut from reaching the shell
-      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i") return false;
-      if (event.metaKey && !event.ctrlKey && event.key === "Backspace") {
-        broadcastWrite("\x15");
-        return false;
-      }
-      if (event.ctrlKey && !event.metaKey && event.key === "Backspace") {
-        broadcastWrite("\x17");
-        return false;
-      }
-      const k = event.key.toLowerCase();
-      if (event.metaKey && (k === "d" || k === "t")) return false;
-      if (event.ctrlKey && k === "t") return false;
-      // Cmd+Arrow (macOS) / Home/End (Linux/Windows) → line navigation
-      const isMac = navigator.platform.startsWith("Mac");
-      if (isMac && event.metaKey) {
-        switch (event.key) {
-          case "ArrowLeft":
-            // Beginning of line (Ctrl+A)
-            broadcastWrite("\x01");
-            return false;
-          case "ArrowRight":
-            // End of line (Ctrl+E)
-            broadcastWrite("\x05");
-            return false;
-          case "ArrowUp":
-            // Scroll to top (Ctrl+Home)
-            broadcastWrite("\x1b[1;5H");
-            return false;
-          case "ArrowDown":
-            // Scroll to bottom (Ctrl+End)
-            broadcastWrite("\x1b[1;5F");
-            return false;
-        }
-      }
-      // Home/End keys work natively on Linux/Windows — no extra mapping needed
-      return true;
-    });
-    const writeDisposable = terminal.onData((data) => {
-      if (isTerminalResponse(data)) {
-        // Terminal protocol responses go only to the originating session
-        enqueueTerminalProtocolInput(cacheKey, workspaceId, sessionId, data);
-        return;
-      }
-      broadcastWrite(data);
-    });
-
-    const binaryDisposable = terminal.onBinary((data) => {
-      const bytes = Array.from(data, (c) => c.charCodeAt(0));
-      broadcastWriteBytes(bytes);
-    });
-
-    const resizeDisposable = terminal.onResize(({ cols, rows }) => {
-      const current = cachedTerminals.get(cacheKey);
-      if (!current) {
-        return;
-      }
-      sendResizeIfNeeded(workspaceId, sessionId, current, cols, rows);
-    });
-
-    let disposed = false;
-    const entry: SessionTerminal = {
-      terminal,
-      fitAddon,
-      stdinQueue: [],
-      stdinQueueChars: 0,
-      stdinFlushInFlight: false,
-      outputQueue: [],
-      outputQueueChars: 0,
-      lastAppliedSeq: 0,
-      resumeInFlight: false,
-      resumeRetryAttempts: 0,
-      rendererMode: "canvas",
-      flushInProgress: false,
-      flushNonce: 0,
-      flushStallCount: 0,
-      flushTimeoutWindowCount: 0,
-      isAttached: true,
-      debugSample: {
-        chunks: 0,
-        chars: 0,
-        lastLogAt: Date.now(),
-      },
-      rendererDiagnostics,
-      imageAddonCleanup: undefined,
-      webglCleanup: undefined,
-      dispose: () => {
-        if (disposed) {
-          return;
-        }
-        disposed = true;
-        clearSessionTimers(entry);
-        entry.imageAddonCleanup?.();
-        entry.imageAddonCleanup = undefined;
-        entry.webglCleanup?.();
-        entry.webglCleanup = undefined;
-        writeDisposable.dispose();
-        binaryDisposable.dispose();
-        resizeDisposable.dispose();
-        terminal.dispose();
-      },
-    };
-    cachedTerminals.set(cacheKey, entry);
-    if (acceleratedTerminalRenderingPreferenceLoaded) {
-      applyAcceleratedRenderingPreference(
-        cacheKey,
-        entry,
-        acceleratedTerminalRenderingEnabled,
-      );
-    }
-    if (SHOW_TERMINAL_DIAGNOSTICS_UI) {
-      void refreshBackendRendererDiagnostics(workspaceId, sessionId);
-    }
-
-    // Synchronous fit — ensures PTY gets correct size before first shell output
-    fitAddon.fit();
-    sendResizeIfNeeded(workspaceId, sessionId, entry, terminal.cols, terminal.rows);
-
-    void resumeSessionOutput(workspaceId, sessionId, "attach");
-    scheduleTerminalFit(workspaceId, sessionId, 0);
+    createCachedTerminal(workspaceId, sessionId, container);
   }, [workspaceId]);
 
   // Fit all sessions in the active group — reads store at call time to stay

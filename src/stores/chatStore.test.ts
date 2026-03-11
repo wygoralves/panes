@@ -352,7 +352,7 @@ describe("chatStore send", () => {
     await useChatStore.getState().setActiveThread("thread-1");
 
     expect(mockIpc.syncThreadFromEngine).toHaveBeenCalledWith("thread-1");
-    expect(mockIpc.getThreadMessagesWindow).toHaveBeenCalledWith("thread-1", null, 120);
+    expect(mockIpc.getThreadMessagesWindow).toHaveBeenCalledWith("thread-1", null, 80);
   });
 
   it("normalizes deny approvals to decline in optimistic state", async () => {

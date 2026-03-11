@@ -21,6 +21,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useShallow } from "zustand/react/shallow";
 import { useChatStore } from "../../stores/chatStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -1082,7 +1083,23 @@ export function ChatPanel() {
     error,
     setActiveThread: bindChatThread,
     threadId,
-  } = useChatStore();
+  } = useChatStore(
+    useShallow((state) => ({
+      messages: state.messages,
+      hasOlderMessages: state.hasOlderMessages,
+      loadingOlderMessages: state.loadingOlderMessages,
+      loadOlderMessages: state.loadOlderMessages,
+      send: state.send,
+      cancel: state.cancel,
+      respondApproval: state.respondApproval,
+      hydrateActionOutput: state.hydrateActionOutput,
+      streaming: state.streaming,
+      usageLimits: state.usageLimits,
+      error: state.error,
+      setActiveThread: state.setActiveThread,
+      threadId: state.threadId,
+    })),
+  );
   const messageFocusTarget = useUiStore((s) => s.messageFocusTarget);
   const clearMessageFocusTarget = useUiStore((s) => s.clearMessageFocusTarget);
   const focusMode = useUiStore((s) => s.focusMode);
@@ -1098,24 +1115,43 @@ export function ChatPanel() {
   );
   const {
     repos,
-    activeRepoId,
     activeWorkspaceId,
-    workspaces,
+    activeWorkspace,
+    activeRepo,
     setRepoTrustLevel,
-    setAllReposTrustLevel
-  } = useWorkspaceStore();
+    setAllReposTrustLevel,
+  } = useWorkspaceStore(
+    useShallow((state) => ({
+      repos: state.repos,
+      activeWorkspaceId: state.activeWorkspaceId,
+      activeWorkspace:
+        state.workspaces.find((workspace) => workspace.id === state.activeWorkspaceId) ?? null,
+      activeRepo: state.repos.find((repo) => repo.id === state.activeRepoId) ?? null,
+      setRepoTrustLevel: state.setRepoTrustLevel,
+      setAllReposTrustLevel: state.setAllReposTrustLevel,
+    })),
+  );
   const {
-    ensureThreadForScope,
+    activeThread,
     createThread,
     refreshThreads,
-    threads,
-    activeThreadId,
     setActiveThread: setActiveThreadInStore,
     applyThreadUpdateLocal,
     setThreadReasoningEffortLocal,
     setThreadLastModelLocal,
     renameThread,
-  } = useThreadStore();
+  } = useThreadStore(
+    useShallow((state) => ({
+      activeThread: state.threads.find((thread) => thread.id === state.activeThreadId) ?? null,
+      createThread: state.createThread,
+      refreshThreads: state.refreshThreads,
+      setActiveThread: state.setActiveThread,
+      applyThreadUpdateLocal: state.applyThreadUpdateLocal,
+      setThreadReasoningEffortLocal: state.setThreadReasoningEffortLocal,
+      setThreadLastModelLocal: state.setThreadLastModelLocal,
+      renameThread: state.renameThread,
+    })),
+  );
   const gitStatus = useGitStore((s) => s.status);
   const terminalWorkspaceState = useTerminalStore((s) =>
     activeWorkspaceId ? s.workspaces[activeWorkspaceId] : undefined,
@@ -1154,20 +1190,6 @@ export function ChatPanel() {
     effort: string | null;
   } | null>(null);
 
-  const activeWorkspace = useMemo(
-    () => workspaces.find((w) => w.id === activeWorkspaceId) ?? null,
-    [workspaces, activeWorkspaceId],
-  );
-
-  const activeRepo = useMemo(
-    () => repos.find((r) => r.id === activeRepoId) ?? null,
-    [repos, activeRepoId],
-  );
-
-  const activeThread = useMemo(
-    () => threads.find((t) => t.id === activeThreadId) ?? null,
-    [threads, activeThreadId],
-  );
   const trustLevelOptions = useMemo(() => getTrustLevelOptions(t), [t]);
   const codexThreadApprovalPolicyOptions = useMemo(
     () => getCodexThreadApprovalPolicyOptions(t),
@@ -2027,7 +2049,6 @@ export function ChatPanel() {
     }
 
     const currentThread =
-      threads.find((thread) => thread.id === targetThreadId) ??
       useThreadStore.getState().threads.find((thread) => thread.id === targetThreadId) ??
       activeThread;
 
@@ -2342,17 +2363,6 @@ export function ChatPanel() {
     [hydrateActionOutput],
   );
 
-  const assistantIdentityByMessageId = useMemo(() => {
-    const identityByMessageId = new Map<string, { label: string; engineId: string }>();
-    for (const message of messages) {
-      if (message.role !== "assistant") {
-        continue;
-      }
-      identityByMessageId.set(message.id, renderAssistantIdentity(message));
-    }
-    return identityByMessageId;
-  }, [messages, renderAssistantIdentity]);
-
   const virtualizedLayout = useMemo(() => {
     if (!virtualizationEnabled || messages.length === 0) {
       return null;
@@ -2428,6 +2438,25 @@ export function ChatPanel() {
     viewportHeight,
     viewportScrollTop,
   ]);
+
+  const visibleMessages = useMemo(() => {
+    if (!virtualizationEnabled || !virtualWindow) {
+      return messages;
+    }
+
+    return messages.slice(virtualWindow.startIndex, virtualWindow.endIndexExclusive);
+  }, [messages, virtualWindow, virtualizationEnabled]);
+
+  const assistantIdentityByMessageId = useMemo(() => {
+    const identityByMessageId = new Map<string, { label: string; engineId: string }>();
+    for (const message of visibleMessages) {
+      if (message.role !== "assistant") {
+        continue;
+      }
+      identityByMessageId.set(message.id, renderAssistantIdentity(message));
+    }
+    return identityByMessageId;
+  }, [renderAssistantIdentity, visibleMessages]);
 
   const workspaceName = activeWorkspace?.name || activeWorkspace?.rootPath.split("/").pop() || "";
 
@@ -2911,9 +2940,7 @@ export function ChatPanel() {
             )}
 
             <div style={{ display: "flex", flexDirection: "column", gap: MESSAGE_ROW_GAP }}>
-              {messages
-                .slice(virtualWindow.startIndex, virtualWindow.endIndexExclusive)
-                .map((message, relativeIndex) => {
+              {visibleMessages.map((message, relativeIndex) => {
                   const absoluteIndex = virtualWindow.startIndex + relativeIndex;
                   const assistantIdentity = assistantIdentityByMessageId.get(message.id);
                   return (
@@ -2942,7 +2969,7 @@ export function ChatPanel() {
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: MESSAGE_ROW_GAP }}>
-            {messages.map((message, index) => {
+            {visibleMessages.map((message, index) => {
               const assistantIdentity = assistantIdentityByMessageId.get(message.id);
               return (
                 <MessageRow

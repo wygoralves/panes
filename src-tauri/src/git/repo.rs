@@ -51,12 +51,14 @@ impl FileTreeCache {
         }
     }
 
+    fn prune_expired_locked(map: &mut HashMap<String, FileTreeCacheEntry>) {
+        map.retain(|_, entry| entry.populated_at.elapsed() < FILE_TREE_CACHE_TTL);
+    }
+
     fn get(&self, repo_path: &str) -> Option<(Arc<Vec<FileTreeEntryDto>>, bool)> {
-        let map = self.inner.lock().unwrap();
+        let mut map = self.inner.lock().unwrap();
+        Self::prune_expired_locked(&mut map);
         let entry = map.get(repo_path)?;
-        if entry.populated_at.elapsed() >= FILE_TREE_CACHE_TTL {
-            return None;
-        }
         Some((Arc::clone(&entry.entries), entry.truncated))
     }
 
@@ -68,6 +70,7 @@ impl FileTreeCache {
     ) -> Arc<Vec<FileTreeEntryDto>> {
         let arc = Arc::new(entries);
         let mut map = self.inner.lock().unwrap();
+        Self::prune_expired_locked(&mut map);
         map.insert(
             repo_path.to_string(),
             FileTreeCacheEntry {

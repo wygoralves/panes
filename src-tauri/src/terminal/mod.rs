@@ -27,7 +27,7 @@ use crate::runtime_env;
 
 const TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS: u64 = 16;
 const TERMINAL_OUTPUT_MAX_EMIT_BYTES: usize = 256 * 1024;
-const TERMINAL_OUTPUT_BUFFER_MAX_BYTES: usize = 8 * 1024 * 1024;
+const TERMINAL_OUTPUT_BUFFER_MAX_BYTES: usize = 4 * 1024 * 1024;
 const TERMINAL_REPLAY_MAX_CHUNKS: usize = 4096;
 const TERMINAL_REPLAY_MAX_BYTES: usize = 8 * 1024 * 1024;
 
@@ -88,8 +88,14 @@ struct SpawnedSession {
     reader: Box<dyn Read + Send>,
 }
 
+#[derive(Default)]
+struct SharedTerminalOutputState {
+    chunks: VecDeque<String>,
+    total_bytes: usize,
+}
+
 struct SharedTerminalOutput {
-    buffer: Mutex<String>,
+    buffer: Mutex<SharedTerminalOutputState>,
     ready: Condvar,
     done: AtomicBool,
 }
@@ -97,10 +103,45 @@ struct SharedTerminalOutput {
 impl SharedTerminalOutput {
     fn new() -> Self {
         Self {
-            buffer: Mutex::new(String::new()),
+            buffer: Mutex::new(SharedTerminalOutputState::default()),
             ready: Condvar::new(),
             done: AtomicBool::new(false),
         }
+    }
+
+    fn push_chunk(&self, mut chunk: String) -> (usize, usize) {
+        if chunk.is_empty() {
+            let state = self
+                .buffer
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            return (0, state.total_bytes);
+        }
+
+        if chunk.len() > TERMINAL_OUTPUT_BUFFER_MAX_BYTES {
+            trim_string_to_tail(&mut chunk, TERMINAL_OUTPUT_BUFFER_MAX_BYTES);
+        }
+
+        let mut state = self
+            .buffer
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.total_bytes += chunk.len();
+        state.chunks.push_back(chunk);
+
+        let mut trimmed = 0;
+        while state.total_bytes > TERMINAL_OUTPUT_BUFFER_MAX_BYTES {
+            let Some(removed) = state.chunks.pop_front() else {
+                break;
+            };
+            state.total_bytes = state.total_bytes.saturating_sub(removed.len());
+            trimmed += removed.len();
+        }
+
+        let total_bytes = state.total_bytes;
+        drop(state);
+        self.ready.notify_one();
+        (trimmed, total_bytes)
     }
 }
 
@@ -121,6 +162,47 @@ fn take_string_head(value: &mut String, max_bytes: usize) -> String {
     let out = std::mem::take(value);
     *value = rest;
     out
+}
+
+fn take_output_chunks_head(state: &mut SharedTerminalOutputState, max_bytes: usize) -> String {
+    if state.total_bytes == 0 {
+        return String::new();
+    }
+
+    let mut payload = String::new();
+    let mut payload_bytes = 0;
+    while let Some(front) = state.chunks.front() {
+        let front_len = front.len();
+        if payload_bytes > 0 && payload_bytes + front_len > max_bytes {
+            break;
+        }
+
+        if payload_bytes == 0 && front_len > max_bytes {
+            let Some(mut chunk) = state.chunks.pop_front() else {
+                break;
+            };
+            let head = take_string_head(&mut chunk, max_bytes);
+            let head_len = head.len();
+            state.total_bytes = state.total_bytes.saturating_sub(head_len);
+            payload.push_str(&head);
+            if !chunk.is_empty() {
+                state.chunks.push_front(chunk);
+            }
+            break;
+        }
+
+        let Some(chunk) = state.chunks.pop_front() else {
+            break;
+        };
+        state.total_bytes = state.total_bytes.saturating_sub(front_len);
+        payload_bytes += front_len;
+        payload.push_str(&chunk);
+        if payload_bytes >= max_bytes {
+            break;
+        }
+    }
+
+    payload
 }
 
 fn trim_string_to_tail(value: &mut String, max_bytes: usize) -> usize {
@@ -448,7 +530,7 @@ impl TerminalManager {
                             break;
                         }
 
-                        if guard.is_empty() {
+                        if guard.total_bytes == 0 {
                             guard = shared_for_emitter
                                 .ready
                                 .wait(guard)
@@ -470,7 +552,7 @@ impl TerminalManager {
                     }
 
                     let done = shared_for_emitter.done.load(Ordering::Relaxed);
-                    if guard.is_empty() {
+                    if guard.total_bytes == 0 {
                         if done {
                             break;
                         }
@@ -478,11 +560,11 @@ impl TerminalManager {
                         continue;
                     }
 
-                    let payload = take_string_head(&mut guard, TERMINAL_OUTPUT_MAX_EMIT_BYTES);
+                    let payload = take_output_chunks_head(&mut guard, TERMINAL_OUTPUT_MAX_EMIT_BYTES);
                     session_handle_for_emitter
                         .io_counters
                         .output_buffer_bytes
-                        .store(guard.len() as u64, Ordering::Relaxed);
+                        .store(guard.total_bytes as u64, Ordering::Relaxed);
                     drop(guard);
                     if payload.is_empty() {
                         continue;
@@ -568,13 +650,8 @@ impl TerminalManager {
                         }
 
                         if !pending.is_empty() {
-                            let mut buffer = shared
-                                .buffer
-                                .lock()
-                                .unwrap_or_else(|poison| poison.into_inner());
-                            buffer.push_str(&pending);
-                            let trimmed =
-                                trim_string_to_tail(&mut buffer, TERMINAL_OUTPUT_BUFFER_MAX_BYTES);
+                            let (trimmed, total_bytes) =
+                                shared.push_chunk(std::mem::take(&mut pending));
                             if trimmed > 0 {
                                 session
                                     .io_counters
@@ -585,18 +662,14 @@ impl TerminalManager {
                                     .output_buffer_trimmed_bytes
                                     .fetch_add(trimmed as u64, Ordering::Relaxed);
                             }
-                            let len = buffer.len() as u64;
                             session
                                 .io_counters
                                 .output_buffer_bytes
-                                .store(len, Ordering::Relaxed);
+                                .store(total_bytes as u64, Ordering::Relaxed);
                             session
                                 .io_counters
                                 .output_buffer_peak_bytes
-                                .fetch_max(len, Ordering::Relaxed);
-                            pending.clear();
-                            drop(buffer);
-                            shared.ready.notify_one();
+                                .fetch_max(total_bytes as u64, Ordering::Relaxed);
                         }
                     }
                     Err(error) => {
@@ -609,12 +682,7 @@ impl TerminalManager {
             }
 
             if !pending.is_empty() {
-                let mut buffer = shared
-                    .buffer
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner());
-                buffer.push_str(&pending);
-                let trimmed = trim_string_to_tail(&mut buffer, TERMINAL_OUTPUT_BUFFER_MAX_BYTES);
+                let (trimmed, total_bytes) = shared.push_chunk(std::mem::take(&mut pending));
                 if trimmed > 0 {
                     session
                         .io_counters
@@ -625,28 +693,19 @@ impl TerminalManager {
                         .output_buffer_trimmed_bytes
                         .fetch_add(trimmed as u64, Ordering::Relaxed);
                 }
-                let len = buffer.len() as u64;
                 session
                     .io_counters
                     .output_buffer_bytes
-                    .store(len, Ordering::Relaxed);
+                    .store(total_bytes as u64, Ordering::Relaxed);
                 session
                     .io_counters
                     .output_buffer_peak_bytes
-                    .fetch_max(len, Ordering::Relaxed);
-                drop(buffer);
-                shared.ready.notify_one();
+                    .fetch_max(total_bytes as u64, Ordering::Relaxed);
             }
             if !decode_buffer.is_empty() {
                 let trailing = String::from_utf8_lossy(&decode_buffer).to_string();
                 if !trailing.is_empty() {
-                    let mut buffer = shared
-                        .buffer
-                        .lock()
-                        .unwrap_or_else(|poison| poison.into_inner());
-                    buffer.push_str(&trailing);
-                    let trimmed =
-                        trim_string_to_tail(&mut buffer, TERMINAL_OUTPUT_BUFFER_MAX_BYTES);
+                    let (trimmed, total_bytes) = shared.push_chunk(trailing);
                     if trimmed > 0 {
                         session
                             .io_counters
@@ -657,17 +716,14 @@ impl TerminalManager {
                             .output_buffer_trimmed_bytes
                             .fetch_add(trimmed as u64, Ordering::Relaxed);
                     }
-                    let len = buffer.len() as u64;
                     session
                         .io_counters
                         .output_buffer_bytes
-                        .store(len, Ordering::Relaxed);
+                        .store(total_bytes as u64, Ordering::Relaxed);
                     session
                         .io_counters
                         .output_buffer_peak_bytes
-                        .fetch_max(len, Ordering::Relaxed);
-                    drop(buffer);
-                    shared.ready.notify_one();
+                        .fetch_max(total_bytes as u64, Ordering::Relaxed);
                 }
             }
 

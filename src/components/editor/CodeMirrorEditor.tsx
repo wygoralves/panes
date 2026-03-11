@@ -235,29 +235,47 @@ function getLanguageExtension(filePath: string): Extension | null {
 // Same pattern as TerminalPanel's session cache.
 
 const MAX_CACHED_EDITORS = 20;
+const MAX_CACHED_EDITOR_BYTES = 10 * 1024 * 1024;
 
 interface CachedEditor {
   view: EditorView;
   filePath: string;
   onChangeRef: { current: (content: string) => void };
   extraExtensionsCompartment: Compartment;
+  readOnlyCompartment: Compartment;
   lastAccess: number;
+  docBytes: number;
 }
 
 const editorCache = new Map<string, CachedEditor>();
 
+function estimateDocumentBytes(content: string): number {
+  return content.length * 2;
+}
+
 function evictLruEditors(excludeTabId: string): void {
-  if (editorCache.size <= MAX_CACHED_EDITORS) return;
+  let totalBytes = 0;
+  for (const cached of editorCache.values()) {
+    totalBytes += cached.docBytes;
+  }
+
+  if (editorCache.size <= MAX_CACHED_EDITORS && totalBytes <= MAX_CACHED_EDITOR_BYTES) return;
 
   const entries = [...editorCache.entries()]
     .filter(([id]) => id !== excludeTabId)
+    .filter(([, cached]) => !cached.view.dom.isConnected)
     .sort((a, b) => a[1].lastAccess - b[1].lastAccess);
 
-  const toEvict = editorCache.size - MAX_CACHED_EDITORS;
-  for (let i = 0; i < toEvict && i < entries.length; i++) {
-    const [id, cached] = entries[i];
+  let index = 0;
+  while (
+    index < entries.length &&
+    (editorCache.size > MAX_CACHED_EDITORS || totalBytes > MAX_CACHED_EDITOR_BYTES)
+  ) {
+    const [id, cached] = entries[index];
     cached.view.destroy();
     editorCache.delete(id);
+    totalBytes -= cached.docBytes;
+    index += 1;
   }
 }
 
@@ -335,6 +353,7 @@ export function CodeMirrorEditor({
     const changeRef = onChangeRef;
     const externalRef = isExternalUpdate;
     const extraExtensionsCompartment = new Compartment();
+    const readOnlyCompartment = new Compartment();
 
     const editorExtensions: Extension[] = [
       lineNumbers(),
@@ -371,15 +390,24 @@ export function CodeMirrorEditor({
         },
       ]),
       extraExtensionsCompartment.of(extensions),
+      readOnlyCompartment.of(readOnly ? EditorState.readOnly.of(true) : []),
       EditorView.updateListener.of((update) => {
-        if (update.docChanged && !externalRef.current) {
-          changeRef.current(update.state.doc.toString());
+        if (update.docChanged) {
+          const cached = editorCache.get(tabId);
+          if (cached) {
+            cached.docBytes = update.state.doc.length * 2;
+          }
+          evictLruEditors(tabId);
+
+          if (!externalRef.current) {
+            const nextContent = update.state.doc.toString();
+            changeRef.current(nextContent);
+          }
         }
       }),
     ];
 
     if (lang) editorExtensions.push(lang);
-    if (readOnly) editorExtensions.push(EditorState.readOnly.of(true));
 
     const state = EditorState.create({ doc: content, extensions: editorExtensions });
     const view = new EditorView({ state, parent: containerRef.current });
@@ -389,7 +417,9 @@ export function CodeMirrorEditor({
       filePath,
       onChangeRef: changeRef,
       extraExtensionsCompartment,
+      readOnlyCompartment,
       lastAccess: Date.now(),
+      docBytes: estimateDocumentBytes(content),
     });
     evictLruEditors(tabId);
 
@@ -423,6 +453,16 @@ export function CodeMirrorEditor({
       effects: cached.extraExtensionsCompartment.reconfigure(extensions),
     });
   }, [tabId, extensions]);
+
+  useEffect(() => {
+    const cached = editorCache.get(tabId);
+    if (!cached) return;
+    cached.view.dispatch({
+      effects: cached.readOnlyCompartment.reconfigure(
+        readOnly ? EditorState.readOnly.of(true) : [],
+      ),
+    });
+  }, [tabId, readOnly]);
 
   return (
     <div
