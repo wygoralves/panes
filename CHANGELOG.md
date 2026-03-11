@@ -1,5 +1,16 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.37.0...vnull) (2026-03-11)
+
+### Features
+
+* optimize terminal buffer, chat rendering, and editor cache ([b522c59](https://github.com/wygoralves/panes/commit/b522c5914b4e530384efb9fe19db587752c56b99))
+
+### Bug Fixes
+
+* fix clickable area of buttons ([0db8016](https://github.com/wygoralves/panes/commit/0db8016bd88a10da669220610de7d8fec4ab0b67))
+* harden keep-awake helper lifecycle ([c6d89b6](https://github.com/wygoralves/panes/commit/c6d89b66274c649041c75283e54584fa510e1f6a))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.36.0...vnull) (2026-03-10)
 
 ### Features
