@@ -560,7 +560,8 @@ impl TerminalManager {
                         continue;
                     }
 
-                    let payload = take_output_chunks_head(&mut guard, TERMINAL_OUTPUT_MAX_EMIT_BYTES);
+                    let payload =
+                        take_output_chunks_head(&mut guard, TERMINAL_OUTPUT_MAX_EMIT_BYTES);
                     session_handle_for_emitter
                         .io_counters
                         .output_buffer_bytes
