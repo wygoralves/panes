@@ -524,100 +524,88 @@ function ReadinessEngineRow({
   const { t } = useTranslation("setup");
   const available = health?.available ?? false;
   const warnings = health?.warnings ?? [];
-  const checks = health?.checks ?? [];
   const fixes = health?.fixes ?? [];
+  const hasNotes = warnings.length > 0 || fixes.length > 0;
+  const [notesOpen, setNotesOpen] = useState(false);
 
   return (
     <div
       style={{
         display: "flex",
-        alignItems: "flex-start",
-        gap: 10,
-        padding: "10px 12px",
-        borderRadius: "var(--radius-sm)",
+        flexDirection: "column",
+        gap: 16,
+        padding: "24px 22px",
+        borderRadius: "var(--radius-md)",
+        border: "1px solid var(--border)",
+        background: "var(--bg-2)",
       }}
     >
-      <div
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: "50%",
-          flexShrink: 0,
-          marginTop: 5,
-          background: available ? "var(--success)" : "var(--warning)",
-          transition: "background 120ms",
-        }}
-      />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)" }}>
+      {/* Top: logo + status */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {getHarnessIcon(engineId, 22)}
+          <span style={{ fontSize: 15, fontWeight: 600, color: "var(--text-1)" }}>
             {engineId === "codex" ? "Codex" : "Claude"}
           </span>
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 3,
-              fontSize: 10,
-              fontWeight: 500,
-              color: available ? "var(--success)" : "var(--warning)",
-            }}
-          >
-            {available ? <CheckCircle2 size={10} /> : <AlertTriangle size={10} />}
-            {available ? t("chatReadiness.status.ready") : t("chatReadiness.status.attention")}
-          </span>
         </div>
-        <p style={{ margin: 0, fontSize: 11, lineHeight: 1.4, color: "var(--text-3)" }}>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            fontSize: 11,
+            fontWeight: 500,
+            color: available ? "var(--success)" : "var(--warning)",
+          }}
+        >
+          {available ? <CheckCircle2 size={11} /> : <AlertTriangle size={11} />}
+          {available ? t("chatReadiness.status.ready") : t("chatReadiness.status.attention")}
+        </span>
+      </div>
+
+      {/* Details */}
+      <div>
+        <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: "var(--text-3)" }}>
           {health?.details ?? t("chatReadiness.status.pending")}
         </p>
         {health?.version ? (
-          <span style={{ fontSize: 10, color: "var(--text-3)", fontFamily: '"JetBrains Mono", monospace' }}>
-            {health.version}
+          <span style={{ fontSize: 10, color: "var(--text-3)", fontFamily: '"JetBrains Mono", monospace', marginTop: 4, display: "inline-block" }}>
+            v{health.version}
           </span>
         ) : null}
-
-        {warnings.length > 0 ? (
-          <div style={{ marginTop: 6 }}>
-            <span style={{ fontSize: 10, fontWeight: 600, color: "var(--warning)" }}>
-              {t("chatReadiness.sections.warnings")}
-            </span>
-            {warnings.map((w) => (
-              <p key={w} style={{ margin: "2px 0 0", fontSize: 11, color: "var(--text-3)" }}>{w}</p>
-            ))}
-          </div>
-        ) : null}
-
-        {checks.length > 0 ? (
-          <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 4 }}>
-            {checks.map((c) => (
-              <code
-                key={c}
-                style={{
-                  fontSize: 10,
-                  color: "var(--text-3)",
-                  padding: "2px 5px",
-                  borderRadius: 3,
-                  background: "var(--bg-2)",
-                  border: "1px solid var(--border)",
-                }}
-              >
-                {c}
-              </code>
-            ))}
-          </div>
-        ) : null}
-
-        {fixes.length > 0 ? (
-          <div style={{ marginTop: 6 }}>
-            <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)" }}>
-              {t("chatReadiness.sections.fixes")}
-            </span>
-            {fixes.map((f) => (
-              <p key={f} style={{ margin: "2px 0 0", fontSize: 11, color: "var(--text-3)" }}>{f}</p>
-            ))}
-          </div>
-        ) : null}
       </div>
+
+      {/* Expandable notes (warnings + fixes) */}
+      {hasNotes ? (
+        <div>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => setNotesOpen((o) => !o)}
+            style={{
+              padding: "4px 0",
+              fontSize: 11,
+              color: "var(--warning)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            <AlertTriangle size={10} />
+            {notesOpen ? t("chatReadiness.sections.hideNotes") : t("chatReadiness.sections.showNotes")}
+          </button>
+          {notesOpen ? (
+            <div style={{ marginTop: 6, display: "grid", gap: 4 }}>
+              {warnings.map((w) => (
+                <p key={w} style={{ margin: 0, fontSize: 11, color: "var(--warning)", lineHeight: 1.4 }}>{w}</p>
+              ))}
+              {fixes.map((f) => (
+                <p key={f} style={{ margin: 0, fontSize: 11, color: "var(--text-3)", lineHeight: 1.4 }}>{f}</p>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -787,6 +775,13 @@ export function OnboardingWizard() {
     if (!open || selectedWorkspaceId || !activeWorkspaceId) return;
     setSelectedWorkspaceId(activeWorkspaceId);
   }, [activeWorkspaceId, open, selectedWorkspaceId, setSelectedWorkspaceId]);
+
+  useEffect(() => {
+    if (!open || step !== "workspace") return;
+    if (selectedWorkspaceId && selectedWorkspaceId === activeWorkspaceId) {
+      setWorkspaceConfirmed(true);
+    }
+  }, [open, step, selectedWorkspaceId, activeWorkspaceId]);
 
   useEffect(() => {
     if (!open || step !== "cliProviders") return;
@@ -1208,7 +1203,7 @@ export function OnboardingWizard() {
                     />
                   ) : null}
 
-                  <div>
+                  <div style={{ display: "grid", gap: 8, gridTemplateColumns: selectedChatEngines.length > 1 ? "1fr 1fr" : "1fr" }}>
                     {selectedChatEngines.map((engineId) => (
                       <ReadinessEngineRow
                         key={engineId}
