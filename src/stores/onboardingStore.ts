@@ -207,6 +207,10 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   setSelectedWorkspaceId: (workspaceId) => set({ selectedWorkspaceId: workspaceId }),
   clearInstallState: () => set({ installLog: [], installing: null, error: null }),
   installDependency: async (dependency, method, label) => {
+    if (get().installing) {
+      return false;
+    }
+
     set({
       installing: describeInstallTarget("dependency", dependency, label),
       error: null,
@@ -234,6 +238,10 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     }
   },
   installHarness: async (harnessId, label) => {
+    if (get().installing) {
+      return false;
+    }
+
     const installId = normalizeOnboardingHarnessInstallId(harnessId);
     set({
       installing: describeInstallTarget("harness", installId, label),

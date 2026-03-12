@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canContinueChatReadiness,
   isChatWorkflowReady,
   isCodexAuthDeferred,
   nextOnboardingStep,
@@ -149,5 +150,27 @@ describe("onboarding helpers", () => {
     expect(isChatWorkflowReady(["codex"], readyDependencies, { codex: runtimeFailure })).toBe(
       false,
     );
+  });
+
+  it("blocks advancing chat readiness while a refresh is pending or has failed", () => {
+    const readyHealth = {
+      claude: {
+        id: "claude",
+        available: true,
+        warnings: [],
+        checks: [],
+        fixes: [],
+      },
+    };
+
+    expect(
+      canContinueChatReadiness(["claude"], readyDependencies, readyHealth, true, null),
+    ).toBe(false);
+    expect(
+      canContinueChatReadiness(["claude"], readyDependencies, readyHealth, false, "request failed"),
+    ).toBe(false);
+    expect(
+      canContinueChatReadiness(["claude"], readyDependencies, readyHealth, false, null),
+    ).toBe(true);
   });
 });

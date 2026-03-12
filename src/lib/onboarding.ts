@@ -113,6 +113,20 @@ export function isChatWorkflowReady(
   );
 }
 
+export function canContinueChatReadiness(
+  selectedEngines: OnboardingChatEngineId[],
+  dependencyReport: DependencyReport | null,
+  engineHealth: Partial<Record<OnboardingChatEngineId, EngineHealth>>,
+  loading: boolean,
+  error: string | null,
+): boolean {
+  if (loading || error) {
+    return false;
+  }
+
+  return isChatWorkflowReady(selectedEngines, dependencyReport, engineHealth);
+}
+
 export function onboardingStepIndex(step: OnboardingStep): number {
   switch (step) {
     case "workflow":

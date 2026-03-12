@@ -153,4 +153,49 @@ describe("onboardingStore", () => {
     expect(useOnboardingStore.getState().installing).toBeNull();
     expect(useOnboardingStore.getState().error).toBe("listen failed");
   });
+
+  it("blocks a second dependency install while one is already running", async () => {
+    let resolveInstall: ((value: { success: boolean; message: string }) => void) | undefined;
+    mockIpc.installDependency.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveInstall = resolve;
+        }),
+    );
+
+    const firstInstall = useOnboardingStore
+      .getState()
+      .installDependency("node", "brew", "Node.js");
+
+    const secondInstall = await useOnboardingStore
+      .getState()
+      .installDependency("codex", "npm_global", "Codex CLI");
+
+    expect(secondInstall).toBe(false);
+    expect(mockIpc.installDependency).toHaveBeenCalledTimes(1);
+
+    resolveInstall?.({ success: true, message: "ok" });
+    await firstInstall;
+  });
+
+  it("blocks a harness install while another install is already running", async () => {
+    let resolveInstall: ((value: { success: boolean; message: string }) => void) | undefined;
+    mockIpc.installHarness.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveInstall = resolve;
+        }),
+    );
+
+    const firstInstall = useOnboardingStore.getState().installHarness("codex", "Codex CLI");
+    const secondInstall = await useOnboardingStore
+      .getState()
+      .installDependency("node", "brew", "Node.js");
+
+    expect(secondInstall).toBe(false);
+    expect(mockIpc.installDependency).not.toHaveBeenCalled();
+
+    resolveInstall?.({ success: true, message: "ok" });
+    await firstInstall;
+  });
 });

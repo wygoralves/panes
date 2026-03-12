@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { copyTextToClipboard } from "../../lib/clipboard";
 import {
+  canContinueChatReadiness,
   isChatWorkflowReady,
   isCodexAuthDeferred,
   nextOnboardingStep,
@@ -417,12 +418,14 @@ function ChatEngineCard({
 }
 
 function ProviderCard({
+  disabled,
   description,
   harness,
   installing,
   onInstall,
   onOpenWebsite,
 }: {
+  disabled: boolean;
   description: string;
   harness: HarnessInfo;
   installing: boolean;
@@ -507,7 +510,7 @@ function ProviderCard({
                 type="button"
                 className="btn-primary"
                 onClick={onInstall}
-                disabled={installing}
+                disabled={disabled}
                 style={{
                   padding: "8px 12px",
                   fontSize: 12,
@@ -553,6 +556,7 @@ function ReadinessDependencyCard({
   actionLabel,
   command,
   description,
+  disabled,
   installing,
   label,
   onInstall,
@@ -560,6 +564,7 @@ function ReadinessDependencyCard({
   actionLabel?: string;
   command?: string | null;
   description: string;
+  disabled: boolean;
   installing: boolean;
   label: string;
   onInstall?: () => void;
@@ -590,7 +595,7 @@ function ReadinessDependencyCard({
             type="button"
             className="btn-primary"
             onClick={onInstall}
-            disabled={installing}
+            disabled={disabled}
             style={{
               padding: "8px 12px",
               fontSize: 12,
@@ -853,10 +858,17 @@ export function OnboardingWizard() {
   const visibleSteps = getVisibleSteps(preferredWorkflow);
   const currentStepIndex = visibleSteps.indexOf(step);
   const stepMetadata = STEP_TITLES[step];
-  const chatReady = isChatWorkflowReady(
+  const chatWorkflowReady = isChatWorkflowReady(
     selectedChatEngines,
     readiness.dependencyReport,
     readiness.engineHealth,
+  );
+  const chatReady = canContinueChatReadiness(
+    selectedChatEngines,
+    readiness.dependencyReport,
+    readiness.engineHealth,
+    readiness.loading,
+    readiness.error,
   );
   const codexAuthDeferred =
     selectedChatEngines.includes("codex") &&
@@ -1008,6 +1020,10 @@ export function OnboardingWizard() {
   }
 
   async function handleInstallHarness(harness: HarnessInfo) {
+    if (installing) {
+      return;
+    }
+
     clearInstallState();
     const ok = await installHarness(harness.id, harness.name);
     if (ok) {
@@ -1016,6 +1032,10 @@ export function OnboardingWizard() {
   }
 
   async function handleInstallNode() {
+    if (installing) {
+      return;
+    }
+
     const report = readiness.dependencyReport;
     if (!report?.node.installMethod) {
       return;
@@ -1029,6 +1049,10 @@ export function OnboardingWizard() {
   }
 
   async function handleInstallCodex() {
+    if (installing) {
+      return;
+    }
+
     const report = readiness.dependencyReport;
     if (!report?.codex.installMethod) {
       return;
@@ -1282,6 +1306,7 @@ export function OnboardingWizard() {
                 {harnesses.map((harness) => (
                   <ProviderCard
                     key={harness.id}
+                    disabled={Boolean(installing)}
                     harness={harness}
                     description={t(`app:harnesses.descriptions.${harness.id}`, {
                       defaultValue: harness.description,
@@ -1413,6 +1438,7 @@ export function OnboardingWizard() {
                     : t("setup:chatReadiness.nodeInstallManual")
                 }
                 command={nodeManualGuidance?.command ?? null}
+                disabled={Boolean(installing)}
                 installing={installing?.kind === "dependency" && installing.id === "node"}
                 onInstall={
                   readiness.dependencyReport.node.canAutoInstall &&
@@ -1434,6 +1460,7 @@ export function OnboardingWizard() {
                     : t("setup:chatReadiness.codexInstallManual")
                 }
                 command="npm install -g @openai/codex"
+                disabled={Boolean(installing)}
                 installing={installing?.kind === "dependency" && installing.id === "codex"}
                 onInstall={
                   readiness.dependencyReport.codex.canAutoInstall &&
@@ -1460,9 +1487,9 @@ export function OnboardingWizard() {
               ))}
             </div>
 
-            {codexAuthDeferred ? (
+            {!readiness.loading && !readiness.error && codexAuthDeferred ? (
               <StatusMessage tone="info">{t("setup:chatReadiness.authDeferred")}</StatusMessage>
-            ) : chatReady ? (
+            ) : !readiness.loading && !readiness.error && chatWorkflowReady ? (
               <StatusMessage tone="info">{t("setup:chatReadiness.readyHint")}</StatusMessage>
             ) : null}
 
