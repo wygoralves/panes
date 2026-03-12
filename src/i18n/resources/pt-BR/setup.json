@@ -1,4 +1,9 @@
 {
+  "greeting": {
+    "title": "Bem-vindo ao Panes",
+    "subtitle": "Seu cockpit local para programação assistida por IA.",
+    "cta": "Começar"
+  },
   "workflow": {
     "title": "Qual é sua forma preferida de trabalhar?",
     "subtitle": "Escolha o fluxo que o Panes deve otimizar primeiro. Você pode reabrir o onboarding depois e mudar isso.",

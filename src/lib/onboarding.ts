@@ -51,6 +51,8 @@ export function nextOnboardingStep(
   workflow: OnboardingWorkflowPreference | null,
 ): OnboardingStep {
   switch (step) {
+    case "greeting":
+      return "workflow";
     case "workflow":
       return workflow === "cli" ? "cliProviders" : "chatEngines";
     case "cliProviders":
@@ -70,6 +72,8 @@ export function previousOnboardingStep(
   workflow: OnboardingWorkflowPreference | null,
 ): OnboardingStep {
   switch (step) {
+    case "workflow":
+      return "greeting";
     case "cliProviders":
     case "chatEngines":
       return "workflow";
@@ -77,9 +81,9 @@ export function previousOnboardingStep(
       return "chatEngines";
     case "workspace":
       return workflow === "cli" ? "cliProviders" : "chatReadiness";
-    case "workflow":
+    case "greeting":
     default:
-      return "workflow";
+      return "greeting";
   }
 }
 
@@ -129,6 +133,8 @@ export function canContinueChatReadiness(
 
 export function onboardingStepIndex(step: OnboardingStep): number {
   switch (step) {
+    case "greeting":
+      return -1;
     case "workflow":
       return 0;
     case "cliProviders":

@@ -734,6 +734,7 @@ export interface TerminalGroup {
 export type OnboardingWorkflowPreference = "cli" | "chat";
 export type OnboardingChatEngineId = "codex" | "claude";
 export type OnboardingStep =
+  | "greeting"
   | "workflow"
   | "cliProviders"
   | "chatEngines"

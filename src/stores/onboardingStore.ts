@@ -167,7 +167,7 @@ function describeInstallTarget(
 export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   open: false,
   ...readStoredOnboardingState(),
-  step: "workflow",
+  step: "greeting",
   selectedWorkspaceId: null,
   installLog: [],
   installing: null,
@@ -176,7 +176,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   openOnboarding: () =>
     set((state) => ({
       open: true,
-      step: "workflow",
+      step: "greeting",
       selectedWorkspaceId: null,
       installLog: [],
       installing: null,

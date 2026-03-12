@@ -75,6 +75,10 @@ const STEP_TITLES: Record<
   OnboardingStep,
   { titleKey: string; subtitleKey: string }
 > = {
+  greeting: {
+    titleKey: "greeting.title",
+    subtitleKey: "greeting.subtitle",
+  },
   workflow: {
     titleKey: "workflow.title",
     subtitleKey: "workflow.subtitle",
@@ -740,20 +744,20 @@ export function OnboardingWizard() {
   const busy = Boolean(installing) || workspaceLoading;
 
   const canContinue =
-    step === "workflow"
-      ? preferredWorkflow !== null
-      : step === "chatEngines"
-        ? selectedChatEngines.length > 0
-        : step === "chatReadiness"
-          ? chatReady
-          : step === "workspace"
-            ? selectedWorkspaceId !== null && workspaceConfirmed
-            : true;
+    step === "greeting"
+      ? true
+      : step === "workflow"
+        ? preferredWorkflow !== null
+        : step === "chatEngines"
+          ? selectedChatEngines.length > 0
+          : step === "chatReadiness"
+            ? chatReady
+            : step === "workspace"
+              ? selectedWorkspaceId !== null && workspaceConfirmed
+              : true;
 
-  const progressPercent =
-    visibleSteps.length > 1
-      ? ((Math.max(0, currentStepIndex) + 1) / visibleSteps.length) * 100
-      : 0;
+  const isGreeting = step === "greeting";
+
 
   /* ─── Effects ─── */
 
@@ -966,29 +970,97 @@ export function OnboardingWizard() {
           <X size={14} />
         </button>
 
-        {/* Progress bar */}
-        <div style={{ padding: "16px 24px 0", flexShrink: 0 }}>
-          <div
-            style={{
-              height: 1,
-              background: "rgba(255, 255, 255, 0.06)",
-              maxWidth: "min(90%, 1100px)",
-              margin: "0 auto",
-            }}
-          >
-            <div
-              style={{
-                height: "100%",
-                width: `${progressPercent}%`,
-                background: "var(--accent)",
-                transition: "width 300ms var(--ease-out)",
-              }}
-            />
-          </div>
-        </div>
 
         {/* Scroll area — margin:auto centers vertically when content is short */}
         <div style={{ flex: 1, overflowY: "auto", display: "flex", justifyContent: "center" }}>
+          {isGreeting ? (
+            /* ── Greeting ── */
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                textAlign: "center",
+                margin: "auto",
+                padding: "32px 24px",
+                maxWidth: 480,
+              }}
+            >
+              {/* Panes logo */}
+              <div
+                style={{
+                  marginBottom: 32,
+                  animation: "ob-greeting-logo 500ms var(--ease-out) both",
+                }}
+              >
+                <svg viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg" width={56} height={56}>
+                  <rect x="10" y="36" width="94" height="94" stroke="white" strokeWidth="6" />
+                  <rect x="36" y="10" width="94" height="94" stroke="white" strokeWidth="6" />
+                  <rect x="23" y="23" width="94" height="94" stroke="white" strokeWidth="6" />
+                  <rect x="50" y="50" width="40" height="40" fill="#FF6B6B" />
+                </svg>
+              </div>
+
+              {/* Divider line */}
+              <div
+                style={{
+                  width: 40,
+                  height: 1,
+                  background: "rgba(255, 255, 255, 0.12)",
+                  marginBottom: 32,
+                  transformOrigin: "center",
+                  animation: "ob-greeting-line 400ms var(--ease-out) 200ms both",
+                }}
+              />
+
+              {/* Title */}
+              <h1
+                style={{
+                  fontSize: 32,
+                  fontWeight: 700,
+                  lineHeight: 1.15,
+                  margin: 0,
+                  color: "var(--text-1)",
+                  letterSpacing: "-0.01em",
+                  animation: "ob-greeting-text 400ms var(--ease-out) 300ms both",
+                }}
+              >
+                {t("setup:greeting.title")}
+              </h1>
+
+              {/* Subtitle */}
+              <p
+                style={{
+                  fontSize: 15,
+                  color: "var(--text-3)",
+                  lineHeight: 1.6,
+                  margin: "12px 0 0",
+                  animation: "ob-greeting-text 400ms var(--ease-out) 420ms both",
+                }}
+              >
+                {t("setup:greeting.subtitle")}
+              </p>
+
+              {/* CTA */}
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleNext}
+                style={{
+                  marginTop: 40,
+                  padding: "10px 28px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  borderRadius: "var(--radius-sm)",
+                  animation: "ob-greeting-text 400ms var(--ease-out) 560ms both",
+                }}
+              >
+                {t("setup:greeting.cta")}
+                <ArrowRight size={14} />
+              </button>
+            </div>
+          ) : (
           <div
             style={{
               width: "min(90%, 1100px)",
@@ -1271,10 +1343,11 @@ export function OnboardingWizard() {
               ) : null}
             </div>
           </div>
+          )}
         </div>
 
-        {/* Footer */}
-        <div
+        {/* Footer — hidden on greeting */}
+        {!isGreeting ? <div
           style={{
             position: "absolute",
             bottom: 0,
@@ -1297,28 +1370,16 @@ export function OnboardingWizard() {
           >
             {/* Buttons */}
             <div style={{ display: "flex", gap: 6 }}>
-              {step !== "workflow" ? (
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={handleBack}
-                  disabled={busy}
-                  style={{ padding: "7px 12px", fontSize: 12, borderRadius: "var(--radius-sm)", opacity: busy ? 0.4 : 1 }}
-                >
-                  <ArrowLeft size={12} />
-                  {t("setup:actions.back")}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={handleClose}
-                  disabled={busy}
-                  style={{ padding: "7px 12px", fontSize: 12, borderRadius: "var(--radius-sm)" }}
-                >
-                  {t("common:actions.notNow")}
-                </button>
-              )}
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={handleBack}
+                disabled={busy}
+                style={{ padding: "7px 12px", fontSize: 12, borderRadius: "var(--radius-sm)", opacity: busy ? 0.4 : 1 }}
+              >
+                <ArrowLeft size={12} />
+                {t("setup:actions.back")}
+              </button>
 
               {step === "workspace" ? (
                 <button
@@ -1345,7 +1406,7 @@ export function OnboardingWizard() {
               )}
             </div>
           </div>
-        </div>
+        </div> : null}
       </div>
     </div>
   );

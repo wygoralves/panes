@@ -1,4 +1,9 @@
 {
+  "greeting": {
+    "title": "Welcome to Panes",
+    "subtitle": "Your local cockpit for AI-assisted coding.",
+    "cta": "Get started"
+  },
   "workflow": {
     "title": "How do you prefer to work?",
     "subtitle": "Pick the workflow Panes should optimize first. You can reopen onboarding later and switch.",

@@ -621,12 +621,30 @@ button, input, textarea, select {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes ob-greeting-logo {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes ob-greeting-text {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ob-greeting-line {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   @keyframes ob-backdrop-in { from, to { opacity: 1; } }
   @keyframes ob-heading-in { from, to { opacity: 1; transform: none; } }
   @keyframes ob-step-enter-forward { from, to { opacity: 1; transform: none; } }
   @keyframes ob-step-enter-back { from, to { opacity: 1; transform: none; } }
   @keyframes ob-card-cascade { from, to { opacity: 1; transform: none; } }
+  @keyframes ob-greeting-logo { from, to { opacity: 1; transform: none; } }
+  @keyframes ob-greeting-text { from, to { opacity: 1; transform: none; } }
+  @keyframes ob-greeting-line { from, to { transform: scaleX(1); } }
 }
 
 @keyframes thinking-pulse {
