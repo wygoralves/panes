@@ -22,15 +22,15 @@ use db::Database;
 use engines::{CodexRuntimeEvent, EngineManager};
 use git::repo::FileTreeCache;
 use git::watcher::GitWatcherManager;
-use locale::{native_strings, resolve_app_locale};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use locale::native_strings;
+use locale::resolve_app_locale;
 use models::{EngineRuntimeUpdatedDto, ThreadDto, ThreadStatusDto};
 use power::KeepAwakeManager;
 use state::{AppState, TurnManager};
-use tauri::{
-    image::Image,
-    menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, SubmenuBuilder},
-    Emitter, Manager, RunEvent, WebviewWindowBuilder,
-};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use tauri::menu::{AboutMetadata, MenuItem, PredefinedMenuItem, SubmenuBuilder};
+use tauri::{image::Image, menu::Menu, Emitter, Manager, RunEvent, WebviewWindowBuilder};
 use terminal::TerminalManager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -547,176 +547,185 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
     #[cfg(target_os = "linux")]
     {
         let _ = locale;
-        return Menu::with_items(handle, &[]);
+        Menu::with_items(handle, &[])
     }
 
-    let strings = native_strings(locale);
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        let strings = native_strings(locale);
 
-    #[cfg(target_os = "macos")]
-    let app_menu = SubmenuBuilder::new(handle, strings.app_menu)
-        .about(Some(AboutMetadata {
-            name: Some("Panes".to_string()),
-            version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            authors: Some(vec!["Wygor Alves".to_string()]),
-            comments: Some(strings.about_comments.to_string()),
-            copyright: Some("Copyright © 2026 Wygor Alves".to_string()),
-            license: Some("MIT".to_string()),
-            website: Some("https://github.com/wygoralves/panes".to_string()),
-            website_label: Some("GitHub".to_string()),
-            icon: match Image::from_bytes(include_bytes!("../icons/128x128@2x.png")) {
-                Ok(img) => Some(img),
-                Err(e) => {
-                    log::warn!("failed to load about icon: {e}");
-                    None
-                }
-            },
-            ..Default::default()
-        }))
-        .separator()
-        .item(&PredefinedMenuItem::services(handle, None)?)
-        .separator()
-        .hide()
-        .hide_others()
-        .show_all()
-        .separator()
-        .quit()
-        .build()?;
+        let app_menu = {
+            #[cfg(target_os = "macos")]
+            {
+                SubmenuBuilder::new(handle, strings.app_menu)
+                    .about(Some(AboutMetadata {
+                        name: Some("Panes".to_string()),
+                        version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                        authors: Some(vec!["Wygor Alves".to_string()]),
+                        comments: Some(strings.about_comments.to_string()),
+                        copyright: Some("Copyright © 2026 Wygor Alves".to_string()),
+                        license: Some("MIT".to_string()),
+                        website: Some("https://github.com/wygoralves/panes".to_string()),
+                        website_label: Some("GitHub".to_string()),
+                        icon: match Image::from_bytes(include_bytes!("../icons/128x128@2x.png")) {
+                            Ok(img) => Some(img),
+                            Err(e) => {
+                                log::warn!("failed to load about icon: {e}");
+                                None
+                            }
+                        },
+                        ..Default::default()
+                    }))
+                    .separator()
+                    .item(&PredefinedMenuItem::services(handle, None)?)
+                    .separator()
+                    .hide()
+                    .hide_others()
+                    .show_all()
+                    .separator()
+                    .quit()
+                    .build()?
+            }
 
-    #[cfg(target_os = "windows")]
-    let app_menu = SubmenuBuilder::new(handle, strings.app_menu)
-        .about(Some(AboutMetadata {
-            name: Some("Panes".to_string()),
-            version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            authors: Some(vec!["Wygor Alves".to_string()]),
-            comments: Some(strings.about_comments.to_string()),
-            copyright: Some("Copyright © 2026 Wygor Alves".to_string()),
-            license: Some("MIT".to_string()),
-            website: Some("https://github.com/wygoralves/panes".to_string()),
-            website_label: Some("GitHub".to_string()),
-            icon: match Image::from_bytes(include_bytes!("../icons/128x128@2x.png")) {
-                Ok(img) => Some(img),
-                Err(e) => {
-                    log::warn!("failed to load about icon: {e}");
-                    None
-                }
-            },
-            ..Default::default()
-        }))
-        .separator()
-        .quit()
-        .build()?;
+            #[cfg(target_os = "windows")]
+            {
+                SubmenuBuilder::new(handle, strings.app_menu)
+                    .about(Some(AboutMetadata {
+                        name: Some("Panes".to_string()),
+                        version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                        authors: Some(vec!["Wygor Alves".to_string()]),
+                        comments: Some(strings.about_comments.to_string()),
+                        copyright: Some("Copyright © 2026 Wygor Alves".to_string()),
+                        license: Some("MIT".to_string()),
+                        website: Some("https://github.com/wygoralves/panes".to_string()),
+                        website_label: Some("GitHub".to_string()),
+                        icon: match Image::from_bytes(include_bytes!("../icons/128x128@2x.png")) {
+                            Ok(img) => Some(img),
+                            Err(e) => {
+                                log::warn!("failed to load about icon: {e}");
+                                None
+                            }
+                        },
+                        ..Default::default()
+                    }))
+                    .separator()
+                    .quit()
+                    .build()?
+            }
+        };
 
-    // Linux and Windows terminals rely on Ctrl-based control sequences, so
-    // avoid wiring those chords to native edit accelerators. DOM text inputs
-    // still keep their standard shortcuts through the webview, and the menu
-    // items remain clickable.
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    let edit_undo = MenuItem::with_id(handle, "edit-undo", strings.undo, true, None::<&str>)?;
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    let edit_redo = MenuItem::with_id(handle, "edit-redo", strings.redo, true, None::<&str>)?;
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    let edit_cut = MenuItem::with_id(handle, "edit-cut", strings.cut, true, None::<&str>)?;
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    let edit_copy = MenuItem::with_id(handle, "edit-copy", strings.copy, true, None::<&str>)?;
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    let edit_paste = MenuItem::with_id(handle, "edit-paste", strings.paste, true, None::<&str>)?;
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    let edit_select_all = MenuItem::with_id(
-        handle,
-        "edit-select-all",
-        strings.select_all,
-        true,
-        None::<&str>,
-    )?;
+        #[cfg(target_os = "windows")]
+        let edit_menu = {
+            // Windows terminals rely on Ctrl-based control sequences, so avoid
+            // wiring those chords to native edit accelerators. DOM text inputs
+            // still keep their standard shortcuts through the webview, and the
+            // menu items remain clickable.
+            let edit_undo =
+                MenuItem::with_id(handle, "edit-undo", strings.undo, true, None::<&str>)?;
+            let edit_redo =
+                MenuItem::with_id(handle, "edit-redo", strings.redo, true, None::<&str>)?;
+            let edit_cut = MenuItem::with_id(handle, "edit-cut", strings.cut, true, None::<&str>)?;
+            let edit_copy =
+                MenuItem::with_id(handle, "edit-copy", strings.copy, true, None::<&str>)?;
+            let edit_paste =
+                MenuItem::with_id(handle, "edit-paste", strings.paste, true, None::<&str>)?;
+            let edit_select_all = MenuItem::with_id(
+                handle,
+                "edit-select-all",
+                strings.select_all,
+                true,
+                None::<&str>,
+            )?;
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    let edit_menu = SubmenuBuilder::new(handle, strings.edit_menu)
-        .item(&edit_undo)
-        .item(&edit_redo)
-        .separator()
-        .item(&edit_cut)
-        .item(&edit_copy)
-        .item(&edit_paste)
-        .item(&edit_select_all)
-        .build()?;
+            SubmenuBuilder::new(handle, strings.edit_menu)
+                .item(&edit_undo)
+                .item(&edit_redo)
+                .separator()
+                .item(&edit_cut)
+                .item(&edit_copy)
+                .item(&edit_paste)
+                .item(&edit_select_all)
+                .build()?
+        };
 
-    #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
-    let edit_menu = SubmenuBuilder::new(handle, strings.edit_menu)
-        .undo()
-        .redo()
-        .separator()
-        .cut()
-        .copy()
-        .paste()
-        .select_all()
-        .build()?;
+        #[cfg(target_os = "macos")]
+        let edit_menu = SubmenuBuilder::new(handle, strings.edit_menu)
+            .undo()
+            .redo()
+            .separator()
+            .cut()
+            .copy()
+            .paste()
+            .select_all()
+            .build()?;
 
-    let toggle_sidebar = MenuItem::with_id(
-        handle,
-        "toggle-sidebar",
-        strings.toggle_sidebar,
-        true,
-        Some("CmdOrCtrl+B"),
-    )?;
-    let toggle_git_panel = MenuItem::with_id(
-        handle,
-        "toggle-git-panel",
-        strings.toggle_git_panel,
-        true,
-        Some("CmdOrCtrl+Shift+B"),
-    )?;
-    let toggle_focus_mode = MenuItem::with_id(
-        handle,
-        "toggle-focus-mode",
-        strings.toggle_focus_mode,
-        true,
-        Some("CmdOrCtrl+Alt+F"),
-    )?;
-    let toggle_fullscreen = MenuItem::with_id(
-        handle,
-        "toggle-fullscreen",
-        strings.toggle_fullscreen,
-        true,
-        Some("F11"),
-    )?;
-    let toggle_search = MenuItem::with_id(
-        handle,
-        "toggle-search",
-        strings.search,
-        true,
-        Some("CmdOrCtrl+Shift+F"),
-    )?;
-    let toggle_terminal = MenuItem::with_id(
-        handle,
-        "toggle-terminal",
-        strings.toggle_terminal,
-        true,
-        Some("CmdOrCtrl+Shift+T"),
-    )?;
-    let view_menu = SubmenuBuilder::new(handle, strings.view_menu)
-        .item(&toggle_sidebar)
-        .item(&toggle_git_panel)
-        .item(&toggle_focus_mode)
-        .item(&toggle_fullscreen)
-        .separator()
-        .item(&toggle_search)
-        .separator()
-        .item(&toggle_terminal)
-        .build()?;
+        let toggle_sidebar = MenuItem::with_id(
+            handle,
+            "toggle-sidebar",
+            strings.toggle_sidebar,
+            true,
+            Some("CmdOrCtrl+B"),
+        )?;
+        let toggle_git_panel = MenuItem::with_id(
+            handle,
+            "toggle-git-panel",
+            strings.toggle_git_panel,
+            true,
+            Some("CmdOrCtrl+Shift+B"),
+        )?;
+        let toggle_focus_mode = MenuItem::with_id(
+            handle,
+            "toggle-focus-mode",
+            strings.toggle_focus_mode,
+            true,
+            Some("CmdOrCtrl+Alt+F"),
+        )?;
+        let toggle_fullscreen = MenuItem::with_id(
+            handle,
+            "toggle-fullscreen",
+            strings.toggle_fullscreen,
+            true,
+            Some("F11"),
+        )?;
+        let toggle_search = MenuItem::with_id(
+            handle,
+            "toggle-search",
+            strings.search,
+            true,
+            Some("CmdOrCtrl+Shift+F"),
+        )?;
+        let toggle_terminal = MenuItem::with_id(
+            handle,
+            "toggle-terminal",
+            strings.toggle_terminal,
+            true,
+            Some("CmdOrCtrl+Shift+T"),
+        )?;
+        let view_menu = SubmenuBuilder::new(handle, strings.view_menu)
+            .item(&toggle_sidebar)
+            .item(&toggle_git_panel)
+            .item(&toggle_focus_mode)
+            .item(&toggle_fullscreen)
+            .separator()
+            .item(&toggle_search)
+            .separator()
+            .item(&toggle_terminal)
+            .build()?;
 
-    let close_window = MenuItem::with_id(
-        handle,
-        "close-window",
-        strings.close,
-        true,
-        Some("CmdOrCtrl+W"),
-    )?;
-    let window_menu = SubmenuBuilder::new(handle, strings.window_menu)
-        .minimize()
-        .item(&PredefinedMenuItem::maximize(handle, None)?)
-        .separator()
-        .item(&close_window)
-        .build()?;
+        let close_window = MenuItem::with_id(
+            handle,
+            "close-window",
+            strings.close,
+            true,
+            Some("CmdOrCtrl+W"),
+        )?;
+        let window_menu = SubmenuBuilder::new(handle, strings.window_menu)
+            .minimize()
+            .item(&PredefinedMenuItem::maximize(handle, None)?)
+            .separator()
+            .item(&close_window)
+            .build()?;
 
-    Menu::with_items(handle, &[&app_menu, &edit_menu, &view_menu, &window_menu])
+        Menu::with_items(handle, &[&app_menu, &edit_menu, &view_menu, &window_menu])
+    }
 }

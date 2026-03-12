@@ -173,7 +173,7 @@ fn is_transient_appimage_mount(path: &Path) -> bool {
 }
 
 fn is_current_executable_tree(path: &Path, current_exe_dir: Option<&Path>) -> bool {
-    current_exe_dir.is_some_and(|dir| path == dir || path.starts_with(dir) || dir.starts_with(path))
+    current_exe_dir.is_some_and(|dir| path == dir || path.starts_with(dir))
 }
 
 fn is_unsafe_windows_default_root(
@@ -475,6 +475,28 @@ mod tests {
             Some(&home),
             Some(&cwd),
             false,
+            None,
+            None,
+        );
+
+        assert_eq!(selected, home);
+    }
+
+    #[test]
+    fn preferred_default_workspace_root_keeps_windows_home_when_executable_is_nested_inside_it() {
+        let home = std::env::temp_dir()
+            .join(format!("panes-home-{}", Uuid::new_v4()))
+            .join("Users")
+            .join("panes");
+        let install_dir = home.join("AppData").join("Local").join("Panes");
+        fs::create_dir_all(&install_dir).expect("failed to create fake install dir");
+        fs::create_dir_all(&home).expect("failed to create temp home");
+
+        let selected = preferred_default_workspace_root_for(
+            Some(&install_dir),
+            Some(&home),
+            Some(&install_dir),
+            true,
             None,
             None,
         );
