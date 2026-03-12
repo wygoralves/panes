@@ -117,6 +117,9 @@ jobs:
       - name: Windows keep awake tests
         working-directory: src-tauri
         run: cargo test commands::power::tests --lib
+      - name: Windows keep awake backend tests
+        working-directory: src-tauri
+        run: cargo test power::tests --lib
       - name: Windows terminal tests
         working-directory: src-tauri
         run: cargo test terminal::tests --lib
