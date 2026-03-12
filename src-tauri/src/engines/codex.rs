@@ -208,11 +208,6 @@ impl Engine for CodexEngine {
         resolve_codex_executable().await.executable.is_some()
     }
 
-    async fn version(&self) -> Option<String> {
-        let resolution = resolve_codex_executable().await;
-        self.probe_version_from_resolution(&resolution).await.ok()
-    }
-
     async fn start_thread(
         &self,
         scope: ThreadScope,

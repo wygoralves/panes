@@ -150,12 +150,16 @@ pub async fn install_harness(app: AppHandle, harness_id: String) -> Result<Insta
     if let Some(script) = def.install_script {
         #[cfg(target_os = "windows")]
         {
+            let _ = script;
             return Err(format!(
                 "{} must be installed manually from {} on Windows",
                 def.name, def.website
             ));
         }
-        return run_harness_install_script(&app, &harness_id, script).await;
+        #[cfg(not(target_os = "windows"))]
+        {
+            return run_harness_install_script(&app, &harness_id, script).await;
+        }
     }
 
     let install_cmd = def.install_command.ok_or_else(|| {

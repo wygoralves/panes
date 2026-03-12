@@ -224,7 +224,6 @@ pub trait Engine: Send + Sync {
     fn models(&self) -> Vec<ModelInfo>;
 
     async fn is_available(&self) -> bool;
-    async fn version(&self) -> Option<String>;
 
     async fn start_thread(
         &self,

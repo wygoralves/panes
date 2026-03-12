@@ -96,7 +96,8 @@ enum SidecarEvent {
     },
     Version {
         id: Option<String>,
-        version: String,
+        #[serde(rename = "version")]
+        _version: String,
     },
 }
 
@@ -739,10 +740,6 @@ impl Engine for ClaudeSidecarEngine {
             let state = self.state.lock().await;
             ClaudeTransport::resolve_sidecar_path(state.resource_dir.as_ref()).is_ok()
         }
-    }
-
-    async fn version(&self) -> Option<String> {
-        Some("agent-sdk".to_string())
     }
 
     async fn start_thread(

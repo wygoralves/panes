@@ -106,6 +106,7 @@ pub fn is_executable_file(path: &Path) -> bool {
     }
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 pub fn terminal_shell() -> PathBuf {
     #[cfg(target_os = "windows")]
     let shell_env = env::var("COMSPEC").ok();
@@ -148,6 +149,7 @@ pub fn command_shell_for_string(command: &str) -> ShellLaunchSpec {
 }
 
 #[cfg(not(target_os = "windows"))]
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 pub fn login_probe_shells() -> Vec<PathBuf> {
     login_probe_shells_for(
         env::var("SHELL").ok().as_deref(),
@@ -156,6 +158,7 @@ pub fn login_probe_shells() -> Vec<PathBuf> {
 }
 
 #[cfg(target_os = "windows")]
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 pub fn login_probe_shells() -> Vec<PathBuf> {
     Vec::new()
 }
@@ -280,6 +283,7 @@ fn augmented_path_entries_for(
     dedupe_paths(entries)
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn terminal_shell_for(
     shell_env: Option<&str>,
     home: Option<&Path>,
@@ -377,10 +381,13 @@ fn command_shell_program_for(
 
     #[cfg(target_os = "windows")]
     {
-        return PathBuf::from("cmd.exe");
+        PathBuf::from("cmd.exe")
     }
 
-    PathBuf::from("/bin/sh")
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from("/bin/sh")
+    }
 }
 
 fn resolve_from_entries(binary: &str, entries: &[PathBuf]) -> Option<PathBuf> {
@@ -631,6 +638,7 @@ fn copy_dir_contents_recursive(source: &Path, target: &Path) -> std::io::Result<
     Ok(())
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn nvm_bin_dirs(home: &Path) -> Vec<PathBuf> {
     let versions_dir = home.join(".nvm/versions/node");
     let Ok(entries) = fs::read_dir(versions_dir) else {
@@ -646,6 +654,7 @@ fn nvm_bin_dirs(home: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::time::{SystemTime, UNIX_EPOCH};
     use uuid::Uuid;
 
@@ -655,22 +664,37 @@ mod tests {
 
     #[test]
     fn terminal_shell_args_match_shell_type() {
-        assert_eq!(
-            terminal_shell_args(Path::new("/bin/bash")),
-            vec!["-l".to_string(), "-i".to_string()]
-        );
-        assert_eq!(
-            terminal_shell_args(Path::new("/bin/zsh")),
-            vec!["-l".to_string(), "-i".to_string()]
-        );
-        assert_eq!(
-            terminal_shell_args(Path::new("/bin/sh")),
-            vec!["-l".to_string(), "-i".to_string()]
-        );
-        assert_eq!(
-            terminal_shell_args(Path::new("/usr/bin/fish")),
-            vec!["-l".to_string(), "-i".to_string()]
-        );
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(
+                terminal_shell_args(Path::new("cmd.exe")),
+                Vec::<String>::new()
+            );
+            assert_eq!(
+                terminal_shell_args(Path::new("pwsh.exe")),
+                Vec::<String>::new()
+            );
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert_eq!(
+                terminal_shell_args(Path::new("/bin/bash")),
+                vec!["-l".to_string(), "-i".to_string()]
+            );
+            assert_eq!(
+                terminal_shell_args(Path::new("/bin/zsh")),
+                vec!["-l".to_string(), "-i".to_string()]
+            );
+            assert_eq!(
+                terminal_shell_args(Path::new("/bin/sh")),
+                vec!["-l".to_string(), "-i".to_string()]
+            );
+            assert_eq!(
+                terminal_shell_args(Path::new("/usr/bin/fish")),
+                vec!["-l".to_string(), "-i".to_string()]
+            );
+        }
     }
 
     #[test]
