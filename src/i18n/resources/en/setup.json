@@ -9,14 +9,17 @@
   },
   "deps": {
     "node": {
+      "label": "Node.js",
       "auto": "Not found - will install via Homebrew",
       "manual": "Not found - install Node.js 20+ manually"
     },
     "codex": {
+      "label": "Codex CLI",
       "auto": "Not found - will install via npm",
       "manual": "Not found - install with: npm install -g @openai/codex"
     },
     "git": {
+      "label": "Git",
       "manual": "Not found - some git features will be unavailable"
     }
   },
@@ -30,10 +33,15 @@
     "title": "Manual installation",
     "installNode": "Install Node.js",
     "installCodex": "Install Codex CLI",
+    "installGit": "Install Git",
     "nodeAltOrDownload": "Or download from https://nodejs.org",
     "nodeAltInstall": "Install Node.js 20+ from https://nodejs.org",
     "nodeAltPackageManagerDetected": "Install Node.js 20+ using {{manager}} or from https://nodejs.org",
     "nodeAltPackageManager": "Install Node.js 20+ using your OS package manager or from https://nodejs.org",
+    "gitAltOrDownload": "Or download from https://git-scm.com/downloads",
+    "gitAltInstall": "Install Git from https://git-scm.com/downloads",
+    "gitAltPackageManagerDetected": "Install Git using {{manager}} or from https://git-scm.com/downloads",
+    "gitAltPackageManager": "Install Git using your OS package manager or from https://git-scm.com/downloads",
     "copied": "Copied"
   },
   "install": {
@@ -61,7 +69,9 @@
     "stale": "(stale)"
   },
   "error": {
-    "unexpected": "An unexpected error occurred during setup."
+    "unexpected": "An unexpected error occurred during setup.",
+    "nodeInstallFailed": "Node.js installation failed",
+    "codexInstallFailed": "Codex CLI installation failed"
   },
   "header": {
     "completeTitle": "Setup Complete",

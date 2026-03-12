@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getNodeManualGuidance } from "./setupGuidance";
+import { getGitManualGuidance, getNodeManualGuidance } from "./setupGuidance";
 import type { DependencyReport } from "../types";
 
 const baseReport: DependencyReport = {
@@ -36,7 +36,7 @@ describe("setup guidance", () => {
         packageManagers: ["apt"],
       }),
     ).toEqual({
-      command: null,
+      command: "sudo apt install nodejs npm",
       altKey: "manual.nodeAltPackageManagerDetected",
       altVars: { manager: "apt" },
     });
@@ -63,7 +63,7 @@ describe("setup guidance", () => {
         packageManagers: ["winget"],
       }),
     ).toEqual({
-      command: null,
+      command: "winget install OpenJS.NodeJS.LTS",
       altKey: "manual.nodeAltPackageManagerDetected",
       altVars: { manager: "winget" },
     });
@@ -78,6 +78,27 @@ describe("setup guidance", () => {
     ).toEqual({
       command: null,
       altKey: "manual.nodeAltInstall",
+    });
+  });
+
+  it("uses detected Windows package managers for manual Git guidance", () => {
+    expect(
+      getGitManualGuidance({
+        ...baseReport,
+        platform: "windows",
+        packageManagers: ["winget"],
+      }),
+    ).toEqual({
+      command: "winget install --id Git.Git -e",
+      altKey: "manual.gitAltPackageManagerDetected",
+      altVars: { manager: "winget" },
+    });
+  });
+
+  it("falls back to direct Git install guidance without package managers", () => {
+    expect(getGitManualGuidance(baseReport)).toEqual({
+      command: null,
+      altKey: "manual.gitAltPackageManager",
     });
   });
 });

@@ -11,7 +11,7 @@ import {
 import { useSetupStore, type SetupPhase } from "../../stores/setupStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { copyTextToClipboard } from "../../lib/clipboard";
-import { getNodeManualGuidance } from "../../lib/setupGuidance";
+import { getGitManualGuidance, getNodeManualGuidance } from "../../lib/setupGuidance";
 import type { CodexProtocolDiagnostics, DepStatus, EngineHealth } from "../../types";
 
 const SETUP_COMPLETED_KEY = "panes.setup.completed.v2";
@@ -187,11 +187,12 @@ function PlanPhase() {
     (!report.codex.found && report.codex.canAutoInstall);
 
   const nodeManual = getNodeManualGuidance(report);
+  const gitManual = getGitManualGuidance(report);
 
   return (
     <div style={{ display: "grid", gap: 10 }}>
       <DepCard
-        label="Node.js"
+        label={t("deps.node.label")}
         dep={report.node}
         description={
           report.node.canAutoInstall
@@ -200,7 +201,7 @@ function PlanPhase() {
         }
       />
       <DepCard
-        label="Codex CLI"
+        label={t("deps.codex.label")}
         dep={report.codex}
         description={
           report.codex.canAutoInstall
@@ -209,7 +210,7 @@ function PlanPhase() {
         }
       />
       <DepCard
-        label="Git"
+        label={t("deps.git.label")}
         dep={report.git}
         description={t("deps.git.manual")}
       />
@@ -313,6 +314,13 @@ function PlanPhase() {
                 command="npm install -g @openai/codex"
               />
             )}
+            {!report.git.found && (
+              <ManualStep
+                label={t("manual.installGit")}
+                command={gitManual.command}
+                alt={t(gitManual.altKey, gitManual.altVars)}
+              />
+            )}
           </div>
         </div>
       )}
@@ -370,7 +378,6 @@ function ManualStep({
               background: "rgba(255, 255, 255, 0.03)",
             }}
           >
-            <span style={{ color: "var(--text-3)", userSelect: "none" }}>$ </span>
             {command}
           </code>
           <button
@@ -419,7 +426,14 @@ function InstallingPhase() {
         />
         {installing
           ? t("install.installing", {
-              name: installing === "node" ? "Node.js" : installing === "codex" ? "Codex CLI" : installing,
+              name:
+                installing === "node"
+                  ? t("deps.node.label")
+                  : installing === "codex"
+                    ? t("deps.codex.label")
+                    : installing === "git"
+                      ? t("deps.git.label")
+                      : installing,
             })
           : t("install.finishing")}
       </div>
@@ -443,13 +457,22 @@ function CompletePhase() {
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ display: "grid", gap: 6 }}>
         {report?.node.found && (
-          <CheckItem label="Node.js" detail={report.node.version ?? t("status.detected")} />
+          <CheckItem
+            label={t("deps.node.label")}
+            detail={report.node.version ?? t("status.detected")}
+          />
         )}
         {report?.codex.found && (
-          <CheckItem label="Codex CLI" detail={report.codex.version ?? t("status.detected")} />
+          <CheckItem
+            label={t("deps.codex.label")}
+            detail={report.codex.version ?? t("status.detected")}
+          />
         )}
         {report?.git.found && (
-          <CheckItem label="Git" detail={report.git.version ?? t("status.detected")} />
+          <CheckItem
+            label={t("deps.git.label")}
+            detail={report.git.version ?? t("status.detected")}
+          />
         )}
       </div>
       <button
