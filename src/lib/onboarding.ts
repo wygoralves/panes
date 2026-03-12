@@ -29,6 +29,31 @@ interface OnboardingAutoOpenOptions {
   legacyCompleted: boolean;
 }
 
+export interface OnboardingShortcutTargetNode {
+  tagName?: string | null;
+  role?: string | null;
+  isContentEditable?: boolean;
+}
+
+const INTERACTIVE_ONBOARDING_TAGS: ReadonlySet<string> = new Set([
+  "A",
+  "BUTTON",
+  "INPUT",
+  "SELECT",
+  "SUMMARY",
+  "TEXTAREA",
+] as const);
+
+const INTERACTIVE_ONBOARDING_ROLES: ReadonlySet<string> = new Set([
+  "button",
+  "checkbox",
+  "link",
+  "menuitem",
+  "option",
+  "radio",
+  "switch",
+] as const);
+
 export function normalizeOnboardingHarnessInstallId(targetId: string): string {
   if (targetId === "claude") {
     return CHAT_ENGINE_INSTALL_HARNESS_IDS.claude;
@@ -129,6 +154,20 @@ export function canContinueChatReadiness(
   }
 
   return isChatWorkflowReady(selectedEngines, dependencyReport, engineHealth);
+}
+
+export function isOnboardingEnterTargetInteractive(
+  path: OnboardingShortcutTargetNode[],
+): boolean {
+  return path.some((node) => {
+    const tagName = node.tagName?.toUpperCase();
+    const role = node.role?.toLowerCase();
+    return Boolean(
+      node.isContentEditable ||
+        (tagName && INTERACTIVE_ONBOARDING_TAGS.has(tagName)) ||
+        (role && INTERACTIVE_ONBOARDING_ROLES.has(role)),
+    );
+  });
 }
 
 export function onboardingStepIndex(step: OnboardingStep): number {

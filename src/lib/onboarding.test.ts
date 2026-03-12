@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canContinueChatReadiness,
+  isOnboardingEnterTargetInteractive,
   isChatWorkflowReady,
   isCodexAuthDeferred,
   nextOnboardingStep,
@@ -172,5 +173,26 @@ describe("onboarding helpers", () => {
     expect(
       canContinueChatReadiness(["claude"], readyDependencies, readyHealth, false, null),
     ).toBe(true);
+  });
+
+  it("ignores the global Enter shortcut when focus is inside another interactive control", () => {
+    expect(
+      isOnboardingEnterTargetInteractive([
+        { tagName: "span", role: null, isContentEditable: false },
+        { tagName: "button", role: null, isContentEditable: false },
+      ]),
+    ).toBe(true);
+
+    expect(
+      isOnboardingEnterTargetInteractive([
+        { tagName: "div", role: "button", isContentEditable: false },
+      ]),
+    ).toBe(true);
+
+    expect(
+      isOnboardingEnterTargetInteractive([
+        { tagName: "div", role: null, isContentEditable: false },
+      ]),
+    ).toBe(false);
   });
 });

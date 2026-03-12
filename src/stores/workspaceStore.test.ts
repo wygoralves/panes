@@ -118,6 +118,55 @@ describe("workspaceStore.removeWorkspace", () => {
   });
 });
 
+describe("workspaceStore.openWorkspace", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+    });
+
+    useWorkspaceStore.setState({
+      workspaces: [],
+      archivedWorkspaces: [],
+      activeWorkspaceId: null,
+      repos: [],
+      activeRepoId: null,
+      reposLoading: false,
+      loading: false,
+      error: undefined,
+    });
+
+    mockIpc.getRepos.mockResolvedValue([]);
+    mockIpc.listArchivedWorkspaces.mockResolvedValue([]);
+    mockIpc.listWorkspaces.mockResolvedValue([]);
+    mockTerminalStoreState.prepareWorkspaceActivation.mockResolvedValue(undefined);
+  });
+
+  it("returns the opened workspace so callers can select it directly", async () => {
+    const openedWorkspace = makeWorkspace("ws-opened", "/workspace/opened");
+
+    mockIpc.openWorkspace.mockResolvedValue(openedWorkspace);
+
+    const result = await useWorkspaceStore.getState().openWorkspace("./workspace/opened");
+
+    expect(result).toEqual(openedWorkspace);
+    expect(useWorkspaceStore.getState().activeWorkspaceId).toBe(openedWorkspace.id);
+    expect(useWorkspaceStore.getState().workspaces).toEqual([openedWorkspace]);
+  });
+
+  it("returns null when opening a workspace fails", async () => {
+    mockIpc.openWorkspace.mockRejectedValue(new Error("open failed"));
+
+    const result = await useWorkspaceStore.getState().openWorkspace("/workspace/missing");
+
+    expect(result).toBeNull();
+    expect(useWorkspaceStore.getState().error).toContain("open failed");
+  });
+});
+
 describe("workspaceStore.rescanWorkspace", () => {
   beforeEach(() => {
     vi.clearAllMocks();

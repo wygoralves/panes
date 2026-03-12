@@ -21,6 +21,7 @@ import {
 import { copyTextToClipboard } from "../../lib/clipboard";
 import {
   canContinueChatReadiness,
+  isOnboardingEnterTargetInteractive,
   isChatWorkflowReady,
   isCodexAuthDeferred,
   nextOnboardingStep,
@@ -107,6 +108,27 @@ function getVisibleSteps(
   if (workflow === "cli") return ["workflow", "cliProviders", "workspace"];
   if (workflow === "chat") return ["workflow", "chatEngines", "chatReadiness", "workspace"];
   return ["workflow"];
+}
+
+function describeShortcutTargetPath(target: EventTarget | null) {
+  const path: Array<{
+    tagName?: string | null;
+    role?: string | null;
+    isContentEditable?: boolean;
+  }> = [];
+
+  let current = target instanceof Element ? target : null;
+
+  while (current) {
+    path.push({
+      tagName: current.tagName,
+      role: current.getAttribute("role"),
+      isContentEditable: current instanceof HTMLElement ? current.isContentEditable : false,
+    });
+    current = current.parentElement;
+  }
+
+  return path;
 }
 
 /* ─── Sub-components ─── */
@@ -716,7 +738,7 @@ export function OnboardingWizard() {
 
   const autoOpenedRef = useRef(false);
   const readinessRequestRef = useRef(0);
-  const [workspaceConfirmed, setWorkspaceConfirmed] = useState(false);
+  const [confirmedWorkspaceId, setConfirmedWorkspaceId] = useState<string | null>(null);
   const [readiness, setReadiness] = useState<ReadinessState>(EMPTY_READINESS_STATE);
   const [stepDirection, setStepDirection] = useState<"forward" | "back">("forward");
   const [stepAnimKey, setStepAnimKey] = useState(0);
@@ -742,6 +764,8 @@ export function OnboardingWizard() {
     readiness.dependencyReport.codex.found === true &&
     isCodexAuthDeferred(readiness.engineHealth.codex);
   const busy = Boolean(installing) || workspaceLoading;
+  const workspaceConfirmed =
+    selectedWorkspaceId !== null && confirmedWorkspaceId === selectedWorkspaceId;
 
   const canContinue =
     step === "greeting"
@@ -771,7 +795,7 @@ export function OnboardingWizard() {
   useEffect(() => {
     if (!open) return;
     readinessRequestRef.current += 1;
-    setWorkspaceConfirmed(false);
+    setConfirmedWorkspaceId(null);
     setReadiness(EMPTY_READINESS_STATE);
   }, [open]);
 
@@ -779,13 +803,6 @@ export function OnboardingWizard() {
     if (!open || selectedWorkspaceId || !activeWorkspaceId) return;
     setSelectedWorkspaceId(activeWorkspaceId);
   }, [activeWorkspaceId, open, selectedWorkspaceId, setSelectedWorkspaceId]);
-
-  useEffect(() => {
-    if (!open || step !== "workspace") return;
-    if (selectedWorkspaceId && selectedWorkspaceId === activeWorkspaceId) {
-      setWorkspaceConfirmed(true);
-    }
-  }, [open, step, selectedWorkspaceId, activeWorkspaceId]);
 
   useEffect(() => {
     if (!open || step !== "cliProviders") return;
@@ -882,11 +899,10 @@ export function OnboardingWizard() {
   async function handleOpenWorkspaceFolder() {
     const selected = await openDirectoryDialog({ directory: true, multiple: false });
     if (!selected || Array.isArray(selected)) return;
-    await openWorkspace(selected);
-    const opened = useWorkspaceStore.getState().workspaces.find((w) => w.rootPath === selected);
-    if (!opened) return;
-    setSelectedWorkspaceId(opened.id);
-    setWorkspaceConfirmed(true);
+    const openedWorkspace = await openWorkspace(selected);
+    if (!openedWorkspace) return;
+    setSelectedWorkspaceId(openedWorkspace.id);
+    setConfirmedWorkspaceId(openedWorkspace.id);
   }
 
   const handleFinish = useCallback(async () => {
@@ -904,6 +920,13 @@ export function OnboardingWizard() {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape" && !busy) handleClose();
       if (e.key === "Enter" && canContinue && !busy) {
+        if (
+          e.defaultPrevented ||
+          isOnboardingEnterTargetInteractive(describeShortcutTargetPath(e.target))
+        ) {
+          return;
+        }
+        e.preventDefault();
         if (step === "workspace") void handleFinish();
         else handleNext();
       }
@@ -1317,7 +1340,10 @@ export function OnboardingWizard() {
                           workspace={ws}
                           active={ws.id === activeWorkspaceId}
                           selected={ws.id === selectedWorkspaceId}
-                          onClick={() => { setSelectedWorkspaceId(ws.id); setWorkspaceConfirmed(true); }}
+                          onClick={() => {
+                            setSelectedWorkspaceId(ws.id);
+                            setConfirmedWorkspaceId(ws.id);
+                          }}
                         />
                       ))}
                     </div>

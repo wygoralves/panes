@@ -19,7 +19,7 @@ interface WorkspaceState {
   error?: string;
   loadWorkspaces: () => Promise<void>;
   refreshArchivedWorkspaces: () => Promise<void>;
-  openWorkspace: (path: string, scanDepth?: number) => Promise<void>;
+  openWorkspace: (path: string, scanDepth?: number) => Promise<Workspace | null>;
   removeWorkspace: (workspaceId: string) => Promise<void>;
   restoreWorkspace: (workspaceId: string) => Promise<void>;
   loadRepos: (workspaceId: string) => Promise<void>;
@@ -178,8 +178,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }));
       await useTerminalStore.getState().prepareWorkspaceActivation(workspace.id);
       await get().loadRepos(workspace.id);
+      return workspace;
     } catch (error) {
       set({ loading: false, error: String(error) });
+      return null;
     }
   },
   removeWorkspace: async (workspaceId) => {
