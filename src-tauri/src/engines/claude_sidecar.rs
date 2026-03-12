@@ -408,13 +408,7 @@ impl ClaudeSidecarEngine {
         let mut warnings = Vec::new();
         let mut fixes = Vec::new();
 
-        checks.push("node --version".to_string());
-        checks.push("command -v node".to_string());
-        #[cfg(target_os = "macos")]
-        {
-            checks.push("echo \"$PATH\"".to_string());
-            checks.push("/bin/zsh -lic 'command -v node && node --version'".to_string());
-        }
+        checks.extend(node_health_checks_for_platform(runtime_env::platform_id()));
 
         if let Some(node_path) = node_resolution.executable.as_ref() {
             checks.push(format!(
@@ -500,28 +494,46 @@ async fn resolve_node_executable() -> NodeExecutableResolution {
 }
 
 fn node_unavailable_details(resolution: &NodeExecutableResolution) -> String {
-    let path_preview = resolution
-        .app_path
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "(empty)".to_string());
+    node_unavailable_details_for_platform(runtime_env::platform_id(), resolution)
+}
 
-    match resolution.login_shell_executable.as_ref() {
-        Some(shell_path) => format!(
+fn node_fix_commands(resolution: &NodeExecutableResolution) -> Vec<String> {
+    node_fix_commands_for_platform(runtime_env::platform_id(), resolution)
+}
+
+fn node_unavailable_details_for_platform(
+    platform: &str,
+    resolution: &NodeExecutableResolution,
+) -> String {
+    let path_preview = app_path_preview(resolution.app_path.as_deref());
+
+    match (platform, resolution.login_shell_executable.as_ref()) {
+        ("macos", Some(shell_path)) => format!(
             "Node.js was found in your login shell at `{}`, but Panes does not see it in the app PATH. This is common when launching the app from Finder on macOS. App PATH: `{}`",
             shell_path.display(),
             path_preview
         ),
-        None => format!(
+        ("windows", _) => format!(
+            "Node.js executable not found for the Claude engine. App PATH: `{}`. On Windows, verify that the Node.js install directory is in PATH.",
+            path_preview
+        ),
+        (_, Some(shell_path)) => format!(
+            "Node.js was found in your login shell at `{}`, but Panes does not see it in the app PATH. App PATH: `{}`",
+            shell_path.display(),
+            path_preview
+        ),
+        (_, None) => format!(
             "Node.js executable not found for the Claude engine. App PATH: `{}`",
             path_preview
         ),
     }
 }
 
-fn node_fix_commands(resolution: &NodeExecutableResolution) -> Vec<String> {
-    #[cfg(target_os = "macos")]
-    {
+fn node_fix_commands_for_platform(
+    platform: &str,
+    resolution: &NodeExecutableResolution,
+) -> Vec<String> {
+    if platform == "macos" {
         let mut fixes = Vec::new();
         match resolution.login_shell_executable.as_ref() {
             Some(shell_path) => {
@@ -542,11 +554,45 @@ fn node_fix_commands(resolution: &NodeExecutableResolution) -> Vec<String> {
         return fixes;
     }
 
-    #[cfg(not(target_os = "macos"))]
-    {
+    if platform == "windows" {
         let _ = resolution;
-        Vec::new()
+        return vec![
+            "where node".to_string(),
+            "echo %PATH%".to_string(),
+            "Ensure your Node.js install directory is present in PATH, then restart Panes."
+                .to_string(),
+        ];
     }
+
+    let _ = resolution;
+    Vec::new()
+}
+
+fn node_health_checks_for_platform(platform: &str) -> Vec<String> {
+    let mut checks = vec!["node --version".to_string()];
+
+    match platform {
+        "windows" => {
+            checks.push("where node".to_string());
+            checks.push("echo %PATH%".to_string());
+        }
+        "macos" => {
+            checks.push("command -v node".to_string());
+            checks.push("echo \"$PATH\"".to_string());
+            checks.push("/bin/zsh -lic 'command -v node && node --version'".to_string());
+        }
+        _ => {
+            checks.push("command -v node".to_string());
+        }
+    }
+
+    checks
+}
+
+fn app_path_preview(path: Option<&str>) -> String {
+    path.filter(|value| !value.trim().is_empty())
+        .unwrap_or("(empty)")
+        .to_string()
 }
 
 fn executable_augmented_path(executable: &Path) -> Option<OsString> {
@@ -1122,5 +1168,47 @@ mod tests {
             ClaudeSidecarEngine::parse_output_stream("unknown"),
             OutputStream::Stdout
         ));
+    }
+
+    #[test]
+    fn node_health_checks_use_windows_commands() {
+        let checks = node_health_checks_for_platform("windows");
+
+        assert!(checks.contains(&"where node".to_string()));
+        assert!(checks.contains(&"echo %PATH%".to_string()));
+        assert!(!checks.iter().any(|check| check == "command -v node"));
+    }
+
+    #[test]
+    fn node_unavailable_details_for_windows_mentions_path_guidance() {
+        let details = node_unavailable_details_for_platform(
+            "windows",
+            &NodeExecutableResolution {
+                executable: None,
+                source: "unavailable",
+                app_path: Some(r"C:\Windows\System32".to_string()),
+                login_shell_executable: None,
+            },
+        );
+
+        assert!(details.contains("install directory is in PATH"));
+        assert!(details.contains("App PATH"));
+    }
+
+    #[test]
+    fn node_fix_commands_for_windows_cover_where_and_restart() {
+        let fixes = node_fix_commands_for_platform(
+            "windows",
+            &NodeExecutableResolution {
+                executable: None,
+                source: "unavailable",
+                app_path: Some(r"C:\Windows\System32".to_string()),
+                login_shell_executable: None,
+            },
+        );
+
+        assert!(fixes.contains(&"where node".to_string()));
+        assert!(fixes.contains(&"echo %PATH%".to_string()));
+        assert!(fixes.iter().any(|fix| fix.contains("restart Panes")));
     }
 }
