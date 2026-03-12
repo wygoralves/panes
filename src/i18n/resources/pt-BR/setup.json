@@ -25,15 +25,15 @@
     "scanning": "Escaneando providers disponíveis..."
   },
   "chatEngines": {
-    "title": "Escolha seus engines de chat",
-    "subtitle": "Selecione os engines que você quer deixar prontos dentro do chat do Panes.",
+    "title": "Escolha seus harnesses de chat",
+    "subtitle": "Selecione quais harnesses você quer deixar prontos dentro do chat do Panes.",
     "helper": "Você pode selecionar Codex, Claude ou os dois. Se escolher os dois, o próximo passo verifica os dois runtimes antes de continuar.",
     "options": {
       "codex": {
-        "description": "Use o engine integrado do Codex no chat do Panes. Esse fluxo pode instalar Node.js e Codex CLI se estiverem ausentes."
+        "description": "Chat via Codex App Server. Pode instalar Node.js e Codex CLI se estiverem ausentes."
       },
       "claude": {
-        "description": "Use o sidecar integrado do Claude no chat do Panes. Esse fluxo não exige instalar a Claude CLI."
+        "description": "Chat via Claude Agent SDK. Não exige instalar a Claude CLI separadamente."
       }
     }
   },

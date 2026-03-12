@@ -15,7 +15,7 @@ import {
   PinOff,
   Terminal,
   Check,
-  Cpu,
+  Rocket,
   RefreshCw,
   PillBottle,
   Globe,
@@ -804,7 +804,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 openOnboarding();
               }}
             >
-              <Cpu size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+              <Rocket size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
               {t("app:sidebar.engineSetup")}
             </button>
             <button

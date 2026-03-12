@@ -587,21 +587,21 @@ function ReadinessEngineRow({
             className="btn btn-ghost"
             onClick={() => setNotesOpen((o) => !o)}
             style={{
-              padding: "4px 0",
-              fontSize: 11,
-              color: "var(--warning)",
+              padding: 0,
+              fontSize: 10,
+              color: "var(--text-3)",
               display: "inline-flex",
               alignItems: "center",
-              gap: 4,
+              gap: 3,
+              opacity: 0.6,
             }}
           >
-            <AlertTriangle size={10} />
             {notesOpen ? t("chatReadiness.sections.hideNotes") : t("chatReadiness.sections.showNotes")}
           </button>
           {notesOpen ? (
             <div style={{ marginTop: 6, display: "grid", gap: 4 }}>
               {warnings.map((w) => (
-                <p key={w} style={{ margin: 0, fontSize: 11, color: "var(--warning)", lineHeight: 1.4 }}>{w}</p>
+                <p key={w} style={{ margin: 0, fontSize: 11, color: "var(--text-3)", lineHeight: 1.4 }}>{w}</p>
               ))}
               {fixes.map((f) => (
                 <p key={f} style={{ margin: 0, fontSize: 11, color: "var(--text-3)", lineHeight: 1.4 }}>{f}</p>
