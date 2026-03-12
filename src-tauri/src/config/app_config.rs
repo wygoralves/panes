@@ -4,6 +4,7 @@ use std::{
     sync::{Mutex, MutexGuard, OnceLock},
 };
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::runtime_env;
@@ -125,6 +126,8 @@ impl AppConfig {
     }
 
     fn load_or_create_unlocked() -> anyhow::Result<Self> {
+        runtime_env::migrate_legacy_app_data_dir()
+            .context("failed to migrate legacy app data dir")?;
         let path = Self::path();
 
         if !path.exists() {

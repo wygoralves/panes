@@ -72,6 +72,8 @@ impl Drop for PooledConnection {
 
 impl Database {
     pub fn init() -> anyhow::Result<Self> {
+        runtime_env::migrate_legacy_app_data_dir()
+            .context("failed to migrate legacy app data dir")?;
         let base_dir = runtime_env::app_data_dir();
         fs::create_dir_all(base_dir.join("logs")).context("failed to create app data dir")?;
 

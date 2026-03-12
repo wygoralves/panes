@@ -97,12 +97,17 @@ pub fn ensure_default_workspace(db: &Database) -> anyhow::Result<WorkspaceDto> {
     let current_exe_dir = std::env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf));
-    if let Some(first) = list_workspaces(db)?
-        .into_iter()
-        .find(|workspace| {
-            is_viable_workspace_root(Path::new(&workspace.root_path), current_exe_dir.as_deref())
-        })
-    {
+    let temp_dir = std::env::temp_dir();
+    let windows_dir = windows_system_dir();
+    if let Some(first) = list_workspaces(db)?.into_iter().find(|workspace| {
+        is_viable_workspace_root(
+            Path::new(&workspace.root_path),
+            current_exe_dir.as_deref(),
+            cfg!(target_os = "windows"),
+            Some(temp_dir.as_path()),
+            windows_dir.as_deref(),
+        )
+    }) {
         return Ok(first);
     }
 
@@ -117,22 +122,49 @@ fn preferred_default_workspace_root() -> std::path::PathBuf {
     let current_exe_dir = std::env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf));
-    preferred_default_workspace_root_for(cwd.as_deref(), home.as_deref(), current_exe_dir.as_deref())
+    let temp_dir = std::env::temp_dir();
+    let windows_dir = windows_system_dir();
+    preferred_default_workspace_root_for(
+        cwd.as_deref(),
+        home.as_deref(),
+        current_exe_dir.as_deref(),
+        cfg!(target_os = "windows"),
+        Some(temp_dir.as_path()),
+        windows_dir.as_deref(),
+    )
 }
 
 fn preferred_default_workspace_root_for(
     cwd: Option<&Path>,
     home: Option<&Path>,
     current_exe_dir: Option<&Path>,
+    is_windows: bool,
+    temp_dir: Option<&Path>,
+    windows_dir: Option<&Path>,
 ) -> std::path::PathBuf {
-    cwd.filter(|path| is_viable_workspace_root(path, current_exe_dir))
-        .or_else(|| home.filter(|path| is_viable_workspace_root(path, current_exe_dir)))
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
+    cwd.filter(|path| {
+        is_viable_workspace_root(path, current_exe_dir, is_windows, temp_dir, windows_dir)
+    })
+    .or_else(|| {
+        home.filter(|path| {
+            is_viable_workspace_root(path, current_exe_dir, is_windows, temp_dir, windows_dir)
+        })
+    })
+    .map(Path::to_path_buf)
+    .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
-fn is_viable_workspace_root(path: &Path, current_exe_dir: Option<&Path>) -> bool {
-    path.is_dir() && !is_transient_appimage_mount(path) && !is_current_executable_dir(path, current_exe_dir)
+fn is_viable_workspace_root(
+    path: &Path,
+    current_exe_dir: Option<&Path>,
+    is_windows: bool,
+    temp_dir: Option<&Path>,
+    windows_dir: Option<&Path>,
+) -> bool {
+    path.is_dir()
+        && !is_transient_appimage_mount(path)
+        && !is_current_executable_tree(path, current_exe_dir)
+        && !is_unsafe_windows_default_root(path, is_windows, temp_dir, windows_dir)
 }
 
 fn is_transient_appimage_mount(path: &Path) -> bool {
@@ -140,8 +172,29 @@ fn is_transient_appimage_mount(path: &Path) -> bool {
     rendered.starts_with("/tmp/.mount_") || rendered.starts_with("/var/tmp/.mount_")
 }
 
-fn is_current_executable_dir(path: &Path, current_exe_dir: Option<&Path>) -> bool {
-    current_exe_dir.is_some_and(|dir| dir == path)
+fn is_current_executable_tree(path: &Path, current_exe_dir: Option<&Path>) -> bool {
+    current_exe_dir.is_some_and(|dir| path == dir || path.starts_with(dir) || dir.starts_with(path))
+}
+
+fn is_unsafe_windows_default_root(
+    path: &Path,
+    is_windows: bool,
+    temp_dir: Option<&Path>,
+    windows_dir: Option<&Path>,
+) -> bool {
+    if !is_windows {
+        return false;
+    }
+
+    temp_dir.is_some_and(|dir| path.starts_with(dir))
+        || windows_dir.is_some_and(|dir| path.starts_with(dir))
+}
+
+fn windows_system_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("WINDIR")
+        .or_else(|| std::env::var_os("SystemRoot"))
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
 }
 
 pub fn delete_workspace(db: &Database, workspace_id: &str) -> anyhow::Result<()> {
@@ -391,7 +444,8 @@ mod tests {
         fs::create_dir_all(&home).expect("failed to create temp home");
 
         let cwd = std::path::Path::new("/tmp/.mount_PanesTest/usr");
-        let selected = preferred_default_workspace_root_for(Some(cwd), Some(&home), None);
+        let selected =
+            preferred_default_workspace_root_for(Some(cwd), Some(&home), None, false, None, None);
 
         assert_eq!(selected, home);
     }
@@ -403,7 +457,8 @@ mod tests {
         fs::create_dir_all(&cwd).expect("failed to create temp cwd");
         fs::create_dir_all(&home).expect("failed to create temp home");
 
-        let selected = preferred_default_workspace_root_for(Some(&cwd), Some(&home), None);
+        let selected =
+            preferred_default_workspace_root_for(Some(&cwd), Some(&home), None, false, None, None);
 
         assert_eq!(selected, cwd);
     }
@@ -415,7 +470,55 @@ mod tests {
         fs::create_dir_all(&cwd).expect("failed to create temp install root");
         fs::create_dir_all(&home).expect("failed to create temp home");
 
-        let selected = preferred_default_workspace_root_for(Some(&cwd), Some(&home), Some(&cwd));
+        let selected = preferred_default_workspace_root_for(
+            Some(&cwd),
+            Some(&home),
+            Some(&cwd),
+            false,
+            None,
+            None,
+        );
+
+        assert_eq!(selected, home);
+    }
+
+    #[test]
+    fn preferred_default_workspace_root_skips_windows_system_dirs() {
+        let windows_dir =
+            std::env::temp_dir().join(format!("panes-windows-dir-{}", Uuid::new_v4()));
+        let home = std::env::temp_dir().join(format!("panes-home-{}", Uuid::new_v4()));
+        let cwd = windows_dir.join("System32");
+        fs::create_dir_all(&cwd).expect("failed to create fake windows cwd");
+        fs::create_dir_all(&home).expect("failed to create temp home");
+
+        let selected = preferred_default_workspace_root_for(
+            Some(&cwd),
+            Some(&home),
+            None,
+            true,
+            None,
+            Some(&windows_dir),
+        );
+
+        assert_eq!(selected, home);
+    }
+
+    #[test]
+    fn preferred_default_workspace_root_skips_windows_temp_dirs() {
+        let temp_dir = std::env::temp_dir().join(format!("panes-temp-{}", Uuid::new_v4()));
+        let home = std::env::temp_dir().join(format!("panes-home-{}", Uuid::new_v4()));
+        let cwd = temp_dir.join("nsis");
+        fs::create_dir_all(&cwd).expect("failed to create fake temp cwd");
+        fs::create_dir_all(&home).expect("failed to create temp home");
+
+        let selected = preferred_default_workspace_root_for(
+            Some(&cwd),
+            Some(&home),
+            None,
+            true,
+            Some(&temp_dir),
+            None,
+        );
 
         assert_eq!(selected, home);
     }

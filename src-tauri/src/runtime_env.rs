@@ -41,6 +41,15 @@ pub fn app_data_dir() -> PathBuf {
     )
 }
 
+pub fn legacy_app_data_dir() -> Option<PathBuf> {
+    home_dir().map(|home| legacy_app_data_dir_for(&home))
+}
+
+pub fn migrate_legacy_app_data_dir() -> std::io::Result<()> {
+    let current = app_data_dir();
+    migrate_legacy_app_data_dir_for(&current, legacy_app_data_dir().as_deref())
+}
+
 pub fn augmented_path() -> Option<OsString> {
     join_paths(augmented_path_entries())
 }
@@ -535,15 +544,91 @@ fn app_data_dir_for(
         if let Some(home) = home {
             return home.join("AppData").join("Local").join("Panes");
         }
-        return PathBuf::from("Panes");
+        return env::temp_dir().join("Panes");
     }
 
-    home.unwrap_or_else(|| Path::new("."))
-        .join(".agent-workspace")
+    home.map(legacy_app_data_dir_for)
+        .unwrap_or_else(|| Path::new(".").join(".agent-workspace"))
 }
 
 fn non_empty_os_str(value: Option<&OsStr>) -> Option<&OsStr> {
     value.filter(|value| !value.is_empty())
+}
+
+fn legacy_app_data_dir_for(home: &Path) -> PathBuf {
+    home.join(".agent-workspace")
+}
+
+fn migrate_legacy_app_data_dir_for(current: &Path, legacy: Option<&Path>) -> std::io::Result<()> {
+    let Some(legacy) = legacy else {
+        return Ok(());
+    };
+
+    if current == legacy || !legacy.exists() || path_has_entries(current)? {
+        return Ok(());
+    }
+
+    if let Some(parent) = current.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut copied_legacy = false;
+    if current.exists() {
+        copy_dir_contents_recursive(legacy, current)?;
+        copied_legacy = true;
+    } else if let Err(rename_error) = fs::rename(legacy, current) {
+        log::warn!(
+            "failed to rename legacy app data dir {} -> {}: {}; falling back to copy",
+            legacy.display(),
+            current.display(),
+            rename_error
+        );
+        copy_dir_contents_recursive(legacy, current)?;
+        copied_legacy = true;
+    }
+
+    if copied_legacy {
+        let _ = fs::remove_dir_all(legacy);
+    }
+
+    Ok(())
+}
+
+fn path_has_entries(path: &Path) -> std::io::Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    if path.is_file() {
+        return Ok(true);
+    }
+
+    Ok(fs::read_dir(path)?.next().transpose()?.is_some())
+}
+
+fn copy_dir_contents_recursive(source: &Path, target: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(target)?;
+
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+
+        if entry.file_type()?.is_dir() {
+            copy_dir_contents_recursive(&source_path, &target_path)?;
+            continue;
+        }
+
+        if target_path.exists() {
+            continue;
+        }
+
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(&source_path, &target_path)?;
+    }
+
+    Ok(())
 }
 
 fn nvm_bin_dirs(home: &Path) -> Vec<PathBuf> {
@@ -562,6 +647,7 @@ fn nvm_bin_dirs(home: &Path) -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use uuid::Uuid;
 
     fn normalize_path(path: &Path) -> String {
         path.to_string_lossy().replace('\\', "/")
@@ -827,5 +913,59 @@ mod tests {
     fn app_data_dir_for_unix_uses_dot_agent_workspace() {
         let path = app_data_dir_for(false, None, None, Some(Path::new("/home/panes")));
         assert_eq!(path, PathBuf::from("/home/panes/.agent-workspace"));
+    }
+
+    #[test]
+    fn app_data_dir_for_windows_falls_back_to_absolute_temp_dir() {
+        let path = app_data_dir_for(true, None, None, None);
+        assert_eq!(path, std::env::temp_dir().join("Panes"));
+        assert!(path.is_absolute());
+    }
+
+    #[test]
+    fn migrate_legacy_app_data_dir_moves_existing_legacy_tree() {
+        let root = std::env::temp_dir().join(format!("panes-app-data-migrate-{}", Uuid::new_v4()));
+        let current = root.join("AppData").join("Local").join("Panes");
+        let legacy = root.join(".agent-workspace");
+
+        fs::create_dir_all(legacy.join("logs")).expect("legacy app data dir should exist");
+        fs::write(legacy.join("config.toml"), "theme = \"dark\"\n")
+            .expect("legacy config should be written");
+        fs::write(legacy.join("logs").join("events.log"), "hello\n")
+            .expect("legacy log should be written");
+
+        migrate_legacy_app_data_dir_for(&current, Some(&legacy))
+            .expect("legacy app data should migrate");
+
+        assert!(current.join("config.toml").exists());
+        assert!(current.join("logs").join("events.log").exists());
+        assert!(!legacy.exists());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migrate_legacy_app_data_dir_preserves_existing_target_data() {
+        let root = std::env::temp_dir().join(format!("panes-app-data-preserve-{}", Uuid::new_v4()));
+        let current = root.join("AppData").join("Local").join("Panes");
+        let legacy = root.join(".agent-workspace");
+
+        fs::create_dir_all(&current).expect("current app data dir should exist");
+        fs::create_dir_all(&legacy).expect("legacy app data dir should exist");
+        fs::write(current.join("config.toml"), "theme = \"light\"\n")
+            .expect("current config should be written");
+        fs::write(legacy.join("config.toml"), "theme = \"dark\"\n")
+            .expect("legacy config should be written");
+
+        migrate_legacy_app_data_dir_for(&current, Some(&legacy))
+            .expect("migration should skip populated targets");
+
+        assert_eq!(
+            fs::read_to_string(current.join("config.toml")).expect("current config should exist"),
+            "theme = \"light\"\n"
+        );
+        assert!(legacy.join("config.toml").exists());
+
+        let _ = fs::remove_dir_all(&root);
     }
 }
