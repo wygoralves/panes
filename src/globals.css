@@ -587,12 +587,13 @@ button, input, textarea, select {
   50% { box-shadow: 0 0 20px rgba(255, 107, 107, 0.3); }
 }
 
-/* ── Onboarding Animations ── */
+/* ── Onboarding ── */
 
-@keyframes ob-drift {
-  0%   { transform: translate(0, 0) scale(1); }
-  50%  { transform: translate(30px, -20px) scale(1.05); }
-  100% { transform: translate(0, 0) scale(1); }
+.ob-interactive {
+  transition: border-color 120ms, background 120ms;
+}
+.ob-interactive:not(.ob-selected):hover {
+  border-color: rgba(255, 255, 255, 0.24) !important;
 }
 
 @keyframes ob-backdrop-in {
@@ -621,7 +622,6 @@ button, input, textarea, select {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  @keyframes ob-drift { 0%, 100% { transform: none; } }
   @keyframes ob-backdrop-in { from, to { opacity: 1; } }
   @keyframes ob-heading-in { from, to { opacity: 1; transform: none; } }
   @keyframes ob-step-enter-forward { from, to { opacity: 1; transform: none; } }

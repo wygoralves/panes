@@ -234,6 +234,7 @@ function WorkflowCard({
   return (
     <button
       type="button"
+      className={`ob-interactive${active ? " ob-selected" : ""}`}
       onClick={onClick}
       style={{
         width: "100%",
@@ -248,7 +249,6 @@ function WorkflowCard({
         background: active
           ? "rgba(255, 107, 107, 0.04)"
           : "var(--bg-2)",
-        transition: "border-color 120ms, background 120ms",
         display: "flex",
         flexDirection: "column" as const,
         gap: 16,
@@ -272,7 +272,7 @@ function WorkflowCard({
         <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-1)", marginBottom: 4 }}>
           {title}
         </div>
-        <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5, color: "var(--text-3)" }}>
+        <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: "var(--text-3)" }}>
           {description}
         </p>
       </div>
@@ -296,6 +296,7 @@ function ChatEngineCard({
   return (
     <button
       type="button"
+      className={`ob-interactive${selected ? " ob-selected" : ""}`}
       onClick={onClick}
       style={{
         width: "100%",
@@ -310,7 +311,6 @@ function ChatEngineCard({
         background: selected
           ? "rgba(255, 107, 107, 0.04)"
           : "var(--bg-2)",
-        transition: "border-color 120ms, background 120ms",
         animation: "ob-card-cascade 200ms var(--ease-out) both",
         animationDelay: `${index * 40}ms`,
         display: "flex",
@@ -366,6 +366,7 @@ function ProviderRow({
 
   return (
     <div
+      className="ob-interactive"
       style={{
         display: "flex",
         alignItems: "center",
@@ -395,7 +396,7 @@ function ProviderRow({
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 3,
-                fontSize: 10.5,
+                fontSize: 10,
                 fontWeight: 500,
                 color: "var(--success)",
               }}
@@ -405,7 +406,7 @@ function ProviderRow({
             </span>
           ) : null}
         </div>
-        <p style={{ margin: 0, fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.4 }}>
+        <p style={{ margin: 0, fontSize: 11, color: "var(--text-3)", lineHeight: 1.4 }}>
           {description}
         </p>
         {harness.version ? (
@@ -418,6 +419,15 @@ function ProviderRow({
       {/* Actions */}
       {!harness.found ? (
         <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={onOpenWebsite}
+            style={{ padding: "5px 8px", fontSize: 11, borderRadius: "var(--radius-sm)" }}
+          >
+            <ExternalLink size={11} />
+          </button>
+          {canInstall && installCommand ? <CopyCommandButton command={installCommand} /> : null}
           {canInstall ? (
             <button
               type="button"
@@ -439,15 +449,6 @@ function ProviderRow({
               {t("setup:actions.install")}
             </button>
           ) : null}
-          {canInstall && installCommand ? <CopyCommandButton command={installCommand} /> : null}
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={onOpenWebsite}
-            style={{ padding: "5px 8px", fontSize: 11, borderRadius: "var(--radius-sm)" }}
-          >
-            <ExternalLink size={11} />
-          </button>
         </div>
       ) : null}
     </div>
@@ -476,12 +477,10 @@ function ReadinessDependencyCard({
   return (
     <div
       style={{
-        borderRadius: "var(--radius-sm)",
-        border: "1px solid var(--border)",
-        background: "var(--bg-2)",
-        padding: "14px 16px",
+        borderLeft: "2px solid var(--border)",
+        paddingLeft: 14,
         display: "grid",
-        gap: 10,
+        gap: 8,
       }}
     >
       <div>
@@ -559,7 +558,7 @@ function ReadinessEngineRow({
               display: "inline-flex",
               alignItems: "center",
               gap: 3,
-              fontSize: 10.5,
+              fontSize: 10,
               fontWeight: 500,
               color: available ? "var(--success)" : "var(--warning)",
             }}
@@ -568,7 +567,7 @@ function ReadinessEngineRow({
             {available ? t("chatReadiness.status.ready") : t("chatReadiness.status.attention")}
           </span>
         </div>
-        <p style={{ margin: 0, fontSize: 11.5, lineHeight: 1.4, color: "var(--text-3)" }}>
+        <p style={{ margin: 0, fontSize: 11, lineHeight: 1.4, color: "var(--text-3)" }}>
           {health?.details ?? t("chatReadiness.status.pending")}
         </p>
         {health?.version ? (
@@ -579,7 +578,7 @@ function ReadinessEngineRow({
 
         {warnings.length > 0 ? (
           <div style={{ marginTop: 6 }}>
-            <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--warning)" }}>
+            <span style={{ fontSize: 10, fontWeight: 600, color: "var(--warning)" }}>
               {t("chatReadiness.sections.warnings")}
             </span>
             {warnings.map((w) => (
@@ -594,7 +593,7 @@ function ReadinessEngineRow({
               <code
                 key={c}
                 style={{
-                  fontSize: 10.5,
+                  fontSize: 10,
                   color: "var(--text-3)",
                   padding: "2px 5px",
                   borderRadius: 3,
@@ -610,7 +609,7 @@ function ReadinessEngineRow({
 
         {fixes.length > 0 ? (
           <div style={{ marginTop: 6 }}>
-            <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-3)" }}>
+            <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)" }}>
               {t("chatReadiness.sections.fixes")}
             </span>
             {fixes.map((f) => (
@@ -639,6 +638,7 @@ function WorkspaceRow({
   return (
     <button
       type="button"
+      className={`ob-interactive${selected ? " ob-selected" : ""}`}
       onClick={onClick}
       style={{
         width: "100%",
@@ -652,7 +652,6 @@ function WorkspaceRow({
         background: selected
           ? "rgba(255, 107, 107, 0.04)"
           : "var(--bg-2)",
-        transition: "border-color 120ms, background 120ms",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
@@ -1028,9 +1027,40 @@ export function OnboardingWizard() {
               <h2 style={{ fontSize: 24, fontWeight: 700, lineHeight: 1.2, margin: "0 0 6px", color: "var(--text-1)" }}>
                 {t(`setup:${stepMetadata.titleKey}`)}
               </h2>
-              <p style={{ fontSize: 14, color: "var(--text-3)", lineHeight: 1.5, margin: 0 }}>
-                {t(`setup:${stepMetadata.subtitleKey}`)}
-              </p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <p style={{ fontSize: 14, color: "var(--text-3)", lineHeight: 1.5, margin: 0 }}>
+                  {t(`setup:${stepMetadata.subtitleKey}`)}
+                </p>
+                {step === "cliProviders" ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => void scanHarnesses()}
+                    disabled={harnessPhase === "scanning" || Boolean(installing)}
+                    title={t("setup:actions.refreshProviders")}
+                    style={{ width: 28, height: 28, padding: 0, borderRadius: "var(--radius-sm)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                  >
+                    <RefreshCw
+                      size={12}
+                      style={{ animation: harnessPhase === "scanning" ? "spin 1s linear infinite" : "none" }}
+                    />
+                  </button>
+                ) : step === "chatReadiness" ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => void refreshReadiness()}
+                    disabled={readiness.loading || Boolean(installing)}
+                    title={t("setup:actions.refreshStatus")}
+                    style={{ width: 28, height: 28, padding: 0, borderRadius: "var(--radius-sm)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                  >
+                    <RefreshCw
+                      size={12}
+                      style={{ animation: readiness.loading ? "spin 1s linear infinite" : "none" }}
+                    />
+                  </button>
+                ) : null}
+              </div>
             </div>
 
             {/* Step body */}
@@ -1065,25 +1095,6 @@ export function OnboardingWizard() {
               {/* ── CLI Providers ── */}
               {step === "cliProviders" ? (
                 <div style={{ display: "grid", gap: 12 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <p style={{ margin: 0, fontSize: 12, color: "var(--text-3)" }}>
-                      {t("setup:cliProviders.helper")}
-                    </p>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      onClick={() => void scanHarnesses()}
-                      disabled={harnessPhase === "scanning" || Boolean(installing)}
-                      title={t("setup:actions.refreshProviders")}
-                      style={{ width: 28, height: 28, padding: 0, borderRadius: "var(--radius-sm)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
-                    >
-                      <RefreshCw
-                        size={12}
-                        style={{ animation: harnessPhase === "scanning" ? "spin 1s linear infinite" : "none" }}
-                      />
-                    </button>
-                  </div>
-
                   {harnessError ? <StatusMessage tone="warning">{harnessError}</StatusMessage> : null}
 
                   {harnessPhase === "scanning" && harnesses.length === 0 ? (
@@ -1128,9 +1139,6 @@ export function OnboardingWizard() {
               {/* ── Chat Engines ── */}
               {step === "chatEngines" ? (
                 <div style={{ display: "grid", gap: 10 }}>
-                  <p style={{ margin: 0, fontSize: 12, color: "var(--text-3)" }}>
-                    {t("setup:chatEngines.helper")}
-                  </p>
                   <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
                     {CHAT_ENGINE_OPTIONS.map((engine, index) => (
                       <ChatEngineCard
@@ -1149,25 +1157,6 @@ export function OnboardingWizard() {
               {/* ── Chat Readiness ── */}
               {step === "chatReadiness" ? (
                 <div style={{ display: "grid", gap: 12 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <p style={{ margin: 0, fontSize: 12, color: "var(--text-3)" }}>
-                      {t("setup:chatReadiness.helper")}
-                    </p>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      onClick={() => void refreshReadiness()}
-                      disabled={readiness.loading || Boolean(installing)}
-                      title={t("setup:actions.refreshStatus")}
-                      style={{ width: 28, height: 28, padding: 0, borderRadius: "var(--radius-sm)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
-                    >
-                      <RefreshCw
-                        size={12}
-                        style={{ animation: readiness.loading ? "spin 1s linear infinite" : "none" }}
-                      />
-                    </button>
-                  </div>
-
                   {readiness.error ? <StatusMessage tone="warning">{readiness.error}</StatusMessage> : null}
 
                   {readiness.loading && !readiness.dependencyReport ? (
@@ -1253,10 +1242,6 @@ export function OnboardingWizard() {
               {/* ── Workspace ── */}
               {step === "workspace" ? (
                 <div style={{ display: "grid", gap: 12 }}>
-                  <p style={{ margin: 0, fontSize: 12, color: "var(--text-3)" }}>
-                    {t("setup:workspace.helper")}
-                  </p>
-
                   {workspaces.length > 0 ? (
                     <div style={{ display: "grid", gap: 8 }}>
                       {workspaces.map((ws) => (
