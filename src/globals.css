@@ -587,6 +587,48 @@ button, input, textarea, select {
   50% { box-shadow: 0 0 20px rgba(255, 107, 107, 0.3); }
 }
 
+/* ── Onboarding Animations ── */
+
+@keyframes ob-drift {
+  0%   { transform: translate(0, 0) scale(1); }
+  50%  { transform: translate(30px, -20px) scale(1.05); }
+  100% { transform: translate(0, 0) scale(1); }
+}
+
+@keyframes ob-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes ob-heading-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ob-step-enter-forward {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes ob-step-enter-back {
+  from { opacity: 0; transform: translateX(-20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes ob-card-cascade {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes ob-drift { 0%, 100% { transform: none; } }
+  @keyframes ob-backdrop-in { from, to { opacity: 1; } }
+  @keyframes ob-heading-in { from, to { opacity: 1; transform: none; } }
+  @keyframes ob-step-enter-forward { from, to { opacity: 1; transform: none; } }
+  @keyframes ob-step-enter-back { from, to { opacity: 1; transform: none; } }
+  @keyframes ob-card-cascade { from, to { opacity: 1; transform: none; } }
+}
+
 @keyframes thinking-pulse {
   0%, 100% { opacity: 0.45; filter: drop-shadow(0 0 0 transparent); }
   50% { opacity: 1; filter: drop-shadow(0 0 4px rgba(96, 165, 250, 0.5)); }

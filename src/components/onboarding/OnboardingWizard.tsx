@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { open as openDirectoryDialog } from "@tauri-apps/plugin-dialog";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { useTranslation } from "react-i18next";
@@ -11,10 +11,10 @@ import {
   Download,
   ExternalLink,
   FolderOpen,
+  Info,
   Loader2,
   MessageSquare,
   RefreshCw,
-  Settings2,
   Terminal,
   X,
 } from "lucide-react";
@@ -45,6 +45,8 @@ import type {
   OnboardingWorkflowPreference,
 } from "../../types";
 
+/* ─── Types ─── */
+
 interface ReadinessState {
   loading: boolean;
   dependencyReport: DependencyReport | null;
@@ -58,6 +60,8 @@ const EMPTY_READINESS_STATE: ReadinessState = {
   engineHealth: {},
   error: null,
 };
+
+/* ─── Constants ─── */
 
 const CHAT_ENGINE_OPTIONS: Array<{
   id: OnboardingChatEngineId;
@@ -96,16 +100,12 @@ const STEP_TITLES: Record<
 function getVisibleSteps(
   workflow: OnboardingWorkflowPreference | null,
 ): OnboardingStep[] {
-  if (workflow === "cli") {
-    return ["workflow", "cliProviders", "workspace"];
-  }
-
-  if (workflow === "chat") {
-    return ["workflow", "chatEngines", "chatReadiness", "workspace"];
-  }
-
+  if (workflow === "cli") return ["workflow", "cliProviders", "workspace"];
+  if (workflow === "chat") return ["workflow", "chatEngines", "chatReadiness", "workspace"];
   return ["workflow"];
 }
+
+/* ─── Sub-components ─── */
 
 function CopyCommandButton({ command }: { command: string }) {
   const { t } = useTranslation(["setup", "common"]);
@@ -124,18 +124,16 @@ function CopyCommandButton({ command }: { command: string }) {
   return (
     <button
       type="button"
-      className="btn-ghost"
+      className="btn btn-ghost"
       onClick={() => void handleCopy()}
       style={{
-        padding: "7px 12px",
-        fontSize: 11.5,
+        padding: "5px 8px",
+        fontSize: 11,
         borderRadius: "var(--radius-sm)",
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
+        color: copied ? "var(--success)" : undefined,
       }}
     >
-      <ClipboardCopy size={12} />
+      <ClipboardCopy size={11} />
       {copied ? t("setup:actions.copied") : t("common:actions.copy")}
     </button>
   );
@@ -150,9 +148,7 @@ function InstallLogView({
   const logRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
-    }
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [log.length]);
 
   return (
@@ -160,16 +156,16 @@ function InstallLogView({
       ref={logRef}
       style={{
         margin: 0,
-        padding: "12px 14px",
+        padding: "10px 12px",
         fontSize: 11,
         lineHeight: 1.5,
         fontFamily: '"JetBrains Mono", monospace',
-        background: "var(--code-bg)",
+        background: "var(--bg-2)",
         borderRadius: "var(--radius-sm)",
         border: "1px solid var(--border)",
-        maxHeight: 220,
+        maxHeight: 160,
         overflow: "auto",
-        color: "var(--text-2)",
+        color: "var(--text-3)",
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
       }}
@@ -185,7 +181,7 @@ function InstallLogView({
                     ? "var(--warning)"
                     : entry.stream === "status"
                       ? "var(--accent)"
-                      : "var(--text-2)",
+                      : "var(--text-3)",
               }}
             >
               {entry.line}
@@ -202,72 +198,32 @@ function StatusMessage({
   tone: "warning" | "info";
   children: string;
 }) {
-  const borderColor =
-    tone === "warning"
-      ? "rgba(251, 191, 36, 0.28)"
-      : "rgba(90, 170, 255, 0.24)";
-  const background =
-    tone === "warning"
-      ? "rgba(251, 191, 36, 0.07)"
-      : "rgba(90, 170, 255, 0.08)";
+  const isWarning = tone === "warning";
+  const IconComponent = isWarning ? AlertTriangle : Info;
 
   return (
     <div
       style={{
-        padding: "12px 14px",
+        padding: "10px 12px",
         borderRadius: "var(--radius-sm)",
-        border: `1px solid ${borderColor}`,
-        background,
+        border: "1px solid var(--border)",
+        background: "var(--bg-2)",
         display: "flex",
         alignItems: "flex-start",
         gap: 10,
       }}
     >
-      <AlertTriangle
-        size={15}
+      <IconComponent
+        size={13}
         style={{
           flexShrink: 0,
-          color: tone === "warning" ? "var(--warning)" : "var(--accent)",
-          marginTop: 1,
+          color: isWarning ? "var(--warning)" : "var(--text-3)",
+          marginTop: 2,
         }}
       />
-      <p style={{ margin: 0, fontSize: 12, color: "var(--text-1)", lineHeight: 1.5 }}>
+      <p style={{ margin: 0, fontSize: 12, color: "var(--text-2)", lineHeight: 1.5 }}>
         {children}
       </p>
-    </div>
-  );
-}
-
-function StepChip({
-  active,
-  complete,
-  label,
-}: {
-  active: boolean;
-  complete: boolean;
-  label: string;
-}) {
-  return (
-    <div
-      style={{
-        padding: "6px 10px",
-        borderRadius: 999,
-        border: active
-          ? "1px solid rgba(255, 107, 107, 0.4)"
-          : complete
-            ? "1px solid rgba(255, 107, 107, 0.25)"
-            : "1px solid var(--border)",
-        background: active
-          ? "rgba(255, 107, 107, 0.1)"
-          : complete
-            ? "rgba(255, 107, 107, 0.05)"
-            : "var(--bg-2)",
-        fontSize: 11,
-        fontWeight: 600,
-        color: active ? "var(--accent)" : "var(--text-2)",
-      }}
-    >
-      {label}
     </div>
   );
 }
@@ -288,60 +244,61 @@ function WorkflowCard({
   return (
     <button
       type="button"
-      className="btn-ghost"
       onClick={onClick}
       style={{
         width: "100%",
         textAlign: "left",
-        padding: 0,
-        borderRadius: "var(--radius)",
+        padding: "20px 18px",
+        borderRadius: "var(--radius-md)",
+        position: "relative",
+        cursor: "pointer",
         border: active
-          ? "1px solid rgba(255, 107, 107, 0.35)"
+          ? "1px solid var(--border-accent)"
           : "1px solid var(--border)",
-        background: active ? "rgba(255, 107, 107, 0.06)" : "var(--bg-2)",
-        overflow: "hidden",
+        background: active
+          ? "rgba(255, 107, 107, 0.04)"
+          : "var(--bg-2)",
+        transition: "border-color 120ms, background 120ms",
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          gap: 14,
-          padding: "18px 18px 16px",
-          alignItems: "flex-start",
-        }}
-      >
+      {active ? (
+        <CheckCircle2
+          size={14}
+          style={{
+            position: "absolute",
+            top: 12,
+            right: 12,
+            color: "var(--accent)",
+          }}
+        />
+      ) : null}
+      <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
         <div
           style={{
-            width: 42,
-            height: 42,
-            borderRadius: 12,
-            background: active ? "rgba(255, 107, 107, 0.14)" : "var(--bg-3)",
+            width: 40,
+            height: 40,
+            borderRadius: 10,
+            background: active
+              ? "var(--accent-dim)"
+              : "rgba(255, 255, 255, 0.04)",
+            border: active
+              ? "1px solid var(--border-accent)"
+              : "1px solid rgba(255, 255, 255, 0.06)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: active ? "var(--accent)" : "var(--text-2)",
+            color: active ? "var(--accent)" : "var(--text-3)",
             flexShrink: 0,
+            transition: "all 120ms",
           }}
         >
           {icon}
         </div>
-        <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-            }}
-          >
-            <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-1)" }}>
-              {title}
-            </span>
-            {active ? (
-              <CheckCircle2 size={15} style={{ color: "var(--accent)", flexShrink: 0 }} />
-            ) : null}
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-1)", marginBottom: 2 }}>
+            {title}
           </div>
-          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.55, color: "var(--text-2)" }}>
+          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: "var(--text-3)" }}>
             {description}
           </p>
         </div>
@@ -351,11 +308,13 @@ function WorkflowCard({
 }
 
 function ChatEngineCard({
+  index,
   selected,
   description,
   id,
   onClick,
 }: {
+  index: number;
   selected: boolean;
   description: string;
   id: OnboardingChatEngineId;
@@ -364,51 +323,57 @@ function ChatEngineCard({
   return (
     <button
       type="button"
-      className="btn-ghost"
       onClick={onClick}
       style={{
         width: "100%",
-        padding: "16px 16px 14px",
-        borderRadius: "var(--radius)",
+        padding: "16px",
+        borderRadius: "var(--radius-md)",
         textAlign: "left",
+        position: "relative",
+        cursor: "pointer",
         border: selected
-          ? "1px solid rgba(255, 107, 107, 0.35)"
+          ? "1px solid var(--border-accent)"
           : "1px solid var(--border)",
-        background: selected ? "rgba(255, 107, 107, 0.06)" : "var(--bg-2)",
+        background: selected
+          ? "rgba(255, 107, 107, 0.04)"
+          : "var(--bg-2)",
+        transition: "border-color 120ms, background 120ms",
+        animation: "ob-card-cascade 200ms var(--ease-out) both",
+        animationDelay: `${index * 40}ms`,
       }}
     >
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+      {selected ? (
+        <CheckCircle2
+          size={13}
+          style={{ position: "absolute", top: 12, right: 12, color: "var(--accent)" }}
+        />
+      ) : null}
+      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
         <div
           style={{
-            width: 36,
-            height: 36,
-            borderRadius: 10,
-            background: selected ? "rgba(255, 107, 107, 0.14)" : "var(--bg-3)",
+            width: 34,
+            height: 34,
+            borderRadius: 8,
+            background: selected
+              ? "var(--accent-dim)"
+              : "rgba(255, 255, 255, 0.04)",
+            border: selected
+              ? "1px solid var(--border-accent)"
+              : "1px solid rgba(255, 255, 255, 0.06)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             flexShrink: 0,
+            transition: "all 120ms",
           }}
         >
-          {getHarnessIcon(id, 18)}
+          {getHarnessIcon(id, 16)}
         </div>
-        <div style={{ display: "grid", gap: 4, minWidth: 0, flex: 1 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-            }}
-          >
-            <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-1)" }}>
-              {id === "codex" ? "Codex" : "Claude"}
-            </span>
-            {selected ? (
-              <CheckCircle2 size={15} style={{ color: "var(--accent)", flexShrink: 0 }} />
-            ) : null}
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)", marginBottom: 2 }}>
+            {id === "codex" ? "Codex" : "Claude"}
           </div>
-          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.55, color: "var(--text-2)" }}>
+          <p style={{ margin: 0, fontSize: 11.5, lineHeight: 1.4, color: "var(--text-3)" }}>
             {description}
           </p>
         </div>
@@ -417,7 +382,12 @@ function ChatEngineCard({
   );
 }
 
-function ProviderCard({
+/**
+ * Flat tile row matching the hp-tile pattern from HarnessPanel.
+ * No bordered card — just a row that highlights on hover.
+ */
+function ProviderRow({
+  index,
   disabled,
   description,
   harness,
@@ -425,6 +395,7 @@ function ProviderCard({
   onInstall,
   onOpenWebsite,
 }: {
+  index: number;
   disabled: boolean;
   description: string;
   harness: HarnessInfo;
@@ -439,112 +410,98 @@ function ProviderCard({
   return (
     <div
       style={{
-        borderRadius: "var(--radius)",
-        border: harness.found
-          ? "1px solid rgba(255, 107, 107, 0.25)"
-          : "1px solid var(--border)",
-        background: harness.found ? "rgba(255, 107, 107, 0.05)" : "var(--bg-2)",
-        padding: "16px 16px 14px",
-        display: "grid",
-        gap: 12,
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+        padding: "12px 14px",
+        borderRadius: "var(--radius-md)",
+        border: "1px solid var(--border)",
+        background: "var(--bg-2)",
+        animation: "ob-card-cascade 200ms var(--ease-out) both",
+        animationDelay: `${index * 30}ms`,
       }}
     >
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-        <div
-          style={{
-            width: 36,
-            height: 36,
-            borderRadius: 10,
-            background: harness.found ? "rgba(255, 107, 107, 0.14)" : "var(--bg-3)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          }}
-        >
-          {getHarnessIcon(harness.id, harness.native ? 20 : 18)}
-        </div>
-        <div style={{ minWidth: 0, flex: 1, display: "grid", gap: 4 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 12,
-            }}
-          >
-            <span style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-1)" }}>
-              {harness.name}
-            </span>
-            {harness.found ? (
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 5,
-                  fontSize: 11,
-                  color: "var(--accent)",
-                }}
-              >
-                <CheckCircle2 size={12} />
-                {t("app:harnesses.installed")}
-              </span>
-            ) : null}
-          </div>
-          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.55, color: "var(--text-2)" }}>
-            {description}
-          </p>
-          {harness.version ? (
-            <span style={{ fontSize: 11, color: "var(--text-3)", fontFamily: '"JetBrains Mono", monospace' }}>
-              {harness.version}
-            </span>
-          ) : null}
-        </div>
+      {/* Icon */}
+      <div
+        style={{
+          width: 34,
+          height: 34,
+          borderRadius: "var(--radius-sm)",
+          background: "rgba(255, 255, 255, 0.04)",
+          border: "1px solid rgba(255, 255, 255, 0.06)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+        }}
+      >
+        {getHarnessIcon(harness.id, harness.native ? 20 : 16)}
       </div>
 
-      {!harness.found ? (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {canInstall ? (
-            <>
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={onInstall}
-                disabled={disabled}
-                style={{
-                  padding: "8px 12px",
-                  fontSize: 12,
-                  borderRadius: "var(--radius-sm)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                {installing ? (
-                  <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
-                ) : (
-                  <Download size={12} />
-                )}
-                {t("setup:actions.install")}
-              </button>
-              {installCommand ? <CopyCommandButton command={installCommand} /> : null}
-            </>
+      {/* Body */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)" }}>
+            {harness.name}
+          </span>
+          {harness.found ? (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 3,
+                fontSize: 10.5,
+                fontWeight: 500,
+                color: "var(--success)",
+              }}
+            >
+              <CheckCircle2 size={10} />
+              {t("app:harnesses.installed")}
+            </span>
           ) : null}
+        </div>
+        <p style={{ margin: 0, fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.4 }}>
+          {description}
+        </p>
+        {harness.version ? (
+          <span style={{ fontSize: 10, color: "var(--text-3)", fontFamily: '"JetBrains Mono", monospace' }}>
+            {harness.version}
+          </span>
+        ) : null}
+      </div>
+
+      {/* Actions */}
+      {!harness.found ? (
+        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+          {canInstall ? (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={onInstall}
+              disabled={disabled}
+              style={{
+                padding: "5px 10px",
+                fontSize: 11,
+                borderRadius: "var(--radius-sm)",
+                opacity: disabled ? 0.4 : 1,
+              }}
+            >
+              {installing ? (
+                <Loader2 size={11} className="animate-spin" />
+              ) : (
+                <Download size={11} />
+              )}
+              {t("setup:actions.install")}
+            </button>
+          ) : null}
+          {canInstall && installCommand ? <CopyCommandButton command={installCommand} /> : null}
           <button
             type="button"
-            className="btn-ghost"
+            className="btn btn-ghost"
             onClick={onOpenWebsite}
-            style={{
-              padding: "8px 12px",
-              fontSize: 12,
-              borderRadius: "var(--radius-sm)",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-            }}
+            style={{ padding: "5px 8px", fontSize: 11, borderRadius: "var(--radius-sm)" }}
           >
-            <ExternalLink size={12} />
-            {t("setup:actions.openWebsite")}
+            <ExternalLink size={11} />
           </button>
         </div>
       ) : null}
@@ -574,42 +531,36 @@ function ReadinessDependencyCard({
   return (
     <div
       style={{
-        borderRadius: "var(--radius)",
+        borderRadius: "var(--radius-sm)",
         border: "1px solid var(--border)",
         background: "var(--bg-2)",
-        padding: "14px 14px 13px",
+        padding: "14px 16px",
         display: "grid",
         gap: 10,
       }}
     >
-      <div style={{ display: "grid", gap: 4 }}>
+      <div>
         <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)" }}>{label}</span>
-        <p style={{ margin: 0, fontSize: 12, lineHeight: 1.55, color: "var(--text-2)" }}>
+        <p style={{ margin: "2px 0 0", fontSize: 12, lineHeight: 1.5, color: "var(--text-3)" }}>
           {description}
         </p>
       </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
         {onInstall ? (
           <button
             type="button"
-            className="btn-primary"
+            className="btn btn-primary"
             onClick={onInstall}
             disabled={disabled}
             style={{
-              padding: "8px 12px",
-              fontSize: 12,
+              padding: "5px 10px",
+              fontSize: 11,
               borderRadius: "var(--radius-sm)",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
+              opacity: disabled ? 0.4 : 1,
             }}
           >
-            {installing ? (
-              <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
-            ) : (
-              <Download size={12} />
-            )}
+            {installing ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
             {actionLabel ?? t("actions.install")}
           </button>
         ) : null}
@@ -619,7 +570,7 @@ function ReadinessDependencyCard({
   );
 }
 
-function ReadinessEngineCard({
+function ReadinessEngineRow({
   engineId,
   health,
 }: {
@@ -635,120 +586,103 @@ function ReadinessEngineCard({
   return (
     <div
       style={{
-        borderRadius: "var(--radius)",
-        border: available
-          ? "1px solid rgba(255, 107, 107, 0.25)"
-          : "1px solid var(--border)",
-        background: available ? "rgba(255, 107, 107, 0.05)" : "var(--bg-2)",
-        padding: "14px 14px 12px",
-        display: "grid",
-        gap: 10,
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 12,
+        padding: "10px 12px",
+        borderRadius: "var(--radius-sm)",
       }}
     >
-      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-        <div
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: 10,
-            background: available ? "rgba(255, 107, 107, 0.14)" : "var(--bg-3)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          }}
-        >
-          {getHarnessIcon(engineId, 17)}
-        </div>
-        <div style={{ display: "grid", gap: 4, minWidth: 0, flex: 1 }}>
-          <div
+      <div
+        style={{
+          width: 34,
+          height: 34,
+          borderRadius: 8,
+          background: "rgba(255, 255, 255, 0.04)",
+          border: "1px solid rgba(255, 255, 255, 0.06)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+        }}
+      >
+        {getHarnessIcon(engineId, 16)}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)" }}>
+            {engineId === "codex" ? "Codex" : "Claude"}
+          </span>
+          <span
             style={{
-              display: "flex",
+              display: "inline-flex",
               alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
+              gap: 3,
+              fontSize: 10.5,
+              fontWeight: 500,
+              color: available ? "var(--success)" : "var(--warning)",
             }}
           >
-            <span style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-1)" }}>
-              {engineId === "codex" ? "Codex" : "Claude"}
+            {available ? <CheckCircle2 size={10} /> : <AlertTriangle size={10} />}
+            {available ? t("chatReadiness.status.ready") : t("chatReadiness.status.attention")}
+          </span>
+        </div>
+        <p style={{ margin: 0, fontSize: 11.5, lineHeight: 1.4, color: "var(--text-3)" }}>
+          {health?.details ?? t("chatReadiness.status.pending")}
+        </p>
+        {health?.version ? (
+          <span style={{ fontSize: 10, color: "var(--text-3)", fontFamily: '"JetBrains Mono", monospace' }}>
+            {health.version}
+          </span>
+        ) : null}
+
+        {warnings.length > 0 ? (
+          <div style={{ marginTop: 6 }}>
+            <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--warning)" }}>
+              {t("chatReadiness.sections.warnings")}
             </span>
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 5,
-                fontSize: 11,
-                color: available ? "var(--accent)" : "var(--warning)",
-              }}
-            >
-              {available ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
-              {available ? t("chatReadiness.status.ready") : t("chatReadiness.status.attention")}
-            </span>
+            {warnings.map((w) => (
+              <p key={w} style={{ margin: "2px 0 0", fontSize: 11, color: "var(--text-3)" }}>{w}</p>
+            ))}
           </div>
-          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.55, color: "var(--text-2)" }}>
-            {health?.details ?? t("chatReadiness.status.pending")}
-          </p>
-          {health?.version ? (
-            <span style={{ fontSize: 11, color: "var(--text-3)", fontFamily: '"JetBrains Mono", monospace' }}>
-              {health.version}
+        ) : null}
+
+        {checks.length > 0 ? (
+          <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {checks.map((c) => (
+              <code
+                key={c}
+                style={{
+                  fontSize: 10.5,
+                  color: "var(--text-3)",
+                  padding: "2px 5px",
+                  borderRadius: 3,
+                  background: "var(--bg-2)",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                {c}
+              </code>
+            ))}
+          </div>
+        ) : null}
+
+        {fixes.length > 0 ? (
+          <div style={{ marginTop: 6 }}>
+            <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-3)" }}>
+              {t("chatReadiness.sections.fixes")}
             </span>
-          ) : null}
-        </div>
+            {fixes.map((f) => (
+              <p key={f} style={{ margin: "2px 0 0", fontSize: 11, color: "var(--text-3)" }}>{f}</p>
+            ))}
+          </div>
+        ) : null}
       </div>
-
-      {warnings.length > 0 ? (
-        <div style={{ display: "grid", gap: 5 }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--warning)" }}>
-            {t("chatReadiness.sections.warnings")}
-          </span>
-          {warnings.map((warning) => (
-            <p key={warning} style={{ margin: 0, fontSize: 11.5, color: "var(--text-2)" }}>
-              {warning}
-            </p>
-          ))}
-        </div>
-      ) : null}
-
-      {checks.length > 0 ? (
-        <div style={{ display: "grid", gap: 5 }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-3)" }}>
-            {t("chatReadiness.sections.checks")}
-          </span>
-          {checks.map((check) => (
-            <code
-              key={check}
-              style={{
-                fontSize: 11,
-                color: "var(--text-2)",
-                padding: "4px 6px",
-                borderRadius: 6,
-                background: "var(--code-bg)",
-                border: "1px solid var(--border)",
-              }}
-            >
-              {check}
-            </code>
-          ))}
-        </div>
-      ) : null}
-
-      {fixes.length > 0 ? (
-        <div style={{ display: "grid", gap: 5 }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-3)" }}>
-            {t("chatReadiness.sections.fixes")}
-          </span>
-          {fixes.map((fix) => (
-            <p key={fix} style={{ margin: 0, fontSize: 11.5, color: "var(--text-2)" }}>
-              {fix}
-            </p>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
 
-function WorkspaceCard({
+function WorkspaceRow({
   active,
   onClick,
   selected,
@@ -764,41 +698,37 @@ function WorkspaceCard({
   return (
     <button
       type="button"
-      className="btn-ghost"
       onClick={onClick}
       style={{
         width: "100%",
         textAlign: "left",
-        padding: "14px 14px 13px",
-        borderRadius: "var(--radius)",
+        padding: "12px 14px",
+        borderRadius: "var(--radius-md)",
+        cursor: "pointer",
         border: selected
-          ? "1px solid rgba(255, 107, 107, 0.35)"
+          ? "1px solid var(--border-accent)"
           : "1px solid var(--border)",
-        background: selected ? "rgba(255, 107, 107, 0.06)" : "var(--bg-2)",
-        display: "grid",
-        gap: 6,
+        background: selected
+          ? "rgba(255, 107, 107, 0.04)"
+          : "var(--bg-2)",
+        transition: "border-color 120ms, background 120ms",
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-        }}
-      >
-        <span style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-1)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)" }}>
           {workspace.name}
         </span>
         {active ? (
-          <span style={{ fontSize: 11, color: "var(--accent)" }}>{t("workspace.current")}</span>
+          <span style={{ fontSize: 10, fontWeight: 600, color: "var(--accent)" }}>
+            {t("workspace.current")}
+          </span>
         ) : null}
       </div>
       <span
         style={{
-          fontSize: 11.5,
-          color: "var(--text-2)",
-          lineHeight: 1.5,
+          fontSize: 11,
+          color: "var(--text-3)",
+          lineHeight: 1.3,
           fontFamily: '"JetBrains Mono", monospace',
           wordBreak: "break-word",
         }}
@@ -809,51 +739,55 @@ function WorkspaceCard({
   );
 }
 
+/* ─── Main Wizard ─── */
+
 export function OnboardingWizard() {
   const { t } = useTranslation(["setup", "common", "app"]);
-  const open = useOnboardingStore((state) => state.open);
-  const completed = useOnboardingStore((state) => state.completed);
-  const legacyCompleted = useOnboardingStore((state) => state.legacyCompleted);
-  const step = useOnboardingStore((state) => state.step);
-  const preferredWorkflow = useOnboardingStore((state) => state.preferredWorkflow);
-  const selectedChatEngines = useOnboardingStore((state) => state.selectedChatEngines);
-  const selectedWorkspaceId = useOnboardingStore((state) => state.selectedWorkspaceId);
-  const installLog = useOnboardingStore((state) => state.installLog);
-  const installing = useOnboardingStore((state) => state.installing);
-  const installError = useOnboardingStore((state) => state.error);
-  const openOnboarding = useOnboardingStore((state) => state.openOnboarding);
-  const closeOnboarding = useOnboardingStore((state) => state.closeOnboarding);
-  const setStep = useOnboardingStore((state) => state.setStep);
-  const setPreferredWorkflow = useOnboardingStore((state) => state.setPreferredWorkflow);
-  const toggleChatEngine = useOnboardingStore((state) => state.toggleChatEngine);
-  const setSelectedWorkspaceId = useOnboardingStore((state) => state.setSelectedWorkspaceId);
-  const clearInstallState = useOnboardingStore((state) => state.clearInstallState);
-  const installDependency = useOnboardingStore((state) => state.installDependency);
-  const installHarness = useOnboardingStore((state) => state.installHarness);
-  const completeOnboarding = useOnboardingStore((state) => state.complete);
+  const open = useOnboardingStore((s) => s.open);
+  const completed = useOnboardingStore((s) => s.completed);
+  const legacyCompleted = useOnboardingStore((s) => s.legacyCompleted);
+  const step = useOnboardingStore((s) => s.step);
+  const preferredWorkflow = useOnboardingStore((s) => s.preferredWorkflow);
+  const selectedChatEngines = useOnboardingStore((s) => s.selectedChatEngines);
+  const selectedWorkspaceId = useOnboardingStore((s) => s.selectedWorkspaceId);
+  const installLog = useOnboardingStore((s) => s.installLog);
+  const installing = useOnboardingStore((s) => s.installing);
+  const installError = useOnboardingStore((s) => s.error);
+  const openOnboarding = useOnboardingStore((s) => s.openOnboarding);
+  const closeOnboarding = useOnboardingStore((s) => s.closeOnboarding);
+  const setStep = useOnboardingStore((s) => s.setStep);
+  const setPreferredWorkflow = useOnboardingStore((s) => s.setPreferredWorkflow);
+  const toggleChatEngine = useOnboardingStore((s) => s.toggleChatEngine);
+  const setSelectedWorkspaceId = useOnboardingStore((s) => s.setSelectedWorkspaceId);
+  const clearInstallState = useOnboardingStore((s) => s.clearInstallState);
+  const installDependency = useOnboardingStore((s) => s.installDependency);
+  const installHarness = useOnboardingStore((s) => s.installHarness);
+  const completeOnboarding = useOnboardingStore((s) => s.complete);
 
-  const harnessPhase = useHarnessStore((state) => state.phase);
-  const harnessError = useHarnessStore((state) => state.error);
-  const harnesses = useHarnessStore((state) => state.harnesses);
-  const scanHarnesses = useHarnessStore((state) => state.scan);
+  const harnessPhase = useHarnessStore((s) => s.phase);
+  const harnessError = useHarnessStore((s) => s.error);
+  const harnesses = useHarnessStore((s) => s.harnesses);
+  const scanHarnesses = useHarnessStore((s) => s.scan);
 
-  const workspaces = useWorkspaceStore((state) => state.workspaces);
-  const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
-  const workspaceLoading = useWorkspaceStore((state) => state.loading);
-  const workspaceError = useWorkspaceStore((state) => state.error);
-  const openWorkspace = useWorkspaceStore((state) => state.openWorkspace);
-  const setActiveWorkspace = useWorkspaceStore((state) => state.setActiveWorkspace);
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const workspaceLoading = useWorkspaceStore((s) => s.loading);
+  const workspaceError = useWorkspaceStore((s) => s.error);
+  const openWorkspace = useWorkspaceStore((s) => s.openWorkspace);
+  const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
 
-  const loadedOnce = useEngineStore((state) => state.loadedOnce);
-  const loadingEngines = useEngineStore((state) => state.loading);
-  const loadEngines = useEngineStore((state) => state.load);
+  const loadedOnce = useEngineStore((s) => s.loadedOnce);
+  const loadingEngines = useEngineStore((s) => s.loading);
+  const loadEngines = useEngineStore((s) => s.load);
 
-  const setActiveView = useUiStore((state) => state.setActiveView);
+  const setActiveView = useUiStore((s) => s.setActiveView);
 
   const autoOpenedRef = useRef(false);
   const readinessRequestRef = useRef(0);
   const [workspaceConfirmed, setWorkspaceConfirmed] = useState(false);
   const [readiness, setReadiness] = useState<ReadinessState>(EMPTY_READINESS_STATE);
+  const [stepDirection, setStepDirection] = useState<"forward" | "back">("forward");
+  const [stepAnimKey, setStepAnimKey] = useState(0);
 
   const visibleSteps = getVisibleSteps(preferredWorkflow);
   const currentStepIndex = visibleSteps.indexOf(step);
@@ -877,242 +811,6 @@ export function OnboardingWizard() {
     isCodexAuthDeferred(readiness.engineHealth.codex);
   const busy = Boolean(installing) || workspaceLoading;
 
-  useEffect(() => {
-    if (autoOpenedRef.current || open) {
-      return;
-    }
-
-    if (
-      !shouldAutoOpenOnboarding({
-        loadedOnce,
-        loadingEngines,
-        completed,
-        legacyCompleted,
-      })
-    ) {
-      return;
-    }
-
-    autoOpenedRef.current = true;
-    openOnboarding();
-  }, [completed, legacyCompleted, loadedOnce, loadingEngines, open, openOnboarding]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    readinessRequestRef.current += 1;
-    setWorkspaceConfirmed(false);
-    setReadiness(EMPTY_READINESS_STATE);
-  }, [open]);
-
-  useEffect(() => {
-    if (!open || selectedWorkspaceId || !activeWorkspaceId) {
-      return;
-    }
-
-    setSelectedWorkspaceId(activeWorkspaceId);
-  }, [activeWorkspaceId, open, selectedWorkspaceId, setSelectedWorkspaceId]);
-
-  useEffect(() => {
-    if (!open || step !== "cliProviders") {
-      return;
-    }
-
-    if (harnesses.length === 0 || harnessPhase === "error") {
-      void scanHarnesses();
-    }
-  }, [harnessPhase, harnesses.length, open, scanHarnesses, step]);
-
-  async function refreshReadiness() {
-    const requestId = ++readinessRequestRef.current;
-    setReadiness((state) => ({
-      ...state,
-      loading: true,
-      error: null,
-    }));
-
-    try {
-      const dependencyReport = await ipc.checkDependencies();
-      const engineResults = await Promise.allSettled(
-        selectedChatEngines.map((engineId) => ipc.engineHealth(engineId)),
-      );
-      const nextHealth: Partial<Record<OnboardingChatEngineId, EngineHealth>> = {};
-
-      engineResults.forEach((result, index) => {
-        const engineId = selectedChatEngines[index];
-        if (!engineId) {
-          return;
-        }
-
-        if (result.status === "fulfilled") {
-          nextHealth[engineId] = result.value;
-          return;
-        }
-
-        nextHealth[engineId] = {
-          id: engineId,
-          available: false,
-          details: String(result.reason),
-          warnings: [],
-          checks: [],
-          fixes: [],
-        };
-      });
-
-      if (requestId !== readinessRequestRef.current) {
-        return;
-      }
-
-      setReadiness({
-        loading: false,
-        dependencyReport,
-        engineHealth: nextHealth,
-        error: null,
-      });
-      void loadEngines();
-    } catch (error) {
-      if (requestId !== readinessRequestRef.current) {
-        return;
-      }
-
-      setReadiness((state) => ({
-        ...state,
-        loading: false,
-        error: error instanceof Error ? error.message : String(error),
-      }));
-    }
-  }
-
-  useEffect(() => {
-    if (!open || step !== "chatReadiness" || selectedChatEngines.length === 0) {
-      return;
-    }
-
-    void refreshReadiness();
-  }, [open, selectedChatEngines, step]);
-
-  function handleClose() {
-    if (busy) {
-      return;
-    }
-
-    closeOnboarding();
-  }
-
-  function handleBack() {
-    if (busy) {
-      return;
-    }
-
-    clearInstallState();
-    setStep(previousOnboardingStep(step, preferredWorkflow));
-  }
-
-  function handleNext() {
-    if (busy) {
-      return;
-    }
-
-    clearInstallState();
-    setStep(nextOnboardingStep(step, preferredWorkflow));
-  }
-
-  async function handleInstallHarness(harness: HarnessInfo) {
-    if (installing) {
-      return;
-    }
-
-    clearInstallState();
-    const ok = await installHarness(harness.id, harness.name);
-    if (ok) {
-      await scanHarnesses();
-    }
-  }
-
-  async function handleInstallNode() {
-    if (installing) {
-      return;
-    }
-
-    const report = readiness.dependencyReport;
-    if (!report?.node.installMethod) {
-      return;
-    }
-
-    clearInstallState();
-    const ok = await installDependency("node", report.node.installMethod, t("chatReadiness.deps.node"));
-    if (ok) {
-      await refreshReadiness();
-    }
-  }
-
-  async function handleInstallCodex() {
-    if (installing) {
-      return;
-    }
-
-    const report = readiness.dependencyReport;
-    if (!report?.codex.installMethod) {
-      return;
-    }
-
-    clearInstallState();
-    const ok = await installDependency("codex", report.codex.installMethod, "Codex CLI");
-    if (ok) {
-      await refreshReadiness();
-    }
-  }
-
-  async function handleOpenWebsite(url: string) {
-    try {
-      await openExternal(url);
-    } catch {
-      // Ignore shell failures here; the action is best-effort.
-    }
-  }
-
-  async function handleOpenWorkspaceFolder() {
-    const selected = await openDirectoryDialog({ directory: true, multiple: false });
-    if (!selected || Array.isArray(selected)) {
-      return;
-    }
-
-    await openWorkspace(selected);
-    const openedWorkspace = useWorkspaceStore
-      .getState()
-      .workspaces.find((workspace) => workspace.rootPath === selected);
-
-    if (!openedWorkspace) {
-      return;
-    }
-
-    setSelectedWorkspaceId(openedWorkspace.id);
-    setWorkspaceConfirmed(true);
-  }
-
-  async function handleFinish() {
-    if (!selectedWorkspaceId || !preferredWorkflow || busy) {
-      return;
-    }
-
-    if (selectedWorkspaceId !== activeWorkspaceId) {
-      await setActiveWorkspace(selectedWorkspaceId);
-    }
-
-    if (preferredWorkflow === "chat") {
-      await loadEngines();
-    }
-
-    completeOnboarding();
-    setActiveView(preferredWorkflow === "cli" ? "harnesses" : "chat");
-  }
-
-  if (!open) {
-    return null;
-  }
-
   const canContinue =
     step === "workflow"
       ? preferredWorkflow !== null
@@ -1124,9 +822,164 @@ export function OnboardingWizard() {
             ? selectedWorkspaceId !== null && workspaceConfirmed
             : true;
 
+  const progressPercent =
+    visibleSteps.length > 1
+      ? ((Math.max(0, currentStepIndex) + 1) / visibleSteps.length) * 100
+      : 0;
+
+  /* ─── Effects ─── */
+
+  useEffect(() => {
+    if (autoOpenedRef.current || open) return;
+    if (!shouldAutoOpenOnboarding({ loadedOnce, loadingEngines, completed, legacyCompleted })) return;
+    autoOpenedRef.current = true;
+    openOnboarding();
+  }, [completed, legacyCompleted, loadedOnce, loadingEngines, open, openOnboarding]);
+
+  useEffect(() => {
+    if (!open) return;
+    readinessRequestRef.current += 1;
+    setWorkspaceConfirmed(false);
+    setReadiness(EMPTY_READINESS_STATE);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || selectedWorkspaceId || !activeWorkspaceId) return;
+    setSelectedWorkspaceId(activeWorkspaceId);
+  }, [activeWorkspaceId, open, selectedWorkspaceId, setSelectedWorkspaceId]);
+
+  useEffect(() => {
+    if (!open || step !== "cliProviders") return;
+    if (harnesses.length === 0 || harnessPhase === "error") void scanHarnesses();
+  }, [harnessPhase, harnesses.length, open, scanHarnesses, step]);
+
+  async function refreshReadiness() {
+    const requestId = ++readinessRequestRef.current;
+    setReadiness((s) => ({ ...s, loading: true, error: null }));
+    try {
+      const dependencyReport = await ipc.checkDependencies();
+      const engineResults = await Promise.allSettled(
+        selectedChatEngines.map((id) => ipc.engineHealth(id)),
+      );
+      const nextHealth: Partial<Record<OnboardingChatEngineId, EngineHealth>> = {};
+      engineResults.forEach((result, i) => {
+        const eid = selectedChatEngines[i];
+        if (!eid) return;
+        if (result.status === "fulfilled") { nextHealth[eid] = result.value; return; }
+        nextHealth[eid] = {
+          id: eid, available: false, details: String(result.reason),
+          warnings: [], checks: [], fixes: [],
+        };
+      });
+      if (requestId !== readinessRequestRef.current) return;
+      setReadiness({ loading: false, dependencyReport, engineHealth: nextHealth, error: null });
+      void loadEngines();
+    } catch (error) {
+      if (requestId !== readinessRequestRef.current) return;
+      setReadiness((s) => ({
+        ...s, loading: false,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+
+  useEffect(() => {
+    if (!open || step !== "chatReadiness" || selectedChatEngines.length === 0) return;
+    void refreshReadiness();
+  }, [open, selectedChatEngines, step]);
+
+  /* ─── Handlers ─── */
+
+  const handleClose = useCallback(() => {
+    if (busy) return;
+    closeOnboarding();
+  }, [busy, closeOnboarding]);
+
+  function handleBack() {
+    if (busy) return;
+    clearInstallState();
+    setStepDirection("back");
+    setStepAnimKey((k) => k + 1);
+    setStep(previousOnboardingStep(step, preferredWorkflow));
+  }
+
+  function handleNext() {
+    if (busy) return;
+    clearInstallState();
+    setStepDirection("forward");
+    setStepAnimKey((k) => k + 1);
+    setStep(nextOnboardingStep(step, preferredWorkflow));
+  }
+
+  async function handleInstallHarness(harness: HarnessInfo) {
+    if (installing) return;
+    clearInstallState();
+    const ok = await installHarness(harness.id, harness.name);
+    if (ok) await scanHarnesses();
+  }
+
+  async function handleInstallNode() {
+    if (installing) return;
+    const report = readiness.dependencyReport;
+    if (!report?.node.installMethod) return;
+    clearInstallState();
+    const ok = await installDependency("node", report.node.installMethod, t("chatReadiness.deps.node"));
+    if (ok) await refreshReadiness();
+  }
+
+  async function handleInstallCodex() {
+    if (installing) return;
+    const report = readiness.dependencyReport;
+    if (!report?.codex.installMethod) return;
+    clearInstallState();
+    const ok = await installDependency("codex", report.codex.installMethod, "Codex CLI");
+    if (ok) await refreshReadiness();
+  }
+
+  async function handleOpenWebsite(url: string) {
+    try { await openExternal(url); } catch { /* best-effort */ }
+  }
+
+  async function handleOpenWorkspaceFolder() {
+    const selected = await openDirectoryDialog({ directory: true, multiple: false });
+    if (!selected || Array.isArray(selected)) return;
+    await openWorkspace(selected);
+    const opened = useWorkspaceStore.getState().workspaces.find((w) => w.rootPath === selected);
+    if (!opened) return;
+    setSelectedWorkspaceId(opened.id);
+    setWorkspaceConfirmed(true);
+  }
+
+  const handleFinish = useCallback(async () => {
+    if (!selectedWorkspaceId || !preferredWorkflow || busy) return;
+    if (selectedWorkspaceId !== activeWorkspaceId) await setActiveWorkspace(selectedWorkspaceId);
+    if (preferredWorkflow === "chat") await loadEngines();
+    completeOnboarding();
+    setActiveView(preferredWorkflow === "cli" ? "harnesses" : "chat");
+  }, [selectedWorkspaceId, preferredWorkflow, busy, activeWorkspaceId, setActiveWorkspace, loadEngines, completeOnboarding, setActiveView]);
+
+  /* ─── Keyboard ─── */
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && !busy) handleClose();
+      if (e.key === "Enter" && canContinue && !busy) {
+        if (step === "workspace") void handleFinish();
+        else handleNext();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, busy, canContinue, step, handleClose, handleFinish]);
+
   const nodeManualGuidance = readiness.dependencyReport
     ? getNodeManualGuidance(readiness.dependencyReport)
     : null;
+
+  if (!open) return null;
+
+  /* ─── Render ─── */
 
   return (
     <div
@@ -1134,532 +987,482 @@ export function OnboardingWizard() {
         position: "fixed",
         inset: 0,
         zIndex: 70,
-        background: "rgba(0, 0, 0, 0.65)",
+        background: "rgba(0, 0, 0, 0.85)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 20,
-        animation: "fade-in 0.15s ease-out",
+        animation: "ob-backdrop-in 250ms var(--ease-out) both",
       }}
       onClick={handleClose}
     >
+      {/* Subtle ambient wash */}
+      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
+        <div
+          style={{
+            position: "absolute",
+            top: "-20%",
+            right: "-15%",
+            width: 500,
+            height: 500,
+            borderRadius: "50%",
+            background: "radial-gradient(circle, rgba(255, 107, 107, 0.04) 0%, transparent 70%)",
+            filter: "blur(80px)",
+            animation: "ob-drift 20s ease-in-out infinite",
+          }}
+        />
+      </div>
+
+      {/* Content */}
       <div
-        className="surface"
         style={{
-          width: "min(860px, 100%)",
-          maxHeight: "88vh",
-          overflow: "auto",
-          display: "grid",
-          gap: 22,
-          padding: "22px 24px",
-          boxShadow:
-            "0 24px 80px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06)",
-          animation: "slide-up 0.2s ease-out",
+          position: "relative",
+          zIndex: 1,
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
         }}
-        onClick={(event) => event.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
+        {/* Top bar: just close + progress */}
+        <div style={{ padding: "16px 24px 0", flexShrink: 0 }}>
           <div
             style={{
-              width: 34,
-              height: 34,
-              borderRadius: "var(--radius-sm)",
-              border: "1px solid var(--border)",
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
-              background: "var(--bg-2)",
-              color: "var(--text-2)",
-              flexShrink: 0,
+              justifyContent: "flex-end",
+              maxWidth: "min(90%, 1100px)",
+              margin: "0 auto",
             }}
           >
-            <Settings2 size={16} />
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={handleClose}
+              disabled={busy}
+              style={{
+                width: 28,
+                height: 28,
+                padding: 0,
+                borderRadius: "var(--radius-sm)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "var(--text-3)",
+                opacity: busy ? 0.4 : 1,
+              }}
+              title={t("common:actions.close")}
+            >
+              <X size={14} />
+            </button>
           </div>
-          <div style={{ minWidth: 0, flex: 1, display: "grid", gap: 12 }}>
-            <div style={{ display: "grid", gap: 4 }}>
-              <p style={{ margin: 0, fontSize: 15, fontWeight: 600, color: "var(--text-1)" }}>
+
+          {/* Progress bar */}
+          <div
+            style={{
+              marginTop: 12,
+              height: 1,
+              background: "rgba(255, 255, 255, 0.06)",
+              maxWidth: "min(90%, 1100px)",
+              margin: "12px auto 0",
+            }}
+          >
+            <div
+              style={{
+                height: "100%",
+                width: `${progressPercent}%`,
+                background: "var(--accent)",
+                transition: "width 300ms var(--ease-out)",
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Scroll area */}
+        <div style={{ flex: 1, overflowY: "auto", display: "flex", justifyContent: "center", alignItems: "flex-start" }}>
+          <div
+            style={{
+              width: "min(90%, 1100px)",
+              paddingTop: 48,
+              paddingBottom: 96,
+            }}
+          >
+            {/* Heading */}
+            <div
+              key={`heading-${step}`}
+              style={{
+                marginBottom: 28,
+                animation: "ob-heading-in 200ms var(--ease-out) both",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase" as const,
+                  color: "var(--text-3)",
+                  marginBottom: 6,
+                }}
+              >
+                {t("setup:footer.stepCounter", {
+                  current: Math.max(1, currentStepIndex + 1),
+                  total: visibleSteps.length,
+                })}
+              </div>
+              <h2 style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.3, margin: "0 0 4px", color: "var(--text-1)" }}>
                 {t(`setup:${stepMetadata.titleKey}`)}
-              </p>
-              <p style={{ margin: 0, fontSize: 12.5, color: "var(--text-2)", lineHeight: 1.5 }}>
+              </h2>
+              <p style={{ fontSize: 13, color: "var(--text-3)", lineHeight: 1.5, margin: 0 }}>
                 {t(`setup:${stepMetadata.subtitleKey}`)}
               </p>
             </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {visibleSteps.map((visibleStep, index) => (
-                <StepChip
-                  key={visibleStep}
-                  active={visibleStep === step}
-                  complete={currentStepIndex > index}
-                  label={t(`setup:steps.${visibleStep}`)}
-                />
-              ))}
+
+            {/* Step body */}
+            <div
+              key={stepAnimKey}
+              style={{
+                animation: stepDirection === "forward"
+                  ? "ob-step-enter-forward 180ms var(--ease-out) both"
+                  : "ob-step-enter-back 180ms var(--ease-out) both",
+              }}
+            >
+              {/* ── Workflow ── */}
+              {step === "workflow" ? (
+                <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
+                  <WorkflowCard
+                    active={preferredWorkflow === "cli"}
+                    description={t("setup:workflow.options.cli.description")}
+                    icon={<Terminal size={20} />}
+                    title={t("setup:workflow.options.cli.title")}
+                    onClick={() => setPreferredWorkflow("cli")}
+                  />
+                  <WorkflowCard
+                    active={preferredWorkflow === "chat"}
+                    description={t("setup:workflow.options.chat.description")}
+                    icon={<MessageSquare size={20} />}
+                    title={t("setup:workflow.options.chat.title")}
+                    onClick={() => setPreferredWorkflow("chat")}
+                  />
+                </div>
+              ) : null}
+
+              {/* ── CLI Providers ── */}
+              {step === "cliProviders" ? (
+                <div style={{ display: "grid", gap: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <p style={{ margin: 0, fontSize: 12, color: "var(--text-3)" }}>
+                      {t("setup:cliProviders.helper")}
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => void scanHarnesses()}
+                      disabled={harnessPhase === "scanning" || Boolean(installing)}
+                      title={t("setup:actions.refreshProviders")}
+                      style={{ width: 28, height: 28, padding: 0, borderRadius: "var(--radius-sm)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                    >
+                      <RefreshCw
+                        size={12}
+                        style={{ animation: harnessPhase === "scanning" ? "spin 1s linear infinite" : "none" }}
+                      />
+                    </button>
+                  </div>
+
+                  {harnessError ? <StatusMessage tone="warning">{harnessError}</StatusMessage> : null}
+
+                  {harnessPhase === "scanning" && harnesses.length === 0 ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "24px 12px" }}>
+                      <Loader2 size={14} style={{ color: "var(--text-3)", animation: "spin 1s linear infinite" }} />
+                      <span style={{ fontSize: 12, color: "var(--text-3)" }}>
+                        {t("setup:cliProviders.scanning")}
+                      </span>
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {harnesses.map((harness, index) => (
+                        <ProviderRow
+                          key={harness.id}
+                          index={index}
+                          disabled={Boolean(installing)}
+                          harness={harness}
+                          description={t(`app:harnesses.descriptions.${harness.id}`, { defaultValue: harness.description })}
+                          installing={installing?.kind === "harness" && installing.id === harness.id}
+                          onInstall={() => void handleInstallHarness(harness)}
+                          onOpenWebsite={() => void handleOpenWebsite(harness.website)}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {installing?.kind === "harness" || installLog.length > 0 || installError ? (
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {installing ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-3)" }}>
+                          <Loader2 size={12} style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }} />
+                          {t("setup:install.installing", { name: installing.label })}
+                        </div>
+                      ) : null}
+                      <InstallLogView log={installLog} />
+                      {installError ? <StatusMessage tone="warning">{installError}</StatusMessage> : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/* ── Chat Engines ── */}
+              {step === "chatEngines" ? (
+                <div style={{ display: "grid", gap: 10 }}>
+                  <p style={{ margin: 0, fontSize: 12, color: "var(--text-3)" }}>
+                    {t("setup:chatEngines.helper")}
+                  </p>
+                  <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
+                    {CHAT_ENGINE_OPTIONS.map((engine, index) => (
+                      <ChatEngineCard
+                        key={engine.id}
+                        index={index}
+                        id={engine.id}
+                        description={t(`setup:${engine.descriptionKey}`)}
+                        selected={selectedChatEngines.includes(engine.id)}
+                        onClick={() => toggleChatEngine(engine.id)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* ── Chat Readiness ── */}
+              {step === "chatReadiness" ? (
+                <div style={{ display: "grid", gap: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <p style={{ margin: 0, fontSize: 12, color: "var(--text-3)" }}>
+                      {t("setup:chatReadiness.helper")}
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => void refreshReadiness()}
+                      disabled={readiness.loading || Boolean(installing)}
+                      title={t("setup:actions.refreshStatus")}
+                      style={{ width: 28, height: 28, padding: 0, borderRadius: "var(--radius-sm)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                    >
+                      <RefreshCw
+                        size={12}
+                        style={{ animation: readiness.loading ? "spin 1s linear infinite" : "none" }}
+                      />
+                    </button>
+                  </div>
+
+                  {readiness.error ? <StatusMessage tone="warning">{readiness.error}</StatusMessage> : null}
+
+                  {readiness.loading && !readiness.dependencyReport ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "24px 12px" }}>
+                      <Loader2 size={14} style={{ color: "var(--text-3)", animation: "spin 1s linear infinite" }} />
+                      <span style={{ fontSize: 12, color: "var(--text-3)" }}>
+                        {t("setup:chatReadiness.loading")}
+                      </span>
+                    </div>
+                  ) : null}
+
+                  {readiness.dependencyReport && !readiness.dependencyReport.node.found ? (
+                    <ReadinessDependencyCard
+                      label={t("setup:chatReadiness.deps.node")}
+                      description={
+                        readiness.dependencyReport.node.canAutoInstall
+                          ? t("setup:chatReadiness.nodeInstallAvailable")
+                          : t("setup:chatReadiness.nodeInstallManual")
+                      }
+                      command={nodeManualGuidance?.command ?? null}
+                      disabled={Boolean(installing)}
+                      installing={installing?.kind === "dependency" && installing.id === "node"}
+                      onInstall={
+                        readiness.dependencyReport.node.canAutoInstall && readiness.dependencyReport.node.installMethod
+                          ? () => void handleInstallNode()
+                          : undefined
+                      }
+                    />
+                  ) : null}
+
+                  {selectedChatEngines.includes("codex") &&
+                  readiness.dependencyReport &&
+                  !readiness.dependencyReport.codex.found ? (
+                    <ReadinessDependencyCard
+                      label="Codex CLI"
+                      description={
+                        readiness.dependencyReport.codex.canAutoInstall
+                          ? t("setup:chatReadiness.codexInstallAvailable")
+                          : t("setup:chatReadiness.codexInstallManual")
+                      }
+                      command="npm install -g @openai/codex"
+                      disabled={Boolean(installing)}
+                      installing={installing?.kind === "dependency" && installing.id === "codex"}
+                      onInstall={
+                        readiness.dependencyReport.codex.canAutoInstall && readiness.dependencyReport.codex.installMethod
+                          ? () => void handleInstallCodex()
+                          : undefined
+                      }
+                    />
+                  ) : null}
+
+                  <div>
+                    {selectedChatEngines.map((engineId) => (
+                      <ReadinessEngineRow
+                        key={engineId}
+                        engineId={engineId}
+                        health={readiness.engineHealth[engineId]}
+                      />
+                    ))}
+                  </div>
+
+                  {!readiness.loading && !readiness.error && codexAuthDeferred ? (
+                    <StatusMessage tone="info">{t("setup:chatReadiness.authDeferred")}</StatusMessage>
+                  ) : !readiness.loading && !readiness.error && chatWorkflowReady ? (
+                    <StatusMessage tone="info">{t("setup:chatReadiness.readyHint")}</StatusMessage>
+                  ) : null}
+
+                  {installing?.kind === "dependency" || installLog.length > 0 || installError ? (
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {installing ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-3)" }}>
+                          <Loader2 size={12} style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }} />
+                          {t("setup:install.installing", { name: installing.label })}
+                        </div>
+                      ) : null}
+                      <InstallLogView log={installLog} />
+                      {installError ? <StatusMessage tone="warning">{installError}</StatusMessage> : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/* ── Workspace ── */}
+              {step === "workspace" ? (
+                <div style={{ display: "grid", gap: 12 }}>
+                  <p style={{ margin: 0, fontSize: 12, color: "var(--text-3)" }}>
+                    {t("setup:workspace.helper")}
+                  </p>
+
+                  {workspaces.length > 0 ? (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {workspaces.map((ws) => (
+                        <WorkspaceRow
+                          key={ws.id}
+                          workspace={ws}
+                          active={ws.id === activeWorkspaceId}
+                          selected={ws.id === selectedWorkspaceId}
+                          onClick={() => { setSelectedWorkspaceId(ws.id); setWorkspaceConfirmed(true); }}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <StatusMessage tone="warning">{t("setup:workspace.empty")}</StatusMessage>
+                  )}
+
+                  <div>
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      onClick={() => void handleOpenWorkspaceFolder()}
+                      disabled={workspaceLoading}
+                      style={{ padding: "6px 10px", fontSize: 12, borderRadius: "var(--radius-sm)" }}
+                    >
+                      {workspaceLoading ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
+                      {t("setup:actions.openFolder")}
+                    </button>
+                  </div>
+
+                  {workspaceError ? <StatusMessage tone="warning">{workspaceError}</StatusMessage> : null}
+                </div>
+              ) : null}
             </div>
           </div>
-          <button
-            type="button"
-            className="btn-ghost"
-            onClick={handleClose}
-            disabled={busy}
-            style={{
-              width: 28,
-              height: 28,
-              borderRadius: "var(--radius-sm)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "var(--text-3)",
-              cursor: busy ? "default" : "pointer",
-              flexShrink: 0,
-            }}
-            title={t("common:actions.close")}
-          >
-            <X size={14} />
-          </button>
         </div>
 
-        {step === "workflow" ? (
-          <div style={{ display: "grid", gap: 12 }}>
-            <WorkflowCard
-              active={preferredWorkflow === "cli"}
-              description={t("setup:workflow.options.cli.description")}
-              icon={<Terminal size={18} />}
-              title={t("setup:workflow.options.cli.title")}
-              onClick={() => setPreferredWorkflow("cli")}
-            />
-            <WorkflowCard
-              active={preferredWorkflow === "chat"}
-              description={t("setup:workflow.options.chat.description")}
-              icon={<MessageSquare size={18} />}
-              title={t("setup:workflow.options.chat.title")}
-              onClick={() => setPreferredWorkflow("chat")}
-            />
-          </div>
-        ) : null}
-
-        {step === "cliProviders" ? (
-          <div style={{ display: "grid", gap: 14 }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-              }}
-            >
-              <p style={{ margin: 0, fontSize: 12, color: "var(--text-2)" }}>
-                {t("setup:cliProviders.helper")}
-              </p>
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={() => void scanHarnesses()}
-                disabled={harnessPhase === "scanning" || Boolean(installing)}
-                style={{
-                  padding: "8px 12px",
-                  fontSize: 12,
-                  borderRadius: "var(--radius-sm)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                <RefreshCw
-                  size={12}
-                  style={{
-                    animation: harnessPhase === "scanning" ? "spin 1s linear infinite" : "none",
-                  }}
-                />
-                {t("setup:actions.refreshProviders")}
-              </button>
-            </div>
-
-            {harnessError ? <StatusMessage tone="warning">{harnessError}</StatusMessage> : null}
-
-            {harnessPhase === "scanning" && harnesses.length === 0 ? (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 12,
-                  padding: "28px 0",
-                }}
-              >
-                <Loader2
-                  size={22}
-                  style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }}
-                />
-                <p style={{ margin: 0, fontSize: 12, color: "var(--text-2)" }}>
-                  {t("setup:cliProviders.scanning")}
-                </p>
-              </div>
-            ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gap: 12,
-                  gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-                }}
-              >
-                {harnesses.map((harness) => (
-                  <ProviderCard
-                    key={harness.id}
-                    disabled={Boolean(installing)}
-                    harness={harness}
-                    description={t(`app:harnesses.descriptions.${harness.id}`, {
-                      defaultValue: harness.description,
-                    })}
-                    installing={installing?.kind === "harness" && installing.id === harness.id}
-                    onInstall={() => void handleInstallHarness(harness)}
-                    onOpenWebsite={() => void handleOpenWebsite(harness.website)}
-                  />
-                ))}
-              </div>
-            )}
-
-            {installing?.kind === "harness" || installLog.length > 0 || installError ? (
-              <div style={{ display: "grid", gap: 10 }}>
-                {installing ? (
-                  <div
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 8,
-                      fontSize: 12,
-                      color: "var(--text-1)",
-                    }}
-                  >
-                    <Loader2
-                      size={13}
-                      style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }}
-                    />
-                    {t("setup:install.installing", { name: installing.label })}
-                  </div>
-                ) : null}
-                <InstallLogView log={installLog} />
-                {installError ? <StatusMessage tone="warning">{installError}</StatusMessage> : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        {step === "chatEngines" ? (
-          <div style={{ display: "grid", gap: 12 }}>
-            <p style={{ margin: 0, fontSize: 12, color: "var(--text-2)" }}>
-              {t("setup:chatEngines.helper")}
-            </p>
-            <div
-              style={{
-                display: "grid",
-                gap: 12,
-                gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-              }}
-            >
-              {CHAT_ENGINE_OPTIONS.map((engine) => (
-                <ChatEngineCard
-                  key={engine.id}
-                  id={engine.id}
-                  description={t(`setup:${engine.descriptionKey}`)}
-                  selected={selectedChatEngines.includes(engine.id)}
-                  onClick={() => toggleChatEngine(engine.id)}
-                />
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {step === "chatReadiness" ? (
-          <div style={{ display: "grid", gap: 14 }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-              }}
-            >
-              <p style={{ margin: 0, fontSize: 12, color: "var(--text-2)" }}>
-                {t("setup:chatReadiness.helper")}
-              </p>
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={() => void refreshReadiness()}
-                disabled={readiness.loading || Boolean(installing)}
-                style={{
-                  padding: "8px 12px",
-                  fontSize: 12,
-                  borderRadius: "var(--radius-sm)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                <RefreshCw
-                  size={12}
-                  style={{
-                    animation: readiness.loading ? "spin 1s linear infinite" : "none",
-                  }}
-                />
-                {t("setup:actions.refreshStatus")}
-              </button>
-            </div>
-
-            {readiness.error ? <StatusMessage tone="warning">{readiness.error}</StatusMessage> : null}
-
-            {readiness.loading && !readiness.dependencyReport ? (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 12,
-                  padding: "24px 0",
-                }}
-              >
-                <Loader2
-                  size={22}
-                  style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }}
-                />
-                <p style={{ margin: 0, fontSize: 12, color: "var(--text-2)" }}>
-                  {t("setup:chatReadiness.loading")}
-                </p>
-              </div>
-            ) : null}
-
-            {readiness.dependencyReport && !readiness.dependencyReport.node.found ? (
-              <ReadinessDependencyCard
-                label={t("setup:chatReadiness.deps.node")}
-                description={
-                  readiness.dependencyReport.node.canAutoInstall
-                    ? t("setup:chatReadiness.nodeInstallAvailable")
-                    : t("setup:chatReadiness.nodeInstallManual")
-                }
-                command={nodeManualGuidance?.command ?? null}
-                disabled={Boolean(installing)}
-                installing={installing?.kind === "dependency" && installing.id === "node"}
-                onInstall={
-                  readiness.dependencyReport.node.canAutoInstall &&
-                  readiness.dependencyReport.node.installMethod
-                    ? () => void handleInstallNode()
-                    : undefined
-                }
-              />
-            ) : null}
-
-            {selectedChatEngines.includes("codex") &&
-            readiness.dependencyReport &&
-            !readiness.dependencyReport.codex.found ? (
-              <ReadinessDependencyCard
-                label="Codex CLI"
-                description={
-                  readiness.dependencyReport.codex.canAutoInstall
-                    ? t("setup:chatReadiness.codexInstallAvailable")
-                    : t("setup:chatReadiness.codexInstallManual")
-                }
-                command="npm install -g @openai/codex"
-                disabled={Boolean(installing)}
-                installing={installing?.kind === "dependency" && installing.id === "codex"}
-                onInstall={
-                  readiness.dependencyReport.codex.canAutoInstall &&
-                  readiness.dependencyReport.codex.installMethod
-                    ? () => void handleInstallCodex()
-                    : undefined
-                }
-              />
-            ) : null}
-
-            <div
-              style={{
-                display: "grid",
-                gap: 12,
-                gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-              }}
-            >
-              {selectedChatEngines.map((engineId) => (
-                <ReadinessEngineCard
-                  key={engineId}
-                  engineId={engineId}
-                  health={readiness.engineHealth[engineId]}
-                />
-              ))}
-            </div>
-
-            {!readiness.loading && !readiness.error && codexAuthDeferred ? (
-              <StatusMessage tone="info">{t("setup:chatReadiness.authDeferred")}</StatusMessage>
-            ) : !readiness.loading && !readiness.error && chatWorkflowReady ? (
-              <StatusMessage tone="info">{t("setup:chatReadiness.readyHint")}</StatusMessage>
-            ) : null}
-
-            {installing?.kind === "dependency" || installLog.length > 0 || installError ? (
-              <div style={{ display: "grid", gap: 10 }}>
-                {installing ? (
-                  <div
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 8,
-                      fontSize: 12,
-                      color: "var(--text-1)",
-                    }}
-                  >
-                    <Loader2
-                      size={13}
-                      style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }}
-                    />
-                    {t("setup:install.installing", { name: installing.label })}
-                  </div>
-                ) : null}
-                <InstallLogView log={installLog} />
-                {installError ? <StatusMessage tone="warning">{installError}</StatusMessage> : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        {step === "workspace" ? (
-          <div style={{ display: "grid", gap: 14 }}>
-            <p style={{ margin: 0, fontSize: 12, color: "var(--text-2)" }}>
-              {t("setup:workspace.helper")}
-            </p>
-
-            {workspaces.length > 0 ? (
-              <div style={{ display: "grid", gap: 10 }}>
-                {workspaces.map((workspace) => (
-                  <WorkspaceCard
-                    key={workspace.id}
-                    workspace={workspace}
-                    active={workspace.id === activeWorkspaceId}
-                    selected={workspace.id === selectedWorkspaceId}
-                    onClick={() => {
-                      setSelectedWorkspaceId(workspace.id);
-                      setWorkspaceConfirmed(true);
-                    }}
-                  />
-                ))}
-              </div>
-            ) : (
-              <StatusMessage tone="warning">{t("setup:workspace.empty")}</StatusMessage>
-            )}
-
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              <button
-                type="button"
-                className="btn-outline"
-                onClick={() => void handleOpenWorkspaceFolder()}
-                disabled={workspaceLoading}
-                style={{
-                  padding: "8px 12px",
-                  fontSize: 12,
-                  borderRadius: "var(--radius-sm)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                {workspaceLoading ? (
-                  <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
-                ) : (
-                  <FolderOpen size={12} />
-                )}
-                {t("setup:actions.openFolder")}
-              </button>
-            </div>
-
-            {workspaceError ? <StatusMessage tone="warning">{workspaceError}</StatusMessage> : null}
-          </div>
-        ) : null}
-
+        {/* Footer */}
         <div
           style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            borderTop: "1px solid var(--border)",
-            paddingTop: 16,
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            padding: "20px 24px",
+            background: "linear-gradient(to top, rgba(0, 0, 0, 0.90) 40%, transparent)",
+            pointerEvents: "none",
           }}
         >
-          <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>
-            {t("setup:footer.stepCounter", {
-              current: currentStepIndex >= 0 ? currentStepIndex + 1 : 1,
-              total: visibleSteps.length,
-            })}
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            {step !== "workflow" ? (
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={handleBack}
-                disabled={busy}
-                style={{
-                  padding: "8px 12px",
-                  fontSize: 12,
-                  borderRadius: "var(--radius-sm)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                <ArrowLeft size={12} />
-                {t("setup:actions.back")}
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={handleClose}
-                disabled={busy}
-                style={{
-                  padding: "8px 12px",
-                  fontSize: 12,
-                  borderRadius: "var(--radius-sm)",
-                }}
-              >
-                {t("common:actions.notNow")}
-              </button>
-            )}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              maxWidth: "min(90%, 1100px)",
+              margin: "0 auto",
+              pointerEvents: "auto",
+            }}
+          >
+            {/* Dots */}
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              {visibleSteps.map((vs) => (
+                <div
+                  key={vs}
+                  style={{
+                    width: vs === step ? 14 : 4,
+                    height: 4,
+                    borderRadius: 2,
+                    background: vs === step ? "var(--accent)" : "rgba(255, 255, 255, 0.12)",
+                    transition: "width 200ms var(--ease-out), background 120ms",
+                  }}
+                />
+              ))}
+            </div>
 
-            {step === "workspace" ? (
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={() => void handleFinish()}
-                disabled={!canContinue || busy}
-                style={{
-                  padding: "8px 14px",
-                  fontSize: 12,
-                  borderRadius: "var(--radius-sm)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                <CheckCircle2 size={12} />
-                {t("setup:actions.finish")}
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={handleNext}
-                disabled={!canContinue || busy}
-                style={{
-                  padding: "8px 14px",
-                  fontSize: 12,
-                  borderRadius: "var(--radius-sm)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                {t("setup:actions.continue")}
-                <ArrowRight size={12} />
-              </button>
-            )}
+            {/* Buttons */}
+            <div style={{ display: "flex", gap: 6 }}>
+              {step !== "workflow" ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={handleBack}
+                  disabled={busy}
+                  style={{ padding: "7px 12px", fontSize: 12, borderRadius: "var(--radius-sm)", opacity: busy ? 0.4 : 1 }}
+                >
+                  <ArrowLeft size={12} />
+                  {t("setup:actions.back")}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={handleClose}
+                  disabled={busy}
+                  style={{ padding: "7px 12px", fontSize: 12, borderRadius: "var(--radius-sm)" }}
+                >
+                  {t("common:actions.notNow")}
+                </button>
+              )}
+
+              {step === "workspace" ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void handleFinish()}
+                  disabled={!canContinue || busy}
+                  style={{ padding: "7px 14px", fontSize: 12, borderRadius: "var(--radius-sm)", opacity: !canContinue || busy ? 0.4 : 1 }}
+                >
+                  <CheckCircle2 size={12} />
+                  {t("setup:actions.finish")}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleNext}
+                  disabled={!canContinue || busy}
+                  style={{ padding: "7px 14px", fontSize: 12, borderRadius: "var(--radius-sm)", opacity: !canContinue || busy ? 0.4 : 1 }}
+                >
+                  {t("setup:actions.continue")}
+                  <ArrowRight size={12} />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
