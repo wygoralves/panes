@@ -1,6 +1,6 @@
 import { Dropdown } from "./Dropdown";
 import { runEditMenuAction } from "../../lib/nativeEditActions";
-import { useSetupStore } from "../../stores/setupStore";
+import { useOnboardingStore } from "../../stores/onboardingStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -65,7 +65,7 @@ export function LinuxWindowFrame({ frameState }: LinuxWindowFrameProps) {
   function handleAppMenuAction(value: string) {
     switch (value) {
       case "open-setup":
-        useSetupStore.getState().openSetup();
+        useOnboardingStore.getState().openOnboarding();
         return;
       case "close-app":
         void closeCurrentWindow();

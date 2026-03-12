@@ -24,7 +24,7 @@ import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
-import { useSetupStore } from "../../stores/setupStore";
+import { useOnboardingStore } from "../../stores/onboardingStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import { canToggleKeepAwake, useKeepAwakeStore } from "../../stores/keepAwakeStore";
 import { toast } from "../../stores/toastStore";
@@ -94,7 +94,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     createThread,
     refreshArchivedThreads,
   } = useThreadStore();
-  const openEngineSetup = useSetupStore((state) => state.openSetup);
+  const openOnboarding = useOnboardingStore((state) => state.openOnboarding);
   const sidebarPinned = useUiStore((state) => state.sidebarPinned);
   const toggleSidebarPin = useUiStore((state) => state.toggleSidebarPin);
   const activeView = useUiStore((state) => state.activeView);
@@ -801,7 +801,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               className="git-action-menu-item"
               onClick={() => {
                 closeSettingsMenu();
-                openEngineSetup();
+                openOnboarding();
               }}
             >
               <Cpu size={14} style={{ opacity: 0.5, flexShrink: 0 }} />

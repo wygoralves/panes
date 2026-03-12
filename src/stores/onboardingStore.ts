@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { ipc, listenInstallProgress } from "../lib/ipc";
+import { normalizeOnboardingHarnessInstallId } from "../lib/onboarding";
 import type {
   OnboardingChatEngineId,
   OnboardingStep,
@@ -183,7 +184,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
       preferredWorkflow: state.preferredWorkflow,
       selectedChatEngines: state.selectedChatEngines,
     })),
-  closeOnboarding: () => set({ open: false, error: null, installing: null }),
+  closeOnboarding: () => set({ open: false, installLog: [], error: null, installing: null }),
   isCompleted: () => get().completed,
   hasLegacyCompletion: () => get().legacyCompleted,
   setStep: (step) => set({ step, error: null }),
@@ -232,8 +233,9 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     }
   },
   installHarness: async (harnessId, label) => {
+    const installId = normalizeOnboardingHarnessInstallId(harnessId);
     set({
-      installing: describeInstallTarget("harness", harnessId, label),
+      installing: describeInstallTarget("harness", installId, label),
       error: null,
     });
 
@@ -247,7 +249,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     });
 
     try {
-      const result = await ipc.installHarness(harnessId);
+      const result = await ipc.installHarness(installId);
       return result.success;
     } catch (error) {
       set({ error: error instanceof Error ? error.message : String(error) });

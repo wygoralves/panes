@@ -121,4 +121,16 @@ describe("onboardingStore", () => {
     expect(localStorage.getItem(ONBOARDING_COMPLETED_KEY)).toBe("1");
     expect(useOnboardingStore.getState().isCompleted()).toBe(true);
   });
+
+  it("maps the Claude engine id to the installable Claude harness", async () => {
+    mockIpc.installHarness.mockResolvedValue({
+      success: true,
+      message: "ok",
+    });
+
+    const ok = await useOnboardingStore.getState().installHarness("claude", "Claude Code");
+
+    expect(ok).toBe(true);
+    expect(mockIpc.installHarness).toHaveBeenCalledWith("claude-code");
+  });
 });

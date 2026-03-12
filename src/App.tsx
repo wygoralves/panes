@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
 import { CommandPalette } from "./components/shared/CommandPalette";
-import { SetupWizard } from "./components/onboarding/SetupWizard";
+import { OnboardingWizard } from "./components/onboarding/OnboardingWizard";
 import { ToastContainer } from "./components/shared/ToastContainer";
 import { t } from "./i18n";
 import { useUpdateStore } from "./stores/updateStore";
@@ -452,7 +452,7 @@ export function App() {
         <ThreeColumnLayout />
       </div>
       <CommandPalette open={commandPaletteOpen} onClose={closeCommandPalette} />
-      <SetupWizard />
+      <OnboardingWizard />
       <ToastContainer />
     </div>
   );
