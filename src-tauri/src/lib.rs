@@ -552,6 +552,7 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
 
     let strings = native_strings(locale);
 
+    #[cfg(target_os = "macos")]
     let app_menu = SubmenuBuilder::new(handle, strings.app_menu)
         .about(Some(AboutMetadata {
             name: Some("Panes".to_string()),
@@ -577,6 +578,30 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
         .hide()
         .hide_others()
         .show_all()
+        .separator()
+        .quit()
+        .build()?;
+
+    #[cfg(target_os = "windows")]
+    let app_menu = SubmenuBuilder::new(handle, strings.app_menu)
+        .about(Some(AboutMetadata {
+            name: Some("Panes".to_string()),
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            authors: Some(vec!["Wygor Alves".to_string()]),
+            comments: Some(strings.about_comments.to_string()),
+            copyright: Some("Copyright © 2026 Wygor Alves".to_string()),
+            license: Some("MIT".to_string()),
+            website: Some("https://github.com/wygoralves/panes".to_string()),
+            website_label: Some("GitHub".to_string()),
+            icon: match Image::from_bytes(include_bytes!("../icons/128x128@2x.png")) {
+                Ok(img) => Some(img),
+                Err(e) => {
+                    log::warn!("failed to load about icon: {e}");
+                    None
+                }
+            },
+            ..Default::default()
+        }))
         .separator()
         .quit()
         .build()?;
