@@ -202,19 +202,9 @@ function StatusMessage({
   const IconComponent = isWarning ? AlertTriangle : Info;
 
   return (
-    <div
-      style={{
-        padding: "10px 12px",
-        borderRadius: "var(--radius-sm)",
-        border: "1px solid var(--border)",
-        background: "var(--bg-2)",
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 10,
-      }}
-    >
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "2px 0" }}>
       <IconComponent
-        size={13}
+        size={12}
         style={{
           flexShrink: 0,
           color: isWarning ? "var(--warning)" : "var(--text-3)",
@@ -248,7 +238,7 @@ function WorkflowCard({
       style={{
         width: "100%",
         textAlign: "left",
-        padding: "20px 18px",
+        padding: "24px 22px",
         borderRadius: "var(--radius-md)",
         position: "relative",
         cursor: "pointer",
@@ -259,6 +249,9 @@ function WorkflowCard({
           ? "rgba(255, 107, 107, 0.04)"
           : "var(--bg-2)",
         transition: "border-color 120ms, background 120ms",
+        display: "flex",
+        flexDirection: "column" as const,
+        gap: 16,
       }}
     >
       {active ? (
@@ -266,42 +259,22 @@ function WorkflowCard({
           size={14}
           style={{
             position: "absolute",
-            top: 12,
-            right: 12,
+            top: 16,
+            right: 16,
             color: "var(--accent)",
           }}
         />
       ) : null}
-      <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-        <div
-          style={{
-            width: 40,
-            height: 40,
-            borderRadius: 10,
-            background: active
-              ? "var(--accent-dim)"
-              : "rgba(255, 255, 255, 0.04)",
-            border: active
-              ? "1px solid var(--border-accent)"
-              : "1px solid rgba(255, 255, 255, 0.06)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: active ? "var(--accent)" : "var(--text-3)",
-            flexShrink: 0,
-            transition: "all 120ms",
-          }}
-        >
-          {icon}
+      <div style={{ color: active ? "var(--accent)" : "var(--text-3)", transition: "color 120ms" }}>
+        {icon}
+      </div>
+      <div>
+        <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-1)", marginBottom: 4 }}>
+          {title}
         </div>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-1)", marginBottom: 2 }}>
-            {title}
-          </div>
-          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: "var(--text-3)" }}>
-            {description}
-          </p>
-        </div>
+        <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5, color: "var(--text-3)" }}>
+          {description}
+        </p>
       </div>
     </button>
   );
@@ -326,7 +299,7 @@ function ChatEngineCard({
       onClick={onClick}
       style={{
         width: "100%",
-        padding: "16px",
+        padding: "20px 18px",
         borderRadius: "var(--radius-md)",
         textAlign: "left",
         position: "relative",
@@ -340,43 +313,27 @@ function ChatEngineCard({
         transition: "border-color 120ms, background 120ms",
         animation: "ob-card-cascade 200ms var(--ease-out) both",
         animationDelay: `${index * 40}ms`,
+        display: "flex",
+        flexDirection: "column" as const,
+        gap: 12,
       }}
     >
       {selected ? (
         <CheckCircle2
           size={13}
-          style={{ position: "absolute", top: 12, right: 12, color: "var(--accent)" }}
+          style={{ position: "absolute", top: 14, right: 14, color: "var(--accent)" }}
         />
       ) : null}
-      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        <div
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: 8,
-            background: selected
-              ? "var(--accent-dim)"
-              : "rgba(255, 255, 255, 0.04)",
-            border: selected
-              ? "1px solid var(--border-accent)"
-              : "1px solid rgba(255, 255, 255, 0.06)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-            transition: "all 120ms",
-          }}
-        >
-          {getHarnessIcon(id, 16)}
+      <div style={{ flexShrink: 0 }}>
+        {getHarnessIcon(id, 22)}
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-1)", marginBottom: 3 }}>
+          {id === "codex" ? "Codex" : "Claude"}
         </div>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)", marginBottom: 2 }}>
-            {id === "codex" ? "Codex" : "Claude"}
-          </div>
-          <p style={{ margin: 0, fontSize: 11.5, lineHeight: 1.4, color: "var(--text-3)" }}>
-            {description}
-          </p>
-        </div>
+        <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: "var(--text-3)" }}>
+          {description}
+        </p>
       </div>
     </button>
   );
@@ -421,21 +378,9 @@ function ProviderRow({
         animationDelay: `${index * 30}ms`,
       }}
     >
-      {/* Icon */}
-      <div
-        style={{
-          width: 34,
-          height: 34,
-          borderRadius: "var(--radius-sm)",
-          background: "rgba(255, 255, 255, 0.04)",
-          border: "1px solid rgba(255, 255, 255, 0.06)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          flexShrink: 0,
-        }}
-      >
-        {getHarnessIcon(harness.id, harness.native ? 20 : 16)}
+      {/* Icon — no container, show logo directly */}
+      <div style={{ width: 28, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        {getHarnessIcon(harness.id, harness.native ? 22 : 18)}
       </div>
 
       {/* Body */}
@@ -588,26 +533,22 @@ function ReadinessEngineRow({
       style={{
         display: "flex",
         alignItems: "flex-start",
-        gap: 12,
+        gap: 10,
         padding: "10px 12px",
         borderRadius: "var(--radius-sm)",
       }}
     >
       <div
         style={{
-          width: 34,
-          height: 34,
-          borderRadius: 8,
-          background: "rgba(255, 255, 255, 0.04)",
-          border: "1px solid rgba(255, 255, 255, 0.06)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
           flexShrink: 0,
+          marginTop: 5,
+          background: available ? "var(--success)" : "var(--warning)",
+          transition: "background 120ms",
         }}
-      >
-        {getHarnessIcon(engineId, 16)}
-      </div>
+      />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)" }}>
@@ -719,7 +660,7 @@ function WorkspaceRow({
           {workspace.name}
         </span>
         {active ? (
-          <span style={{ fontSize: 10, fontWeight: 600, color: "var(--accent)" }}>
+          <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text-2)" }}>
             {t("workspace.current")}
           </span>
         ) : null}
@@ -994,23 +935,6 @@ export function OnboardingWizard() {
       }}
       onClick={handleClose}
     >
-      {/* Subtle ambient wash */}
-      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
-        <div
-          style={{
-            position: "absolute",
-            top: "-20%",
-            right: "-15%",
-            width: 500,
-            height: 500,
-            borderRadius: "50%",
-            background: "radial-gradient(circle, rgba(255, 107, 107, 0.04) 0%, transparent 70%)",
-            filter: "blur(80px)",
-            animation: "ob-drift 20s ease-in-out infinite",
-          }}
-        />
-      </div>
-
       {/* Content */}
       <div
         style={{
@@ -1022,47 +946,40 @@ export function OnboardingWizard() {
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Top bar: just close + progress */}
+        {/* Close button — viewport-edge positioned */}
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={handleClose}
+          disabled={busy}
+          style={{
+            position: "absolute",
+            top: 16,
+            right: 20,
+            zIndex: 2,
+            width: 28,
+            height: 28,
+            padding: 0,
+            borderRadius: "var(--radius-sm)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--text-3)",
+            opacity: busy ? 0.4 : 1,
+          }}
+          title={t("common:actions.close")}
+        >
+          <X size={14} />
+        </button>
+
+        {/* Progress bar */}
         <div style={{ padding: "16px 24px 0", flexShrink: 0 }}>
           <div
             style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "flex-end",
-              maxWidth: "min(90%, 1100px)",
-              margin: "0 auto",
-            }}
-          >
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={handleClose}
-              disabled={busy}
-              style={{
-                width: 28,
-                height: 28,
-                padding: 0,
-                borderRadius: "var(--radius-sm)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "var(--text-3)",
-                opacity: busy ? 0.4 : 1,
-              }}
-              title={t("common:actions.close")}
-            >
-              <X size={14} />
-            </button>
-          </div>
-
-          {/* Progress bar */}
-          <div
-            style={{
-              marginTop: 12,
               height: 1,
               background: "rgba(255, 255, 255, 0.06)",
               maxWidth: "min(90%, 1100px)",
-              margin: "12px auto 0",
+              margin: "0 auto",
             }}
           >
             <div
@@ -1076,13 +993,13 @@ export function OnboardingWizard() {
           </div>
         </div>
 
-        {/* Scroll area */}
-        <div style={{ flex: 1, overflowY: "auto", display: "flex", justifyContent: "center", alignItems: "flex-start" }}>
+        {/* Scroll area — margin:auto centers vertically when content is short */}
+        <div style={{ flex: 1, overflowY: "auto", display: "flex", justifyContent: "center" }}>
           <div
             style={{
               width: "min(90%, 1100px)",
-              paddingTop: 48,
-              paddingBottom: 96,
+              margin: "auto 0",
+              padding: "32px 0 96px",
             }}
           >
             {/* Heading */}
@@ -1108,10 +1025,10 @@ export function OnboardingWizard() {
                   total: visibleSteps.length,
                 })}
               </div>
-              <h2 style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.3, margin: "0 0 4px", color: "var(--text-1)" }}>
+              <h2 style={{ fontSize: 24, fontWeight: 700, lineHeight: 1.2, margin: "0 0 6px", color: "var(--text-1)" }}>
                 {t(`setup:${stepMetadata.titleKey}`)}
               </h2>
-              <p style={{ fontSize: 13, color: "var(--text-3)", lineHeight: 1.5, margin: 0 }}>
+              <p style={{ fontSize: 14, color: "var(--text-3)", lineHeight: 1.5, margin: 0 }}>
                 {t(`setup:${stepMetadata.subtitleKey}`)}
               </p>
             </div>
@@ -1131,14 +1048,14 @@ export function OnboardingWizard() {
                   <WorkflowCard
                     active={preferredWorkflow === "cli"}
                     description={t("setup:workflow.options.cli.description")}
-                    icon={<Terminal size={20} />}
+                    icon={<Terminal size={28} />}
                     title={t("setup:workflow.options.cli.title")}
                     onClick={() => setPreferredWorkflow("cli")}
                   />
                   <WorkflowCard
                     active={preferredWorkflow === "chat"}
                     description={t("setup:workflow.options.chat.description")}
-                    icon={<MessageSquare size={20} />}
+                    icon={<MessageSquare size={28} />}
                     title={t("setup:workflow.options.chat.title")}
                     onClick={() => setPreferredWorkflow("chat")}
                   />
@@ -1392,28 +1309,12 @@ export function OnboardingWizard() {
             style={{
               display: "flex",
               alignItems: "center",
-              justifyContent: "space-between",
+              justifyContent: "flex-end",
               maxWidth: "min(90%, 1100px)",
               margin: "0 auto",
               pointerEvents: "auto",
             }}
           >
-            {/* Dots */}
-            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-              {visibleSteps.map((vs) => (
-                <div
-                  key={vs}
-                  style={{
-                    width: vs === step ? 14 : 4,
-                    height: 4,
-                    borderRadius: 2,
-                    background: vs === step ? "var(--accent)" : "rgba(255, 255, 255, 0.12)",
-                    transition: "width 200ms var(--ease-out), background 120ms",
-                  }}
-                />
-              ))}
-            </div>
-
             {/* Buttons */}
             <div style={{ display: "flex", gap: 6 }}>
               {step !== "workflow" ? (
