@@ -100,13 +100,7 @@ fn reveal_path_impl(path: PathBuf) -> anyhow::Result<()> {
         (None, None)
     };
 
-    let Some(plan) = build_reveal_command_plan(
-        &path,
-        platform,
-        xdg_open,
-        gio,
-    )?
-    else {
+    let Some(plan) = build_reveal_command_plan(&path, platform, xdg_open, gio)? else {
         return Ok(());
     };
 
