@@ -2,8 +2,11 @@ import type { DependencyReport } from "../types";
 
 const LINUX_PACKAGE_MANAGER_ORDER = ["apt", "dnf", "pacman", "zypper", "apk"] as const;
 const WINDOWS_PACKAGE_MANAGER_ORDER = ["winget", "choco", "scoop"] as const;
+type LinuxPackageManager = (typeof LINUX_PACKAGE_MANAGER_ORDER)[number];
+type WindowsPackageManager = (typeof WINDOWS_PACKAGE_MANAGER_ORDER)[number];
+type SupportedPackageManager = LinuxPackageManager | WindowsPackageManager;
 
-const NODE_INSTALL_COMMANDS = {
+const NODE_INSTALL_COMMANDS: Readonly<Record<SupportedPackageManager, string>> = {
   apt: "sudo apt install nodejs npm",
   dnf: "sudo dnf install nodejs npm",
   pacman: "sudo pacman -S nodejs npm",
@@ -14,7 +17,7 @@ const NODE_INSTALL_COMMANDS = {
   scoop: "scoop install nodejs-lts",
 } as const;
 
-const GIT_INSTALL_COMMANDS = {
+const GIT_INSTALL_COMMANDS: Readonly<Record<SupportedPackageManager, string>> = {
   apt: "sudo apt install git",
   dnf: "sudo dnf install git",
   pacman: "sudo pacman -S git",
@@ -113,12 +116,12 @@ export function getGitManualGuidance(report: DependencyReport): ManualInstallGui
   };
 }
 
-function getPreferredLinuxPackageManager(packageManagers: string[]): string | null {
+function getPreferredLinuxPackageManager(packageManagers: string[]): LinuxPackageManager | null {
   const match = LINUX_PACKAGE_MANAGER_ORDER.find((manager) => packageManagers.includes(manager));
   return match ?? null;
 }
 
-function getPreferredWindowsPackageManager(packageManagers: string[]): string | null {
+function getPreferredWindowsPackageManager(packageManagers: string[]): WindowsPackageManager | null {
   const match = WINDOWS_PACKAGE_MANAGER_ORDER.find((manager) => packageManagers.includes(manager));
   return match ?? null;
 }
