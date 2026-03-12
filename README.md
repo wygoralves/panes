@@ -25,7 +25,7 @@
 <p align="center">
   <a href="https://github.com/wygoralves/panes/releases/latest"><img src="https://img.shields.io/github/v/release/wygoralves/panes?label=download&color=blue" alt="Latest Release" /></a>
   <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" />
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg" alt="Platform" />
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg" alt="Platform" />
   <img src="https://img.shields.io/badge/tauri-v2-blue?logo=tauri" alt="Tauri v2" />
   <img src="https://img.shields.io/badge/auto--update-OTA-green.svg" alt="OTA Auto-Update" />
 </p>
@@ -109,6 +109,10 @@ open /Applications/Panes.app
 
 Maintainers can find the tap/release automation setup in [docs/homebrew-distribution.md](./docs/homebrew-distribution.md).
 
+### Install on Windows
+
+Download the latest `*-setup.exe` installer from [GitHub Releases](https://github.com/wygoralves/panes/releases/latest) and run it. Later updates are delivered in-app through the Tauri updater.
+
 ### Install and Run from Source
 
 ```bash
@@ -124,7 +128,7 @@ pnpm tauri:dev
 pnpm tauri:build
 ```
 
-Common bundle artifacts include macOS DMGs/app archives and Linux DEB/AppImage outputs, depending on platform and target.
+Common bundle artifacts include macOS DMGs/app archives, Linux DEB/AppImage outputs, and Windows NSIS installers, depending on platform and target.
 
 Git is recommended for the repo-management features, but the app can still launch without it.
 
@@ -162,9 +166,12 @@ Generated build artifacts can grow quickly during Tauri/Rust development. `pnpm 
 
 | Path | Purpose |
 |---|---|
-| `~/.agent-workspace/config.toml` | App configuration |
-| `~/.agent-workspace/workspaces.db` | SQLite database |
-| `~/.agent-workspace/logs` | App log directory |
+| macOS / Linux: `~/.agent-workspace/config.toml` | App configuration |
+| macOS / Linux: `~/.agent-workspace/workspaces.db` | SQLite database |
+| macOS / Linux: `~/.agent-workspace/logs` | App log directory |
+| Windows: `%LOCALAPPDATA%\Panes\config.toml` | App configuration |
+| Windows: `%LOCALAPPDATA%\Panes\workspaces.db` | SQLite database |
+| Windows: `%LOCALAPPDATA%\Panes\logs` | App log directory |
 
 ### Localization
 

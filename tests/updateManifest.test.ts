@@ -78,4 +78,28 @@ describe("resolveUpdaterAssetPairs", () => {
       ]),
     ).toThrow("Expected exactly one macOS updater bundle signature asset, found none.");
   });
+
+  it("maps one Windows updater asset to windows-x86_64", () => {
+    const resolved = resolveUpdaterAssetPairs([
+      {
+        name: "Panes_0.38.0_x64-setup.exe",
+        browser_download_url: "https://example.com/Panes_0.38.0_x64-setup.exe",
+      },
+      {
+        name: "Panes_0.38.0_x64-setup.exe.sig",
+        browser_download_url: "https://example.com/Panes_0.38.0_x64-setup.exe.sig",
+      },
+    ]);
+
+    expect(
+      buildStaticReleasePlatforms(resolved, {
+        "Panes_0.38.0_x64-setup.exe.sig": "windows-signature",
+      }),
+    ).toEqual({
+      "windows-x86_64": {
+        signature: "windows-signature",
+        url: "https://example.com/Panes_0.38.0_x64-setup.exe",
+      },
+    });
+  });
 });

@@ -87,10 +87,29 @@ jobs:
         working-directory: src-tauri
         run: cargo check --target x86_64-apple-darwin
 
+  windows_compat:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Ensure frontendDist placeholder
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          if (-not (Test-Path dist/index.html)) {
+            Set-Content -Path dist/index.html -Value '<!doctype html><html><body>CI placeholder</body></html>'
+          }
+      - name: Rust check on Windows
+        working-directory: src-tauri
+        run: cargo check
+
   release:
     name: Automated Release
     if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master')
-    needs: [frontend, rust, macos_compat]
+    needs: [frontend, rust, macos_compat, windows_compat]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -233,7 +252,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-15, ubuntu-22.04]
+        platform: [macos-15, ubuntu-22.04, windows-latest]
 
     steps:
       - name: Checkout released tag
@@ -340,6 +359,18 @@ jobs:
             src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg.sig
             src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows assets to GitHub Release
+        if: matrix.platform == 'windows-latest'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release.outputs.released_tag }}
+          files: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/nsis/*-setup.exe.sig
           fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
@@ -599,3 +630,132 @@ jobs:
           lipo -info /Applications/Panes.app/Contents/MacOS/Panes
           file /Applications/Panes.app/Contents/MacOS/Panes | grep -Eq 'arm64|aarch64'
           file /Applications/Panes.app/Contents/MacOS/Panes | grep -q 'x86_64'
+
+  windows_release_smoke:
+    name: Windows Release Smoke
+    if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
+    needs: [release, update_manifest]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ needs.release.outputs.released_tag }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download Windows release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir artifacts --pattern "*-setup.exe" --pattern "*-setup.exe.sig"
+          Get-ChildItem artifacts
+
+      - name: Validate published updater manifest
+        shell: pwsh
+        run: |
+          $setupExe = Get-ChildItem artifacts -Filter *-setup.exe | Select-Object -First 1
+          if (-not $setupExe) {
+            throw "Windows NSIS updater bundle was not downloaded."
+          }
+
+          $env:SETUP_EXE_NAME = $setupExe.Name
+
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              Invoke-WebRequest "https://raw.githubusercontent.com/$env:GITHUB_REPOSITORY/gh-pages/latest.json" -OutFile latest.json
+              break
+            } catch {
+              if ($attempt -eq 5) {
+                throw "Unable to fetch latest.json from gh-pages."
+              }
+              Start-Sleep -Seconds 5
+            }
+          }
+
+          $script = @'
+          const fs = require("node:fs");
+
+          const manifest = JSON.parse(fs.readFileSync("latest.json", "utf8"));
+          const windows = manifest.platforms?.["windows-x86_64"];
+
+          if (!windows) {
+            throw new Error("latest.json must include windows-x86_64.");
+          }
+
+          if (!windows.signature) {
+            throw new Error("latest.json Windows signature is missing.");
+          }
+
+          if (!windows.url.endsWith(process.env.SETUP_EXE_NAME)) {
+            throw new Error(`latest.json Windows URL does not reference ${process.env.SETUP_EXE_NAME}.`);
+          }
+          '@
+          node -e $script
+
+      - name: Validate Windows NSIS install and bundled sidecar
+        shell: pwsh
+        run: |
+          $setupExe = Get-ChildItem artifacts -Filter *-setup.exe | Select-Object -First 1
+          if (-not $setupExe) {
+            throw "Windows NSIS installer was not downloaded."
+          }
+
+          $installRoot = Join-Path $env:RUNNER_TEMP "panes-smoke"
+          if (Test-Path $installRoot) {
+            Remove-Item -Recurse -Force $installRoot
+          }
+
+          $installer = Start-Process -FilePath $setupExe.FullName -ArgumentList @('/S', "/D=$installRoot") -Wait -PassThru
+          if ($installer.ExitCode -ne 0) {
+            throw "Windows installer exited with code $($installer.ExitCode)."
+          }
+
+          $appBinary = Get-ChildItem $installRoot -Recurse -Filter Panes.exe | Select-Object -First 1
+          if (-not $appBinary) {
+            throw "Unable to locate installed Panes.exe."
+          }
+
+          $sidecar = Get-ChildItem $installRoot -Recurse -Filter claude-agent-sdk-server.mjs | Select-Object -First 1
+          if (-not $sidecar) {
+            throw "Unable to locate bundled Claude sidecar in installed app."
+          }
+
+          Get-Command git | Out-Null
+          Get-Command node | Out-Null
+
+          $sidecarOut = Join-Path $env:RUNNER_TEMP "panes-sidecar.out"
+          $sidecarErr = Join-Path $env:RUNNER_TEMP "panes-sidecar.err"
+          if (Test-Path $sidecarOut) { Remove-Item -Force $sidecarOut }
+          if (Test-Path $sidecarErr) { Remove-Item -Force $sidecarErr }
+
+          $sidecarProc = Start-Process -FilePath node -ArgumentList $sidecar.FullName -PassThru -RedirectStandardOutput $sidecarOut -RedirectStandardError $sidecarErr
+          $ready = $false
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            if ((Test-Path $sidecarOut) -and ((Get-Content $sidecarOut -Raw) -match '"type":"ready"')) {
+              $ready = $true
+              break
+            }
+            Start-Sleep -Seconds 2
+          }
+
+          if (-not $ready) {
+            if (Test-Path $sidecarOut) { Get-Content $sidecarOut }
+            if (Test-Path $sidecarErr) { Get-Content $sidecarErr }
+            throw "Bundled Claude sidecar did not reach ready state."
+          }
+
+          if (-not $sidecarProc.HasExited) {
+            Stop-Process -Id $sidecarProc.Id -Force
+          }
+
+          $appProc = Start-Process -FilePath $appBinary.FullName -WorkingDirectory $appBinary.Directory.FullName -PassThru
+          Start-Sleep -Seconds 5
+          if ($appProc.HasExited) {
+            throw "Panes.exe exited immediately on the Windows runner."
+          }
+          Stop-Process -Id $appProc.Id -Force
