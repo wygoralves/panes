@@ -510,12 +510,9 @@ impl TerminalManager {
                     .checked_sub(min_emit_interval)
                     .unwrap_or_else(Instant::now);
 
-                // Foreground process detection state — only active on Unix with a known shell PID.
-                #[cfg(not(target_os = "windows"))]
+                // Foreground process detection state — active when the PTY exposes a shell PID.
                 let fg_check_interval = Duration::from_millis(1500);
-                #[cfg(not(target_os = "windows"))]
                 let mut last_fg_check_at: Option<Instant> = None;
-                #[cfg(not(target_os = "windows"))]
                 let mut last_fg_process: Option<(u32, String)> = None;
 
                 loop {
@@ -596,7 +593,6 @@ impl TerminalManager {
                     last_emit_at = Instant::now();
 
                     // Check foreground process reactively after output, debounced to 1.5s.
-                    #[cfg(not(target_os = "windows"))]
                     if let Some(shell_pid) = emitter_shell_pid {
                         let should_check = last_fg_check_at
                             .map(|t| t.elapsed() >= fg_check_interval)
@@ -1316,7 +1312,10 @@ fn build_terminal_env_config_for(is_windows: bool, inputs: TerminalEnvInputs) ->
             .clone()
             .or(inputs.default_home.clone())
             .or(inputs.home.clone());
-        let home = user_profile.clone().or(inputs.home).or(inputs.default_home);
+        let home = inputs
+            .home
+            .or_else(|| user_profile.clone())
+            .or(inputs.default_home);
         let windows_home = user_profile.clone().or_else(|| home.clone());
         let local_app_data = inputs
             .local_app_data
@@ -1704,6 +1703,302 @@ fn extract_tool_name_from_args(pid: u32) -> Option<String> {
     Some(name.to_string())
 }
 
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct WindowsChildProcess {
+    process_id: u32,
+    name: Option<String>,
+    command_line: Option<String>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+enum WindowsChildProcessResponse {
+    One(WindowsChildProcess),
+    Many(Vec<WindowsChildProcess>),
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsChildProcessResponse {
+    fn into_vec(self) -> Vec<WindowsChildProcess> {
+        match self {
+            Self::One(process) => vec![process],
+            Self::Many(processes) => processes,
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn detect_foreground_process(shell_pid: u32) -> Option<(u32, String)> {
+    let script = format!(
+        "$children = @(Get-CimInstance Win32_Process -Filter 'ParentProcessId = {shell_pid}' | Sort-Object ProcessId | Select-Object ProcessId, Name, CommandLine); if ($children.Count -eq 0) {{ exit 1 }}; $children | ConvertTo-Json -Compress"
+    );
+    let output = std::process::Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &script,
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let processes = serde_json::from_slice::<WindowsChildProcessResponse>(&output.stdout)
+        .ok()?
+        .into_vec();
+    select_windows_foreground_process(&processes)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn select_windows_foreground_process(processes: &[WindowsChildProcess]) -> Option<(u32, String)> {
+    let mut ordered = processes.to_vec();
+    ordered.sort_by_key(|process| process.process_id);
+
+    for process in ordered.into_iter().rev() {
+        let raw_name = process.name.as_deref().unwrap_or("").trim();
+        if raw_name.is_empty() {
+            continue;
+        }
+
+        let normalized_name = normalize_process_token(raw_name)?;
+        if is_windows_infrastructure_process(&normalized_name) {
+            continue;
+        }
+
+        if let Some(command_line) = process.command_line.as_deref() {
+            if let Some(tool_name) =
+                extract_tool_name_from_windows_command_line(&normalized_name, command_line)
+            {
+                if !is_windows_infrastructure_process(&tool_name)
+                    && !is_windows_shell_or_interpreter(&tool_name)
+                {
+                    return Some((process.process_id, tool_name));
+                }
+            }
+        }
+
+        if !is_windows_shell_or_interpreter(&normalized_name) {
+            return Some((process.process_id, normalized_name));
+        }
+    }
+
+    None
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn normalize_process_token(token: &str) -> Option<String> {
+    let trimmed = token
+        .trim()
+        .trim_matches(|ch| matches!(ch, '"' | '\'' | '`'));
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let basename = trimmed
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(trimmed)
+        .trim()
+        .trim_matches(|ch| matches!(ch, '"' | '\'' | '`'));
+    if basename.is_empty() {
+        return None;
+    }
+
+    let lowercase = basename.to_ascii_lowercase();
+    let normalized = strip_known_process_suffix(&lowercase);
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized.to_string())
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn strip_known_process_suffix(value: &str) -> &str {
+    value
+        .strip_suffix(".exe")
+        .or_else(|| value.strip_suffix(".cmd"))
+        .or_else(|| value.strip_suffix(".bat"))
+        .or_else(|| value.strip_suffix(".ps1"))
+        .or_else(|| value.strip_suffix(".mjs"))
+        .or_else(|| value.strip_suffix(".cjs"))
+        .or_else(|| value.strip_suffix(".js"))
+        .or_else(|| value.strip_suffix(".mts"))
+        .or_else(|| value.strip_suffix(".ts"))
+        .or_else(|| value.strip_suffix(".py"))
+        .or_else(|| value.strip_suffix(".rb"))
+        .or_else(|| value.strip_suffix(".pl"))
+        .unwrap_or(value)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn is_windows_infrastructure_process(name: &str) -> bool {
+    matches!(name, "conhost" | "openconsole")
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn is_windows_shell_or_interpreter(name: &str) -> bool {
+    matches!(
+        name,
+        "cmd"
+            | "powershell"
+            | "pwsh"
+            | "node"
+            | "nodejs"
+            | "python"
+            | "python3"
+            | "ruby"
+            | "perl"
+            | "deno"
+            | "bun"
+            | "tsx"
+            | "ts-node"
+            | "npx"
+    )
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn extract_tool_name_from_windows_command_line(
+    process_name: &str,
+    command_line: &str,
+) -> Option<String> {
+    let tokens = split_command_line_words(command_line);
+    if tokens.is_empty() {
+        return None;
+    }
+
+    match process_name {
+        "cmd" => extract_tool_name_from_cmd_tokens(&tokens),
+        "powershell" | "pwsh" => extract_tool_name_from_powershell_tokens(&tokens),
+        name if is_windows_shell_or_interpreter(name) => {
+            extract_tool_name_from_token_sequence(&tokens[1..])
+        }
+        _ => Some(process_name.to_string()),
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn extract_tool_name_from_cmd_tokens(tokens: &[String]) -> Option<String> {
+    if let Some(index) = tokens
+        .iter()
+        .position(|token| matches_ignore_ascii_case(token, ["/c", "/k"]))
+    {
+        return extract_tool_name_from_token_sequence(&tokens[index + 1..]);
+    }
+
+    extract_tool_name_from_token_sequence(&tokens[1..])
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn extract_tool_name_from_powershell_tokens(tokens: &[String]) -> Option<String> {
+    for (index, token) in tokens.iter().enumerate() {
+        if matches_ignore_ascii_case(token, ["-command", "-c", "-file"]) {
+            return extract_tool_name_from_token_sequence(&tokens[index + 1..]);
+        }
+    }
+
+    extract_tool_name_from_token_sequence(&tokens[1..])
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn extract_tool_name_from_token_sequence(tokens: &[String]) -> Option<String> {
+    for (index, token) in tokens.iter().enumerate() {
+        let trimmed = token.trim();
+        if trimmed.is_empty() || matches!(trimmed, "&" | "." | "call" | "start") {
+            continue;
+        }
+        if looks_like_command_flag(trimmed) {
+            continue;
+        }
+
+        if trimmed.contains(char::is_whitespace) {
+            if let Some(name) = extract_tool_name_from_windows_command_line_snippet(trimmed) {
+                return Some(name);
+            }
+        }
+
+        let candidate = match normalize_process_token(trimmed) {
+            Some(value) => value,
+            None => continue,
+        };
+
+        if is_windows_infrastructure_process(&candidate) {
+            continue;
+        }
+
+        if is_windows_shell_or_interpreter(&candidate) {
+            if let Some(name) = extract_tool_name_from_token_sequence(&tokens[index + 1..]) {
+                return Some(name);
+            }
+            continue;
+        }
+
+        return Some(candidate);
+    }
+
+    None
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn extract_tool_name_from_windows_command_line_snippet(snippet: &str) -> Option<String> {
+    let nested = split_command_line_words(snippet);
+    if nested.is_empty() {
+        return None;
+    }
+    extract_tool_name_from_token_sequence(&nested)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn looks_like_command_flag(token: &str) -> bool {
+    (token.starts_with('-') || token.starts_with('/'))
+        && !token.contains('\\')
+        && !token.contains(':')
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn split_command_line_words(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut active_quote: Option<char> = None;
+
+    for ch in input.chars() {
+        match active_quote {
+            Some(quote) if ch == quote => {
+                active_quote = None;
+            }
+            Some(_) => current.push(ch),
+            None if ch == '"' || ch == '\'' => {
+                active_quote = Some(ch);
+            }
+            None if ch.is_whitespace() => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            None => current.push(ch),
+        }
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    tokens
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn matches_ignore_ascii_case<const N: usize>(value: &str, options: [&str; N]) -> bool {
+    options
+        .iter()
+        .any(|option| value.eq_ignore_ascii_case(option))
+}
+
 fn take_next_utf8_chunk(buffer: &mut Vec<u8>) -> Option<String> {
     if buffer.is_empty() {
         return None;
@@ -1876,7 +2171,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_terminal_env_prefers_user_profile_over_posix_home() {
+    fn windows_terminal_env_uses_user_profile_for_windows_dirs() {
         let config = build_terminal_env_config_for(
             true,
             TerminalEnvInputs {
@@ -1891,6 +2186,15 @@ mod tests {
             config
                 .snapshot
                 .home
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("/c/Users/panes")
+        );
+        assert_eq!(
+            config
+                .snapshot
+                .user_profile
                 .as_deref()
                 .map(normalize_path)
                 .as_deref(),
@@ -1912,6 +2216,54 @@ mod tests {
                 .as_deref(),
             Some("C:/Users/panes/AppData/Roaming")
         );
+    }
+
+    #[test]
+    fn windows_command_line_extracts_tool_from_cmd_wrapper() {
+        let tool = extract_tool_name_from_windows_command_line(
+            "cmd",
+            r#"cmd.exe /d /s /c "codex --help""#,
+        );
+
+        assert_eq!(tool.as_deref(), Some("codex"));
+    }
+
+    #[test]
+    fn windows_command_line_extracts_tool_from_node_script() {
+        let tool = extract_tool_name_from_windows_command_line(
+            "node",
+            r#""C:\Program Files\nodejs\node.exe" "C:\Users\panes\AppData\Roaming\npm\node_modules\@openai\codex\bin\codex.js" --version"#,
+        );
+
+        assert_eq!(tool.as_deref(), Some("codex"));
+    }
+
+    #[test]
+    fn windows_command_line_extracts_tool_from_powershell_wrapper() {
+        let tool = extract_tool_name_from_windows_command_line(
+            "powershell",
+            r#"powershell.exe -NoProfile -Command "& 'C:\Users\panes\AppData\Roaming\npm\claude.cmd' --help""#,
+        );
+
+        assert_eq!(tool.as_deref(), Some("claude"));
+    }
+
+    #[test]
+    fn windows_foreground_process_skips_conhost_and_uses_wrapped_tool_name() {
+        let selected = select_windows_foreground_process(&[
+            WindowsChildProcess {
+                process_id: 4200,
+                name: Some("conhost.exe".to_string()),
+                command_line: Some(r#"C:\Windows\System32\conhost.exe 0x4"#.to_string()),
+            },
+            WindowsChildProcess {
+                process_id: 4201,
+                name: Some("cmd.exe".to_string()),
+                command_line: Some(r#"cmd.exe /d /s /c "gemini --help""#.to_string()),
+            },
+        ]);
+
+        assert_eq!(selected, Some((4201, "gemini".to_string())));
     }
 
     #[test]
@@ -1959,5 +2311,48 @@ mod tests {
         assert!(config.roaming_app_data.is_none());
         assert!(config.temp.is_none());
         assert!(config.tmp.is_none());
+    }
+
+    #[test]
+    fn windows_terminal_env_preserves_explicit_home() {
+        let config = build_terminal_env_config_for(
+            true,
+            TerminalEnvInputs {
+                home: Some(r"D:\custom-home".to_string()),
+                user_profile: Some(r"C:\Users\panes".to_string()),
+                local_app_data: Some(r"C:\Users\panes\AppData\Local".to_string()),
+                roaming_app_data: Some(r"C:\Users\panes\AppData\Roaming".to_string()),
+                temp: Some(r"C:\Users\panes\AppData\Local\Temp".to_string()),
+                ..TerminalEnvInputs::default()
+            },
+        );
+
+        assert_eq!(
+            config
+                .snapshot
+                .home
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("D:/custom-home")
+        );
+        assert_eq!(
+            config
+                .snapshot
+                .user_profile
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("C:/Users/panes")
+        );
+        assert_eq!(
+            config
+                .snapshot
+                .local_app_data
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("C:/Users/panes/AppData/Local")
+        );
     }
 }
