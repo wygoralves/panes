@@ -148,6 +148,13 @@ pub async fn install_harness(app: AppHandle, harness_id: String) -> Result<Insta
 
     // Prefer install_script (curl-pipe installers) over install_command (npm)
     if let Some(script) = def.install_script {
+        #[cfg(target_os = "windows")]
+        {
+            return Err(format!(
+                "{} must be installed manually from {} on Windows",
+                def.name, def.website
+            ));
+        }
         return run_harness_install_script(&app, &harness_id, script).await;
     }
 
@@ -199,7 +206,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
                 found: true,
                 version: Some(version),
                 path: Some(path.display().to_string()),
-                can_auto_install: def.install_command.is_some() || def.install_script.is_some(),
+                can_auto_install: harness_can_auto_install(def),
                 website: def.website.to_string(),
                 native: def.native,
             };
@@ -215,7 +222,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
             found: true,
             version: Some(version),
             path: Some(path),
-            can_auto_install: def.install_command.is_some() || def.install_script.is_some(),
+            can_auto_install: harness_can_auto_install(def),
             website: def.website.to_string(),
             native: def.native,
         };
@@ -229,10 +236,19 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
         found: false,
         version: None,
         path: None,
-        can_auto_install: def.install_command.is_some() || def.install_script.is_some(),
+        can_auto_install: harness_can_auto_install(def),
         website: def.website.to_string(),
         native: def.native,
     }
+}
+
+fn harness_can_auto_install(def: &HarnessDef) -> bool {
+    #[cfg(target_os = "windows")]
+    if def.install_script.is_some() {
+        return def.install_command.is_some();
+    }
+
+    def.install_command.is_some() || def.install_script.is_some()
 }
 
 // ---------------------------------------------------------------------------

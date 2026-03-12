@@ -6,6 +6,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::runtime_env;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -150,10 +152,7 @@ impl AppConfig {
     }
 
     pub fn path() -> PathBuf {
-        let home = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("."));
-        home.join(".agent-workspace").join("config.toml")
+        runtime_env::app_data_dir().join("config.toml")
     }
 }
 

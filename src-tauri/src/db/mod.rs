@@ -9,6 +9,8 @@ use std::{
 use anyhow::Context;
 use rusqlite::Connection;
 
+use crate::runtime_env;
+
 pub mod actions;
 pub mod messages;
 pub mod repos;
@@ -70,7 +72,7 @@ impl Drop for PooledConnection {
 
 impl Database {
     pub fn init() -> anyhow::Result<Self> {
-        let base_dir = dirs_home().join(".agent-workspace");
+        let base_dir = runtime_env::app_data_dir();
         fs::create_dir_all(base_dir.join("logs")).context("failed to create app data dir")?;
 
         let path = base_dir.join("workspaces.db");
@@ -252,10 +254,4 @@ fn table_has_column(conn: &Connection, table: &str, column: &str) -> anyhow::Res
     }
 
     Ok(false)
-}
-
-fn dirs_home() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
 }

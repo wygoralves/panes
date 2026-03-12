@@ -5,6 +5,7 @@ use rusqlite::{params, OptionalExtension};
 use uuid::Uuid;
 
 use crate::models::WorkspaceDto;
+use crate::runtime_env;
 
 use super::Database;
 
@@ -107,7 +108,7 @@ pub fn ensure_default_workspace(db: &Database) -> anyhow::Result<WorkspaceDto> {
 
 fn preferred_default_workspace_root() -> std::path::PathBuf {
     let cwd = std::env::current_dir().ok();
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let home = runtime_env::home_dir();
     preferred_default_workspace_root_for(cwd.as_deref(), home.as_deref())
 }
 

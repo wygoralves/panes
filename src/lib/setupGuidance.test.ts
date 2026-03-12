@@ -54,4 +54,30 @@ describe("setup guidance", () => {
       altKey: "manual.nodeAltOrDownload",
     });
   });
+
+  it("uses detected Windows package managers for manual Node guidance", () => {
+    expect(
+      getNodeManualGuidance({
+        ...baseReport,
+        platform: "windows",
+        packageManagers: ["winget"],
+      }),
+    ).toEqual({
+      command: null,
+      altKey: "manual.nodeAltPackageManagerDetected",
+      altVars: { manager: "winget" },
+    });
+  });
+
+  it("falls back to direct install guidance on Windows without a package manager", () => {
+    expect(
+      getNodeManualGuidance({
+        ...baseReport,
+        platform: "windows",
+      }),
+    ).toEqual({
+      command: null,
+      altKey: "manual.nodeAltInstall",
+    });
+  });
 });
