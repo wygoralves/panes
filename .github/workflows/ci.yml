@@ -111,6 +111,9 @@ jobs:
       - name: Windows app config tests
         working-directory: src-tauri
         run: cargo test app_config --lib
+      - name: Windows keep awake tests
+        working-directory: src-tauri
+        run: cargo test commands::power::tests --lib
       - name: Windows terminal tests
         working-directory: src-tauri
         run: cargo test terminal::tests --lib

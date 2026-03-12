@@ -22,6 +22,10 @@ interface KeepAwakeStoreState {
   toggle: () => Promise<KeepAwakeState | null>;
 }
 
+export function canToggleKeepAwake(state: KeepAwakeState | null | undefined) {
+  return state?.supported !== false || state?.enabled === true;
+}
+
 function hasClosedDisplayLimitation(state: KeepAwakeState) {
   return state.supportsClosedDisplay === false && state.closedDisplayActive === false;
 }
@@ -135,7 +139,7 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
       return null;
     }
 
-    if (!current.supported && !current.enabled) {
+    if (!canToggleKeepAwake(current)) {
       toast.warning(t(KEEP_AWAKE_TOAST_KEYS.unsupported));
       return current;
     }
