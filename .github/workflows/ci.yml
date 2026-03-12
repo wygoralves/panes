@@ -130,10 +130,99 @@ jobs:
         working-directory: src-tauri
         run: cargo test claude_sidecar::tests --lib
 
+  windows_bundle_check:
+    runs-on: windows-latest
+    needs: [frontend, windows_compat]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build desktop assets
+        run: pnpm run build:desktop
+      - name: Build unsigned Windows NSIS bundle
+        run: pnpm exec tauri build --ci --bundles nsis --config src-tauri/tauri.windows.bundle-check.conf.json --no-sign
+        env:
+          PANES_SKIP_DESKTOP_PREBUILD: "1"
+      - name: Validate local Windows NSIS install and bundled sidecar
+        shell: pwsh
+        run: |
+          $setupExe = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter *-setup.exe | Select-Object -First 1
+          if (-not $setupExe) {
+            throw "Windows NSIS installer was not built."
+          }
+
+          $installRoot = Join-Path $env:RUNNER_TEMP "panes-bundle-check"
+          if (Test-Path $installRoot) {
+            Remove-Item -Recurse -Force $installRoot
+          }
+
+          $installer = Start-Process -FilePath $setupExe.FullName -ArgumentList @('/S', "/D=$installRoot") -Wait -PassThru
+          if ($installer.ExitCode -ne 0) {
+            throw "Windows installer exited with code $($installer.ExitCode)."
+          }
+
+          $appBinary = Get-ChildItem $installRoot -Recurse -Filter Panes.exe | Select-Object -First 1
+          if (-not $appBinary) {
+            throw "Unable to locate installed Panes.exe."
+          }
+
+          $sidecar = Get-ChildItem $installRoot -Recurse -Filter claude-agent-sdk-server.mjs | Select-Object -First 1
+          if (-not $sidecar) {
+            throw "Unable to locate bundled Claude sidecar in installed app."
+          }
+
+          Get-Command git | Out-Null
+          Get-Command node | Out-Null
+
+          $sidecarOut = Join-Path $env:RUNNER_TEMP "panes-bundle-check-sidecar.out"
+          $sidecarErr = Join-Path $env:RUNNER_TEMP "panes-bundle-check-sidecar.err"
+          if (Test-Path $sidecarOut) { Remove-Item -Force $sidecarOut }
+          if (Test-Path $sidecarErr) { Remove-Item -Force $sidecarErr }
+
+          $sidecarProc = Start-Process -FilePath node -ArgumentList $sidecar.FullName -PassThru -RedirectStandardOutput $sidecarOut -RedirectStandardError $sidecarErr
+          $ready = $false
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            if ((Test-Path $sidecarOut) -and ((Get-Content $sidecarOut -Raw) -match '"type":"ready"')) {
+              $ready = $true
+              break
+            }
+            Start-Sleep -Seconds 2
+          }
+
+          if (-not $ready) {
+            if (Test-Path $sidecarOut) { Get-Content $sidecarOut }
+            if (Test-Path $sidecarErr) { Get-Content $sidecarErr }
+            throw "Bundled Claude sidecar did not reach ready state."
+          }
+
+          if (-not $sidecarProc.HasExited) {
+            Stop-Process -Id $sidecarProc.Id -Force
+          }
+
+          $appProc = Start-Process -FilePath $appBinary.FullName -WorkingDirectory $appBinary.Directory.FullName -PassThru
+          Start-Sleep -Seconds 5
+          if ($appProc.HasExited) {
+            throw "Panes.exe exited immediately on the Windows runner."
+          }
+          Stop-Process -Id $appProc.Id -Force
+
   release:
     name: Automated Release
     if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master')
-    needs: [frontend, rust, macos_compat, windows_compat]
+    needs: [frontend, rust, macos_compat, windows_compat, windows_bundle_check]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -687,7 +776,13 @@ jobs:
             throw "Windows NSIS updater bundle was not downloaded."
           }
 
+          $setupSig = Get-ChildItem artifacts -Filter *-setup.exe.sig | Select-Object -First 1
+          if (-not $setupSig) {
+            throw "Windows NSIS updater signature was not downloaded."
+          }
+
           $env:SETUP_EXE_NAME = $setupExe.Name
+          $env:SETUP_SIG = (Get-Content $setupSig.FullName -Raw).Trim()
 
           for ($attempt = 1; $attempt -le 5; $attempt++) {
             try {
@@ -713,6 +808,10 @@ jobs:
 
           if (!windows.signature) {
             throw new Error("latest.json Windows signature is missing.");
+          }
+
+          if (windows.signature.trim() !== process.env.SETUP_SIG) {
+            throw new Error("latest.json Windows signature does not match the published .sig contents.");
           }
 
           if (!windows.url.endsWith(process.env.SETUP_EXE_NAME)) {
