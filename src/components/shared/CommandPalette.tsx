@@ -54,7 +54,7 @@ import { useGitStore } from "../../stores/gitStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useFileStore } from "../../stores/fileStore";
 import { useHarnessStore } from "../../stores/harnessStore";
-import { useKeepAwakeStore } from "../../stores/keepAwakeStore";
+import { canToggleKeepAwake, useKeepAwakeStore } from "../../stores/keepAwakeStore";
 import { toast } from "../../stores/toastStore";
 import type { FileTreeEntry, GitBranch, GitStash, HarnessInfo, Repo, SearchResult, Thread, Workspace } from "../../types";
 
@@ -165,11 +165,19 @@ interface ResultGroup {
   items: ResultItem[];
 }
 
+interface StaticCommandOptions {
+  keepAwakeAvailable?: boolean;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Static commands                                                    */
 /* ------------------------------------------------------------------ */
 
-export function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
+export function getStaticCommands(
+  t: TFunction<"app">,
+  options: StaticCommandOptions = {},
+): CommandEntry[] {
+  const { keepAwakeAvailable = true } = options;
   return [
   // Layout
   {
@@ -259,6 +267,7 @@ export function getStaticCommands(t: TFunction<"app">): CommandEntry[] {
     icon: Power,
     group: "layout",
     keywords: ["keep", "awake", "sleep", "idle", "system", "manter", "acordado", "sleep"],
+    isAvailable: () => keepAwakeAvailable,
     action: async ({ close }) => {
       close();
       await useKeepAwakeStore.getState().toggle();
@@ -926,6 +935,7 @@ export function CommandPalette({ open, onClose }: Props) {
   const shouldShowFileResultsInSearch = isSearchMode && (searchScope === "all" || searchScope === "files");
   const shouldShowMessageResultsInSearch = isSearchMode && (searchScope === "all" || searchScope === "messages");
   const shouldShowThreadResultsInSearch = isSearchMode && (searchScope === "all" || searchScope === "threads");
+  const keepAwakeAvailable = useKeepAwakeStore((state) => canToggleKeepAwake(state.state));
 
   // Context object for command actions
   const commandCtx = useMemo<CommandContext>(
@@ -941,8 +951,11 @@ export function CommandPalette({ open, onClose }: Props) {
 
   // Available commands filtered by context
   const availableCommands = useMemo(
-    () => getStaticCommands(t).filter((c) => !c.isAvailable || c.isAvailable(commandCtx)),
-    [commandCtx, t],
+    () =>
+      getStaticCommands(t, { keepAwakeAvailable }).filter(
+        (c) => !c.isAvailable || c.isAvailable(commandCtx),
+      ),
+    [commandCtx, keepAwakeAvailable, t],
   );
 
   /* ---- Reset on open/close ---- */
