@@ -105,6 +105,12 @@ jobs:
       - name: Rust check on Windows
         working-directory: src-tauri
         run: cargo check
+      - name: Windows runtime env tests
+        working-directory: src-tauri
+        run: cargo test runtime_env --lib
+      - name: Windows terminal tests
+        working-directory: src-tauri
+        run: cargo test terminal::tests --lib
 
   release:
     name: Automated Release
