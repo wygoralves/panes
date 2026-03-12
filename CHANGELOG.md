@@ -1,5 +1,31 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.38.0...vnull) (2026-03-12)
+
+### Features
+
+* **windows:** add keep awake backend support ([3594b11](https://github.com/wygoralves/panes/commit/3594b110824a14466ff68ec783fbe513b581f563))
+* **windows:** add release pipeline and updater assets ([5094e54](https://github.com/wygoralves/panes/commit/5094e5477e10667e042e1af8d1e02f7f8f7293e2))
+* **windows:** detect terminal foreground harnesses ([e3db0f2](https://github.com/wygoralves/panes/commit/e3db0f2f78764b0fa13a897d97dba72873571c2a))
+* **windows:** fix fmt issue ([281d703](https://github.com/wygoralves/panes/commit/281d70324ab179ef164106477b8c5ce2d5bfce36))
+* **windows:** fix more ci issues ([862ac15](https://github.com/wygoralves/panes/commit/862ac15c05f1a24f18c8303518b793b0dd661792))
+* **windows:** fix ts errors ([45e3918](https://github.com/wygoralves/panes/commit/45e3918950406fab31057a53894896804e5debb9))
+* **windows:** gate unsupported keep awake controls ([0b89ceb](https://github.com/wygoralves/panes/commit/0b89ceb8b55a38082057d65f863b54c70e99fb3b))
+* **windows:** harden reveal path selection ([83998d4](https://github.com/wygoralves/panes/commit/83998d41c6113d1276abe1ba80ea36e26e5a6486))
+* **windows:** harden terminal env and harness onboarding ([435d8ca](https://github.com/wygoralves/panes/commit/435d8caafbcab386226373ee8746fcb738258b8c))
+* **windows:** improve engine health guidance ([f687705](https://github.com/wygoralves/panes/commit/f6877055499217131c4223b962130621095195d4))
+* **windows:** normalize app data and setup discovery ([628dd8e](https://github.com/wygoralves/panes/commit/628dd8ea33c639d352caf30a59ee6562deaabe20))
+* **windows:** update docs to warn rough edges on windows first release ([0f189b8](https://github.com/wygoralves/panes/commit/0f189b8337cc627c196b926e237ec33ffa21fc96))
+
+### Bug Fixes
+
+* **windows:** avoid install dir as default workspace ([76bba92](https://github.com/wygoralves/panes/commit/76bba9271ee28ddf5929ea4b0ec494ebfe13f6fa))
+* **windows:** harden update manifest generation ([da0c982](https://github.com/wygoralves/panes/commit/da0c982699f7ac858d47f9d08fd705906c6f4827))
+* **windows:** improve manual setup guidance ([5db2197](https://github.com/wygoralves/panes/commit/5db219784f63de6e3dea3d33a33961a2a8c833dd))
+* **windows:** migrate app data and harden defaults ([a9c8200](https://github.com/wygoralves/panes/commit/a9c82007af4906fdb277a193abd4d505eb0574d6))
+* **windows:** remove macos-only app menu items ([1120b04](https://github.com/wygoralves/panes/commit/1120b046db3a4460a4a1c7dee574756f08660684))
+* **windows:** tweak ci scripts for windows build ([961c141](https://github.com/wygoralves/panes/commit/961c141728e197d8896dfdf0c549d3cf6af16960))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.37.0...vnull) (2026-03-11)
 
 ### Features
