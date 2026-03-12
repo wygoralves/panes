@@ -366,6 +366,8 @@ export const ipc = {
   installDependency: (dependency: string, method: string) =>
     invoke<InstallResult>("install_dependency", { dependency, method }),
   checkHarnesses: () => invoke<HarnessReport>("check_harnesses"),
+  installHarness: (harnessId: string) =>
+    invoke<InstallResult>("install_harness", { harnessId }),
   launchHarness: (harnessId: string) =>
     invoke<string>("launch_harness", { harnessId }),
 };

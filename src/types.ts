@@ -731,6 +731,15 @@ export interface TerminalGroup {
 
 // ── Setup / Onboarding ──────────────────────────────────────────────
 
+export type OnboardingWorkflowPreference = "cli" | "chat";
+export type OnboardingChatEngineId = "codex" | "claude";
+export type OnboardingStep =
+  | "workflow"
+  | "cliProviders"
+  | "chatEngines"
+  | "chatReadiness"
+  | "workspace";
+
 export interface DependencyReport {
   node: DepStatus;
   codex: DepStatus;
