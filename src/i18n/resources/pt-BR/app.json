@@ -307,6 +307,8 @@
     "retry": "Tentar novamente",
     "copySuccess": "Copiado para a área de transferência",
     "copyFailed": "Falha ao copiar comando",
+    "website": "Site",
+    "websiteOpenFailed": "Falha ao abrir o site do harness",
     "scanning": "Escaneando seu sistema...",
     "detectedCount": "{{installed}} de {{total}} ferramentas detectadas",
     "loading": "Detectando harnesses instalados...",

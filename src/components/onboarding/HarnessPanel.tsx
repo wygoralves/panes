@@ -1,11 +1,13 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import { open } from "@tauri-apps/plugin-shell";
 import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
   ClipboardCopy,
   Download,
+  ExternalLink,
   Loader2,
   Play,
   RefreshCw,
@@ -17,20 +19,13 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { writeCommandToNewSession } from "../../lib/ipc";
 import { copyTextToClipboard } from "../../lib/clipboard";
+import {
+  getHarnessInstallCommand,
+  getHarnessTileAction,
+} from "../../lib/harnessInstallActions";
 import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import type { HarnessInfo } from "../../types";
-
-/* ─── Install command map (mirrors backend harness definitions) ─── */
-const INSTALL_COMMANDS: Record<string, string> = {
-  codex: "npm install -g @openai/codex",
-  "claude-code": "npm install -g @anthropic-ai/claude-code",
-  "gemini-cli": "npm install -g @google/gemini-cli",
-  kiro: "curl -fsSL https://cli.kiro.dev/install | bash",
-  opencode: "npm install -g opencode",
-  "kilo-code": "npm install -g kilo-code",
-  "factory-droid": "curl -fsSL https://app.factory.ai/cli | sh",
-};
 
 /* ─── Harness tile ─── */
 function HarnessTile({
@@ -39,15 +34,18 @@ function HarnessTile({
   onInstallInTerminal,
   onCopyCommand,
   onLaunch,
+  onOpenWebsite,
 }: {
   harness: HarnessInfo;
   description: string;
   onInstallInTerminal: () => void;
   onCopyCommand: () => void;
   onLaunch: () => void;
+  onOpenWebsite: () => void;
 }) {
   const { t } = useTranslation("app");
-  const installCmd = INSTALL_COMMANDS[harness.id];
+  const installCmd = getHarnessInstallCommand(harness.id);
+  const action = getHarnessTileAction(harness);
 
   return (
     <div className={`hp-tile${harness.native ? " hp-tile-native" : ""}${harness.found ? " hp-tile-installed" : ""}`}>
@@ -73,12 +71,12 @@ function HarnessTile({
       </div>
 
       <div className="hp-tile-action">
-        {harness.found ? (
+        {action === "launch" ? (
           <button type="button" className="hp-btn hp-btn-launch" onClick={onLaunch}>
             <Play size={11} />
             {t("harnesses.launch")}
           </button>
-        ) : installCmd ? (
+        ) : action === "install" && installCmd ? (
           <div className="hp-tile-action-group">
             <button
               type="button"
@@ -97,6 +95,16 @@ function HarnessTile({
               {t("harnesses.install")}
             </button>
           </div>
+        ) : action === "manual" ? (
+          <button
+            type="button"
+            className="hp-btn hp-btn-copy"
+            onClick={onOpenWebsite}
+            title={harness.website}
+          >
+            <ExternalLink size={11} />
+            {t("harnesses.website")}
+          </button>
         ) : null}
       </div>
     </div>
@@ -146,12 +154,12 @@ export function HarnessPanel() {
   }
 
   function handleInstallInTerminal(harnessId: string) {
-    const cmd = INSTALL_COMMANDS[harnessId];
+    const cmd = getHarnessInstallCommand(harnessId);
     if (cmd) void spawnInTerminal(cmd);
   }
 
   function handleCopyCommand(harnessId: string) {
-    const cmd = INSTALL_COMMANDS[harnessId];
+    const cmd = getHarnessInstallCommand(harnessId);
     if (cmd) {
       void copyTextToClipboard(cmd)
         .then(() => {
@@ -165,6 +173,14 @@ export function HarnessPanel() {
           });
         });
     }
+  }
+
+  function handleOpenWebsite(website: string) {
+    void open(website).catch(() => {
+      void import("../../stores/toastStore").then(({ toast }) => {
+        toast.error(t("harnesses.websiteOpenFailed"));
+      });
+    });
   }
 
   return (
@@ -231,6 +247,7 @@ export function HarnessPanel() {
                   onInstallInTerminal={() => handleInstallInTerminal(h.id)}
                   onCopyCommand={() => handleCopyCommand(h.id)}
                   onLaunch={() => void handleLaunch(h.id)}
+                  onOpenWebsite={() => handleOpenWebsite(h.website)}
                 />
               ))}
             </div>

@@ -109,6 +109,7 @@ struct TokioKeepAwakeChild {
 }
 
 const KEEP_AWAKE_SPAWN_GRACE_PERIOD: Duration = Duration::from_millis(150);
+const WINDOWS_KEEP_AWAKE_MARKER: &str = "PANES_KEEP_AWAKE_WINDOWS";
 
 impl KeepAwakeManager {
     pub fn new() -> Self {
@@ -490,11 +491,7 @@ impl KeepAwakeSpawner for ProcessKeepAwakeSpawner {
         let helper = child.id().map(|pid| KeepAwakeHelperState {
             pid,
             program: spec.program.display().to_string(),
-            args: spec
-                .args
-                .iter()
-                .map(|arg| arg.to_string_lossy().into_owned())
-                .collect(),
+            args: helper_command_args_fingerprint(&spec.program, &spec.args),
             start_marker: read_process_start_marker(pid)
                 .map_err(|error| {
                     log::warn!(
@@ -618,6 +615,39 @@ fn helper_command_matches(command_line: &str, helper: &KeepAwakeHelperState) -> 
         .all(|arg| command_line.contains(arg))
 }
 
+fn helper_command_args_fingerprint(program: &Path, args: &[OsString]) -> Vec<String> {
+    if is_powershell_program(program)
+        && args
+            .last()
+            .is_some_and(|arg| arg.to_string_lossy().contains(WINDOWS_KEEP_AWAKE_MARKER))
+    {
+        let mut fingerprint = args
+            .iter()
+            .take(args.len().saturating_sub(1))
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        fingerprint.push(WINDOWS_KEEP_AWAKE_MARKER.to_string());
+        return fingerprint;
+    }
+
+    args.iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect()
+}
+
+fn is_powershell_program(program: &Path) -> bool {
+    let program_name = program
+        .to_string_lossy()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        program_name.as_str(),
+        "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe"
+    )
+}
+
 fn read_process_start_marker(pid: u32) -> io::Result<Option<String>> {
     #[cfg(target_os = "linux")]
     {
@@ -642,6 +672,11 @@ fn read_process_start_marker(pid: u32) -> io::Result<Option<String>> {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return read_windows_process_property(pid, "CreationDate", true);
     }
 
     #[allow(unreachable_code)]
@@ -686,6 +721,11 @@ fn read_process_command_line(pid: u32) -> io::Result<Option<String>> {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        return read_windows_process_property(pid, "CommandLine", false);
+    }
+
     #[allow(unreachable_code)]
     {
         let ps = crate::runtime_env::resolve_executable("ps")
@@ -721,10 +761,83 @@ fn terminate_process(pid: u32) -> io::Result<()> {
         return Err(error);
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        return terminate_windows_process(pid);
+    }
+
     #[allow(unreachable_code)]
     Err(io::Error::other(
         "keep awake termination is not supported on this platform",
     ))
+}
+
+#[cfg(target_os = "windows")]
+fn read_windows_process_property(
+    pid: u32,
+    property: &str,
+    format_datetime: bool,
+) -> io::Result<Option<String>> {
+    let formatting = if format_datetime {
+        "$value.ToString('o')"
+    } else {
+        "$value.ToString()"
+    };
+    let script = format!(
+        "$process = Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}' | Select-Object -First 1; if ($null -eq $process) {{ exit 1 }}; $value = $process.{property}; if ($null -eq $value -or [string]::IsNullOrWhiteSpace($value.ToString())) {{ exit 1 }}; {formatting}"
+    );
+    let output = run_windows_powershell_script(&script)?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(stdout))
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn terminate_windows_process(pid: u32) -> io::Result<()> {
+    let script = format!(
+        "$process = Get-Process -Id {pid} -ErrorAction SilentlyContinue; if ($null -eq $process) {{ exit 0 }}; Stop-Process -Id {pid} -Force -ErrorAction Stop"
+    );
+    let output = run_windows_powershell_script(&script)?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(io::Error::other(if stderr.is_empty() {
+        format!("failed to stop process {pid} via PowerShell")
+    } else {
+        stderr
+    }))
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_powershell_script(script: &str) -> io::Result<std::process::Output> {
+    let powershell = resolve_windows_powershell().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "Windows keep awake requires PowerShell",
+        )
+    })?;
+    Command::new(powershell)
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            script,
+        ])
+        .output()
 }
 
 fn exit_status_message(status: ExitStatus) -> String {
@@ -791,10 +904,69 @@ fn resolve_backend_spec() -> Result<BackendSpec, String> {
         });
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
+    {
+        let owner_pid = std::process::id();
+        let powershell = resolve_windows_powershell()
+            .ok_or_else(|| "Windows keep awake requires PowerShell".to_string())?;
+        return Ok(BackendSpec {
+            program: powershell,
+            args: build_windows_keep_awake_args(owner_pid),
+        });
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         Err("keep awake is not supported on this platform".to_string())
     }
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_windows_powershell() -> Option<PathBuf> {
+    ["powershell.exe", "powershell", "pwsh", "pwsh.exe"]
+        .into_iter()
+        .find_map(crate::runtime_env::resolve_executable)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn build_windows_keep_awake_args(owner_pid: u32) -> Vec<OsString> {
+    vec![
+        OsString::from("-NoLogo"),
+        OsString::from("-NoProfile"),
+        OsString::from("-NonInteractive"),
+        OsString::from("-ExecutionPolicy"),
+        OsString::from("Bypass"),
+        OsString::from("-WindowStyle"),
+        OsString::from("Hidden"),
+        OsString::from("-Command"),
+        OsString::from(build_windows_keep_awake_script(owner_pid)),
+    ]
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn build_windows_keep_awake_script(owner_pid: u32) -> String {
+    format!(
+        "$marker = '{WINDOWS_KEEP_AWAKE_MARKER}'; \
+$ownerPid = {owner_pid}; \
+$signature = @'\
+using System.Runtime.InteropServices; \
+public static class PanesKeepAwakeNative {{ \
+  [DllImport(\"kernel32.dll\", SetLastError=true)] \
+  public static extern uint SetThreadExecutionState(uint esFlags); \
+}}\
+'@; \
+Add-Type -TypeDefinition $signature; \
+$continuous = 0x80000000; \
+$systemRequired = 0x00000001; \
+try {{ \
+  while (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue) {{ \
+    [PanesKeepAwakeNative]::SetThreadExecutionState($continuous -bor $systemRequired) | Out-Null; \
+    Start-Sleep -Seconds 30; \
+  }} \
+}} finally {{ \
+  [PanesKeepAwakeNative]::SetThreadExecutionState($continuous) | Out-Null; \
+}}"
+    )
 }
 
 #[cfg(test)]
@@ -1399,6 +1571,41 @@ mod tests {
         assert!(args
             .iter()
             .any(|arg| arg == format!("--pid={}", std::process::id())));
+    }
+
+    #[test]
+    fn windows_backend_script_tracks_owner_process_and_prevents_sleep() {
+        let args = build_windows_keep_awake_args(77)
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let script = args.last().expect("powershell script should be present");
+
+        assert!(args.iter().any(|arg| arg == "-NoProfile"));
+        assert!(args.iter().any(|arg| arg == "-NonInteractive"));
+        assert!(args.iter().any(|arg| arg == "-WindowStyle"));
+        assert!(args.iter().any(|arg| arg == "Hidden"));
+        assert!(script.contains(WINDOWS_KEEP_AWAKE_MARKER));
+        assert!(script.contains("$ownerPid = 77"));
+        assert!(script.contains("SetThreadExecutionState"));
+        assert!(script.contains("Start-Sleep -Seconds 30"));
+        assert!(script.contains("$continuous -bor $systemRequired"));
+    }
+
+    #[test]
+    fn powershell_helper_fingerprint_uses_marker_instead_of_full_script() {
+        let program =
+            PathBuf::from("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+        let args = build_windows_keep_awake_args(88);
+        let fingerprint = helper_command_args_fingerprint(&program, &args);
+
+        assert!(fingerprint.iter().any(|arg| arg == "-NoProfile"));
+        assert!(fingerprint
+            .iter()
+            .any(|arg| arg == WINDOWS_KEEP_AWAKE_MARKER));
+        assert!(!fingerprint
+            .iter()
+            .any(|arg| arg.contains("SetThreadExecutionState")));
     }
 
     fn exit_status_from_code(code: i32) -> ExitStatus {

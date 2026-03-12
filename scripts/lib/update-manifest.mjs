@@ -11,6 +11,12 @@ export const UPDATER_PLATFORM_DEFINITIONS = [
     label: "Linux updater bundle",
     platforms: ["linux-x86_64"],
   },
+  {
+    bundleMatch: /-setup\.exe$/,
+    signatureMatch: /-setup\.exe\.sig$/,
+    label: "Windows updater bundle",
+    platforms: ["windows-x86_64"],
+  },
 ];
 
 function findMatchingAssets(assets, pattern) {

@@ -9,14 +9,17 @@
   },
   "deps": {
     "node": {
+      "label": "Node.js",
       "auto": "Nao encontrado - sera instalado via Homebrew",
       "manual": "Nao encontrado - instale o Node.js 20+ manualmente"
     },
     "codex": {
+      "label": "Codex CLI",
       "auto": "Nao encontrado - sera instalado via npm",
       "manual": "Nao encontrado - instale com: npm install -g @openai/codex"
     },
     "git": {
+      "label": "Git",
       "manual": "Nao encontrado - alguns recursos de Git ficarao indisponiveis"
     }
   },
@@ -30,10 +33,15 @@
     "title": "Instalacao manual",
     "installNode": "Instalar Node.js",
     "installCodex": "Instalar Codex CLI",
+    "installGit": "Instalar Git",
     "nodeAltOrDownload": "Ou baixe em https://nodejs.org",
     "nodeAltInstall": "Instale o Node.js 20+ em https://nodejs.org",
     "nodeAltPackageManagerDetected": "Instale o Node.js 20+ com {{manager}} ou em https://nodejs.org",
     "nodeAltPackageManager": "Instale o Node.js 20+ com o gerenciador de pacotes do seu sistema operacional ou em https://nodejs.org",
+    "gitAltOrDownload": "Ou baixe em https://git-scm.com/downloads",
+    "gitAltInstall": "Instale o Git em https://git-scm.com/downloads",
+    "gitAltPackageManagerDetected": "Instale o Git com {{manager}} ou em https://git-scm.com/downloads",
+    "gitAltPackageManager": "Instale o Git com o gerenciador de pacotes do seu sistema operacional ou em https://git-scm.com/downloads",
     "copied": "Copiado"
   },
   "install": {
@@ -61,7 +69,9 @@
     "stale": "(desatualizado)"
   },
   "error": {
-    "unexpected": "Ocorreu um erro inesperado durante a configuracao."
+    "unexpected": "Ocorreu um erro inesperado durante a configuracao.",
+    "nodeInstallFailed": "A instalacao do Node.js falhou",
+    "codexInstallFailed": "A instalacao do Codex CLI falhou"
   },
   "header": {
     "completeTitle": "Configuracao concluida",

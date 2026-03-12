@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { ipc, listenInstallProgress } from "../lib/ipc";
+import { t } from "../i18n";
 import type { DependencyReport } from "../types";
 
 const SETUP_COMPLETED_KEY = "panes.setup.completed.v2";
@@ -97,7 +98,7 @@ export const useSetupStore = create<SetupStore>((set, get) => ({
     if (!report.node.found && report.node.canAutoInstall && report.node.installMethod) {
       const ok = await install("node", report.node.installMethod);
       if (!ok) {
-        set({ phase: "error", error: "Node.js installation failed" });
+        set({ phase: "error", error: t("setup:error.nodeInstallFailed") });
         return;
       }
     }
@@ -106,7 +107,7 @@ export const useSetupStore = create<SetupStore>((set, get) => ({
     if (!report.codex.found && report.codex.canAutoInstall && report.codex.installMethod) {
       const ok = await install("codex", report.codex.installMethod);
       if (!ok) {
-        set({ phase: "error", error: "Codex CLI installation failed" });
+        set({ phase: "error", error: t("setup:error.codexInstallFailed") });
         return;
       }
     }

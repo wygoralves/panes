@@ -307,6 +307,8 @@
     "retry": "Retry",
     "copySuccess": "Copied to clipboard",
     "copyFailed": "Failed to copy command",
+    "website": "Website",
+    "websiteOpenFailed": "Failed to open harness website",
     "scanning": "Scanning your system...",
     "detectedCount": "{{installed}} of {{total}} tools detected",
     "loading": "Detecting installed harnesses...",

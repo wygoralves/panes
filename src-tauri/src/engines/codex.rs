@@ -208,11 +208,6 @@ impl Engine for CodexEngine {
         resolve_codex_executable().await.executable.is_some()
     }
 
-    async fn version(&self) -> Option<String> {
-        let resolution = resolve_codex_executable().await;
-        self.probe_version_from_resolution(&resolution).await.ok()
-    }
-
     async fn start_thread(
         &self,
         scope: ThreadScope,
@@ -1652,23 +1647,35 @@ pub async fn resolve_codex_executable() -> CodexExecutableResolution {
 }
 
 fn codex_unavailable_details(resolution: &CodexExecutableResolution) -> Option<String> {
+    codex_unavailable_details_for_platform(runtime_env::platform_id(), resolution)
+}
+
+fn codex_unavailable_details_for_platform(
+    platform: &str,
+    resolution: &CodexExecutableResolution,
+) -> Option<String> {
     if resolution.executable.is_some() {
         return None;
     }
 
-    let path_preview = resolution
-        .app_path
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "(empty)".to_string());
+    let path_preview = app_path_preview(resolution.app_path.as_deref());
 
-    match resolution.login_shell_executable.as_ref() {
-        Some(shell_path) => Some(format!(
+    match (platform, resolution.login_shell_executable.as_ref()) {
+        ("macos", Some(shell_path)) => Some(format!(
             "Codex was found in your login shell at `{}`, but Panes does not see this in its app PATH. This is common when launching from Finder on macOS. App PATH: `{}`",
             shell_path.display(),
             path_preview
         )),
-        None => Some(format!(
+        ("windows", _) => Some(format!(
+            "{}. App PATH: `{}`. On Windows, Codex is usually installed with `npm install -g @openai/codex` and exposed from `%APPDATA%\\npm`.",
+            CODEX_MISSING_DEFAULT_DETAILS, path_preview
+        )),
+        (_, Some(shell_path)) => Some(format!(
+            "Codex was found in your login shell at `{}`, but Panes does not see this in its app PATH. App PATH: `{}`",
+            shell_path.display(),
+            path_preview
+        )),
+        (_, None) => Some(format!(
             "{}. App PATH: `{}`",
             CODEX_MISSING_DEFAULT_DETAILS, path_preview
         )),
@@ -1676,11 +1683,15 @@ fn codex_unavailable_details(resolution: &CodexExecutableResolution) -> Option<S
 }
 
 fn codex_execution_failure_details(resolution: &CodexExecutableResolution, error: &str) -> String {
-    let path_preview = resolution
-        .app_path
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "(empty)".to_string());
+    codex_execution_failure_details_for_platform(runtime_env::platform_id(), resolution, error)
+}
+
+fn codex_execution_failure_details_for_platform(
+    platform: &str,
+    resolution: &CodexExecutableResolution,
+    error: &str,
+) -> String {
+    let path_preview = app_path_preview(resolution.app_path.as_deref());
     let executable = resolution
         .executable
         .as_ref()
@@ -1691,6 +1702,18 @@ fn codex_execution_failure_details(resolution: &CodexExecutableResolution, error
         .to_lowercase()
         .contains("env: node: no such file or directory")
     {
+        if platform == "windows" {
+            return format!(
+                "Codex executable was found at `{executable}`, but Panes could not find `node` when launching it. This usually means Node.js is not installed or its install directory is missing from PATH on Windows. App PATH: `{path_preview}`. Error: {error}"
+            );
+        }
+
+        if platform != "macos" {
+            return format!(
+                "Codex executable was found at `{executable}`, but Panes could not find `node` when launching it. App PATH: `{path_preview}`. Error: {error}"
+            );
+        }
+
         return format!(
             "Codex executable was found at `{executable}`, but Panes could not find `node` when launching it (Finder-launched apps often have a limited PATH). App PATH: `{path_preview}`. Error: {error}"
         );
@@ -1715,22 +1738,34 @@ fn codex_resolution_note(resolution: &CodexExecutableResolution) -> Option<Strin
 }
 
 fn codex_health_checks() -> Vec<String> {
-    let checks = vec![
+    codex_health_checks_for_platform(runtime_env::platform_id())
+}
+
+fn codex_health_checks_for_platform(platform: &str) -> Vec<String> {
+    let mut checks = vec![
         "codex --version".to_string(),
-        "command -v codex".to_string(),
         "node --version".to_string(),
-        "command -v node".to_string(),
         "codex app-server --help".to_string(),
     ];
 
-    #[cfg(target_os = "macos")]
-    let checks = {
-        let mut checks = checks;
-        checks.push("echo \"$PATH\"".to_string());
-        checks.push("/bin/zsh -lic 'command -v codex && codex --version'".to_string());
-        checks.push("sandbox-exec -p '(version 1) (allow default)' /usr/bin/true".to_string());
-        checks
-    };
+    match platform {
+        "windows" => {
+            checks.push("where codex".to_string());
+            checks.push("where node".to_string());
+            checks.push("echo %PATH%".to_string());
+        }
+        "macos" => {
+            checks.push("command -v codex".to_string());
+            checks.push("command -v node".to_string());
+            checks.push("echo \"$PATH\"".to_string());
+            checks.push("/bin/zsh -lic 'command -v codex && codex --version'".to_string());
+            checks.push("sandbox-exec -p '(version 1) (allow default)' /usr/bin/true".to_string());
+        }
+        _ => {
+            checks.push("command -v codex".to_string());
+            checks.push("command -v node".to_string());
+        }
+    }
 
     checks
 }
@@ -1739,8 +1774,15 @@ fn codex_fix_commands(
     resolution: &CodexExecutableResolution,
     execution_error: Option<&str>,
 ) -> Vec<String> {
-    #[cfg(target_os = "macos")]
-    {
+    codex_fix_commands_for_platform(runtime_env::platform_id(), resolution, execution_error)
+}
+
+fn codex_fix_commands_for_platform(
+    platform: &str,
+    resolution: &CodexExecutableResolution,
+    execution_error: Option<&str>,
+) -> Vec<String> {
+    if platform == "macos" {
         let mut fixes = Vec::new();
         if resolution.executable.is_none() {
             if let Some(shell_path) = &resolution.login_shell_executable {
@@ -1774,12 +1816,39 @@ fn codex_fix_commands(
         return fixes;
     }
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = resolution;
-        let _ = execution_error;
-        Vec::new()
+    if platform == "windows" {
+        let mut fixes = Vec::new();
+        if resolution.executable.is_none() {
+            fixes.push("npm install -g @openai/codex".to_string());
+            fixes.push("where codex".to_string());
+            fixes.push("echo %APPDATA%".to_string());
+            fixes.push(
+                "Ensure `%APPDATA%\\npm` is present in PATH, then restart Panes.".to_string(),
+            );
+            return fixes;
+        }
+
+        if execution_error.is_some() {
+            fixes.push("where node".to_string());
+            fixes.push("where codex".to_string());
+            fixes.push("echo %PATH%".to_string());
+            fixes.push(
+                "Ensure Node.js 20+ is installed and visible to Panes, then restart the app."
+                    .to_string(),
+            );
+        }
+        return fixes;
     }
+
+    let _ = resolution;
+    let _ = execution_error;
+    Vec::new()
+}
+
+fn app_path_preview(path: Option<&str>) -> String {
+    path.filter(|value| !value.trim().is_empty())
+        .unwrap_or("(empty)")
+        .to_string()
 }
 
 fn codex_augmented_path(executable: &Path) -> Option<OsString> {
@@ -3668,5 +3737,69 @@ mod tests {
         };
 
         assert!(!event_indicates_auth_failure(&event));
+    }
+
+    #[test]
+    fn codex_health_checks_use_windows_commands() {
+        let checks = codex_health_checks_for_platform("windows");
+
+        assert!(checks.contains(&"where codex".to_string()));
+        assert!(checks.contains(&"where node".to_string()));
+        assert!(checks.contains(&"echo %PATH%".to_string()));
+        assert!(!checks.iter().any(|check| check == "command -v codex"));
+    }
+
+    #[test]
+    fn codex_unavailable_details_for_windows_mentions_appdata_npm() {
+        let details = codex_unavailable_details_for_platform(
+            "windows",
+            &CodexExecutableResolution {
+                executable: None,
+                source: "unavailable",
+                app_path: Some(r"C:\Windows\System32".to_string()),
+                login_shell_executable: None,
+            },
+        )
+        .expect("details should exist");
+
+        assert!(details.contains("%APPDATA%\\npm"));
+        assert!(details.contains("App PATH"));
+    }
+
+    #[test]
+    fn codex_fix_commands_for_windows_cover_install_and_path() {
+        let fixes = codex_fix_commands_for_platform(
+            "windows",
+            &CodexExecutableResolution {
+                executable: None,
+                source: "unavailable",
+                app_path: Some(r"C:\Windows\System32".to_string()),
+                login_shell_executable: None,
+            },
+            None,
+        );
+
+        assert!(fixes.contains(&"npm install -g @openai/codex".to_string()));
+        assert!(fixes.contains(&"where codex".to_string()));
+        assert!(fixes.iter().any(|fix| fix.contains("%APPDATA%\\npm")));
+    }
+
+    #[test]
+    fn codex_execution_failure_details_for_windows_mentions_node_path() {
+        let details = codex_execution_failure_details_for_platform(
+            "windows",
+            &CodexExecutableResolution {
+                executable: Some(std::path::PathBuf::from(
+                    r"C:\Users\panes\AppData\Roaming\npm\codex.cmd",
+                )),
+                source: "app-path",
+                app_path: Some(r"C:\Windows\System32".to_string()),
+                login_shell_executable: None,
+            },
+            "env: node: no such file or directory",
+        );
+
+        assert!(details.contains("missing from PATH on Windows"));
+        assert!(details.contains("node"));
     }
 }
