@@ -7,6 +7,7 @@ import {
   nextOnboardingStep,
   normalizeOnboardingHarnessInstallId,
   previousOnboardingStep,
+  resolvePreferredOnboardingChatSelection,
   shouldAutoOpenOnboarding,
 } from "./onboarding";
 import type { DependencyReport } from "../types";
@@ -42,6 +43,42 @@ describe("onboarding helpers", () => {
     expect(normalizeOnboardingHarnessInstallId("claude")).toBe("claude-code");
     expect(normalizeOnboardingHarnessInstallId("codex")).toBe("codex");
     expect(normalizeOnboardingHarnessInstallId("kiro")).toBe("kiro");
+  });
+
+  it("prefers the single onboarding-selected chat engine and its default model", () => {
+    expect(
+      resolvePreferredOnboardingChatSelection(["claude"], [
+        {
+          id: "codex",
+          models: [{ id: "gpt-5.3-codex", hidden: false, isDefault: true }],
+        },
+        {
+          id: "claude",
+          models: [
+            { id: "claude-opus-4-6", hidden: false, isDefault: false },
+            { id: "claude-sonnet-4-6", hidden: false, isDefault: true },
+          ],
+        },
+      ]),
+    ).toEqual({
+      engineId: "claude",
+      modelId: "claude-sonnet-4-6",
+    });
+  });
+
+  it("keeps the existing default behavior when onboarding selected multiple engines", () => {
+    expect(
+      resolvePreferredOnboardingChatSelection(["codex", "claude"], [
+        {
+          id: "codex",
+          models: [{ id: "gpt-5.3-codex", hidden: false, isDefault: true }],
+        },
+        {
+          id: "claude",
+          models: [{ id: "claude-sonnet-4-6", hidden: false, isDefault: true }],
+        },
+      ]),
+    ).toBeNull();
   });
 
   it("auto-opens only for users who have not completed any onboarding", () => {

@@ -10,6 +10,7 @@ mod linux_webkit;
 mod locale;
 mod models;
 mod power;
+mod process_utils;
 mod runtime_env;
 mod state;
 mod terminal;

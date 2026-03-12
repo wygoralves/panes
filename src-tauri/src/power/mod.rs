@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{process::Child, sync::Mutex};
 
 use crate::config::app_config::AppConfig;
+use crate::process_utils;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeepAwakeStatus {
@@ -475,6 +476,7 @@ impl KeepAwakeSpawner for ProcessKeepAwakeSpawner {
     fn spawn(&self) -> anyhow::Result<SpawnedKeepAwakeChild> {
         let spec = resolve_backend_spec().map_err(anyhow::Error::msg)?;
         let mut command = tokio::process::Command::new(&spec.program);
+        process_utils::configure_tokio_command(&mut command);
         command
             .args(&spec.args)
             .stdin(Stdio::null())
@@ -825,7 +827,9 @@ fn run_windows_powershell_script(script: &str) -> io::Result<std::process::Outpu
             "Windows keep awake requires PowerShell",
         )
     })?;
-    Command::new(powershell)
+    let mut command = Command::new(powershell);
+    process_utils::configure_std_command(&mut command);
+    command
         .args([
             "-NoLogo",
             "-NoProfile",

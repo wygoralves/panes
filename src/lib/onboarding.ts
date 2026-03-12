@@ -35,6 +35,22 @@ export interface OnboardingShortcutTargetNode {
   isContentEditable?: boolean;
 }
 
+interface OnboardingChatModelSelection {
+  id: string;
+  hidden: boolean;
+  isDefault: boolean;
+}
+
+interface OnboardingChatEngineSelectionCandidate {
+  id: string;
+  models: OnboardingChatModelSelection[];
+}
+
+export interface OnboardingPreferredChatSelection {
+  engineId: OnboardingChatEngineId;
+  modelId: string;
+}
+
 const INTERACTIVE_ONBOARDING_TAGS: ReadonlySet<string> = new Set([
   "A",
   "BUTTON",
@@ -60,6 +76,34 @@ export function normalizeOnboardingHarnessInstallId(targetId: string): string {
   }
 
   return targetId;
+}
+
+export function resolvePreferredOnboardingChatSelection(
+  selectedEngines: OnboardingChatEngineId[],
+  engines: ReadonlyArray<OnboardingChatEngineSelectionCandidate>,
+): OnboardingPreferredChatSelection | null {
+  if (selectedEngines.length !== 1) {
+    return null;
+  }
+
+  const [engineId] = selectedEngines;
+  const engine = engines.find((candidate) => candidate.id === engineId);
+  if (!engine) {
+    return null;
+  }
+
+  const model =
+    engine.models.find((candidate) => candidate.isDefault) ??
+    engine.models.find((candidate) => !candidate.hidden) ??
+    engine.models[0];
+  if (!model) {
+    return null;
+  }
+
+  return {
+    engineId,
+    modelId: model.id,
+  };
 }
 
 export function shouldAutoOpenOnboarding({

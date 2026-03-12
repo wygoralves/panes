@@ -21,6 +21,7 @@ import {
   Globe,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
+import { useEngineStore } from "../../stores/engineStore";
 import { useThreadStore } from "../../stores/threadStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
@@ -30,6 +31,7 @@ import { canToggleKeepAwake, useKeepAwakeStore } from "../../stores/keepAwakeSto
 import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { formatRelativeTime } from "../../lib/formatters";
+import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
 import {
   emitTerminalAcceleratedRenderingChanged,
   getTerminalAcceleratedRenderingPreferenceVersion,
@@ -95,12 +97,14 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     refreshArchivedThreads,
   } = useThreadStore();
   const openOnboarding = useOnboardingStore((state) => state.openOnboarding);
+  const selectedChatEngines = useOnboardingStore((state) => state.selectedChatEngines);
   const sidebarPinned = useUiStore((state) => state.sidebarPinned);
   const toggleSidebarPin = useUiStore((state) => state.toggleSidebarPin);
   const activeView = useUiStore((state) => state.activeView);
   const setActiveView = useUiStore((state) => state.setActiveView);
   const openWorkspaceSettings = useUiStore((state) => state.openWorkspaceSettings);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
+  const engines = useEngineStore((s) => s.engines);
   const updateStatus = useUpdateStore((s) => s.status);
   const updateSnoozed = useUpdateStore((s) => s.snoozed);
   const keepAwakeState = useKeepAwakeStore((s) => s.state);
@@ -108,6 +112,10 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const toggleKeepAwake = useKeepAwakeStore((s) => s.toggle);
   const hasUpdate = updateStatus === "available" && !updateSnoozed;
   const keepAwakeAvailable = canToggleKeepAwake(keepAwakeState);
+  const preferredOnboardingChatSelection = useMemo(
+    () => resolvePreferredOnboardingChatSelection(selectedChatEngines, engines),
+    [engines, selectedChatEngines],
+  );
 
   const projects = useMemo<ProjectGroup[]>(
     () =>
@@ -235,6 +243,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     const createdThreadId = await createThread({
       workspaceId: project.id,
       repoId: null,
+      engineId: preferredOnboardingChatSelection?.engineId,
+      modelId: preferredOnboardingChatSelection?.modelId,
       title: t("app:sidebar.newThreadTitle"),
     });
     if (!createdThreadId) return;
@@ -915,9 +925,15 @@ function CollapsedRail({
   const setActiveRepo = useWorkspaceStore((s) => s.setActiveRepo);
   const createThread = useThreadStore((s) => s.createThread);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
+  const engines = useEngineStore((s) => s.engines);
+  const selectedChatEngines = useOnboardingStore((s) => s.selectedChatEngines);
   const hasUpdate = useUpdateStore((s) => s.status === "available" && !s.snoozed);
   const activeView = useUiStore((s) => s.activeView);
   const setActiveView = useUiStore((s) => s.setActiveView);
+  const preferredOnboardingChatSelection = useMemo(
+    () => resolvePreferredOnboardingChatSelection(selectedChatEngines, engines),
+    [engines, selectedChatEngines],
+  );
 
   async function onNewThread() {
     const activeProject = projects.find((p) => p.id === activeWorkspaceId);
@@ -926,6 +942,8 @@ function CollapsedRail({
     const createdThreadId = await createThread({
       workspaceId: activeProject.id,
       repoId: null,
+      engineId: preferredOnboardingChatSelection?.engineId,
+      modelId: preferredOnboardingChatSelection?.modelId,
       title: t("sidebar.newThreadTitle"),
     });
     if (!createdThreadId) return;

@@ -9,7 +9,7 @@ use tokio::{
     sync::{broadcast, oneshot, Mutex},
 };
 
-use crate::runtime_env;
+use crate::{process_utils, runtime_env};
 
 use super::codex_protocol::{
     notification_payload, parse_incoming, request_payload, response_error_payload,
@@ -27,6 +27,7 @@ pub struct CodexTransport {
 impl CodexTransport {
     pub async fn spawn(codex_executable: &str) -> anyhow::Result<Self> {
         let mut command = Command::new(codex_executable);
+        process_utils::configure_tokio_command(&mut command);
         if let Some(augmented_path) = codex_augmented_path(codex_executable) {
             command.env("PATH", augmented_path);
         }

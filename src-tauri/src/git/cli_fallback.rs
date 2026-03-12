@@ -2,8 +2,12 @@ use std::process::Command;
 
 use anyhow::Context;
 
+use crate::process_utils;
+
 pub fn run_git(repo_path: &str, args: &[&str]) -> anyhow::Result<String> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    process_utils::configure_std_command(&mut command);
+    let output = command
         .arg("-C")
         .arg(repo_path)
         .args(args)

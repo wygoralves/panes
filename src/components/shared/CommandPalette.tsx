@@ -36,6 +36,7 @@ import {
   Power,
 } from "lucide-react";
 import { ipc, writeCommandToNewSession } from "../../lib/ipc";
+import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
 import {
   COMMAND_PALETTE_DEFAULT_LAUNCH,
   detectCommandPaletteMode,
@@ -50,11 +51,13 @@ import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useThreadStore } from "../../stores/threadStore";
 import { useChatStore } from "../../stores/chatStore";
+import { useEngineStore } from "../../stores/engineStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useFileStore } from "../../stores/fileStore";
 import { useHarnessStore } from "../../stores/harnessStore";
 import { canToggleKeepAwake, useKeepAwakeStore } from "../../stores/keepAwakeStore";
+import { useOnboardingStore } from "../../stores/onboardingStore";
 import { toast } from "../../stores/toastStore";
 import type { FileTreeEntry, GitBranch, GitStash, HarnessInfo, Repo, SearchResult, Thread, Workspace } from "../../types";
 
@@ -516,9 +519,15 @@ export function getStaticCommands(
     action: async ({ activeWorkspaceId, close }) => {
       close();
       if (!activeWorkspaceId) return;
+      const preferredOnboardingChatSelection = resolvePreferredOnboardingChatSelection(
+        useOnboardingStore.getState().selectedChatEngines,
+        useEngineStore.getState().engines,
+      );
       const threadId = await useThreadStore.getState().createThread({
         workspaceId: activeWorkspaceId,
         repoId: null,
+        engineId: preferredOnboardingChatSelection?.engineId,
+        modelId: preferredOnboardingChatSelection?.modelId,
         title: t("sidebar.newThreadTitle"),
       });
       if (threadId) {

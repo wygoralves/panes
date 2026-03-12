@@ -5,6 +5,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::models::{HarnessInfo, HarnessReport, InstallProgressEvent, InstallResult};
+use crate::process_utils;
 use crate::runtime_env;
 
 // ---------------------------------------------------------------------------
@@ -282,6 +283,7 @@ async fn run_harness_install(
     );
 
     let mut command = Command::new(program);
+    process_utils::configure_tokio_command(&mut command);
     command.args(args);
     if let Some(augmented_path) = runtime_env::augmented_path_with_prepend(
         Path::new(program)
@@ -389,6 +391,7 @@ async fn run_harness_install_script(
 
     let spec = runtime_env::command_shell_for_string(script);
     let mut command = Command::new(&spec.program);
+    process_utils::configure_tokio_command(&mut command);
     command.args(&spec.args);
     if let Some(augmented_path) = runtime_env::augmented_path_with_prepend(
         spec.program
@@ -478,7 +481,9 @@ async fn run_harness_install_script(
 // ---------------------------------------------------------------------------
 
 async fn get_command_version(path: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new(path).args(args).output().await.ok()?;
+    let mut command = Command::new(path);
+    process_utils::configure_tokio_command(&mut command);
+    let output = command.args(args).output().await.ok()?;
     if !output.status.success() {
         return None;
     }

@@ -16,6 +16,7 @@
         languageSelector: "Language selector",
         toggleMenu: "Toggle navigation menu",
         downloadMac: "Download for macOS",
+        downloadWindows: "Download for Windows",
         downloadLinux: "Download for Linux",
         features: "Features",
         integrations: "Integrations",
@@ -122,6 +123,7 @@
         languageSelector: "Seletor de idioma",
         toggleMenu: "Abrir menu",
         downloadMac: "Baixar para macOS",
+        downloadWindows: "Baixar para Windows",
         downloadLinux: "Baixar para Linux",
         features: "Produto",
         integrations: "Integrações",
@@ -305,12 +307,16 @@
     });
   }
 
-  function detectLinux() {
-    return navigator.platform.toLowerCase().includes("linux");
+  function detectOS() {
+    var platform = navigator.platform.toLowerCase();
+    if (platform.includes("win")) return "windows";
+    if (platform.includes("linux")) return "linux";
+    return "mac";
   }
 
   function updateDownloadLabels(locale) {
-    var key = detectLinux() ? "common.downloadLinux" : "common.downloadMac";
+    var os = detectOS();
+    var key = os === "windows" ? "common.downloadWindows" : os === "linux" ? "common.downloadLinux" : "common.downloadMac";
     var label = getValue(locale, key);
     document.querySelectorAll("#hero-download span, #cta-download span").forEach(function (element) {
       element.textContent = label;
