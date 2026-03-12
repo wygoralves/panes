@@ -108,9 +108,18 @@ jobs:
       - name: Windows runtime env tests
         working-directory: src-tauri
         run: cargo test runtime_env --lib
+      - name: Windows app config tests
+        working-directory: src-tauri
+        run: cargo test app_config --lib
       - name: Windows terminal tests
         working-directory: src-tauri
         run: cargo test terminal::tests --lib
+      - name: Windows Codex engine tests
+        working-directory: src-tauri
+        run: cargo test codex::tests --lib
+      - name: Windows Claude sidecar tests
+        working-directory: src-tauri
+        run: cargo test claude_sidecar::tests --lib
 
   release:
     name: Automated Release
