@@ -113,6 +113,8 @@ Maintainers can find the tap/release automation setup in [docs/homebrew-distribu
 
 Download the latest `*-setup.exe` installer from [GitHub Releases](https://github.com/wygoralves/panes/releases/latest) and run it. Later updates are delivered in-app through the Tauri updater.
 
+For this Windows release, the validated scope is installer, updater, startup, and bundled-runtime compatibility. It does not guarantee that Codex and Claude are fully validated end to end through the in-app chat flow yet, so expect some rough edges there.
+
 ### Install and Run from Source
 
 ```bash
