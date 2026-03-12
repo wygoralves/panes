@@ -1212,97 +1212,48 @@ fn default_shell() -> String {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct TerminalEnvInputs {
+    term: Option<String>,
+    colorterm: Option<String>,
+    term_program: Option<String>,
+    term_program_version: Option<String>,
+    home: Option<String>,
+    xdg_config_home: Option<String>,
+    xdg_data_home: Option<String>,
+    xdg_cache_home: Option<String>,
+    xdg_state_home: Option<String>,
+    tmpdir: Option<String>,
+    lang: Option<String>,
+    lc_all: Option<String>,
+    lc_ctype: Option<String>,
+    path: Option<String>,
+    user_profile: Option<String>,
+    local_app_data: Option<String>,
+    roaming_app_data: Option<String>,
+    temp: Option<String>,
+    tmp: Option<String>,
+    default_home: Option<String>,
+    default_local_app_data: Option<String>,
+    default_roaming_app_data: Option<String>,
+    default_temp_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct TerminalEnvConfig {
+    is_windows: bool,
+    snapshot: TerminalEnvSnapshotDto,
+    user_profile: Option<String>,
+    local_app_data: Option<String>,
+    roaming_app_data: Option<String>,
+    temp: Option<String>,
+    tmp: Option<String>,
+}
+
 fn configure_terminal_env(cmd: &mut CommandBuilder) -> TerminalEnvSnapshotDto {
-    let inherited_term = read_non_empty_env("TERM");
-    let term = match inherited_term.as_deref() {
-        Some("dumb") | None => Some("xterm-256color".to_string()),
-        Some(value) => Some(value.to_string()),
-    };
-    let colorterm = read_non_empty_env("COLORTERM").or_else(|| Some("truecolor".to_string()));
-    let term_program = read_non_empty_env("TERM_PROGRAM").or_else(|| Some("Panes".to_string()));
-    let term_program_version = read_non_empty_env("TERM_PROGRAM_VERSION")
-        .or_else(|| Some(env!("CARGO_PKG_VERSION").to_string()));
-    let home = read_non_empty_env("HOME");
-    let xdg_config_home = read_non_empty_env("XDG_CONFIG_HOME")
-        .or_else(|| home.as_ref().map(|value| format!("{value}/.config")));
-    let xdg_data_home = read_non_empty_env("XDG_DATA_HOME")
-        .or_else(|| home.as_ref().map(|value| format!("{value}/.local/share")));
-    let xdg_cache_home = read_non_empty_env("XDG_CACHE_HOME")
-        .or_else(|| home.as_ref().map(|value| format!("{value}/.cache")));
-    let xdg_state_home = read_non_empty_env("XDG_STATE_HOME")
-        .or_else(|| home.as_ref().map(|value| format!("{value}/.local/state")));
-    let tmpdir = read_non_empty_env("TMPDIR");
-    let lang = read_non_empty_env("LANG").or_else(|| Some("en_US.UTF-8".to_string()));
-    let lc_ctype = read_non_empty_env("LC_CTYPE").or_else(|| lang.clone());
-    let lc_all = read_non_empty_env("LC_ALL");
-    let path = build_terminal_path(home.as_deref()).or_else(|| read_non_empty_env("PATH"));
-
-    if let Some(value) = term.as_deref() {
-        cmd.env("TERM", value);
-    }
-    if let Some(value) = colorterm.as_deref() {
-        cmd.env("COLORTERM", value);
-    }
-    if let Some(value) = term_program.as_deref() {
-        cmd.env("TERM_PROGRAM", value);
-    }
-    if let Some(value) = term_program_version.as_deref() {
-        cmd.env("TERM_PROGRAM_VERSION", value);
-    }
-    cmd.env("PANES_TERM_PROGRAM", "Panes");
-    cmd.env("PANES_TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
-    if let Some(value) = home.as_deref() {
-        cmd.env("HOME", value);
-    }
-    if let Some(value) = xdg_config_home.as_deref() {
-        cmd.env("XDG_CONFIG_HOME", value);
-    }
-    if let Some(value) = xdg_data_home.as_deref() {
-        cmd.env("XDG_DATA_HOME", value);
-    }
-    if let Some(value) = xdg_cache_home.as_deref() {
-        cmd.env("XDG_CACHE_HOME", value);
-    }
-    if let Some(value) = xdg_state_home.as_deref() {
-        cmd.env("XDG_STATE_HOME", value);
-    }
-    if let Some(value) = tmpdir.as_deref() {
-        cmd.env("TMPDIR", value);
-    }
-    if let Some(value) = lang.as_deref() {
-        cmd.env("LANG", value);
-    }
-    if let Some(value) = lc_ctype.as_deref() {
-        cmd.env("LC_CTYPE", value);
-    }
-    if let Some(value) = lc_all.as_deref() {
-        cmd.env("LC_ALL", value);
-    }
-    if let Some(value) = path.as_deref() {
-        cmd.env("PATH", value);
-    }
-
-    ensure_dir_exists("XDG_CONFIG_HOME", xdg_config_home.as_deref());
-    ensure_dir_exists("XDG_DATA_HOME", xdg_data_home.as_deref());
-    ensure_dir_exists("XDG_CACHE_HOME", xdg_cache_home.as_deref());
-    ensure_dir_exists("XDG_STATE_HOME", xdg_state_home.as_deref());
-
-    TerminalEnvSnapshotDto {
-        term,
-        colorterm,
-        term_program,
-        term_program_version,
-        home,
-        xdg_config_home,
-        xdg_data_home,
-        xdg_cache_home,
-        xdg_state_home,
-        tmpdir,
-        lang,
-        lc_all,
-        lc_ctype,
-        path,
-    }
+    let config = build_terminal_env_config();
+    apply_terminal_env(cmd, &config);
+    config.snapshot
 }
 
 fn build_terminal_path(_home: Option<&str>) -> Option<String> {
@@ -1313,6 +1264,251 @@ fn build_terminal_path(_home: Option<&str>) -> Option<String> {
     } else {
         Some(rendered)
     }
+}
+
+fn read_terminal_env_inputs() -> TerminalEnvInputs {
+    TerminalEnvInputs {
+        term: read_non_empty_env("TERM"),
+        colorterm: read_non_empty_env("COLORTERM"),
+        term_program: read_non_empty_env("TERM_PROGRAM"),
+        term_program_version: read_non_empty_env("TERM_PROGRAM_VERSION"),
+        home: read_non_empty_env("HOME"),
+        xdg_config_home: read_non_empty_env("XDG_CONFIG_HOME"),
+        xdg_data_home: read_non_empty_env("XDG_DATA_HOME"),
+        xdg_cache_home: read_non_empty_env("XDG_CACHE_HOME"),
+        xdg_state_home: read_non_empty_env("XDG_STATE_HOME"),
+        tmpdir: read_non_empty_env("TMPDIR"),
+        lang: read_non_empty_env("LANG"),
+        lc_all: read_non_empty_env("LC_ALL"),
+        lc_ctype: read_non_empty_env("LC_CTYPE"),
+        path: build_terminal_path(None).or_else(|| read_non_empty_env("PATH")),
+        user_profile: read_non_empty_env("USERPROFILE"),
+        local_app_data: read_non_empty_env("LOCALAPPDATA"),
+        roaming_app_data: read_non_empty_env("APPDATA"),
+        temp: read_non_empty_env("TEMP"),
+        tmp: read_non_empty_env("TMP"),
+        default_home: runtime_env::home_dir().map(path_to_string),
+        default_local_app_data: runtime_env::local_app_data_dir().map(path_to_string),
+        default_roaming_app_data: runtime_env::roaming_app_data_dir().map(path_to_string),
+        default_temp_dir: Some(path_to_string(std::env::temp_dir())),
+    }
+}
+
+fn build_terminal_env_config() -> TerminalEnvConfig {
+    build_terminal_env_config_for(cfg!(target_os = "windows"), read_terminal_env_inputs())
+}
+
+fn build_terminal_env_config_for(is_windows: bool, inputs: TerminalEnvInputs) -> TerminalEnvConfig {
+    let term = match inputs.term.as_deref() {
+        Some("dumb") | None => Some("xterm-256color".to_string()),
+        Some(value) => Some(value.to_string()),
+    };
+    let colorterm = inputs.colorterm.or_else(|| Some("truecolor".to_string()));
+    let term_program = inputs.term_program.or_else(|| Some("Panes".to_string()));
+    let term_program_version = inputs
+        .term_program_version
+        .or_else(|| Some(env!("CARGO_PKG_VERSION").to_string()));
+    let path = inputs.path;
+
+    if is_windows {
+        let user_profile = inputs
+            .user_profile
+            .clone()
+            .or(inputs.default_home.clone())
+            .or(inputs.home.clone());
+        let home = user_profile.clone().or(inputs.home).or(inputs.default_home);
+        let windows_home = user_profile.clone().or_else(|| home.clone());
+        let local_app_data = inputs
+            .local_app_data
+            .or(inputs.default_local_app_data)
+            .or_else(|| {
+                windows_home
+                    .as_ref()
+                    .map(|value| path_to_string(Path::new(value).join("AppData").join("Local")))
+            })
+            .or_else(|| inputs.roaming_app_data.clone())
+            .or(inputs.default_roaming_app_data.clone());
+        let roaming_app_data = inputs
+            .roaming_app_data
+            .or(inputs.default_roaming_app_data)
+            .or_else(|| {
+                windows_home
+                    .as_ref()
+                    .map(|value| path_to_string(Path::new(value).join("AppData").join("Roaming")))
+            })
+            .or_else(|| local_app_data.clone());
+        let temp = inputs
+            .temp
+            .or_else(|| inputs.tmp.clone())
+            .or_else(|| {
+                local_app_data
+                    .as_ref()
+                    .map(|value| path_to_string(Path::new(value).join("Temp")))
+            })
+            .or(inputs.default_temp_dir);
+        let tmp = inputs.tmp.or_else(|| temp.clone());
+        let tmpdir = inputs.tmpdir.or_else(|| temp.clone());
+
+        return TerminalEnvConfig {
+            is_windows,
+            snapshot: TerminalEnvSnapshotDto {
+                term,
+                colorterm,
+                term_program,
+                term_program_version,
+                home,
+                user_profile: user_profile.clone(),
+                app_data: roaming_app_data.clone(),
+                local_app_data: local_app_data.clone(),
+                xdg_config_home: None,
+                xdg_data_home: None,
+                xdg_cache_home: None,
+                xdg_state_home: None,
+                tmpdir,
+                temp: temp.clone(),
+                tmp: tmp.clone(),
+                lang: None,
+                lc_all: None,
+                lc_ctype: None,
+                path,
+            },
+            user_profile,
+            local_app_data,
+            roaming_app_data,
+            temp,
+            tmp,
+        };
+    }
+
+    let home = inputs.home.or(inputs.default_home);
+
+    let xdg_config_home = inputs
+        .xdg_config_home
+        .or_else(|| home.as_ref().map(|value| format!("{value}/.config")));
+    let xdg_data_home = inputs
+        .xdg_data_home
+        .or_else(|| home.as_ref().map(|value| format!("{value}/.local/share")));
+    let xdg_cache_home = inputs
+        .xdg_cache_home
+        .or_else(|| home.as_ref().map(|value| format!("{value}/.cache")));
+    let xdg_state_home = inputs
+        .xdg_state_home
+        .or_else(|| home.as_ref().map(|value| format!("{value}/.local/state")));
+    let tmpdir = inputs.tmpdir;
+    let lang = inputs.lang.or_else(|| Some("en_US.UTF-8".to_string()));
+    let lc_ctype = inputs.lc_ctype.or_else(|| lang.clone());
+    let lc_all = inputs.lc_all;
+
+    TerminalEnvConfig {
+        is_windows,
+        snapshot: TerminalEnvSnapshotDto {
+            term,
+            colorterm,
+            term_program,
+            term_program_version,
+            home,
+            user_profile: None,
+            app_data: None,
+            local_app_data: None,
+            xdg_config_home,
+            xdg_data_home,
+            xdg_cache_home,
+            xdg_state_home,
+            tmpdir,
+            temp: None,
+            tmp: None,
+            lang,
+            lc_all,
+            lc_ctype,
+            path,
+        },
+        user_profile: None,
+        local_app_data: None,
+        roaming_app_data: None,
+        temp: None,
+        tmp: None,
+    }
+}
+
+fn apply_terminal_env(cmd: &mut CommandBuilder, config: &TerminalEnvConfig) {
+    if let Some(value) = config.snapshot.term.as_deref() {
+        cmd.env("TERM", value);
+    }
+    if let Some(value) = config.snapshot.colorterm.as_deref() {
+        cmd.env("COLORTERM", value);
+    }
+    if let Some(value) = config.snapshot.term_program.as_deref() {
+        cmd.env("TERM_PROGRAM", value);
+    }
+    if let Some(value) = config.snapshot.term_program_version.as_deref() {
+        cmd.env("TERM_PROGRAM_VERSION", value);
+    }
+    cmd.env("PANES_TERM_PROGRAM", "Panes");
+    cmd.env("PANES_TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+    if let Some(value) = config.snapshot.home.as_deref() {
+        cmd.env("HOME", value);
+    }
+    if let Some(value) = config.snapshot.path.as_deref() {
+        cmd.env("PATH", value);
+    }
+    if let Some(value) = config.snapshot.tmpdir.as_deref() {
+        cmd.env("TMPDIR", value);
+    }
+
+    if config.is_windows {
+        if let Some(value) = config.user_profile.as_deref() {
+            cmd.env("USERPROFILE", value);
+        }
+        if let Some(value) = config.local_app_data.as_deref() {
+            cmd.env("LOCALAPPDATA", value);
+        }
+        if let Some(value) = config.roaming_app_data.as_deref() {
+            cmd.env("APPDATA", value);
+        }
+        if let Some(value) = config.temp.as_deref() {
+            cmd.env("TEMP", value);
+        }
+        if let Some(value) = config.tmp.as_deref() {
+            cmd.env("TMP", value);
+        }
+
+        ensure_dir_exists("LOCALAPPDATA", config.local_app_data.as_deref());
+        ensure_dir_exists("APPDATA", config.roaming_app_data.as_deref());
+        ensure_dir_exists("TMPDIR", config.snapshot.tmpdir.as_deref());
+        ensure_dir_exists("TEMP", config.temp.as_deref());
+        ensure_dir_exists("TMP", config.tmp.as_deref());
+        return;
+    }
+
+    if let Some(value) = config.snapshot.xdg_config_home.as_deref() {
+        cmd.env("XDG_CONFIG_HOME", value);
+    }
+    if let Some(value) = config.snapshot.xdg_data_home.as_deref() {
+        cmd.env("XDG_DATA_HOME", value);
+    }
+    if let Some(value) = config.snapshot.xdg_cache_home.as_deref() {
+        cmd.env("XDG_CACHE_HOME", value);
+    }
+    if let Some(value) = config.snapshot.xdg_state_home.as_deref() {
+        cmd.env("XDG_STATE_HOME", value);
+    }
+    if let Some(value) = config.snapshot.lang.as_deref() {
+        cmd.env("LANG", value);
+    }
+    if let Some(value) = config.snapshot.lc_ctype.as_deref() {
+        cmd.env("LC_CTYPE", value);
+    }
+    if let Some(value) = config.snapshot.lc_all.as_deref() {
+        cmd.env("LC_ALL", value);
+    }
+
+    ensure_dir_exists(
+        "XDG_CONFIG_HOME",
+        config.snapshot.xdg_config_home.as_deref(),
+    );
+    ensure_dir_exists("XDG_DATA_HOME", config.snapshot.xdg_data_home.as_deref());
+    ensure_dir_exists("XDG_CACHE_HOME", config.snapshot.xdg_cache_home.as_deref());
+    ensure_dir_exists("XDG_STATE_HOME", config.snapshot.xdg_state_home.as_deref());
 }
 
 fn ensure_dir_exists(label: &str, path: Option<&str>) {
@@ -1332,6 +1528,10 @@ fn read_non_empty_env(key: &str) -> Option<String> {
             Some(value)
         }
     })
+}
+
+fn path_to_string(path: impl AsRef<Path>) -> String {
+    path.as_ref().to_string_lossy().to_string()
 }
 
 fn rfc3339_from_unix_ms(ms: u64) -> Option<String> {
@@ -1542,5 +1742,222 @@ fn take_next_utf8_chunk(buffer: &mut Vec<u8>) -> Option<String> {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn normalize_path(path: &str) -> String {
+        path.replace('\\', "/")
+    }
+
+    #[test]
+    fn windows_terminal_env_prefers_windows_dirs_without_unix_overrides() {
+        let config = build_terminal_env_config_for(
+            true,
+            TerminalEnvInputs {
+                default_home: Some(r"C:\Users\panes".to_string()),
+                default_local_app_data: Some(r"C:\Users\panes\AppData\Local".to_string()),
+                default_roaming_app_data: Some(r"C:\Users\panes\AppData\Roaming".to_string()),
+                default_temp_dir: Some(r"C:\Users\panes\AppData\Local\Temp".to_string()),
+                path: Some(r"C:\Tools;C:\Windows\System32".to_string()),
+                ..TerminalEnvInputs::default()
+            },
+        );
+
+        assert_eq!(
+            config
+                .snapshot
+                .home
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("C:/Users/panes")
+        );
+        assert_eq!(
+            config
+                .user_profile
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("C:/Users/panes")
+        );
+        assert_eq!(
+            config
+                .snapshot
+                .user_profile
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("C:/Users/panes")
+        );
+        assert_eq!(
+            config
+                .local_app_data
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("C:/Users/panes/AppData/Local")
+        );
+        assert_eq!(
+            config
+                .snapshot
+                .local_app_data
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("C:/Users/panes/AppData/Local")
+        );
+        assert_eq!(
+            config
+                .roaming_app_data
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("C:/Users/panes/AppData/Roaming")
+        );
+        assert_eq!(
+            config
+                .snapshot
+                .app_data
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("C:/Users/panes/AppData/Roaming")
+        );
+        assert_eq!(
+            config.temp.as_deref().map(normalize_path).as_deref(),
+            Some("C:/Users/panes/AppData/Local/Temp")
+        );
+        assert_eq!(
+            config
+                .snapshot
+                .temp
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("C:/Users/panes/AppData/Local/Temp")
+        );
+        assert_eq!(
+            config.tmp.as_deref().map(normalize_path).as_deref(),
+            Some("C:/Users/panes/AppData/Local/Temp")
+        );
+        assert_eq!(
+            config
+                .snapshot
+                .tmp
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("C:/Users/panes/AppData/Local/Temp")
+        );
+        assert!(config.snapshot.xdg_config_home.is_none());
+        assert!(config.snapshot.xdg_data_home.is_none());
+        assert!(config.snapshot.xdg_cache_home.is_none());
+        assert!(config.snapshot.xdg_state_home.is_none());
+        assert_eq!(
+            config
+                .snapshot
+                .tmpdir
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("C:/Users/panes/AppData/Local/Temp")
+        );
+        assert!(config.snapshot.lang.is_none());
+        assert!(config.snapshot.lc_all.is_none());
+        assert!(config.snapshot.lc_ctype.is_none());
+        assert_eq!(
+            config.snapshot.path.as_deref(),
+            Some(r"C:\Tools;C:\Windows\System32")
+        );
+    }
+
+    #[test]
+    fn windows_terminal_env_prefers_user_profile_over_posix_home() {
+        let config = build_terminal_env_config_for(
+            true,
+            TerminalEnvInputs {
+                home: Some("/c/Users/panes".to_string()),
+                user_profile: Some(r"C:\Users\panes".to_string()),
+                path: Some(r"C:\Tools;C:\Windows\System32".to_string()),
+                ..TerminalEnvInputs::default()
+            },
+        );
+
+        assert_eq!(
+            config
+                .snapshot
+                .home
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("C:/Users/panes")
+        );
+        assert_eq!(
+            config
+                .local_app_data
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("C:/Users/panes/AppData/Local")
+        );
+        assert_eq!(
+            config
+                .roaming_app_data
+                .as_deref()
+                .map(normalize_path)
+                .as_deref(),
+            Some("C:/Users/panes/AppData/Roaming")
+        );
+    }
+
+    #[test]
+    fn unix_terminal_env_keeps_xdg_and_locale_defaults() {
+        let config = build_terminal_env_config_for(
+            false,
+            TerminalEnvInputs {
+                home: Some("/home/panes".to_string()),
+                path: Some("/custom/bin:/usr/bin".to_string()),
+                ..TerminalEnvInputs::default()
+            },
+        );
+
+        assert_eq!(config.snapshot.home.as_deref(), Some("/home/panes"));
+        assert_eq!(
+            config.snapshot.xdg_config_home.as_deref(),
+            Some("/home/panes/.config")
+        );
+        assert_eq!(
+            config.snapshot.xdg_data_home.as_deref(),
+            Some("/home/panes/.local/share")
+        );
+        assert_eq!(
+            config.snapshot.xdg_cache_home.as_deref(),
+            Some("/home/panes/.cache")
+        );
+        assert_eq!(
+            config.snapshot.xdg_state_home.as_deref(),
+            Some("/home/panes/.local/state")
+        );
+        assert_eq!(config.snapshot.lang.as_deref(), Some("en_US.UTF-8"));
+        assert_eq!(config.snapshot.lc_ctype.as_deref(), Some("en_US.UTF-8"));
+        assert!(config.snapshot.lc_all.is_none());
+        assert_eq!(
+            config.snapshot.path.as_deref(),
+            Some("/custom/bin:/usr/bin")
+        );
+        assert!(config.snapshot.user_profile.is_none());
+        assert!(config.snapshot.app_data.is_none());
+        assert!(config.snapshot.local_app_data.is_none());
+        assert!(config.snapshot.temp.is_none());
+        assert!(config.snapshot.tmp.is_none());
+        assert!(config.user_profile.is_none());
+        assert!(config.local_app_data.is_none());
+        assert!(config.roaming_app_data.is_none());
+        assert!(config.temp.is_none());
+        assert!(config.tmp.is_none());
     }
 }

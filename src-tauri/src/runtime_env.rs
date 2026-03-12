@@ -160,10 +160,7 @@ pub fn login_probe_shell_args(shell: &Path, command: &str) -> Vec<String> {
             "-c".to_string(),
             command.to_string(),
         ],
-        ShellFlavor::Sh
-        | ShellFlavor::Cmd
-        | ShellFlavor::PowerShell
-        | ShellFlavor::Other => {
+        ShellFlavor::Sh | ShellFlavor::Cmd | ShellFlavor::PowerShell | ShellFlavor::Other => {
             vec!["-l".to_string(), "-c".to_string(), command.to_string()]
         }
     }
@@ -343,8 +340,12 @@ fn command_shell_program_for(
 ) -> PathBuf {
     let local_app_data = local_app_data_dir();
     let roaming_app_data = roaming_app_data_dir();
-    let augmented_entries =
-        augmented_path_entries_for(home, current_path, local_app_data.as_deref(), roaming_app_data.as_deref());
+    let augmented_entries = augmented_path_entries_for(
+        home,
+        current_path,
+        local_app_data.as_deref(),
+        roaming_app_data.as_deref(),
+    );
 
     if let Some(shell) = shell_env
         .map(str::trim)
@@ -510,11 +511,11 @@ fn home_dir_from_env(
         })
 }
 
-fn local_app_data_dir() -> Option<PathBuf> {
+pub fn local_app_data_dir() -> Option<PathBuf> {
     non_empty_os_str(env::var_os("LOCALAPPDATA").as_deref()).map(PathBuf::from)
 }
 
-fn roaming_app_data_dir() -> Option<PathBuf> {
+pub fn roaming_app_data_dir() -> Option<PathBuf> {
     non_empty_os_str(env::var_os("APPDATA").as_deref()).map(PathBuf::from)
 }
 
@@ -537,7 +538,8 @@ fn app_data_dir_for(
         return PathBuf::from("Panes");
     }
 
-    home.unwrap_or_else(|| Path::new(".")).join(".agent-workspace")
+    home.unwrap_or_else(|| Path::new("."))
+        .join(".agent-workspace")
 }
 
 fn non_empty_os_str(value: Option<&OsStr>) -> Option<&OsStr> {
@@ -793,13 +795,9 @@ mod tests {
 
     #[test]
     fn home_dir_from_env_uses_windows_fallbacks_when_home_is_missing() {
-        let from_user_profile = home_dir_from_env(
-            None,
-            Some(OsStr::new(r"C:\Users\panes")),
-            None,
-            None,
-        )
-        .expect("user profile path");
+        let from_user_profile =
+            home_dir_from_env(None, Some(OsStr::new(r"C:\Users\panes")), None, None)
+                .expect("user profile path");
         assert_eq!(normalize_path(&from_user_profile), "C:/Users/panes");
 
         let from_home_drive = home_dir_from_env(
@@ -822,10 +820,7 @@ mod tests {
             Some(Path::new(r"C:\Users\panes\AppData\Roaming")),
             Some(Path::new(r"C:\Users\panes")),
         );
-        assert_eq!(
-            normalize_path(&path),
-            "C:/Users/panes/AppData/Local/Panes"
-        );
+        assert_eq!(normalize_path(&path), "C:/Users/panes/AppData/Local/Panes");
     }
 
     #[test]

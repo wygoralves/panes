@@ -581,21 +581,21 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
         .quit()
         .build()?;
 
-    // Linux terminals rely on Ctrl-based control sequences, so avoid wiring
-    // those chords to native edit accelerators. DOM text inputs still keep
-    // their standard shortcuts through the webview, and the menu items remain
-    // clickable.
-    #[cfg(target_os = "linux")]
+    // Linux and Windows terminals rely on Ctrl-based control sequences, so
+    // avoid wiring those chords to native edit accelerators. DOM text inputs
+    // still keep their standard shortcuts through the webview, and the menu
+    // items remain clickable.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let edit_undo = MenuItem::with_id(handle, "edit-undo", strings.undo, true, None::<&str>)?;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let edit_redo = MenuItem::with_id(handle, "edit-redo", strings.redo, true, None::<&str>)?;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let edit_cut = MenuItem::with_id(handle, "edit-cut", strings.cut, true, None::<&str>)?;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let edit_copy = MenuItem::with_id(handle, "edit-copy", strings.copy, true, None::<&str>)?;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let edit_paste = MenuItem::with_id(handle, "edit-paste", strings.paste, true, None::<&str>)?;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let edit_select_all = MenuItem::with_id(
         handle,
         "edit-select-all",
@@ -604,7 +604,7 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
         None::<&str>,
     )?;
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let edit_menu = SubmenuBuilder::new(handle, strings.edit_menu)
         .item(&edit_undo)
         .item(&edit_redo)
@@ -615,7 +615,7 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
         .item(&edit_select_all)
         .build()?;
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
     let edit_menu = SubmenuBuilder::new(handle, strings.edit_menu)
         .undo()
         .redo()
