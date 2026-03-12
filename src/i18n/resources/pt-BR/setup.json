@@ -1,74 +1,76 @@
 {
   "workflow": {
-    "title": "Qual e sua forma preferida de trabalhar?",
-    "subtitle": "Escolha o fluxo que o Panes deve otimizar primeiro. Voce pode reabrir o onboarding depois e mudar isso.",
+    "title": "Qual é sua forma preferida de trabalhar?",
+    "subtitle": "Escolha o fluxo que o Panes deve otimizar primeiro. Você pode reabrir o onboarding depois e mudar isso.",
     "options": {
       "cli": {
         "title": "CLI Agents",
-        "description": "Veja quais CLIs de agent o Panes ja suporta, instale as que fizerem sentido e depois escolha o workspace onde quer comecar."
+        "description": "Veja quais CLIs de agent o Panes já suporta, instale as que fizerem sentido e depois escolha o workspace onde quer começar."
       },
       "chat": {
         "title": "Chat com Codex / Claude",
-        "description": "Escolha Codex, Claude ou os dois. O Panes verifica o que esta pronto, ajuda a instalar o que faltar e depois leva voce para um workspace."
+        "description": "Escolha Codex, Claude ou os dois. O Panes verifica o que está pronto, ajuda a instalar o que faltar e depois leva você para um workspace."
       }
     }
   },
   "cliProviders": {
     "title": "Escolha seus CLI agents",
-    "subtitle": "Veja quais providers ja estao disponiveis nesta maquina e instale os que faltarem antes de abrir seu primeiro workspace.",
-    "helper": "O launch fica de fora aqui de proposito. O onboarding termina quando voce confirma um workspace e o Panes te leva para o painel de harnesses.",
-    "scanning": "Escaneando providers disponiveis..."
+    "subtitle": "Veja quais providers já estão disponíveis nesta máquina e instale os que faltarem antes de abrir seu primeiro workspace.",
+    "helper": "O launch fica de fora aqui de propósito. O onboarding termina quando você confirma um workspace e o Panes te leva para o painel de harnesses.",
+    "scanning": "Escaneando providers disponíveis..."
   },
   "chatEngines": {
     "title": "Escolha seus engines de chat",
-    "subtitle": "Selecione os engines que voce quer deixar prontos dentro do chat do Panes.",
-    "helper": "Voce pode selecionar Codex, Claude ou os dois. Se escolher os dois, o proximo passo verifica os dois runtimes antes de continuar.",
+    "subtitle": "Selecione os engines que você quer deixar prontos dentro do chat do Panes.",
+    "helper": "Você pode selecionar Codex, Claude ou os dois. Se escolher os dois, o próximo passo verifica os dois runtimes antes de continuar.",
     "options": {
       "codex": {
         "description": "Use o engine integrado do Codex no chat do Panes. Esse fluxo pode instalar Node.js e Codex CLI se estiverem ausentes."
       },
       "claude": {
-        "description": "Use o sidecar integrado do Claude no chat do Panes. Esse fluxo nao exige instalar a Claude CLI."
+        "description": "Use o sidecar integrado do Claude no chat do Panes. Esse fluxo não exige instalar a Claude CLI."
       }
     }
   },
   "chatReadiness": {
-    "title": "Verifique a prontidao do chat",
-    "subtitle": "O Panes esta checando os engines selecionados e as dependencias realmente necessarias para chat.",
-    "helper": "Avisos sobre configuracao futura de auth sao apenas informativos nesta versao. O objetivo aqui e deixar o runtime instalado e um workspace confirmado.",
+    "title": "Verifique a prontidão do chat",
+    "subtitle": "O Panes está checando os engines selecionados e as dependências realmente necessárias para chat.",
+    "helper": "Avisos sobre configuração futura de auth são apenas informativos nesta versão. O objetivo aqui é deixar o runtime instalado e um workspace confirmado.",
     "loading": "Verificando os engines selecionados...",
-    "readyHint": "Tudo o que foi selecionado para chat esta pronto. Continue para escolher o workspace que voce quer usar primeiro.",
-    "authDeferred": "O Codex ainda precisa de login na conta, mas isso nao bloqueia o onboarding nesta versao. Conclua o onboarding agora e finalize o auth do Codex depois.",
-    "nodeInstallAvailable": "Node.js esta ausente. O Panes pode instalar automaticamente para que os engines de chat selecionados funcionem.",
-    "nodeInstallManual": "Node.js esta ausente. Instale manualmente o Node.js 20+ e depois atualize a verificacao.",
-    "codexInstallAvailable": "Codex CLI esta ausente. O Panes pode instalar automaticamente para o engine de chat do Codex.",
-    "codexInstallManual": "Codex CLI esta ausente. Instale manualmente e depois atualize a verificacao.",
+    "readyHint": "Tudo o que foi selecionado para chat está pronto. Continue para escolher o workspace que você quer usar primeiro.",
+    "authDeferred": "O Codex ainda precisa de login na conta, mas isso não bloqueia o onboarding nesta versão. Conclua o onboarding agora e finalize o auth do Codex depois.",
+    "nodeInstallAvailable": "Node.js está ausente. O Panes pode instalar automaticamente para que os engines de chat selecionados funcionem.",
+    "nodeInstallManual": "Node.js está ausente. Instale manualmente o Node.js 20+ e depois atualize a verificação.",
+    "codexInstallAvailable": "Codex CLI está ausente. O Panes pode instalar automaticamente para o engine de chat do Codex.",
+    "codexInstallManual": "Codex CLI está ausente. Instale manualmente e depois atualize a verificação.",
     "deps": {
       "node": "Node.js"
     },
     "status": {
       "ready": "Pronto",
-      "attention": "Precisa de atencao",
-      "pending": "Os dados de health ainda nao foram carregados."
+      "attention": "Precisa de atenção",
+      "pending": "Os dados de health ainda não foram carregados."
     },
     "sections": {
       "warnings": "Avisos",
       "checks": "Checks",
-      "fixes": "Proximos passos sugeridos"
+      "fixes": "Próximos passos sugeridos",
+      "showNotes": "Mostrar avisos",
+      "hideNotes": "Ocultar avisos"
     }
   },
   "workspace": {
     "title": "Confirme seu primeiro workspace",
-    "subtitle": "Escolha o workspace que o Panes deve abrir apos o onboarding. Mesmo que ja exista um ativo, confirme aqui de forma explicita.",
-    "helper": "Selecione um workspace existente ou abra uma nova pasta. O onboarding so termina depois dessa confirmacao.",
-    "empty": "Ainda nao ha workspaces disponiveis. Abra uma pasta para continuar.",
+    "subtitle": "Escolha o workspace que o Panes deve abrir após o onboarding. Mesmo que já exista um ativo, confirme aqui de forma explícita.",
+    "helper": "Selecione um workspace existente ou abra uma nova pasta. O onboarding só termina depois dessa confirmação.",
+    "empty": "Ainda não há workspaces disponíveis. Abra uma pasta para continuar.",
     "current": "Workspace atual"
   },
   "steps": {
     "workflow": "Fluxo",
     "cliProviders": "Providers",
     "chatEngines": "Engines",
-    "chatReadiness": "Prontidao",
+    "chatReadiness": "Prontidão",
     "workspace": "Workspace"
   },
   "actions": {

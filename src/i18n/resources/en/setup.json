@@ -54,7 +54,9 @@
     "sections": {
       "warnings": "Warnings",
       "checks": "Checks",
-      "fixes": "Suggested next steps"
+      "fixes": "Suggested next steps",
+      "showNotes": "Show warnings",
+      "hideNotes": "Hide warnings"
     }
   },
   "workspace": {
