@@ -122,23 +122,37 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
-    fn with_temp_home<T>(f: impl FnOnce() -> T) -> T {
+    const APP_DATA_ENV_VARS: [&str; 4] = ["HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA"];
+
+    fn with_temp_app_data_env<T>(f: impl FnOnce() -> T) -> T {
         let _guard = env_lock().lock().expect("env lock poisoned");
-        let previous = std::env::var_os("HOME");
+        let previous: Vec<(&str, Option<std::ffi::OsString>)> = APP_DATA_ENV_VARS
+            .into_iter()
+            .map(|key| (key, std::env::var_os(key)))
+            .collect();
         let root = std::env::temp_dir().join(format!("panes-keep-awake-home-{}", Uuid::new_v4()));
-        fs::create_dir_all(&root).expect("failed to create temp home");
+        let local_app_data = root.join("AppData").join("Local");
+        let roaming_app_data = root.join("AppData").join("Roaming");
+        fs::create_dir_all(&local_app_data).expect("failed to create temp local app data");
+        fs::create_dir_all(&roaming_app_data).expect("failed to create temp roaming app data");
         std::env::set_var("HOME", &root);
+        std::env::set_var("USERPROFILE", &root);
+        std::env::set_var("LOCALAPPDATA", &local_app_data);
+        std::env::set_var("APPDATA", &roaming_app_data);
         let result = f();
-        match previous {
-            Some(value) => std::env::set_var("HOME", value),
-            None => std::env::remove_var("HOME"),
+        for (key, value) in previous {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
         }
+        let _ = fs::remove_dir_all(&root);
         result
     }
 
     #[test]
     fn save_enabled_preference_updates_power_section() {
-        with_temp_home(|| {
+        with_temp_app_data_env(|| {
             let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
             runtime.block_on(async {
                 save_enabled_preference(true)

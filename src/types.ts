@@ -630,11 +630,16 @@ export interface TerminalEnvSnapshot {
   termProgram: string | null;
   termProgramVersion: string | null;
   home: string | null;
+  userProfile: string | null;
+  appData: string | null;
+  localAppData: string | null;
   xdgConfigHome: string | null;
   xdgDataHome: string | null;
   xdgCacheHome: string | null;
   xdgStateHome: string | null;
   tmpdir: string | null;
+  temp: string | null;
+  tmp: string | null;
   lang: string | null;
   lcAll: string | null;
   lcCtype: string | null;

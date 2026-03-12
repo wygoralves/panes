@@ -26,7 +26,7 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useSetupStore } from "../../stores/setupStore";
 import { useUpdateStore } from "../../stores/updateStore";
-import { useKeepAwakeStore } from "../../stores/keepAwakeStore";
+import { canToggleKeepAwake, useKeepAwakeStore } from "../../stores/keepAwakeStore";
 import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { formatRelativeTime } from "../../lib/formatters";
@@ -107,6 +107,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const keepAwakeLoading = useKeepAwakeStore((s) => s.loading);
   const toggleKeepAwake = useKeepAwakeStore((s) => s.toggle);
   const hasUpdate = updateStatus === "available" && !updateSnoozed;
+  const keepAwakeAvailable = canToggleKeepAwake(keepAwakeState);
 
   const projects = useMemo<ProjectGroup[]>(
     () =>
@@ -689,14 +690,11 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             <button
               type="button"
               className="git-action-menu-item"
-              disabled={keepAwakeLoading || (keepAwakeState?.supported === false && !keepAwakeState.enabled)}
+              disabled={keepAwakeLoading || !keepAwakeAvailable}
               title={keepAwakeDescription}
               style={{
                 justifyContent: "space-between",
-                opacity:
-                  keepAwakeLoading || (keepAwakeState?.supported === false && !keepAwakeState.enabled)
-                    ? 0.5
-                    : 1,
+                opacity: keepAwakeLoading || !keepAwakeAvailable ? 0.5 : 1,
               }}
               onClick={() => {
                 void toggleKeepAwake();

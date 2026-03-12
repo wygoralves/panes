@@ -24,7 +24,7 @@ vi.mock("./toastStore", () => ({
   toast: mockToast,
 }));
 
-import { useKeepAwakeStore } from "./keepAwakeStore";
+import { canToggleKeepAwake, useKeepAwakeStore } from "./keepAwakeStore";
 
 function createStorageStub() {
   const storage = new Map<string, string>();
@@ -144,6 +144,17 @@ describe("keepAwakeStore", () => {
     expect(result?.supported).toBe(false);
     expect(mockIpc.setKeepAwakeEnabled).not.toHaveBeenCalled();
     expect(mockToast.warning).toHaveBeenCalledWith("app:commandPalette.toasts.keepAwakeUnsupported");
+  });
+
+  it("treats unsupported disabled keep awake as unavailable", () => {
+    expect(
+      canToggleKeepAwake({
+        supported: false,
+        enabled: false,
+        active: false,
+        message: "unsupported",
+      }),
+    ).toBe(false);
   });
 
   it("shows an error toast when activation does not become active", async () => {
@@ -310,11 +321,59 @@ describe("keepAwakeStore", () => {
     });
   });
 
-  it("registers the keep awake command in the command palette", async () => {
+  it("hides the keep awake command when the runtime is unsupported and disabled", async () => {
     const { getStaticCommands } = await import("../components/shared/CommandPalette");
+    useKeepAwakeStore.setState({
+      state: {
+        supported: false,
+        enabled: false,
+        active: false,
+        message: "unsupported",
+      },
+      loading: false,
+      loadedOnce: true,
+    });
 
-    const commands = getStaticCommands(((key: string) => key) as never);
+    const command = getStaticCommands(((key: string) => key) as never, {
+      keepAwakeAvailable: false,
+    }).find(
+      (entry) => entry.id === "toggle-keep-awake",
+    );
 
-    expect(commands.some((command) => command.id === "toggle-keep-awake")).toBe(true);
+    expect(command?.isAvailable?.({
+      activeWorkspaceId: null,
+      activeRepoPath: null,
+      repos: [],
+      close: () => {},
+      openSubFlow: () => {},
+    } as never)).toBe(false);
+  });
+
+  it("keeps the keep awake command available when a stale enabled preference needs disabling", async () => {
+    const { getStaticCommands } = await import("../components/shared/CommandPalette");
+    useKeepAwakeStore.setState({
+      state: {
+        supported: false,
+        enabled: true,
+        active: false,
+        message: "unsupported",
+      },
+      loading: false,
+      loadedOnce: true,
+    });
+
+    const command = getStaticCommands(((key: string) => key) as never, {
+      keepAwakeAvailable: true,
+    }).find(
+      (entry) => entry.id === "toggle-keep-awake",
+    );
+
+    expect(command?.isAvailable?.({
+      activeWorkspaceId: null,
+      activeRepoPath: null,
+      repos: [],
+      close: () => {},
+      openSubFlow: () => {},
+    } as never)).toBe(true);
   });
 });

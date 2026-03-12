@@ -4,7 +4,10 @@ use std::{
     sync::{Mutex, MutexGuard, OnceLock},
 };
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
+
+use crate::runtime_env;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -123,6 +126,8 @@ impl AppConfig {
     }
 
     fn load_or_create_unlocked() -> anyhow::Result<Self> {
+        runtime_env::migrate_legacy_app_data_dir()
+            .context("failed to migrate legacy app data dir")?;
         let path = Self::path();
 
         if !path.exists() {
@@ -150,10 +155,7 @@ impl AppConfig {
     }
 
     pub fn path() -> PathBuf {
-        let home = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("."));
-        home.join(".agent-workspace").join("config.toml")
+        runtime_env::app_data_dir().join("config.toml")
     }
 }
 
@@ -198,17 +200,31 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
-    fn with_temp_home<T>(f: impl FnOnce() -> T) -> T {
+    const APP_DATA_ENV_VARS: [&str; 4] = ["HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA"];
+
+    fn with_temp_app_data_env<T>(f: impl FnOnce() -> T) -> T {
         let _guard = env_lock().lock().expect("env lock poisoned");
-        let previous = std::env::var_os("HOME");
+        let previous: Vec<(&str, Option<std::ffi::OsString>)> = APP_DATA_ENV_VARS
+            .into_iter()
+            .map(|key| (key, std::env::var_os(key)))
+            .collect();
         let root = std::env::temp_dir().join(format!("panes-app-config-home-{}", Uuid::new_v4()));
-        fs::create_dir_all(&root).expect("temp home should exist");
+        let local_app_data = root.join("AppData").join("Local");
+        let roaming_app_data = root.join("AppData").join("Roaming");
+        fs::create_dir_all(&local_app_data).expect("temp local app data should exist");
+        fs::create_dir_all(&roaming_app_data).expect("temp roaming app data should exist");
         std::env::set_var("HOME", &root);
+        std::env::set_var("USERPROFILE", &root);
+        std::env::set_var("LOCALAPPDATA", &local_app_data);
+        std::env::set_var("APPDATA", &roaming_app_data);
         let result = f();
-        match previous {
-            Some(value) => std::env::set_var("HOME", value),
-            None => std::env::remove_var("HOME"),
+        for (key, value) in previous {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
         }
+        let _ = fs::remove_dir_all(&root);
         result
     }
 
@@ -250,7 +266,7 @@ max_action_output_chars = 20000
 
     #[test]
     fn save_overwrites_existing_config() {
-        with_temp_home(|| {
+        with_temp_app_data_env(|| {
             let mut config = AppConfig::default();
             config.general.locale = Some("en".to_string());
             config.save().expect("initial config save should succeed");

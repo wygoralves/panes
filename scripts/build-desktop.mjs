@@ -16,7 +16,8 @@ const requiredArtifacts = [
   ),
 ];
 
-const pnpmExecutable = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const isWindows = process.platform === "win32";
+const pnpmExecutable = "pnpm";
 
 async function ensureArtifactsExist() {
   for (const artifactPath of requiredArtifacts) {
@@ -35,7 +36,10 @@ function run(command, args) {
     const child = spawn(command, args, {
       cwd: repoRoot,
       stdio: "inherit",
-      env: process.env,
+      // On Windows, pnpm is exposed via a .cmd shim, which must be launched
+      // through the shell instead of being spawned as a raw executable.
+      shell: isWindows,
+      windowsHide: true,
     });
 
     child.on("error", reject);

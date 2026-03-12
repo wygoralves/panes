@@ -18,17 +18,11 @@ pub async fn check_dependencies() -> Result<DependencyReport, String> {
 
     let package_managers = detect_package_managers(node.found).await;
 
-    let platform = if cfg!(target_os = "macos") {
-        "macos"
-    } else {
-        "linux"
-    };
-
     Ok(DependencyReport {
         node,
         codex,
         git,
-        platform: platform.to_string(),
+        platform: runtime_env::platform_id().to_string(),
         package_managers,
     })
 }
@@ -378,13 +372,23 @@ async fn resolve_npm_path() -> String {
 async fn detect_package_managers(node_found: bool) -> Vec<String> {
     let mut package_managers = Vec::new();
 
+    if node_found {
+        package_managers.push("npm".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        for manager in ["winget", "choco", "scoop"] {
+            if runtime_env::resolve_executable(manager).is_some() {
+                package_managers.push(manager.to_string());
+            }
+        }
+    }
+
     #[cfg(not(target_os = "windows"))]
     {
         if resolve_brew_path().is_some() {
             package_managers.push("homebrew".to_string());
-        }
-        if node_found {
-            package_managers.push("npm".to_string());
         }
         if cfg!(target_os = "linux") {
             for manager in ["apt", "dnf", "pacman", "zypper", "apk"] {

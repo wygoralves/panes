@@ -4,9 +4,10 @@ use anyhow::Context;
 use tauri::State;
 use tokio::process::Command;
 
+#[cfg(not(target_os = "windows"))]
+use crate::runtime_env;
 use crate::{
     models::{EngineCheckResultDto, EngineHealthDto, EngineInfoDto},
-    runtime_env,
     state::AppState,
 };
 
