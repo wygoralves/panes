@@ -51,6 +51,13 @@ interface ReadinessState {
   error: string | null;
 }
 
+const EMPTY_READINESS_STATE: ReadinessState = {
+  loading: false,
+  dependencyReport: null,
+  engineHealth: {},
+  error: null,
+};
+
 const CHAT_ENGINE_OPTIONS: Array<{
   id: OnboardingChatEngineId;
   descriptionKey: string;
@@ -841,12 +848,7 @@ export function OnboardingWizard() {
   const autoOpenedRef = useRef(false);
   const readinessRequestRef = useRef(0);
   const [workspaceConfirmed, setWorkspaceConfirmed] = useState(false);
-  const [readiness, setReadiness] = useState<ReadinessState>({
-    loading: false,
-    dependencyReport: null,
-    engineHealth: {},
-    error: null,
-  });
+  const [readiness, setReadiness] = useState<ReadinessState>(EMPTY_READINESS_STATE);
 
   const visibleSteps = getVisibleSteps(preferredWorkflow);
   const currentStepIndex = visibleSteps.indexOf(step);
@@ -888,7 +890,9 @@ export function OnboardingWizard() {
       return;
     }
 
+    readinessRequestRef.current += 1;
     setWorkspaceConfirmed(false);
+    setReadiness(EMPTY_READINESS_STATE);
   }, [open]);
 
   useEffect(() => {

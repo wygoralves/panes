@@ -212,16 +212,17 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
       error: null,
     });
 
-    const unlisten = await listenInstallProgress((event) => {
-      set((state) => ({
-        installLog: [
-          ...state.installLog,
-          { dep: event.dependency, line: event.line, stream: event.stream },
-        ],
-      }));
-    });
+    let unlisten: (() => void) | null = null;
 
     try {
+      unlisten = await listenInstallProgress((event) => {
+        set((state) => ({
+          installLog: [
+            ...state.installLog,
+            { dep: event.dependency, line: event.line, stream: event.stream },
+          ],
+        }));
+      });
       const result = await ipc.installDependency(dependency, method);
       return result.success;
     } catch (error) {
@@ -229,7 +230,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
       return false;
     } finally {
       set({ installing: null });
-      unlisten();
+      unlisten?.();
     }
   },
   installHarness: async (harnessId, label) => {
@@ -239,16 +240,17 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
       error: null,
     });
 
-    const unlisten = await listenInstallProgress((event) => {
-      set((state) => ({
-        installLog: [
-          ...state.installLog,
-          { dep: event.dependency, line: event.line, stream: event.stream },
-        ],
-      }));
-    });
+    let unlisten: (() => void) | null = null;
 
     try {
+      unlisten = await listenInstallProgress((event) => {
+        set((state) => ({
+          installLog: [
+            ...state.installLog,
+            { dep: event.dependency, line: event.line, stream: event.stream },
+          ],
+        }));
+      });
       const result = await ipc.installHarness(installId);
       return result.success;
     } catch (error) {
@@ -256,7 +258,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
       return false;
     } finally {
       set({ installing: null });
-      unlisten();
+      unlisten?.();
     }
   },
   complete: () => {

@@ -133,4 +133,24 @@ describe("onboardingStore", () => {
     expect(ok).toBe(true);
     expect(mockIpc.installHarness).toHaveBeenCalledWith("claude-code");
   });
+
+  it("cleans up dependency installs when progress subscription fails", async () => {
+    mockListenInstallProgress.mockRejectedValue(new Error("listen failed"));
+
+    const ok = await useOnboardingStore.getState().installDependency("node", "brew", "Node.js");
+
+    expect(ok).toBe(false);
+    expect(useOnboardingStore.getState().installing).toBeNull();
+    expect(useOnboardingStore.getState().error).toBe("listen failed");
+  });
+
+  it("cleans up harness installs when progress subscription fails", async () => {
+    mockListenInstallProgress.mockRejectedValue(new Error("listen failed"));
+
+    const ok = await useOnboardingStore.getState().installHarness("codex", "Codex CLI");
+
+    expect(ok).toBe(false);
+    expect(useOnboardingStore.getState().installing).toBeNull();
+    expect(useOnboardingStore.getState().error).toBe("listen failed");
+  });
 });
