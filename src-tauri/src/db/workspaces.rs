@@ -94,9 +94,14 @@ pub fn list_archived_workspaces(db: &Database) -> anyhow::Result<Vec<WorkspaceDt
 }
 
 pub fn ensure_default_workspace(db: &Database) -> anyhow::Result<WorkspaceDto> {
+    let current_exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
     if let Some(first) = list_workspaces(db)?
         .into_iter()
-        .find(|workspace| is_viable_workspace_root(Path::new(&workspace.root_path)))
+        .find(|workspace| {
+            is_viable_workspace_root(Path::new(&workspace.root_path), current_exe_dir.as_deref())
+        })
     {
         return Ok(first);
     }
@@ -109,26 +114,34 @@ pub fn ensure_default_workspace(db: &Database) -> anyhow::Result<WorkspaceDto> {
 fn preferred_default_workspace_root() -> std::path::PathBuf {
     let cwd = std::env::current_dir().ok();
     let home = runtime_env::home_dir();
-    preferred_default_workspace_root_for(cwd.as_deref(), home.as_deref())
+    let current_exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+    preferred_default_workspace_root_for(cwd.as_deref(), home.as_deref(), current_exe_dir.as_deref())
 }
 
 fn preferred_default_workspace_root_for(
     cwd: Option<&Path>,
     home: Option<&Path>,
+    current_exe_dir: Option<&Path>,
 ) -> std::path::PathBuf {
-    cwd.filter(|path| is_viable_workspace_root(path))
-        .or_else(|| home.filter(|path| is_viable_workspace_root(path)))
+    cwd.filter(|path| is_viable_workspace_root(path, current_exe_dir))
+        .or_else(|| home.filter(|path| is_viable_workspace_root(path, current_exe_dir)))
         .map(Path::to_path_buf)
         .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
-fn is_viable_workspace_root(path: &Path) -> bool {
-    path.is_dir() && !is_transient_appimage_mount(path)
+fn is_viable_workspace_root(path: &Path, current_exe_dir: Option<&Path>) -> bool {
+    path.is_dir() && !is_transient_appimage_mount(path) && !is_current_executable_dir(path, current_exe_dir)
 }
 
 fn is_transient_appimage_mount(path: &Path) -> bool {
     let rendered = path.to_string_lossy();
     rendered.starts_with("/tmp/.mount_") || rendered.starts_with("/var/tmp/.mount_")
+}
+
+fn is_current_executable_dir(path: &Path, current_exe_dir: Option<&Path>) -> bool {
+    current_exe_dir.is_some_and(|dir| dir == path)
 }
 
 pub fn delete_workspace(db: &Database, workspace_id: &str) -> anyhow::Result<()> {
@@ -378,7 +391,7 @@ mod tests {
         fs::create_dir_all(&home).expect("failed to create temp home");
 
         let cwd = std::path::Path::new("/tmp/.mount_PanesTest/usr");
-        let selected = preferred_default_workspace_root_for(Some(cwd), Some(&home));
+        let selected = preferred_default_workspace_root_for(Some(cwd), Some(&home), None);
 
         assert_eq!(selected, home);
     }
@@ -390,8 +403,20 @@ mod tests {
         fs::create_dir_all(&cwd).expect("failed to create temp cwd");
         fs::create_dir_all(&home).expect("failed to create temp home");
 
-        let selected = preferred_default_workspace_root_for(Some(&cwd), Some(&home));
+        let selected = preferred_default_workspace_root_for(Some(&cwd), Some(&home), None);
 
         assert_eq!(selected, cwd);
+    }
+
+    #[test]
+    fn preferred_default_workspace_root_skips_current_executable_directory() {
+        let cwd = std::env::temp_dir().join(format!("panes-install-{}", Uuid::new_v4()));
+        let home = std::env::temp_dir().join(format!("panes-home-{}", Uuid::new_v4()));
+        fs::create_dir_all(&cwd).expect("failed to create temp install root");
+        fs::create_dir_all(&home).expect("failed to create temp home");
+
+        let selected = preferred_default_workspace_root_for(Some(&cwd), Some(&home), Some(&cwd));
+
+        assert_eq!(selected, home);
     }
 }
