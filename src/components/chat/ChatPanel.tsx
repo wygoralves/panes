@@ -4472,7 +4472,7 @@ export function ChatPanel() {
                       }
                       if (e.key === "Enter" || e.key === "Tab") {
                         e.preventDefault();
-                        const cmd = filteredSlashCommands[slashMenuActiveIndex];
+                        const cmd = filteredSlashCommands[Math.min(slashMenuActiveIndex, filteredSlashCommands.length - 1)];
                         if (cmd) handleSlashCommandSelect(cmd.id);
                         return;
                       }

@@ -346,7 +346,8 @@
       "codexThreadResumeUnavailable": "Selecione um workspace e um modelo do Codex antes de retomar uma thread remota.",
       "codexThreadResumeFailed": "Falha ao anexar a thread do Codex selecionada.",
       "codexThreadForked": "Uma nova thread ramificada do Codex foi criada.",
-      "codexThreadRolledBack": "Uma nova ramificação com rollback dos últimos {{count}} turnos foi criada.",
+      "codexThreadRolledBack_one": "Uma nova ramificação com rollback do último {{count}} turno foi criada.",
+      "codexThreadRolledBack_other": "Uma nova ramificação com rollback dos últimos {{count}} turnos foi criada.",
       "codexThreadCompactionStarted": "A compactação da thread do Codex foi iniciada.",
       "codexThreadResumed": "A thread remota do Codex selecionada foi anexada.",
       "serviceTierUpdated": "Camada de serviço -> {{value}}",
@@ -445,6 +446,10 @@
       "experimental": {
         "title": "Recursos experimentais",
         "empty": "Nenhum recurso experimental disponível."
+      },
+      "info": {
+        "badgeOn": "lig",
+        "badgeOff": "des"
       }
     }
   }

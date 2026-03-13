@@ -571,7 +571,19 @@ pub async fn start_codex_review(
         .unwrap_or_else(|| source_thread.model_id.clone());
     let reasoning_effort = thread_reasoning_effort(source_thread.engine_metadata.as_ref());
 
-    let (review_thread, assistant_message_id) = run_db(db.clone(), {
+    let cancellation = CancellationToken::new();
+    if !state
+        .turns
+        .try_register(&source_thread.id, cancellation.clone())
+        .await
+    {
+        return Err(
+            "A turn is already running for this thread. Cancel it before starting a review."
+                .to_string(),
+        );
+    }
+
+    let (review_thread, assistant_message_id) = match run_db(db.clone(), {
         let source_thread = source_thread.clone();
         let review_message = review_message.clone();
         let review_title = review_title.clone();
@@ -622,19 +634,14 @@ pub async fn start_codex_review(
             Ok((updated_thread, assistant_message.id))
         }
     })
-    .await?;
-
-    let cancellation = CancellationToken::new();
-    if !state
-        .turns
-        .try_register(&review_thread.id, cancellation.clone())
-        .await
+    .await
     {
-        return Err(
-            "A turn is already running for this thread. Cancel it before starting a review."
-                .to_string(),
-        );
-    }
+        Ok(result) => result,
+        Err(error) => {
+            state.turns.finish(&source_thread.id).await;
+            return Err(error);
+        }
+    };
 
     let state_cloned = state.inner().clone();
     let app_handle = app.clone();
@@ -771,6 +778,8 @@ fn build_user_blocks(
             .saturating_add(1),
     );
 
+    let mut structured_text_parts: Vec<String> = Vec::new();
+
     for item in input_items {
         match item {
             TurnInputItem::Skill { name, path } => {
@@ -785,7 +794,9 @@ fn build_user_blocks(
                     path: path.clone(),
                 });
             }
-            TurnInputItem::Text { .. } => {}
+            TurnInputItem::Text { text } => {
+                structured_text_parts.push(text.clone());
+            }
         }
     }
 
@@ -798,8 +809,13 @@ fn build_user_blocks(
         });
     }
 
+    let final_text = if structured_text_parts.is_empty() {
+        message.to_string()
+    } else {
+        structured_text_parts.join("\n")
+    };
     user_blocks.push(ContentBlock::Text {
-        content: message.to_string(),
+        content: final_text,
         plan_mode: if plan_mode { Some(true) } else { None },
         is_steer: if is_steer { Some(true) } else { None },
     });
@@ -1845,6 +1861,10 @@ async fn run_codex_review_turn(
     )
     .await;
 
+    if let Err(error) = started_task.await {
+        log::warn!("failed to join codex review start task: {error}");
+    }
+
     loop {
         let incoming_event = if pending_event.is_some() {
             match tokio::time::timeout(STREAM_EVENT_COALESCE_IDLE_FLUSH_INTERVAL, event_rx.recv())
@@ -2206,10 +2226,6 @@ async fn run_codex_review_turn(
         }
     }
 
-    if let Err(error) = started_task.await {
-        log::warn!("failed to join codex review start task: {error}");
-    }
-
     let latest_review_thread = run_db(state.db.clone(), {
         let review_thread_id = review_thread.id.clone();
         move |db| {
@@ -2229,8 +2245,7 @@ async fn run_codex_review_turn(
         },
     );
 
-    let _ = source_thread;
-    state.turns.finish(&review_thread.id).await;
+    state.turns.finish(&source_thread.id).await;
 }
 
 fn is_coalescable_stream_event(event: &EngineEvent) -> bool {
@@ -3511,7 +3526,8 @@ fn resolve_reasoning_effort_from_catalog(
 fn normalize_codex_approval_policy_value(value: &Value) -> Result<Value, String> {
     match value {
         Value::String(raw) => {
-            let normalized = raw.trim();
+            let normalized = raw.trim().to_lowercase();
+            let normalized = normalized.as_str();
             if matches!(
                 normalized,
                 "untrusted" | "on-failure" | "on-request" | "never"

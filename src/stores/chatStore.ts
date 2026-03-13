@@ -655,7 +655,7 @@ function collapseTrailingSteerMessages(messages: Message[]): Message[] {
     const isSteerCandidate =
       message.role === "user" &&
       previous?.role === "assistant" &&
-      (messageHasSteerMarker(message) || (isAtTail && previous.status === "streaming")) &&
+      messageHasSteerMarker(message) &&
       nextMessage?.role !== "assistant";
 
     if (isSteerCandidate) {
@@ -1517,59 +1517,62 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streamFlushInProgress = true;
         const batch = queuedStreamEvents.splice(0, queuedStreamEvents.length);
         const flushStartedAt = performance.now();
-        set((state) => {
-          if (bindSeq !== activeThreadBindSeq || state.threadId !== threadId) {
-            return state;
-          }
-
-          let nextMessages = state.messages;
-          let nextStreaming = state.streaming;
-          let nextStatus = state.status;
-          let nextUsageLimits = state.usageLimits;
-          let hydrationRecalcRequired = false;
-          for (const queuedEvent of batch) {
-            if (queuedEvent.type === "UsageLimitsUpdated") {
-              nextUsageLimits = mapUsageLimitsFromEvent(queuedEvent);
-              continue;
+        try {
+          set((state) => {
+            if (bindSeq !== activeThreadBindSeq || state.threadId !== threadId) {
+              return state;
             }
-            const previousLength = nextMessages.length;
-            nextMessages = applyStreamEvent(nextMessages, queuedEvent, state.threadId);
-            if (nextMessages.length !== previousLength) {
-              hydrationRecalcRequired = true;
-            }
-            const nextRuntimeState = applyRuntimeStateFromEvent(
-              nextStatus,
-              nextStreaming,
-              queuedEvent,
-            );
-            nextStatus = nextRuntimeState.status;
-            nextStreaming = nextRuntimeState.streaming;
-            if (queuedEvent.type === "TurnCompleted") {
-              pendingTurnMetaByThread.delete(threadId);
-            }
-          }
-          if (hydrationRecalcRequired) {
-            nextMessages = applyHydrationWindow(nextMessages);
-          }
 
-          if (
-            nextMessages === state.messages &&
-            nextStatus === state.status &&
-            nextStreaming === state.streaming &&
-            nextUsageLimits === state.usageLimits
-          ) {
-            return state;
-          }
+            let nextMessages = state.messages;
+            let nextStreaming = state.streaming;
+            let nextStatus = state.status;
+            let nextUsageLimits = state.usageLimits;
+            let hydrationRecalcRequired = false;
+            for (const queuedEvent of batch) {
+              if (queuedEvent.type === "UsageLimitsUpdated") {
+                nextUsageLimits = mapUsageLimitsFromEvent(queuedEvent);
+                continue;
+              }
+              const previousLength = nextMessages.length;
+              nextMessages = applyStreamEvent(nextMessages, queuedEvent, state.threadId);
+              if (nextMessages.length !== previousLength) {
+                hydrationRecalcRequired = true;
+              }
+              const nextRuntimeState = applyRuntimeStateFromEvent(
+                nextStatus,
+                nextStreaming,
+                queuedEvent,
+              );
+              nextStatus = nextRuntimeState.status;
+              nextStreaming = nextRuntimeState.streaming;
+              if (queuedEvent.type === "TurnCompleted") {
+                pendingTurnMetaByThread.delete(threadId);
+              }
+            }
+            if (hydrationRecalcRequired) {
+              nextMessages = applyHydrationWindow(nextMessages);
+            }
 
-          return {
-            ...state,
-            messages: nextMessages,
-            status: nextStatus,
-            streaming: nextStreaming,
-            usageLimits: nextUsageLimits,
-          };
-        });
-        streamFlushInProgress = false;
+            if (
+              nextMessages === state.messages &&
+              nextStatus === state.status &&
+              nextStreaming === state.streaming &&
+              nextUsageLimits === state.usageLimits
+            ) {
+              return state;
+            }
+
+            return {
+              ...state,
+              messages: nextMessages,
+              status: nextStatus,
+              streaming: nextStreaming,
+              usageLimits: nextUsageLimits,
+            };
+          });
+        } finally {
+          streamFlushInProgress = false;
+        }
         recordPerfMetric("chat.stream.flush.ms", performance.now() - flushStartedAt, {
           threadId,
           batchSize: batch.length,
@@ -1829,6 +1832,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return false;
     }
 
+    if (options?.threadIdOverride && options.threadIdOverride !== state.threadId) {
+      set({ error: "Cannot steer a thread that is not currently active" });
+      return false;
+    }
+
     const attachments = options?.attachments ?? [];
     const inputItems = options?.inputItems ?? [];
     const planMode = options?.planMode ?? false;
@@ -1883,19 +1891,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
 
-    await ipc.respondApproval(threadId, approvalId, response);
-    const decision = resolveApprovalDecision(response);
-    set((state) => {
-      const nextMessages = resolveApprovalInMessages(state.messages, approvalId, decision);
-      if (nextMessages === state.messages) {
-        return state;
-      }
+    try {
+      await ipc.respondApproval(threadId, approvalId, response);
+      const decision = resolveApprovalDecision(response);
+      set((state) => {
+        const nextMessages = resolveApprovalInMessages(state.messages, approvalId, decision);
+        if (nextMessages === state.messages) {
+          return state;
+        }
 
-      return {
-        ...state,
-        messages: nextMessages,
-      };
-    });
+        return {
+          ...state,
+          messages: nextMessages,
+        };
+      });
+    } catch (error) {
+      set({ error: String(error) });
+    }
   },
   hydrateActionOutput: async (messageId, actionId) => {
     const requestKey = `${messageId}::${actionId}`;

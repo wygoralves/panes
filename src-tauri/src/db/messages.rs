@@ -147,58 +147,52 @@ pub fn drop_last_turns(db: &Database, thread_id: &str, num_turns: u32) -> anyhow
         return Ok(0);
     }
 
-    let placeholders = std::iter::repeat_n("?", message_ids.len())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let delete_actions_sql =
-        format!("DELETE FROM actions WHERE thread_id = ? AND message_id IN ({placeholders})");
-    let delete_approvals_sql =
-        format!("DELETE FROM approvals WHERE thread_id = ? AND message_id IN ({placeholders})");
-    let delete_messages_sql =
-        format!("DELETE FROM messages WHERE thread_id = ? AND id IN ({placeholders})");
-
     let mut conn = db.connect()?;
     let tx = conn
         .transaction()
         .context("failed to start thread rollback transaction")?;
 
-    let mut actions_params = Vec::with_capacity(message_ids.len() + 1);
-    actions_params.push(rusqlite::types::Value::from(thread_id.to_string()));
-    actions_params.extend(
-        message_ids
-            .iter()
-            .cloned()
-            .map(rusqlite::types::Value::from),
-    );
-    tx.execute(&delete_actions_sql, params_from_iter(actions_params))
-        .context("failed to delete rolled-back thread actions")?;
+    for chunk in message_ids.chunks(500) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let delete_actions_sql = format!(
+            "DELETE FROM actions WHERE thread_id = ? AND message_id IN ({placeholders})"
+        );
+        let delete_approvals_sql = format!(
+            "DELETE FROM approvals WHERE thread_id = ? AND message_id IN ({placeholders})"
+        );
+        let delete_messages_sql = format!(
+            "DELETE FROM messages WHERE thread_id = ? AND id IN ({placeholders})"
+        );
 
-    let mut approvals_params = Vec::with_capacity(message_ids.len() + 1);
-    approvals_params.push(rusqlite::types::Value::from(thread_id.to_string()));
-    approvals_params.extend(
-        message_ids
-            .iter()
-            .cloned()
-            .map(rusqlite::types::Value::from),
-    );
-    tx.execute(&delete_approvals_sql, params_from_iter(approvals_params))
-        .context("failed to delete rolled-back thread approvals")?;
+        let mut actions_params = Vec::with_capacity(chunk.len() + 1);
+        actions_params.push(rusqlite::types::Value::from(thread_id.to_string()));
+        actions_params
+            .extend(chunk.iter().cloned().map(rusqlite::types::Value::from));
+        tx.execute(&delete_actions_sql, params_from_iter(actions_params))
+            .context("failed to delete rolled-back thread actions")?;
+
+        let mut approvals_params = Vec::with_capacity(chunk.len() + 1);
+        approvals_params.push(rusqlite::types::Value::from(thread_id.to_string()));
+        approvals_params
+            .extend(chunk.iter().cloned().map(rusqlite::types::Value::from));
+        tx.execute(&delete_approvals_sql, params_from_iter(approvals_params))
+            .context("failed to delete rolled-back thread approvals")?;
+
+        let mut message_params = Vec::with_capacity(chunk.len() + 1);
+        message_params.push(rusqlite::types::Value::from(thread_id.to_string()));
+        message_params
+            .extend(chunk.iter().cloned().map(rusqlite::types::Value::from));
+        tx.execute(&delete_messages_sql, params_from_iter(message_params))
+            .context("failed to delete rolled-back thread messages")?;
+    }
+
     tx.execute(
         "DELETE FROM approvals WHERE thread_id = ?1 AND status = 'pending'",
         params![thread_id],
     )
     .context("failed to clear pending approvals after rollback")?;
-
-    let mut message_params = Vec::with_capacity(message_ids.len() + 1);
-    message_params.push(rusqlite::types::Value::from(thread_id.to_string()));
-    message_params.extend(
-        message_ids
-            .iter()
-            .cloned()
-            .map(rusqlite::types::Value::from),
-    );
-    tx.execute(&delete_messages_sql, params_from_iter(message_params))
-        .context("failed to delete rolled-back thread messages")?;
 
     tx.commit()
         .context("failed to commit thread rollback transaction")?;

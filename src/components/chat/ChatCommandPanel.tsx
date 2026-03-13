@@ -672,6 +672,7 @@ function InfoListPanel({
   items: { name: string; detail?: string; enabled?: boolean; badge?: string }[];
   onDismiss: () => void;
 }) {
+  const { t } = useTranslation("chat");
   return (
     <div className="chat-command-panel">
       <div className="chat-command-panel-header">
@@ -705,7 +706,7 @@ function InfoListPanel({
                 <span
                   className={`chat-command-panel-info-badge ${item.enabled ? "chat-command-panel-info-badge-on" : "chat-command-panel-info-badge-off"}`}
                 >
-                  {item.enabled ? "on" : "off"}
+                  {item.enabled ? t("slashCommands.panels.info.badgeOn") : t("slashCommands.panels.info.badgeOff")}
                 </span>
               )}
               {item.badge && (

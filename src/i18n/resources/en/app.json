@@ -183,7 +183,8 @@
       "noStagedHint": "(no staged files)",
       "stashWithMessage": "Stash with message: \"{{message}}\"",
       "stashEmpty": "Press Enter to stash (or type a message)",
-      "codexRollback": "Rollback {{count}} turns",
+      "codexRollback_one": "Rollback {{count}} turn",
+      "codexRollback_other": "Rollback {{count}} turns",
       "codexRollbackEmpty": "Type the number of turns to roll back..."
     },
     "placeholders": {

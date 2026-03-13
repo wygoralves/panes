@@ -650,6 +650,17 @@ button, input, textarea, select {
   @keyframes ob-greeting-logo { from, to { opacity: 1; transform: none; } }
   @keyframes ob-greeting-text { from, to { opacity: 1; transform: none; } }
   @keyframes ob-greeting-line { from, to { transform: scaleX(1); } }
+
+  .chat-tool-input-panel,
+  .chat-command-panel {
+    animation: none;
+  }
+
+  .slash-menu-item {
+    animation: none;
+  }
+
+  @keyframes slash-menu-in { from, to { opacity: 1; transform: none; } }
 }
 
 @keyframes thinking-pulse {
@@ -5393,12 +5404,6 @@ button, input, textarea, select {
   color: var(--text-3);
 }
 
-.chat-tool-input-hint {
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--text-3);
-}
-
 .chat-tool-input-actions {
   display: flex;
   align-items: center;
@@ -5447,6 +5452,11 @@ button, input, textarea, select {
   box-shadow: none;
 }
 
+.chat-tool-input-btn-primary:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 .chat-tool-input-btn-secondary {
   background: transparent;
   border-color: var(--border);
@@ -5456,6 +5466,26 @@ button, input, textarea, select {
 .chat-tool-input-btn-secondary:hover {
   background: rgba(255, 255, 255, 0.05);
   color: var(--text-1);
+}
+
+.chat-tool-input-btn-secondary:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.chat-tool-input-btn-danger {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  color: var(--danger);
+}
+
+.chat-tool-input-btn-danger:hover {
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+}
+
+.chat-tool-input-btn-danger:focus-visible {
+  outline: 1px solid var(--danger);
+  outline-offset: -1px;
 }
 
 /* ── Toolbar Buttons ───────────────────────────────────────────────── */
@@ -5520,7 +5550,7 @@ button, input, textarea, select {
 .codex-config-popover {
   width: min(420px, calc(100vw - 16px));
   padding: 12px;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-1) 92%, black);
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
@@ -5596,35 +5626,11 @@ button, input, textarea, select {
   line-height: 1.5;
 }
 
-.codex-config-textarea-wrap {
-  position: relative;
-}
-
 .codex-config-select:focus,
 .codex-config-textarea:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
-}
-
-.codex-config-clear {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--bg-1);
-  color: var(--text-3);
-}
-
-.codex-config-clear:hover {
-  color: var(--text-1);
-  border-color: var(--text-3);
 }
 
 .codex-config-note {
@@ -5636,9 +5642,9 @@ button, input, textarea, select {
 .codex-config-error {
   margin-top: 10px;
   padding: 8px 10px;
-  border-radius: 10px;
-  background: rgba(239, 68, 68, 0.12);
-  color: rgb(252, 165, 165);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--error);
   font-size: 11px;
   line-height: 1.4;
 }
@@ -5786,6 +5792,11 @@ button, input, textarea, select {
   background: rgba(255, 255, 255, 0.06);
 }
 
+.slash-menu-item:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+  outline: none;
+}
+
 .slash-menu-item-disabled {
   opacity: 0.35;
   cursor: default;
@@ -5897,6 +5908,11 @@ button, input, textarea, select {
   background: rgba(255, 255, 255, 0.06);
 }
 
+.chat-command-panel-close:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 .chat-command-panel-desc {
   font-size: 10.5px;
   line-height: 1.4;
@@ -5969,7 +5985,7 @@ button, input, textarea, select {
   line-height: 1.3;
   padding: 4px 6px;
   border-radius: var(--radius-xs);
-  background: rgba(255, 80, 80, 0.06);
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
 }
 
 .chat-command-panel-actions {
@@ -6012,6 +6028,11 @@ button, input, textarea, select {
   cursor: default;
 }
 
+.chat-command-panel-btn-primary:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 .chat-command-panel-btn-secondary {
   background: transparent;
   color: var(--text-2);
@@ -6026,6 +6047,26 @@ button, input, textarea, select {
 .chat-command-panel-btn-secondary:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.chat-command-panel-btn-secondary:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.chat-command-panel-btn-danger {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  color: var(--danger);
+}
+
+.chat-command-panel-btn-danger:hover {
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+}
+
+.chat-command-panel-btn-danger:focus-visible {
+  outline: 1px solid var(--danger);
+  outline-offset: -1px;
 }
 
 .chat-command-panel-toggle-group {
@@ -6120,8 +6161,8 @@ button, input, textarea, select {
 }
 
 .chat-command-panel-info-badge-on {
-  background: rgba(52, 211, 153, 0.12);
-  color: rgb(52, 211, 153);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
 }
 
 .chat-command-panel-info-badge-off {
@@ -7157,7 +7198,7 @@ button, input, textarea, select {
   padding: 0 6px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.06);
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.03em;

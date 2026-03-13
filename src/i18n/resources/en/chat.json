@@ -346,7 +346,8 @@
       "codexThreadResumeUnavailable": "Select a workspace and Codex model before resuming a remote thread.",
       "codexThreadResumeFailed": "Failed to attach the selected Codex thread.",
       "codexThreadForked": "Created a new forked Codex thread.",
-      "codexThreadRolledBack": "Created a new rollback branch with the last {{count}} turn removed.",
+      "codexThreadRolledBack_one": "Created a new rollback branch with the last {{count}} turn removed.",
+      "codexThreadRolledBack_other": "Created a new rollback branch with the last {{count}} turns removed.",
       "codexThreadCompactionStarted": "Started Codex thread compaction.",
       "codexThreadResumed": "Attached the selected remote Codex thread.",
       "serviceTierUpdated": "Service tier -> {{value}}",
@@ -445,6 +446,10 @@
       "experimental": {
         "title": "Experimental features",
         "empty": "No experimental features available."
+      },
+      "info": {
+        "badgeOn": "on",
+        "badgeOff": "off"
       }
     }
   }

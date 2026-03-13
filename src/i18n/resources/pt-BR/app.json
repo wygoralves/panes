@@ -183,7 +183,8 @@
       "noStagedHint": "(nenhum arquivo preparado)",
       "stashWithMessage": "Fazer stash com a mensagem: \"{{message}}\"",
       "stashEmpty": "Pressione Enter para fazer stash (ou digite uma mensagem)",
-      "codexRollback": "Reverter {{count}} rodadas",
+      "codexRollback_one": "Rollback de {{count}} turno",
+      "codexRollback_other": "Rollback de {{count}} turnos",
       "codexRollbackEmpty": "Digite o número de rodadas para reverter..."
     },
     "placeholders": {
