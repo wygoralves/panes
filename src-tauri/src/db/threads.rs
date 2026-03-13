@@ -76,9 +76,12 @@ pub fn list_threads_for_workspace(
      FROM threads
      WHERE workspace_id = ?1
        AND archived_at IS NULL
-       AND EXISTS (
-         SELECT 1 FROM messages
-         WHERE messages.thread_id = threads.id
+       AND (
+         engine_thread_id IS NOT NULL
+         OR EXISTS (
+           SELECT 1 FROM messages
+           WHERE messages.thread_id = threads.id
+         )
        )
      ORDER BY last_activity_at DESC",
   )?;
@@ -102,9 +105,12 @@ pub fn list_archived_threads_for_workspace(
      FROM threads
      WHERE workspace_id = ?1
        AND archived_at IS NOT NULL
-       AND EXISTS (
-         SELECT 1 FROM messages
-         WHERE messages.thread_id = threads.id
+       AND (
+         engine_thread_id IS NOT NULL
+         OR EXISTS (
+           SELECT 1 FROM messages
+           WHERE messages.thread_id = threads.id
+         )
        )
      ORDER BY archived_at DESC",
   )?;
@@ -437,9 +443,7 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
-    use crate::db::{
-        messages, workspaces, ConnectionPool, SQLITE_POOL_MAX_IDLE,
-    };
+    use crate::db::{messages, workspaces, ConnectionPool, SQLITE_POOL_MAX_IDLE};
 
     use super::*;
 
@@ -544,5 +548,41 @@ mod tests {
         assert_eq!(refreshed.message_count, 2);
         assert_eq!(refreshed.total_tokens, 34);
         assert!(!refreshed.last_activity_at.is_empty());
+    }
+
+    #[test]
+    fn list_threads_for_workspace_includes_engine_backed_threads_without_messages() {
+        let db = test_db();
+        let visible = test_thread(&db, "Remote");
+        let hidden = test_thread(&db, "Hidden");
+        set_engine_thread_id(&db, &visible.id, "codex-thread-123").unwrap();
+
+        let listed = list_threads_for_workspace(&db, &visible.workspace_id).unwrap();
+        let listed_ids = listed
+            .into_iter()
+            .map(|thread| thread.id)
+            .collect::<Vec<_>>();
+
+        assert!(listed_ids.contains(&visible.id));
+        assert!(!listed_ids.contains(&hidden.id));
+    }
+
+    #[test]
+    fn list_archived_threads_for_workspace_includes_engine_backed_threads_without_messages() {
+        let db = test_db();
+        let visible = test_thread(&db, "Archived remote");
+        let hidden = test_thread(&db, "Archived hidden");
+        set_engine_thread_id(&db, &visible.id, "codex-thread-archived").unwrap();
+        archive_thread(&db, &visible.id).unwrap();
+        archive_thread(&db, &hidden.id).unwrap();
+
+        let listed = list_archived_threads_for_workspace(&db, &visible.workspace_id).unwrap();
+        let listed_ids = listed
+            .into_iter()
+            .map(|thread| thread.id)
+            .collect::<Vec<_>>();
+
+        assert!(listed_ids.contains(&visible.id));
+        assert!(!listed_ids.contains(&hidden.id));
     }
 }

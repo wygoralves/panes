@@ -1324,6 +1324,7 @@ export function ChatPanel() {
     forkCodexThread,
     rollbackCodexThread,
     compactCodexThread,
+    attachCodexRemoteThread,
     refreshThreads,
     setActiveThread: setActiveThreadInStore,
     applyThreadUpdateLocal,
@@ -1337,6 +1338,7 @@ export function ChatPanel() {
       forkCodexThread: state.forkCodexThread,
       rollbackCodexThread: state.rollbackCodexThread,
       compactCodexThread: state.compactCodexThread,
+      attachCodexRemoteThread: state.attachCodexRemoteThread,
       refreshThreads: state.refreshThreads,
       setActiveThread: state.setActiveThread,
       applyThreadUpdateLocal: state.applyThreadUpdateLocal,
@@ -2696,6 +2698,25 @@ export function ChatPanel() {
     }
 
     toast.success(t("panel.toasts.codexThreadCompactionStarted"));
+  }
+
+  async function onAttachCodexRemoteThread(engineThreadId: string) {
+    if (!activeWorkspaceId || !selectedModelId) {
+      throw new Error(t("panel.toasts.codexThreadResumeUnavailable"));
+    }
+
+    const attachedThread = await attachCodexRemoteThread(
+      activeWorkspaceId,
+      engineThreadId,
+      selectedModelId,
+    );
+    if (!attachedThread) {
+      throw new Error(t("panel.toasts.codexThreadResumeFailed"));
+    }
+
+    setActiveThreadInStore(attachedThread.id);
+    await bindChatThread(attachedThread.id);
+    toast.success(t("panel.toasts.codexThreadResumed"));
   }
 
   async function onSubmit(event: FormEvent) {
@@ -4181,15 +4202,18 @@ export function ChatPanel() {
                     onStartReview={onStartCodexReview}
                   />
                   <CodexThreadPicker
-                    disabled={
-                      !activeThread ||
-                      activeThread.engineId !== "codex" ||
-                      !activeThread.engineThreadId ||
-                      streaming
+                    disabled={!activeWorkspaceId || !selectedModelId || streaming}
+                    workspaceId={activeWorkspaceId}
+                    modelId={selectedModelId ?? null}
+                    canManageActiveThread={
+                      !!activeThread &&
+                      activeThread.engineId === "codex" &&
+                      !!activeThread.engineThreadId
                     }
                     onFork={onForkCodexThread}
                     onRollback={onRollbackCodexThread}
                     onCompact={onCompactCodexThread}
+                    onAttachRemoteThread={onAttachCodexRemoteThread}
                   />
                   <CodexConfigPicker
                     activeCount={codexConfigActiveCount}

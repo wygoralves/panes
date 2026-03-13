@@ -9,6 +9,7 @@ import type {
   ChatInputItem,
   CodexReviewDelivery,
   CodexReviewTarget,
+  CodexRemoteThreadPage,
   ContentBlock,
   CodexApp,
   CodexSkill,
@@ -131,6 +132,28 @@ export const ipc = {
   listThreads: (workspaceId: string) => invoke<Thread[]>("list_threads", { workspaceId }),
   listArchivedThreads: (workspaceId: string) =>
     invoke<Thread[]>("list_archived_threads", { workspaceId }),
+  listCodexRemoteThreads: (
+    workspaceId: string,
+    options?: {
+      cursor?: string | null;
+      limit?: number | null;
+      searchTerm?: string | null;
+      archived?: boolean | null;
+    },
+  ) =>
+    invoke<CodexRemoteThreadPage>("list_codex_remote_threads", {
+      workspaceId,
+      cursor: options?.cursor ?? null,
+      limit: options?.limit ?? null,
+      searchTerm: options?.searchTerm ?? null,
+      archived: options?.archived ?? null,
+    }),
+  attachCodexRemoteThread: (workspaceId: string, engineThreadId: string, modelId: string) =>
+    invoke<Thread>("attach_codex_remote_thread", {
+      workspaceId,
+      engineThreadId,
+      modelId,
+    }),
   createThread: (
     workspaceId: string,
     repoId: string | null,

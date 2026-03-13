@@ -29,10 +29,10 @@ use crate::{process_utils, runtime_env};
 
 use super::{
     codex_event_mapper::TurnEventMapper, codex_protocol::IncomingMessage,
-    codex_transport::CodexTransport, ActionResult, Engine, EngineEvent, EngineThread,
-    ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo, ReasoningEffortOption, SandboxPolicy,
-    ThreadScope, ThreadSyncSnapshot, TurnAttachment, TurnCompletionStatus, TurnInput,
-    TurnInputItem,
+    codex_transport::CodexTransport, ActionResult, CodexRemoteThreadSummary, Engine, EngineEvent,
+    EngineThread, ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo, ReasoningEffortOption,
+    SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment, TurnCompletionStatus,
+    TurnInput, TurnInputItem,
 };
 
 const INITIALIZE_METHODS: &[&str] = &["initialize"];
@@ -42,6 +42,7 @@ const THREAD_READ_METHODS: &[&str] = &["thread/read"];
 const THREAD_ARCHIVE_METHODS: &[&str] = &["thread/archive"];
 const THREAD_UNARCHIVE_METHODS: &[&str] = &["thread/unarchive"];
 const THREAD_SET_NAME_METHODS: &[&str] = &["thread/name/set"];
+const THREAD_LIST_METHODS: &[&str] = &["thread/list"];
 const THREAD_FORK_METHODS: &[&str] = &["thread/fork"];
 const THREAD_ROLLBACK_METHODS: &[&str] = &["thread/rollback"];
 const THREAD_COMPACT_START_METHODS: &[&str] = &["thread/compact/start"];
@@ -1009,7 +1010,8 @@ impl CodexEngine {
             requested_runtime.personality.clone(),
             requested_runtime.output_schema.clone(),
         );
-        self.store_thread_runtime(&new_engine_thread_id, runtime).await;
+        self.store_thread_runtime(&new_engine_thread_id, runtime)
+            .await;
 
         Ok(CodexForkedThread {
             engine_thread_id: new_engine_thread_id,
@@ -1381,8 +1383,7 @@ impl CodexEngine {
         if !completion_seen {
             event_tx
                 .send(EngineEvent::Error {
-                    message: "Timed out waiting for `turn/completed` from codex review"
-                        .to_string(),
+                    message: "Timed out waiting for `turn/completed` from codex review".to_string(),
                     recoverable: false,
                 })
                 .await
@@ -1552,6 +1553,63 @@ impl CodexEngine {
         .ok()?;
 
         extract_thread_preview(&result)
+    }
+
+    pub async fn list_threads(
+        &self,
+        search_term: Option<&str>,
+        archived: Option<bool>,
+    ) -> anyhow::Result<Vec<CodexRemoteThreadSummary>> {
+        let transport = self.ensure_ready_transport().await?;
+        let search_term = search_term.map(str::to_string);
+
+        let threads =
+            fetch_paginated_data(transport.as_ref(), THREAD_LIST_METHODS, move |cursor| {
+                serde_json::json!({
+                  "cursor": cursor,
+                  "limit": 100,
+                  "searchTerm": search_term,
+                  "archived": archived,
+                  "sortKey": "updated_at",
+                  "sourceKinds": ["appServer"],
+                })
+            })
+            .await
+            .context("failed to list codex threads")?;
+
+        Ok(threads
+            .iter()
+            .filter_map(|thread| {
+                extract_codex_remote_thread_summary(thread, archived == Some(true))
+            })
+            .collect())
+    }
+
+    pub async fn read_remote_thread(
+        &self,
+        engine_thread_id: &str,
+    ) -> anyhow::Result<CodexRemoteThreadSummary> {
+        let transport = self.ensure_ready_transport().await?;
+        let params = serde_json::json!({
+          "threadId": engine_thread_id,
+          "includeTurns": false,
+        });
+
+        let response = request_with_fallback(
+            transport.as_ref(),
+            THREAD_READ_METHODS,
+            params,
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to read codex thread")?;
+
+        extract_codex_remote_thread_summary(&response, false)
+            .ok_or_else(|| anyhow::anyhow!("codex thread response missing remote thread summary"))
+    }
+
+    pub async fn unarchive_remote_thread(&self, engine_thread_id: &str) -> anyhow::Result<()> {
+        self.unarchive_thread(engine_thread_id).await
     }
 
     pub async fn read_thread_sync_snapshot(
@@ -3484,6 +3542,69 @@ fn extract_nested_i64(value: &serde_json::Value, path: &[&str]) -> Option<i64> {
         .and_then(|text| text.trim().parse::<i64>().ok())
 }
 
+fn extract_codex_remote_thread_summary(
+    value: &serde_json::Value,
+    archived: bool,
+) -> Option<CodexRemoteThreadSummary> {
+    let thread = value.get("thread").unwrap_or(value);
+    let engine_thread_id = extract_any_string(thread, &["id"])?;
+    let cwd = extract_any_string(thread, &["cwd"])?;
+    let created_at = extract_any_i64(thread, &["createdAt", "created_at"])?;
+    let updated_at = extract_any_i64(thread, &["updatedAt", "updated_at"]).unwrap_or(created_at);
+
+    Some(CodexRemoteThreadSummary {
+        engine_thread_id,
+        title: extract_thread_title(value),
+        preview: extract_thread_preview(value).unwrap_or_default(),
+        cwd,
+        created_at,
+        updated_at,
+        model_provider: extract_any_string(thread, &["modelProvider", "model_provider"])
+            .unwrap_or_else(|| "unknown".to_string()),
+        source_kind: extract_thread_source_kind(thread.get("source")),
+        status_type: extract_thread_runtime_status_type(value)
+            .unwrap_or_else(|| "unknown".to_string()),
+        active_flags: extract_thread_runtime_active_flags(value),
+        archived,
+    })
+}
+
+fn extract_thread_source_kind(value: Option<&serde_json::Value>) -> String {
+    let Some(value) = value else {
+        return "unknown".to_string();
+    };
+
+    if let Some(kind) = value.as_str() {
+        return kind.to_string();
+    }
+
+    let Some(object) = value.as_object() else {
+        return "unknown".to_string();
+    };
+
+    let Some(sub_agent) = object.get("subAgent").or_else(|| object.get("sub_agent")) else {
+        return "unknown".to_string();
+    };
+
+    if let Some(kind) = sub_agent.as_str() {
+        return match kind {
+            "review" => "subAgentReview".to_string(),
+            "compact" => "subAgentCompact".to_string(),
+            _ => "subAgentOther".to_string(),
+        };
+    }
+
+    let Some(sub_agent_object) = sub_agent.as_object() else {
+        return "subAgentOther".to_string();
+    };
+
+    if sub_agent_object.contains_key("thread_spawn") {
+        return "subAgentThreadSpawn".to_string();
+    }
+
+    "subAgentOther".to_string()
+}
+
 fn extract_thread_title(value: &serde_json::Value) -> Option<String> {
     value
         .get("thread")
@@ -5095,6 +5216,70 @@ mod tests {
         let runtime = thread_runtime_from_resume_response(&response, &requested_runtime);
 
         assert_eq!(runtime, requested_runtime);
+    }
+
+    #[test]
+    fn extract_codex_remote_thread_summary_reads_thread_list_shape() {
+        let summary = extract_codex_remote_thread_summary(
+            &json!({
+                "id": "thread-123",
+                "name": "Remote thread",
+                "preview": "Most recent preview",
+                "cwd": "/tmp/workspace",
+                "createdAt": 1710000000,
+                "updatedAt": 1710003600,
+                "modelProvider": "openai",
+                "source": "appServer",
+                "status": {
+                    "type": "active",
+                    "activeFlags": ["waitingOnApproval"]
+                }
+            }),
+            false,
+        )
+        .expect("expected summary");
+
+        assert_eq!(summary.engine_thread_id, "thread-123");
+        assert_eq!(summary.title.as_deref(), Some("Remote thread"));
+        assert_eq!(summary.preview, "Most recent preview");
+        assert_eq!(summary.cwd, "/tmp/workspace");
+        assert_eq!(summary.created_at, 1710000000);
+        assert_eq!(summary.updated_at, 1710003600);
+        assert_eq!(summary.model_provider, "openai");
+        assert_eq!(summary.source_kind, "appServer");
+        assert_eq!(summary.status_type, "active");
+        assert_eq!(summary.active_flags, vec!["waitingOnApproval".to_string()]);
+        assert!(!summary.archived);
+    }
+
+    #[test]
+    fn extract_codex_remote_thread_summary_maps_sub_agent_sources() {
+        let summary = extract_codex_remote_thread_summary(
+            &json!({
+                "thread": {
+                    "id": "thread-456",
+                    "cwd": "/tmp/repo",
+                    "createdAt": 1710000000,
+                    "updatedAt": 1710000001,
+                    "modelProvider": "openai",
+                    "source": {
+                        "subAgent": {
+                            "thread_spawn": true
+                        }
+                    },
+                    "status": {
+                        "type": "idle",
+                        "activeFlags": []
+                    }
+                },
+                "preview": "Preview"
+            }),
+            true,
+        )
+        .expect("expected summary");
+
+        assert_eq!(summary.source_kind, "subAgentThreadSpawn");
+        assert!(summary.archived);
     }
 
     #[tokio::test]

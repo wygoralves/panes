@@ -242,6 +242,8 @@ pub fn run() {
             commands::engines::run_engine_check,
             commands::threads::list_threads,
             commands::threads::list_archived_threads,
+            commands::threads::list_codex_remote_threads,
+            commands::threads::attach_codex_remote_thread,
             commands::threads::create_thread,
             commands::threads::rename_thread,
             commands::threads::confirm_workspace_thread,

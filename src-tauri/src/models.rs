@@ -74,6 +74,30 @@ pub struct ThreadDto {
     pub last_activity_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexRemoteThreadDto {
+    pub engine_thread_id: String,
+    pub title: Option<String>,
+    pub preview: String,
+    pub cwd: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub model_provider: String,
+    pub source_kind: String,
+    pub status_type: String,
+    pub active_flags: Vec<String>,
+    pub archived: bool,
+    pub local_thread_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexRemoteThreadPageDto {
+    pub threads: Vec<CodexRemoteThreadDto>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadStatusDto {

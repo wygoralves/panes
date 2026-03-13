@@ -228,6 +228,21 @@ pub struct ThreadSyncSnapshot {
 }
 
 #[derive(Debug, Clone)]
+pub struct CodexRemoteThreadSummary {
+    pub engine_thread_id: String,
+    pub title: Option<String>,
+    pub preview: String,
+    pub cwd: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub model_provider: String,
+    pub source_kind: String,
+    pub status_type: String,
+    pub active_flags: Vec<String>,
+    pub archived: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct TurnAttachment {
     pub file_name: String,
     pub file_path: String,
@@ -406,11 +421,35 @@ impl EngineManager {
         engine_thread_id: &str,
         num_turns: u32,
     ) -> anyhow::Result<ThreadSyncSnapshot> {
-        self.codex.rollback_thread(engine_thread_id, num_turns).await
+        self.codex
+            .rollback_thread(engine_thread_id, num_turns)
+            .await
     }
 
     pub async fn compact_codex_thread(&self, engine_thread_id: &str) -> anyhow::Result<()> {
         self.codex.compact_thread(engine_thread_id).await
+    }
+
+    pub async fn list_codex_remote_threads(
+        &self,
+        search_term: Option<&str>,
+        archived: Option<bool>,
+    ) -> anyhow::Result<Vec<CodexRemoteThreadSummary>> {
+        self.codex.list_threads(search_term, archived).await
+    }
+
+    pub async fn read_codex_remote_thread(
+        &self,
+        engine_thread_id: &str,
+    ) -> anyhow::Result<CodexRemoteThreadSummary> {
+        self.codex.read_remote_thread(engine_thread_id).await
+    }
+
+    pub async fn unarchive_codex_remote_thread(
+        &self,
+        engine_thread_id: &str,
+    ) -> anyhow::Result<()> {
+        self.codex.unarchive_remote_thread(engine_thread_id).await
     }
 
     pub async fn start_codex_review(

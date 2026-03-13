@@ -115,6 +115,26 @@ export interface Thread {
   lastActivityAt: string;
 }
 
+export interface CodexRemoteThread {
+  engineThreadId: string;
+  title?: string | null;
+  preview: string;
+  cwd: string;
+  createdAt: string;
+  updatedAt: string;
+  modelProvider: string;
+  sourceKind: string;
+  statusType: string;
+  activeFlags: string[];
+  archived: boolean;
+  localThreadId?: string | null;
+}
+
+export interface CodexRemoteThreadPage {
+  threads: CodexRemoteThread[];
+  nextCursor?: string | null;
+}
+
 export type CodexReviewDelivery = "inline" | "detached";
 
 export type CodexReviewTarget =
