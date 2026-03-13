@@ -101,6 +101,13 @@ struct ThreadRuntime {
     output_schema: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlanModeActivation {
+    Disabled,
+    NativeCollaboration,
+    PromptPrefix,
+}
+
 #[derive(Default)]
 struct CodexState {
     transport: Option<Arc<CodexTransport>>,
@@ -493,6 +500,7 @@ impl Engine for CodexEngine {
         let thread_id = engine_thread_id.to_string();
 
         let runtime = self.thread_runtime(&thread_id).await;
+        let plan_mode_activation = self.resolve_turn_plan_mode_activation(&input).await;
         validate_turn_attachments(&input.attachments).await?;
 
         let transport_for_rate_limits = transport.clone();
@@ -510,12 +518,14 @@ impl Engine for CodexEngine {
         let thread_id_for_turn = thread_id.clone();
         let runtime_for_turn = runtime.clone();
         let input_for_turn = input.clone();
+        let plan_mode_activation_for_turn = plan_mode_activation;
         let turn_task = tokio::spawn(async move {
             request_turn_start(
                 transport_for_turn.as_ref(),
                 &thread_id_for_turn,
                 runtime_for_turn,
                 input_for_turn,
+                plan_mode_activation_for_turn,
             )
             .await
         });
@@ -1924,6 +1934,30 @@ impl CodexEngine {
         state.protocol_diagnostics = Some(diagnostics);
     }
 
+    async fn resolve_turn_plan_mode_activation(&self, input: &TurnInput) -> PlanModeActivation {
+        if !input.plan_mode {
+            return PlanModeActivation::Disabled;
+        }
+
+        let cached_diagnostics = {
+            let state = self.state.lock().await;
+            state.protocol_diagnostics.clone()
+        };
+
+        if let Some(diagnostics) = cached_diagnostics.as_ref() {
+            if !diagnostics.stale {
+                if let Some(activation) = plan_mode_activation_from_diagnostics(Some(diagnostics)) {
+                    return activation;
+                }
+            }
+        }
+
+        let refreshed_diagnostics = self.protocol_diagnostics_snapshot().await;
+        plan_mode_activation_from_diagnostics(refreshed_diagnostics.as_ref())
+            .or_else(|| plan_mode_activation_from_diagnostics(cached_diagnostics.as_ref()))
+            .unwrap_or(PlanModeActivation::NativeCollaboration)
+    }
+
     async fn unsupported_external_auth_tokens_message(&self) -> Option<String> {
         let state = self.state.lock().await;
         let auth_mode = state
@@ -2894,13 +2928,52 @@ async fn request_turn_start(
     thread_id: &str,
     runtime: Option<ThreadRuntime>,
     input: TurnInput,
+    plan_mode_activation: PlanModeActivation,
 ) -> anyhow::Result<serde_json::Value> {
     let runtime_ref = runtime.as_ref();
+    let attempts_native_plan_mode =
+        should_attempt_native_plan_mode(plan_mode_activation, runtime_ref);
 
-    let params = build_turn_start_params(thread_id, runtime_ref, &input).await?;
-    request_with_fallback(transport, TURN_START_METHODS, params, TURN_REQUEST_TIMEOUT)
-        .await
-        .context("codex turn/start request failed")
+    let primary_params =
+        build_turn_start_params(thread_id, runtime_ref, &input, plan_mode_activation).await?;
+    match request_with_fallback(
+        transport,
+        TURN_START_METHODS,
+        primary_params,
+        TURN_REQUEST_TIMEOUT,
+    )
+    .await
+    {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            if !input.plan_mode
+                || !attempts_native_plan_mode
+                || !is_plan_mode_protocol_error(&error.to_string())
+            {
+                return Err(error).context("codex turn/start request failed");
+            }
+
+            log::warn!(
+                "native codex plan mode rejected by app-server; retrying with prompt-guided fallback: {error}"
+            );
+
+            let fallback_params = build_turn_start_params(
+                thread_id,
+                runtime_ref,
+                &input,
+                PlanModeActivation::PromptPrefix,
+            )
+            .await?;
+            request_with_fallback(
+                transport,
+                TURN_START_METHODS,
+                fallback_params,
+                TURN_REQUEST_TIMEOUT,
+            )
+            .await
+            .context("codex turn/start request failed after plan-mode fallback")
+        }
+    }
 }
 
 async fn request_turn_steer(
@@ -2912,7 +2985,7 @@ async fn request_turn_steer(
     let params = serde_json::json!({
       "threadId": thread_id,
       "expectedTurnId": expected_turn_id,
-      "input": build_turn_input_items(input).await?,
+      "input": build_turn_input_items(input, input.plan_mode).await?,
     });
 
     request_with_fallback(transport, TURN_STEER_METHODS, params, DEFAULT_TIMEOUT)
@@ -2924,10 +2997,17 @@ async fn build_turn_start_params(
     thread_id: &str,
     runtime: Option<&ThreadRuntime>,
     input: &TurnInput,
+    plan_mode_activation: PlanModeActivation,
 ) -> anyhow::Result<serde_json::Value> {
+    let use_native_plan_mode = should_attempt_native_plan_mode(plan_mode_activation, runtime);
     let mut turn_params = serde_json::json!({
       "threadId": thread_id,
-      "input": build_turn_input_items(input).await?,
+      "input": build_turn_input_items(
+          input,
+          matches!(plan_mode_activation, PlanModeActivation::PromptPrefix)
+              || (input.plan_mode && !use_native_plan_mode),
+      )
+      .await?,
     });
 
     if let Some(runtime) = runtime {
@@ -2966,13 +3046,25 @@ async fn build_turn_start_params(
             if let Some(output_schema) = runtime.output_schema.as_ref() {
                 params.insert("outputSchema".to_string(), output_schema.clone());
             }
+            if use_native_plan_mode {
+                if let Some(collaboration_mode) = plan_mode_protocol_payload(runtime) {
+                    params.insert("collaborationMode".to_string(), collaboration_mode);
+                    params.insert(
+                        "summary".to_string(),
+                        serde_json::Value::String("detailed".to_string()),
+                    );
+                }
+            }
         }
     }
 
     Ok(turn_params)
 }
 
-async fn build_turn_input_items(input: &TurnInput) -> anyhow::Result<Vec<serde_json::Value>> {
+async fn build_turn_input_items(
+    input: &TurnInput,
+    force_plan_prompt_prefix: bool,
+) -> anyhow::Result<Vec<serde_json::Value>> {
     let base_items = if input.input_items.is_empty() {
         vec![TurnInputItem::Text {
             text: input.message.clone(),
@@ -2981,7 +3073,7 @@ async fn build_turn_input_items(input: &TurnInput) -> anyhow::Result<Vec<serde_j
         input.input_items.clone()
     };
 
-    let text_items = apply_plan_prompt_prefix(base_items, input.plan_mode);
+    let text_items = apply_plan_prompt_prefix(base_items, force_plan_prompt_prefix);
     let mut items = Vec::with_capacity(text_items.len() + input.attachments.len());
     for item in text_items {
         match item {
@@ -3037,6 +3129,73 @@ async fn build_turn_input_items(input: &TurnInput) -> anyhow::Result<Vec<serde_j
     Ok(items)
 }
 
+fn should_attempt_native_plan_mode(
+    plan_mode_activation: PlanModeActivation,
+    runtime: Option<&ThreadRuntime>,
+) -> bool {
+    matches!(
+        plan_mode_activation,
+        PlanModeActivation::NativeCollaboration
+    ) && runtime
+        .map(|runtime| !runtime.model_id.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn plan_mode_protocol_payload(runtime: &ThreadRuntime) -> Option<serde_json::Value> {
+    if runtime.model_id.trim().is_empty() {
+        return None;
+    }
+
+    let mut settings = serde_json::Map::new();
+    settings.insert(
+        "model".to_string(),
+        serde_json::Value::String(runtime.model_id.clone()),
+    );
+    if let Some(effort) = runtime.reasoning_effort.as_ref() {
+        settings.insert(
+            "reasoning_effort".to_string(),
+            serde_json::Value::String(effort.clone()),
+        );
+    }
+
+    Some(serde_json::json!({
+      "mode": "plan",
+      "settings": settings,
+    }))
+}
+
+fn plan_mode_activation_from_diagnostics(
+    diagnostics: Option<&CodexProtocolDiagnosticsDto>,
+) -> Option<PlanModeActivation> {
+    let diagnostics = diagnostics?;
+    let advertises_plan = diagnostics
+        .collaboration_modes
+        .iter()
+        .any(|mode| mode.eq_ignore_ascii_case("plan"));
+    let availability = diagnostics
+        .method_availability
+        .iter()
+        .find(|entry| entry.method == "collaborationMode/list")
+        .map(|entry| entry.status.as_str());
+
+    match availability {
+        Some("available") => Some(if advertises_plan {
+            PlanModeActivation::NativeCollaboration
+        } else {
+            PlanModeActivation::PromptPrefix
+        }),
+        Some("unsupported") => Some(PlanModeActivation::PromptPrefix),
+        Some("error") => None,
+        Some(_) => None,
+        None if !diagnostics.collaboration_modes.is_empty() => Some(if advertises_plan {
+            PlanModeActivation::NativeCollaboration
+        } else {
+            PlanModeActivation::PromptPrefix
+        }),
+        None => None,
+    }
+}
+
 fn apply_plan_prompt_prefix(items: Vec<TurnInputItem>, include_prefix: bool) -> Vec<TurnInputItem> {
     if !include_prefix {
         return items;
@@ -3069,6 +3228,14 @@ fn apply_plan_prompt_prefix(items: Vec<TurnInputItem>, include_prefix: bool) -> 
     }
 
     prefixed
+}
+
+fn is_plan_mode_protocol_error(error: &str) -> bool {
+    let value = error.to_lowercase();
+    value.contains("collaborationmode")
+        || value.contains("collaboration_mode")
+        || value.contains("unknown field `collaboration")
+        || (value.contains("unknown field") && value.contains("plan"))
 }
 
 async fn validate_turn_attachments(attachments: &[TurnAttachment]) -> anyhow::Result<()> {
@@ -5392,7 +5559,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_turn_start_params_uses_prompt_guided_plan_mode_for_codex() {
+    async fn build_turn_start_params_uses_native_plan_mode_for_codex_when_available() {
         let runtime = ThreadRuntime {
             cwd: "/tmp/workspace".to_string(),
             model_id: "gpt-5.4".to_string(),
@@ -5416,9 +5583,73 @@ mod tests {
             }],
         };
 
-        let params = build_turn_start_params("thread-123", Some(&runtime), &input)
-            .await
-            .expect("turn/start params");
+        let params = build_turn_start_params(
+            "thread-123",
+            Some(&runtime),
+            &input,
+            PlanModeActivation::NativeCollaboration,
+        )
+        .await
+        .expect("turn/start params");
+
+        assert_eq!(
+            params.get("collaborationMode"),
+            Some(&json!({
+                "mode": "plan",
+                "settings": {
+                    "model": "gpt-5.4",
+                    "reasoning_effort": "medium",
+                }
+            }))
+        );
+        assert_eq!(params.get("summary"), Some(&json!("detailed")));
+
+        let payload = params
+            .get("input")
+            .and_then(Value::as_array)
+            .expect("input array");
+        assert_eq!(payload.len(), 1);
+        assert_eq!(payload[0].get("type").and_then(Value::as_str), Some("text"));
+        let text = payload[0]
+            .get("text")
+            .and_then(Value::as_str)
+            .expect("text payload");
+        assert_eq!(text, "Inspect the repo first");
+    }
+
+    #[tokio::test]
+    async fn build_turn_start_params_uses_prompt_fallback_when_plan_mode_is_not_native() {
+        let runtime = ThreadRuntime {
+            cwd: "/tmp/workspace".to_string(),
+            model_id: "gpt-5.4".to_string(),
+            approval_policy: json!("on-request"),
+            sandbox_policy: json!({
+                "type": "workspaceWrite",
+                "writableRoots": ["/tmp/workspace"],
+                "networkAccess": false,
+            }),
+            reasoning_effort: Some("medium".to_string()),
+            service_tier: Some("fast".to_string()),
+            personality: Some("friendly".to_string()),
+            output_schema: Some(json!({"type":"object"})),
+        };
+        let input = TurnInput {
+            message: "Inspect the repo first".to_string(),
+            attachments: Vec::new(),
+            plan_mode: true,
+            input_items: vec![TurnInputItem::Text {
+                text: "Inspect the repo first".to_string(),
+            }],
+        };
+
+        let params = build_turn_start_params(
+            "thread-123",
+            Some(&runtime),
+            &input,
+            PlanModeActivation::PromptPrefix,
+        )
+        .await
+        .expect("turn/start params");
 
         assert_eq!(params.get("collaborationMode"), None);
         assert_eq!(params.get("summary"), None);
@@ -5427,8 +5658,6 @@ mod tests {
             .get("input")
             .and_then(Value::as_array)
             .expect("input array");
-        assert_eq!(payload.len(), 1);
-        assert_eq!(payload[0].get("type").and_then(Value::as_str), Some("text"));
         let text = payload[0]
             .get("text")
             .and_then(Value::as_str)
@@ -5448,9 +5677,10 @@ mod tests {
             }],
         };
 
-        let params = build_turn_start_params("thread-123", None, &input)
-            .await
-            .expect("turn/start params");
+        let params =
+            build_turn_start_params("thread-123", None, &input, PlanModeActivation::Disabled)
+                .await
+                .expect("turn/start params");
 
         assert_eq!(params.get("collaborationMode"), None);
         assert_eq!(params.get("summary"), None);
@@ -5462,6 +5692,70 @@ mod tests {
         assert_eq!(
             payload[0].get("text").and_then(Value::as_str),
             Some("Inspect the repo first")
+        );
+    }
+
+    #[test]
+    fn plan_mode_activation_prefers_native_when_plan_is_advertised() {
+        let diagnostics = CodexProtocolDiagnosticsDto {
+            method_availability: vec![CodexMethodAvailabilityDto {
+                method: "collaborationMode/list".to_string(),
+                status: "available".to_string(),
+                detail: None,
+            }],
+            collaboration_modes: vec!["default".to_string(), "plan".to_string()],
+            experimental_features: Vec::new(),
+            apps: Vec::new(),
+            skills: Vec::new(),
+            plugin_marketplaces: Vec::new(),
+            mcp_servers: Vec::new(),
+            account: None,
+            config: None,
+            last_config_warning: None,
+            last_account_login: None,
+            last_mcp_oauth: None,
+            last_thread_realtime: None,
+            last_windows_sandbox_setup: None,
+            last_windows_world_writable_warning: None,
+            fetched_at: None,
+            stale: false,
+        };
+
+        assert_eq!(
+            plan_mode_activation_from_diagnostics(Some(&diagnostics)),
+            Some(PlanModeActivation::NativeCollaboration)
+        );
+    }
+
+    #[test]
+    fn plan_mode_activation_falls_back_when_plan_is_not_advertised() {
+        let diagnostics = CodexProtocolDiagnosticsDto {
+            method_availability: vec![CodexMethodAvailabilityDto {
+                method: "collaborationMode/list".to_string(),
+                status: "unsupported".to_string(),
+                detail: Some("not implemented".to_string()),
+            }],
+            collaboration_modes: Vec::new(),
+            experimental_features: Vec::new(),
+            apps: Vec::new(),
+            skills: Vec::new(),
+            plugin_marketplaces: Vec::new(),
+            mcp_servers: Vec::new(),
+            account: None,
+            config: None,
+            last_config_warning: None,
+            last_account_login: None,
+            last_mcp_oauth: None,
+            last_thread_realtime: None,
+            last_windows_sandbox_setup: None,
+            last_windows_world_writable_warning: None,
+            fetched_at: None,
+            stale: false,
+        };
+
+        assert_eq!(
+            plan_mode_activation_from_diagnostics(Some(&diagnostics)),
+            Some(PlanModeActivation::PromptPrefix)
         );
     }
 
