@@ -46,6 +46,8 @@ function formatModelName(name: string): string {
 
 function shortEffortLabel(t: TFunction<"chat">, effort: string): string {
   switch (effort) {
+    case "none": return t("modelPicker.effort.noneShort");
+    case "minimal": return t("modelPicker.effort.minimalShort");
     case "low": return t("modelPicker.effort.lowShort");
     case "medium": return t("modelPicker.effort.mediumShort");
     case "high": return t("modelPicker.effort.highShort");
@@ -56,6 +58,8 @@ function shortEffortLabel(t: TFunction<"chat">, effort: string): string {
 
 function effortDisplayLabel(t: TFunction<"chat">, effort: string): string {
   switch (effort) {
+    case "none": return t("modelPicker.effort.none");
+    case "minimal": return t("modelPicker.effort.minimal");
     case "low": return t("modelPicker.effort.low");
     case "medium": return t("modelPicker.effort.medium");
     case "high": return t("modelPicker.effort.high");
@@ -70,7 +74,39 @@ function resolveUpgradeName(
 ): string | null {
   if (!upgradeId) return null;
   const target = models.find((m) => m.id === upgradeId);
-  return target ? formatModelName(target.displayName) : null;
+  return formatModelName(target?.displayName ?? upgradeId);
+}
+
+function firstMeaningfulLine(value?: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const line = value
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .find((entry) => entry.length > 0);
+  return line && line.length > 0 ? line : null;
+}
+
+function resolveModelUpgradeHint(
+  t: TFunction<"chat">,
+  model: EngineModel,
+  models: EngineModel[],
+): string | null {
+  const explicitHint =
+    model.upgradeInfo?.upgradeCopy?.trim() ||
+    firstMeaningfulLine(model.upgradeInfo?.migrationMarkdown) ||
+    null;
+  if (explicitHint) {
+    return explicitHint;
+  }
+
+  const upgradeTarget = model.upgradeInfo?.model ?? model.upgrade;
+  const upgradeName = resolveUpgradeName(upgradeTarget, models);
+  if (!upgradeName) {
+    return null;
+  }
+  return t("modelPicker.upgradeAvailable", { model: upgradeName });
 }
 
 /* ── Component ── */
@@ -324,7 +360,11 @@ function ModelRow({
 }) {
   const { t } = useTranslation("chat");
   const upgradeName = resolveUpgradeName(model.upgrade, allModels);
+  const upgradeHint = resolveModelUpgradeHint(t, model, allModels);
+  const availabilityHint = model.availabilityNux?.message?.trim() || null;
   const efforts = model.supportedReasoningEfforts ?? [];
+  const supportsImages = model.inputModalities?.includes("image") ?? false;
+  const supportsPersonality = model.supportsPersonality === true;
 
   return (
     <div className={`mp-model${isSelected ? " mp-model-selected" : ""}`}>
@@ -344,6 +384,27 @@ function ModelRow({
           </div>
           {model.description && (
             <span className="mp-model-desc">{model.description}</span>
+          )}
+          <div className="mp-model-badges">
+            {supportsImages ? (
+              <span className="mp-model-badge">{t("modelPicker.modalities.image")}</span>
+            ) : (
+              <span className="mp-model-badge">{t("modelPicker.modalities.textOnly")}</span>
+            )}
+            {supportsPersonality && (
+              <span className="mp-model-badge">{t("modelPicker.supportsPersonality")}</span>
+            )}
+            {upgradeName && !upgradeHint && (
+              <span className="mp-model-badge">
+                {t("modelPicker.upgradeAvailable", { model: upgradeName })}
+              </span>
+            )}
+          </div>
+          {upgradeHint && (
+            <span className="mp-model-upgrade">{upgradeHint}</span>
+          )}
+          {availabilityHint && (
+            <span className="mp-model-upgrade">{availabilityHint}</span>
           )}
         </div>
         {isSelected && (

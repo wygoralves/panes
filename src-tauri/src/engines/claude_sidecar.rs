@@ -671,6 +671,10 @@ impl Engine for ClaudeSidecarEngine {
                 hidden: false,
                 is_default: false,
                 upgrade: None,
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string(), "image".to_string()],
+                supports_personality: false,
                 default_reasoning_effort: "high".to_string(),
                 supported_reasoning_efforts: vec![
                     ReasoningEffortOption {
@@ -694,6 +698,10 @@ impl Engine for ClaudeSidecarEngine {
                 hidden: false,
                 is_default: true,
                 upgrade: Some("claude-opus-4-6".to_string()),
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string(), "image".to_string()],
+                supports_personality: false,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![
                     ReasoningEffortOption {
@@ -717,6 +725,10 @@ impl Engine for ClaudeSidecarEngine {
                 hidden: false,
                 is_default: false,
                 upgrade: Some("claude-sonnet-4-6".to_string()),
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string(), "image".to_string()],
+                supports_personality: false,
                 default_reasoning_effort: "low".to_string(),
                 supported_reasoning_efforts: vec![
                     ReasoningEffortOption {

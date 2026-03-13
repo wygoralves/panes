@@ -6,11 +6,21 @@
     "legacy": "Legacy ({{count}})",
     "thinking": "Thinking",
     "default": "default",
+    "supportsPersonality": "Personality",
+    "upgradeAvailable": "Upgrade available: {{model}}",
+    "modalities": {
+      "image": "Vision",
+      "textOnly": "Text only"
+    },
     "effort": {
+      "none": "None",
+      "minimal": "Minimal",
       "low": "Low",
       "medium": "Medium",
       "high": "High",
       "xhigh": "Max",
+      "noneShort": "None",
+      "minimalShort": "Min",
       "lowShort": "Lo",
       "mediumShort": "Med",
       "highShort": "Hi",

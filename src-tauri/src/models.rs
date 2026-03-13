@@ -229,8 +229,34 @@ pub struct EngineModelDto {
     pub hidden: bool,
     pub is_default: bool,
     pub upgrade: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub availability_nux: Option<EngineModelAvailabilityNuxDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgrade_info: Option<EngineModelUpgradeInfoDto>,
+    #[serde(default)]
+    pub input_modalities: Vec<String>,
+    #[serde(default)]
+    pub supports_personality: bool,
     pub default_reasoning_effort: String,
     pub supported_reasoning_efforts: Vec<ReasoningEffortOptionDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineModelAvailabilityNuxDto {
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineModelUpgradeInfoDto {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgrade_copy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_link: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub migration_markdown: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

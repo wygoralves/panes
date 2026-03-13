@@ -28,9 +28,9 @@ use crate::{process_utils, runtime_env};
 
 use super::{
     codex_event_mapper::TurnEventMapper, codex_protocol::IncomingMessage,
-    codex_transport::CodexTransport, ActionResult, Engine, EngineEvent, EngineThread, ModelInfo,
-    ReasoningEffortOption, SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment,
-    TurnCompletionStatus, TurnInput,
+    codex_transport::CodexTransport, ActionResult, Engine, EngineEvent, EngineThread,
+    ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo, ReasoningEffortOption, SandboxPolicy,
+    ThreadScope, ThreadSyncSnapshot, TurnAttachment, TurnCompletionStatus, TurnInput,
 };
 
 const INITIALIZE_METHODS: &[&str] = &["initialize"];
@@ -90,6 +90,7 @@ struct CodexState {
     approval_requests: HashMap<String, PendingApproval>,
     active_turn_ids: HashMap<String, String>,
     thread_runtimes: HashMap<String, ThreadRuntime>,
+    runtime_model_cache: Option<Vec<ModelInfo>>,
     sandbox_probe_completed: bool,
     force_external_sandbox: bool,
     protocol_diagnostics: Option<CodexProtocolDiagnosticsDto>,
@@ -155,12 +156,53 @@ impl Engine for CodexEngine {
     fn models(&self) -> Vec<ModelInfo> {
         vec![
             ModelInfo {
-                id: "gpt-5.3-codex".to_string(),
-                display_name: "gpt-5.3-codex".to_string(),
+                id: "gpt-5.4".to_string(),
+                display_name: "gpt-5.4".to_string(),
                 description: "Latest frontier agentic coding model.".to_string(),
                 hidden: false,
                 is_default: true,
                 upgrade: None,
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string(), "image".to_string()],
+                supports_personality: true,
+                default_reasoning_effort: "medium".to_string(),
+                supported_reasoning_efforts: vec![
+                    ReasoningEffortOption {
+                        reasoning_effort: "low".to_string(),
+                        description: "Fast responses with lighter reasoning".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "medium".to_string(),
+                        description: "Balances speed and reasoning depth for everyday tasks"
+                            .to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "high".to_string(),
+                        description: "Greater reasoning depth for complex problems".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "xhigh".to_string(),
+                        description: "Extra high reasoning depth for complex problems".to_string(),
+                    },
+                ],
+            },
+            ModelInfo {
+                id: "gpt-5.3-codex".to_string(),
+                display_name: "gpt-5.3-codex".to_string(),
+                description: "Frontier Codex-optimized agentic coding model.".to_string(),
+                hidden: false,
+                is_default: false,
+                upgrade: Some("gpt-5.4".to_string()),
+                availability_nux: None,
+                upgrade_info: Some(ModelUpgradeInfo {
+                    model: "gpt-5.4".to_string(),
+                    upgrade_copy: None,
+                    model_link: None,
+                    migration_markdown: None,
+                }),
+                input_modalities: vec!["text".to_string(), "image".to_string()],
+                supports_personality: true,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![
                     ReasoningEffortOption {
@@ -182,12 +224,53 @@ impl Engine for CodexEngine {
                 ],
             },
             ModelInfo {
+                id: "gpt-5.3-codex-spark".to_string(),
+                display_name: "GPT-5.3-Codex-Spark".to_string(),
+                description: "Ultra-fast coding model.".to_string(),
+                hidden: false,
+                is_default: false,
+                upgrade: None,
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string()],
+                supports_personality: true,
+                default_reasoning_effort: "high".to_string(),
+                supported_reasoning_efforts: vec![
+                    ReasoningEffortOption {
+                        reasoning_effort: "low".to_string(),
+                        description: "Fast responses with lighter reasoning".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "medium".to_string(),
+                        description: "Balances speed and reasoning depth for everyday tasks"
+                            .to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "high".to_string(),
+                        description: "Greater reasoning depth for complex problems".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "xhigh".to_string(),
+                        description: "Extra high reasoning depth for complex problems".to_string(),
+                    },
+                ],
+            },
+            ModelInfo {
                 id: "gpt-5.1-codex-mini".to_string(),
                 display_name: "gpt-5.1-codex-mini".to_string(),
                 description: "Optimized for codex. Cheaper, faster, but less capable.".to_string(),
                 hidden: false,
                 is_default: false,
-                upgrade: Some("gpt-5.3-codex".to_string()),
+                upgrade: Some("gpt-5.4".to_string()),
+                availability_nux: None,
+                upgrade_info: Some(ModelUpgradeInfo {
+                    model: "gpt-5.4".to_string(),
+                    upgrade_copy: None,
+                    model_link: None,
+                    migration_markdown: None,
+                }),
+                input_modalities: vec!["text".to_string(), "image".to_string()],
+                supports_personality: false,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![
                     ReasoningEffortOption {
@@ -796,13 +879,22 @@ impl CodexEngine {
 
     pub async fn list_models_runtime(&self) -> Vec<ModelInfo> {
         match self.fetch_models_from_server().await {
-            Ok(models) if !models.is_empty() => models,
-            Ok(_) => self.models(),
+            Ok(models) if !models.is_empty() => {
+                self.store_runtime_model_cache(models.clone()).await;
+                models
+            }
+            Ok(_) => self.runtime_model_fallback().await,
             Err(error) => {
                 log::warn!("failed to load codex models via model/list, using fallback: {error}");
-                self.models()
+                self.runtime_model_fallback().await
             }
         }
+    }
+
+    pub async fn runtime_model_fallback(&self) -> Vec<ModelInfo> {
+        self.runtime_model_cache_snapshot()
+            .await
+            .unwrap_or_else(|| self.models())
     }
 
     pub async fn uses_external_sandbox(&self) -> bool {
@@ -947,7 +1039,7 @@ impl CodexEngine {
 
     async fn fetch_models_from_server(&self) -> anyhow::Result<Vec<ModelInfo>> {
         if !self.is_available().await {
-            return Ok(self.models());
+            return Ok(Vec::new());
         }
 
         let transport = self.ensure_ready_transport().await?;
@@ -1524,6 +1616,16 @@ impl CodexEngine {
             .insert(engine_thread_id.to_string(), runtime);
     }
 
+    async fn store_runtime_model_cache(&self, models: Vec<ModelInfo>) {
+        let mut state = self.state.lock().await;
+        state.runtime_model_cache = Some(models);
+    }
+
+    async fn runtime_model_cache_snapshot(&self) -> Option<Vec<ModelInfo>> {
+        let state = self.state.lock().await;
+        state.runtime_model_cache.clone()
+    }
+
     async fn thread_runtime(&self, engine_thread_id: &str) -> Option<ThreadRuntime> {
         let state = self.state.lock().await;
         state.thread_runtimes.get(engine_thread_id).cloned()
@@ -1578,6 +1680,14 @@ struct CodexModel {
     #[serde(default)]
     upgrade: Option<String>,
     #[serde(default)]
+    availability_nux: Option<CodexModelAvailabilityNux>,
+    #[serde(default)]
+    upgrade_info: Option<CodexModelUpgradeInfo>,
+    #[serde(default)]
+    input_modalities: Vec<String>,
+    #[serde(default)]
+    supports_personality: Option<bool>,
+    #[serde(default)]
     default_reasoning_effort: Option<String>,
     #[serde(default)]
     supported_reasoning_efforts: Vec<CodexReasoningEffortOption>,
@@ -1590,6 +1700,24 @@ struct CodexReasoningEffortOption {
     description: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexModelAvailabilityNux {
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexModelUpgradeInfo {
+    model: String,
+    #[serde(default)]
+    upgrade_copy: Option<String>,
+    #[serde(default)]
+    model_link: Option<String>,
+    #[serde(default)]
+    migration_markdown: Option<String>,
+}
+
 fn map_codex_model(value: CodexModel) -> ModelInfo {
     ModelInfo {
         id: value.id.clone(),
@@ -1598,6 +1726,21 @@ fn map_codex_model(value: CodexModel) -> ModelInfo {
         hidden: value.hidden.unwrap_or(false),
         is_default: value.is_default.unwrap_or(false),
         upgrade: value.upgrade,
+        availability_nux: value
+            .availability_nux
+            .map(|nux| ModelAvailabilityNux { message: nux.message }),
+        upgrade_info: value.upgrade_info.map(|info| ModelUpgradeInfo {
+            model: info.model,
+            upgrade_copy: info.upgrade_copy,
+            model_link: info.model_link,
+            migration_markdown: info.migration_markdown,
+        }),
+        input_modalities: if value.input_modalities.is_empty() {
+            vec!["text".to_string(), "image".to_string()]
+        } else {
+            value.input_modalities
+        },
+        supports_personality: value.supports_personality.unwrap_or(false),
         default_reasoning_effort: value
             .default_reasoning_effort
             .unwrap_or_else(|| "medium".to_string()),
@@ -3714,6 +3857,43 @@ mod tests {
         assert!(locked.approval_requests.is_empty());
     }
 
+    #[tokio::test]
+    async fn runtime_model_fallback_prefers_cached_runtime_models() {
+        let engine = CodexEngine::default();
+        let cached_models = vec![ModelInfo {
+            id: "cached-model".to_string(),
+            display_name: "cached-model".to_string(),
+            description: "Runtime cached model".to_string(),
+            hidden: false,
+            is_default: true,
+            upgrade: None,
+            availability_nux: None,
+            upgrade_info: None,
+            input_modalities: vec!["text".to_string()],
+            supports_personality: true,
+            default_reasoning_effort: "minimal".to_string(),
+            supported_reasoning_efforts: vec![ReasoningEffortOption {
+                reasoning_effort: "minimal".to_string(),
+                description: "Fastest".to_string(),
+            }],
+        }];
+
+        engine.store_runtime_model_cache(cached_models.clone()).await;
+
+        assert_eq!(
+            engine
+                .runtime_model_fallback()
+                .await
+                .into_iter()
+                .map(|model| model.id)
+                .collect::<Vec<_>>(),
+            cached_models
+                .into_iter()
+                .map(|model| model.id)
+                .collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn event_indicates_auth_failure_for_top_level_error() {
         let event = EngineEvent::Error {
@@ -3802,5 +3982,82 @@ mod tests {
 
         assert!(details.contains("missing from PATH on Windows"));
         assert!(details.contains("node"));
+    }
+
+    #[test]
+    fn map_codex_model_preserves_runtime_metadata() {
+        let model = CodexModel {
+            id: "gpt-5.4".to_string(),
+            display_name: Some("gpt-5.4".to_string()),
+            description: Some("Latest frontier agentic coding model.".to_string()),
+            hidden: Some(false),
+            is_default: Some(true),
+            upgrade: Some("gpt-5.5".to_string()),
+            availability_nux: Some(CodexModelAvailabilityNux {
+                message: "Try this model for your current plan.".to_string(),
+            }),
+            upgrade_info: Some(CodexModelUpgradeInfo {
+                model: "gpt-5.5".to_string(),
+                upgrade_copy: Some("Upgrade available".to_string()),
+                model_link: Some("https://example.com".to_string()),
+                migration_markdown: Some("Introducing GPT-5.5".to_string()),
+            }),
+            input_modalities: vec!["text".to_string(), "image".to_string()],
+            supports_personality: Some(true),
+            default_reasoning_effort: Some("minimal".to_string()),
+            supported_reasoning_efforts: vec![CodexReasoningEffortOption {
+                reasoning_effort: "minimal".to_string(),
+                description: "Fastest responses".to_string(),
+            }],
+        };
+
+        let mapped = map_codex_model(model);
+
+        assert_eq!(mapped.upgrade.as_deref(), Some("gpt-5.5"));
+        assert_eq!(
+            mapped.availability_nux.as_ref().map(|value| value.message.as_str()),
+            Some("Try this model for your current plan.")
+        );
+        assert_eq!(
+            mapped.upgrade_info.as_ref().map(|value| value.model.as_str()),
+            Some("gpt-5.5")
+        );
+        assert_eq!(
+            mapped
+                .upgrade_info
+                .as_ref()
+                .and_then(|value| value.upgrade_copy.as_deref()),
+            Some("Upgrade available")
+        );
+        assert_eq!(mapped.input_modalities, vec!["text", "image"]);
+        assert!(mapped.supports_personality);
+        assert_eq!(mapped.default_reasoning_effort, "minimal");
+        assert_eq!(
+            mapped.supported_reasoning_efforts[0].reasoning_effort,
+            "minimal"
+        );
+    }
+
+    #[test]
+    fn map_codex_model_defaults_modalities_when_runtime_omits_them() {
+        let model = CodexModel {
+            id: "gpt-5.4".to_string(),
+            display_name: None,
+            description: None,
+            hidden: None,
+            is_default: None,
+            upgrade: None,
+            availability_nux: None,
+            upgrade_info: None,
+            input_modalities: Vec::new(),
+            supports_personality: None,
+            default_reasoning_effort: None,
+            supported_reasoning_efforts: Vec::new(),
+        };
+
+        let mapped = map_codex_model(model);
+
+        assert_eq!(mapped.input_modalities, vec!["text", "image"]);
+        assert!(!mapped.supports_personality);
     }
 }

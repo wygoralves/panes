@@ -6386,6 +6386,33 @@ button, input, textarea, select {
   white-space: nowrap;
 }
 
+.mp-model-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.mp-model-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-3);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.mp-model-upgrade {
+  font-size: 10px;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+
 .mp-model-check {
   flex-shrink: 0;
   color: var(--accent);

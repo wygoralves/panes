@@ -457,6 +457,10 @@ function formatReasoningEffortLabel(
     return "";
   }
   switch (effort.toLowerCase()) {
+    case "none":
+      return t("modelPicker.effort.none");
+    case "minimal":
+      return t("modelPicker.effort.minimal");
     case "low":
       return t("modelPicker.effort.low");
     case "medium":

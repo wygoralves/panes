@@ -6,11 +6,21 @@
     "legacy": "Legado ({{count}})",
     "thinking": "Raciocínio",
     "default": "padrão",
+    "supportsPersonality": "Personalidade",
+    "upgradeAvailable": "Upgrade disponível: {{model}}",
+    "modalities": {
+      "image": "Visão",
+      "textOnly": "Só texto"
+    },
     "effort": {
+      "none": "Nenhum",
+      "minimal": "Mínimo",
       "low": "Baixo",
       "medium": "Médio",
       "high": "Alto",
       "xhigh": "Máximo",
+      "noneShort": "Nen",
+      "minimalShort": "Min",
       "lowShort": "Bx",
       "mediumShort": "Med",
       "highShort": "Alt",

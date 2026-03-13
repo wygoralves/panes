@@ -10,8 +10,8 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     engines::{claude_sidecar::ClaudeSidecarEngine, codex::CodexEngine},
     models::{
-        EngineCapabilitiesDto, EngineHealthDto, EngineInfoDto, EngineModelDto,
-        ReasoningEffortOptionDto, ThreadDto,
+        EngineCapabilitiesDto, EngineHealthDto, EngineInfoDto, EngineModelAvailabilityNuxDto,
+        EngineModelDto, EngineModelUpgradeInfoDto, ReasoningEffortOptionDto, ThreadDto,
     },
 };
 
@@ -54,6 +54,10 @@ pub struct ModelInfo {
     pub hidden: bool,
     pub is_default: bool,
     pub upgrade: Option<String>,
+    pub availability_nux: Option<ModelAvailabilityNux>,
+    pub upgrade_info: Option<ModelUpgradeInfo>,
+    pub input_modalities: Vec<String>,
+    pub supports_personality: bool,
     pub default_reasoning_effort: String,
     pub supported_reasoning_efforts: Vec<ReasoningEffortOption>,
 }
@@ -62,6 +66,19 @@ pub struct ModelInfo {
 pub struct ReasoningEffortOption {
     pub reasoning_effort: String,
     pub description: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelAvailabilityNux {
+    pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelUpgradeInfo {
+    pub model: String,
+    pub upgrade_copy: Option<String>,
+    pub model_link: Option<String>,
+    pub migration_markdown: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -277,9 +294,9 @@ impl EngineManager {
                 Ok(models) => models,
                 Err(_) => {
                     log::warn!(
-                    "timed out loading codex runtime models; falling back to static model catalog"
-                );
-                    self.codex.models()
+                        "timed out loading codex runtime models; falling back to cached or static model catalog"
+                    );
+                    self.codex.runtime_model_fallback().await
                 }
             };
         let claude_models = self.claude.models();
@@ -496,6 +513,17 @@ fn map_model_info(model: ModelInfo) -> EngineModelDto {
         hidden: model.hidden,
         is_default: model.is_default,
         upgrade: model.upgrade,
+        availability_nux: model.availability_nux.map(|value| EngineModelAvailabilityNuxDto {
+            message: value.message,
+        }),
+        upgrade_info: model.upgrade_info.map(|value| EngineModelUpgradeInfoDto {
+            model: value.model,
+            upgrade_copy: value.upgrade_copy,
+            model_link: value.model_link,
+            migration_markdown: value.migration_markdown,
+        }),
+        input_modalities: model.input_modalities,
+        supports_personality: model.supports_personality,
         default_reasoning_effort: model.default_reasoning_effort,
         supported_reasoning_efforts: model
             .supported_reasoning_efforts

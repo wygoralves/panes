@@ -327,8 +327,23 @@ export interface EngineModel {
   hidden: boolean;
   isDefault: boolean;
   upgrade?: string;
+  availabilityNux?: EngineModelAvailabilityNux;
+  upgradeInfo?: EngineModelUpgradeInfo;
+  inputModalities: string[];
+  supportsPersonality: boolean;
   defaultReasoningEffort: string;
   supportedReasoningEfforts: ReasoningEffortOption[];
+}
+
+export interface EngineModelAvailabilityNux {
+  message: string;
+}
+
+export interface EngineModelUpgradeInfo {
+  model: string;
+  upgradeCopy?: string;
+  modelLink?: string;
+  migrationMarkdown?: string;
 }
 
 export interface ReasoningEffortOption {
