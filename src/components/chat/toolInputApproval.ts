@@ -62,6 +62,12 @@ export function requiresCustomApprovalPayload(details?: Record<string, unknown>)
 export function defaultAdvancedApprovalPayload(
   details?: Record<string, unknown>
 ): ApprovalResponse {
+  if (isRequestUserInputApproval(details)) {
+    return {
+      answers: {},
+    };
+  }
+
   if (isDynamicToolCallApproval(details)) {
     return {
       success: true,

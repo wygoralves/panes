@@ -10,6 +10,8 @@ import {
 interface Props {
   details: Record<string, unknown>;
   onSubmit: (response: ApprovalResponse) => void;
+  onCancel?: () => void;
+  onDecline?: () => void;
 }
 
 function buildQuestionSignature(questions: ReturnType<typeof parseToolInputQuestions>): string {
@@ -25,7 +27,7 @@ function formatOptionLabel(label: string): string {
   return label.replace(/\s*\((recommended|recomendado)\)\s*$/i, "").trim();
 }
 
-export function ToolInputQuestionnaire({ details, onSubmit }: Props) {
+export function ToolInputQuestionnaire({ details, onSubmit, onCancel, onDecline }: Props) {
   const { t } = useTranslation("chat");
   const questions = useMemo(() => parseToolInputQuestions(details), [details]);
   const questionSignature = useMemo(() => buildQuestionSignature(questions), [questions]);
@@ -142,17 +144,35 @@ export function ToolInputQuestionnaire({ details, onSubmit }: Props) {
       </div>
 
       <div className="chat-tool-input-actions">
-        {currentQuestionIndex > 0 ? (
-          <button
-            type="button"
-            className="chat-tool-input-btn-secondary"
-            onClick={() => setCurrentQuestionIndex((current) => Math.max(current - 1, 0))}
-          >
-            {t("messageBlocks.toolInput.previousQuestion")}
-          </button>
-        ) : (
-          <span />
-        )}
+        <div style={{ display: "flex", gap: 8 }}>
+          {onCancel ? (
+            <button
+              type="button"
+              className="chat-tool-input-btn-secondary"
+              onClick={onCancel}
+            >
+              {t("panel.approvalActions.cancel")}
+            </button>
+          ) : null}
+          {onDecline ? (
+            <button
+              type="button"
+              className="chat-tool-input-btn-secondary"
+              onClick={onDecline}
+            >
+              {t("panel.approvalActions.deny")}
+            </button>
+          ) : null}
+          {currentQuestionIndex > 0 ? (
+            <button
+              type="button"
+              className="chat-tool-input-btn-secondary"
+              onClick={() => setCurrentQuestionIndex((current) => Math.max(current - 1, 0))}
+            >
+              {t("messageBlocks.toolInput.previousQuestion")}
+            </button>
+          ) : null}
+        </div>
 
         <button
           type="button"
