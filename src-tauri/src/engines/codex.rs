@@ -15,7 +15,7 @@ use serde::Deserialize;
 use tokio::{
     fs as tokio_fs,
     process::Command,
-    sync::{broadcast, mpsc, Mutex},
+    sync::{broadcast, mpsc, oneshot, Mutex},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -45,6 +45,7 @@ const THREAD_SET_NAME_METHODS: &[&str] = &["thread/name/set"];
 const THREAD_FORK_METHODS: &[&str] = &["thread/fork"];
 const THREAD_ROLLBACK_METHODS: &[&str] = &["thread/rollback"];
 const THREAD_COMPACT_START_METHODS: &[&str] = &["thread/compact/start"];
+const REVIEW_START_METHODS: &[&str] = &["review/start"];
 const EXPERIMENTAL_FEATURE_LIST_METHODS: &[&str] = &["experimentalFeature/list"];
 const COLLABORATION_MODE_LIST_METHODS: &[&str] = &["collaborationMode/list"];
 const SKILLS_LIST_METHODS: &[&str] = &["skills/list"];
@@ -165,6 +166,11 @@ pub struct CodexForkedThread {
     pub preview: Option<String>,
     pub raw_status: Option<String>,
     pub active_flags: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct CodexReviewStarted {
+    pub review_thread_id: String,
 }
 
 #[async_trait]
@@ -1052,6 +1058,342 @@ impl CodexEngine {
         .await
         .context("failed to start codex thread compaction")?;
 
+        Ok(())
+    }
+
+    pub async fn start_review(
+        &self,
+        source_engine_thread_id: &str,
+        target: serde_json::Value,
+        delivery: Option<&str>,
+        event_tx: mpsc::Sender<EngineEvent>,
+        cancellation: CancellationToken,
+        started_tx: oneshot::Sender<CodexReviewStarted>,
+    ) -> Result<(), anyhow::Error> {
+        let transport = self.ensure_ready_transport().await?;
+
+        let mut mapper = TurnEventMapper::default();
+        let mut subscription = transport.subscribe();
+        let source_thread_id = source_engine_thread_id.to_string();
+        let mut active_thread_id = source_thread_id.clone();
+        let requested_delivery = delivery.map(str::to_string);
+
+        let transport_for_rate_limits = transport.clone();
+        let rate_limits_task = tokio::spawn(async move {
+            request_with_fallback(
+                transport_for_rate_limits.as_ref(),
+                ACCOUNT_RATE_LIMITS_READ_METHODS,
+                serde_json::Value::Null,
+                Duration::from_secs(5),
+            )
+            .await
+        });
+
+        let transport_for_review = transport.clone();
+        let source_thread_id_for_review = source_thread_id.clone();
+        let target_for_review = target.clone();
+        let review_task = tokio::spawn(async move {
+            request_with_fallback(
+                transport_for_review.as_ref(),
+                REVIEW_START_METHODS,
+                serde_json::json!({
+                    "threadId": source_thread_id_for_review,
+                    "target": target_for_review,
+                    "delivery": requested_delivery,
+                }),
+                TURN_REQUEST_TIMEOUT,
+            )
+            .await
+        });
+
+        let mut review_task = review_task;
+        let mut rate_limits_task = rate_limits_task;
+        let mut rate_limits_done = false;
+        let mut turn_request_done = false;
+        let mut completion_seen = false;
+        let mut expected_turn_id: Option<String> = None;
+        let mut completion_last_progress_at: Option<Instant> = None;
+        let mut started_tx = Some(started_tx);
+
+        while !completion_seen || !turn_request_done {
+            tokio::select! {
+              response = &mut rate_limits_task, if !rate_limits_done => {
+                rate_limits_done = true;
+                match response {
+                  Ok(Ok(snapshot)) => {
+                    if let Some(event) = mapper.map_rate_limits_snapshot(&snapshot) {
+                      event_tx.send(event).await.ok();
+                    }
+                  }
+                  Ok(Err(error)) => {
+                    log::debug!("account/rateLimits/read unavailable: {error}");
+                  }
+                  Err(error) => {
+                    log::debug!("account/rateLimits/read task join failed: {error}");
+                  }
+                }
+              }
+              _ = cancellation.cancelled() => {
+                self
+                  .interrupt(&active_thread_id)
+                  .await
+                  .context("failed to interrupt codex review on cancellation")?;
+                return Ok(());
+              }
+              response = &mut review_task, if !turn_request_done => {
+                turn_request_done = true;
+                let result = match response {
+                  Ok(Ok(result)) => result,
+                  Ok(Err(error)) => {
+                    if is_auth_related_error(&error.to_string()) {
+                      self
+                        .invalidate_transport(
+                          "resetting codex transport after auth failure while starting review",
+                        )
+                        .await;
+                    }
+                    return Err(error).context("review/start request failed");
+                  }
+                  Err(error) => {
+                    return Err(anyhow::Error::from(error).context("review/start task join failed"));
+                  }
+                };
+
+                let review_thread_id = extract_any_string(&result, &["reviewThreadId", "review_thread_id"])
+                    .ok_or_else(|| anyhow::anyhow!("missing review thread id in review/start response"))?;
+                active_thread_id = review_thread_id.clone();
+                if let Some(started_tx) = started_tx.take() {
+                    let _ = started_tx.send(CodexReviewStarted {
+                        review_thread_id: review_thread_id.clone(),
+                    });
+                }
+
+                if let Some(turn_id) = extract_turn_id(&result) {
+                  if expected_turn_id.is_none() {
+                    expected_turn_id = Some(turn_id.clone());
+                  }
+                  self.set_active_turn(&active_thread_id, &turn_id).await;
+                }
+
+                for event in mapper.map_turn_result(&result) {
+                  if event_indicates_sandbox_denial(&event) {
+                    self.force_external_sandbox_for_thread(&active_thread_id).await;
+                  }
+                  if event_indicates_auth_failure(&event) {
+                    self
+                      .invalidate_transport(
+                        "resetting codex transport after auth failure during review result",
+                      )
+                      .await;
+                  }
+                  if matches!(event, EngineEvent::TurnCompleted { .. }) {
+                    completion_seen = true;
+                    self.clear_active_turn(&active_thread_id).await;
+                  }
+                  event_tx.send(event).await.ok();
+                }
+
+                if !completion_seen {
+                  completion_last_progress_at = Some(Instant::now());
+                }
+              }
+              incoming = subscription.recv() => {
+                match incoming {
+                  Ok(IncomingMessage::Notification { method, params }) => {
+                    if !belongs_to_thread(&params, &active_thread_id) {
+                      continue;
+                    }
+                    if !belongs_to_turn(&params, expected_turn_id.as_deref()) {
+                      continue;
+                    }
+
+                    let normalized_method = normalize_method(&method);
+                    if normalized_method == "turn/started" {
+                      if let Some(turn_id) = extract_turn_id(&params) {
+                        if expected_turn_id.is_none() {
+                          expected_turn_id = Some(turn_id.clone());
+                        }
+                        self.set_active_turn(&active_thread_id, &turn_id).await;
+                      }
+                    } else if normalized_method == "turn/completed" {
+                      self.clear_active_turn(&active_thread_id).await;
+                    }
+                    if turn_request_done && !completion_seen {
+                      completion_last_progress_at = Some(Instant::now());
+                    }
+
+                    let mapped_events = mapper.map_notification(&method, &params);
+                    if mapped_events.is_empty()
+                        && !is_known_codex_notification_method(&normalized_method)
+                    {
+                        log::debug!(
+                            "codex notification not mapped during review: method={method}, normalized={normalized_method}, params_keys={:?}",
+                            params.as_object().map(|object| object.keys().collect::<Vec<_>>())
+                        );
+                    }
+
+                    for event in mapped_events {
+                      if event_indicates_sandbox_denial(&event) {
+                        self.force_external_sandbox_for_thread(&active_thread_id).await;
+                      }
+                      if event_indicates_auth_failure(&event) {
+                        self
+                          .invalidate_transport(
+                            "resetting codex transport after auth failure during streamed review event",
+                          )
+                          .await;
+                      }
+                      if matches!(event, EngineEvent::TurnCompleted { .. }) {
+                        completion_seen = true;
+                        self.clear_active_turn(&active_thread_id).await;
+                      }
+                      event_tx.send(event).await.ok();
+                    }
+                  }
+                  Ok(IncomingMessage::Request { id, raw_id, method, params }) => {
+                    log::debug!(
+                      "codex review server request: method={method}, id={id}, raw_id={raw_id}, params_keys={:?}",
+                      params.as_object().map(|o| o.keys().collect::<Vec<_>>())
+                    );
+                    if !belongs_to_thread(&params, &active_thread_id) {
+                      log::warn!("codex review server request dropped by belongs_to_thread: method={method}");
+                      continue;
+                    }
+                    if !belongs_to_turn(&params, expected_turn_id.as_deref()) {
+                      log::warn!("codex review server request dropped by belongs_to_turn: method={method}");
+                      continue;
+                    }
+                    let normalized_method = normalize_method(&method);
+                    if method_signature(&method) == "accountchatgptauthtokensrefresh" {
+                        let reason = extract_any_string(&params, &["reason"])
+                            .unwrap_or_else(|| "unauthorized".to_string());
+                        let previous_account_id =
+                            extract_any_string(&params, &["previousAccountId", "previous_account_id"]);
+                        let message = match previous_account_id {
+                            Some(previous_account_id) => format!(
+                                "Codex requested ChatGPT token refresh for account `{previous_account_id}` after `{reason}`, but Panes does not manage chatgptAuthTokens authentication."
+                            ),
+                            None => format!(
+                                "Codex requested ChatGPT token refresh after `{reason}`, but Panes does not manage chatgptAuthTokens authentication."
+                            ),
+                        };
+                        log::warn!(
+                            "codex requested external ChatGPT token refresh during review, but Panes does not manage chatgptAuthTokens mode"
+                        );
+                        event_tx
+                            .send(EngineEvent::Error {
+                                message,
+                                recoverable: true,
+                            })
+                            .await
+                            .ok();
+                        transport
+                        .respond_error(
+                          &raw_id,
+                          -32601,
+                          "`account/chatgptAuthTokens/refresh` is not supported by Panes",
+                          Some(serde_json::json!({
+                            "method": method,
+                            "normalizedMethod": normalized_method,
+                          })),
+                        )
+                        .await
+                        .ok();
+                      continue;
+                    }
+
+                    if let Some(approval) = mapper.map_server_request(&id, &method, &params) {
+                      log::info!(
+                        "codex review approval request mapped: approval_id={}, method={method}",
+                        approval.approval_id
+                      );
+                      if turn_request_done && !completion_seen {
+                        completion_last_progress_at = Some(Instant::now());
+                      }
+                      self
+                        .register_approval_request(
+                          &approval.approval_id,
+                          &raw_id,
+                          &approval.server_method,
+                        )
+                        .await;
+                      event_tx.send(approval.event).await.ok();
+                    } else {
+                      log::warn!(
+                        "codex review server request not mapped: method={method}, normalized={normalized_method}"
+                      );
+                      let (message, recoverable) = (
+                        format!("Unsupported Codex server request method `{method}`"),
+                        true,
+                      );
+
+                      event_tx
+                        .send(EngineEvent::Error {
+                          message: message.clone(),
+                          recoverable,
+                        })
+                        .await
+                        .ok();
+
+                      transport
+                        .respond_error(
+                          &raw_id,
+                          -32601,
+                          &message,
+                          Some(serde_json::json!({
+                            "method": method,
+                            "normalizedMethod": normalized_method,
+                          })),
+                        )
+                        .await
+                        .ok();
+                    }
+                  }
+                  Ok(IncomingMessage::Response(_)) => {}
+                  Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!("codex review consumer lagged, skipped {skipped} messages");
+                  }
+                  Err(broadcast::error::RecvError::Closed) => {
+                    break;
+                  }
+                }
+              }
+              _ = tokio::time::sleep(Duration::from_millis(200)), if turn_request_done && !completion_seen => {
+                if let Some(last_progress_at) = completion_last_progress_at {
+                  if Instant::now().duration_since(last_progress_at) >= TURN_COMPLETION_INACTIVITY_TIMEOUT {
+                    log::warn!(
+                      "codex review completion inactivity timeout reached for thread {active_thread_id}; synthesizing completion"
+                    );
+                    break;
+                  }
+                }
+              }
+            }
+        }
+
+        if !rate_limits_done {
+            rate_limits_task.abort();
+        }
+
+        if !completion_seen {
+            event_tx
+                .send(EngineEvent::Error {
+                    message: "Timed out waiting for `turn/completed` from codex review"
+                        .to_string(),
+                    recoverable: false,
+                })
+                .await
+                .ok();
+            event_tx
+                .send(EngineEvent::TurnCompleted {
+                    token_usage: None,
+                    status: TurnCompletionStatus::Failed,
+                })
+                .await
+                .ok();
+        }
+
+        self.clear_active_turn(&active_thread_id).await;
         Ok(())
     }
 

@@ -115,6 +115,14 @@ export interface Thread {
   lastActivityAt: string;
 }
 
+export type CodexReviewDelivery = "inline" | "detached";
+
+export type CodexReviewTarget =
+  | { type: "uncommittedChanges" }
+  | { type: "baseBranch"; branch: string }
+  | { type: "commit"; sha: string; title?: string | null }
+  | { type: "custom"; instructions: string };
+
 export type MessageStatus = "completed" | "streaming" | "interrupted" | "error";
 
 export interface Message {

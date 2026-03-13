@@ -7,7 +7,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{Emitter, State};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -162,6 +162,30 @@ pub enum ChatInputItemPayload {
     Text { text: String },
     Skill { name: String, path: String },
     Mention { name: String, path: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum CodexReviewTargetPayload {
+    #[serde(rename = "uncommittedChanges")]
+    UncommittedChanges,
+    #[serde(rename = "baseBranch")]
+    BaseBranch { branch: String },
+    #[serde(rename = "commit")]
+    Commit {
+        sha: String,
+        #[serde(default)]
+        title: Option<String>,
+    },
+    #[serde(rename = "custom")]
+    Custom { instructions: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CodexReviewDeliveryPayload {
+    Inline,
+    Detached,
 }
 
 async fn run_db<T, F>(db: crate::db::Database, operation: F) -> Result<T, String>
@@ -455,6 +479,137 @@ pub async fn send_message(
     });
 
     Ok(assistant_message.id)
+}
+
+#[tauri::command]
+pub async fn start_codex_review(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    thread_id: String,
+    target: CodexReviewTargetPayload,
+    delivery: Option<CodexReviewDeliveryPayload>,
+) -> Result<ThreadDto, String> {
+    if state.turns.get(&thread_id).await.is_some() {
+        return Err(
+            "A turn is already running for this thread. Cancel it before starting a review."
+                .to_string(),
+        );
+    }
+
+    let db = state.db.clone();
+    let source_thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if source_thread.engine_id != "codex" {
+        return Err("Native review is only available for Codex threads.".to_string());
+    }
+
+    let source_engine_thread_id = source_thread
+        .engine_thread_id
+        .clone()
+        .ok_or_else(|| "Codex review requires an initialized server-backed thread.".to_string())?;
+    let effective_delivery = delivery.unwrap_or(CodexReviewDeliveryPayload::Inline);
+    let (target_payload, review_message, review_title) = normalize_codex_review_target(&target)?;
+    let initial_turn_model_id = thread_last_model_id(source_thread.engine_metadata.as_ref())
+        .unwrap_or_else(|| source_thread.model_id.clone());
+    let reasoning_effort = thread_reasoning_effort(source_thread.engine_metadata.as_ref());
+
+    let (review_thread, assistant_message_id) = run_db(db.clone(), {
+        let source_thread = source_thread.clone();
+        let review_message = review_message.clone();
+        let review_title = review_title.clone();
+        let initial_turn_model_id = initial_turn_model_id.clone();
+        let reasoning_effort = reasoning_effort.clone();
+        let detached = matches!(effective_delivery, CodexReviewDeliveryPayload::Detached);
+        move |db| {
+            let review_thread = if detached {
+                let created = db::threads::create_thread(
+                    db,
+                    &source_thread.workspace_id,
+                    source_thread.repo_id.as_deref(),
+                    &source_thread.engine_id,
+                    &initial_turn_model_id,
+                    &review_title,
+                )?;
+                if let Some(metadata) =
+                    clone_codex_review_metadata(source_thread.engine_metadata.as_ref(), &initial_turn_model_id)
+                {
+                    db::threads::update_engine_metadata(db, &created.id, &metadata)?;
+                }
+                created
+            } else {
+                source_thread.clone()
+            };
+
+            let user_blocks = build_user_blocks(&review_message, &[], &[], false);
+            db::messages::insert_user_message(
+                db,
+                &review_thread.id,
+                &review_message,
+                Some(serde_json::to_value(&user_blocks)?),
+                Some(source_thread.engine_id.as_str()),
+                Some(initial_turn_model_id.as_str()),
+                reasoning_effort.as_deref(),
+            )?;
+            let assistant_message = db::messages::insert_assistant_placeholder(
+                db,
+                &review_thread.id,
+                Some(source_thread.engine_id.as_str()),
+                Some(initial_turn_model_id.as_str()),
+                reasoning_effort.as_deref(),
+            )?;
+            db::threads::update_thread_status(db, &review_thread.id, ThreadStatusDto::Streaming)?;
+            let updated_thread = db::threads::get_thread(db, &review_thread.id)?
+                .ok_or_else(|| anyhow::anyhow!("review thread not found after setup"))?;
+            Ok((updated_thread, assistant_message.id))
+        }
+    })
+    .await?;
+
+    let cancellation = CancellationToken::new();
+    if !state
+        .turns
+        .try_register(&review_thread.id, cancellation.clone())
+        .await
+    {
+        return Err(
+            "A turn is already running for this thread. Cancel it before starting a review."
+                .to_string(),
+        );
+    }
+
+    let state_cloned = state.inner().clone();
+    let app_handle = app.clone();
+    let review_thread_for_task = review_thread.clone();
+    let review_target_for_task = target_payload.clone();
+    let source_engine_thread_id_for_task = source_engine_thread_id.clone();
+    let assistant_message_id_for_task = assistant_message_id.clone();
+    let delivery_label = match effective_delivery {
+        CodexReviewDeliveryPayload::Inline => "inline".to_string(),
+        CodexReviewDeliveryPayload::Detached => "detached".to_string(),
+    };
+
+    tokio::spawn(async move {
+        run_codex_review_turn(
+            app_handle,
+            state_cloned,
+            source_thread,
+            review_thread_for_task,
+            source_engine_thread_id_for_task,
+            assistant_message_id_for_task,
+            initial_turn_model_id,
+            review_target_for_task,
+            delivery_label,
+            cancellation,
+        )
+        .await;
+    });
+
+    Ok(review_thread)
 }
 
 #[tauri::command]
@@ -901,6 +1056,101 @@ pub async fn search_messages(
         db::messages::search_messages(db, &workspace_id, &query)
     })
     .await
+}
+
+fn normalize_codex_review_target(
+    target: &CodexReviewTargetPayload,
+) -> Result<(Value, String, String), String> {
+    match target {
+        CodexReviewTargetPayload::UncommittedChanges => Ok((
+            serde_json::json!({
+                "type": "uncommittedChanges",
+            }),
+            "Review uncommitted changes.".to_string(),
+            "Review: Uncommitted changes".to_string(),
+        )),
+        CodexReviewTargetPayload::BaseBranch { branch } => {
+            let branch = branch.trim();
+            if branch.is_empty() {
+                return Err("Base branch review requires a branch name.".to_string());
+            }
+            Ok((
+                serde_json::json!({
+                    "type": "baseBranch",
+                    "branch": branch,
+                }),
+                format!("Review changes against base branch `{branch}`."),
+                truncate_title(format!("Review: {branch}"), MAX_THREAD_TITLE_CHARS),
+            ))
+        }
+        CodexReviewTargetPayload::Commit { sha, title } => {
+            let sha = sha.trim();
+            if sha.is_empty() {
+                return Err("Commit review requires a commit SHA.".to_string());
+            }
+            let short_sha = sha.chars().take(12).collect::<String>();
+            let normalized_title = title
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+            let message = match normalized_title.as_deref() {
+                Some(title) => format!("Review commit `{sha}`: {title}"),
+                None => format!("Review commit `{sha}`."),
+            };
+            let target = match normalized_title {
+                Some(title) => serde_json::json!({
+                    "type": "commit",
+                    "sha": sha,
+                    "title": title,
+                }),
+                None => serde_json::json!({
+                    "type": "commit",
+                    "sha": sha,
+                }),
+            };
+            Ok((
+                target,
+                message,
+                truncate_title(format!("Review: {short_sha}"), MAX_THREAD_TITLE_CHARS),
+            ))
+        }
+        CodexReviewTargetPayload::Custom { instructions } => {
+            let instructions = instructions.trim();
+            if instructions.is_empty() {
+                return Err("Custom review requires instructions.".to_string());
+            }
+            Ok((
+                serde_json::json!({
+                    "type": "custom",
+                    "instructions": instructions,
+                }),
+                instructions.to_string(),
+                "Review: Custom".to_string(),
+            ))
+        }
+    }
+}
+
+fn clone_codex_review_metadata(existing: Option<&Value>, model_id: &str) -> Option<Value> {
+    let mut metadata = existing.cloned().unwrap_or_else(|| serde_json::json!({}));
+    if !metadata.is_object() {
+        metadata = serde_json::json!({});
+    }
+
+    let object = metadata.as_object_mut()?;
+    object.remove("manualTitle");
+    object.remove("manualTitleUpdatedAt");
+    object.remove("codexPreview");
+    object.remove("codexThreadStatus");
+    object.remove("codexThreadActiveFlags");
+    object.remove("codexSyncRequired");
+    object.remove("codexSyncReason");
+    object.insert(
+        "lastModelId".to_string(),
+        Value::String(model_id.to_string()),
+    );
+    Some(metadata)
 }
 
 async fn run_turn(
@@ -1373,6 +1623,558 @@ async fn run_turn(
     }
 
     state.turns.finish(&thread.id).await;
+}
+
+async fn run_codex_review_turn(
+    app: tauri::AppHandle,
+    state: AppState,
+    source_thread: crate::models::ThreadDto,
+    review_thread: crate::models::ThreadDto,
+    source_engine_thread_id: String,
+    assistant_message_id: String,
+    initial_turn_model_id: String,
+    target: Value,
+    delivery: String,
+    cancellation: CancellationToken,
+) {
+    let max_output_chars = state.config.debug.max_action_output_chars;
+    let (event_tx, mut event_rx) = mpsc::channel::<EngineEvent>(128);
+    let (started_tx, started_rx) = oneshot::channel();
+
+    let engines = state.engines.clone();
+    let source_engine_thread_id_for_engine = source_engine_thread_id.clone();
+    let target_for_engine = target.clone();
+    let delivery_for_engine = delivery.clone();
+    let cancellation_for_engine = cancellation.clone();
+
+    let engine_task = tokio::spawn(async move {
+        engines
+            .start_codex_review(
+                &source_engine_thread_id_for_engine,
+                target_for_engine,
+                Some(delivery_for_engine.as_str()),
+                event_tx,
+                cancellation_for_engine,
+                started_tx,
+            )
+            .await
+    });
+
+    let state_for_started = state.clone();
+    let app_for_started = app.clone();
+    let review_thread_for_started = review_thread.clone();
+    let started_task = tokio::spawn(async move {
+        let Ok(started) = started_rx.await else {
+            return;
+        };
+
+        let updated_thread = match run_db(state_for_started.db.clone(), {
+            let review_thread_id = review_thread_for_started.id.clone();
+            let review_thread_engine_id = review_thread_for_started.engine_thread_id.clone();
+            let review_thread_model_id = review_thread_for_started.model_id.clone();
+            let review_thread_metadata = review_thread_for_started.engine_metadata.clone();
+            let review_thread_status = review_thread_for_started.status.clone();
+            let review_thread_title = review_thread_for_started.title.clone();
+            let review_thread_workspace_id = review_thread_for_started.workspace_id.clone();
+            let review_thread_repo_id = review_thread_for_started.repo_id.clone();
+            move |db| {
+                if review_thread_engine_id.as_deref() == Some(started.review_thread_id.as_str()) {
+                    return db::threads::get_thread(db, &review_thread_id)?.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "review thread not found after review/start: {review_thread_id}"
+                        )
+                    });
+                }
+
+                db::threads::set_engine_thread_id(db, &review_thread_id, &started.review_thread_id)?;
+                let current = db::threads::get_thread(db, &review_thread_id)?.ok_or_else(|| {
+                    anyhow::anyhow!("review thread not found after engine thread update")
+                })?;
+                let metadata = current.engine_metadata.or(review_thread_metadata.clone());
+                db::threads::update_thread_runtime_snapshot(
+                    db,
+                    &review_thread_id,
+                    Some(&review_thread_title),
+                    Some(review_thread_status.clone()),
+                    metadata.as_ref(),
+                )?;
+                db::threads::get_thread(db, &review_thread_id)?.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "review thread not found after runtime snapshot update: {review_thread_workspace_id}:{review_thread_repo_id:?}:{review_thread_model_id}"
+                    )
+                })
+            }
+        })
+        .await
+        {
+            Ok(thread) => thread,
+            Err(error) => {
+                log::warn!("failed to persist codex review thread id: {error}");
+                return;
+            }
+        };
+
+        let _ = app_for_started.emit(
+            "thread-updated",
+            ThreadUpdatedEvent {
+                thread_id: updated_thread.id.clone(),
+                workspace_id: updated_thread.workspace_id.clone(),
+                thread: Some(updated_thread),
+            },
+        );
+    });
+
+    let mut blocks: Vec<ContentBlock> = Vec::new();
+    let mut action_index: HashMap<String, usize> = HashMap::new();
+    let mut approval_index: HashMap<String, usize> = HashMap::new();
+    let mut message_status = MessageStatusDto::Streaming;
+    let mut thread_status = ThreadStatusDto::Streaming;
+    let mut turn_model_id = initial_turn_model_id;
+    let mut token_usage: Option<(u64, u64)> = None;
+    let mut blocks_dirty = false;
+    let mut message_state_dirty = false;
+    let mut thread_status_dirty = false;
+    let mut turn_model_dirty = false;
+    let mut last_persist_at = Instant::now();
+    let mut last_blocks_persist_at = Instant::now();
+    let mut last_persisted_thread_status = thread_status.clone();
+    let stream_event_topic = format!("stream-event-{}", review_thread.id);
+    let approval_event_topic = format!("approval-request-{}", review_thread.id);
+    let mut pending_event: Option<EngineEvent> = None;
+
+    let initial_turn_started_event = EngineEvent::TurnStarted {
+        client_turn_id: None,
+    };
+    let initial_progress = process_stream_event(
+        &app,
+        &state,
+        &review_thread,
+        &assistant_message_id,
+        &stream_event_topic,
+        &approval_event_topic,
+        &initial_turn_started_event,
+        &mut blocks,
+        &mut action_index,
+        &mut approval_index,
+        max_output_chars,
+    )
+    .await;
+    let initial_force_persist = apply_stream_progress(
+        initial_progress,
+        &mut message_status,
+        &mut thread_status,
+        &mut turn_model_id,
+        &mut token_usage,
+        &mut blocks_dirty,
+        &mut message_state_dirty,
+        &mut thread_status_dirty,
+        &mut turn_model_dirty,
+    );
+    flush_stream_state(
+        &state,
+        &review_thread,
+        &assistant_message_id,
+        &blocks,
+        &message_status,
+        &thread_status,
+        &turn_model_id,
+        &mut blocks_dirty,
+        &mut message_state_dirty,
+        &mut thread_status_dirty,
+        &mut turn_model_dirty,
+        &mut last_persisted_thread_status,
+        &mut last_persist_at,
+        &mut last_blocks_persist_at,
+        initial_force_persist,
+    )
+    .await;
+
+    loop {
+        let incoming_event = if pending_event.is_some() {
+            match tokio::time::timeout(STREAM_EVENT_COALESCE_IDLE_FLUSH_INTERVAL, event_rx.recv())
+                .await
+            {
+                Ok(event) => event,
+                Err(_) => {
+                    if let Some(event) = pending_event.take() {
+                        let progress = process_stream_event(
+                            &app,
+                            &state,
+                            &review_thread,
+                            &assistant_message_id,
+                            &stream_event_topic,
+                            &approval_event_topic,
+                            &event,
+                            &mut blocks,
+                            &mut action_index,
+                            &mut approval_index,
+                            max_output_chars,
+                        )
+                        .await;
+                        let force_persist = apply_stream_progress(
+                            progress,
+                            &mut message_status,
+                            &mut thread_status,
+                            &mut turn_model_id,
+                            &mut token_usage,
+                            &mut blocks_dirty,
+                            &mut message_state_dirty,
+                            &mut thread_status_dirty,
+                            &mut turn_model_dirty,
+                        );
+                        flush_stream_state(
+                            &state,
+                            &review_thread,
+                            &assistant_message_id,
+                            &blocks,
+                            &message_status,
+                            &thread_status,
+                            &turn_model_id,
+                            &mut blocks_dirty,
+                            &mut message_state_dirty,
+                            &mut thread_status_dirty,
+                            &mut turn_model_dirty,
+                            &mut last_persisted_thread_status,
+                            &mut last_persist_at,
+                            &mut last_blocks_persist_at,
+                            force_persist,
+                        )
+                        .await;
+                    }
+                    continue;
+                }
+            }
+        } else {
+            event_rx.recv().await
+        };
+
+        let Some(incoming_event) = incoming_event else {
+            break;
+        };
+
+        let mut current_event = incoming_event;
+
+        loop {
+            if let Some(previous_event) = pending_event.take() {
+                match try_coalesce_stream_events(previous_event, current_event) {
+                    Ok(merged_event) => {
+                        if coalesced_event_content_len(&merged_event)
+                            >= STREAM_EVENT_COALESCE_MAX_CHARS
+                        {
+                            let progress = process_stream_event(
+                                &app,
+                                &state,
+                                &review_thread,
+                                &assistant_message_id,
+                                &stream_event_topic,
+                                &approval_event_topic,
+                                &merged_event,
+                                &mut blocks,
+                                &mut action_index,
+                                &mut approval_index,
+                                max_output_chars,
+                            )
+                            .await;
+                            let force_persist = apply_stream_progress(
+                                progress,
+                                &mut message_status,
+                                &mut thread_status,
+                                &mut turn_model_id,
+                                &mut token_usage,
+                                &mut blocks_dirty,
+                                &mut message_state_dirty,
+                                &mut thread_status_dirty,
+                                &mut turn_model_dirty,
+                            );
+                            flush_stream_state(
+                                &state,
+                                &review_thread,
+                                &assistant_message_id,
+                                &blocks,
+                                &message_status,
+                                &thread_status,
+                                &turn_model_id,
+                                &mut blocks_dirty,
+                                &mut message_state_dirty,
+                                &mut thread_status_dirty,
+                                &mut turn_model_dirty,
+                                &mut last_persisted_thread_status,
+                                &mut last_persist_at,
+                                &mut last_blocks_persist_at,
+                                force_persist,
+                            )
+                            .await;
+                        } else {
+                            pending_event = Some(merged_event);
+                        }
+                        break;
+                    }
+                    Err((unmerged_previous_event, unmerged_current_event)) => {
+                        let progress = process_stream_event(
+                            &app,
+                            &state,
+                            &review_thread,
+                            &assistant_message_id,
+                            &stream_event_topic,
+                            &approval_event_topic,
+                            &unmerged_previous_event,
+                            &mut blocks,
+                            &mut action_index,
+                            &mut approval_index,
+                            max_output_chars,
+                        )
+                        .await;
+                        let force_persist = apply_stream_progress(
+                            progress,
+                            &mut message_status,
+                            &mut thread_status,
+                            &mut turn_model_id,
+                            &mut token_usage,
+                            &mut blocks_dirty,
+                            &mut message_state_dirty,
+                            &mut thread_status_dirty,
+                            &mut turn_model_dirty,
+                        );
+                        flush_stream_state(
+                            &state,
+                            &review_thread,
+                            &assistant_message_id,
+                            &blocks,
+                            &message_status,
+                            &thread_status,
+                            &turn_model_id,
+                            &mut blocks_dirty,
+                            &mut message_state_dirty,
+                            &mut thread_status_dirty,
+                            &mut turn_model_dirty,
+                            &mut last_persisted_thread_status,
+                            &mut last_persist_at,
+                            &mut last_blocks_persist_at,
+                            force_persist,
+                        )
+                        .await;
+                        current_event = unmerged_current_event;
+                    }
+                }
+            } else if is_coalescable_stream_event(&current_event) {
+                pending_event = Some(current_event);
+                break;
+            } else {
+                let progress = process_stream_event(
+                    &app,
+                    &state,
+                    &review_thread,
+                    &assistant_message_id,
+                    &stream_event_topic,
+                    &approval_event_topic,
+                    &current_event,
+                    &mut blocks,
+                    &mut action_index,
+                    &mut approval_index,
+                    max_output_chars,
+                )
+                .await;
+                let force_persist = apply_stream_progress(
+                    progress,
+                    &mut message_status,
+                    &mut thread_status,
+                    &mut turn_model_id,
+                    &mut token_usage,
+                    &mut blocks_dirty,
+                    &mut message_state_dirty,
+                    &mut thread_status_dirty,
+                    &mut turn_model_dirty,
+                );
+                flush_stream_state(
+                    &state,
+                    &review_thread,
+                    &assistant_message_id,
+                    &blocks,
+                    &message_status,
+                    &thread_status,
+                    &turn_model_id,
+                    &mut blocks_dirty,
+                    &mut message_state_dirty,
+                    &mut thread_status_dirty,
+                    &mut turn_model_dirty,
+                    &mut last_persisted_thread_status,
+                    &mut last_persist_at,
+                    &mut last_blocks_persist_at,
+                    force_persist,
+                )
+                .await;
+                break;
+            }
+        }
+    }
+
+    if let Some(event) = pending_event.take() {
+        let progress = process_stream_event(
+            &app,
+            &state,
+            &review_thread,
+            &assistant_message_id,
+            &stream_event_topic,
+            &approval_event_topic,
+            &event,
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            max_output_chars,
+        )
+        .await;
+        let force_persist = apply_stream_progress(
+            progress,
+            &mut message_status,
+            &mut thread_status,
+            &mut turn_model_id,
+            &mut token_usage,
+            &mut blocks_dirty,
+            &mut message_state_dirty,
+            &mut thread_status_dirty,
+            &mut turn_model_dirty,
+        );
+        flush_stream_state(
+            &state,
+            &review_thread,
+            &assistant_message_id,
+            &blocks,
+            &message_status,
+            &thread_status,
+            &turn_model_id,
+            &mut blocks_dirty,
+            &mut message_state_dirty,
+            &mut thread_status_dirty,
+            &mut turn_model_dirty,
+            &mut last_persisted_thread_status,
+            &mut last_persist_at,
+            &mut last_blocks_persist_at,
+            force_persist,
+        )
+        .await;
+    }
+
+    match engine_task.await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            blocks.push(ContentBlock::Error {
+                message: format!("Engine error: {error}"),
+            });
+            blocks_dirty = true;
+            if message_status != MessageStatusDto::Error {
+                message_status = MessageStatusDto::Error;
+                message_state_dirty = true;
+            }
+            if thread_status != ThreadStatusDto::Error {
+                thread_status = ThreadStatusDto::Error;
+                thread_status_dirty = true;
+            }
+            let _ = app.emit(
+                &stream_event_topic,
+                EngineEvent::Error {
+                    message: format!("{error}"),
+                    recoverable: false,
+                },
+            );
+        }
+        Err(error) => {
+            blocks.push(ContentBlock::Error {
+                message: format!("Engine task join error: {error}"),
+            });
+            blocks_dirty = true;
+            if message_status != MessageStatusDto::Error {
+                message_status = MessageStatusDto::Error;
+                message_state_dirty = true;
+            }
+            if thread_status != ThreadStatusDto::Error {
+                thread_status = ThreadStatusDto::Error;
+                thread_status_dirty = true;
+            }
+        }
+    }
+
+    if cancellation.is_cancelled() && matches!(message_status, MessageStatusDto::Streaming) {
+        message_status = MessageStatusDto::Interrupted;
+        message_state_dirty = true;
+        thread_status = ThreadStatusDto::Idle;
+        thread_status_dirty = true;
+    }
+
+    flush_stream_state(
+        &state,
+        &review_thread,
+        &assistant_message_id,
+        &blocks,
+        &message_status,
+        &thread_status,
+        &turn_model_id,
+        &mut blocks_dirty,
+        &mut message_state_dirty,
+        &mut thread_status_dirty,
+        &mut turn_model_dirty,
+        &mut last_persisted_thread_status,
+        &mut last_persist_at,
+        &mut last_blocks_persist_at,
+        true,
+    )
+    .await;
+
+    if let Err(error) = run_db(state.db.clone(), {
+        let assistant_message_id = assistant_message_id.clone();
+        let message_status = message_status.clone();
+        let token_usage = token_usage;
+        move |db| {
+            db::messages::complete_assistant_message(
+                db,
+                &assistant_message_id,
+                message_status,
+                token_usage,
+                Some(turn_model_id.as_str()),
+            )
+        }
+    })
+    .await
+    {
+        log::warn!("failed to complete review assistant message: {error}");
+    }
+
+    if matches!(message_status, MessageStatusDto::Completed) {
+        if let Err(error) = run_db(state.db.clone(), {
+            let thread_id = review_thread.id.clone();
+            let token_usage = token_usage;
+            move |db| db::threads::bump_message_counters(db, &thread_id, token_usage)
+        })
+        .await
+        {
+            log::warn!("failed to bump review thread counters: {error}");
+        }
+    }
+
+    if let Err(error) = started_task.await {
+        log::warn!("failed to join codex review start task: {error}");
+    }
+
+    let latest_review_thread = run_db(state.db.clone(), {
+        let review_thread_id = review_thread.id.clone();
+        move |db| {
+            db::threads::get_thread(db, &review_thread_id)?.ok_or_else(|| {
+                anyhow::anyhow!("review thread not found before final thread-updated emit")
+            })
+        }
+    })
+    .await
+    .ok();
+    let _ = app.emit(
+        "thread-updated",
+        ThreadUpdatedEvent {
+            thread_id: review_thread.id.clone(),
+            workspace_id: review_thread.workspace_id.clone(),
+            thread: latest_review_thread,
+        },
+    );
+
+    let _ = source_thread;
+    state.turns.finish(&review_thread.id).await;
 }
 
 fn is_coalescable_stream_event(event: &EngineEvent) -> bool {
@@ -2799,6 +3601,55 @@ mod tests {
         .expect_err("blank skill names should be rejected");
 
         assert!(error.contains("skill input items require non-empty name and path"));
+    }
+
+    #[test]
+    fn normalize_codex_review_target_builds_commit_payload() {
+        let (target, message, title) = normalize_codex_review_target(
+            &CodexReviewTargetPayload::Commit {
+                sha: "abcdef1234567890".to_string(),
+                title: Some("Refactor auth flow".to_string()),
+            },
+        )
+        .expect("commit target should normalize");
+
+        assert_eq!(
+            target,
+            serde_json::json!({
+                "type": "commit",
+                "sha": "abcdef1234567890",
+                "title": "Refactor auth flow",
+            })
+        );
+        assert_eq!(message, "Review commit `abcdef1234567890`: Refactor auth flow");
+        assert_eq!(title, "Review: abcdef123456");
+    }
+
+    #[test]
+    fn clone_codex_review_metadata_clears_runtime_only_fields() {
+        let metadata = clone_codex_review_metadata(
+            Some(&serde_json::json!({
+                "manualTitle": true,
+                "manualTitleUpdatedAt": "2026-03-12T00:00:00Z",
+                "codexPreview": "old preview",
+                "codexThreadStatus": "active",
+                "codexThreadActiveFlags": ["waitingOnApproval"],
+                "codexSyncRequired": true,
+                "codexSyncReason": "stale",
+                "serviceTier": "fast",
+            })),
+            "gpt-5.4",
+        )
+        .expect("metadata should clone");
+
+        assert_eq!(metadata.get("manualTitle"), None);
+        assert_eq!(metadata.get("codexPreview"), None);
+        assert_eq!(metadata.get("codexThreadStatus"), None);
+        assert_eq!(metadata.get("codexThreadActiveFlags"), None);
+        assert_eq!(metadata.get("codexSyncRequired"), None);
+        assert_eq!(metadata.get("codexSyncReason"), None);
+        assert_eq!(metadata.get("serviceTier"), Some(&serde_json::json!("fast")));
+        assert_eq!(metadata.get("lastModelId"), Some(&serde_json::json!("gpt-5.4")));
     }
 
     #[test]

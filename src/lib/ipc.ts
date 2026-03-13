@@ -7,6 +7,8 @@ import type {
   ActionOutputPayload,
   ChatAttachment,
   ChatInputItem,
+  CodexReviewDelivery,
+  CodexReviewTarget,
   ContentBlock,
   CodexApp,
   CodexSkill,
@@ -240,6 +242,16 @@ export const ipc = {
       attachments: attachments ?? null,
       inputItems: inputItems ?? null,
       planMode: planMode ?? null,
+    }),
+  startCodexReview: (
+    threadId: string,
+    target: CodexReviewTarget,
+    delivery: CodexReviewDelivery,
+  ) =>
+    invoke<Thread>("start_codex_review", {
+      threadId,
+      target,
+      delivery,
     }),
   cancelTurn: (threadId: string) => invoke<void>("cancel_turn", { threadId }),
   respondApproval: (threadId: string, approvalId: string, response: ApprovalResponse) =>

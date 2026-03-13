@@ -159,6 +159,46 @@
     "compactDescription": "Pede ao Codex para compactar o contexto da thread ativa no servidor.",
     "compactAction": "Compactar"
   },
+  "reviewPicker": {
+    "title": "Review",
+    "shortTitle": "Review",
+    "subtitle": "Inicie um turno nativo de review do Codex usando o contexto da thread atual.",
+    "targetLabel": "Alvo",
+    "deliveryLabel": "Entrega",
+    "branchLabel": "Branch base",
+    "branchPlaceholder": "main",
+    "commitLabel": "SHA do commit",
+    "commitPlaceholder": "abc1234",
+    "instructionsLabel": "Instruções",
+    "instructionsPlaceholder": "Revise a refatoração atual em busca de regressões e testes ausentes.",
+    "working": "Iniciando...",
+    "startAction": "Iniciar review",
+    "targets": {
+      "uncommittedChanges": "Mudanças não commitadas",
+      "baseBranch": "Branch base",
+      "commit": "Commit",
+      "custom": "Personalizado"
+    },
+    "delivery": {
+      "inline": "Inline",
+      "detached": "Destacado"
+    },
+    "deliveryDescriptions": {
+      "inline": "Executa o review na thread atual.",
+      "detached": "Executa o review em uma nova thread de review do Codex."
+    },
+    "targetDescriptions": {
+      "uncommittedChanges": "Revise mudanças staged, unstaged e arquivos não rastreados na working tree atual.",
+      "baseBranch": "Revise as mudanças entre a branch atual e a branch base selecionada.",
+      "commit": "Revise as mudanças introduzidas por um commit.",
+      "custom": "Execute uma solicitação nativa de review em texto livre em vez de um alvo derivado do Git."
+    },
+    "errors": {
+      "branchRequired": "A branch base é obrigatória.",
+      "commitRequired": "O SHA do commit é obrigatório.",
+      "instructionsRequired": "As instruções de review são obrigatórias."
+    }
+  },
   "policy": {
     "trustTitle": "Confiança",
     "approvalTitleCodex": "Aprovação",
@@ -266,6 +306,9 @@
       "codexSandboxUnavailable": "As opções de sandbox somente leitura e escrita no workspace do Codex ficam indisponíveis enquanto o Panes usa sandbox externo.",
       "codexOnlySandbox": "As opções de sandbox só estão disponíveis para threads do Codex.",
       "codexThreadToolUnavailable": "As ferramentas nativas de thread do Codex só estão disponíveis para threads ativas do Codex com histórico no servidor.",
+      "codexReviewUnavailable": "O review nativo do Codex exige uma thread ativa do Codex com histórico no servidor.",
+      "codexReviewStarted": "Um review inline do Codex foi iniciado.",
+      "codexReviewDetachedStarted": "Uma thread destacada de review do Codex foi iniciada.",
       "codexThreadForkFailed": "Falha ao ramificar a thread ativa do Codex.",
       "codexThreadRollbackFailed": "Falha ao fazer rollback da thread ativa do Codex.",
       "codexThreadCompactFailed": "Falha ao iniciar a compactação da thread do Codex.",

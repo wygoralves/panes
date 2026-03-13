@@ -4,14 +4,14 @@ use anyhow::Context;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     engines::{
         claude_sidecar::ClaudeSidecarEngine,
-        codex::{CodexEngine, CodexForkedThread},
+        codex::{CodexEngine, CodexForkedThread, CodexReviewStarted},
     },
     models::{
         CodexAppDto, CodexSkillDto, EngineCapabilitiesDto, EngineHealthDto, EngineInfoDto,
@@ -411,6 +411,27 @@ impl EngineManager {
 
     pub async fn compact_codex_thread(&self, engine_thread_id: &str) -> anyhow::Result<()> {
         self.codex.compact_thread(engine_thread_id).await
+    }
+
+    pub async fn start_codex_review(
+        &self,
+        source_engine_thread_id: &str,
+        target: Value,
+        delivery: Option<&str>,
+        event_tx: mpsc::Sender<EngineEvent>,
+        cancellation: CancellationToken,
+        started_tx: oneshot::Sender<CodexReviewStarted>,
+    ) -> anyhow::Result<()> {
+        self.codex
+            .start_review(
+                source_engine_thread_id,
+                target,
+                delivery,
+                event_tx,
+                cancellation,
+                started_tx,
+            )
+            .await
     }
 
     pub async fn ensure_engine_thread(

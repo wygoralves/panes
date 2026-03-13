@@ -159,6 +159,46 @@
     "compactDescription": "Ask Codex to compact the active thread context on the server.",
     "compactAction": "Compact"
   },
+  "reviewPicker": {
+    "title": "Review",
+    "shortTitle": "Review",
+    "subtitle": "Start a native Codex review turn against the current thread context.",
+    "targetLabel": "Target",
+    "deliveryLabel": "Delivery",
+    "branchLabel": "Base branch",
+    "branchPlaceholder": "main",
+    "commitLabel": "Commit SHA",
+    "commitPlaceholder": "abc1234",
+    "instructionsLabel": "Instructions",
+    "instructionsPlaceholder": "Review the current refactor for regressions and missing tests.",
+    "working": "Starting...",
+    "startAction": "Start review",
+    "targets": {
+      "uncommittedChanges": "Uncommitted changes",
+      "baseBranch": "Base branch",
+      "commit": "Commit",
+      "custom": "Custom"
+    },
+    "delivery": {
+      "inline": "Inline",
+      "detached": "Detached"
+    },
+    "deliveryDescriptions": {
+      "inline": "Run the review on the current thread.",
+      "detached": "Run the review on a new Codex review thread."
+    },
+    "targetDescriptions": {
+      "uncommittedChanges": "Review staged, unstaged, and untracked changes in the current working tree.",
+      "baseBranch": "Review the changes between the current branch and the selected base branch.",
+      "commit": "Review the changes introduced by one commit.",
+      "custom": "Run a free-form native review request instead of a Git-derived target."
+    },
+    "errors": {
+      "branchRequired": "Base branch is required.",
+      "commitRequired": "Commit SHA is required.",
+      "instructionsRequired": "Review instructions are required."
+    }
+  },
   "policy": {
     "trustTitle": "Trust",
     "approvalTitleCodex": "Approval",
@@ -266,6 +306,9 @@
       "codexSandboxUnavailable": "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode.",
       "codexOnlySandbox": "Sandbox overrides are only available for Codex threads.",
       "codexThreadToolUnavailable": "Native Codex thread tools are only available for active Codex threads with server history.",
+      "codexReviewUnavailable": "Native Codex review requires an active server-backed Codex thread.",
+      "codexReviewStarted": "Started an inline Codex review.",
+      "codexReviewDetachedStarted": "Started a detached Codex review thread.",
       "codexThreadForkFailed": "Failed to fork the active Codex thread.",
       "codexThreadRollbackFailed": "Failed to rollback the active Codex thread.",
       "codexThreadCompactFailed": "Failed to start Codex thread compaction.",

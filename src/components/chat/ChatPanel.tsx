@@ -57,6 +57,7 @@ import {
   type CodexServiceTierValue,
 } from "./CodexConfigPicker";
 import { CodexRuntimePicker } from "./CodexRuntimePicker";
+import { CodexReviewPicker } from "./CodexReviewPicker";
 import { CodexThreadPicker } from "./CodexThreadPicker";
 import { PermissionPicker } from "./PermissionPicker";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
@@ -2617,6 +2618,36 @@ export function ChatPanel() {
     toast.success(t("panel.toasts.codexThreadForked"));
   }
 
+  async function onStartCodexReview(request: {
+    target: import("../../types").CodexReviewTarget;
+    delivery: import("../../types").CodexReviewDelivery;
+  }) {
+    if (
+      !activeThread ||
+      activeThread.engineId !== "codex" ||
+      !activeThread.engineThreadId
+    ) {
+      throw new Error(t("panel.toasts.codexReviewUnavailable"));
+    }
+
+    const reviewThread = await ipc.startCodexReview(
+      activeThread.id,
+      request.target,
+      request.delivery,
+    );
+
+    await refreshThreads(reviewThread.workspaceId);
+    setActiveThreadInStore(reviewThread.id);
+    await bindChatThread(reviewThread.id);
+    toast.success(
+      t(
+        request.delivery === "detached"
+          ? "panel.toasts.codexReviewDetachedStarted"
+          : "panel.toasts.codexReviewStarted",
+      ),
+    );
+  }
+
   async function onRollbackCodexThread(numTurns: number) {
     if (!activeThread || activeThread.engineId !== "codex") {
       throw new Error(t("panel.toasts.codexThreadToolUnavailable"));
@@ -4100,6 +4131,20 @@ export function ChatPanel() {
                     skills={
                       codexReferenceCatalogState.skillsLoaded ? codexSkills : undefined
                     }
+                  />
+                  <CodexReviewPicker
+                    disabled={
+                      !activeThread ||
+                      activeThread.engineId !== "codex" ||
+                      !activeThread.engineThreadId ||
+                      streaming
+                    }
+                    defaultBaseBranch={
+                      (activeThread?.repoId
+                        ? repos.find((repo) => repo.id === activeThread.repoId)?.defaultBranch
+                        : activeRepo?.defaultBranch) ?? null
+                    }
+                    onStartReview={onStartCodexReview}
                   />
                   <CodexThreadPicker
                     disabled={
