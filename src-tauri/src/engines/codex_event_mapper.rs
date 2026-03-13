@@ -601,8 +601,8 @@ impl TurnEventMapper {
         let Some(item_id) = extract_any_string(params, &["itemId", "item_id"]) else {
             return Vec::new();
         };
-        let summary_index = extract_any_i64(params, &["summaryIndex", "summary_index"])
-            .unwrap_or_default();
+        let summary_index =
+            extract_any_i64(params, &["summaryIndex", "summary_index"]).unwrap_or_default();
         let previous = self
             .reasoning_summary_parts_by_item_id
             .insert(item_id, summary_index);

@@ -446,7 +446,8 @@ async fn handle_codex_runtime_event(
             }
         }
         CodexRuntimeEvent::ThreadUnarchived { engine_thread_id } => {
-            if let Some(updated_thread) = restore_codex_runtime_thread(state, &engine_thread_id).await
+            if let Some(updated_thread) =
+                restore_codex_runtime_thread(state, &engine_thread_id).await
             {
                 let _ = app.emit(
                     "thread-updated",
@@ -598,7 +599,10 @@ async fn archive_codex_runtime_thread(
     Some((thread.id, thread.workspace_id))
 }
 
-async fn restore_codex_runtime_thread(state: &AppState, engine_thread_id: &str) -> Option<ThreadDto> {
+async fn restore_codex_runtime_thread(
+    state: &AppState,
+    engine_thread_id: &str,
+) -> Option<ThreadDto> {
     let thread = run_db(state.db.clone(), {
         let engine_thread_id = engine_thread_id.to_string();
         move |db| db::threads::find_thread_by_engine_thread_id(db, "codex", &engine_thread_id)

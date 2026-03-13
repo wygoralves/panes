@@ -18,8 +18,9 @@ use crate::{
         TurnInputItem,
     },
     models::{
-        ActionOutputDto, MessageDto, MessageStatusDto, MessageWindowCursorDto, MessageWindowDto,
-        RepoDto, SearchResultDto, ThreadDto, ThreadStatusDto, TrustLevelDto,
+        ActionOutputDto, EngineInfoDto, EngineModelDto, MessageDto, MessageStatusDto,
+        MessageWindowCursorDto, MessageWindowDto, RepoDto, SearchResultDto, ThreadDto,
+        ThreadStatusDto, TrustLevelDto,
     },
     state::AppState,
 };
@@ -206,6 +207,7 @@ pub async fn send_message(
     thread_id: String,
     message: String,
     model_id: Option<String>,
+    reasoning_effort: Option<String>,
     attachments: Option<Vec<ChatAttachmentPayload>>,
     input_items: Option<Vec<ChatInputItemPayload>>,
     plan_mode: Option<bool>,
@@ -238,8 +240,18 @@ pub async fn send_message(
         plan_mode,
         input_items: input_items.clone(),
     };
+    let current_turn_model_id = thread_last_model_id(thread.engine_metadata.as_ref())
+        .unwrap_or_else(|| thread.model_id.clone());
+    let model_switch_requested = requested_model_id
+        .map(|value| value != current_turn_model_id.as_str())
+        .unwrap_or(false);
+    let validation_catalog = if model_switch_requested {
+        state.engines.list_engines().await.ok()
+    } else {
+        None
+    };
     let effective_model_id =
-        resolve_turn_model_id(state.inner(), &thread, requested_model_id).await?;
+        resolve_turn_model_id(&thread, requested_model_id, validation_catalog.as_deref())?;
 
     let (workspace, repos, selected_repo) = run_db(db.clone(), {
         let workspace_id = thread.workspace_id.clone();
@@ -262,7 +274,30 @@ pub async fn send_message(
     .await?;
 
     let workspace_root = workspace.root_path.clone();
-    let reasoning_effort = thread_reasoning_effort(thread.engine_metadata.as_ref());
+    let requested_reasoning_effort = normalize_reasoning_effort_value(reasoning_effort.as_deref());
+    let stored_reasoning_effort = thread_reasoning_effort(thread.engine_metadata.as_ref());
+    let configured_reasoning_effort = requested_reasoning_effort
+        .clone()
+        .or_else(|| stored_reasoning_effort.clone());
+    let reasoning_effort = if requested_reasoning_effort.is_some() {
+        requested_reasoning_effort
+    } else if model_switch_requested {
+        validation_catalog
+            .as_deref()
+            .map(|engines| {
+                resolve_reasoning_effort_from_catalog(
+                    engines,
+                    thread.engine_id.as_str(),
+                    effective_model_id.as_str(),
+                    configured_reasoning_effort.as_deref(),
+                )
+            })
+            .unwrap_or_else(|| {
+                normalize_reasoning_effort_value(configured_reasoning_effort.as_deref())
+            })
+    } else {
+        configured_reasoning_effort.clone()
+    };
     let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref())?;
     let sandbox_mode = sandbox_mode_override
         .clone()
@@ -321,7 +356,7 @@ pub async fn send_message(
         );
     }
 
-    if requested_model_id.is_some() {
+    if requested_model_id.is_some() || reasoning_effort != stored_reasoning_effort {
         let mut metadata = thread
             .engine_metadata
             .clone()
@@ -330,10 +365,20 @@ pub async fn send_message(
             metadata = serde_json::json!({});
         }
         if let Some(object) = metadata.as_object_mut() {
-            object.insert(
-                "lastModelId".to_string(),
-                Value::String(effective_model_id.clone()),
-            );
+            if requested_model_id.is_some() {
+                object.insert(
+                    "lastModelId".to_string(),
+                    Value::String(effective_model_id.clone()),
+                );
+            }
+            match reasoning_effort.as_ref() {
+                Some(value) => {
+                    object.insert("reasoningEffort".to_string(), Value::String(value.clone()));
+                }
+                None => {
+                    object.remove("reasoningEffort");
+                }
+            }
         }
         run_db(db.clone(), {
             let thread_id = thread.id.clone();
@@ -535,9 +580,10 @@ pub async fn start_codex_review(
                     &initial_turn_model_id,
                     &review_title,
                 )?;
-                if let Some(metadata) =
-                    clone_codex_review_metadata(source_thread.engine_metadata.as_ref(), &initial_turn_model_id)
-                {
+                if let Some(metadata) = clone_codex_review_metadata(
+                    source_thread.engine_metadata.as_ref(),
+                    &initial_turn_model_id,
+                ) {
                     db::threads::update_engine_metadata(db, &created.id, &metadata)?;
                 }
                 created
@@ -3389,6 +3435,68 @@ fn thread_output_schema(metadata: Option<&Value>) -> Option<Value> {
         .cloned()
 }
 
+fn normalize_reasoning_effort_value(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_lowercase)
+}
+
+fn resolve_reasoning_effort_for_model(
+    model: &EngineModelDto,
+    requested_effort: Option<&str>,
+) -> Option<String> {
+    let normalized_requested = normalize_reasoning_effort_value(requested_effort);
+    if let Some(requested) = normalized_requested.as_ref() {
+        if model
+            .supported_reasoning_efforts
+            .iter()
+            .any(|option| option.reasoning_effort == *requested)
+        {
+            return Some(requested.clone());
+        }
+    }
+
+    let normalized_default =
+        normalize_reasoning_effort_value(Some(model.default_reasoning_effort.as_str()));
+    if let Some(default_effort) = normalized_default.as_ref() {
+        if model
+            .supported_reasoning_efforts
+            .iter()
+            .any(|option| option.reasoning_effort == *default_effort)
+        {
+            return Some(default_effort.clone());
+        }
+    }
+
+    model
+        .supported_reasoning_efforts
+        .iter()
+        .map(|option| option.reasoning_effort.trim())
+        .find(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or(normalized_default)
+        .or(normalized_requested)
+}
+
+fn resolve_reasoning_effort_from_catalog(
+    engines: &[EngineInfoDto],
+    engine_id: &str,
+    model_id: &str,
+    requested_effort: Option<&str>,
+) -> Option<String> {
+    let normalized_requested = normalize_reasoning_effort_value(requested_effort);
+    let Some(model) = engines
+        .iter()
+        .find(|engine| engine.id == engine_id)
+        .and_then(|engine| engine.models.iter().find(|model| model.id == model_id))
+    else {
+        return normalized_requested;
+    };
+
+    resolve_reasoning_effort_for_model(model, normalized_requested.as_deref())
+}
+
 fn normalize_codex_approval_policy_value(value: &Value) -> Result<Value, String> {
     match value {
         Value::String(raw) => {
@@ -3451,6 +3559,7 @@ mod tests {
         db,
         engines::EngineManager,
         git::{repo::FileTreeCache, watcher::GitWatcherManager},
+        models::{EngineCapabilitiesDto, ReasoningEffortOptionDto},
         power::KeepAwakeManager,
         state::{AppState, TurnManager},
         terminal::TerminalManager,
@@ -3608,13 +3717,12 @@ mod tests {
 
     #[test]
     fn normalize_codex_review_target_builds_commit_payload() {
-        let (target, message, title) = normalize_codex_review_target(
-            &CodexReviewTargetPayload::Commit {
+        let (target, message, title) =
+            normalize_codex_review_target(&CodexReviewTargetPayload::Commit {
                 sha: "abcdef1234567890".to_string(),
                 title: Some("Refactor auth flow".to_string()),
-            },
-        )
-        .expect("commit target should normalize");
+            })
+            .expect("commit target should normalize");
 
         assert_eq!(
             target,
@@ -3624,7 +3732,10 @@ mod tests {
                 "title": "Refactor auth flow",
             })
         );
-        assert_eq!(message, "Review commit `abcdef1234567890`: Refactor auth flow");
+        assert_eq!(
+            message,
+            "Review commit `abcdef1234567890`: Refactor auth flow"
+        );
         assert_eq!(title, "Review: abcdef123456");
     }
 
@@ -3651,8 +3762,14 @@ mod tests {
         assert_eq!(metadata.get("codexThreadActiveFlags"), None);
         assert_eq!(metadata.get("codexSyncRequired"), None);
         assert_eq!(metadata.get("codexSyncReason"), None);
-        assert_eq!(metadata.get("serviceTier"), Some(&serde_json::json!("fast")));
-        assert_eq!(metadata.get("lastModelId"), Some(&serde_json::json!("gpt-5.4")));
+        assert_eq!(
+            metadata.get("serviceTier"),
+            Some(&serde_json::json!("fast"))
+        );
+        assert_eq!(
+            metadata.get("lastModelId"),
+            Some(&serde_json::json!("gpt-5.4"))
+        );
     }
 
     #[test]
@@ -4050,12 +4167,119 @@ mod tests {
             .and_then(|item| item.get("decision"))
             .is_none());
     }
+
+    #[test]
+    fn resolve_reasoning_effort_from_catalog_falls_back_to_model_default() {
+        let engines = vec![EngineInfoDto {
+            id: "codex".to_string(),
+            name: "Codex".to_string(),
+            models: vec![EngineModelDto {
+                id: "gpt-5.1-codex-mini".to_string(),
+                display_name: "GPT-5.1 Codex Mini".to_string(),
+                description: String::new(),
+                hidden: false,
+                is_default: false,
+                upgrade: None,
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string()],
+                supports_personality: false,
+                default_reasoning_effort: "medium".to_string(),
+                supported_reasoning_efforts: vec![
+                    ReasoningEffortOptionDto {
+                        reasoning_effort: "medium".to_string(),
+                        description: String::new(),
+                    },
+                    ReasoningEffortOptionDto {
+                        reasoning_effort: "high".to_string(),
+                        description: String::new(),
+                    },
+                ],
+            }],
+            capabilities: EngineCapabilitiesDto {
+                permission_modes: Vec::new(),
+                sandbox_modes: Vec::new(),
+                approval_decisions: Vec::new(),
+            },
+        }];
+
+        assert_eq!(
+            resolve_reasoning_effort_from_catalog(
+                &engines,
+                "codex",
+                "gpt-5.1-codex-mini",
+                Some("xhigh"),
+            ),
+            Some("medium".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_reasoning_effort_from_catalog_keeps_supported_effort() {
+        let engines = vec![EngineInfoDto {
+            id: "codex".to_string(),
+            name: "Codex".to_string(),
+            models: vec![EngineModelDto {
+                id: "gpt-5.1-codex-mini".to_string(),
+                display_name: "GPT-5.1 Codex Mini".to_string(),
+                description: String::new(),
+                hidden: false,
+                is_default: false,
+                upgrade: None,
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string()],
+                supports_personality: false,
+                default_reasoning_effort: "medium".to_string(),
+                supported_reasoning_efforts: vec![
+                    ReasoningEffortOptionDto {
+                        reasoning_effort: "medium".to_string(),
+                        description: String::new(),
+                    },
+                    ReasoningEffortOptionDto {
+                        reasoning_effort: "high".to_string(),
+                        description: String::new(),
+                    },
+                ],
+            }],
+            capabilities: EngineCapabilitiesDto {
+                permission_modes: Vec::new(),
+                sandbox_modes: Vec::new(),
+                approval_decisions: Vec::new(),
+            },
+        }];
+
+        assert_eq!(
+            resolve_reasoning_effort_from_catalog(
+                &engines,
+                "codex",
+                "gpt-5.1-codex-mini",
+                Some("high"),
+            ),
+            Some("high".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_turn_model_id_accepts_thread_last_model_without_catalog() {
+        let state = test_app_state();
+        let mut thread = test_thread(&state, "codex", "gpt-5.5-codex");
+        thread.engine_metadata = Some(serde_json::json!({
+            "lastModelId": "gpt-5.1-codex-mini"
+        }));
+
+        assert_eq!(
+            resolve_turn_model_id(&thread, Some("gpt-5.1-codex-mini"), None)
+                .expect("last model should resolve without a catalog"),
+            "gpt-5.1-codex-mini"
+        );
+    }
 }
 
-async fn resolve_turn_model_id(
-    state: &AppState,
+fn resolve_turn_model_id(
     thread: &ThreadDto,
     requested_model_id: Option<&str>,
+    engines: Option<&[EngineInfoDto]>,
 ) -> Result<String, String> {
     let Some(requested_model_id) = requested_model_id else {
         return Ok(thread.model_id.clone());
@@ -4065,7 +4289,12 @@ async fn resolve_turn_model_id(
         return Ok(thread.model_id.clone());
     }
 
-    if let Ok(engines) = state.engines.list_engines().await {
+    if thread_last_model_id(thread.engine_metadata.as_ref()).as_deref() == Some(requested_model_id)
+    {
+        return Ok(requested_model_id.to_string());
+    }
+
+    if let Some(engines) = engines {
         if let Some(engine) = engines.iter().find(|engine| engine.id == thread.engine_id) {
             if engine
                 .models

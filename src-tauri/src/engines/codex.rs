@@ -382,10 +382,11 @@ impl Engine for CodexEngine {
         }
 
         if let Some(existing_thread_id) = resume_engine_thread_id {
-            if self
-                .can_reuse_live_thread(existing_thread_id, &requested_runtime)
-                .await
-            {
+            if self.can_reuse_live_thread(existing_thread_id).await {
+                // Codex applies model and effort per `turn/start`, so a live thread can stay put
+                // while we swap the requested runtime for the next turn.
+                self.store_thread_runtime(existing_thread_id, requested_runtime.clone())
+                    .await;
                 return Ok(EngineThread {
                     engine_thread_id: existing_thread_id.to_string(),
                 });
@@ -2473,21 +2474,17 @@ impl CodexEngine {
         state.thread_runtimes.get(engine_thread_id).cloned()
     }
 
-    async fn can_reuse_live_thread(
-        &self,
-        engine_thread_id: &str,
-        requested_runtime: &ThreadRuntime,
-    ) -> bool {
-        let (transport, initialized, runtime_matches) = {
+    async fn can_reuse_live_thread(&self, engine_thread_id: &str) -> bool {
+        let (transport, initialized, known_thread) = {
             let state = self.state.lock().await;
             (
                 state.transport.clone(),
                 state.initialized,
-                state.thread_runtimes.get(engine_thread_id) == Some(requested_runtime),
+                state.thread_runtimes.contains_key(engine_thread_id),
             )
         };
 
-        if !initialized || !runtime_matches {
+        if !initialized || !known_thread {
             return false;
         }
 

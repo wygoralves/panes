@@ -1537,6 +1537,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         threadId,
         message,
         options?.modelId ?? null,
+        options?.reasoningEffort ?? null,
         attachments.length > 0 ? attachments : null,
         inputItems.length > 0 ? inputItems : null,
         planMode,

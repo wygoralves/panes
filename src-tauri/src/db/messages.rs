@@ -74,10 +74,14 @@ pub fn clone_thread_messages(
         .context("failed to start thread message clone transaction")?;
 
     for (index, message) in messages.iter().enumerate() {
-        let token_usage = message.token_usage.as_ref().cloned().unwrap_or(TokenUsageDto {
-            input: 0,
-            output: 0,
-        });
+        let token_usage = message
+            .token_usage
+            .as_ref()
+            .cloned()
+            .unwrap_or(TokenUsageDto {
+                input: 0,
+                output: 0,
+            });
         let created_at = (Utc::now() + ChronoDuration::milliseconds(index as i64))
             .format("%Y-%m-%d %H:%M:%S%.3f")
             .to_string();
@@ -112,11 +116,7 @@ pub fn clone_thread_messages(
     Ok(messages.len())
 }
 
-pub fn drop_last_turns(
-    db: &Database,
-    thread_id: &str,
-    num_turns: u32,
-) -> anyhow::Result<usize> {
+pub fn drop_last_turns(db: &Database, thread_id: &str, num_turns: u32) -> anyhow::Result<usize> {
     let messages = get_thread_messages(db, thread_id)?;
     let user_message_indexes = messages
         .iter()
@@ -1524,16 +1524,31 @@ mod tests {
         assert_eq!(source_messages.len(), target_messages.len());
         assert_ne!(source_messages[0].id, target_messages[0].id);
         assert_eq!(target_messages[0].role, "user");
-        assert_eq!(target_messages[0].content.as_deref(), Some("Branch this history"));
+        assert_eq!(
+            target_messages[0].content.as_deref(),
+            Some("Branch this history")
+        );
         assert_eq!(target_messages[0].turn_engine_id.as_deref(), Some("codex"));
-        assert_eq!(target_messages[0].turn_model_id.as_deref(), Some("gpt-5.3-codex"));
-        assert_eq!(target_messages[0].turn_reasoning_effort.as_deref(), Some("medium"));
+        assert_eq!(
+            target_messages[0].turn_model_id.as_deref(),
+            Some("gpt-5.3-codex")
+        );
+        assert_eq!(
+            target_messages[0].turn_reasoning_effort.as_deref(),
+            Some("medium")
+        );
         assert_eq!(target_messages[0].status, MessageStatusDto::Completed);
         assert_eq!(target_messages[1].role, "assistant");
-        assert_eq!(target_messages[1].content.as_deref(), Some("Created branch preview"));
+        assert_eq!(
+            target_messages[1].content.as_deref(),
+            Some("Created branch preview")
+        );
         assert_eq!(target_messages[1].status, MessageStatusDto::Completed);
         assert_eq!(
-            target_messages[1].token_usage.as_ref().map(|usage| (usage.input, usage.output)),
+            target_messages[1]
+                .token_usage
+                .as_ref()
+                .map(|usage| (usage.input, usage.output)),
             Some((7, 11))
         );
         assert!(

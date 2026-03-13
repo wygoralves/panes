@@ -46,6 +46,7 @@ import { isLinuxDesktop } from "../../lib/windowActions";
 import { MessageBlocks } from "./MessageBlocks";
 import { resolveEngineCapabilities } from "./engineCapabilities";
 import { buildCodexInputItems } from "./codexInputItems";
+import { resolveReasoningEffortForModel } from "./reasoningEffort";
 import {
   buildPermissionsApprovalResponse,
   buildPermissionsDeclineResponse,
@@ -1224,6 +1225,9 @@ export function ChatPanel() {
   const [selectedEngineId, setSelectedEngineId] = useState("codex");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [selectedEffort, setSelectedEffort] = useState("medium");
+  const selectedEngineIdRef = useRef(selectedEngineId);
+  const selectedModelIdRef = useRef<string | null>(selectedModelId);
+  const selectedEffortRef = useRef(selectedEffort);
   const [codexSkills, setCodexSkills] = useState<CodexSkill[]>([]);
   const [codexApps, setCodexApps] = useState<CodexApp[]>([]);
   const [codexReferenceCatalogState, setCodexReferenceCatalogState] =
@@ -1493,6 +1497,7 @@ export function ChatPanel() {
       activeThread.repoId === activeScopeRepoId;
     const engineMatch = activeThread.engineId === selectedEngineId;
     const modelMatch =
+      selectedEngineId === "codex" ||
       activeThread.modelId === selectedModelId ||
       readThreadLastModelId(activeThread) === selectedModelId;
 
@@ -1504,6 +1509,18 @@ export function ChatPanel() {
     selectedEngineId,
     selectedModelId,
   ]);
+
+  useEffect(() => {
+    selectedEngineIdRef.current = selectedEngineId;
+  }, [selectedEngineId]);
+
+  useEffect(() => {
+    selectedModelIdRef.current = selectedModelId;
+  }, [selectedModelId]);
+
+  useEffect(() => {
+    selectedEffortRef.current = selectedEffort;
+  }, [selectedEffort]);
   const canSteerActiveTurn = useMemo(() => {
     if (
       !streaming ||
@@ -1613,12 +1630,6 @@ export function ChatPanel() {
     () => selectedModel?.supportedReasoningEfforts ?? [],
     [selectedModel],
   );
-  const selectedReasoningEffort = useMemo(
-    () => supportedEfforts.some((option) => option.reasoningEffort === selectedEffort)
-      ? selectedEffort
-      : null,
-    [selectedEffort, supportedEfforts],
-  );
   const activeThreadReasoningEffort =
     typeof activeThread?.engineMetadata?.reasoningEffort === "string"
       ? activeThread.engineMetadata.reasoningEffort
@@ -1632,6 +1643,22 @@ export function ChatPanel() {
     }
     return encodeModelOptionValue(selectedEngineId, selectedModelId);
   }, [selectedEngineId, selectedModelId]);
+  const resolveComposerRuntimeSelection = useCallback(() => {
+    const engineId = selectedEngineIdRef.current;
+    const modelId = selectedModelIdRef.current;
+    if (!engineId || !modelId) {
+      return null;
+    }
+
+    const engine = engines.find((candidate) => candidate.id === engineId) ?? null;
+    const model = engine?.models.find((candidate) => candidate.id === modelId) ?? null;
+
+    return {
+      engineId,
+      modelId,
+      reasoningEffort: resolveReasoningEffortForModel(model, selectedEffortRef.current),
+    };
+  }, [engines]);
 
   const renderAssistantIdentity = useCallback((message: Message) => {
     const messageEngineId =
@@ -2180,20 +2207,10 @@ export function ChatPanel() {
     }
     effortSyncKeyRef.current = syncKey;
 
-    const effortFromThreadSupported = activeThreadReasoningEffort
-      ? supportedEfforts.some((option) => option.reasoningEffort === activeThreadReasoningEffort)
-      : false;
-    const modelDefaultSupported = supportedEfforts.some(
-      (option) => option.reasoningEffort === selectedModel.defaultReasoningEffort,
+    const nextEffort = resolveReasoningEffortForModel(
+      selectedModel,
+      activeThreadReasoningEffort ?? selectedEffort,
     );
-    const fallbackEffort =
-      supportedEfforts[0]?.reasoningEffort ?? selectedModel.defaultReasoningEffort;
-
-    const nextEffort = effortFromThreadSupported
-      ? activeThreadReasoningEffort!
-      : modelDefaultSupported
-        ? selectedModel.defaultReasoningEffort
-        : fallbackEffort;
 
     if (nextEffort && selectedEffort !== nextEffort) {
       setSelectedEffort(nextEffort);
@@ -2962,9 +2979,13 @@ export function ChatPanel() {
       return;
     }
 
-    if (!selectedModelId) {
+    const composerRuntime = resolveComposerRuntimeSelection();
+    if (!composerRuntime) {
       return;
     }
+    const submitEngineId = composerRuntime.engineId;
+    const submitModelId = composerRuntime.modelId;
+    const submitReasoningEffort = composerRuntime.reasoningEffort;
 
     const activeScopeRepoId = activeRepo?.id ?? null;
     const activeThreadInScope = activeThread
@@ -2972,11 +2993,12 @@ export function ChatPanel() {
         activeThread.repoId === activeScopeRepoId
       : false;
     const activeThreadModelMatch = activeThread
-      ? activeThread.modelId === selectedModelId ||
-        readThreadLastModelId(activeThread) === selectedModelId
+      ? submitEngineId === "codex" ||
+        activeThread.modelId === submitModelId ||
+        readThreadLastModelId(activeThread) === submitModelId
       : false;
     const activeThreadEngineMatch = activeThread
-      ? activeThread.engineId === selectedEngineId
+      ? activeThread.engineId === submitEngineId
       : false;
 
     let targetThreadId =
@@ -2991,8 +3013,8 @@ export function ChatPanel() {
       const createdThreadId = await createThread({
         workspaceId: activeWorkspaceId,
         repoId: activeScopeRepoId,
-        engineId: selectedEngineId,
-        modelId: selectedModelId,
+        engineId: submitEngineId,
+        modelId: submitModelId,
         title: activeRepo
           ? t("panel.repoChatTitle", { name: activeRepo.name })
           : t("panel.workspaceChatTitle"),
@@ -3004,7 +3026,7 @@ export function ChatPanel() {
       await bindChatThread(createdThreadId);
     }
 
-    const inputItems = await resolveCodexInputItems(text, selectedEngineId);
+    const inputItems = await resolveCodexInputItems(text, submitEngineId);
 
     const currentThread =
       useThreadStore.getState().threads.find((thread) => thread.id === targetThreadId) ??
@@ -3033,9 +3055,9 @@ export function ChatPanel() {
           attachments: [...attachments],
           inputItems: inputItems ?? null,
           planMode,
-          engineId: selectedEngineId,
-          modelId: selectedModelId!,
-          effort: selectedReasoningEffort,
+          engineId: submitEngineId,
+          modelId: submitModelId,
+          effort: submitReasoningEffort,
           personality: selectedPersonality,
           serviceTier: selectedServiceTier,
           outputSchemaText,
@@ -3045,20 +3067,22 @@ export function ChatPanel() {
       }
     }
 
-    if (selectedReasoningEffort) {
-      await ipc.setThreadReasoningEffort(targetThreadId, selectedReasoningEffort, selectedModelId);
-      setThreadReasoningEffortLocal(targetThreadId, selectedReasoningEffort);
-    }
+    await ipc.setThreadReasoningEffort(
+      targetThreadId,
+      submitReasoningEffort,
+      submitModelId,
+    );
+    setThreadReasoningEffortLocal(targetThreadId, submitReasoningEffort);
     if (!(await applyCodexConfigToThread(targetThreadId))) {
       return;
     }
-    setThreadLastModelLocal(targetThreadId, selectedModelId);
+    setThreadLastModelLocal(targetThreadId, submitModelId);
 
     const sent = await send(text, {
       threadIdOverride: targetThreadId,
-      engineId: selectedEngineId,
-      modelId: selectedModelId,
-      reasoningEffort: selectedReasoningEffort,
+      engineId: submitEngineId,
+      modelId: submitModelId,
+      reasoningEffort: submitReasoningEffort,
       attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
       inputItems,
       planMode,
@@ -3077,10 +3101,8 @@ export function ChatPanel() {
     try {
       await ipc.confirmWorkspaceThread(prompt.threadId, prompt.threadPaths);
 
-      if (prompt.effort) {
-        await ipc.setThreadReasoningEffort(prompt.threadId, prompt.effort, prompt.modelId);
-        setThreadReasoningEffortLocal(prompt.threadId, prompt.effort);
-      }
+      await ipc.setThreadReasoningEffort(prompt.threadId, prompt.effort, prompt.modelId);
+      setThreadReasoningEffortLocal(prompt.threadId, prompt.effort);
       if (!(await applyCodexConfigToThread(prompt.threadId, {
         engineId: prompt.engineId,
         personality: prompt.personality,
@@ -3120,6 +3142,7 @@ export function ChatPanel() {
   }
 
   async function onReasoningEffortChange(nextEffort: string) {
+    selectedEffortRef.current = nextEffort;
     setSelectedEffort(nextEffort);
     const targetThreadId = threadId ?? activeThread?.id ?? null;
     if (!targetThreadId) {
@@ -3127,7 +3150,11 @@ export function ChatPanel() {
     }
 
     setThreadReasoningEffortLocal(targetThreadId, nextEffort);
-    await ipc.setThreadReasoningEffort(targetThreadId, nextEffort, selectedModelId);
+    await ipc.setThreadReasoningEffort(
+      targetThreadId,
+      nextEffort,
+      selectedModelIdRef.current,
+    );
   }
 
   async function onRepoTrustLevelChange(nextTrustLevel: TrustLevel) {
@@ -4464,8 +4491,22 @@ export function ChatPanel() {
                 selectedEffort={selectedEffort}
                 onEngineModelChange={(engineId, modelId) => {
                   manuallyOverrodeThreadSelectionRef.current = true;
+                  selectedEngineIdRef.current = engineId;
                   if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
+                  const nextEngine =
+                    engines.find((engine) => engine.id === engineId) ?? null;
+                  const nextModel =
+                    nextEngine?.models.find((model) => model.id === modelId) ?? null;
+                  const nextEffort = resolveReasoningEffortForModel(
+                    nextModel,
+                    selectedEffortRef.current,
+                  );
+                  selectedModelIdRef.current = modelId;
                   setSelectedModelId(modelId);
+                  if (nextEffort && nextEffort !== selectedEffort) {
+                    selectedEffortRef.current = nextEffort;
+                    setSelectedEffort(nextEffort);
+                  }
                 }}
                 onEffortChange={(effort) => void onReasoningEffortChange(effort)}
                 disabled={availableModels.length === 0}
