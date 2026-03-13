@@ -18,6 +18,9 @@ mod workspace_startup;
 
 use std::sync::Arc;
 
+use anyhow::Context;
+use rusqlite::OptionalExtension;
+
 use config::app_config::AppConfig;
 use db::Database;
 use engines::{CodexRuntimeEvent, EngineManager};
@@ -165,6 +168,8 @@ pub fn run() {
             commands::power::get_keep_awake_state,
             commands::power::set_keep_awake_enabled,
             commands::chat::send_message,
+            commands::chat::start_codex_review,
+            commands::chat::steer_message,
             commands::chat::cancel_turn,
             commands::chat::respond_to_approval,
             commands::chat::get_thread_messages,
@@ -235,17 +240,25 @@ pub fn run() {
             commands::engines::list_engines,
             commands::engines::engine_health,
             commands::engines::prewarm_engine,
+            commands::engines::list_codex_skills,
+            commands::engines::list_codex_apps,
             commands::engines::run_engine_check,
             commands::threads::list_threads,
             commands::threads::list_archived_threads,
+            commands::threads::list_codex_remote_threads,
+            commands::threads::attach_codex_remote_thread,
             commands::threads::create_thread,
             commands::threads::rename_thread,
             commands::threads::confirm_workspace_thread,
             commands::threads::set_thread_reasoning_effort,
             commands::threads::set_thread_execution_policy,
+            commands::threads::set_thread_codex_config,
             commands::threads::archive_thread,
             commands::threads::restore_thread,
             commands::threads::sync_thread_from_engine,
+            commands::threads::fork_codex_thread,
+            commands::threads::rollback_codex_thread,
+            commands::threads::compact_codex_thread,
             commands::threads::delete_thread,
             commands::terminal::terminal_create_session,
             commands::terminal::terminal_write,
@@ -318,6 +331,9 @@ async fn handle_codex_runtime_event(
                 },
             );
         }
+        CodexRuntimeEvent::ApprovalResolved { approval_id } => {
+            resolve_codex_runtime_approval(app, state, &approval_id).await;
+        }
         CodexRuntimeEvent::ThreadStatusChanged {
             engine_thread_id,
             status_type,
@@ -389,6 +405,217 @@ async fn handle_codex_runtime_event(
                 );
             }
         }
+        CodexRuntimeEvent::ThreadSnapshotUpdated {
+            engine_thread_id,
+            thread_name,
+            status_type,
+            active_flags,
+            preview,
+        } => {
+            if let Some(updated_thread) = apply_codex_runtime_thread_update(
+                state,
+                &engine_thread_id,
+                thread_name.as_deref(),
+                status_type.as_deref(),
+                &active_flags,
+                preview.as_deref(),
+                Some(false),
+                None,
+            )
+            .await
+            {
+                let _ = app.emit(
+                    "thread-updated",
+                    ThreadUpdatedEvent {
+                        thread_id: updated_thread.id.clone(),
+                        workspace_id: updated_thread.workspace_id.clone(),
+                        thread: Some(updated_thread),
+                    },
+                );
+            }
+        }
+        CodexRuntimeEvent::ThreadArchived { engine_thread_id } => {
+            if let Some((thread_id, workspace_id)) =
+                archive_codex_runtime_thread(state, &engine_thread_id).await
+            {
+                let _ = app.emit(
+                    "thread-updated",
+                    ThreadUpdatedEvent {
+                        thread_id,
+                        workspace_id,
+                        thread: None,
+                    },
+                );
+            }
+        }
+        CodexRuntimeEvent::ThreadUnarchived { engine_thread_id } => {
+            if let Some(updated_thread) =
+                restore_codex_runtime_thread(state, &engine_thread_id).await
+            {
+                let _ = app.emit(
+                    "thread-updated",
+                    ThreadUpdatedEvent {
+                        thread_id: updated_thread.id.clone(),
+                        workspace_id: updated_thread.workspace_id.clone(),
+                        thread: Some(updated_thread),
+                    },
+                );
+            }
+        }
+    }
+}
+
+async fn resolve_codex_runtime_approval(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    approval_id: &str,
+) {
+    let Some((thread_id, message_id)) = run_db(state.db.clone(), {
+        let approval_id = approval_id.to_string();
+        move |db| db::actions::find_approval_context(db, &approval_id)
+    })
+    .await
+    .ok()
+    .flatten() else {
+        return;
+    };
+
+    let has_local_turn = state.turns.get(&thread_id).await.is_some();
+    let updated_thread = match run_db(state.db.clone(), {
+        let approval_id = approval_id.to_string();
+        let thread_id = thread_id.clone();
+        let message_id = message_id.clone();
+        move |db| {
+            let mut conn = db.connect()?;
+            let tx = conn
+                .transaction()
+                .context("failed to start approval resolution transaction")?;
+
+            // Resolve the approval record.
+            tx.execute(
+                "UPDATE approvals
+                 SET status = 'answered', answered_at = COALESCE(answered_at, datetime('now'))
+                 WHERE id = ?1",
+                rusqlite::params![approval_id],
+            )
+            .context("failed to resolve approval")?;
+
+            // Update the approval block inside the message's blocks_json (best-effort).
+            let raw_blocks: Option<String> = tx
+                .query_row(
+                    "SELECT blocks_json FROM messages WHERE id = ?1",
+                    rusqlite::params![message_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .context("failed to load message blocks for approval update")?;
+            if let Some(raw_blocks) = raw_blocks {
+                let mut blocks_value: serde_json::Value =
+                    serde_json::from_str(&raw_blocks).unwrap_or_else(|_| serde_json::json!([]));
+                let changed = if let Some(items) = blocks_value.as_array_mut() {
+                    let mut any_changed = false;
+                    for block in items.iter_mut() {
+                        let Some(object) = block.as_object_mut() else {
+                            continue;
+                        };
+                        if object.get("type").and_then(serde_json::Value::as_str)
+                            != Some("approval")
+                        {
+                            continue;
+                        }
+                        let bid = object
+                            .get("approvalId")
+                            .and_then(serde_json::Value::as_str)
+                            .or_else(|| {
+                                object
+                                    .get("approval_id")
+                                    .and_then(serde_json::Value::as_str)
+                            });
+                        if bid != Some(approval_id.as_str()) {
+                            continue;
+                        }
+                        let should_update = object
+                            .get("status")
+                            .and_then(serde_json::Value::as_str)
+                            .map(|v| v != "answered")
+                            .unwrap_or(true);
+                        if should_update {
+                            object.insert(
+                                "status".to_string(),
+                                serde_json::Value::String("answered".to_string()),
+                            );
+                            any_changed = true;
+                        }
+                    }
+                    any_changed
+                } else {
+                    false
+                };
+                if changed {
+                    tx.execute(
+                        "UPDATE messages SET blocks_json = ?1 WHERE id = ?2",
+                        rusqlite::params![blocks_value.to_string(), message_id],
+                    )
+                    .context("failed to persist answered approval in message blocks")?;
+                }
+            }
+
+            // Conditionally advance the thread status.
+            if has_local_turn {
+                tx.execute(
+                    "UPDATE threads
+                     SET status = ?1, last_activity_at = datetime('now')
+                     WHERE id = ?2
+                       AND status = ?3",
+                    rusqlite::params![
+                        ThreadStatusDto::Streaming.as_str(),
+                        thread_id,
+                        ThreadStatusDto::AwaitingApproval.as_str()
+                    ],
+                )
+                .context("failed to conditionally update thread status")?;
+            }
+
+            tx.commit()
+                .context("failed to commit approval resolution transaction")?;
+
+            // Read the updated thread after the transaction has committed (non-atomic read is fine).
+            let updated_thread = if has_local_turn {
+                db::threads::get_thread(db, &thread_id)?
+            } else {
+                None
+            };
+
+            Ok(updated_thread)
+        }
+    })
+    .await
+    {
+        Ok(updated_thread) => updated_thread,
+        Err(error) => {
+            log::warn!("failed to reconcile resolved runtime approval {approval_id}: {error}");
+            return;
+        }
+    };
+
+    let stream_event_topic = format!("stream-event-{thread_id}");
+    let _ = app.emit(
+        &stream_event_topic,
+        serde_json::json!({
+            "type": "ApprovalResolved",
+            "approval_id": approval_id,
+        }),
+    );
+
+    if let Some(thread) = updated_thread {
+        let _ = app.emit(
+            "thread-updated",
+            ThreadUpdatedEvent {
+                thread_id: thread.id.clone(),
+                workspace_id: thread.workspace_id.clone(),
+                thread: Some(thread),
+            },
+        );
     }
 }
 
@@ -433,6 +660,55 @@ async fn apply_codex_runtime_thread_update(
                 next_status,
                 Some(&metadata),
             )
+        }
+    })
+    .await
+    .ok()
+}
+
+async fn archive_codex_runtime_thread(
+    state: &AppState,
+    engine_thread_id: &str,
+) -> Option<(String, String)> {
+    let thread = run_db(state.db.clone(), {
+        let engine_thread_id = engine_thread_id.to_string();
+        move |db| db::threads::find_thread_by_engine_thread_id(db, "codex", &engine_thread_id)
+    })
+    .await
+    .ok()??;
+
+    run_db(state.db.clone(), {
+        let thread_id = thread.id.clone();
+        move |db| match db::threads::archive_thread(db, &thread_id) {
+            Ok(()) => Ok(()),
+            Err(error) if error.to_string().contains("already archived") => Ok(()),
+            Err(error) => Err(error),
+        }
+    })
+    .await
+    .ok()?;
+
+    Some((thread.id, thread.workspace_id))
+}
+
+async fn restore_codex_runtime_thread(
+    state: &AppState,
+    engine_thread_id: &str,
+) -> Option<ThreadDto> {
+    let thread = run_db(state.db.clone(), {
+        let engine_thread_id = engine_thread_id.to_string();
+        move |db| db::threads::find_thread_by_engine_thread_id(db, "codex", &engine_thread_id)
+    })
+    .await
+    .ok()??;
+
+    run_db(state.db.clone(), {
+        let thread_id = thread.id.clone();
+        let existing = thread.clone();
+        move |db| match db::threads::restore_thread(db, &thread_id) {
+            Ok(restored) => Ok(restored),
+            Err(error) if error.to_string().contains("not archived") => Ok(existing),
+            Err(error) => Err(error),
         }
     })
     .await

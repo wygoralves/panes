@@ -6,11 +6,22 @@
     "legacy": "Legado ({{count}})",
     "thinking": "Raciocínio",
     "default": "padrão",
+    "fastOn": "Fast",
+    "supportsPersonality": "Personalidade",
+    "upgradeAvailable": "Upgrade disponível: {{model}}",
+    "modalities": {
+      "image": "Visão",
+      "textOnly": "Só texto"
+    },
     "effort": {
+      "none": "Nenhum",
+      "minimal": "Mínimo",
       "low": "Baixo",
       "medium": "Médio",
       "high": "Alto",
       "xhigh": "Máximo",
+      "noneShort": "Nen",
+      "minimalShort": "Min",
       "lowShort": "Bx",
       "mediumShort": "Med",
       "highShort": "Alt",
@@ -38,6 +49,182 @@
     "networkAccess": "Acesso à rede",
     "sandbox": "Sandbox",
     "network": "Rede"
+  },
+  "configPicker": {
+    "title": "Configuração do turno",
+    "shortTitle": "Config",
+    "subtitle": "Sobrescritas de thread do Codex são aplicadas no próximo turno e mantidas para os seguintes.",
+    "customCount": "{{count}} personalizadas",
+    "personality": "Personalidade",
+    "personalityDescription": "Define o tom do Codex para os próximos turnos desta thread.",
+    "personalityUnsupported": "O modelo selecionado não anuncia suporte a personalidade. Mesmo assim, você pode limpar uma sobrescrita existente aqui.",
+    "serviceTier": "Camada de serviço",
+    "serviceTierDescription": "Escolha o equilíbrio entre menor latência e capacidade flex.",
+    "outputSchema": "Schema de saída",
+    "outputSchemaDescription": "Restrição opcional de JSON Schema para respostas finais do assistente nesta thread.",
+    "outputSchemaPlaceholder": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"summary\": { \"type\": \"string\" }\n  },\n  \"required\": [\"summary\"],\n  \"additionalProperties\": false\n}",
+    "outputSchemaHint": "Cole um objeto JSON Schema ou `true`/`false`.",
+    "outputSchemaSet": "Schema de saída ativo",
+    "approvalPolicy": "Política de aprovação avançada",
+    "approvalPolicyDescription": "Objeto `reject` estruturado opcional. Quando definido, ele sobrescreve o seletor simples de aprovação do Codex.",
+    "approvalPolicyPlaceholder": "{\n  \"reject\": {\n    \"mcp_elicitations\": true,\n    \"rules\": false,\n    \"sandbox_approval\": false\n  }\n}",
+    "applySchema": "Aplicar schema",
+    "clearSchema": "Limpar schema",
+    "clearCustomApproval": "Limpar política de aprovação personalizada",
+    "save": "Salvar",
+    "saving": "Salvando...",
+    "reset": "Redefinir",
+    "inherit": "Auto",
+    "personalities": {
+      "none": "Nenhuma",
+      "friendly": "Amigável",
+      "pragmatic": "Pragmática"
+    },
+    "serviceTiers": {
+      "fast": "Fast",
+      "flex": "Flex"
+    },
+    "invalidJson": "JSON inválido: {{error}}",
+    "invalidApprovalPolicy": "A política de aprovação precisa ser um objeto JSON.",
+    "invalidOutputSchemaType": "esperado um objeto ou booleano JSON Schema",
+    "invalidOutputSchema": "O schema de saída deve ser um objeto ou booleano JSON Schema válido: {{error}}"
+  },
+  "runtimePicker": {
+    "title": "Diagnósticos de runtime",
+    "shortTitle": "Runtime",
+    "subtitle": "Capacidades e estado do Codex app-server em tempo real a partir do transporte ativo.",
+    "notLoaded": "Nenhum diagnóstico de runtime foi capturado ainda.",
+    "planModePromptGuided": "Este runtime do Codex anuncia modo de colaboração de plano. O Panes vai usar o modo de plano nativo nos turns em modo de plano.",
+    "planModePromptGuidedFallback": "Este runtime do Codex não anuncia modo de colaboração nativo de plano. O Panes vai cair para planejamento guiado por prompt.",
+    "planModePromptGuidedUnknown": "O Panes vai preferir o modo de colaboração nativo de plano do Codex quando disponível e, caso contrário, cair para planejamento guiado por prompt.",
+    "status": "Status",
+    "statusCurrent": "Atual",
+    "statusStale": "Defasado",
+    "fetchedAt": "Coletado em",
+    "issues": "{{count}} problemas",
+    "requiresOpenaiAuth": "Exige autenticação OpenAI",
+    "externalAuthTokensUnsupported": "Tokens externos de autenticação do ChatGPT não são suportados pelo Panes. O Codex pode rodar, mas a renovação do token precisa acontecer fora do app.",
+    "none": "Nenhum",
+    "unknown": "Desconhecido",
+    "yes": "Sim",
+    "no": "Não",
+    "sections": {
+      "account": "Conta",
+      "config": "Configuração",
+      "modes": "Modos de colaboração",
+      "features": "Features experimentais",
+      "skills": "Skills",
+      "apps": "Apps",
+      "plugins": "Plugins",
+      "mcpServers": "Servidores MCP",
+      "methodIssues": "Problemas de método",
+      "events": "Eventos recentes do runtime"
+    },
+    "fields": {
+      "provider": "Provedor",
+      "authMode": "Modo de autenticação",
+      "email": "Email",
+      "plan": "Plano",
+      "model": "Modelo",
+      "modelProvider": "Provedor do modelo",
+      "serviceTier": "Camada de serviço",
+      "approvalPolicy": "Política de aprovação",
+      "sandboxMode": "Modo de sandbox",
+      "webSearch": "Busca web",
+      "profile": "Perfil",
+      "layers": "Camadas de configuração",
+      "enabled": "Habilitado",
+      "accessible": "Acessível",
+      "capabilities": "Capacidades",
+      "authStatus": "Status de autenticação",
+      "tools": "Ferramentas",
+      "resources": "Recursos",
+      "templates": "Templates"
+    },
+    "events": {
+      "configWarning": "Aviso de configuração",
+      "accountLogin": "Login da conta",
+      "mcpOauth": "OAuth do MCP",
+      "windowsSandboxSetup": "Configuração do sandbox no Windows",
+      "windowsWorldWritableWarning": "Aviso de paths world-writable no Windows",
+      "threadRealtime": "Realtime da thread",
+      "scanIncomplete": "Varredura incompleta"
+    }
+  },
+  "threadPicker": {
+    "title": "Ferramentas da thread",
+    "shortTitle": "Thread",
+    "subtitle": "Navegue por threads remotas do Codex ou execute ações nativas de histórico na thread vinculada no app-server.",
+    "working": "Processando...",
+    "invalidTurns": "A quantidade de turnos para rollback precisa ser 1 ou maior.",
+    "resumeTitle": "Retomar thread existente",
+    "resumeDescription": "Navegue pelas threads do Codex app-server deste workspace e anexe uma delas sem importar o transcript anterior.",
+    "searchPlaceholder": "Buscar threads remotas",
+    "searchAction": "Buscar",
+    "refreshAction": "Atualizar",
+    "loadMoreAction": "Carregar mais",
+    "resumeUnavailable": "Selecione um workspace e um modelo do Codex antes de navegar pelas threads remotas.",
+    "remoteHistoryNote": "O histórico anterior continua no servidor por enquanto. Novos turnos seguem na thread anexada.",
+    "loadingRemote": "Carregando threads remotas...",
+    "noRemoteThreads": "Nenhuma thread do Codex correspondente foi encontrada para este workspace.",
+    "openAttachedAction": "Abrir local",
+    "attachAction": "Anexar",
+    "threadMeta": "Atualizada em {{updatedAt}}. Origem: {{sourceKind}}. Status: {{statusType}}. Provedor: {{modelProvider}}.",
+    "filters": {
+      "active": "Ativas",
+      "archived": "Arquivadas"
+    },
+    "forkTitle": "Ramificar thread",
+    "forkDescription": "Cria uma nova thread derivada do Codex a partir do histórico atual mantido no servidor.",
+    "forkAction": "Ramificar",
+    "rollbackTitle": "Rollback em ramificação",
+    "rollbackDescription": "Cria uma nova thread ramificada e remove os turnos mais recentes do histórico local e do servidor.",
+    "rollbackTurns": "Turnos a remover",
+    "rollbackWarning": "Rollback não desfaz mudanças no sistema de arquivos. Ele só ramifica o histórico do chat.",
+    "rollbackAction": "Rollback",
+    "compactTitle": "Compactar contexto",
+    "compactDescription": "Pede ao Codex para compactar o contexto da thread ativa no servidor.",
+    "compactAction": "Compactar"
+  },
+  "reviewPicker": {
+    "title": "Review",
+    "shortTitle": "Review",
+    "subtitle": "Inicie um turno nativo de review do Codex usando o contexto da thread atual.",
+    "targetLabel": "Alvo",
+    "deliveryLabel": "Entrega",
+    "branchLabel": "Branch base",
+    "branchPlaceholder": "main",
+    "commitLabel": "SHA do commit",
+    "commitPlaceholder": "abc1234",
+    "instructionsLabel": "Instruções",
+    "instructionsPlaceholder": "Revise a refatoração atual em busca de regressões e testes ausentes.",
+    "working": "Iniciando...",
+    "startAction": "Iniciar review",
+    "targets": {
+      "uncommittedChanges": "Mudanças não commitadas",
+      "baseBranch": "Branch base",
+      "commit": "Commit",
+      "custom": "Personalizado"
+    },
+    "delivery": {
+      "inline": "Inline",
+      "detached": "Destacado"
+    },
+    "deliveryDescriptions": {
+      "inline": "Executa o review na thread atual.",
+      "detached": "Executa o review em uma nova thread de review do Codex."
+    },
+    "targetDescriptions": {
+      "uncommittedChanges": "Revise mudanças staged, unstaged e arquivos não rastreados na working tree atual.",
+      "baseBranch": "Revise as mudanças entre a branch atual e a branch base selecionada.",
+      "commit": "Revise as mudanças introduzidas por um commit.",
+      "custom": "Execute uma solicitação nativa de review em texto livre em vez de um alvo derivado do Git."
+    },
+    "errors": {
+      "branchRequired": "A branch base é obrigatória.",
+      "commitRequired": "O SHA do commit é obrigatório.",
+      "instructionsRequired": "As instruções de review são obrigatórias."
+    }
   },
   "policy": {
     "trustTitle": "Confiança",
@@ -99,11 +286,17 @@
     "trustWorkspace": "Confiar no workspace",
     "dropFiles": "Solte arquivos para anexar",
     "attachFiles": "Anexar arquivos",
+    "sendFollowUp": "Enviar acompanhamento",
     "enablePlanMode": "Ativar modo de plano (Shift+Tab)",
     "disablePlanMode": "Desativar modo de plano (Shift+Tab)",
+    "enablePlanModeCodex": "Ativar modo de plano para Codex (Shift+Tab)",
+    "disablePlanModeCodex": "Desativar modo de plano para Codex (Shift+Tab)",
     "planMode": "Plano",
     "planShort": "Plano",
     "planModeBanner": "Modo de plano: o agente vai planejar antes de executar.",
+    "planModeBannerCodex": "Modo de plano: o Panes pede que o Codex use seu modo de colaboração nativo de plano antes de agir.",
+    "planModeBannerCodexFallback": "Modo de plano guiado por prompt: o Panes pede que o Codex planeje antes de agir porque este runtime não anuncia atualmente um modo de colaboração nativo de plano.",
+    "planModeBannerCodexUnknown": "Modo de plano: o Panes vai preferir o modo de colaboração nativo de plano do Codex quando disponível e, caso contrário, cair para planejamento guiado por prompt.",
     "placeholders": {
       "plan": "Descreva o que você quer planejar...",
       "chat": "Peça alterações de continuação"
@@ -144,9 +337,32 @@
     "toasts": {
       "codexSandboxUnavailable": "As opções de sandbox somente leitura e escrita no workspace do Codex ficam indisponíveis enquanto o Panes usa sandbox externo.",
       "codexOnlySandbox": "As opções de sandbox só estão disponíveis para threads do Codex.",
+      "codexThreadToolUnavailable": "As ferramentas nativas de thread do Codex só estão disponíveis para threads ativas do Codex com histórico no servidor.",
+      "codexReviewUnavailable": "O review nativo do Codex exige uma thread ativa do Codex com histórico no servidor.",
+      "codexReviewStarted": "Um review inline do Codex foi iniciado.",
+      "codexReviewDetachedStarted": "Uma thread destacada de review do Codex foi iniciada.",
+      "codexThreadForkFailed": "Falha ao ramificar a thread ativa do Codex.",
+      "codexThreadRollbackFailed": "Falha ao fazer rollback da thread ativa do Codex.",
+      "codexThreadCompactFailed": "Falha ao iniciar a compactação da thread do Codex.",
+      "codexThreadResumeUnavailable": "Selecione um workspace e um modelo do Codex antes de retomar uma thread remota.",
+      "codexThreadResumeFailed": "Falha ao anexar a thread do Codex selecionada.",
+      "codexThreadForked": "Uma nova thread ramificada do Codex foi criada.",
+      "codexThreadRolledBack_one": "Uma nova ramificação com rollback do último {{count}} turno foi criada.",
+      "codexThreadRolledBack_other": "Uma nova ramificação com rollback dos últimos {{count}} turnos foi criada.",
+      "codexThreadCompactionStarted": "A compactação da thread do Codex foi iniciada.",
+      "codexThreadResumed": "A thread remota do Codex selecionada foi anexada.",
+      "serviceTierUpdated": "Camada de serviço -> {{value}}",
+      "fastToggled": "Modo fast {{state}}",
+      "on": "ligado",
+      "off": "desligado",
+      "personalityUpdated": "Personalidade -> {{value}}",
       "claudeSandboxUnsupported": "Claude suporta apenas os modos de sandbox somente leitura e escrita no workspace.",
       "fullAccessNetworkWarning": "O modo acesso total habilita temporariamente o acesso à rede.",
-      "updateExecutionPolicyFailed": "Falha ao atualizar a política de execução da thread: {{error}}"
+      "updateExecutionPolicyFailed": "Falha ao atualizar a política de execução da thread: {{error}}",
+      "updateCodexConfigFailed": "Falha ao atualizar a configuração de turno do Codex: {{error}}",
+      "invalidOutputSchema": "O schema de saída deve ser um objeto ou booleano JSON Schema válido: {{error}}",
+      "invalidCustomApprovalPolicy": "A política de aprovação estruturada deve ser um objeto JSON.",
+      "invalidCustomApprovalPolicyWithError": "A política de aprovação estruturada contém JSON inválido: {{error}}"
     }
   },
   "messageBlocks": {
@@ -197,6 +413,15 @@
       "sendPayload": "Enviar payload"
     },
     "toolInput": {
+      "answerInComposer": "Responda isso na caixa de chat abaixo.",
+      "questionCounter": "{{current}} / {{total}}",
+      "recommended": "Recomendado",
+      "customAnswerPlaceholder": "Digite sua própria resposta",
+      "customAnswerPlaceholderOptional": "Digite sua própria resposta, ou deixe em branco para usar a opção selecionada",
+      "selectedOptionFallback": "Digite sua própria resposta, ou deixe em branco para usar a opção selecionada",
+      "answerRequiredHint": "Digite uma resposta para continuar.",
+      "previousQuestion": "Voltar",
+      "nextQuestion": "Próxima pergunta",
       "otherAnswerPlaceholder": "Outra resposta (opcional)",
       "sendAnswers": "Enviar respostas"
     }
@@ -211,5 +436,25 @@
     "windowWeeklyLeft": "Semana restante",
     "resets": "reinicia {{time}}",
     "usageUnavailable": "Limites de uso indisponíveis no servidor"
+  },
+  "slashCommands": {
+    "panels": {
+      "skills": {
+        "title": "Skills",
+        "empty": "Nenhuma skill carregada neste runtime."
+      },
+      "mcp": {
+        "title": "Servidores MCP",
+        "empty": "Nenhum servidor MCP conectado."
+      },
+      "experimental": {
+        "title": "Recursos experimentais",
+        "empty": "Nenhum recurso experimental disponível."
+      },
+      "info": {
+        "badgeOn": "lig",
+        "badgeOff": "des"
+      }
+    }
   }
 }

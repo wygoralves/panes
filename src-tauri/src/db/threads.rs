@@ -76,9 +76,12 @@ pub fn list_threads_for_workspace(
      FROM threads
      WHERE workspace_id = ?1
        AND archived_at IS NULL
-       AND EXISTS (
-         SELECT 1 FROM messages
-         WHERE messages.thread_id = threads.id
+       AND (
+         engine_thread_id IS NOT NULL
+         OR EXISTS (
+           SELECT 1 FROM messages
+           WHERE messages.thread_id = threads.id
+         )
        )
      ORDER BY last_activity_at DESC",
   )?;
@@ -102,9 +105,12 @@ pub fn list_archived_threads_for_workspace(
      FROM threads
      WHERE workspace_id = ?1
        AND archived_at IS NOT NULL
-       AND EXISTS (
-         SELECT 1 FROM messages
-         WHERE messages.thread_id = threads.id
+       AND (
+         engine_thread_id IS NOT NULL
+         OR EXISTS (
+           SELECT 1 FROM messages
+           WHERE messages.thread_id = threads.id
+         )
        )
      ORDER BY archived_at DESC",
   )?;
@@ -240,6 +246,34 @@ pub fn update_thread_title(db: &Database, thread_id: &str, title: &str) -> anyho
         params![title, thread_id],
     )
     .context("failed to update thread title")?;
+    Ok(())
+}
+
+pub fn refresh_thread_message_stats(db: &Database, thread_id: &str) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    let (message_count, total_tokens, latest_message_at): (i64, i64, Option<String>) = conn
+        .query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(COALESCE(token_input, 0) + COALESCE(token_output, 0)), 0),
+                MAX(created_at)
+             FROM messages
+             WHERE thread_id = ?1",
+            params![thread_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .context("failed to recalculate thread message stats")?;
+
+    conn.execute(
+        "UPDATE threads
+         SET message_count = ?1,
+             total_tokens = ?2,
+             last_activity_at = COALESCE(?3, datetime('now'))
+         WHERE id = ?4",
+        params![message_count, total_tokens, latest_message_at, thread_id],
+    )
+    .context("failed to persist recalculated thread message stats")?;
+
     Ok(())
 }
 
@@ -409,7 +443,7 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
-    use crate::db::{workspaces, ConnectionPool, SQLITE_POOL_MAX_IDLE};
+    use crate::db::{messages, workspaces, ConnectionPool, SQLITE_POOL_MAX_IDLE};
 
     use super::*;
 
@@ -475,5 +509,80 @@ mod tests {
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );
+    }
+
+    #[test]
+    fn refresh_thread_message_stats_recomputes_counters_from_messages() {
+        let db = test_db();
+        let thread = test_thread(&db, "Stats");
+        messages::insert_user_message(
+            &db,
+            &thread.id,
+            "Count this turn",
+            None,
+            Some("codex"),
+            Some("gpt-5.3-codex"),
+            Some("low"),
+        )
+        .unwrap();
+        let assistant = messages::insert_assistant_placeholder(
+            &db,
+            &thread.id,
+            Some("codex"),
+            Some("gpt-5.3-codex"),
+            Some("low"),
+        )
+        .unwrap();
+        messages::complete_assistant_message(
+            &db,
+            &assistant.id,
+            crate::models::MessageStatusDto::Completed,
+            Some((13, 21)),
+            Some("gpt-5.3-codex"),
+        )
+        .unwrap();
+
+        refresh_thread_message_stats(&db, &thread.id).unwrap();
+
+        let refreshed = get_thread(&db, &thread.id).unwrap().unwrap();
+        assert_eq!(refreshed.message_count, 2);
+        assert_eq!(refreshed.total_tokens, 34);
+        assert!(!refreshed.last_activity_at.is_empty());
+    }
+
+    #[test]
+    fn list_threads_for_workspace_includes_engine_backed_threads_without_messages() {
+        let db = test_db();
+        let visible = test_thread(&db, "Remote");
+        let hidden = test_thread(&db, "Hidden");
+        set_engine_thread_id(&db, &visible.id, "codex-thread-123").unwrap();
+
+        let listed = list_threads_for_workspace(&db, &visible.workspace_id).unwrap();
+        let listed_ids = listed
+            .into_iter()
+            .map(|thread| thread.id)
+            .collect::<Vec<_>>();
+
+        assert!(listed_ids.contains(&visible.id));
+        assert!(!listed_ids.contains(&hidden.id));
+    }
+
+    #[test]
+    fn list_archived_threads_for_workspace_includes_engine_backed_threads_without_messages() {
+        let db = test_db();
+        let visible = test_thread(&db, "Archived remote");
+        let hidden = test_thread(&db, "Archived hidden");
+        set_engine_thread_id(&db, &visible.id, "codex-thread-archived").unwrap();
+        archive_thread(&db, &visible.id).unwrap();
+        archive_thread(&db, &hidden.id).unwrap();
+
+        let listed = list_archived_threads_for_workspace(&db, &visible.workspace_id).unwrap();
+        let listed_ids = listed
+            .into_iter()
+            .map(|thread| thread.id)
+            .collect::<Vec<_>>();
+
+        assert!(listed_ids.contains(&visible.id));
+        assert!(!listed_ids.contains(&hidden.id));
     }
 }

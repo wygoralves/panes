@@ -7,7 +7,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{Emitter, State};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -15,10 +15,12 @@ use crate::{
     engines::{
         normalize_approval_response_for_engine, validate_engine_sandbox_mode, EngineEvent,
         OutputStream, SandboxPolicy, ThreadScope, TurnAttachment, TurnCompletionStatus, TurnInput,
+        TurnInputItem,
     },
     models::{
-        ActionOutputDto, MessageDto, MessageStatusDto, MessageWindowCursorDto, MessageWindowDto,
-        RepoDto, SearchResultDto, ThreadDto, ThreadStatusDto, TrustLevelDto,
+        ActionOutputDto, EngineInfoDto, EngineModelDto, MessageDto, MessageStatusDto,
+        MessageWindowCursorDto, MessageWindowDto, RepoDto, SearchResultDto, ThreadDto,
+        ThreadStatusDto, TrustLevelDto,
     },
     state::AppState,
 };
@@ -41,6 +43,8 @@ enum ContentBlock {
         content: String,
         #[serde(rename = "planMode", skip_serializing_if = "Option::is_none")]
         plan_mode: Option<bool>,
+        #[serde(rename = "isSteer", skip_serializing_if = "Option::is_none")]
+        is_steer: Option<bool>,
     },
 
     #[serde(rename = "diff")]
@@ -101,6 +105,12 @@ enum ContentBlock {
         #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
     },
+
+    #[serde(rename = "skill")]
+    Skill { name: String, path: String },
+
+    #[serde(rename = "mention")]
+    Mention { name: String, path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +159,38 @@ pub struct ChatAttachmentPayload {
     pub mime_type: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ChatInputItemPayload {
+    Text { text: String },
+    Skill { name: String, path: String },
+    Mention { name: String, path: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum CodexReviewTargetPayload {
+    #[serde(rename = "uncommittedChanges")]
+    UncommittedChanges,
+    #[serde(rename = "baseBranch")]
+    BaseBranch { branch: String },
+    #[serde(rename = "commit")]
+    Commit {
+        sha: String,
+        #[serde(default)]
+        title: Option<String>,
+    },
+    #[serde(rename = "custom")]
+    Custom { instructions: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CodexReviewDeliveryPayload {
+    Inline,
+    Detached,
+}
+
 async fn run_db<T, F>(db: crate::db::Database, operation: F) -> Result<T, String>
 where
     T: Send + 'static,
@@ -167,7 +209,9 @@ pub async fn send_message(
     thread_id: String,
     message: String,
     model_id: Option<String>,
+    reasoning_effort: Option<String>,
     attachments: Option<Vec<ChatAttachmentPayload>>,
+    input_items: Option<Vec<ChatInputItemPayload>>,
     plan_mode: Option<bool>,
     client_turn_id: Option<String>,
 ) -> Result<String, String> {
@@ -190,14 +234,26 @@ pub async fn send_message(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let attachments = normalize_attachments(attachments)?;
+    let input_items = normalize_input_items(message.as_str(), input_items)?;
     let plan_mode = plan_mode.unwrap_or(false);
     let turn_input = TurnInput {
         message: message.clone(),
         attachments: attachments.clone(),
         plan_mode,
+        input_items: input_items.clone(),
+    };
+    let current_turn_model_id = thread_last_model_id(thread.engine_metadata.as_ref())
+        .unwrap_or_else(|| thread.model_id.clone());
+    let model_switch_requested = requested_model_id
+        .map(|value| value != current_turn_model_id.as_str())
+        .unwrap_or(false);
+    let validation_catalog = if model_switch_requested {
+        state.engines.list_engines().await.ok()
+    } else {
+        None
     };
     let effective_model_id =
-        resolve_turn_model_id(state.inner(), &thread, requested_model_id).await?;
+        resolve_turn_model_id(&thread, requested_model_id, validation_catalog.as_deref())?;
 
     let (workspace, repos, selected_repo) = run_db(db.clone(), {
         let workspace_id = thread.workspace_id.clone();
@@ -220,7 +276,30 @@ pub async fn send_message(
     .await?;
 
     let workspace_root = workspace.root_path.clone();
-    let reasoning_effort = thread_reasoning_effort(thread.engine_metadata.as_ref());
+    let requested_reasoning_effort = normalize_reasoning_effort_value(reasoning_effort.as_deref());
+    let stored_reasoning_effort = thread_reasoning_effort(thread.engine_metadata.as_ref());
+    let configured_reasoning_effort = requested_reasoning_effort
+        .clone()
+        .or_else(|| stored_reasoning_effort.clone());
+    let reasoning_effort = if requested_reasoning_effort.is_some() {
+        requested_reasoning_effort
+    } else if model_switch_requested {
+        validation_catalog
+            .as_deref()
+            .map(|engines| {
+                resolve_reasoning_effort_from_catalog(
+                    engines,
+                    thread.engine_id.as_str(),
+                    effective_model_id.as_str(),
+                    configured_reasoning_effort.as_deref(),
+                )
+            })
+            .unwrap_or_else(|| {
+                normalize_reasoning_effort_value(configured_reasoning_effort.as_deref())
+            })
+    } else {
+        configured_reasoning_effort.clone()
+    };
     let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref())?;
     let sandbox_mode = sandbox_mode_override
         .clone()
@@ -279,7 +358,7 @@ pub async fn send_message(
         );
     }
 
-    if requested_model_id.is_some() {
+    if requested_model_id.is_some() || reasoning_effort != stored_reasoning_effort {
         let mut metadata = thread
             .engine_metadata
             .clone()
@@ -288,10 +367,20 @@ pub async fn send_message(
             metadata = serde_json::json!({});
         }
         if let Some(object) = metadata.as_object_mut() {
-            object.insert(
-                "lastModelId".to_string(),
-                Value::String(effective_model_id.clone()),
-            );
+            if requested_model_id.is_some() {
+                object.insert(
+                    "lastModelId".to_string(),
+                    Value::String(effective_model_id.clone()),
+                );
+            }
+            match reasoning_effort.as_ref() {
+                Some(value) => {
+                    object.insert("reasoningEffort".to_string(), Value::String(value.clone()));
+                }
+                None => {
+                    object.remove("reasoningEffort");
+                }
+            }
         }
         run_db(db.clone(), {
             let thread_id = thread.id.clone();
@@ -306,24 +395,19 @@ pub async fn send_message(
         let thread_id = thread.id.clone();
         let message = message.clone();
         let attachments = attachments.clone();
+        let input_items = input_items.clone();
         let plan_mode_enabled = plan_mode;
         let engine_id = thread.engine_id.clone();
         let model_id = effective_model_id.clone();
         let reasoning_effort = reasoning_effort.clone();
         move |db| {
-            let mut user_blocks = Vec::with_capacity(attachments.len().saturating_add(1));
-            for attachment in &attachments {
-                user_blocks.push(ContentBlock::Attachment {
-                    file_name: attachment.file_name.clone(),
-                    file_path: attachment.file_path.clone(),
-                    size_bytes: attachment.size_bytes,
-                    mime_type: attachment.mime_type.clone(),
-                });
-            }
-            user_blocks.push(ContentBlock::Text {
-                content: message.clone(),
-                plan_mode: if plan_mode_enabled { Some(true) } else { None },
-            });
+            let user_blocks = build_user_blocks(
+                &message,
+                &input_items,
+                &attachments,
+                plan_mode_enabled,
+                false,
+            );
             db::messages::insert_user_message(
                 db,
                 &thread_id,
@@ -367,22 +451,33 @@ pub async fn send_message(
             thread_allow_network_override(thread.engine_metadata.as_ref())
                 .unwrap_or_else(|| allow_network_for_trust_level(&trust_level))
         };
+    let personality = if thread.engine_id == "codex"
+        && model_supports_personality(state.inner(), &thread.engine_id, &effective_model_id).await
+    {
+        thread_personality(thread.engine_metadata.as_ref())
+    } else {
+        None
+    };
+
+    let approval_policy_override = thread_approval_policy_override_value(
+        thread.engine_id.as_str(),
+        thread.engine_metadata.as_ref(),
+    )?;
 
     let sandbox = SandboxPolicy {
         writable_roots,
         allow_network,
-        approval_policy: Some(
-            thread_approval_policy_override(
-                thread.engine_id.as_str(),
-                thread.engine_metadata.as_ref(),
-            )
-            .unwrap_or_else(|| {
+        approval_policy: Some(approval_policy_override.unwrap_or_else(|| {
+            Value::String(
                 approval_policy_for_engine_and_trust_level(thread.engine_id.as_str(), &trust_level)
-                    .to_string()
-            }),
-        ),
+                    .to_string(),
+            )
+        })),
         reasoning_effort,
         sandbox_mode: Some(sandbox_mode),
+        service_tier: thread_service_tier(thread.engine_metadata.as_ref()),
+        personality,
+        output_schema: thread_output_schema(thread.engine_metadata.as_ref()),
     };
 
     let engine_thread_id = state
@@ -436,6 +531,380 @@ pub async fn send_message(
     });
 
     Ok(assistant_message.id)
+}
+
+#[tauri::command]
+pub async fn start_codex_review(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    thread_id: String,
+    target: CodexReviewTargetPayload,
+    delivery: Option<CodexReviewDeliveryPayload>,
+) -> Result<ThreadDto, String> {
+    if state.turns.get(&thread_id).await.is_some() {
+        return Err(
+            "A turn is already running for this thread. Cancel it before starting a review."
+                .to_string(),
+        );
+    }
+
+    let db = state.db.clone();
+    let source_thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if source_thread.engine_id != "codex" {
+        return Err("Native review is only available for Codex threads.".to_string());
+    }
+
+    let source_engine_thread_id = source_thread
+        .engine_thread_id
+        .clone()
+        .ok_or_else(|| "Codex review requires an initialized server-backed thread.".to_string())?;
+    let effective_delivery = delivery.unwrap_or(CodexReviewDeliveryPayload::Inline);
+    let (target_payload, review_message, review_title) = normalize_codex_review_target(&target)?;
+    let initial_turn_model_id = thread_last_model_id(source_thread.engine_metadata.as_ref())
+        .unwrap_or_else(|| source_thread.model_id.clone());
+    let reasoning_effort = thread_reasoning_effort(source_thread.engine_metadata.as_ref());
+
+    let cancellation = CancellationToken::new();
+    if !state
+        .turns
+        .try_register(&source_thread.id, cancellation.clone())
+        .await
+    {
+        return Err(
+            "A turn is already running for this thread. Cancel it before starting a review."
+                .to_string(),
+        );
+    }
+
+    let (review_thread, assistant_message_id) = match run_db(db.clone(), {
+        let source_thread = source_thread.clone();
+        let review_message = review_message.clone();
+        let review_title = review_title.clone();
+        let initial_turn_model_id = initial_turn_model_id.clone();
+        let reasoning_effort = reasoning_effort.clone();
+        let detached = matches!(effective_delivery, CodexReviewDeliveryPayload::Detached);
+        move |db| {
+            let review_thread = if detached {
+                let created = db::threads::create_thread(
+                    db,
+                    &source_thread.workspace_id,
+                    source_thread.repo_id.as_deref(),
+                    &source_thread.engine_id,
+                    &initial_turn_model_id,
+                    &review_title,
+                )?;
+                if let Some(metadata) = clone_codex_review_metadata(
+                    source_thread.engine_metadata.as_ref(),
+                    &initial_turn_model_id,
+                ) {
+                    db::threads::update_engine_metadata(db, &created.id, &metadata)?;
+                }
+                created
+            } else {
+                source_thread.clone()
+            };
+
+            let user_blocks = build_user_blocks(&review_message, &[], &[], false, false);
+            db::messages::insert_user_message(
+                db,
+                &review_thread.id,
+                &review_message,
+                Some(serde_json::to_value(&user_blocks)?),
+                Some(source_thread.engine_id.as_str()),
+                Some(initial_turn_model_id.as_str()),
+                reasoning_effort.as_deref(),
+            )?;
+            let assistant_message = db::messages::insert_assistant_placeholder(
+                db,
+                &review_thread.id,
+                Some(source_thread.engine_id.as_str()),
+                Some(initial_turn_model_id.as_str()),
+                reasoning_effort.as_deref(),
+            )?;
+            db::threads::update_thread_status(db, &review_thread.id, ThreadStatusDto::Streaming)?;
+            let updated_thread = db::threads::get_thread(db, &review_thread.id)?
+                .ok_or_else(|| anyhow::anyhow!("review thread not found after setup"))?;
+            Ok((updated_thread, assistant_message.id))
+        }
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            state.turns.finish(&source_thread.id).await;
+            return Err(error);
+        }
+    };
+
+    if matches!(effective_delivery, CodexReviewDeliveryPayload::Detached) {
+        if !state
+            .turns
+            .try_register(&review_thread.id, cancellation.clone())
+            .await
+        {
+            log::warn!(
+                "failed to register cancellation token for detached review thread {}",
+                review_thread.id
+            );
+        }
+    }
+
+    let state_cloned = state.inner().clone();
+    let app_handle = app.clone();
+    let review_thread_for_task = review_thread.clone();
+    let review_target_for_task = target_payload.clone();
+    let source_engine_thread_id_for_task = source_engine_thread_id.clone();
+    let assistant_message_id_for_task = assistant_message_id.clone();
+    let delivery_label = match effective_delivery {
+        CodexReviewDeliveryPayload::Inline => "inline".to_string(),
+        CodexReviewDeliveryPayload::Detached => "detached".to_string(),
+    };
+
+    tokio::spawn(async move {
+        run_codex_review_turn(
+            app_handle,
+            state_cloned,
+            source_thread,
+            review_thread_for_task,
+            source_engine_thread_id_for_task,
+            assistant_message_id_for_task,
+            initial_turn_model_id,
+            review_target_for_task,
+            delivery_label,
+            cancellation,
+        )
+        .await;
+    });
+
+    Ok(review_thread)
+}
+
+#[tauri::command]
+pub async fn steer_message(
+    state: State<'_, AppState>,
+    thread_id: String,
+    message: String,
+    attachments: Option<Vec<ChatAttachmentPayload>>,
+    input_items: Option<Vec<ChatInputItemPayload>>,
+    plan_mode: Option<bool>,
+) -> Result<(), String> {
+    if state.turns.get(&thread_id).await.is_none() {
+        return Err(
+            "No active turn is running for this thread yet. Wait for Codex to start the turn before steering."
+                .to_string(),
+        );
+    }
+
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if thread.engine_id != "codex" {
+        return Err("Mid-turn steering is only available for Codex threads.".to_string());
+    }
+
+    let engine_thread_id = thread
+        .engine_thread_id
+        .clone()
+        .ok_or_else(|| format!("thread `{thread_id}` has no active engine thread id"))?;
+    let attachments = normalize_attachments(attachments)?;
+    let input_items = normalize_input_items(message.as_str(), input_items)?;
+    let plan_mode = plan_mode.unwrap_or(false);
+    let turn_input = TurnInput {
+        message: message.clone(),
+        attachments: attachments.clone(),
+        plan_mode,
+        input_items: input_items.clone(),
+    };
+    let effective_model_id = thread_last_model_id(thread.engine_metadata.as_ref())
+        .unwrap_or_else(|| thread.model_id.clone());
+    let reasoning_effort = thread_reasoning_effort(thread.engine_metadata.as_ref());
+    let user_blocks = build_user_blocks(&message, &input_items, &attachments, plan_mode, true);
+
+    let user_message = run_db(db.clone(), {
+        let thread_id = thread.id.clone();
+        let message = message.clone();
+        let user_blocks = user_blocks.clone();
+        let engine_id = thread.engine_id.clone();
+        let model_id = effective_model_id.clone();
+        let reasoning_effort = reasoning_effort.clone();
+        move |db| {
+            db::messages::insert_user_message(
+                db,
+                &thread_id,
+                &message,
+                Some(serde_json::to_value(&user_blocks)?),
+                Some(engine_id.as_str()),
+                Some(model_id.as_str()),
+                reasoning_effort.as_deref(),
+            )
+        }
+    })
+    .await?;
+
+    if let Err(error) = state
+        .engines
+        .steer_message(&thread, &engine_thread_id, turn_input)
+        .await
+    {
+        let rollback_result = run_db(db, {
+            let message_id = user_message.id.clone();
+            move |db| db::messages::delete_message(db, &message_id)
+        })
+        .await;
+        if let Err(rollback_error) = rollback_result {
+            log::warn!(
+                "failed to roll back persisted steer message {} after steer error: {}",
+                user_message.id,
+                rollback_error
+            );
+        }
+
+        return Err(err_to_string(error));
+    }
+
+    Ok(())
+}
+
+fn build_user_blocks(
+    message: &str,
+    input_items: &[TurnInputItem],
+    attachments: &[TurnAttachment],
+    plan_mode: bool,
+    is_steer: bool,
+) -> Vec<ContentBlock> {
+    let mut user_blocks = Vec::with_capacity(
+        input_items
+            .len()
+            .saturating_add(attachments.len())
+            .saturating_add(1),
+    );
+
+    let mut structured_text_parts: Vec<String> = Vec::new();
+
+    for item in input_items {
+        match item {
+            TurnInputItem::Skill { name, path } => {
+                user_blocks.push(ContentBlock::Skill {
+                    name: name.clone(),
+                    path: path.clone(),
+                });
+            }
+            TurnInputItem::Mention { name, path } => {
+                user_blocks.push(ContentBlock::Mention {
+                    name: name.clone(),
+                    path: path.clone(),
+                });
+            }
+            TurnInputItem::Text { text } => {
+                structured_text_parts.push(text.clone());
+            }
+        }
+    }
+
+    for attachment in attachments {
+        user_blocks.push(ContentBlock::Attachment {
+            file_name: attachment.file_name.clone(),
+            file_path: attachment.file_path.clone(),
+            size_bytes: attachment.size_bytes,
+            mime_type: attachment.mime_type.clone(),
+        });
+    }
+
+    let final_text = if structured_text_parts.is_empty() {
+        message.to_string()
+    } else {
+        structured_text_parts.join("\n")
+    };
+    user_blocks.push(ContentBlock::Text {
+        content: final_text,
+        plan_mode: if plan_mode { Some(true) } else { None },
+        is_steer: if is_steer { Some(true) } else { None },
+    });
+
+    user_blocks
+}
+
+fn normalize_input_items(
+    message: &str,
+    input_items: Option<Vec<ChatInputItemPayload>>,
+) -> Result<Vec<TurnInputItem>, String> {
+    let mut normalized = Vec::new();
+
+    for item in input_items.unwrap_or_default() {
+        match item {
+            ChatInputItemPayload::Text { text } => {
+                if !text.is_empty() {
+                    normalized.push(TurnInputItem::Text { text });
+                }
+            }
+            ChatInputItemPayload::Skill { name, path } => {
+                let name = name.trim();
+                let path = path.trim();
+                if name.is_empty() || path.is_empty() {
+                    return Err("skill input items require non-empty name and path".to_string());
+                }
+                normalized.push(TurnInputItem::Skill {
+                    name: name.to_string(),
+                    path: path.to_string(),
+                });
+            }
+            ChatInputItemPayload::Mention { name, path } => {
+                let name = name.trim();
+                let path = path.trim();
+                if name.is_empty() || path.is_empty() {
+                    return Err("mention input items require non-empty name and path".to_string());
+                }
+                normalized.push(TurnInputItem::Mention {
+                    name: name.to_string(),
+                    path: path.to_string(),
+                });
+            }
+        }
+    }
+
+    if normalized.is_empty() {
+        normalized.push(TurnInputItem::Text {
+            text: message.to_string(),
+        });
+        return Ok(normalized);
+    }
+
+    let has_text_item = normalized
+        .iter()
+        .any(|item| matches!(item, TurnInputItem::Text { text } if !text.is_empty()));
+    if !has_text_item && !message.trim().is_empty() {
+        return Err(
+            "input items must include at least one text segment when message text is provided"
+                .to_string(),
+        );
+    }
+
+    let mut merged = Vec::with_capacity(normalized.len());
+    for item in normalized {
+        match item {
+            TurnInputItem::Text { text } => {
+                if let Some(TurnInputItem::Text { text: current }) = merged.last_mut() {
+                    current.push_str(&text);
+                } else {
+                    merged.push(TurnInputItem::Text { text });
+                }
+            }
+            other => merged.push(other),
+        }
+    }
+
+    Ok(merged)
 }
 
 fn normalize_attachments(
@@ -532,10 +1001,7 @@ async fn respond_to_approval_inner(
         .await
         .map_err(err_to_string)?;
 
-    let decision = normalized_response
-        .get("decision")
-        .and_then(|value| value.as_str())
-        .unwrap_or("custom");
+    let decision = approval_response_decision_for_persistence(&normalized_response);
     run_db(db, {
         let approval_id = approval_id.clone();
         let thread_id = thread_id.clone();
@@ -557,6 +1023,61 @@ async fn respond_to_approval_inner(
     .await?;
 
     Ok(())
+}
+
+fn approval_response_decision_for_persistence(response: &Value) -> &'static str {
+    if let Some(decision) = response.get("decision").and_then(Value::as_str) {
+        return match decision {
+            "deny" => "decline",
+            "acceptForSession" => "accept_for_session",
+            "accept" => "accept",
+            "decline" => "decline",
+            "cancel" => "cancel",
+            "accept_for_session" => "accept_for_session",
+            _ => "custom",
+        };
+    }
+
+    if let Some(action) = response.get("action").and_then(Value::as_str) {
+        return match action {
+            "accept" => "accept",
+            "decline" => "decline",
+            "cancel" => "cancel",
+            _ => "custom",
+        };
+    }
+
+    if response.get("permissions").is_some() {
+        if permission_profile_is_empty(response.get("permissions")) {
+            return "decline";
+        }
+        if matches!(
+            response.get("scope").and_then(Value::as_str),
+            Some("session")
+        ) {
+            return "accept_for_session";
+        }
+        return "accept";
+    }
+
+    "custom"
+}
+
+fn permission_profile_is_empty(value: Option<&Value>) -> bool {
+    fn has_granted_permission(value: &Value) -> bool {
+        match value {
+            Value::Bool(value) => *value,
+            Value::String(value) => !value.trim().is_empty() && value != "none",
+            Value::Array(items) => items.iter().any(has_granted_permission),
+            Value::Object(map) => map.values().any(has_granted_permission),
+            _ => false,
+        }
+    }
+
+    match value {
+        Some(value) => !has_granted_permission(value),
+        None => true,
+    }
 }
 
 #[tauri::command]
@@ -619,6 +1140,101 @@ pub async fn search_messages(
         db::messages::search_messages(db, &workspace_id, &query)
     })
     .await
+}
+
+fn normalize_codex_review_target(
+    target: &CodexReviewTargetPayload,
+) -> Result<(Value, String, String), String> {
+    match target {
+        CodexReviewTargetPayload::UncommittedChanges => Ok((
+            serde_json::json!({
+                "type": "uncommittedChanges",
+            }),
+            "Review uncommitted changes.".to_string(),
+            "Review: Uncommitted changes".to_string(),
+        )),
+        CodexReviewTargetPayload::BaseBranch { branch } => {
+            let branch = branch.trim();
+            if branch.is_empty() {
+                return Err("Base branch review requires a branch name.".to_string());
+            }
+            Ok((
+                serde_json::json!({
+                    "type": "baseBranch",
+                    "branch": branch,
+                }),
+                format!("Review changes against base branch `{branch}`."),
+                truncate_title(format!("Review: {branch}"), MAX_THREAD_TITLE_CHARS),
+            ))
+        }
+        CodexReviewTargetPayload::Commit { sha, title } => {
+            let sha = sha.trim();
+            if sha.is_empty() {
+                return Err("Commit review requires a commit SHA.".to_string());
+            }
+            let short_sha = sha.chars().take(12).collect::<String>();
+            let normalized_title = title
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+            let message = match normalized_title.as_deref() {
+                Some(title) => format!("Review commit `{sha}`: {title}"),
+                None => format!("Review commit `{sha}`."),
+            };
+            let target = match normalized_title {
+                Some(title) => serde_json::json!({
+                    "type": "commit",
+                    "sha": sha,
+                    "title": title,
+                }),
+                None => serde_json::json!({
+                    "type": "commit",
+                    "sha": sha,
+                }),
+            };
+            Ok((
+                target,
+                message,
+                truncate_title(format!("Review: {short_sha}"), MAX_THREAD_TITLE_CHARS),
+            ))
+        }
+        CodexReviewTargetPayload::Custom { instructions } => {
+            let instructions = instructions.trim();
+            if instructions.is_empty() {
+                return Err("Custom review requires instructions.".to_string());
+            }
+            Ok((
+                serde_json::json!({
+                    "type": "custom",
+                    "instructions": instructions,
+                }),
+                instructions.to_string(),
+                "Review: Custom".to_string(),
+            ))
+        }
+    }
+}
+
+fn clone_codex_review_metadata(existing: Option<&Value>, model_id: &str) -> Option<Value> {
+    let mut metadata = existing.cloned().unwrap_or_else(|| serde_json::json!({}));
+    if !metadata.is_object() {
+        metadata = serde_json::json!({});
+    }
+
+    let object = metadata.as_object_mut()?;
+    object.remove("manualTitle");
+    object.remove("manualTitleUpdatedAt");
+    object.remove("codexPreview");
+    object.remove("codexThreadStatus");
+    object.remove("codexThreadActiveFlags");
+    object.remove("codexSyncRequired");
+    object.remove("codexSyncReason");
+    object.insert(
+        "lastModelId".to_string(),
+        Value::String(model_id.to_string()),
+    );
+    Some(metadata)
 }
 
 async fn run_turn(
@@ -1093,6 +1709,558 @@ async fn run_turn(
     state.turns.finish(&thread.id).await;
 }
 
+async fn run_codex_review_turn(
+    app: tauri::AppHandle,
+    state: AppState,
+    source_thread: crate::models::ThreadDto,
+    review_thread: crate::models::ThreadDto,
+    source_engine_thread_id: String,
+    assistant_message_id: String,
+    initial_turn_model_id: String,
+    target: Value,
+    delivery: String,
+    cancellation: CancellationToken,
+) {
+    let max_output_chars = state.config.debug.max_action_output_chars;
+    let (event_tx, mut event_rx) = mpsc::channel::<EngineEvent>(128);
+    let (started_tx, started_rx) = oneshot::channel();
+
+    let engines = state.engines.clone();
+    let source_engine_thread_id_for_engine = source_engine_thread_id.clone();
+    let target_for_engine = target.clone();
+    let delivery_for_engine = delivery.clone();
+    let cancellation_for_engine = cancellation.clone();
+
+    let engine_task = tokio::spawn(async move {
+        engines
+            .start_codex_review(
+                &source_engine_thread_id_for_engine,
+                target_for_engine,
+                Some(delivery_for_engine.as_str()),
+                event_tx,
+                cancellation_for_engine,
+                started_tx,
+            )
+            .await
+    });
+
+    let state_for_started = state.clone();
+    let app_for_started = app.clone();
+    let review_thread_for_started = review_thread.clone();
+    let started_task = tokio::spawn(async move {
+        let Ok(started) = started_rx.await else {
+            return;
+        };
+
+        let updated_thread = match run_db(state_for_started.db.clone(), {
+            let review_thread_id = review_thread_for_started.id.clone();
+            let review_thread_engine_id = review_thread_for_started.engine_thread_id.clone();
+            let review_thread_model_id = review_thread_for_started.model_id.clone();
+            let review_thread_metadata = review_thread_for_started.engine_metadata.clone();
+            let review_thread_status = review_thread_for_started.status.clone();
+            let review_thread_title = review_thread_for_started.title.clone();
+            let review_thread_workspace_id = review_thread_for_started.workspace_id.clone();
+            let review_thread_repo_id = review_thread_for_started.repo_id.clone();
+            move |db| {
+                if review_thread_engine_id.as_deref() == Some(started.review_thread_id.as_str()) {
+                    return db::threads::get_thread(db, &review_thread_id)?.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "review thread not found after review/start: {review_thread_id}"
+                        )
+                    });
+                }
+
+                db::threads::set_engine_thread_id(db, &review_thread_id, &started.review_thread_id)?;
+                let current = db::threads::get_thread(db, &review_thread_id)?.ok_or_else(|| {
+                    anyhow::anyhow!("review thread not found after engine thread update")
+                })?;
+                let metadata = current.engine_metadata.or(review_thread_metadata.clone());
+                db::threads::update_thread_runtime_snapshot(
+                    db,
+                    &review_thread_id,
+                    Some(&review_thread_title),
+                    Some(review_thread_status.clone()),
+                    metadata.as_ref(),
+                )?;
+                db::threads::get_thread(db, &review_thread_id)?.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "review thread not found after runtime snapshot update: {review_thread_workspace_id}:{review_thread_repo_id:?}:{review_thread_model_id}"
+                    )
+                })
+            }
+        })
+        .await
+        {
+            Ok(thread) => thread,
+            Err(error) => {
+                log::warn!("failed to persist codex review thread id: {error}");
+                return;
+            }
+        };
+
+        let _ = app_for_started.emit(
+            "thread-updated",
+            ThreadUpdatedEvent {
+                thread_id: updated_thread.id.clone(),
+                workspace_id: updated_thread.workspace_id.clone(),
+                thread: Some(updated_thread),
+            },
+        );
+    });
+
+    let mut blocks: Vec<ContentBlock> = Vec::new();
+    let mut action_index: HashMap<String, usize> = HashMap::new();
+    let mut approval_index: HashMap<String, usize> = HashMap::new();
+    let mut message_status = MessageStatusDto::Streaming;
+    let mut thread_status = ThreadStatusDto::Streaming;
+    let mut turn_model_id = initial_turn_model_id;
+    let mut token_usage: Option<(u64, u64)> = None;
+    let mut blocks_dirty = false;
+    let mut message_state_dirty = false;
+    let mut thread_status_dirty = false;
+    let mut turn_model_dirty = false;
+    let mut last_persist_at = Instant::now();
+    let mut last_blocks_persist_at = Instant::now();
+    let mut last_persisted_thread_status = thread_status.clone();
+    let stream_event_topic = format!("stream-event-{}", review_thread.id);
+    let approval_event_topic = format!("approval-request-{}", review_thread.id);
+    let mut pending_event: Option<EngineEvent> = None;
+
+    let initial_turn_started_event = EngineEvent::TurnStarted {
+        client_turn_id: None,
+    };
+    let initial_progress = process_stream_event(
+        &app,
+        &state,
+        &review_thread,
+        &assistant_message_id,
+        &stream_event_topic,
+        &approval_event_topic,
+        &initial_turn_started_event,
+        &mut blocks,
+        &mut action_index,
+        &mut approval_index,
+        max_output_chars,
+    )
+    .await;
+    let initial_force_persist = apply_stream_progress(
+        initial_progress,
+        &mut message_status,
+        &mut thread_status,
+        &mut turn_model_id,
+        &mut token_usage,
+        &mut blocks_dirty,
+        &mut message_state_dirty,
+        &mut thread_status_dirty,
+        &mut turn_model_dirty,
+    );
+    flush_stream_state(
+        &state,
+        &review_thread,
+        &assistant_message_id,
+        &blocks,
+        &message_status,
+        &thread_status,
+        &turn_model_id,
+        &mut blocks_dirty,
+        &mut message_state_dirty,
+        &mut thread_status_dirty,
+        &mut turn_model_dirty,
+        &mut last_persisted_thread_status,
+        &mut last_persist_at,
+        &mut last_blocks_persist_at,
+        initial_force_persist,
+    )
+    .await;
+
+    if let Err(error) = started_task.await {
+        log::warn!("failed to join codex review start task: {error}");
+    }
+
+    loop {
+        let incoming_event = if pending_event.is_some() {
+            match tokio::time::timeout(STREAM_EVENT_COALESCE_IDLE_FLUSH_INTERVAL, event_rx.recv())
+                .await
+            {
+                Ok(event) => event,
+                Err(_) => {
+                    if let Some(event) = pending_event.take() {
+                        let progress = process_stream_event(
+                            &app,
+                            &state,
+                            &review_thread,
+                            &assistant_message_id,
+                            &stream_event_topic,
+                            &approval_event_topic,
+                            &event,
+                            &mut blocks,
+                            &mut action_index,
+                            &mut approval_index,
+                            max_output_chars,
+                        )
+                        .await;
+                        let force_persist = apply_stream_progress(
+                            progress,
+                            &mut message_status,
+                            &mut thread_status,
+                            &mut turn_model_id,
+                            &mut token_usage,
+                            &mut blocks_dirty,
+                            &mut message_state_dirty,
+                            &mut thread_status_dirty,
+                            &mut turn_model_dirty,
+                        );
+                        flush_stream_state(
+                            &state,
+                            &review_thread,
+                            &assistant_message_id,
+                            &blocks,
+                            &message_status,
+                            &thread_status,
+                            &turn_model_id,
+                            &mut blocks_dirty,
+                            &mut message_state_dirty,
+                            &mut thread_status_dirty,
+                            &mut turn_model_dirty,
+                            &mut last_persisted_thread_status,
+                            &mut last_persist_at,
+                            &mut last_blocks_persist_at,
+                            force_persist,
+                        )
+                        .await;
+                    }
+                    continue;
+                }
+            }
+        } else {
+            event_rx.recv().await
+        };
+
+        let Some(incoming_event) = incoming_event else {
+            break;
+        };
+
+        let mut current_event = incoming_event;
+
+        loop {
+            if let Some(previous_event) = pending_event.take() {
+                match try_coalesce_stream_events(previous_event, current_event) {
+                    Ok(merged_event) => {
+                        if coalesced_event_content_len(&merged_event)
+                            >= STREAM_EVENT_COALESCE_MAX_CHARS
+                        {
+                            let progress = process_stream_event(
+                                &app,
+                                &state,
+                                &review_thread,
+                                &assistant_message_id,
+                                &stream_event_topic,
+                                &approval_event_topic,
+                                &merged_event,
+                                &mut blocks,
+                                &mut action_index,
+                                &mut approval_index,
+                                max_output_chars,
+                            )
+                            .await;
+                            let force_persist = apply_stream_progress(
+                                progress,
+                                &mut message_status,
+                                &mut thread_status,
+                                &mut turn_model_id,
+                                &mut token_usage,
+                                &mut blocks_dirty,
+                                &mut message_state_dirty,
+                                &mut thread_status_dirty,
+                                &mut turn_model_dirty,
+                            );
+                            flush_stream_state(
+                                &state,
+                                &review_thread,
+                                &assistant_message_id,
+                                &blocks,
+                                &message_status,
+                                &thread_status,
+                                &turn_model_id,
+                                &mut blocks_dirty,
+                                &mut message_state_dirty,
+                                &mut thread_status_dirty,
+                                &mut turn_model_dirty,
+                                &mut last_persisted_thread_status,
+                                &mut last_persist_at,
+                                &mut last_blocks_persist_at,
+                                force_persist,
+                            )
+                            .await;
+                        } else {
+                            pending_event = Some(merged_event);
+                        }
+                        break;
+                    }
+                    Err((unmerged_previous_event, unmerged_current_event)) => {
+                        let progress = process_stream_event(
+                            &app,
+                            &state,
+                            &review_thread,
+                            &assistant_message_id,
+                            &stream_event_topic,
+                            &approval_event_topic,
+                            &unmerged_previous_event,
+                            &mut blocks,
+                            &mut action_index,
+                            &mut approval_index,
+                            max_output_chars,
+                        )
+                        .await;
+                        let force_persist = apply_stream_progress(
+                            progress,
+                            &mut message_status,
+                            &mut thread_status,
+                            &mut turn_model_id,
+                            &mut token_usage,
+                            &mut blocks_dirty,
+                            &mut message_state_dirty,
+                            &mut thread_status_dirty,
+                            &mut turn_model_dirty,
+                        );
+                        flush_stream_state(
+                            &state,
+                            &review_thread,
+                            &assistant_message_id,
+                            &blocks,
+                            &message_status,
+                            &thread_status,
+                            &turn_model_id,
+                            &mut blocks_dirty,
+                            &mut message_state_dirty,
+                            &mut thread_status_dirty,
+                            &mut turn_model_dirty,
+                            &mut last_persisted_thread_status,
+                            &mut last_persist_at,
+                            &mut last_blocks_persist_at,
+                            force_persist,
+                        )
+                        .await;
+                        current_event = unmerged_current_event;
+                    }
+                }
+            } else if is_coalescable_stream_event(&current_event) {
+                pending_event = Some(current_event);
+                break;
+            } else {
+                let progress = process_stream_event(
+                    &app,
+                    &state,
+                    &review_thread,
+                    &assistant_message_id,
+                    &stream_event_topic,
+                    &approval_event_topic,
+                    &current_event,
+                    &mut blocks,
+                    &mut action_index,
+                    &mut approval_index,
+                    max_output_chars,
+                )
+                .await;
+                let force_persist = apply_stream_progress(
+                    progress,
+                    &mut message_status,
+                    &mut thread_status,
+                    &mut turn_model_id,
+                    &mut token_usage,
+                    &mut blocks_dirty,
+                    &mut message_state_dirty,
+                    &mut thread_status_dirty,
+                    &mut turn_model_dirty,
+                );
+                flush_stream_state(
+                    &state,
+                    &review_thread,
+                    &assistant_message_id,
+                    &blocks,
+                    &message_status,
+                    &thread_status,
+                    &turn_model_id,
+                    &mut blocks_dirty,
+                    &mut message_state_dirty,
+                    &mut thread_status_dirty,
+                    &mut turn_model_dirty,
+                    &mut last_persisted_thread_status,
+                    &mut last_persist_at,
+                    &mut last_blocks_persist_at,
+                    force_persist,
+                )
+                .await;
+                break;
+            }
+        }
+    }
+
+    if let Some(event) = pending_event.take() {
+        let progress = process_stream_event(
+            &app,
+            &state,
+            &review_thread,
+            &assistant_message_id,
+            &stream_event_topic,
+            &approval_event_topic,
+            &event,
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            max_output_chars,
+        )
+        .await;
+        let force_persist = apply_stream_progress(
+            progress,
+            &mut message_status,
+            &mut thread_status,
+            &mut turn_model_id,
+            &mut token_usage,
+            &mut blocks_dirty,
+            &mut message_state_dirty,
+            &mut thread_status_dirty,
+            &mut turn_model_dirty,
+        );
+        flush_stream_state(
+            &state,
+            &review_thread,
+            &assistant_message_id,
+            &blocks,
+            &message_status,
+            &thread_status,
+            &turn_model_id,
+            &mut blocks_dirty,
+            &mut message_state_dirty,
+            &mut thread_status_dirty,
+            &mut turn_model_dirty,
+            &mut last_persisted_thread_status,
+            &mut last_persist_at,
+            &mut last_blocks_persist_at,
+            force_persist,
+        )
+        .await;
+    }
+
+    match engine_task.await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            blocks.push(ContentBlock::Error {
+                message: format!("Engine error: {error}"),
+            });
+            blocks_dirty = true;
+            if message_status != MessageStatusDto::Error {
+                message_status = MessageStatusDto::Error;
+                message_state_dirty = true;
+            }
+            if thread_status != ThreadStatusDto::Error {
+                thread_status = ThreadStatusDto::Error;
+                thread_status_dirty = true;
+            }
+            let _ = app.emit(
+                &stream_event_topic,
+                EngineEvent::Error {
+                    message: format!("{error}"),
+                    recoverable: false,
+                },
+            );
+        }
+        Err(error) => {
+            blocks.push(ContentBlock::Error {
+                message: format!("Engine task join error: {error}"),
+            });
+            blocks_dirty = true;
+            if message_status != MessageStatusDto::Error {
+                message_status = MessageStatusDto::Error;
+                message_state_dirty = true;
+            }
+            if thread_status != ThreadStatusDto::Error {
+                thread_status = ThreadStatusDto::Error;
+                thread_status_dirty = true;
+            }
+        }
+    }
+
+    if cancellation.is_cancelled() && matches!(message_status, MessageStatusDto::Streaming) {
+        message_status = MessageStatusDto::Interrupted;
+        message_state_dirty = true;
+        thread_status = ThreadStatusDto::Idle;
+        thread_status_dirty = true;
+    }
+
+    flush_stream_state(
+        &state,
+        &review_thread,
+        &assistant_message_id,
+        &blocks,
+        &message_status,
+        &thread_status,
+        &turn_model_id,
+        &mut blocks_dirty,
+        &mut message_state_dirty,
+        &mut thread_status_dirty,
+        &mut turn_model_dirty,
+        &mut last_persisted_thread_status,
+        &mut last_persist_at,
+        &mut last_blocks_persist_at,
+        true,
+    )
+    .await;
+
+    if let Err(error) = run_db(state.db.clone(), {
+        let assistant_message_id = assistant_message_id.clone();
+        let message_status = message_status.clone();
+        let token_usage = token_usage;
+        move |db| {
+            db::messages::complete_assistant_message(
+                db,
+                &assistant_message_id,
+                message_status,
+                token_usage,
+                Some(turn_model_id.as_str()),
+            )
+        }
+    })
+    .await
+    {
+        log::warn!("failed to complete review assistant message: {error}");
+    }
+
+    if matches!(message_status, MessageStatusDto::Completed) {
+        if let Err(error) = run_db(state.db.clone(), {
+            let thread_id = review_thread.id.clone();
+            let token_usage = token_usage;
+            move |db| db::threads::bump_message_counters(db, &thread_id, token_usage)
+        })
+        .await
+        {
+            log::warn!("failed to bump review thread counters: {error}");
+        }
+    }
+
+    let latest_review_thread = run_db(state.db.clone(), {
+        let review_thread_id = review_thread.id.clone();
+        move |db| {
+            db::threads::get_thread(db, &review_thread_id)?.ok_or_else(|| {
+                anyhow::anyhow!("review thread not found before final thread-updated emit")
+            })
+        }
+    })
+    .await
+    .ok();
+    let _ = app.emit(
+        "thread-updated",
+        ThreadUpdatedEvent {
+            thread_id: review_thread.id.clone(),
+            workspace_id: review_thread.workspace_id.clone(),
+            thread: latest_review_thread,
+        },
+    );
+
+    state.turns.finish(&source_thread.id).await;
+    state.turns.finish(&review_thread.id).await;
+}
+
 fn is_coalescable_stream_event(event: &EngineEvent) -> bool {
     matches!(
         event,
@@ -1116,7 +2284,9 @@ fn coalesced_event_content_len(event: &EngineEvent) -> usize {
 fn same_output_stream(left: &OutputStream, right: &OutputStream) -> bool {
     matches!(
         (left, right),
-        (OutputStream::Stdout, OutputStream::Stdout) | (OutputStream::Stderr, OutputStream::Stderr)
+        (OutputStream::Stdout, OutputStream::Stdout)
+            | (OutputStream::Stderr, OutputStream::Stderr)
+            | (OutputStream::Stdin, OutputStream::Stdin)
     )
 }
 
@@ -1669,6 +2839,7 @@ fn apply_event_to_blocks(
                     let stream_name = match stream {
                         OutputStream::Stdout => "stdout",
                         OutputStream::Stderr => "stderr",
+                        OutputStream::Stdin => "stdin",
                     };
                     let chunk_content = truncate_chars(content, max_output_chars);
                     if chunk_content.is_empty() {
@@ -1760,6 +2931,22 @@ fn apply_event_to_blocks(
             progress.turn_model_id = Some(to_model.to_string());
             progress.force_persist = true;
         }
+        EngineEvent::Notice {
+            kind,
+            level,
+            title,
+            message,
+        } => {
+            let block = ContentBlock::Notice {
+                kind: kind.to_string(),
+                level: level.to_string(),
+                title: title.to_string(),
+                message: message.to_string(),
+            };
+            progress.blocks_changed =
+                upsert_notice_block(blocks, action_index, approval_index, kind, block);
+            progress.force_persist = true;
+        }
         EngineEvent::ApprovalRequested {
             approval_id,
             action_type,
@@ -1815,6 +3002,7 @@ fn append_text_delta(blocks: &mut Vec<ContentBlock>, content: &str) -> bool {
     blocks.push(ContentBlock::Text {
         content: content.to_string(),
         plan_mode: None,
+        is_steer: None,
     });
     true
 }
@@ -2079,20 +3267,21 @@ fn allow_network_for_trust_level(trust_level: &TrustLevelDto) -> bool {
     matches!(trust_level, TrustLevelDto::Trusted)
 }
 
-fn thread_approval_policy_override(engine_id: &str, metadata: Option<&Value>) -> Option<String> {
+fn thread_approval_policy_override_value(
+    engine_id: &str,
+    metadata: Option<&Value>,
+) -> Result<Option<Value>, String> {
     match engine_id {
-        "claude" => metadata
+        "claude" => Ok(metadata
             .and_then(|value| value.get("claudePermissionMode"))
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| matches!(*value, "trusted" | "standard" | "restricted"))
-            .map(ToOwned::to_owned),
+            .map(|value| Value::String(value.to_string()))),
         _ => metadata
             .and_then(|value| value.get("sandboxApprovalPolicy"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| matches!(*value, "untrusted" | "on-failure" | "on-request" | "never"))
-            .map(ToOwned::to_owned),
+            .map(normalize_codex_approval_policy_value)
+            .transpose(),
     }
 }
 
@@ -2252,6 +3441,154 @@ fn thread_reasoning_effort(metadata: Option<&Value>) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn thread_last_model_id(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("lastModelId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn thread_service_tier(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("serviceTier"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| matches!(*value, "fast" | "flex"))
+        .map(ToOwned::to_owned)
+}
+
+fn thread_personality(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("personality"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| matches!(*value, "none" | "friendly" | "pragmatic"))
+        .map(ToOwned::to_owned)
+}
+
+fn thread_output_schema(metadata: Option<&Value>) -> Option<Value> {
+    metadata
+        .and_then(|value| value.get("outputSchema"))
+        .cloned()
+}
+
+fn normalize_reasoning_effort_value(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_lowercase)
+}
+
+fn resolve_reasoning_effort_for_model(
+    model: &EngineModelDto,
+    requested_effort: Option<&str>,
+) -> Option<String> {
+    let normalized_requested = normalize_reasoning_effort_value(requested_effort);
+    if let Some(requested) = normalized_requested.as_ref() {
+        if model
+            .supported_reasoning_efforts
+            .iter()
+            .any(|option| option.reasoning_effort == *requested)
+        {
+            return Some(requested.clone());
+        }
+    }
+
+    let normalized_default =
+        normalize_reasoning_effort_value(Some(model.default_reasoning_effort.as_str()));
+    if let Some(default_effort) = normalized_default.as_ref() {
+        if model
+            .supported_reasoning_efforts
+            .iter()
+            .any(|option| option.reasoning_effort == *default_effort)
+        {
+            return Some(default_effort.clone());
+        }
+    }
+
+    model
+        .supported_reasoning_efforts
+        .iter()
+        .map(|option| option.reasoning_effort.trim())
+        .find(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or(normalized_default)
+        .or(normalized_requested)
+}
+
+fn resolve_reasoning_effort_from_catalog(
+    engines: &[EngineInfoDto],
+    engine_id: &str,
+    model_id: &str,
+    requested_effort: Option<&str>,
+) -> Option<String> {
+    let normalized_requested = normalize_reasoning_effort_value(requested_effort);
+    let Some(model) = engines
+        .iter()
+        .find(|engine| engine.id == engine_id)
+        .and_then(|engine| engine.models.iter().find(|model| model.id == model_id))
+    else {
+        return normalized_requested;
+    };
+
+    resolve_reasoning_effort_for_model(model, normalized_requested.as_deref())
+}
+
+fn normalize_codex_approval_policy_value(value: &Value) -> Result<Value, String> {
+    match value {
+        Value::String(raw) => {
+            let normalized = raw.trim().to_lowercase();
+            let normalized = normalized.as_str();
+            if matches!(
+                normalized,
+                "untrusted" | "on-failure" | "on-request" | "never"
+            ) {
+                Ok(Value::String(normalized.to_string()))
+            } else {
+                Err(format!(
+                    "invalid approval policy `{normalized}`. expected one of: untrusted, on-failure, on-request, never"
+                ))
+            }
+        }
+        Value::Object(object) => {
+            let reject = object
+                .get("reject")
+                .and_then(Value::as_object)
+                .ok_or_else(|| {
+                    "invalid structured approval policy. expected a `reject` object".to_string()
+                })?;
+
+            for required_key in ["mcp_elicitations", "rules", "sandbox_approval"] {
+                if !reject.get(required_key).and_then(Value::as_bool).is_some() {
+                    return Err(format!(
+                        "invalid structured approval policy. missing boolean reject.{required_key}"
+                    ));
+                }
+            }
+
+            if reject.contains_key("request_permissions")
+                && reject
+                    .get("request_permissions")
+                    .and_then(Value::as_bool)
+                    .is_none()
+            {
+                return Err(
+                    "invalid structured approval policy. reject.request_permissions must be a boolean"
+                        .to_string(),
+                );
+            }
+
+            Ok(Value::Object(object.clone()))
+        }
+        _ => Err(
+            "invalid approval policy. expected a string mode or structured reject object"
+                .to_string(),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{fs, sync::Arc};
@@ -2262,6 +3599,7 @@ mod tests {
         db,
         engines::EngineManager,
         git::{repo::FileTreeCache, watcher::GitWatcherManager},
+        models::{EngineCapabilitiesDto, ReasoningEffortOptionDto},
         power::KeepAwakeManager,
         state::{AppState, TurnManager},
         terminal::TerminalManager,
@@ -2354,6 +3692,138 @@ mod tests {
         assert!(!unsupported_thread_sandbox_override_for_external_sandbox(
             None, true,
         ));
+    }
+
+    #[test]
+    fn normalize_input_items_merges_adjacent_text_and_preserves_typed_items() {
+        let normalized = normalize_input_items(
+            "fallback",
+            Some(vec![
+                ChatInputItemPayload::Text {
+                    text: "Use ".to_string(),
+                },
+                ChatInputItemPayload::Text {
+                    text: "$lint".to_string(),
+                },
+                ChatInputItemPayload::Skill {
+                    name: "lint".to_string(),
+                    path: "/tmp/skills/lint".to_string(),
+                },
+                ChatInputItemPayload::Mention {
+                    name: "Docs".to_string(),
+                    path: "app://docs".to_string(),
+                },
+                ChatInputItemPayload::Text {
+                    text: " now".to_string(),
+                },
+            ]),
+        )
+        .expect("input items should normalize");
+
+        assert_eq!(
+            normalized,
+            vec![
+                TurnInputItem::Text {
+                    text: "Use $lint".to_string(),
+                },
+                TurnInputItem::Skill {
+                    name: "lint".to_string(),
+                    path: "/tmp/skills/lint".to_string(),
+                },
+                TurnInputItem::Mention {
+                    name: "Docs".to_string(),
+                    path: "app://docs".to_string(),
+                },
+                TurnInputItem::Text {
+                    text: " now".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn normalize_input_items_rejects_blank_typed_entries() {
+        let error = normalize_input_items(
+            "fallback",
+            Some(vec![ChatInputItemPayload::Skill {
+                name: " ".to_string(),
+                path: "/tmp/skills/lint".to_string(),
+            }]),
+        )
+        .expect_err("blank skill names should be rejected");
+
+        assert!(error.contains("skill input items require non-empty name and path"));
+    }
+
+    #[test]
+    fn normalize_codex_review_target_builds_commit_payload() {
+        let (target, message, title) =
+            normalize_codex_review_target(&CodexReviewTargetPayload::Commit {
+                sha: "abcdef1234567890".to_string(),
+                title: Some("Refactor auth flow".to_string()),
+            })
+            .expect("commit target should normalize");
+
+        assert_eq!(
+            target,
+            serde_json::json!({
+                "type": "commit",
+                "sha": "abcdef1234567890",
+                "title": "Refactor auth flow",
+            })
+        );
+        assert_eq!(
+            message,
+            "Review commit `abcdef1234567890`: Refactor auth flow"
+        );
+        assert_eq!(title, "Review: abcdef123456");
+    }
+
+    #[test]
+    fn clone_codex_review_metadata_clears_runtime_only_fields() {
+        let metadata = clone_codex_review_metadata(
+            Some(&serde_json::json!({
+                "manualTitle": true,
+                "manualTitleUpdatedAt": "2026-03-12T00:00:00Z",
+                "codexPreview": "old preview",
+                "codexThreadStatus": "active",
+                "codexThreadActiveFlags": ["waitingOnApproval"],
+                "codexSyncRequired": true,
+                "codexSyncReason": "stale",
+                "serviceTier": "fast",
+            })),
+            "gpt-5.4",
+        )
+        .expect("metadata should clone");
+
+        assert_eq!(metadata.get("manualTitle"), None);
+        assert_eq!(metadata.get("codexPreview"), None);
+        assert_eq!(metadata.get("codexThreadStatus"), None);
+        assert_eq!(metadata.get("codexThreadActiveFlags"), None);
+        assert_eq!(metadata.get("codexSyncRequired"), None);
+        assert_eq!(metadata.get("codexSyncReason"), None);
+        assert_eq!(
+            metadata.get("serviceTier"),
+            Some(&serde_json::json!("fast"))
+        );
+        assert_eq!(
+            metadata.get("lastModelId"),
+            Some(&serde_json::json!("gpt-5.4"))
+        );
+    }
+
+    #[test]
+    fn normalize_input_items_rejects_non_empty_message_without_text_segments() {
+        let error = normalize_input_items(
+            "Use lint",
+            Some(vec![ChatInputItemPayload::Skill {
+                name: "lint".to_string(),
+                path: "/tmp/skills/lint".to_string(),
+            }]),
+        )
+        .expect_err("non-empty message text requires a text segment");
+
+        assert!(error.contains("input items must include at least one text segment"));
     }
 
     #[test]
@@ -2470,13 +3940,30 @@ mod tests {
         });
 
         assert_eq!(
-            thread_approval_policy_override("claude", Some(&metadata)).as_deref(),
-            Some("restricted")
+            thread_approval_policy_override_value("claude", Some(&metadata)).unwrap(),
+            Some(Value::String("restricted".to_string()))
         );
         assert_eq!(
-            thread_approval_policy_override("codex", Some(&metadata)).as_deref(),
-            Some("never")
+            thread_approval_policy_override_value("codex", Some(&metadata)).unwrap(),
+            Some(Value::String("never".to_string()))
         );
+    }
+
+    #[test]
+    fn invalid_structured_codex_approval_policy_is_rejected() {
+        let metadata = serde_json::json!({
+            "sandboxApprovalPolicy": {
+                "reject": {
+                    "rules": true,
+                    "sandbox_approval": false
+                }
+            }
+        });
+
+        let error = thread_approval_policy_override_value("codex", Some(&metadata))
+            .expect_err("expected malformed structured approval policy to fail");
+
+        assert!(error.contains("reject.mcp_elicitations"));
     }
 
     #[test]
@@ -2577,6 +4064,88 @@ mod tests {
         }
     }
 
+    #[test]
+    fn generic_notice_blocks_are_upserted_by_kind() {
+        let mut blocks = Vec::new();
+        let mut action_index = HashMap::new();
+        let mut approval_index = HashMap::new();
+
+        let first = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::Notice {
+                kind: "deprecation_notice".to_string(),
+                level: "warning".to_string(),
+                title: "Deprecation notice".to_string(),
+                message: "Use the newer API.".to_string(),
+            },
+            1000,
+        );
+        assert!(first.blocks_changed);
+
+        let second = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::Notice {
+                kind: "deprecation_notice".to_string(),
+                level: "warning".to_string(),
+                title: "Deprecation notice".to_string(),
+                message: "Use the newer permissions API.".to_string(),
+            },
+            1000,
+        );
+        assert!(second.blocks_changed);
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Notice { message, .. } if message == "Use the newer permissions API."
+        ));
+    }
+
+    #[test]
+    fn approval_response_persistence_tracks_permissions_session_scope() {
+        let response = serde_json::json!({
+            "permissions": {
+                "network": {
+                    "enabled": true
+                }
+            },
+            "scope": "session"
+        });
+
+        assert_eq!(
+            approval_response_decision_for_persistence(&response),
+            "accept_for_session"
+        );
+    }
+
+    #[test]
+    fn approval_response_persistence_tracks_mcp_elicitation_actions() {
+        let response = serde_json::json!({
+            "action": "decline"
+        });
+
+        assert_eq!(
+            approval_response_decision_for_persistence(&response),
+            "decline"
+        );
+    }
+
+    #[test]
+    fn approval_response_persistence_treats_empty_permissions_as_decline() {
+        let response = serde_json::json!({
+            "permissions": {},
+            "scope": "turn"
+        });
+
+        assert_eq!(
+            approval_response_decision_for_persistence(&response),
+            "decline"
+        );
+    }
+
     #[tokio::test]
     async fn invalid_claude_approval_response_keeps_approval_pending() {
         let state = test_app_state();
@@ -2638,12 +4207,119 @@ mod tests {
             .and_then(|item| item.get("decision"))
             .is_none());
     }
+
+    #[test]
+    fn resolve_reasoning_effort_from_catalog_falls_back_to_model_default() {
+        let engines = vec![EngineInfoDto {
+            id: "codex".to_string(),
+            name: "Codex".to_string(),
+            models: vec![EngineModelDto {
+                id: "gpt-5.1-codex-mini".to_string(),
+                display_name: "GPT-5.1 Codex Mini".to_string(),
+                description: String::new(),
+                hidden: false,
+                is_default: false,
+                upgrade: None,
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string()],
+                supports_personality: false,
+                default_reasoning_effort: "medium".to_string(),
+                supported_reasoning_efforts: vec![
+                    ReasoningEffortOptionDto {
+                        reasoning_effort: "medium".to_string(),
+                        description: String::new(),
+                    },
+                    ReasoningEffortOptionDto {
+                        reasoning_effort: "high".to_string(),
+                        description: String::new(),
+                    },
+                ],
+            }],
+            capabilities: EngineCapabilitiesDto {
+                permission_modes: Vec::new(),
+                sandbox_modes: Vec::new(),
+                approval_decisions: Vec::new(),
+            },
+        }];
+
+        assert_eq!(
+            resolve_reasoning_effort_from_catalog(
+                &engines,
+                "codex",
+                "gpt-5.1-codex-mini",
+                Some("xhigh"),
+            ),
+            Some("medium".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_reasoning_effort_from_catalog_keeps_supported_effort() {
+        let engines = vec![EngineInfoDto {
+            id: "codex".to_string(),
+            name: "Codex".to_string(),
+            models: vec![EngineModelDto {
+                id: "gpt-5.1-codex-mini".to_string(),
+                display_name: "GPT-5.1 Codex Mini".to_string(),
+                description: String::new(),
+                hidden: false,
+                is_default: false,
+                upgrade: None,
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string()],
+                supports_personality: false,
+                default_reasoning_effort: "medium".to_string(),
+                supported_reasoning_efforts: vec![
+                    ReasoningEffortOptionDto {
+                        reasoning_effort: "medium".to_string(),
+                        description: String::new(),
+                    },
+                    ReasoningEffortOptionDto {
+                        reasoning_effort: "high".to_string(),
+                        description: String::new(),
+                    },
+                ],
+            }],
+            capabilities: EngineCapabilitiesDto {
+                permission_modes: Vec::new(),
+                sandbox_modes: Vec::new(),
+                approval_decisions: Vec::new(),
+            },
+        }];
+
+        assert_eq!(
+            resolve_reasoning_effort_from_catalog(
+                &engines,
+                "codex",
+                "gpt-5.1-codex-mini",
+                Some("high"),
+            ),
+            Some("high".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_turn_model_id_accepts_thread_last_model_without_catalog() {
+        let state = test_app_state();
+        let mut thread = test_thread(&state, "codex", "gpt-5.5-codex");
+        thread.engine_metadata = Some(serde_json::json!({
+            "lastModelId": "gpt-5.1-codex-mini"
+        }));
+
+        assert_eq!(
+            resolve_turn_model_id(&thread, Some("gpt-5.1-codex-mini"), None)
+                .expect("last model should resolve without a catalog"),
+            "gpt-5.1-codex-mini"
+        );
+    }
 }
 
-async fn resolve_turn_model_id(
-    state: &AppState,
+fn resolve_turn_model_id(
     thread: &ThreadDto,
     requested_model_id: Option<&str>,
+    engines: Option<&[EngineInfoDto]>,
 ) -> Result<String, String> {
     let Some(requested_model_id) = requested_model_id else {
         return Ok(thread.model_id.clone());
@@ -2653,7 +4329,12 @@ async fn resolve_turn_model_id(
         return Ok(thread.model_id.clone());
     }
 
-    if let Ok(engines) = state.engines.list_engines().await {
+    if thread_last_model_id(thread.engine_metadata.as_ref()).as_deref() == Some(requested_model_id)
+    {
+        return Ok(requested_model_id.to_string());
+    }
+
+    if let Some(engines) = engines {
         if let Some(engine) = engines.iter().find(|engine| engine.id == thread.engine_id) {
             if engine
                 .models
@@ -2677,6 +4358,19 @@ async fn resolve_turn_model_id(
     }
 
     Ok(requested_model_id.to_string())
+}
+
+async fn model_supports_personality(state: &AppState, engine_id: &str, model_id: &str) -> bool {
+    let Ok(engines) = state.engines.list_engines().await else {
+        return false;
+    };
+
+    engines
+        .iter()
+        .find(|engine| engine.id == engine_id)
+        .and_then(|engine| engine.models.iter().find(|model| model.id == model_id))
+        .map(|model| model.supports_personality)
+        .unwrap_or(false)
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {

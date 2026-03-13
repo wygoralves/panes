@@ -19,6 +19,14 @@ import {
   ListChecks,
   Clock,
   Zap,
+  RotateCcw,
+  Minimize2,
+  Search,
+  Scissors,
+  Sparkles,
+  Server,
+  FlaskConical,
+  UserCircle,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
@@ -37,16 +45,32 @@ import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { isLinuxDesktop } from "../../lib/windowActions";
 import { MessageBlocks } from "./MessageBlocks";
 import { resolveEngineCapabilities } from "./engineCapabilities";
+import { buildCodexInputItems } from "./codexInputItems";
+import { resolveReasoningEffortForModel } from "./reasoningEffort";
+import { ToolInputQuestionnaire } from "./ToolInputQuestionnaire";
 import {
+  buildPermissionsApprovalResponse,
+  buildPermissionsDeclineResponse,
+  isPermissionsRequestApproval,
   isRequestUserInputApproval,
   parseApprovalCommand,
   parseApprovalReason,
   parseProposedExecpolicyAmendment,
   parseProposedNetworkPolicyAmendments,
+  parseToolInputQuestions,
   requiresCustomApprovalPayload,
 } from "./toolInputApproval";
 import { ModelPicker } from "./ModelPicker";
+import {
+  type CodexConfigPatch,
+  type CodexPersonalityValue,
+  type CodexServiceTierValue,
+} from "./CodexConfigPicker";
+// CodexRuntimePicker removed from toolbar — runtime info accessed via /slash commands
 import { PermissionPicker } from "./PermissionPicker";
+// CodexReviewPicker and CodexThreadPicker replaced by slash commands (ChatSlashMenu + ChatCommandPanel)
+import { ChatSlashMenu, type SlashCommand } from "./ChatSlashMenu";
+import { ChatCommandPanel, type ActiveSlashCommand } from "./ChatCommandPanel";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { getHarnessIcon } from "../shared/HarnessLogos";
@@ -55,6 +79,9 @@ import type {
   ApprovalBlock,
   ApprovalResponse,
   ChatAttachment,
+  ChatInputItem,
+  CodexApp,
+  CodexSkill,
   ContentBlock,
   EngineHealth,
   Message,
@@ -122,11 +149,15 @@ type CodexThreadApprovalPolicyValue =
   | "untrusted"
   | "on-failure"
   | "on-request"
-  | "never";
+  | "never"
+  | "custom";
 type ClaudeThreadPermissionModeValue = "inherit" | "restricted" | "standard" | "trusted";
 type ThreadApprovalPolicyValue =
   | CodexThreadApprovalPolicyValue
   | ClaudeThreadPermissionModeValue;
+type ThreadApprovalPolicyStateValue =
+  | ThreadApprovalPolicyValue
+  | Record<string, unknown>;
 type ThreadSandboxModeValue =
   | "inherit"
   | "read-only"
@@ -134,10 +165,14 @@ type ThreadSandboxModeValue =
   | "danger-full-access";
 type ThreadNetworkPolicyValue = "inherit" | "enabled" | "restricted";
 type ThreadExecutionPolicyPatch = Partial<{
-  approvalPolicy: ThreadApprovalPolicyValue;
+  approvalPolicy: ThreadApprovalPolicyStateValue;
   sandboxMode: ThreadSandboxModeValue;
   networkPolicy: ThreadNetworkPolicyValue;
 }>;
+interface CodexReferenceCatalogState {
+  skillsLoaded: boolean;
+  appsLoaded: boolean;
+}
 
 function getTrustLevelOptions(
   t: TFunction<"chat">,
@@ -457,6 +492,10 @@ function formatReasoningEffortLabel(
     return "";
   }
   switch (effort.toLowerCase()) {
+    case "none":
+      return t("modelPicker.effort.none");
+    case "minimal":
+      return t("modelPicker.effort.minimal");
     case "low":
       return t("modelPicker.effort.low");
     case "medium":
@@ -485,6 +524,20 @@ function formatEngineModelLabel(
   return effortLabel ? `${baseLabel} ${effortLabel}` : baseLabel;
 }
 
+function serializePrettyJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return "";
+  }
+}
+
+function isCustomCodexApprovalPolicyValue(
+  value: unknown,
+): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function readCodexThreadApprovalPolicyValue(thread: Thread | null): CodexThreadApprovalPolicyValue {
   const value = thread?.engineMetadata?.sandboxApprovalPolicy;
   if (
@@ -495,7 +548,39 @@ function readCodexThreadApprovalPolicyValue(thread: Thread | null): CodexThreadA
   ) {
     return value;
   }
+  if (isCustomCodexApprovalPolicyValue(value)) {
+    return "custom";
+  }
   return "inherit";
+}
+
+function readCodexThreadCustomApprovalPolicyText(thread: Thread | null): string {
+  const value = thread?.engineMetadata?.sandboxApprovalPolicy;
+  return isCustomCodexApprovalPolicyValue(value) ? serializePrettyJson(value) : "";
+}
+
+function readThreadPersonalityValue(thread: Thread | null): CodexPersonalityValue {
+  const value = thread?.engineMetadata?.personality;
+  if (value === "none" || value === "friendly" || value === "pragmatic") {
+    return value;
+  }
+  return "inherit";
+}
+
+function readThreadServiceTierValue(thread: Thread | null): CodexServiceTierValue {
+  const value = thread?.engineMetadata?.serviceTier;
+  if (value === "fast" || value === "flex") {
+    return value;
+  }
+  return "inherit";
+}
+
+function readThreadOutputSchemaText(thread: Thread | null): string {
+  const value = thread?.engineMetadata?.outputSchema;
+  if (value === undefined || value === null) {
+    return "";
+  }
+  return serializePrettyJson(value);
 }
 
 function readClaudeThreadPermissionModeValue(
@@ -556,12 +641,16 @@ function readThreadWorkspaceWritableRoots(thread: Thread | null): string[] {
 }
 
 function readThreadExecutionPolicyState(thread: Thread | null): {
-  approvalPolicy: ThreadApprovalPolicyValue;
+  approvalPolicy: ThreadApprovalPolicyStateValue;
   sandboxMode: ThreadSandboxModeValue;
   networkPolicy: ThreadNetworkPolicyValue;
 } {
+  const rawApprovalPolicy = thread?.engineMetadata?.sandboxApprovalPolicy;
   return {
-    approvalPolicy: readThreadApprovalPolicyValue(thread),
+    approvalPolicy:
+      thread?.engineId === "codex" && isCustomCodexApprovalPolicyValue(rawApprovalPolicy)
+        ? rawApprovalPolicy
+        : readThreadApprovalPolicyValue(thread),
     sandboxMode: readThreadSandboxModeValue(thread),
     networkPolicy: readThreadStoredNetworkPolicyValue(thread),
   };
@@ -572,9 +661,17 @@ function applyThreadExecutionPolicyPatch(
   patch: ThreadExecutionPolicyPatch,
 ): Thread {
   const metadata = { ...(thread.engineMetadata ?? {}) };
+  const currentCodexApprovalPolicy = thread.engineMetadata?.sandboxApprovalPolicy;
+  const nextApprovalPolicy =
+    Object.prototype.hasOwnProperty.call(patch, "approvalPolicy")
+      ? patch.approvalPolicy
+      : isCustomCodexApprovalPolicyValue(currentCodexApprovalPolicy)
+        ? currentCodexApprovalPolicy
+        : readThreadApprovalPolicyValue(thread);
   const nextState = {
     ...readThreadExecutionPolicyState(thread),
     ...patch,
+    approvalPolicy: nextApprovalPolicy,
   };
 
   if (thread.engineId === "claude") {
@@ -588,16 +685,18 @@ function applyThreadExecutionPolicyPatch(
       delete metadata.claudePermissionMode;
     }
   } else {
-    if (
+    if (isCustomCodexApprovalPolicyValue(nextState.approvalPolicy)) {
+      metadata.sandboxApprovalPolicy = nextState.approvalPolicy;
+    } else if (
       nextState.approvalPolicy === "untrusted" ||
       nextState.approvalPolicy === "on-failure" ||
       nextState.approvalPolicy === "on-request" ||
       nextState.approvalPolicy === "never"
     ) {
       metadata.sandboxApprovalPolicy = nextState.approvalPolicy;
-      } else {
-        delete metadata.sandboxApprovalPolicy;
-      }
+    } else {
+      delete metadata.sandboxApprovalPolicy;
+    }
   }
 
   if (nextState.sandboxMode === "inherit") {
@@ -621,12 +720,12 @@ function applyThreadExecutionPolicyPatch(
 function toThreadExecutionPolicyRequest(
   patch: ThreadExecutionPolicyPatch,
 ): {
-  approvalPolicy?: string | null;
+  approvalPolicy?: unknown;
   sandboxMode?: string | null;
   allowNetwork?: boolean | null;
 } {
   const request: {
-    approvalPolicy?: string | null;
+    approvalPolicy?: unknown;
     sandboxMode?: string | null;
     allowNetwork?: boolean | null;
   } = {};
@@ -647,6 +746,41 @@ function toThreadExecutionPolicyRequest(
   }
 
   return request;
+}
+
+function parseStoredOutputSchema(
+  text: string,
+): Record<string, unknown> | boolean | null {
+  const normalized = text.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = JSON.parse(normalized) as unknown;
+  if (
+    typeof parsed !== "boolean" &&
+    (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+  ) {
+    throw new Error("output schema must be a JSON Schema object or boolean");
+  }
+
+  return parsed as Record<string, unknown> | boolean;
+}
+
+function parseStoredApprovalPolicy(
+  text: string,
+): Record<string, unknown> | null {
+  const normalized = text.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = JSON.parse(normalized) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("approval policy must be a JSON object");
+  }
+
+  return parsed as Record<string, unknown>;
 }
 
 function encodeModelOptionValue(engineId: string, modelId: string): string {
@@ -799,8 +933,14 @@ function MessageRowView({
       .map((block) => block.content)
       .join("\n");
   }, [message.blocks, message.content]);
-  const userAttachments = useMemo(
-    () => (message.blocks ?? []).filter((b) => b.type === "attachment"),
+  const userAuxiliaryBlocks = useMemo(
+    () =>
+      (message.blocks ?? []).filter(
+        (block) =>
+          block.type === "attachment" ||
+          block.type === "skill" ||
+          block.type === "mention",
+      ),
     [message.blocks],
   );
   const userPlanMode = useMemo(
@@ -847,21 +987,35 @@ function MessageRowView({
               wordBreak: "break-word",
             }}
           >
-            {userAttachments.length > 0 && (
+            {userAuxiliaryBlocks.length > 0 && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
-                {userAttachments.map((block, i) => {
-                  if (block.type !== "attachment") return null;
-                  const mime = block.mimeType ?? "";
-                  const AttachIcon = mime.startsWith("image/")
-                    ? Image
-                    : mime.startsWith("text/") || mime.includes("json")
-                      ? FileText
-                      : File;
+                {userAuxiliaryBlocks.map((block, i) => {
+                  if (block.type === "attachment") {
+                    const mime = block.mimeType ?? "";
+                    const AttachIcon = mime.startsWith("image/")
+                      ? Image
+                      : mime.startsWith("text/") || mime.includes("json")
+                        ? FileText
+                        : File;
+                    return (
+                      <span key={i} className="chat-attachment-chip">
+                        <AttachIcon size={10} />
+                        <span className="chat-attachment-chip-name" style={{ fontSize: 10 }}>
+                          {block.fileName}
+                        </span>
+                      </span>
+                    );
+                  }
+
                   return (
                     <span key={i} className="chat-attachment-chip">
-                      <AttachIcon size={10} />
+                      {block.type === "skill" ? (
+                        <SquareTerminal size={10} />
+                      ) : (
+                        <MessageSquare size={10} />
+                      )}
                       <span className="chat-attachment-chip-name" style={{ fontSize: 10 }}>
-                        {block.fileName}
+                        {block.name}
                       </span>
                     </span>
                   );
@@ -869,7 +1023,7 @@ function MessageRowView({
               </div>
             )}
             {userPlanMode && (
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 6, fontSize: 10, color: "var(--text-3)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6, fontSize: 10, color: "var(--text-3)" }}>
                 <ListChecks size={10} />
                 <span>{t("panel.planMode")}</span>
               </div>
@@ -1063,9 +1217,31 @@ export function ChatPanel() {
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [isFileDropOver, setIsFileDropOver] = useState(false);
   const [planMode, setPlanMode] = useState(false);
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+  const [slashMenuQuery, setSlashMenuQuery] = useState("");
+  const [slashMenuActiveIndex, setSlashMenuActiveIndex] = useState(0);
+  const [activeCommandPanel, setActiveCommandPanel] = useState<ActiveSlashCommand | null>(null);
+  const [commandPanelBusy, setCommandPanelBusy] = useState(false);
+  const [commandPanelError, setCommandPanelError] = useState<string | null>(null);
+  const commandPanelBusyRef = useRef(false);
+  // runtimePickerOpenSection removed — runtime info panels are inline slash command panels
   const [selectedEngineId, setSelectedEngineId] = useState("codex");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [selectedEffort, setSelectedEffort] = useState("medium");
+  const selectedEngineIdRef = useRef(selectedEngineId);
+  const selectedModelIdRef = useRef<string | null>(selectedModelId);
+  const selectedEffortRef = useRef(selectedEffort);
+  const [codexSkills, setCodexSkills] = useState<CodexSkill[]>([]);
+  const [codexApps, setCodexApps] = useState<CodexApp[]>([]);
+  const [codexReferenceCatalogState, setCodexReferenceCatalogState] =
+    useState<CodexReferenceCatalogState>({
+      skillsLoaded: false,
+      appsLoaded: false,
+    });
+  const [selectedPersonality, setSelectedPersonality] = useState<CodexPersonalityValue>("inherit");
+  const [selectedServiceTier, setSelectedServiceTier] = useState<CodexServiceTierValue>("inherit");
+  const [outputSchemaText, setOutputSchemaText] = useState("");
+  const [customApprovalPolicyText, setCustomApprovalPolicyText] = useState("");
   const [editingThreadTitle, setEditingThreadTitle] = useState(false);
   const [threadTitleDraft, setThreadTitleDraft] = useState("");
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(
@@ -1077,6 +1253,7 @@ export function ChatPanel() {
     loadingOlderMessages,
     loadOlderMessages,
     send,
+    steer,
     cancel,
     respondApproval,
     hydrateActionOutput,
@@ -1092,6 +1269,7 @@ export function ChatPanel() {
       loadingOlderMessages: state.loadingOlderMessages,
       loadOlderMessages: state.loadOlderMessages,
       send: state.send,
+      steer: state.steer,
       cancel: state.cancel,
       respondApproval: state.respondApproval,
       hydrateActionOutput: state.hydrateActionOutput,
@@ -1117,6 +1295,29 @@ export function ChatPanel() {
     () => codexUsesExternalSandbox(health),
     [health],
   );
+  const codexProtocolDiagnostics = health.codex?.protocolDiagnostics;
+  const codexPlanModeAdvertisement = useMemo<
+    "advertised" | "notAdvertised" | "unknown"
+  >(() => {
+    if (!codexProtocolDiagnostics) {
+      return "unknown";
+    }
+
+    const collaborationModeStatus = codexProtocolDiagnostics.methodAvailability.find(
+      (entry) => entry.method === "collaborationMode/list",
+    )?.status;
+    if (collaborationModeStatus && collaborationModeStatus !== "available") {
+      return "unknown";
+    }
+
+    return codexProtocolDiagnostics.collaborationModes.includes("plan")
+      ? "advertised"
+      : "notAdvertised";
+  }, [
+    codexProtocolDiagnostics,
+    codexProtocolDiagnostics?.collaborationModes,
+    codexProtocolDiagnostics?.methodAvailability,
+  ]);
   const preferredOnboardingChatSelection = useMemo(
     () => resolvePreferredOnboardingChatSelection(onboardingSelectedChatEngines, engines),
     [engines, onboardingSelectedChatEngines],
@@ -1142,6 +1343,10 @@ export function ChatPanel() {
   const {
     activeThread,
     createThread,
+    forkCodexThread,
+    rollbackCodexThread,
+    compactCodexThread,
+    attachCodexRemoteThread,
     refreshThreads,
     setActiveThread: setActiveThreadInStore,
     applyThreadUpdateLocal,
@@ -1152,6 +1357,10 @@ export function ChatPanel() {
     useShallow((state) => ({
       activeThread: state.threads.find((thread) => thread.id === state.activeThreadId) ?? null,
       createThread: state.createThread,
+      forkCodexThread: state.forkCodexThread,
+      rollbackCodexThread: state.rollbackCodexThread,
+      compactCodexThread: state.compactCodexThread,
+      attachCodexRemoteThread: state.attachCodexRemoteThread,
       refreshThreads: state.refreshThreads,
       setActiveThread: state.setActiveThread,
       applyThreadUpdateLocal: state.applyThreadUpdateLocal,
@@ -1192,10 +1401,15 @@ export function ChatPanel() {
     threadPaths: string[];
     text: string;
     attachments: ChatAttachment[];
+    inputItems: ChatInputItem[] | null;
     planMode: boolean;
     engineId: string;
     modelId: string;
     effort: string | null;
+    personality: CodexPersonalityValue;
+    serviceTier: CodexServiceTierValue;
+    outputSchemaText: string;
+    customApprovalPolicyText: string;
   } | null>(null);
 
   const trustLevelOptions = useMemo(() => getTrustLevelOptions(t), [t]);
@@ -1227,6 +1441,7 @@ export function ChatPanel() {
     () => availableModels.filter((m) => !m.hidden),
     [availableModels],
   );
+  const codexReferenceRoot = activeRepo?.path ?? activeWorkspace?.rootPath ?? null;
 
   const legacyModels = useMemo(
     () => availableModels.filter((m) => m.hidden),
@@ -1253,16 +1468,170 @@ export function ChatPanel() {
     () => availableModels.find((model) => model.id === selectedModelId) ?? availableModels[0] ?? null,
     [availableModels, selectedModelId],
   );
+  const selectedModelSupportsPersonality = selectedEngineId === "codex" &&
+    selectedModel?.supportsPersonality === true;
+  const codexConfigActiveCount =
+    (selectedPersonality !== "inherit" ? 1 : 0) +
+    (selectedServiceTier !== "inherit" ? 1 : 0) +
+    (outputSchemaText.trim().length > 0 ? 1 : 0) +
+    (customApprovalPolicyText.trim().length > 0 ? 1 : 0);
+  const selectedOutputSchemaValue = useMemo(() => {
+    try {
+      return parseStoredOutputSchema(outputSchemaText);
+    } catch {
+      return null;
+    }
+  }, [outputSchemaText]);
+  const selectedCustomApprovalPolicyValue = useMemo(() => {
+    try {
+      return parseStoredApprovalPolicy(customApprovalPolicyText);
+    } catch {
+      return null;
+    }
+  }, [customApprovalPolicyText]);
+  const activeThreadMatchesComposer = useMemo(() => {
+    if (!activeThread || !activeWorkspaceId || !selectedModelId) {
+      return false;
+    }
+
+    const activeScopeRepoId = activeRepo?.id ?? null;
+    const inScope =
+      activeThread.workspaceId === activeWorkspaceId &&
+      activeThread.repoId === activeScopeRepoId;
+    const engineMatch = activeThread.engineId === selectedEngineId;
+    const modelMatch =
+      selectedEngineId === "codex" ||
+      activeThread.modelId === selectedModelId ||
+      readThreadLastModelId(activeThread) === selectedModelId;
+
+    return inScope && engineMatch && modelMatch;
+  }, [
+    activeRepo?.id,
+    activeThread,
+    activeWorkspaceId,
+    selectedEngineId,
+    selectedModelId,
+  ]);
+
+  useEffect(() => {
+    selectedEngineIdRef.current = selectedEngineId;
+  }, [selectedEngineId]);
+
+  useEffect(() => {
+    selectedModelIdRef.current = selectedModelId;
+  }, [selectedModelId]);
+
+  useEffect(() => {
+    selectedEffortRef.current = selectedEffort;
+  }, [selectedEffort]);
+  const canSteerActiveTurn = useMemo(() => {
+    if (
+      !streaming ||
+      !threadId ||
+      !activeThread ||
+      !activeWorkspaceId ||
+      selectedEngineId !== "codex"
+    ) {
+      return false;
+    }
+
+    const activeScopeRepoId = activeRepo?.id ?? null;
+    return (
+      activeThread.id === threadId &&
+      activeThread.workspaceId === activeWorkspaceId &&
+      activeThread.repoId === activeScopeRepoId &&
+      activeThread.engineId === "codex"
+    );
+  }, [
+    activeRepo?.id,
+    activeThread,
+    activeWorkspaceId,
+    selectedEngineId,
+    streaming,
+    threadId,
+  ]);
+  const codexReferencesAvailable = codexSkills.length > 0 || codexApps.length > 0;
+
+  const loadCodexReferenceCatalogs = useCallback(async (): Promise<{
+    skills: CodexSkill[];
+    apps: CodexApp[];
+    skillsLoaded: boolean;
+    appsLoaded: boolean;
+  }> => {
+    if (!codexReferenceRoot) {
+      return {
+        skills: [],
+        apps: [],
+        skillsLoaded: false,
+        appsLoaded: false,
+      };
+    }
+
+    const [skillsResult, appsResult] = await Promise.allSettled([
+      ipc.listCodexSkills(codexReferenceRoot),
+      ipc.listCodexApps(),
+    ]);
+    const skillsLoaded = skillsResult.status === "fulfilled";
+    const appsLoaded = appsResult.status === "fulfilled";
+    const skills =
+      skillsResult.status === "fulfilled"
+        ? skillsResult.value.filter((skill) => skill.enabled)
+        : [];
+    const apps =
+      appsResult.status === "fulfilled"
+        ? appsResult.value.filter((app) => app.isEnabled && app.isAccessible)
+        : [];
+
+    return {
+      skills,
+      apps,
+      skillsLoaded,
+      appsLoaded,
+    };
+  }, [codexReferenceRoot]);
+
+  const resolveCodexInputItems = useCallback(
+    async (message: string, engineId: string): Promise<ChatInputItem[] | undefined> => {
+      if (engineId !== "codex") {
+        return undefined;
+      }
+
+      let skills = codexSkills;
+      let apps = codexApps;
+      let skillsLoaded = codexReferenceCatalogState.skillsLoaded;
+      let appsLoaded = codexReferenceCatalogState.appsLoaded;
+      if ((!skillsLoaded || !appsLoaded) && message.includes("$")) {
+        const loaded = await loadCodexReferenceCatalogs();
+        if (loaded.skillsLoaded) {
+          skills = loaded.skills;
+          skillsLoaded = true;
+          setCodexSkills(skills);
+        }
+        if (loaded.appsLoaded) {
+          apps = loaded.apps;
+          appsLoaded = true;
+          setCodexApps(apps);
+        }
+        setCodexReferenceCatalogState({
+          skillsLoaded,
+          appsLoaded,
+        });
+      }
+
+      return buildCodexInputItems(message, skills, apps);
+    },
+    [
+      codexApps,
+      codexReferenceCatalogState.appsLoaded,
+      codexReferenceCatalogState.skillsLoaded,
+      codexSkills,
+      loadCodexReferenceCatalogs,
+    ],
+  );
 
   const supportedEfforts = useMemo(
     () => selectedModel?.supportedReasoningEfforts ?? [],
     [selectedModel],
-  );
-  const selectedReasoningEffort = useMemo(
-    () => supportedEfforts.some((option) => option.reasoningEffort === selectedEffort)
-      ? selectedEffort
-      : null,
-    [selectedEffort, supportedEfforts],
   );
   const activeThreadReasoningEffort =
     typeof activeThread?.engineMetadata?.reasoningEffort === "string"
@@ -1277,6 +1646,22 @@ export function ChatPanel() {
     }
     return encodeModelOptionValue(selectedEngineId, selectedModelId);
   }, [selectedEngineId, selectedModelId]);
+  const resolveComposerRuntimeSelection = useCallback(() => {
+    const engineId = selectedEngineIdRef.current;
+    const modelId = selectedModelIdRef.current;
+    if (!engineId || !modelId) {
+      return null;
+    }
+
+    const engine = engines.find((candidate) => candidate.id === engineId) ?? null;
+    const model = engine?.models.find((candidate) => candidate.id === modelId) ?? null;
+
+    return {
+      engineId,
+      modelId,
+      reasoningEffort: resolveReasoningEffortForModel(model, selectedEffortRef.current),
+    };
+  }, [engines]);
 
   const renderAssistantIdentity = useCallback((message: Message) => {
     const messageEngineId =
@@ -1331,6 +1716,10 @@ export function ChatPanel() {
     activeThread?.engineId === "claude"
       ? claudeThreadPermissionModeOptions
       : codexThreadApprovalPolicyOptions;
+  const activeThreadApprovalSelectedLabel =
+    activeThread?.engineId === "codex" && activeThreadApprovalPolicy === "custom"
+      ? t("permissionPicker.custom")
+      : undefined;
   const activeThreadSandboxMode = readThreadSandboxModeValue(activeThread);
   const activeThreadNetworkPolicy = readThreadNetworkPolicyValue(activeThread);
   const activeThreadCapabilities = useMemo(
@@ -1418,6 +1807,60 @@ export function ChatPanel() {
 
     return approvals;
   }, [messages]);
+
+  const pendingToolInputApproval = useMemo(
+    () => {
+      if (activeThread?.engineId === "claude") {
+        return null;
+      }
+
+      for (let index = pendingApprovals.length - 1; index >= 0; index -= 1) {
+        const approval = pendingApprovals[index];
+        if (
+          isRequestUserInputApproval(approval.details ?? {}) &&
+          parseToolInputQuestions(approval.details ?? {}).length > 0
+        ) {
+          return approval;
+        }
+      }
+
+      return null;
+    },
+    [activeThread?.engineId, pendingApprovals],
+  );
+
+  const pendingApprovalBannerRows = useMemo(
+    () =>
+      pendingApprovals.filter((approval) => {
+        if (!isRequestUserInputApproval(approval.details ?? {})) {
+          return true;
+        }
+
+        return (
+          activeThread?.engineId === "claude" ||
+          parseToolInputQuestions(approval.details ?? {}).length === 0
+        );
+      }),
+    [activeThread?.engineId, pendingApprovals],
+  );
+
+  const pendingToolInputQuestions = useMemo(
+    () =>
+      pendingToolInputApproval
+        ? parseToolInputQuestions(pendingToolInputApproval.details ?? {})
+        : [],
+    [pendingToolInputApproval],
+  );
+
+  const showPendingToolInputComposer = Boolean(
+    pendingToolInputApproval &&
+      pendingToolInputQuestions.length > 0 &&
+      activeThread?.engineId !== "claude",
+  );
+  const pendingToolInputSupportsDecline =
+    activeThreadApprovalDecisionCapabilities.includes("decline");
+  const pendingToolInputSupportsCancel =
+    activeThreadApprovalDecisionCapabilities.includes("cancel");
 
   const appendAttachmentsFromPaths = useCallback((paths: string[]) => {
     if (!activeWorkspaceId || paths.length === 0) {
@@ -1726,6 +2169,91 @@ export function ChatPanel() {
   }, [activeWorkspaceId, activeThread?.engineId, engines, selectedEngineId]);
 
   useEffect(() => {
+    if (selectedEngineId !== "codex" || !activeWorkspaceId || !codexReferenceRoot) {
+      setCodexSkills([]);
+      setCodexApps([]);
+      setCodexReferenceCatalogState({
+        skillsLoaded: false,
+        appsLoaded: false,
+      });
+      return;
+    }
+
+    setCodexSkills([]);
+    setCodexApps([]);
+    setCodexReferenceCatalogState({
+      skillsLoaded: false,
+      appsLoaded: false,
+    });
+
+    let disposed = false;
+    void loadCodexReferenceCatalogs().then(({ skills, apps, skillsLoaded, appsLoaded }) => {
+      if (disposed) {
+        return;
+      }
+      if (skillsLoaded) {
+        setCodexSkills(skills);
+      }
+      if (appsLoaded) {
+        setCodexApps(apps);
+      }
+      setCodexReferenceCatalogState({
+        skillsLoaded,
+        appsLoaded,
+      });
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, [activeWorkspaceId, codexReferenceRoot, loadCodexReferenceCatalogs, selectedEngineId]);
+
+  useEffect(() => {
+    if (
+      selectedEngineId !== "codex" ||
+      !activeWorkspaceId ||
+      !codexReferenceRoot ||
+      !codexProtocolDiagnostics?.fetchedAt ||
+      (!codexReferenceCatalogState.skillsLoaded &&
+        !codexReferenceCatalogState.appsLoaded)
+    ) {
+      return;
+    }
+
+    let disposed = false;
+    void loadCodexReferenceCatalogs().then(
+      ({ skills, apps, skillsLoaded, appsLoaded }) => {
+        if (disposed) {
+          return;
+        }
+
+        if (skillsLoaded) {
+          setCodexSkills(skills);
+        }
+        if (appsLoaded) {
+          setCodexApps(apps);
+        }
+        setCodexReferenceCatalogState((current) => ({
+          skillsLoaded: current.skillsLoaded || skillsLoaded,
+          appsLoaded: current.appsLoaded || appsLoaded,
+        }));
+      },
+    );
+
+    return () => {
+      disposed = true;
+    };
+  }, [
+    activeWorkspaceId,
+    codexProtocolDiagnostics?.fetchedAt,
+    codexReferenceCatalogState.appsLoaded,
+    codexReferenceCatalogState.skillsLoaded,
+    codexReferenceRoot,
+    loadCodexReferenceCatalogs,
+    selectedEngineId,
+  ]);
+
+  useEffect(() => {
     if (!selectedModel) {
       return;
     }
@@ -1736,20 +2264,10 @@ export function ChatPanel() {
     }
     effortSyncKeyRef.current = syncKey;
 
-    const effortFromThreadSupported = activeThreadReasoningEffort
-      ? supportedEfforts.some((option) => option.reasoningEffort === activeThreadReasoningEffort)
-      : false;
-    const modelDefaultSupported = supportedEfforts.some(
-      (option) => option.reasoningEffort === selectedModel.defaultReasoningEffort,
+    const nextEffort = resolveReasoningEffortForModel(
+      selectedModel,
+      activeThreadReasoningEffort ?? selectedEffort,
     );
-    const fallbackEffort =
-      supportedEfforts[0]?.reasoningEffort ?? selectedModel.defaultReasoningEffort;
-
-    const nextEffort = effortFromThreadSupported
-      ? activeThreadReasoningEffort!
-      : modelDefaultSupported
-        ? selectedModel.defaultReasoningEffort
-        : fallbackEffort;
 
     if (nextEffort && selectedEffort !== nextEffort) {
       setSelectedEffort(nextEffort);
@@ -1762,6 +2280,17 @@ export function ChatPanel() {
     selectedEffort,
     supportedEfforts,
   ]);
+
+  useEffect(() => {
+    if (activeThread?.engineId !== "codex") {
+      return;
+    }
+
+    setSelectedPersonality(readThreadPersonalityValue(activeThread));
+    setSelectedServiceTier(readThreadServiceTierValue(activeThread));
+    setOutputSchemaText(readThreadOutputSchemaText(activeThread));
+    setCustomApprovalPolicyText(readCodexThreadCustomApprovalPolicyText(activeThread));
+  }, [activeThread?.engineId, activeThread?.id, activeThread?.engineMetadata]);
 
   useEffect(() => {
     if (!activeThread) {
@@ -2031,9 +2560,507 @@ export function ChatPanel() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [cancel]);
 
+  function parseOutputSchemaDraft(
+    draftText: string = outputSchemaText,
+  ): { ok: true; value: unknown | null } | { ok: false } {
+    try {
+      return { ok: true, value: parseStoredOutputSchema(draftText) };
+    } catch (error) {
+      toast.error(
+        t("configPicker.invalidOutputSchema", {
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      return { ok: false };
+    }
+  }
+
+  function parseCustomApprovalPolicyDraft(
+    draftText: string = customApprovalPolicyText,
+  ):
+    | { ok: true; value: Record<string, unknown> | null }
+    | { ok: false } {
+    try {
+      return { ok: true, value: parseStoredApprovalPolicy(draftText) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(
+        message === "approval policy must be a JSON object"
+          ? t("panel.toasts.invalidCustomApprovalPolicy")
+          : t("panel.toasts.invalidCustomApprovalPolicyWithError", {
+              error: message,
+            }),
+      );
+      return { ok: false };
+    }
+  }
+
+  async function onCodexConfigSave(patch: CodexConfigPatch) {
+    const nextPersonality =
+      (patch.updatePersonality
+        ? (patch.personality ?? "inherit")
+        : selectedPersonality) as CodexPersonalityValue;
+    const nextServiceTier =
+      (patch.updateServiceTier
+        ? (patch.serviceTier ?? "inherit")
+        : selectedServiceTier) as CodexServiceTierValue;
+    const nextOutputSchemaText = patch.updateOutputSchema
+      ? serializePrettyJson(patch.outputSchema)
+      : outputSchemaText;
+    const nextCustomApprovalPolicyText = patch.updateApprovalPolicy
+      ? serializePrettyJson(patch.approvalPolicy)
+      : customApprovalPolicyText;
+    const applyLocalState = () => {
+      setSelectedPersonality(nextPersonality);
+      setSelectedServiceTier(nextServiceTier);
+      setOutputSchemaText(nextOutputSchemaText);
+      setCustomApprovalPolicyText(nextCustomApprovalPolicyText);
+    };
+
+    if (!activeThreadMatchesComposer || activeThread?.engineId !== "codex") {
+      applyLocalState();
+      return;
+    }
+
+    try {
+      if (patch.updatePersonality || patch.updateServiceTier || patch.updateOutputSchema) {
+        const updatedThread = await ipc.setThreadCodexConfig(activeThread.id, {
+          personality: patch.updatePersonality ? patch.personality : undefined,
+          serviceTier: patch.updateServiceTier ? patch.serviceTier : undefined,
+          outputSchema: patch.updateOutputSchema ? patch.outputSchema : undefined,
+        });
+        applyThreadUpdateLocal(updatedThread);
+      }
+
+      if (patch.updateApprovalPolicy) {
+        const updatedThread = await ipc.setThreadExecutionPolicy(activeThread.id, {
+          approvalPolicy: patch.approvalPolicy,
+        });
+        applyThreadUpdateLocal(updatedThread);
+      }
+
+      applyLocalState();
+    } catch (error) {
+      throw new Error(
+        t("panel.toasts.updateCodexConfigFailed", { error: String(error) }),
+      );
+    }
+  }
+
+  async function applyCodexConfigToThread(
+    targetThreadId: string,
+    config?: {
+      engineId: string;
+      personality: CodexPersonalityValue;
+      serviceTier: CodexServiceTierValue;
+      outputSchemaText: string;
+      customApprovalPolicyText: string;
+    },
+  ): Promise<boolean> {
+    const effectiveEngineId = config?.engineId ?? selectedEngineId;
+    if (effectiveEngineId !== "codex") {
+      return true;
+    }
+
+    const effectiveConfig = config ?? {
+      engineId: selectedEngineId,
+      personality: selectedPersonality,
+      serviceTier: selectedServiceTier,
+      outputSchemaText,
+      customApprovalPolicyText,
+    };
+
+    const outputSchemaDraft = parseOutputSchemaDraft(effectiveConfig.outputSchemaText);
+    if (!outputSchemaDraft.ok) {
+      return false;
+    }
+    const customApprovalDraft =
+      parseCustomApprovalPolicyDraft(effectiveConfig.customApprovalPolicyText);
+    if (!customApprovalDraft.ok) {
+      return false;
+    }
+
+    try {
+      const updatedConfigThread = await ipc.setThreadCodexConfig(targetThreadId, {
+        personality:
+          effectiveConfig.personality === "inherit" ? null : effectiveConfig.personality,
+        serviceTier:
+          effectiveConfig.serviceTier === "inherit" ? null : effectiveConfig.serviceTier,
+        outputSchema: outputSchemaDraft.value,
+      });
+      applyThreadUpdateLocal(updatedConfigThread);
+
+      const latestThread =
+        useThreadStore.getState().threads.find((thread) => thread.id === targetThreadId) ??
+        updatedConfigThread;
+      const approvalMode = readCodexThreadApprovalPolicyValue(latestThread);
+
+      if (customApprovalDraft.value) {
+        const updatedThread = await ipc.setThreadExecutionPolicy(targetThreadId, {
+          approvalPolicy: customApprovalDraft.value,
+        });
+        applyThreadUpdateLocal(updatedThread);
+      } else if (approvalMode === "custom") {
+        const updatedThread = await ipc.setThreadExecutionPolicy(targetThreadId, {
+          approvalPolicy: null,
+        });
+        applyThreadUpdateLocal(updatedThread);
+      }
+
+      return true;
+    } catch (error) {
+      toast.error(
+        t("panel.toasts.updateCodexConfigFailed", { error: String(error) }),
+      );
+      return false;
+    }
+  }
+
+  async function onForkCodexThread() {
+    if (!activeThread || activeThread.engineId !== "codex") {
+      throw new Error(t("panel.toasts.codexThreadToolUnavailable"));
+    }
+
+    const forkedThread = await forkCodexThread(activeThread.id);
+    if (!forkedThread) {
+      throw new Error(t("panel.toasts.codexThreadForkFailed"));
+    }
+
+    setActiveThreadInStore(forkedThread.id);
+    await bindChatThread(forkedThread.id);
+    toast.success(t("panel.toasts.codexThreadForked"));
+  }
+
+  async function onStartCodexReview(request: {
+    target: import("../../types").CodexReviewTarget;
+    delivery: import("../../types").CodexReviewDelivery;
+  }) {
+    if (
+      !activeThread ||
+      activeThread.engineId !== "codex" ||
+      !activeThread.engineThreadId
+    ) {
+      throw new Error(t("panel.toasts.codexReviewUnavailable"));
+    }
+
+    const reviewThread = await ipc.startCodexReview(
+      activeThread.id,
+      request.target,
+      request.delivery,
+    );
+
+    await refreshThreads(reviewThread.workspaceId);
+    setActiveThreadInStore(reviewThread.id);
+    await bindChatThread(reviewThread.id);
+    toast.success(
+      t(
+        request.delivery === "detached"
+          ? "panel.toasts.codexReviewDetachedStarted"
+          : "panel.toasts.codexReviewStarted",
+      ),
+    );
+  }
+
+  async function onRollbackCodexThread(numTurns: number) {
+    if (!activeThread || activeThread.engineId !== "codex") {
+      throw new Error(t("panel.toasts.codexThreadToolUnavailable"));
+    }
+
+    const rolledBackThread = await rollbackCodexThread(activeThread.id, numTurns);
+    if (!rolledBackThread) {
+      throw new Error(t("panel.toasts.codexThreadRollbackFailed"));
+    }
+
+    setActiveThreadInStore(rolledBackThread.id);
+    await bindChatThread(rolledBackThread.id);
+    toast.success(t("panel.toasts.codexThreadRolledBack", { count: numTurns }));
+  }
+
+  async function onCompactCodexThread() {
+    if (!activeThread || activeThread.engineId !== "codex") {
+      throw new Error(t("panel.toasts.codexThreadToolUnavailable"));
+    }
+
+    const compactedThread = await compactCodexThread(activeThread.id);
+    if (!compactedThread) {
+      throw new Error(t("panel.toasts.codexThreadCompactFailed"));
+    }
+
+    toast.success(t("panel.toasts.codexThreadCompactionStarted"));
+  }
+
+  async function onAttachCodexRemoteThread(engineThreadId: string) {
+    if (!activeWorkspaceId || !selectedModelId) {
+      throw new Error(t("panel.toasts.codexThreadResumeUnavailable"));
+    }
+
+    const attachedThread = await attachCodexRemoteThread(
+      activeWorkspaceId,
+      engineThreadId,
+      selectedModelId,
+    );
+    if (!attachedThread) {
+      throw new Error(t("panel.toasts.codexThreadResumeFailed"));
+    }
+
+    setActiveThreadInStore(attachedThread.id);
+    await bindChatThread(attachedThread.id);
+    toast.success(t("panel.toasts.codexThreadResumed"));
+  }
+
+  /* ── Slash command system ── */
+
+  const canManageActiveCodexThread =
+    !!activeThread &&
+    activeThread.engineId === "codex" &&
+    !!activeThread.engineThreadId &&
+    !streaming;
+  const canUseNativeCodexHistoryTools =
+    canManageActiveCodexThread &&
+    activeThread?.engineMetadata?.codexTranscriptImported !== false;
+
+  const isCodexEngine = selectedEngineId === "codex";
+
+  const slashCommands: SlashCommand[] = useMemo(
+    () => [
+      {
+        id: "review",
+        name: "review",
+        description: t("reviewPicker.subtitle"),
+        icon: Search,
+        codexOnly: true,
+        disabled: !canManageActiveCodexThread,
+      },
+      {
+        id: "fork",
+        name: "fork",
+        description: t("threadPicker.forkDescription"),
+        icon: GitBranch,
+        codexOnly: true,
+        disabled: !canUseNativeCodexHistoryTools,
+      },
+      {
+        id: "rollback",
+        name: "rollback",
+        description: t("threadPicker.rollbackDescription"),
+        icon: RotateCcw,
+        codexOnly: true,
+        disabled: !canUseNativeCodexHistoryTools,
+      },
+      {
+        id: "compact",
+        name: "compact",
+        description: t("threadPicker.compactDescription"),
+        icon: Scissors,
+        codexOnly: true,
+        disabled: !canManageActiveCodexThread,
+      },
+      {
+        id: "fast",
+        name: "fast",
+        description: t("configPicker.serviceTierDescription"),
+        icon: Zap,
+        codexOnly: true,
+        disabled: !isCodexEngine,
+      },
+      {
+        id: "personality",
+        name: "personality",
+        description: t("configPicker.personalityDescription"),
+        icon: UserCircle,
+        codexOnly: true,
+        disabled: !isCodexEngine,
+      },
+      {
+        id: "skills",
+        name: "skills",
+        description: "View loaded Codex skills",
+        icon: Sparkles,
+        codexOnly: true,
+        disabled: !isCodexEngine,
+      },
+      {
+        id: "mcp",
+        name: "MCP",
+        description: "View MCP server status",
+        icon: Server,
+        codexOnly: true,
+        disabled: !isCodexEngine,
+      },
+      {
+        id: "experimental",
+        name: "experimental",
+        description: "View experimental features",
+        icon: FlaskConical,
+        codexOnly: true,
+        disabled: !isCodexEngine,
+      },
+    ],
+    [canManageActiveCodexThread, canUseNativeCodexHistoryTools, isCodexEngine, t],
+  );
+
+  const filteredSlashCommands = useMemo(() => {
+    if (!slashMenuQuery) return slashCommands;
+    const q = slashMenuQuery.toLowerCase();
+    return slashCommands.filter(
+      (c) =>
+        c.name.toLowerCase().startsWith(q) ||
+        c.id.startsWith(q) ||
+        c.description.toLowerCase().includes(q),
+    );
+  }, [slashCommands, slashMenuQuery]);
+
+  function handleSlashCommandSelect(commandId: string) {
+    setSlashMenuOpen(false);
+    setSlashMenuQuery("");
+
+    const cmd = slashCommands.find((c) => c.id === commandId);
+    if (!cmd || cmd.disabled) return;
+
+    // /fast is a simple toggle — no panel needed
+    if (commandId === "fast") {
+      setInput("");
+      const nextTier = selectedServiceTier === "fast" ? "inherit" : "fast";
+      handleCommandPanelConfirm(
+        { type: "fast" } as ActiveSlashCommand,
+        { serviceTier: nextTier },
+      );
+      return;
+    }
+
+    setInput("");
+    setActiveCommandPanel({ type: commandId } as ActiveSlashCommand);
+    setCommandPanelError(null);
+  }
+
+  async function handleCommandPanelConfirm(
+    command: ActiveSlashCommand,
+    payload?: import("./ChatCommandPanel").SlashCommandPayload,
+  ) {
+    if (commandPanelBusyRef.current) {
+      return;
+    }
+    commandPanelBusyRef.current = true;
+    setCommandPanelBusy(true);
+    setCommandPanelError(null);
+    try {
+      switch (command.type) {
+        case "fork":
+          await onForkCodexThread();
+          break;
+        case "compact":
+          await onCompactCodexThread();
+          break;
+        case "rollback":
+          if (payload?.numTurns) {
+            await onRollbackCodexThread(payload.numTurns);
+          }
+          break;
+        case "review":
+          if (payload?.target && payload?.delivery) {
+            await onStartCodexReview({
+              target: payload.target,
+              delivery: payload.delivery,
+            });
+          }
+          break;
+        case "fast":
+          if (payload?.serviceTier !== undefined) {
+            const tier = payload.serviceTier === "inherit" ? null : payload.serviceTier;
+            await onCodexConfigSave({
+              updatePersonality: false,
+              personality: null,
+              updateServiceTier: true,
+              serviceTier: tier,
+              updateOutputSchema: false,
+              outputSchema: null,
+              updateApprovalPolicy: false,
+              approvalPolicy: null,
+            });
+            toast.success(
+              t("panel.toasts.fastToggled", {
+                state: payload.serviceTier === "fast"
+                  ? t("panel.toasts.on")
+                  : t("panel.toasts.off"),
+              }),
+            );
+          }
+          break;
+        case "personality":
+          if (payload?.personality !== undefined) {
+            const p = payload.personality === "inherit" ? null : payload.personality;
+            await onCodexConfigSave({
+              updatePersonality: true,
+              personality: p,
+              updateServiceTier: false,
+              serviceTier: null,
+              updateOutputSchema: false,
+              outputSchema: null,
+              updateApprovalPolicy: false,
+              approvalPolicy: null,
+            });
+            toast.success(t("panel.toasts.personalityUpdated", { value: payload.personality }));
+          }
+          break;
+      }
+      setActiveCommandPanel(null);
+    } catch (err) {
+      setCommandPanelError(err instanceof Error ? err.message : String(err));
+    } finally {
+      commandPanelBusyRef.current = false;
+      setCommandPanelBusy(false);
+    }
+  }
+
+  function handleSlashDetection(value: string, cursorPos: number) {
+    const textBeforeCursor = value.slice(0, cursorPos);
+    const slashMatch = /(?:^|\s)(\/([a-z]*))$/.exec(textBeforeCursor);
+    if (slashMatch) {
+      setSlashMenuOpen(true);
+      setSlashMenuQuery(slashMatch[2] ?? "");
+      setSlashMenuActiveIndex(0);
+    } else if (slashMenuOpen) {
+      setSlashMenuOpen(false);
+    }
+  }
+
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!input.trim() || !activeWorkspaceId || !selectedModelId || streaming) return;
+    if (!input.trim() || !activeWorkspaceId) return;
+    const text = input.trim();
+    const currentAttachments = [...attachments];
+
+    if (streaming) {
+      if (!canSteerActiveTurn) {
+        return;
+      }
+
+      const activeThreadId = threadId ?? activeThread?.id ?? null;
+      if (!activeThreadId) {
+        return;
+      }
+
+      const inputItems = await resolveCodexInputItems(text, "codex");
+      const steered = await steer(text, {
+        threadIdOverride: activeThreadId,
+        attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
+        inputItems,
+        planMode,
+      });
+      if (steered) {
+        setInput("");
+        setAttachments([]);
+      }
+      return;
+    }
+
+    const composerRuntime = resolveComposerRuntimeSelection();
+    if (!composerRuntime) {
+      return;
+    }
+    const submitEngineId = composerRuntime.engineId;
+    const submitModelId = composerRuntime.modelId;
+    const submitReasoningEffort = composerRuntime.reasoningEffort;
 
     const activeScopeRepoId = activeRepo?.id ?? null;
     const activeThreadInScope = activeThread
@@ -2041,11 +3068,12 @@ export function ChatPanel() {
         activeThread.repoId === activeScopeRepoId
       : false;
     const activeThreadModelMatch = activeThread
-      ? activeThread.modelId === selectedModelId ||
-        readThreadLastModelId(activeThread) === selectedModelId
+      ? submitEngineId === "codex" ||
+        activeThread.modelId === submitModelId ||
+        readThreadLastModelId(activeThread) === submitModelId
       : false;
     const activeThreadEngineMatch = activeThread
-      ? activeThread.engineId === selectedEngineId
+      ? activeThread.engineId === submitEngineId
       : false;
 
     let targetThreadId =
@@ -2060,8 +3088,8 @@ export function ChatPanel() {
       const createdThreadId = await createThread({
         workspaceId: activeWorkspaceId,
         repoId: activeScopeRepoId,
-        engineId: selectedEngineId,
-        modelId: selectedModelId,
+        engineId: submitEngineId,
+        modelId: submitModelId,
         title: activeRepo
           ? t("panel.repoChatTitle", { name: activeRepo.name })
           : t("panel.workspaceChatTitle"),
@@ -2072,6 +3100,8 @@ export function ChatPanel() {
       targetThreadId = createdThreadId;
       await bindChatThread(createdThreadId);
     }
+
+    const inputItems = await resolveCodexInputItems(text, submitEngineId);
 
     const currentThread =
       useThreadStore.getState().threads.find((thread) => thread.id === targetThreadId) ??
@@ -2096,32 +3126,40 @@ export function ChatPanel() {
           workspaceId: activeWorkspaceId,
           threadId: targetThreadId,
           threadPaths: availableRepoPaths,
-          text: input.trim(),
+          text,
           attachments: [...attachments],
+          inputItems: inputItems ?? null,
           planMode,
-          engineId: selectedEngineId,
-          modelId: selectedModelId!,
-          effort: selectedReasoningEffort,
+          engineId: submitEngineId,
+          modelId: submitModelId,
+          effort: submitReasoningEffort,
+          personality: selectedPersonality,
+          serviceTier: selectedServiceTier,
+          outputSchemaText,
+          customApprovalPolicyText,
         });
         return;
       }
     }
 
-    const text = input.trim();
-    const currentAttachments = [...attachments];
-
-    if (selectedReasoningEffort) {
-      await ipc.setThreadReasoningEffort(targetThreadId, selectedReasoningEffort, selectedModelId);
-      setThreadReasoningEffortLocal(targetThreadId, selectedReasoningEffort);
+    await ipc.setThreadReasoningEffort(
+      targetThreadId,
+      submitReasoningEffort,
+      submitModelId,
+    );
+    setThreadReasoningEffortLocal(targetThreadId, submitReasoningEffort);
+    if (!(await applyCodexConfigToThread(targetThreadId))) {
+      return;
     }
-    setThreadLastModelLocal(targetThreadId, selectedModelId);
+    setThreadLastModelLocal(targetThreadId, submitModelId);
 
     const sent = await send(text, {
       threadIdOverride: targetThreadId,
-      engineId: selectedEngineId,
-      modelId: selectedModelId,
-      reasoningEffort: selectedReasoningEffort,
+      engineId: submitEngineId,
+      modelId: submitModelId,
+      reasoningEffort: submitReasoningEffort,
       attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
+      inputItems,
       planMode,
     });
     if (sent) {
@@ -2138,9 +3176,18 @@ export function ChatPanel() {
     try {
       await ipc.confirmWorkspaceThread(prompt.threadId, prompt.threadPaths);
 
-      if (prompt.effort) {
-        await ipc.setThreadReasoningEffort(prompt.threadId, prompt.effort, prompt.modelId);
-        setThreadReasoningEffortLocal(prompt.threadId, prompt.effort);
+      await ipc.setThreadReasoningEffort(prompt.threadId, prompt.effort, prompt.modelId);
+      setThreadReasoningEffortLocal(prompt.threadId, prompt.effort);
+      if (!(await applyCodexConfigToThread(prompt.threadId, {
+        engineId: prompt.engineId,
+        personality: prompt.personality,
+        serviceTier: prompt.serviceTier,
+        outputSchemaText: prompt.outputSchemaText,
+        customApprovalPolicyText: prompt.customApprovalPolicyText,
+      }))) {
+        setInput(prompt.text);
+        setAttachments(prompt.attachments);
+        return;
       }
       setThreadLastModelLocal(prompt.threadId, prompt.modelId);
 
@@ -2150,6 +3197,7 @@ export function ChatPanel() {
         modelId: prompt.modelId,
         reasoningEffort: prompt.effort,
         attachments: prompt.attachments.length > 0 ? prompt.attachments : undefined,
+        inputItems: prompt.inputItems ?? undefined,
         planMode: prompt.planMode,
       });
       if (!sent) {
@@ -2169,6 +3217,7 @@ export function ChatPanel() {
   }
 
   async function onReasoningEffortChange(nextEffort: string) {
+    selectedEffortRef.current = nextEffort;
     setSelectedEffort(nextEffort);
     const targetThreadId = threadId ?? activeThread?.id ?? null;
     if (!targetThreadId) {
@@ -2176,7 +3225,11 @@ export function ChatPanel() {
     }
 
     setThreadReasoningEffortLocal(targetThreadId, nextEffort);
-    await ipc.setThreadReasoningEffort(targetThreadId, nextEffort, selectedModelId);
+    await ipc.setThreadReasoningEffort(
+      targetThreadId,
+      nextEffort,
+      selectedModelIdRef.current,
+    );
   }
 
   async function onRepoTrustLevelChange(nextTrustLevel: TrustLevel) {
@@ -3071,7 +4124,7 @@ export function ChatPanel() {
           }}
         >
           {/* Pending approvals */}
-          {pendingApprovals.length > 0 && (
+          {pendingApprovalBannerRows.length > 0 && (
             <div className="chat-approval-banner">
               <div className="approval-header">
                 <span className="approval-header-icon">
@@ -3104,10 +4157,14 @@ export function ChatPanel() {
               </div>
 
               <div className="approval-rows">
-                {pendingApprovals.slice(-3).map((approval) => {
+                {pendingApprovalBannerRows.slice(-3).map((approval) => {
                   const details = approval.details ?? {};
+                  const isPermissionsRequest = isPermissionsRequestApproval(details);
                   const isToolInputRequest = isRequestUserInputApproval(details);
                   const requiresCustomPayload = requiresCustomApprovalPayload(details);
+                  const toolInputQuestionCount = isToolInputRequest
+                    ? parseToolInputQuestions(details).length
+                    : 0;
                   const isClaudeApproval = activeThread?.engineId === "claude";
                   const supportsDecline =
                     activeThreadApprovalDecisionCapabilities.includes("decline");
@@ -3127,6 +4184,12 @@ export function ChatPanel() {
                       requiresCustomPayload ||
                       proposedExecpolicyAmendment.length > 0 ||
                       proposedNetworkPolicyAmendments.length > 0);
+                  const showToolInputComposerHint =
+                    isToolInputRequest &&
+                    !isClaudeApproval &&
+                    toolInputQuestionCount > 0;
+                  const hidePositiveApprovalActions =
+                    isToolInputRequest && toolInputQuestionCount === 0;
                   const command = parseApprovalCommand(details);
                   const reason = parseApprovalReason(details);
 
@@ -3172,20 +4235,25 @@ export function ChatPanel() {
                               </button>
                             )}
                           </>
-                        ) : isToolInputRequest || requiresCustomPayload ? (
+                        ) : showToolInputComposerHint || requiresCustomPayload ? (
                           <span className="approval-row-hint">
-                            {isToolInputRequest
+                            {showToolInputComposerHint
                               ? t("panel.respondInCard")
                               : t("panel.respondInCustomCard")}
                           </span>
                         ) : (
                           <>
-                            {supportsCancel && (
+                            {supportsCancel && !isPermissionsRequest && (
                               <button
                                 type="button"
                                 className="approval-btn approval-btn-cancel"
                                 onClick={() =>
-                                  void respondApproval(approval.approvalId, { decision: "cancel" })
+                                  void respondApproval(
+                                    approval.approvalId,
+                                    isToolInputRequest
+                                      ? { action: "cancel" }
+                                      : { decision: "cancel" },
+                                  )
                                 }
                               >
                                 {t("panel.approvalActions.cancel")}
@@ -3197,28 +4265,36 @@ export function ChatPanel() {
                                 className="approval-btn approval-btn-deny"
                                 onClick={() =>
                                   void respondApproval(approval.approvalId, {
-                                    decision: "decline",
+                                    ...(isPermissionsRequest
+                                      ? buildPermissionsDeclineResponse()
+                                      : isToolInputRequest
+                                        ? { action: "decline" }
+                                        : { decision: "decline" }),
                                   })
                                 }
                               >
                                 {t("panel.approvalActions.deny")}
                               </button>
                             )}
-                            <span className="approval-actions-gap" />
-                            {supportsSession && (
+                            {!hidePositiveApprovalActions && (
+                              <span className="approval-actions-gap" />
+                            )}
+                            {!hidePositiveApprovalActions && supportsSession && (
                               <button
                                 type="button"
                                 className="approval-btn approval-btn-session"
                                 onClick={() =>
                                   void respondApproval(approval.approvalId, {
-                                    decision: "accept_for_session",
+                                    ...(isPermissionsRequest
+                                      ? buildPermissionsApprovalResponse(details, "session")
+                                      : { decision: "accept_for_session" }),
                                   })
                                 }
                               >
                                 {t("panel.approvalActions.allowSession")}
                               </button>
                             )}
-                            {!isClaudeApproval && proposedExecpolicyAmendment.length > 0 && (
+                            {!hidePositiveApprovalActions && !isClaudeApproval && !isPermissionsRequest && proposedExecpolicyAmendment.length > 0 && (
                               <button
                                 type="button"
                                 className="approval-btn approval-btn-session"
@@ -3233,7 +4309,7 @@ export function ChatPanel() {
                                 {t("panel.allowWithPolicy")}
                               </button>
                             )}
-                            {!isClaudeApproval && proposedNetworkPolicyAmendments.map((amendment) => (
+                            {!hidePositiveApprovalActions && !isClaudeApproval && !isPermissionsRequest && proposedNetworkPolicyAmendments.map((amendment) => (
                               <button
                                 key={`${amendment.action}:${amendment.host}`}
                                 type="button"
@@ -3257,12 +4333,17 @@ export function ChatPanel() {
                                   : t("panel.approvalActions.blockHost")}
                               </button>
                             ))}
-                            {supportsAccept && (
+                            {!hidePositiveApprovalActions && supportsAccept && (
                               <button
                                 type="button"
                                 className="approval-btn approval-btn-allow"
                                 onClick={() =>
-                                  void respondApproval(approval.approvalId, { decision: "accept" })
+                                  void respondApproval(
+                                    approval.approvalId,
+                                    isPermissionsRequest
+                                      ? buildPermissionsApprovalResponse(details, "turn")
+                                      : { decision: "accept" },
+                                  )
                                 }
                               >
                                 {t("panel.approvalActions.allow")}
@@ -3279,87 +4360,204 @@ export function ChatPanel() {
           )}
 
           {/* Input container */}
-          <div className={`chat-input-box ${planMode ? "chat-input-box-plan" : ""}`}>
-            {/* Plan mode indicator banner */}
-            {planMode && (
-              <div className="chat-plan-mode-banner">
-                <ListChecks size={12} />
-                <span>{t("panel.planModeBanner")}</span>
-              </div>
-            )}
-
-            {/* Attachment chips */}
-            {attachments.length > 0 && (
-              <div className="chat-attachments-bar">
-                {attachments.map((attachment) => {
-                  const IconComponent = getAttachmentIcon(attachment.mimeType);
-                  return (
-                    <div key={attachment.id} className="chat-attachment-chip">
-                      <IconComponent size={12} />
-                      <span className="chat-attachment-chip-name">{attachment.fileName}</span>
-                      {attachment.sizeBytes > 0 && (
-                        <span className="chat-attachment-chip-size">
-                          {formatFileSize(attachment.sizeBytes)}
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        className="chat-attachment-chip-remove"
-                        onClick={() => removeAttachment(attachment.id)}
-                        title={t("attachments.remove")}
-                      >
-                        <X size={10} />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            <textarea
-              ref={inputRef}
-              rows={3}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (shouldSubmitChatInput({
-                  key: e.key,
-                  ctrlKey: e.ctrlKey,
-                  metaKey: e.metaKey,
-                  shiftKey: e.shiftKey,
-                  isComposing: e.nativeEvent.isComposing,
-                })) {
-                  e.preventDefault();
-                  if (streaming) {
-                    return;
-                  }
-                  void onSubmit(e);
+          <div
+            className={`chat-input-box ${planMode && !showPendingToolInputComposer ? "chat-input-box-plan" : ""} ${showPendingToolInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
+          >
+            {showPendingToolInputComposer && pendingToolInputApproval ? (
+              <ToolInputQuestionnaire
+                details={pendingToolInputApproval.details ?? {}}
+                onCancel={
+                  pendingToolInputSupportsCancel
+                    ? () =>
+                        void respondApproval(pendingToolInputApproval.approvalId, {
+                          action: "cancel",
+                        })
+                    : undefined
                 }
-                if (e.shiftKey && e.key === "Tab") {
-                  e.preventDefault();
-                  if (activeWorkspaceId) {
-                    setPlanMode((prev) => !prev);
-                  }
+                onDecline={
+                  pendingToolInputSupportsDecline
+                    ? () =>
+                        void respondApproval(pendingToolInputApproval.approvalId, {
+                          action: "decline",
+                        })
+                    : undefined
                 }
-              }}
-              placeholder={
-                planMode
-                  ? t("panel.placeholders.plan")
-                  : t("panel.placeholders.chat")
-              }
-              disabled={!activeWorkspaceId}
-              style={{
-                width: "100%",
-                padding: "12px 14px",
-                background: "transparent",
-                color: "var(--text-1)",
-                fontSize: 13,
-                lineHeight: 1.6,
-                resize: "none",
-                fontFamily: "inherit",
-                caretColor: planMode ? "var(--accent-2)" : "var(--accent)",
-              }}
-            />
+                onSubmit={(response) => {
+                  void respondApproval(pendingToolInputApproval.approvalId, response);
+                }}
+              />
+            ) : (
+              <>
+                {/* Plan mode indicator banner */}
+                {planMode && (
+                  <div className="chat-plan-mode-banner">
+                    <ListChecks size={12} />
+                    <span>
+                      {selectedEngineId === "codex"
+                        ? codexPlanModeAdvertisement === "advertised"
+                          ? t("panel.planModeBannerCodex")
+                          : codexPlanModeAdvertisement === "notAdvertised"
+                            ? t("panel.planModeBannerCodexFallback")
+                            : t("panel.planModeBannerCodexUnknown")
+                        : t("panel.planModeBanner")}
+                    </span>
+                  </div>
+                )}
+
+                {/* Attachment chips */}
+                {attachments.length > 0 && (
+                  <div className="chat-attachments-bar">
+                    {attachments.map((attachment) => {
+                      const IconComponent = getAttachmentIcon(attachment.mimeType);
+                      return (
+                        <div key={attachment.id} className="chat-attachment-chip">
+                          <IconComponent size={12} />
+                          <span className="chat-attachment-chip-name">{attachment.fileName}</span>
+                          {attachment.sizeBytes > 0 && (
+                            <span className="chat-attachment-chip-size">
+                              {formatFileSize(attachment.sizeBytes)}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            className="chat-attachment-chip-remove"
+                            onClick={() => removeAttachment(attachment.id)}
+                            title={t("attachments.remove")}
+                          >
+                            <X size={10} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Slash command panel (inline) */}
+                {activeCommandPanel && (
+                  <ChatCommandPanel
+                    command={activeCommandPanel}
+                    busy={commandPanelBusy}
+                    error={commandPanelError}
+                    defaultBaseBranch={
+                      (activeThread?.repoId
+                        ? repos.find((repo) => repo.id === activeThread.repoId)?.defaultBranch
+                        : activeRepo?.defaultBranch) ?? null
+                    }
+                    currentServiceTier={selectedServiceTier}
+                    currentPersonality={selectedPersonality}
+                    personalitySupported={selectedModelSupportsPersonality}
+                    skills={
+                      codexReferenceCatalogState.skillsLoaded
+                        ? codexSkills
+                        : (codexProtocolDiagnostics?.skills ?? [])
+                    }
+                    mcpServers={codexProtocolDiagnostics?.mcpServers}
+                    experimentalFeatures={codexProtocolDiagnostics?.experimentalFeatures}
+                    onConfirm={handleCommandPanelConfirm}
+                    onDismiss={() => {
+                      setActiveCommandPanel(null);
+                      setCommandPanelError(null);
+                    }}
+                  />
+                )}
+
+                <textarea
+                  ref={inputRef}
+                  rows={3}
+                  value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    handleSlashDetection(
+                      e.target.value,
+                      e.target.selectionStart ?? e.target.value.length,
+                    );
+                  }}
+                  onKeyDown={(e) => {
+                    /* ── Slash menu keyboard nav ── */
+                    if (slashMenuOpen) {
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setSlashMenuActiveIndex((i) =>
+                          Math.min(i + 1, filteredSlashCommands.length - 1),
+                        );
+                        return;
+                      }
+                      if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setSlashMenuActiveIndex((i) => Math.max(i - 1, 0));
+                        return;
+                      }
+                      if (e.key === "Enter" || e.key === "Tab") {
+                        e.preventDefault();
+                        const cmd = filteredSlashCommands[Math.min(slashMenuActiveIndex, filteredSlashCommands.length - 1)];
+                        if (cmd) handleSlashCommandSelect(cmd.id);
+                        return;
+                      }
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        setSlashMenuOpen(false);
+                        return;
+                      }
+                    }
+                    /* ── Command panel dismiss ── */
+                    if (activeCommandPanel && e.key === "Escape") {
+                      e.preventDefault();
+                      setActiveCommandPanel(null);
+                      setCommandPanelError(null);
+                      return;
+                    }
+                    if (shouldSubmitChatInput({
+                      key: e.key,
+                      ctrlKey: e.ctrlKey,
+                      metaKey: e.metaKey,
+                      shiftKey: e.shiftKey,
+                      isComposing: e.nativeEvent.isComposing,
+                    })) {
+                      e.preventDefault();
+                      if (streaming && !canSteerActiveTurn) {
+                        return;
+                      }
+                      void onSubmit(e);
+                    }
+                    if (e.shiftKey && e.key === "Tab") {
+                      e.preventDefault();
+                      if (activeWorkspaceId) {
+                        setPlanMode((prev) => !prev);
+                      }
+                    }
+                  }}
+                  placeholder={
+                    planMode
+                      ? t("panel.placeholders.plan")
+                      : t("panel.placeholders.chat")
+                  }
+                  disabled={!activeWorkspaceId}
+                  style={{
+                    width: "100%",
+                    padding: "12px 14px",
+                    background: "transparent",
+                    color: "var(--text-1)",
+                    fontSize: 13,
+                    lineHeight: 1.6,
+                    resize: "none",
+                    fontFamily: "inherit",
+                    caretColor: planMode ? "var(--accent-2)" : "var(--accent)",
+                  }}
+                />
+
+                {/* Slash command menu (portal) */}
+                <ChatSlashMenu
+                  visible={slashMenuOpen && filteredSlashCommands.length > 0}
+                  query={slashMenuQuery}
+                  commands={filteredSlashCommands}
+                  anchorRef={inputRef}
+                  activeIndex={slashMenuActiveIndex}
+                  onSelect={handleSlashCommandSelect}
+                  onDismiss={() => setSlashMenuOpen(false)}
+                  onActiveChange={setSlashMenuActiveIndex}
+                />
+              </>
+            )}
 
             {/* Input toolbar with selectors */}
             <div
@@ -3371,57 +4569,84 @@ export function ChatPanel() {
               }}
             >
               {/* Attach file button */}
-              <button
-                type="button"
-                className="chat-toolbar-btn"
-                onClick={() => void handleAddAttachment()}
-                disabled={!activeWorkspaceId}
-                title={t("panel.attachFiles")}
-              >
-                <Plus size={12} />
-                {attachments.length > 0 && (
-                  <span className="chat-toolbar-badge">{attachments.length}</span>
-                )}
-              </button>
+              {!showPendingToolInputComposer && (
+                <button
+                  type="button"
+                  className="chat-toolbar-btn"
+                  onClick={() => void handleAddAttachment()}
+                  disabled={!activeWorkspaceId}
+                  title={t("panel.attachFiles")}
+                >
+                  <Plus size={12} />
+                  {attachments.length > 0 && (
+                    <span className="chat-toolbar-badge">{attachments.length}</span>
+                  )}
+                </button>
+              )}
 
-              {/* Plan mode toggle */}
-              <button
-                type="button"
-                className={`chat-toolbar-btn chat-toolbar-btn-bordered ${planMode ? "chat-toolbar-btn-active" : ""}`}
-                onClick={() => setPlanMode((prev) => !prev)}
-                disabled={!activeWorkspaceId}
-                title={
-                  planMode
-                    ? t("panel.disablePlanMode")
-                    : t("panel.enablePlanMode")
-                }
-              >
-                <ListChecks size={12} />
-                <span style={{ fontSize: 11 }}>{t("panel.planShort")}</span>
-              </button>
+              {!showPendingToolInputComposer && (
+                <button
+                  type="button"
+                  className={`chat-toolbar-btn chat-toolbar-btn-bordered ${planMode ? "chat-toolbar-btn-active" : ""}`}
+                  onClick={() => setPlanMode((prev) => !prev)}
+                  disabled={!activeWorkspaceId}
+                  title={
+                    selectedEngineId === "codex"
+                      ? planMode
+                        ? t("panel.disablePlanModeCodex")
+                        : t("panel.enablePlanModeCodex")
+                      : planMode
+                        ? t("panel.disablePlanMode")
+                        : t("panel.enablePlanMode")
+                  }
+                >
+                  <ListChecks size={12} />
+                  <span style={{ fontSize: 11 }}>{t("panel.planShort")}</span>
+                </button>
+              )}
 
-              <div className="chat-toolbar-divider" />
+              {!showPendingToolInputComposer && <div className="chat-toolbar-divider" />}
 
               {/* Engine + Model + Effort selector */}
-              <ModelPicker
-                engines={engines}
-                health={health}
-                selectedEngineId={selectedEngineId}
-                selectedModelId={selectedModelId ?? selectedModel?.id ?? ""}
-                selectedEffort={selectedEffort}
-                onEngineModelChange={(engineId, modelId) => {
-                  manuallyOverrodeThreadSelectionRef.current = true;
-                  if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
-                  setSelectedModelId(modelId);
-                }}
-                onEffortChange={(effort) => void onReasoningEffortChange(effort)}
-                disabled={availableModels.length === 0}
-              />
+              {!showPendingToolInputComposer && (
+                <ModelPicker
+                  engines={engines}
+                  health={health}
+                  selectedEngineId={selectedEngineId}
+                  selectedModelId={selectedModelId ?? selectedModel?.id ?? ""}
+                  selectedEffort={selectedEffort}
+                  serviceTier={selectedServiceTier !== "inherit" ? selectedServiceTier : null}
+                  onEngineModelChange={(engineId, modelId) => {
+                    manuallyOverrodeThreadSelectionRef.current = true;
+                    selectedEngineIdRef.current = engineId;
+                    if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
+                    const nextEngine =
+                      engines.find((engine) => engine.id === engineId) ?? null;
+                    const nextModel =
+                      nextEngine?.models.find((model) => model.id === modelId) ?? null;
+                    const nextEffort = resolveReasoningEffortForModel(
+                      nextModel,
+                      selectedEffortRef.current,
+                    );
+                    selectedModelIdRef.current = modelId;
+                    setSelectedModelId(modelId);
+                    if (nextEffort && nextEffort !== selectedEffort) {
+                      selectedEffortRef.current = nextEffort;
+                      setSelectedEffort(nextEffort);
+                    }
+                  }}
+                  onEffortChange={(effort) => void onReasoningEffortChange(effort)}
+                  disabled={availableModels.length === 0}
+                />
+              )}
 
-              {(activeRepo ||
-                repos.length > 0 ||
-                activeThread?.engineId === "codex" ||
-                activeThread?.engineId === "claude") && (
+              {/* Codex Runtime + Config removed from toolbar — accessed via /slash commands */}
+
+              {!showPendingToolInputComposer &&
+                (activeRepo ||
+                  repos.length > 0 ||
+                  activeThread?.engineId === "codex" ||
+                  activeThread?.engineId === "claude") && (
                 <>
                   <div className="chat-toolbar-divider" />
                   <PermissionPicker
@@ -3452,6 +4677,11 @@ export function ChatPanel() {
                         ? activeThreadApprovalPolicy
                         : undefined
                     }
+                    approvalSelectedLabel={
+                      activeThread?.engineId === "codex"
+                        ? activeThreadApprovalSelectedLabel
+                        : undefined
+                    }
                     approvalOptions={
                       activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
                         ? activeThreadApprovalOptions
@@ -3459,10 +4689,14 @@ export function ChatPanel() {
                     }
                     onApprovalChange={
                       activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
-                        ? (value) =>
+                        ? (value) => {
+                            if (activeThread?.engineId === "codex") {
+                              setCustomApprovalPolicyText("");
+                            }
                             void onThreadExecutionPolicyChange({
                               approvalPolicy: value as ThreadApprovalPolicyValue,
-                            })
+                            });
+                          }
                         : undefined
                     }
                     sandboxValue={
@@ -3519,32 +4753,36 @@ export function ChatPanel() {
 
               <div style={{ flex: 1 }} />
 
-              {/* Stop / Send button */}
-              {streaming ? (
-                <button
-                  type="button"
-                  onClick={() => void cancel()}
-                  style={{
-                    padding: "5px 10px",
-                    borderRadius: "var(--radius-sm)",
-                    background: "rgba(248, 113, 113, 0.10)",
-                    color: "var(--danger)",
-                    border: "1px solid rgba(248, 113, 113, 0.2)",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 5,
-                  }}
-                >
-                  <Square size={11} fill="currentColor" />
-                  {t("panel.stop")}
-                </button>
-              ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {streaming && !showPendingToolInputComposer && (
+                  <button
+                    type="button"
+                    onClick={() => void cancel()}
+                    style={{
+                      padding: "5px 10px",
+                      borderRadius: "var(--radius-sm)",
+                      background: "rgba(248, 113, 113, 0.10)",
+                      color: "var(--danger)",
+                      border: "1px solid rgba(248, 113, 113, 0.2)",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
+                    }}
+                  >
+                    <Square size={11} fill="currentColor" />
+                    {t("panel.stop")}
+                  </button>
+                )}
+
+                {(!streaming || canSteerActiveTurn) && !showPendingToolInputComposer && (
                 <button
                   type="submit"
                   disabled={!activeWorkspaceId || !input.trim()}
+                  title={streaming ? t("panel.sendFollowUp") : undefined}
+                  aria-label={streaming ? t("panel.sendFollowUp") : undefined}
                   style={{
                     width: 30,
                     height: 30,
@@ -3570,7 +4808,8 @@ export function ChatPanel() {
                 >
                   <Send size={13} />
                 </button>
-              )}
+                )}
+              </div>
             </div>
           </div>
 

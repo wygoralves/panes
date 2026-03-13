@@ -6,12 +6,17 @@ import type {
   ApprovalResponse,
   ActionBlock,
   ApprovalBlock,
+  AttachmentBlock,
   ChatAttachment,
+  ChatInputItem,
   ContentBlock,
   ContextUsage,
+  MentionBlock,
   Message,
   MessageWindowCursor,
   NoticeBlock,
+  SkillBlock,
+  SteerBlock,
   StreamEvent,
   ThreadStatus
 } from "../types";
@@ -38,6 +43,16 @@ interface ChatState {
       engineId?: string | null;
       reasoningEffort?: string | null;
       attachments?: ChatAttachment[];
+      inputItems?: ChatInputItem[];
+      planMode?: boolean;
+    },
+  ) => Promise<boolean>;
+  steer: (
+    message: string,
+    options?: {
+      threadIdOverride?: string;
+      attachments?: ChatAttachment[];
+      inputItems?: ChatInputItem[];
       planMode?: boolean;
     },
   ) => Promise<boolean>;
@@ -77,6 +92,49 @@ const inflightActionOutputHydration = new Map<string, Promise<void>>();
 
 function isCodexThreadSyncRequired(metadata: Record<string, unknown> | undefined): boolean {
   return metadata?.codexSyncRequired === true;
+}
+
+function isThreadTurnActive(status: ThreadStatus): boolean {
+  return status === "streaming" || status === "awaiting_approval";
+}
+
+function applyRuntimeStateFromEvent(
+  status: ThreadStatus,
+  streaming: boolean,
+  event: StreamEvent,
+): Pick<ChatState, "status" | "streaming"> {
+  if (event.type === "UsageLimitsUpdated") {
+    return { status, streaming };
+  }
+
+  if (event.type === "ApprovalRequested") {
+    return { status: "awaiting_approval", streaming: true };
+  }
+
+  if (event.type === "ApprovalResolved") {
+    return { status: "streaming", streaming: true };
+  }
+
+  if (event.type === "Error" && !event.recoverable) {
+    return { status: "error", streaming: false };
+  }
+
+  if (event.type === "TurnCompleted") {
+    const completionStatus = String(event.status ?? "completed");
+    if (completionStatus === "failed") {
+      return { status: "error", streaming: false };
+    }
+    if (completionStatus === "interrupted") {
+      return { status: "idle", streaming: false };
+    }
+    return { status: "completed", streaming: false };
+  }
+
+  if (event.type === "TurnStarted" || eventHasVisibleAssistantContent(event)) {
+    return { status: "streaming", streaming: true };
+  }
+
+  return { status, streaming };
 }
 
 function recordPendingTurnMetric(
@@ -135,6 +193,7 @@ function eventHasVisibleAssistantContent(event: StreamEvent): boolean {
     case "DiffUpdated":
     case "ActionProgressUpdated":
     case "ModelRerouted":
+    case "Notice":
     case "Error":
       return true;
     default:
@@ -163,7 +222,110 @@ function resolveApprovalDecision(response: ApprovalResponse): ApprovalBlock["dec
     }
     return decision as ApprovalBlock["decision"];
   }
+
+  if ("action" in response && typeof response.action === "string") {
+    const action = String(response.action).trim();
+    if (action === "accept" || action === "decline" || action === "cancel") {
+      return action;
+    }
+    return "custom";
+  }
+
+  if ("permissions" in response) {
+    const scope = response.scope;
+    const permissions =
+      typeof response.permissions === "object" &&
+      response.permissions !== null &&
+      !Array.isArray(response.permissions)
+        ? (response.permissions as Record<string, unknown>)
+        : null;
+    const hasGrantedPermission =
+      permissions !== null &&
+      Object.values(permissions).some((value) => {
+        if (Array.isArray(value)) {
+          return value.length > 0;
+        }
+        if (typeof value === "object" && value !== null) {
+          return Object.values(value as Record<string, unknown>).some((nested) => {
+            if (Array.isArray(nested)) {
+              return nested.length > 0;
+            }
+            if (typeof nested === "object" && nested !== null) {
+              return Object.keys(nested as Record<string, unknown>).length > 0;
+            }
+            return nested === true || (typeof nested === "string" && nested.toLowerCase() !== "none");
+          });
+        }
+        return value === true || (typeof value === "string" && value.toLowerCase() !== "none");
+      });
+
+    if (!hasGrantedPermission) {
+      return "decline";
+    }
+    if (scope === "session") {
+      return "accept_for_session";
+    }
+    return "accept";
+  }
+
   return "custom";
+}
+
+function normalizeActionOutputStream(
+  stream: unknown,
+): ActionBlock["outputChunks"][number]["stream"] {
+  return stream === "stderr" || stream === "stdin" ? stream : "stdout";
+}
+
+function resolveApprovalInMessages(
+  messages: Message[],
+  approvalId: string,
+  decision?: ApprovalBlock["decision"],
+): Message[] {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const message = messages[messageIndex];
+    const blocks = message.blocks;
+    if (!blocks || blocks.length === 0) {
+      continue;
+    }
+
+    const approvalIndex = blocks.findIndex(
+      (block) => block.type === "approval" && block.approvalId === approvalId,
+    );
+    if (approvalIndex < 0) {
+      continue;
+    }
+
+    const approvalBlock = blocks[approvalIndex] as ApprovalBlock;
+    if (
+      approvalBlock.status === "answered" &&
+      (decision === undefined || approvalBlock.decision === decision)
+    ) {
+      return messages;
+    }
+
+    const nextBlocks = [...blocks];
+    nextBlocks[approvalIndex] =
+      decision === undefined
+        ? {
+            ...approvalBlock,
+            status: "answered",
+          }
+        : {
+            ...approvalBlock,
+            status: "answered",
+            decision,
+          };
+
+    const nextMessages = [...messages];
+    nextMessages[messageIndex] = {
+      ...message,
+      blocks: nextBlocks,
+    };
+    return nextMessages;
+  }
+
+  return messages;
 }
 
 function trimActionOutputChunks(
@@ -265,6 +427,253 @@ function createStreamingAssistantMessage(
     hydration: "full",
     hasDeferredContent: false,
   };
+}
+
+function createOptimisticUserMessage(
+  threadId: string,
+  message: string,
+  options?: {
+    attachments?: ChatAttachment[];
+    inputItems?: ChatInputItem[];
+    planMode?: boolean;
+  },
+): Message {
+  const attachments = options?.attachments ?? [];
+  const inputItems = options?.inputItems ?? [];
+  const planMode = options?.planMode ?? false;
+  const userBlocks: ContentBlock[] = [];
+
+  for (const inputItem of inputItems) {
+    if (inputItem.type === "skill") {
+      userBlocks.push({
+        type: "skill",
+        name: inputItem.name,
+        path: inputItem.path,
+      });
+    } else if (inputItem.type === "mention") {
+      userBlocks.push({
+        type: "mention",
+        name: inputItem.name,
+        path: inputItem.path,
+      });
+    }
+  }
+
+  for (const attachment of attachments) {
+    userBlocks.push({
+      type: "attachment",
+      fileName: attachment.fileName,
+      filePath: attachment.filePath,
+      sizeBytes: attachment.sizeBytes,
+      mimeType: attachment.mimeType,
+    });
+  }
+
+  userBlocks.push({ type: "text", content: message, planMode: planMode || undefined });
+
+  return {
+    id: crypto.randomUUID(),
+    threadId,
+    role: "user",
+    content: message,
+    blocks: userBlocks,
+    status: "completed",
+    schemaVersion: 1,
+    createdAt: new Date().toISOString(),
+    hydration: "full",
+    hasDeferredContent: false,
+  };
+}
+
+function createSteerBlock(
+  message: string,
+  options?: {
+    attachments?: ChatAttachment[];
+    inputItems?: ChatInputItem[];
+    planMode?: boolean;
+    steerId?: string;
+  },
+): SteerBlock {
+  const attachments = (options?.attachments ?? []).map<AttachmentBlock>((attachment) => ({
+    type: "attachment",
+    fileName: attachment.fileName,
+    filePath: attachment.filePath,
+    sizeBytes: attachment.sizeBytes,
+    mimeType: attachment.mimeType,
+  }));
+  const skills: SkillBlock[] = [];
+  const mentions: MentionBlock[] = [];
+
+  for (const inputItem of options?.inputItems ?? []) {
+    if (inputItem.type === "skill") {
+      skills.push({
+        type: "skill",
+        name: inputItem.name,
+        path: inputItem.path,
+      });
+    } else if (inputItem.type === "mention") {
+      mentions.push({
+        type: "mention",
+        name: inputItem.name,
+        path: inputItem.path,
+      });
+    }
+  }
+
+  return {
+    type: "steer",
+    steerId: options?.steerId ?? crypto.randomUUID(),
+    content: message,
+    planMode: options?.planMode || undefined,
+    attachments: attachments.length > 0 ? attachments : undefined,
+    skills: skills.length > 0 ? skills : undefined,
+    mentions: mentions.length > 0 ? mentions : undefined,
+  };
+}
+
+function createSteerBlockFromMessage(message: Message): SteerBlock {
+  const blocks = Array.isArray(message.blocks) ? message.blocks : [];
+  const content =
+    typeof message.content === "string" && message.content.length > 0
+      ? message.content
+      : blocks
+          .filter((block): block is Extract<ContentBlock, { type: "text" }> => block.type === "text")
+          .map((block) => block.content)
+          .join("\n");
+  const attachments = blocks.filter(
+    (block): block is AttachmentBlock => block.type === "attachment",
+  );
+  const skills = blocks.filter((block): block is SkillBlock => block.type === "skill");
+  const mentions = blocks.filter((block): block is MentionBlock => block.type === "mention");
+  const planMode = blocks.some(
+    (block) => block.type === "text" && Boolean(block.planMode),
+  );
+
+  return {
+    type: "steer",
+    steerId: message.id,
+    content,
+    planMode: planMode || undefined,
+    attachments: attachments.length > 0 ? attachments : undefined,
+    skills: skills.length > 0 ? skills : undefined,
+    mentions: mentions.length > 0 ? mentions : undefined,
+  };
+}
+
+function messageHasSteerMarker(message: Message): boolean {
+  return (message.blocks ?? []).some(
+    (block) => block.type === "text" && block.isSteer === true,
+  );
+}
+
+function appendSteerBlockToAssistantMessage(message: Message, steerBlock: SteerBlock): Message {
+  const existingBlocks = message.blocks ?? [];
+  if (
+    existingBlocks.some(
+      (block) => block.type === "steer" && block.steerId === steerBlock.steerId,
+    )
+  ) {
+    return message;
+  }
+
+  const blocks = [steerBlock, ...existingBlocks];
+  return {
+    ...message,
+    blocks,
+    hydration: "full",
+    hasDeferredContent: hasDeferredActionOutput(blocks),
+  };
+}
+
+function resolveActiveAssistantTarget(threadId: string): AssistantMessageTarget {
+  const pendingTurnMeta = pendingTurnMetaByThread.get(threadId);
+  return {
+    clientTurnId: pendingTurnMeta?.clientTurnId ?? null,
+    assistantMessageId: pendingTurnMeta?.assistantMessageId ?? null,
+  };
+}
+
+function appendSteerBlockToActiveAssistant(
+  messages: Message[],
+  threadId: string,
+  steerBlock: SteerBlock,
+): Message[] {
+  const { messages: ensuredMessages, assistantIndex } = ensureAssistantMessage(
+    messages,
+    threadId,
+    resolveActiveAssistantTarget(threadId),
+  );
+  const assistant = ensuredMessages[assistantIndex];
+  const nextAssistant = appendSteerBlockToAssistantMessage(assistant, steerBlock);
+  if (nextAssistant === assistant) {
+    return ensuredMessages;
+  }
+
+  return [
+    ...ensuredMessages.slice(0, assistantIndex),
+    nextAssistant,
+    ...ensuredMessages.slice(assistantIndex + 1),
+  ];
+}
+
+function removeSteerBlock(messages: Message[], steerId: string): Message[] {
+  let nextMessages = messages;
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    const blocks = message.blocks ?? [];
+    const nextBlocks = blocks.filter(
+      (block) => !(block.type === "steer" && block.steerId === steerId),
+    );
+    if (nextBlocks.length === blocks.length) {
+      continue;
+    }
+
+    if (nextMessages === messages) {
+      nextMessages = [...messages];
+    }
+    nextMessages[index] = {
+      ...message,
+      blocks: nextBlocks,
+      hydration: "full",
+      hasDeferredContent: hasDeferredActionOutput(nextBlocks),
+    };
+  }
+
+  return nextMessages;
+}
+
+function collapseTrailingSteerMessages(messages: Message[]): Message[] {
+  let changed = false;
+  const collapsed: Message[] = [];
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    const previous = collapsed[collapsed.length - 1];
+    const nextMessage = messages[index + 1];
+
+    const isSteerCandidate =
+      message.role === "user" &&
+      previous?.role === "assistant" &&
+      messageHasSteerMarker(message) &&
+      nextMessage?.role !== "assistant";
+
+    if (isSteerCandidate) {
+      collapsed[collapsed.length - 1] = appendSteerBlockToAssistantMessage(
+        previous,
+        createSteerBlockFromMessage(message),
+      );
+      changed = true;
+      continue;
+    }
+
+    collapsed.push(message);
+  }
+
+  return changed ? collapsed : messages;
+}
+
+function isThreadStatusStreaming(status: ThreadStatus): boolean {
+  return isThreadTurnActive(status);
 }
 
 function hasRenderableAssistantContent(message: Message): boolean {
@@ -575,10 +984,13 @@ function applyHydrationWindow(messages: Message[]): Message[] {
   return nextMessages;
 }
 
-function normalizeMessages(messages: Message[]): Message[] {
+function normalizeMessages(
+  messages: Message[],
+  options?: { collapseTrailingSteers?: boolean },
+): Message[] {
   let nextMessages = messages;
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index];
+  for (let index = 0; index < nextMessages.length; index += 1) {
+    const message = nextMessages[index];
     const normalizedBlocks = normalizeBlocks(message.blocks);
     const normalizedContent =
       message.role === "user" && normalizedBlocks && typeof message.content === "string"
@@ -601,7 +1013,9 @@ function normalizeMessages(messages: Message[]): Message[] {
     }
   }
 
-  return nextMessages;
+  return options?.collapseTrailingSteers === false
+    ? nextMessages
+    : collapseTrailingSteerMessages(nextMessages);
 }
 
 function toIsoTimestamp(value: number | null | undefined): string | null {
@@ -700,6 +1114,10 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     return messages;
   }
 
+  if (event.type === "ApprovalResolved") {
+    return resolveApprovalInMessages(messages, String(event.approval_id ?? ""));
+  }
+
   const assistantTarget = resolveAssistantTargetFromEvent(threadId, event);
   const { messages: ensuredMessages, assistantIndex } = ensureAssistantMessage(
     messages,
@@ -774,7 +1192,7 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
 
   if (event.type === "ActionOutputDelta") {
     const actionId = String(event.action_id ?? "");
-    const stream = String(event.stream ?? "stdout") as "stdout" | "stderr";
+    const stream = normalizeActionOutputStream(event.stream);
     const content = String(event.content ?? "");
     if (actionId && content) {
       const blocks = assistant.blocks ?? [];
@@ -933,6 +1351,19 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     }
   }
 
+  if (event.type === "Notice") {
+    assistant.blocks = upsertNoticeBlock(assistant.blocks ?? [], {
+      type: "notice",
+      kind: String(event.kind ?? "notice"),
+      level:
+        event.level === "warning" || event.level === "error"
+          ? event.level
+          : "info",
+      title: String(event.title ?? "Notice"),
+      message: String(event.message ?? ""),
+    });
+  }
+
   if (event.type === "Error") {
     const blocks = assistant.blocks ?? [];
     assistant.blocks = [...blocks, { type: "error", message: String(event.message ?? "Unknown error") }];
@@ -1024,11 +1455,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     try {
       const threadState = useThreadStore.getState();
-      const activeThread = threadState.threads.find((thread) => thread.id === threadId);
+      let activeThread = threadState.threads.find((thread) => thread.id === threadId);
       if (activeThread?.engineId === "codex" && isCodexThreadSyncRequired(activeThread.engineMetadata)) {
         try {
           const syncedThread = await ipc.syncThreadFromEngine(threadId);
           threadState.applyThreadUpdateLocal(syncedThread);
+          activeThread = syncedThread;
         } catch (error) {
           console.warn(`Failed to sync Codex thread ${threadId}:`, error);
         }
@@ -1084,50 +1516,62 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streamFlushInProgress = true;
         const batch = queuedStreamEvents.splice(0, queuedStreamEvents.length);
         const flushStartedAt = performance.now();
-        set((state) => {
-          if (bindSeq !== activeThreadBindSeq || state.threadId !== threadId) {
-            return state;
-          }
-
-          let nextMessages = state.messages;
-          let nextStreaming = state.streaming;
-          let nextUsageLimits = state.usageLimits;
-          let hydrationRecalcRequired = false;
-          for (const queuedEvent of batch) {
-            if (queuedEvent.type === "UsageLimitsUpdated") {
-              nextUsageLimits = mapUsageLimitsFromEvent(queuedEvent);
-              continue;
+        try {
+          set((state) => {
+            if (bindSeq !== activeThreadBindSeq || state.threadId !== threadId) {
+              return state;
             }
-            const previousLength = nextMessages.length;
-            nextMessages = applyStreamEvent(nextMessages, queuedEvent, state.threadId);
-            if (nextMessages.length !== previousLength) {
-              hydrationRecalcRequired = true;
-            }
-            nextStreaming = queuedEvent.type !== "TurnCompleted";
-            if (queuedEvent.type === "TurnCompleted") {
-              pendingTurnMetaByThread.delete(threadId);
-            }
-          }
-          if (hydrationRecalcRequired) {
-            nextMessages = applyHydrationWindow(nextMessages);
-          }
 
-          if (
-            nextMessages === state.messages &&
-            nextStreaming === state.streaming &&
-            nextUsageLimits === state.usageLimits
-          ) {
-            return state;
-          }
+            let nextMessages = state.messages;
+            let nextStreaming = state.streaming;
+            let nextStatus = state.status;
+            let nextUsageLimits = state.usageLimits;
+            let hydrationRecalcRequired = false;
+            for (const queuedEvent of batch) {
+              if (queuedEvent.type === "UsageLimitsUpdated") {
+                nextUsageLimits = mapUsageLimitsFromEvent(queuedEvent);
+                continue;
+              }
+              const previousLength = nextMessages.length;
+              nextMessages = applyStreamEvent(nextMessages, queuedEvent, state.threadId);
+              if (nextMessages.length !== previousLength) {
+                hydrationRecalcRequired = true;
+              }
+              const nextRuntimeState = applyRuntimeStateFromEvent(
+                nextStatus,
+                nextStreaming,
+                queuedEvent,
+              );
+              nextStatus = nextRuntimeState.status;
+              nextStreaming = nextRuntimeState.streaming;
+              if (queuedEvent.type === "TurnCompleted") {
+                pendingTurnMetaByThread.delete(threadId);
+              }
+            }
+            if (hydrationRecalcRequired) {
+              nextMessages = applyHydrationWindow(nextMessages);
+            }
 
-          return {
-            ...state,
-            messages: nextMessages,
-            streaming: nextStreaming,
-            usageLimits: nextUsageLimits,
-          };
-        });
-        streamFlushInProgress = false;
+            if (
+              nextMessages === state.messages &&
+              nextStatus === state.status &&
+              nextStreaming === state.streaming &&
+              nextUsageLimits === state.usageLimits
+            ) {
+              return state;
+            }
+
+            return {
+              ...state,
+              messages: nextMessages,
+              status: nextStatus,
+              streaming: nextStreaming,
+              usageLimits: nextUsageLimits,
+            };
+          });
+        } finally {
+          streamFlushInProgress = false;
+        }
         recordPerfMetric("chat.stream.flush.ms", performance.now() - flushStartedAt, {
           threadId,
           batchSize: batch.length,
@@ -1198,6 +1642,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
 
+      const threadStatus = activeThread?.status ?? "idle";
       set({
         threadId,
         messages,
@@ -1207,8 +1652,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         olderLoadBlockedUntil: 0,
         unlisten,
         error: undefined,
-        streaming: false,
-        status: "idle",
+        streaming: isThreadStatusStreaming(threadStatus),
+        status: threadStatus,
         usageLimits: null,
       });
     } catch (error) {
@@ -1260,7 +1705,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         cursor,
         MESSAGE_WINDOW_INITIAL_LIMIT,
       );
-      const olderMessages = normalizeMessages(olderWindow.messages).map((message) =>
+      const olderMessages = normalizeMessages(olderWindow.messages, {
+        collapseTrailingSteers: false,
+      }).map((message) =>
         summarizeMessageForMemory(message),
       );
       set((current) => {
@@ -1268,9 +1715,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return current;
         }
         const nextCursor = olderWindow.nextCursor;
+        const mergedMessages = collapseTrailingSteerMessages([
+          ...olderMessages,
+          ...current.messages,
+        ]);
         return {
           ...current,
-          messages: applyHydrationWindow([...olderMessages, ...current.messages]),
+          messages: applyHydrationWindow(mergedMessages),
           olderCursor: nextCursor,
           hasOlderMessages: nextCursor !== null,
           loadingOlderMessages: false,
@@ -1320,35 +1771,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
 
     const attachments = options?.attachments ?? [];
+    const inputItems = options?.inputItems ?? [];
     const planMode = options?.planMode ?? false;
-    const displayContent = message;
-
-    const userBlocks: ContentBlock[] = [];
-    if (attachments.length > 0) {
-      for (const attachment of attachments) {
-        userBlocks.push({
-          type: "attachment",
-          fileName: attachment.fileName,
-          filePath: attachment.filePath,
-          sizeBytes: attachment.sizeBytes,
-          mimeType: attachment.mimeType,
-        });
-      }
-    }
-    userBlocks.push({ type: "text", content: displayContent, planMode: planMode || undefined });
-
-    const userMessage: Message = {
-      id: crypto.randomUUID(),
-      threadId,
-      role: "user",
-      content: displayContent,
-      blocks: userBlocks,
-      status: "completed",
-      schemaVersion: 1,
-      createdAt: new Date().toISOString(),
-      hydration: "full",
-      hasDeferredContent: false,
-    };
+    const userMessage = createOptimisticUserMessage(threadId, message, {
+      attachments,
+      inputItems,
+      planMode,
+    });
     const optimisticAssistantMessage = createStreamingAssistantMessage(threadId, {
       id: optimisticAssistantMessageId,
       clientTurnId,
@@ -1371,7 +1800,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         threadId,
         message,
         options?.modelId ?? null,
+        options?.reasoningEffort ?? null,
         attachments.length > 0 ? attachments : null,
+        inputItems.length > 0 ? inputItems : null,
         planMode,
         clientTurnId,
       );
@@ -1382,6 +1813,57 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: state.messages.filter((item) => item.id !== optimisticAssistantMessage.id),
         status: "error",
         streaming: false,
+        error: String(error),
+      }));
+      return false;
+    }
+  },
+  steer: async (message, options) => {
+    const state = get();
+    if (!state.streaming) {
+      set({ error: "No turn is currently in progress for this thread." });
+      return false;
+    }
+
+    const threadId = options?.threadIdOverride ?? state.threadId;
+    if (!threadId) {
+      set({ error: "No active thread selected" });
+      return false;
+    }
+
+    if (options?.threadIdOverride && options.threadIdOverride !== state.threadId) {
+      set({ error: "Cannot steer a thread that is not currently active" });
+      return false;
+    }
+
+    const attachments = options?.attachments ?? [];
+    const inputItems = options?.inputItems ?? [];
+    const planMode = options?.planMode ?? false;
+    const steerBlock = createSteerBlock(message, {
+      attachments,
+      inputItems,
+      planMode,
+    });
+
+    set((current) => ({
+      messages: applyHydrationWindow(
+        appendSteerBlockToActiveAssistant(current.messages, threadId, steerBlock),
+      ),
+      error: undefined,
+    }));
+
+    try {
+      await ipc.steerMessage(
+        threadId,
+        message,
+        attachments.length > 0 ? attachments : null,
+        inputItems.length > 0 ? inputItems : null,
+        planMode,
+      );
+      return true;
+    } catch (error) {
+      set((current) => ({
+        messages: applyHydrationWindow(removeSteerBlock(current.messages, steerBlock.steerId)),
         error: String(error),
       }));
       return false;
@@ -1408,49 +1890,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
 
-    await ipc.respondApproval(threadId, approvalId, response);
+    // Apply optimistic update BEFORE the IPC call
     const decision = resolveApprovalDecision(response);
+    const previousMessages = get().messages;
     set((state) => {
-      for (let messageIndex = 0; messageIndex < state.messages.length; messageIndex += 1) {
-        const message = state.messages[messageIndex];
-        const blocks = message.blocks;
-        if (!blocks || blocks.length === 0) {
-          continue;
-        }
-
-        const approvalIndex = blocks.findIndex(
-          (block) => block.type === "approval" && block.approvalId === approvalId,
-        );
-        if (approvalIndex < 0) {
-          continue;
-        }
-
-        const approvalBlock = blocks[approvalIndex] as ApprovalBlock;
-        if (approvalBlock.status === "answered" && approvalBlock.decision === decision) {
-          return state;
-        }
-
-        const nextBlocks = [...blocks];
-        nextBlocks[approvalIndex] = {
-          ...approvalBlock,
-          status: "answered",
-          decision,
-        };
-
-        const nextMessages = [...state.messages];
-        nextMessages[messageIndex] = {
-          ...message,
-          blocks: nextBlocks,
-        };
-
-        return {
-          ...state,
-          messages: nextMessages,
-        };
+      const nextMessages = resolveApprovalInMessages(state.messages, approvalId, decision);
+      if (nextMessages === state.messages) {
+        return state;
       }
-
-      return state;
+      return { ...state, messages: nextMessages };
     });
+
+    try {
+      await ipc.respondApproval(threadId, approvalId, response);
+    } catch (error) {
+      // Roll back the optimistic update on failure
+      set({ messages: previousMessages, error: String(error) });
+    }
   },
   hydrateActionOutput: async (messageId, actionId) => {
     const requestKey = `${messageId}::${actionId}`;
@@ -1467,7 +1923,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const normalizedChunks: ActionBlock["outputChunks"] = payload.outputChunks.map((chunk) => ({
-        stream: chunk.stream === "stderr" ? "stderr" : "stdout",
+        stream: normalizeActionOutputStream(chunk.stream),
         content: String(chunk.content ?? ""),
       }));
       const { chunks: trimmedChunks, truncated: trimmedByFrontend } =

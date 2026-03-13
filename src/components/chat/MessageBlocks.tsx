@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Circle,
   AlertTriangle,
+  CornerDownRight,
   ChevronRight,
   FileCode2,
   FileDiff,
@@ -26,20 +27,28 @@ import type {
   DiffBlock,
   MessageStatus,
   NoticeBlock,
+  SteerBlock,
   ThinkingBlock,
 } from "../../types";
-import { ToolInputQuestionnaire } from "./ToolInputQuestionnaire";
 import {
   buildDynamicToolCallResponse,
   defaultAdvancedApprovalPayload,
   isDynamicToolCallApproval,
+  isMcpElicitationApproval,
+  isPermissionsRequestApproval,
   isRequestUserInputApproval,
   parseApprovalCommand,
   parseApprovalReason,
   parseDynamicToolCallArguments,
   parseDynamicToolCallName,
+  parseMcpElicitationMessage,
+  parseMcpElicitationMode,
+  parseMcpElicitationSchema,
+  parseMcpElicitationServerName,
+  parseMcpElicitationUrl,
   parseProposedExecpolicyAmendment,
   parseProposedNetworkPolicyAmendments,
+  parseRequestedPermissions,
   parseToolInputQuestions,
   requiresCustomApprovalPayload,
 } from "./toolInputApproval";
@@ -237,6 +246,86 @@ function NoticeBlockView({ block }: { block: NoticeBlock }) {
           {block.title}
         </div>
         <div>{block.message}</div>
+      </div>
+    </div>
+  );
+}
+
+function SteerBlockView({ block }: { block: SteerBlock }) {
+  const attachmentBlocks = block.attachments ?? [];
+  const skillBlocks = block.skills ?? [];
+  const mentionBlocks = block.mentions ?? [];
+  const hasContent = block.content.trim().length > 0;
+
+  return (
+    <div
+      style={{
+        margin: "2px 12px 8px",
+        padding: "9px 12px",
+        borderRadius: "var(--radius-sm)",
+        border: "1px solid rgba(255, 107, 107, 0.16)",
+        background: "rgba(255, 107, 107, 0.06)",
+        color: "var(--text-2)",
+        fontSize: 12,
+        lineHeight: 1.5,
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 8,
+      }}
+    >
+      <CornerDownRight size={14} style={{ flexShrink: 0, color: "var(--danger)", marginTop: 1 }} />
+      <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
+        {hasContent && (
+          <div
+            style={{
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {block.content}
+          </div>
+        )}
+
+        {(skillBlocks.length > 0 || mentionBlocks.length > 0 || attachmentBlocks.length > 0) && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {skillBlocks.map((skill) => (
+              <span
+                key={`skill:${skill.path}`}
+                className="chat-attachment-chip"
+                style={{ display: "inline-flex" }}
+              >
+                <span className="chat-attachment-chip-name">{`$${skill.name}`}</span>
+              </span>
+            ))}
+            {mentionBlocks.map((mention) => (
+              <span
+                key={`mention:${mention.path}`}
+                className="chat-attachment-chip"
+                style={{ display: "inline-flex" }}
+              >
+                <span className="chat-attachment-chip-name">{`@${mention.name}`}</span>
+              </span>
+            ))}
+            {attachmentBlocks.map((attachment) => {
+              const mime = attachment.mimeType ?? "";
+              const AttachIcon = mime.startsWith("image/")
+                ? Image
+                : mime.startsWith("text/") || mime.includes("json") || mime.includes("javascript")
+                  ? FileText
+                  : File;
+              return (
+                <span
+                  key={`attachment:${attachment.filePath}:${attachment.fileName}`}
+                  className="chat-attachment-chip"
+                  style={{ display: "inline-flex" }}
+                >
+                  <AttachIcon size={12} />
+                  <span className="chat-attachment-chip-name">{attachment.fileName}</span>
+                </span>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -525,6 +614,16 @@ const APPROVAL_INTERNAL_KEYS = new Set([
   "arguments",
   "tool",
   "name",
+  "permissions",
+  "serverName",
+  "server_name",
+  "message",
+  "mode",
+  "url",
+  "requestedSchema",
+  "requested_schema",
+  "elicitationId",
+  "elicitation_id",
 ]);
 
 function extractApprovalDetails(details: Record<string, unknown>) {
@@ -538,6 +637,60 @@ function extractApprovalDetails(details: Record<string, unknown>) {
   }
   const hasRemainingDetails = Object.keys(remainingDetails).length > 0;
   return { command, reason, commandActionCount, remainingDetails, hasRemainingDetails };
+}
+
+function ToolInputApprovalCard({
+  block,
+  questionCount,
+  isPending,
+  isClaudeThread,
+  decisionLabel,
+  decisionBackground,
+  decisionColor,
+}: {
+  block: ApprovalBlock;
+  questionCount: number;
+  isPending: boolean;
+  isClaudeThread: boolean;
+  decisionLabel: string;
+  decisionBackground: string;
+  decisionColor: string;
+}) {
+  const { t } = useTranslation("chat");
+  if (questionCount <= 0) {
+    return null;
+  }
+
+  return (
+    <div className="tool-input-preview-card">
+      <div className="tool-input-preview-body">
+        <div className="tool-input-preview-header">
+          <span className="tool-input-preview-count">
+            {t("messageBlocks.approval.pendingQuestions", {
+              count: questionCount,
+            })}
+          </span>
+
+          {!isPending && block.decision ? (
+            <span
+              className="tool-input-preview-status"
+              style={{ background: decisionBackground, color: decisionColor }}
+            >
+              {decisionLabel}
+            </span>
+          ) : null}
+        </div>
+
+        {isPending && !isClaudeThread ? (
+          <div className="tool-input-preview-footer">
+            <span className="tool-input-preview-note">
+              {t("messageBlocks.toolInput.answerInComposer")}
+            </span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function ApprovalCard({
@@ -555,25 +708,35 @@ function ApprovalCard({
   const details = block.details ?? {};
   const isToolInputRequest = isRequestUserInputApproval(details);
   const isDynamicToolCall = isDynamicToolCallApproval(details);
+  const isPermissionsRequest = isPermissionsRequestApproval(details);
+  const isMcpElicitation = isMcpElicitationApproval(details);
   const requiresCustomPayload = requiresCustomApprovalPayload(details);
   const toolInputQuestions = isToolInputRequest ? parseToolInputQuestions(details) : [];
+  const requiresAdvancedJsonFallback =
+    requiresCustomPayload || (isToolInputRequest && toolInputQuestions.length === 0);
   const proposedExecpolicyAmendment = parseProposedExecpolicyAmendment(details);
   const proposedNetworkPolicyAmendments = parseProposedNetworkPolicyAmendments(details);
-  const showStructuredToolInput =
-    isPending && !isClaudeThread && isToolInputRequest && toolInputQuestions.length > 0;
+  const requestedPermissions = isPermissionsRequest ? parseRequestedPermissions(details) : null;
   const showClaudeUnsupportedApproval =
     isPending &&
     isClaudeThread &&
     (isToolInputRequest ||
       isDynamicToolCall ||
+      isMcpElicitation ||
       requiresCustomPayload ||
       proposedExecpolicyAmendment.length > 0 ||
       proposedNetworkPolicyAmendments.length > 0);
   const dynamicToolName = parseDynamicToolCallName(details);
   const dynamicToolArguments = parseDynamicToolCallArguments(details);
+  const mcpServerName = parseMcpElicitationServerName(details);
+  const mcpMessage = parseMcpElicitationMessage(details);
+  const mcpMode = parseMcpElicitationMode(details);
+  const mcpUrl = parseMcpElicitationUrl(details);
+  const mcpSchema = parseMcpElicitationSchema(details);
 
   const { command, reason, commandActionCount, remainingDetails, hasRemainingDetails } =
     extractApprovalDetails(details);
+  const displayReason = isMcpElicitation ? mcpMessage ?? reason : reason;
 
   const defaultAdvancedPayload = useMemo(
     () => JSON.stringify(defaultAdvancedApprovalPayload(details), null, 2),
@@ -613,6 +776,20 @@ function ApprovalCard({
   } else if (block.decision === "accept" || block.decision === "accept_for_session") {
     decisionBackground = "rgba(52,211,153,0.12)";
     decisionColor = "var(--success)";
+  }
+
+  if (isToolInputRequest && toolInputQuestions.length > 0 && !showClaudeUnsupportedApproval) {
+    return (
+      <ToolInputApprovalCard
+        block={block}
+        questionCount={toolInputQuestions.length}
+        isPending={isPending}
+        isClaudeThread={isClaudeThread}
+        decisionLabel={decisionLabel}
+        decisionBackground={decisionBackground}
+        decisionColor={decisionColor}
+      />
+    );
   }
 
   function submitAdvancedJsonPayload() {
@@ -664,13 +841,29 @@ function ApprovalCard({
       </div>
 
       {/* Details */}
-      {!isToolInputRequest && (command || reason || commandActionCount > 0 || hasRemainingDetails) && (
+      {!isToolInputRequest && (command || displayReason || commandActionCount > 0 || requestedPermissions || mcpUrl || mcpSchema || hasRemainingDetails) && (
         <div className="acard-details">
           {command && (
             <pre className="acard-command">{command}</pre>
           )}
-          {!command && reason && (
-            <p className="acard-reason">{reason}</p>
+          {!command && displayReason && (
+            <p className="acard-reason">{displayReason}</p>
+          )}
+          {isMcpElicitation && mcpServerName && (
+            <p className="acard-meta">{mcpServerName}</p>
+          )}
+          {isMcpElicitation && mcpMode === "url" && mcpUrl && (
+            <pre className="acard-command">{mcpUrl}</pre>
+          )}
+          {isPermissionsRequest && requestedPermissions && (
+            <pre className="acard-remaining-pre">
+              {JSON.stringify(requestedPermissions, null, 2)}
+            </pre>
+          )}
+          {isMcpElicitation && mcpMode === "form" && mcpSchema && (
+            <pre className="acard-remaining-pre">
+              {JSON.stringify(mcpSchema, null, 2)}
+            </pre>
           )}
           {commandActionCount > 0 && (
             <p className="acard-meta">
@@ -718,27 +911,6 @@ function ApprovalCard({
           )}
         </div>
       )}
-
-      {/* Tool input questions */}
-      {isToolInputRequest && toolInputQuestions.length > 0 && (
-        <div className="acard-section">
-          <p className="acard-reason">
-            {t("messageBlocks.approval.pendingQuestions", {
-              count: toolInputQuestions.length,
-            })}
-          </p>
-        </div>
-      )}
-
-      {showStructuredToolInput && (
-        <div className="acard-section">
-          <ToolInputQuestionnaire
-            details={details}
-            onSubmit={(response) => onApproval(block.approvalId, response)}
-          />
-        </div>
-      )}
-
       {showClaudeUnsupportedApproval && (
         <div className="acard-section">
           <p className="acard-reason">
@@ -804,7 +976,7 @@ function ApprovalCard({
         </div>
       )}
 
-      {isPending && !isClaudeThread && requiresCustomPayload && !showStructuredToolInput && (
+      {isPending && !isClaudeThread && requiresAdvancedJsonFallback && (
         <div className="acard-section">
           <p className="acard-reason">
             {t("messageBlocks.approval.customPayloadHint")}
@@ -814,8 +986,8 @@ function ApprovalCard({
 
       {/* Standard approval — no inline buttons; the approval banner handles it */}
 
-      {/* Advanced JSON — only for custom payload requests */}
-      {isPending && !isClaudeThread && requiresCustomPayload && (
+      {/* Advanced JSON — for custom payload requests and malformed tool-input fallbacks */}
+      {isPending && !isClaudeThread && requiresAdvancedJsonFallback && (
         <div className="acard-section">
           <div className="acard-advanced">
             <textarea
@@ -970,6 +1142,11 @@ function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadAc
         /* ── Notice ── */
         if (block.type === "notice") {
           return <NoticeBlockView key={blockKey} block={block} />;
+        }
+
+        /* ── Steer ── */
+        if (block.type === "steer") {
+          return <SteerBlockView key={blockKey} block={block} />;
         }
 
         /* ── Action ── */

@@ -1,4 +1,5 @@
 use anyhow::Context;
+use chrono::{Duration as ChronoDuration, Utc};
 use std::collections::HashMap;
 
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
@@ -52,6 +53,163 @@ pub fn insert_assistant_placeholder(
         turn_model_id,
         turn_reasoning_effort,
     )
+}
+
+pub fn delete_message(db: &Database, message_id: &str) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    conn.execute("DELETE FROM messages WHERE id = ?1", params![message_id])
+        .context("failed to delete message")?;
+    Ok(())
+}
+
+pub fn clone_thread_messages(
+    db: &Database,
+    source_thread_id: &str,
+    target_thread_id: &str,
+) -> anyhow::Result<usize> {
+    let messages = get_thread_messages(db, source_thread_id)?;
+    let mut conn = db.connect()?;
+    let tx = conn
+        .transaction()
+        .context("failed to start thread message clone transaction")?;
+
+    for (index, message) in messages.iter().enumerate() {
+        let token_usage = message
+            .token_usage
+            .as_ref()
+            .cloned()
+            .unwrap_or(TokenUsageDto {
+                input: 0,
+                output: 0,
+            });
+        let created_at = (Utc::now() + ChronoDuration::milliseconds(index as i64))
+            .format("%Y-%m-%d %H:%M:%S%.3f")
+            .to_string();
+
+        tx.execute(
+            "INSERT INTO messages (
+                id, thread_id, role, content, blocks_json, turn_engine_id, turn_model_id,
+                turn_reasoning_effort, schema_version, stream_seq, status, token_input,
+                token_output, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13)",
+            params![
+                Uuid::new_v4().to_string(),
+                target_thread_id,
+                message.role,
+                message.content,
+                message.blocks.as_ref().map(Value::to_string),
+                message.turn_engine_id,
+                message.turn_model_id,
+                message.turn_reasoning_effort,
+                message.schema_version,
+                message.status.as_str(),
+                token_usage.input as i64,
+                token_usage.output as i64,
+                created_at,
+            ],
+        )
+        .context("failed to clone thread message")?;
+    }
+
+    tx.commit()
+        .context("failed to commit thread message clone transaction")?;
+    Ok(messages.len())
+}
+
+pub fn drop_last_turns(db: &Database, thread_id: &str, num_turns: u32) -> anyhow::Result<usize> {
+    let messages = get_thread_messages(db, thread_id)?;
+    let user_message_indexes = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, message)| {
+            (message.role == "user" && !message_has_steer_marker(message)).then_some(index)
+        })
+        .collect::<Vec<_>>();
+
+    let turns_to_drop = usize::try_from(num_turns).unwrap_or(usize::MAX);
+    if turns_to_drop == 0 {
+        anyhow::bail!("num_turns must be at least 1");
+    }
+    if user_message_indexes.len() < turns_to_drop {
+        anyhow::bail!(
+            "cannot drop {turns_to_drop} turns from local thread history with only {} user turns",
+            user_message_indexes.len()
+        );
+    }
+
+    let cutoff_index = user_message_indexes[user_message_indexes.len() - turns_to_drop];
+    let message_ids = messages
+        .iter()
+        .skip(cutoff_index)
+        .map(|message| message.id.clone())
+        .collect::<Vec<_>>();
+    if message_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let mut conn = db.connect()?;
+    let tx = conn
+        .transaction()
+        .context("failed to start thread rollback transaction")?;
+
+    for chunk in message_ids.chunks(500) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let delete_actions_sql =
+            format!("DELETE FROM actions WHERE thread_id = ? AND message_id IN ({placeholders})");
+        let delete_approvals_sql =
+            format!("DELETE FROM approvals WHERE thread_id = ? AND message_id IN ({placeholders})");
+        let delete_messages_sql =
+            format!("DELETE FROM messages WHERE thread_id = ? AND id IN ({placeholders})");
+
+        let mut actions_params = Vec::with_capacity(chunk.len() + 1);
+        actions_params.push(rusqlite::types::Value::from(thread_id.to_string()));
+        actions_params.extend(chunk.iter().cloned().map(rusqlite::types::Value::from));
+        tx.execute(&delete_actions_sql, params_from_iter(actions_params))
+            .context("failed to delete rolled-back thread actions")?;
+
+        let mut approvals_params = Vec::with_capacity(chunk.len() + 1);
+        approvals_params.push(rusqlite::types::Value::from(thread_id.to_string()));
+        approvals_params.extend(chunk.iter().cloned().map(rusqlite::types::Value::from));
+        tx.execute(&delete_approvals_sql, params_from_iter(approvals_params))
+            .context("failed to delete rolled-back thread approvals")?;
+
+        let mut message_params = Vec::with_capacity(chunk.len() + 1);
+        message_params.push(rusqlite::types::Value::from(thread_id.to_string()));
+        message_params.extend(chunk.iter().cloned().map(rusqlite::types::Value::from));
+        tx.execute(&delete_messages_sql, params_from_iter(message_params))
+            .context("failed to delete rolled-back thread messages")?;
+    }
+
+    // Note: all approvals (including pending ones) for the deleted messages are already
+    // removed by the chunked delete_approvals_sql above, which scopes deletions to
+    // message_id IN (...). The previous thread-wide pending approval sweep is intentionally
+    // removed here to avoid deleting pending approvals that belong to retained messages.
+
+    tx.commit()
+        .context("failed to commit thread rollback transaction")?;
+    Ok(message_ids.len())
+}
+
+fn message_has_steer_marker(message: &MessageDto) -> bool {
+    let Some(blocks) = message.blocks.as_ref().and_then(Value::as_array) else {
+        return false;
+    };
+
+    blocks.iter().any(|block| {
+        let Some(block_type) = block.get("type").and_then(Value::as_str) else {
+            return false;
+        };
+        if block_type != "text" {
+            return false;
+        }
+
+        block
+            .get("isSteer")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    })
 }
 
 pub fn update_assistant_blocks_json(
@@ -145,7 +303,7 @@ pub fn get_thread_messages(db: &Database, thread_id: &str) -> anyhow::Result<Vec
             token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at
      FROM messages
      WHERE thread_id = ?1
-     ORDER BY created_at ASC",
+     ORDER BY created_at ASC, rowid ASC",
     )?;
 
     let rows = stmt.query_map(params![thread_id], map_message_row)?;
@@ -356,6 +514,15 @@ pub fn mark_approval_block_answered(
     approval_id: &str,
     decision: &str,
 ) -> anyhow::Result<bool> {
+    mark_approval_block_resolved(db, message_id, approval_id, Some(decision))
+}
+
+pub fn mark_approval_block_resolved(
+    db: &Database,
+    message_id: &str,
+    approval_id: &str,
+    decision: Option<&str>,
+) -> anyhow::Result<bool> {
     let conn = db.connect()?;
     let Some(raw_blocks): Option<String> = conn
         .query_row(
@@ -371,9 +538,12 @@ pub fn mark_approval_block_answered(
 
     let mut blocks_value: Value =
         serde_json::from_str(&raw_blocks).unwrap_or_else(|_| serde_json::json!([]));
-    let mut answered = HashMap::new();
-    answered.insert(approval_id.to_string(), decision.to_string());
-    let changed = apply_answered_approvals_to_blocks(&mut blocks_value, &answered);
+    let mut resolved = HashMap::new();
+    resolved.insert(
+        approval_id.to_string(),
+        decision.map(std::string::ToString::to_string),
+    );
+    let changed = apply_resolved_approvals_to_blocks(&mut blocks_value, &resolved);
     if !changed {
         return Ok(false);
     }
@@ -661,9 +831,9 @@ fn map_message_row(row: &Row<'_>) -> rusqlite::Result<MessageDto> {
     })
 }
 
-fn apply_answered_approvals_to_blocks(
+fn apply_resolved_approvals_to_blocks(
     blocks: &mut Value,
-    answered: &HashMap<String, String>,
+    resolved: &HashMap<String, Option<String>>,
 ) -> bool {
     let Some(items) = blocks.as_array_mut() else {
         return false;
@@ -687,7 +857,7 @@ fn apply_answered_approvals_to_blocks(
             continue;
         };
 
-        let Some(decision) = answered.get(approval_id) else {
+        let Some(decision) = resolved.get(approval_id) else {
             continue;
         };
 
@@ -696,19 +866,21 @@ fn apply_answered_approvals_to_blocks(
             .and_then(Value::as_str)
             .map(|value| value != "answered")
             .unwrap_or(true);
-        let should_update_decision = object
-            .get("decision")
-            .and_then(Value::as_str)
-            .map(|value| value != decision)
-            .unwrap_or(true);
 
         if should_update_status {
             object.insert("status".to_string(), Value::String("answered".to_string()));
             changed = true;
         }
-        if should_update_decision {
-            object.insert("decision".to_string(), Value::String(decision.to_string()));
-            changed = true;
+        if let Some(decision) = decision {
+            let should_update_decision = object
+                .get("decision")
+                .and_then(Value::as_str)
+                .map(|value| value != decision)
+                .unwrap_or(true);
+            if should_update_decision {
+                object.insert("decision".to_string(), Value::String(decision.to_string()));
+                changed = true;
+            }
         }
     }
 
@@ -742,8 +914,8 @@ fn reconcile_answered_approvals_for_messages(
         return Ok(());
     }
 
-    let answered_by_message = load_answered_approvals_for_message_ids(conn, &message_ids)?;
-    if answered_by_message.is_empty() {
+    let resolved_by_message = load_resolved_approvals_for_message_ids(conn, &message_ids)?;
+    if resolved_by_message.is_empty() {
         return Ok(());
     }
 
@@ -751,10 +923,10 @@ fn reconcile_answered_approvals_for_messages(
         let Some(blocks) = message.blocks.as_mut() else {
             continue;
         };
-        let Some(answered) = answered_by_message.get(&message.id) else {
+        let Some(resolved) = resolved_by_message.get(&message.id) else {
             continue;
         };
-        apply_answered_approvals_to_blocks(blocks, answered);
+        apply_resolved_approvals_to_blocks(blocks, resolved);
     }
 
     Ok(())
@@ -765,46 +937,45 @@ fn reconcile_answered_approvals_for_message(
     message_id: &str,
     blocks: &mut Value,
 ) -> anyhow::Result<bool> {
-    let answered = load_answered_approvals_for_message(conn, message_id)?;
-    if answered.is_empty() {
+    let resolved = load_resolved_approvals_for_message(conn, message_id)?;
+    if resolved.is_empty() {
         return Ok(false);
     }
 
-    Ok(apply_answered_approvals_to_blocks(blocks, &answered))
+    Ok(apply_resolved_approvals_to_blocks(blocks, &resolved))
 }
 
-fn load_answered_approvals_for_message(
+fn load_resolved_approvals_for_message(
     conn: &Connection,
     message_id: &str,
-) -> anyhow::Result<HashMap<String, String>> {
+) -> anyhow::Result<HashMap<String, Option<String>>> {
     let mut stmt = conn
         .prepare(
             "SELECT id, decision
          FROM approvals
          WHERE message_id = ?1
-           AND status = 'answered'
-           AND decision IS NOT NULL",
+           AND status = 'answered'",
         )
         .context("failed to prepare approval lookup for message")?;
     let rows = stmt
         .query_map(params![message_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
         })
         .context("failed to query answered approvals for message")?;
 
-    let mut answered = HashMap::new();
+    let mut resolved = HashMap::new();
     for row in rows {
         let (approval_id, decision) = row?;
-        answered.insert(approval_id, decision);
+        resolved.insert(approval_id, decision);
     }
 
-    Ok(answered)
+    Ok(resolved)
 }
 
-fn load_answered_approvals_for_message_ids(
+fn load_resolved_approvals_for_message_ids(
     conn: &Connection,
     message_ids: &[String],
-) -> anyhow::Result<HashMap<String, HashMap<String, String>>> {
+) -> anyhow::Result<HashMap<String, HashMap<String, Option<String>>>> {
     if message_ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -817,7 +988,6 @@ fn load_answered_approvals_for_message_ids(
          FROM approvals
          WHERE message_id IS NOT NULL
            AND status = 'answered'
-           AND decision IS NOT NULL
            AND message_id IN ({placeholders})"
     );
     let mut stmt = conn
@@ -828,21 +998,21 @@ fn load_answered_approvals_for_message_ids(
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(2)?,
             ))
         })
         .context("failed to query answered approvals for messages")?;
 
-    let mut answered_by_message: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut resolved_by_message: HashMap<String, HashMap<String, Option<String>>> = HashMap::new();
     for row in rows {
         let (message_id, approval_id, decision) = row?;
-        answered_by_message
+        resolved_by_message
             .entry(message_id)
             .or_default()
             .insert(approval_id, decision);
     }
 
-    Ok(answered_by_message)
+    Ok(resolved_by_message)
 }
 
 #[cfg(test)]
@@ -899,6 +1069,16 @@ mod tests {
                 "summary": "Run tests",
                 "details": {},
                 "status": "pending"
+            }
+        ])
+    }
+
+    fn steer_blocks_json(content: &str) -> Value {
+        json!([
+            {
+                "type": "text",
+                "content": content,
+                "isSteer": true
             }
         ])
     }
@@ -1158,6 +1338,52 @@ mod tests {
     }
 
     #[test]
+    fn update_assistant_blocks_json_preserves_resolved_approval_without_decision() {
+        let db = test_db();
+        let thread_id = test_thread(&db);
+        let approval_id = "approval-runtime-1";
+        let pending_blocks = approval_blocks_json(approval_id);
+        let message = insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            None,
+            Some(pending_blocks.clone()),
+            MessageStatusDto::Streaming,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        actions::insert_approval(
+            &db,
+            approval_id,
+            &thread_id,
+            &message.id,
+            &ActionType::Command,
+            "Run tests",
+            &json!({}),
+        )
+        .unwrap();
+        actions::resolve_approval(&db, approval_id).unwrap();
+
+        update_assistant_blocks_json(
+            &db,
+            &message.id,
+            &pending_blocks.to_string(),
+            MessageStatusDto::Completed,
+            None,
+        )
+        .unwrap();
+
+        let blocks = get_message_blocks(&db, &message.id).unwrap().unwrap();
+        let (status, decision) = approval_block_status(&blocks).unwrap();
+        assert_eq!(status, "answered");
+        assert_eq!(decision, None);
+    }
+
+    #[test]
     fn update_assistant_turn_model_id_updates_message_metadata() {
         let db = test_db();
         let thread_id = test_thread(&db);
@@ -1225,5 +1451,239 @@ mod tests {
         let (status, decision) = approval_block_status(blocks).unwrap();
         assert_eq!(status, "answered");
         assert_eq!(decision, Some("accept"));
+    }
+
+    #[test]
+    fn get_thread_messages_window_reconciles_resolved_approval_without_decision() {
+        let db = test_db();
+        let thread_id = test_thread(&db);
+        let approval_id = "approval-runtime-2";
+        let pending_blocks = approval_blocks_json(approval_id);
+        let message = insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            None,
+            Some(pending_blocks.clone()),
+            MessageStatusDto::Completed,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        actions::insert_approval(
+            &db,
+            approval_id,
+            &thread_id,
+            &message.id,
+            &ActionType::Command,
+            "Run tests",
+            &json!({}),
+        )
+        .unwrap();
+        actions::resolve_approval(&db, approval_id).unwrap();
+
+        let conn = db.connect().unwrap();
+        conn.execute(
+            "UPDATE messages SET blocks_json = ?1 WHERE id = ?2",
+            params![pending_blocks.to_string(), message.id],
+        )
+        .unwrap();
+        drop(conn);
+
+        let window = get_thread_messages_window(&db, &thread_id, None, 20).unwrap();
+        let blocks = window.messages[0].blocks.as_ref().unwrap();
+        let (status, decision) = approval_block_status(blocks).unwrap();
+        assert_eq!(status, "answered");
+        assert_eq!(decision, None);
+    }
+
+    #[test]
+    fn clone_thread_messages_copies_message_history_and_metadata() {
+        let db = test_db();
+        let source_thread_id = test_thread(&db);
+        let target_thread_id = test_thread(&db);
+
+        let user_message = insert_user_message(
+            &db,
+            &source_thread_id,
+            "Branch this history",
+            Some(json!([{ "type": "text", "content": "Branch this history" }])),
+            Some("codex"),
+            Some("gpt-5.3-codex"),
+            Some("medium"),
+        )
+        .unwrap();
+        let assistant_message = insert_message(
+            &db,
+            &source_thread_id,
+            "assistant",
+            Some("Created branch preview".to_string()),
+            Some(json!([{ "type": "text", "content": "Created branch preview" }])),
+            MessageStatusDto::Completed,
+            Some("codex"),
+            Some("gpt-5.3-codex"),
+            Some("medium"),
+        )
+        .unwrap();
+        let conn = db.connect().unwrap();
+        conn.execute(
+            "UPDATE messages SET token_input = 7, token_output = 11 WHERE id = ?1",
+            params![assistant_message.id],
+        )
+        .unwrap();
+        drop(conn);
+
+        let cloned = clone_thread_messages(&db, &source_thread_id, &target_thread_id).unwrap();
+        assert_eq!(cloned, 2);
+
+        let source_messages = get_thread_messages(&db, &source_thread_id).unwrap();
+        let target_messages = get_thread_messages(&db, &target_thread_id).unwrap();
+        assert_eq!(source_messages.len(), target_messages.len());
+        assert_ne!(source_messages[0].id, target_messages[0].id);
+        assert_eq!(target_messages[0].role, "user");
+        assert_eq!(
+            target_messages[0].content.as_deref(),
+            Some("Branch this history")
+        );
+        assert_eq!(target_messages[0].turn_engine_id.as_deref(), Some("codex"));
+        assert_eq!(
+            target_messages[0].turn_model_id.as_deref(),
+            Some("gpt-5.3-codex")
+        );
+        assert_eq!(
+            target_messages[0].turn_reasoning_effort.as_deref(),
+            Some("medium")
+        );
+        assert_eq!(target_messages[0].status, MessageStatusDto::Completed);
+        assert_eq!(target_messages[1].role, "assistant");
+        assert_eq!(
+            target_messages[1].content.as_deref(),
+            Some("Created branch preview")
+        );
+        assert_eq!(target_messages[1].status, MessageStatusDto::Completed);
+        assert_eq!(
+            target_messages[1]
+                .token_usage
+                .as_ref()
+                .map(|usage| (usage.input, usage.output)),
+            Some((7, 11))
+        );
+        assert!(
+            target_messages[0].created_at <= target_messages[1].created_at,
+            "cloned message ordering should be preserved",
+        );
+        let _ = user_message;
+    }
+
+    #[test]
+    fn drop_last_turns_removes_latest_turn_and_pending_approvals() {
+        let db = test_db();
+        let thread_id = test_thread(&db);
+        insert_user_message(&db, &thread_id, "turn 1", None, None, None, None).unwrap();
+        insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            Some("answer 1".to_string()),
+            Some(json!([])),
+            MessageStatusDto::Completed,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        insert_user_message(&db, &thread_id, "turn 2", None, None, None, None).unwrap();
+        let pending_assistant = insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            None,
+            Some(approval_blocks_json("approval-rollback")),
+            MessageStatusDto::Streaming,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        actions::insert_approval(
+            &db,
+            "approval-rollback",
+            &thread_id,
+            &pending_assistant.id,
+            &ActionType::Command,
+            "Run cleanup",
+            &json!({}),
+        )
+        .unwrap();
+
+        let removed = drop_last_turns(&db, &thread_id, 1).unwrap();
+        assert_eq!(removed, 2);
+
+        let remaining_messages = get_thread_messages(&db, &thread_id).unwrap();
+        assert_eq!(remaining_messages.len(), 2);
+        assert_eq!(remaining_messages[0].content.as_deref(), Some("turn 1"));
+        assert_eq!(remaining_messages[1].content.as_deref(), Some("answer 1"));
+
+        let conn = db.connect().unwrap();
+        let approval_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM approvals WHERE thread_id = ?1",
+                params![thread_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(approval_count, 0);
+    }
+
+    #[test]
+    fn drop_last_turns_ignores_mid_turn_steer_messages() {
+        let db = test_db();
+        let thread_id = test_thread(&db);
+        insert_user_message(&db, &thread_id, "turn 1", None, None, None, None).unwrap();
+        insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            Some("answer 1".to_string()),
+            Some(json!([{ "type": "text", "content": "answer 1" }])),
+            MessageStatusDto::Completed,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        insert_user_message(&db, &thread_id, "turn 2", None, None, None, None).unwrap();
+        insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            Some("working".to_string()),
+            Some(json!([{ "type": "text", "content": "working" }])),
+            MessageStatusDto::Completed,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        insert_user_message(
+            &db,
+            &thread_id,
+            "focus on tests",
+            Some(steer_blocks_json("focus on tests")),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let removed = drop_last_turns(&db, &thread_id, 1).unwrap();
+        assert_eq!(removed, 3);
+
+        let remaining_messages = get_thread_messages(&db, &thread_id).unwrap();
+        assert_eq!(remaining_messages.len(), 2);
+        assert_eq!(remaining_messages[0].content.as_deref(), Some("turn 1"));
+        assert_eq!(remaining_messages[1].content.as_deref(), Some("answer 1"));
     }
 }

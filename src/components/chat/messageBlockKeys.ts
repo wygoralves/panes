@@ -26,6 +26,8 @@ export function getMessageBlockKey(
       return `approval:${block.approvalId}`;
     case "notice":
       return `notice:${block.kind}`;
+    case "steer":
+      return `steer:${block.steerId}`;
     case "diff":
       return `diff:${block.scope}:${getBlockTypeOrdinal(blocks, index, "diff")}`;
     default:

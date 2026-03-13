@@ -15,22 +15,26 @@ use serde::Deserialize;
 use tokio::{
     fs as tokio_fs,
     process::Command,
-    sync::{broadcast, mpsc, Mutex},
+    sync::{broadcast, mpsc, oneshot, Mutex},
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::models::{
-    CodexAccountLoginCompletedDto, CodexAppDto, CodexConfigWarningDto, CodexExperimentalFeatureDto,
-    CodexMcpOauthCompletedDto, CodexMethodAvailabilityDto, CodexProtocolDiagnosticsDto,
+    CodexAccountLoginCompletedDto, CodexAccountStateDto, CodexAppDto, CodexConfigLayerDto,
+    CodexConfigStateDto, CodexConfigWarningDto, CodexExperimentalFeatureDto,
+    CodexMcpOauthCompletedDto, CodexMcpServerDto, CodexMethodAvailabilityDto, CodexPluginDto,
+    CodexPluginMarketplaceDto, CodexProtocolDiagnosticsDto, CodexSkillDto,
+    CodexThreadRealtimeEventDto, CodexWindowsSandboxSetupDto, CodexWindowsWorldWritableWarningDto,
     RuntimeToastDto,
 };
 use crate::{process_utils, runtime_env};
 
 use super::{
     codex_event_mapper::TurnEventMapper, codex_protocol::IncomingMessage,
-    codex_transport::CodexTransport, ActionResult, Engine, EngineEvent, EngineThread, ModelInfo,
-    ReasoningEffortOption, SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment,
-    TurnCompletionStatus, TurnInput,
+    codex_transport::CodexTransport, ActionResult, CodexRemoteThreadSummary, Engine, EngineEvent,
+    EngineThread, ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo, ReasoningEffortOption,
+    SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment, TurnCompletionStatus,
+    TurnInput, TurnInputItem,
 };
 
 const INITIALIZE_METHODS: &[&str] = &["initialize"];
@@ -40,10 +44,21 @@ const THREAD_READ_METHODS: &[&str] = &["thread/read"];
 const THREAD_ARCHIVE_METHODS: &[&str] = &["thread/archive"];
 const THREAD_UNARCHIVE_METHODS: &[&str] = &["thread/unarchive"];
 const THREAD_SET_NAME_METHODS: &[&str] = &["thread/name/set"];
+const THREAD_LIST_METHODS: &[&str] = &["thread/list"];
+const THREAD_FORK_METHODS: &[&str] = &["thread/fork"];
+const THREAD_ROLLBACK_METHODS: &[&str] = &["thread/rollback"];
+const THREAD_COMPACT_START_METHODS: &[&str] = &["thread/compact/start"];
+const REVIEW_START_METHODS: &[&str] = &["review/start"];
 const EXPERIMENTAL_FEATURE_LIST_METHODS: &[&str] = &["experimentalFeature/list"];
 const COLLABORATION_MODE_LIST_METHODS: &[&str] = &["collaborationMode/list"];
+const SKILLS_LIST_METHODS: &[&str] = &["skills/list"];
 const APP_LIST_METHODS: &[&str] = &["app/list"];
+const PLUGIN_LIST_METHODS: &[&str] = &["plugin/list"];
+const MCP_SERVER_STATUS_LIST_METHODS: &[&str] = &["mcpServerStatus/list"];
+const CONFIG_READ_METHODS: &[&str] = &["config/read"];
+const ACCOUNT_READ_METHODS: &[&str] = &["account/read"];
 const TURN_START_METHODS: &[&str] = &["turn/start"];
+const TURN_STEER_METHODS: &[&str] = &["turn/steer"];
 const TURN_INTERRUPT_METHODS: &[&str] = &["turn/interrupt"];
 const COMMAND_EXEC_METHODS: &[&str] = &["command/exec"];
 const MODEL_LIST_METHODS: &[&str] = &["model/list", "models/list"];
@@ -78,9 +93,19 @@ struct PendingApproval {
 struct ThreadRuntime {
     cwd: String,
     model_id: String,
-    approval_policy: String,
+    approval_policy: serde_json::Value,
     sandbox_policy: serde_json::Value,
     reasoning_effort: Option<String>,
+    service_tier: Option<String>,
+    personality: Option<String>,
+    output_schema: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlanModeActivation {
+    Disabled,
+    NativeCollaboration,
+    PromptPrefix,
 }
 
 #[derive(Default)]
@@ -90,6 +115,7 @@ struct CodexState {
     approval_requests: HashMap<String, PendingApproval>,
     active_turn_ids: HashMap<String, String>,
     thread_runtimes: HashMap<String, ThreadRuntime>,
+    runtime_model_cache: Option<Vec<ModelInfo>>,
     sandbox_probe_completed: bool,
     force_external_sandbox: bool,
     protocol_diagnostics: Option<CodexProtocolDiagnosticsDto>,
@@ -131,6 +157,9 @@ pub enum CodexRuntimeEvent {
         diagnostics: CodexProtocolDiagnosticsDto,
         toast: Option<RuntimeToastDto>,
     },
+    ApprovalResolved {
+        approval_id: String,
+    },
     ThreadStatusChanged {
         engine_thread_id: String,
         status_type: String,
@@ -140,6 +169,34 @@ pub enum CodexRuntimeEvent {
         engine_thread_id: String,
         thread_name: Option<String>,
     },
+    ThreadSnapshotUpdated {
+        engine_thread_id: String,
+        thread_name: Option<String>,
+        status_type: Option<String>,
+        active_flags: Vec<String>,
+        preview: Option<String>,
+    },
+    ThreadArchived {
+        engine_thread_id: String,
+    },
+    ThreadUnarchived {
+        engine_thread_id: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct CodexForkedThread {
+    pub engine_thread_id: String,
+    pub model_id: String,
+    pub title: Option<String>,
+    pub preview: Option<String>,
+    pub raw_status: Option<String>,
+    pub active_flags: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct CodexReviewStarted {
+    pub review_thread_id: String,
 }
 
 #[async_trait]
@@ -155,12 +212,53 @@ impl Engine for CodexEngine {
     fn models(&self) -> Vec<ModelInfo> {
         vec![
             ModelInfo {
-                id: "gpt-5.3-codex".to_string(),
-                display_name: "gpt-5.3-codex".to_string(),
+                id: "gpt-5.4".to_string(),
+                display_name: "gpt-5.4".to_string(),
                 description: "Latest frontier agentic coding model.".to_string(),
                 hidden: false,
                 is_default: true,
                 upgrade: None,
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string(), "image".to_string()],
+                supports_personality: true,
+                default_reasoning_effort: "medium".to_string(),
+                supported_reasoning_efforts: vec![
+                    ReasoningEffortOption {
+                        reasoning_effort: "low".to_string(),
+                        description: "Fast responses with lighter reasoning".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "medium".to_string(),
+                        description: "Balances speed and reasoning depth for everyday tasks"
+                            .to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "high".to_string(),
+                        description: "Greater reasoning depth for complex problems".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "xhigh".to_string(),
+                        description: "Extra high reasoning depth for complex problems".to_string(),
+                    },
+                ],
+            },
+            ModelInfo {
+                id: "gpt-5.3-codex".to_string(),
+                display_name: "gpt-5.3-codex".to_string(),
+                description: "Frontier Codex-optimized agentic coding model.".to_string(),
+                hidden: false,
+                is_default: false,
+                upgrade: Some("gpt-5.4".to_string()),
+                availability_nux: None,
+                upgrade_info: Some(ModelUpgradeInfo {
+                    model: "gpt-5.4".to_string(),
+                    upgrade_copy: None,
+                    model_link: None,
+                    migration_markdown: None,
+                }),
+                input_modalities: vec!["text".to_string(), "image".to_string()],
+                supports_personality: true,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![
                     ReasoningEffortOption {
@@ -182,12 +280,53 @@ impl Engine for CodexEngine {
                 ],
             },
             ModelInfo {
+                id: "gpt-5.3-codex-spark".to_string(),
+                display_name: "GPT-5.3-Codex-Spark".to_string(),
+                description: "Ultra-fast coding model.".to_string(),
+                hidden: false,
+                is_default: false,
+                upgrade: None,
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string()],
+                supports_personality: true,
+                default_reasoning_effort: "high".to_string(),
+                supported_reasoning_efforts: vec![
+                    ReasoningEffortOption {
+                        reasoning_effort: "low".to_string(),
+                        description: "Fast responses with lighter reasoning".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "medium".to_string(),
+                        description: "Balances speed and reasoning depth for everyday tasks"
+                            .to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "high".to_string(),
+                        description: "Greater reasoning depth for complex problems".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "xhigh".to_string(),
+                        description: "Extra high reasoning depth for complex problems".to_string(),
+                    },
+                ],
+            },
+            ModelInfo {
                 id: "gpt-5.1-codex-mini".to_string(),
                 display_name: "gpt-5.1-codex-mini".to_string(),
                 description: "Optimized for codex. Cheaper, faster, but less capable.".to_string(),
                 hidden: false,
                 is_default: false,
-                upgrade: Some("gpt-5.3-codex".to_string()),
+                upgrade: Some("gpt-5.4".to_string()),
+                availability_nux: None,
+                upgrade_info: Some(ModelUpgradeInfo {
+                    model: "gpt-5.4".to_string(),
+                    upgrade_copy: None,
+                    model_link: None,
+                    migration_markdown: None,
+                }),
+                input_modalities: vec!["text".to_string(), "image".to_string()],
+                supports_personality: false,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![
                     ReasoningEffortOption {
@@ -219,7 +358,7 @@ impl Engine for CodexEngine {
         let approval_policy = sandbox
             .approval_policy
             .clone()
-            .unwrap_or_else(|| "on-request".to_string());
+            .unwrap_or_else(|| serde_json::Value::String("on-request".to_string()));
         let mut force_external_sandbox = self.resolve_external_sandbox_mode().await;
         let mut sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
         let mut sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
@@ -229,6 +368,9 @@ impl Engine for CodexEngine {
             approval_policy: approval_policy.clone(),
             sandbox_policy: sandbox_policy.clone(),
             reasoning_effort: sandbox.reasoning_effort.clone(),
+            service_tier: sandbox.service_tier.clone(),
+            personality: sandbox.personality.clone(),
+            output_schema: sandbox.output_schema.clone(),
         };
 
         let transport = self.ensure_ready_transport().await?;
@@ -247,10 +389,11 @@ impl Engine for CodexEngine {
         }
 
         if let Some(existing_thread_id) = resume_engine_thread_id {
-            if self
-                .can_reuse_live_thread(existing_thread_id, &requested_runtime)
-                .await
-            {
+            if self.can_reuse_live_thread(existing_thread_id).await {
+                // Codex applies model and effort per `turn/start`, so a live thread can stay put
+                // while we swap the requested runtime for the next turn.
+                self.store_thread_runtime(existing_thread_id, requested_runtime.clone())
+                    .await;
                 return Ok(EngineThread {
                     engine_thread_id: existing_thread_id.to_string(),
                 });
@@ -264,6 +407,8 @@ impl Engine for CodexEngine {
                 &cwd,
                 &approval_policy,
                 &sandbox_mode,
+                sandbox.service_tier.as_deref(),
+                sandbox.personality.as_deref(),
             );
 
             match request_with_fallback(
@@ -293,6 +438,8 @@ impl Engine for CodexEngine {
           "cwd": cwd.clone(),
           "approvalPolicy": approval_policy.clone(),
           "sandbox": sandbox_mode,
+          "serviceTier": sandbox.service_tier.clone(),
+          "personality": sandbox.personality.clone(),
           "experimentalRawEvents": false,
           "persistExtendedHistory": false,
         });
@@ -327,6 +474,9 @@ impl Engine for CodexEngine {
             &requested_runtime.approval_policy,
             &requested_runtime.sandbox_policy,
             requested_runtime.reasoning_effort.clone(),
+            requested_runtime.service_tier.clone(),
+            requested_runtime.personality.clone(),
+            requested_runtime.output_schema.clone(),
         );
         self.store_thread_runtime(&engine_thread_id, runtime).await;
 
@@ -341,12 +491,16 @@ impl Engine for CodexEngine {
         cancellation: CancellationToken,
     ) -> Result<(), anyhow::Error> {
         let transport = self.ensure_ready_transport().await?;
+        if let Some(message) = self.unsupported_external_auth_tokens_message().await {
+            return Err(anyhow::anyhow!(message));
+        }
 
         let mut mapper = TurnEventMapper::default();
         let mut subscription = transport.subscribe();
         let thread_id = engine_thread_id.to_string();
 
         let runtime = self.thread_runtime(&thread_id).await;
+        let plan_mode_activation = self.resolve_turn_plan_mode_activation(&input).await;
         validate_turn_attachments(&input.attachments).await?;
 
         let transport_for_rate_limits = transport.clone();
@@ -364,12 +518,14 @@ impl Engine for CodexEngine {
         let thread_id_for_turn = thread_id.clone();
         let runtime_for_turn = runtime.clone();
         let input_for_turn = input.clone();
+        let plan_mode_activation_for_turn = plan_mode_activation;
         let turn_task = tokio::spawn(async move {
-            request_turn_start_with_plan_fallback(
+            request_turn_start(
                 transport_for_turn.as_ref(),
                 &thread_id_for_turn,
                 runtime_for_turn,
                 input_for_turn,
+                plan_mode_activation_for_turn,
             )
             .await
         });
@@ -401,6 +557,7 @@ impl Engine for CodexEngine {
                 }
               }
               _ = cancellation.cancelled() => {
+                turn_task.abort();
                 self
                   .interrupt(&thread_id)
                   .await
@@ -523,9 +680,29 @@ impl Engine for CodexEngine {
                     }
                     let normalized_method = normalize_method(&method);
                     if method_signature(&method) == "accountchatgptauthtokensrefresh" {
+                        let reason = extract_any_string(&params, &["reason"]);
+                        let previous_account_id =
+                            extract_any_string(&params, &["previousAccountId", "previous_account_id"]);
+                        let message = unsupported_external_auth_tokens_message(
+                            previous_account_id.as_deref(),
+                            reason.as_deref(),
+                        );
                         log::warn!(
                             "codex requested external ChatGPT token refresh, but Panes does not manage chatgptAuthTokens mode"
                         );
+                        self
+                            .publish_external_auth_tokens_warning(
+                                previous_account_id.clone(),
+                                reason.clone(),
+                            )
+                            .await;
+                        event_tx
+                            .send(EngineEvent::Error {
+                                message,
+                                recoverable: true,
+                            })
+                            .await
+                            .ok();
                         transport
                         .respond_error(
                           &raw_id,
@@ -635,6 +812,32 @@ impl Engine for CodexEngine {
         }
 
         self.clear_active_turn(&thread_id).await;
+        Ok(())
+    }
+
+    async fn steer_message(
+        &self,
+        engine_thread_id: &str,
+        input: TurnInput,
+    ) -> Result<(), anyhow::Error> {
+        let transport = self.ensure_ready_transport().await?;
+        validate_turn_attachments(&input.attachments).await?;
+
+        let expected_turn_id = self.active_turn_id(engine_thread_id).await.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Codex has not reported an active turn id for thread {engine_thread_id} yet"
+            )
+        })?;
+
+        request_turn_steer(
+            transport.as_ref(),
+            engine_thread_id,
+            &expected_turn_id,
+            &input,
+        )
+        .await
+        .context("turn/steer request failed")?;
+
         Ok(())
     }
 
@@ -749,6 +952,499 @@ impl CodexEngine {
         self.ensure_ready_transport().await.map(|_| ())
     }
 
+    pub async fn list_skills(&self, cwd: &str) -> anyhow::Result<Vec<CodexSkillDto>> {
+        let transport = self.ensure_ready_transport().await?;
+        let response = request_with_fallback(
+            transport.as_ref(),
+            SKILLS_LIST_METHODS,
+            serde_json::json!({
+                "cwds": [cwd],
+                "forceReload": false,
+            }),
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to list codex skills")?;
+
+        let entries = response
+            .get("data")
+            .and_then(serde_json::Value::as_array)
+            .or_else(|| response.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok(map_skill_entries(&entries))
+    }
+
+    pub async fn list_apps(&self) -> anyhow::Result<Vec<CodexAppDto>> {
+        let transport = self.ensure_ready_transport().await?;
+        match fetch_apps(transport.as_ref()).await {
+            MethodCallOutcome::Available(apps) => Ok(apps),
+            MethodCallOutcome::Unsupported(detail) => {
+                anyhow::bail!("codex app/list unsupported: {}", detail.unwrap_or_default())
+            }
+            MethodCallOutcome::Error(detail) => anyhow::bail!(detail),
+        }
+    }
+
+    pub async fn fork_thread(
+        &self,
+        engine_thread_id: &str,
+        cwd: &str,
+        model: &str,
+        sandbox: SandboxPolicy,
+    ) -> anyhow::Result<CodexForkedThread> {
+        let transport = self.ensure_ready_transport().await?;
+        let approval_policy = sandbox
+            .approval_policy
+            .clone()
+            .unwrap_or_else(|| serde_json::Value::String("on-request".to_string()));
+        let force_external_sandbox = self.resolve_external_sandbox_mode().await;
+        let sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
+        let sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
+        let requested_runtime = ThreadRuntime {
+            cwd: cwd.to_string(),
+            model_id: model.to_string(),
+            approval_policy: approval_policy.clone(),
+            sandbox_policy: sandbox_policy.clone(),
+            reasoning_effort: sandbox.reasoning_effort.clone(),
+            service_tier: sandbox.service_tier.clone(),
+            personality: sandbox.personality.clone(),
+            output_schema: sandbox.output_schema.clone(),
+        };
+
+        let response = request_with_fallback(
+            transport.as_ref(),
+            THREAD_FORK_METHODS,
+            serde_json::json!({
+                "threadId": engine_thread_id,
+                "cwd": cwd,
+                "model": model,
+                "approvalPolicy": approval_policy,
+                "sandbox": sandbox_mode,
+                "serviceTier": sandbox.service_tier,
+            }),
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to fork codex thread")?;
+
+        let new_engine_thread_id = extract_thread_id(&response)
+            .ok_or_else(|| anyhow::anyhow!("missing thread id in thread/fork response"))?;
+        let runtime = thread_runtime_from_start_response(
+            &response,
+            &requested_runtime.cwd,
+            &requested_runtime.model_id,
+            &requested_runtime.approval_policy,
+            &requested_runtime.sandbox_policy,
+            requested_runtime.reasoning_effort.clone(),
+            requested_runtime.service_tier.clone(),
+            requested_runtime.personality.clone(),
+            requested_runtime.output_schema.clone(),
+        );
+        self.store_thread_runtime(&new_engine_thread_id, runtime)
+            .await;
+
+        Ok(CodexForkedThread {
+            engine_thread_id: new_engine_thread_id,
+            model_id: extract_any_string(&response, &["model"])
+                .unwrap_or_else(|| model.to_string()),
+            title: extract_thread_title(&response),
+            preview: extract_thread_preview(&response),
+            raw_status: extract_thread_runtime_status_type(&response),
+            active_flags: extract_thread_runtime_active_flags(&response),
+        })
+    }
+
+    pub async fn rollback_thread(
+        &self,
+        engine_thread_id: &str,
+        num_turns: u32,
+    ) -> anyhow::Result<ThreadSyncSnapshot> {
+        let transport = self.ensure_ready_transport().await?;
+        let response = request_with_fallback(
+            transport.as_ref(),
+            THREAD_ROLLBACK_METHODS,
+            serde_json::json!({
+                "threadId": engine_thread_id,
+                "numTurns": num_turns,
+            }),
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to rollback codex thread")?;
+
+        Ok(ThreadSyncSnapshot {
+            title: extract_thread_title(&response),
+            preview: extract_thread_preview(&response),
+            raw_status: extract_thread_runtime_status_type(&response),
+            active_flags: extract_thread_runtime_active_flags(&response),
+        })
+    }
+
+    pub async fn compact_thread(&self, engine_thread_id: &str) -> anyhow::Result<()> {
+        let transport = self.ensure_ready_transport().await?;
+        request_with_fallback(
+            transport.as_ref(),
+            THREAD_COMPACT_START_METHODS,
+            serde_json::json!({
+                "threadId": engine_thread_id,
+            }),
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to start codex thread compaction")?;
+
+        Ok(())
+    }
+
+    pub async fn start_review(
+        &self,
+        source_engine_thread_id: &str,
+        target: serde_json::Value,
+        delivery: Option<&str>,
+        event_tx: mpsc::Sender<EngineEvent>,
+        cancellation: CancellationToken,
+        started_tx: oneshot::Sender<CodexReviewStarted>,
+    ) -> Result<(), anyhow::Error> {
+        let transport = self.ensure_ready_transport().await?;
+        if let Some(message) = self.unsupported_external_auth_tokens_message().await {
+            return Err(anyhow::anyhow!(message));
+        }
+
+        let mut mapper = TurnEventMapper::default();
+        let mut subscription = transport.subscribe();
+        let source_thread_id = source_engine_thread_id.to_string();
+        let mut active_thread_id = source_thread_id.clone();
+        let requested_delivery = delivery.map(str::to_string);
+
+        let transport_for_rate_limits = transport.clone();
+        let rate_limits_task = tokio::spawn(async move {
+            request_with_fallback(
+                transport_for_rate_limits.as_ref(),
+                ACCOUNT_RATE_LIMITS_READ_METHODS,
+                serde_json::Value::Null,
+                Duration::from_secs(5),
+            )
+            .await
+        });
+
+        let transport_for_review = transport.clone();
+        let source_thread_id_for_review = source_thread_id.clone();
+        let target_for_review = target.clone();
+        let review_task = tokio::spawn(async move {
+            request_with_fallback(
+                transport_for_review.as_ref(),
+                REVIEW_START_METHODS,
+                serde_json::json!({
+                    "threadId": source_thread_id_for_review,
+                    "target": target_for_review,
+                    "delivery": requested_delivery,
+                }),
+                TURN_REQUEST_TIMEOUT,
+            )
+            .await
+        });
+
+        let mut review_task = review_task;
+        let mut rate_limits_task = rate_limits_task;
+        let mut rate_limits_done = false;
+        let mut turn_request_done = false;
+        let mut completion_seen = false;
+        let mut expected_turn_id: Option<String> = None;
+        let mut completion_last_progress_at: Option<Instant> = None;
+        let mut started_tx = Some(started_tx);
+
+        while !completion_seen || !turn_request_done {
+            tokio::select! {
+              response = &mut rate_limits_task, if !rate_limits_done => {
+                rate_limits_done = true;
+                match response {
+                  Ok(Ok(snapshot)) => {
+                    if let Some(event) = mapper.map_rate_limits_snapshot(&snapshot) {
+                      event_tx.send(event).await.ok();
+                    }
+                  }
+                  Ok(Err(error)) => {
+                    log::debug!("account/rateLimits/read unavailable: {error}");
+                  }
+                  Err(error) => {
+                    log::debug!("account/rateLimits/read task join failed: {error}");
+                  }
+                }
+              }
+              _ = cancellation.cancelled() => {
+                review_task.abort();
+                drop(started_tx.take());
+                self
+                  .interrupt(&active_thread_id)
+                  .await
+                  .context("failed to interrupt codex review on cancellation")?;
+                return Ok(());
+              }
+              response = &mut review_task, if !turn_request_done => {
+                turn_request_done = true;
+                let result = match response {
+                  Ok(Ok(result)) => result,
+                  Ok(Err(error)) => {
+                    if is_auth_related_error(&error.to_string()) {
+                      self
+                        .invalidate_transport(
+                          "resetting codex transport after auth failure while starting review",
+                        )
+                        .await;
+                    }
+                    drop(started_tx.take());
+                    return Err(error).context("review/start request failed");
+                  }
+                  Err(error) => {
+                    drop(started_tx.take());
+                    return Err(anyhow::Error::from(error).context("review/start task join failed"));
+                  }
+                };
+
+                let review_thread_id = match extract_any_string(&result, &["reviewThreadId", "review_thread_id"]) {
+                    Some(id) => id,
+                    None => {
+                        drop(started_tx.take());
+                        return Err(anyhow::anyhow!("missing review thread id in review/start response"));
+                    }
+                };
+                active_thread_id = review_thread_id.clone();
+                if let Some(started_tx) = started_tx.take() {
+                    let _ = started_tx.send(CodexReviewStarted {
+                        review_thread_id: review_thread_id.clone(),
+                    });
+                }
+
+                if let Some(turn_id) = extract_turn_id(&result) {
+                  if expected_turn_id.is_none() {
+                    expected_turn_id = Some(turn_id.clone());
+                  }
+                  self.set_active_turn(&active_thread_id, &turn_id).await;
+                }
+
+                for event in mapper.map_turn_result(&result) {
+                  if event_indicates_sandbox_denial(&event) {
+                    self.force_external_sandbox_for_thread(&active_thread_id).await;
+                  }
+                  if event_indicates_auth_failure(&event) {
+                    self
+                      .invalidate_transport(
+                        "resetting codex transport after auth failure during review result",
+                      )
+                      .await;
+                  }
+                  if matches!(event, EngineEvent::TurnCompleted { .. }) {
+                    completion_seen = true;
+                    self.clear_active_turn(&active_thread_id).await;
+                  }
+                  event_tx.send(event).await.ok();
+                }
+
+                if !completion_seen {
+                  completion_last_progress_at = Some(Instant::now());
+                }
+              }
+              incoming = subscription.recv() => {
+                match incoming {
+                  Ok(IncomingMessage::Notification { method, params }) => {
+                    if !belongs_to_thread(&params, &active_thread_id) {
+                      continue;
+                    }
+                    if !belongs_to_turn(&params, expected_turn_id.as_deref()) {
+                      continue;
+                    }
+
+                    let normalized_method = normalize_method(&method);
+                    if normalized_method == "turn/started" {
+                      if let Some(turn_id) = extract_turn_id(&params) {
+                        if expected_turn_id.is_none() {
+                          expected_turn_id = Some(turn_id.clone());
+                        }
+                        self.set_active_turn(&active_thread_id, &turn_id).await;
+                      }
+                    } else if normalized_method == "turn/completed" {
+                      self.clear_active_turn(&active_thread_id).await;
+                    }
+                    if turn_request_done && !completion_seen {
+                      completion_last_progress_at = Some(Instant::now());
+                    }
+
+                    let mapped_events = mapper.map_notification(&method, &params);
+                    if mapped_events.is_empty()
+                        && !is_known_codex_notification_method(&normalized_method)
+                    {
+                        log::debug!(
+                            "codex notification not mapped during review: method={method}, normalized={normalized_method}, params_keys={:?}",
+                            params.as_object().map(|object| object.keys().collect::<Vec<_>>())
+                        );
+                    }
+
+                    for event in mapped_events {
+                      if event_indicates_sandbox_denial(&event) {
+                        self.force_external_sandbox_for_thread(&active_thread_id).await;
+                      }
+                      if event_indicates_auth_failure(&event) {
+                        self
+                          .invalidate_transport(
+                            "resetting codex transport after auth failure during streamed review event",
+                          )
+                          .await;
+                      }
+                      if matches!(event, EngineEvent::TurnCompleted { .. }) {
+                        completion_seen = true;
+                        self.clear_active_turn(&active_thread_id).await;
+                      }
+                      event_tx.send(event).await.ok();
+                    }
+                  }
+                  Ok(IncomingMessage::Request { id, raw_id, method, params }) => {
+                    log::debug!(
+                      "codex review server request: method={method}, id={id}, raw_id={raw_id}, params_keys={:?}",
+                      params.as_object().map(|o| o.keys().collect::<Vec<_>>())
+                    );
+                    if !belongs_to_thread(&params, &active_thread_id) {
+                      log::warn!("codex review server request dropped by belongs_to_thread: method={method}");
+                      continue;
+                    }
+                    if !belongs_to_turn(&params, expected_turn_id.as_deref()) {
+                      log::warn!("codex review server request dropped by belongs_to_turn: method={method}");
+                      continue;
+                    }
+                    let normalized_method = normalize_method(&method);
+                    if method_signature(&method) == "accountchatgptauthtokensrefresh" {
+                        let reason = extract_any_string(&params, &["reason"]);
+                        let previous_account_id =
+                            extract_any_string(&params, &["previousAccountId", "previous_account_id"]);
+                        let message = unsupported_external_auth_tokens_message(
+                            previous_account_id.as_deref(),
+                            reason.as_deref(),
+                        );
+                        log::warn!(
+                            "codex requested external ChatGPT token refresh during review, but Panes does not manage chatgptAuthTokens mode"
+                        );
+                        self
+                            .publish_external_auth_tokens_warning(
+                                previous_account_id.clone(),
+                                reason.clone(),
+                            )
+                            .await;
+                        event_tx
+                            .send(EngineEvent::Error {
+                                message,
+                                recoverable: true,
+                            })
+                            .await
+                            .ok();
+                        transport
+                        .respond_error(
+                          &raw_id,
+                          -32601,
+                          "`account/chatgptAuthTokens/refresh` is not supported by Panes",
+                          Some(serde_json::json!({
+                            "method": method,
+                            "normalizedMethod": normalized_method,
+                          })),
+                        )
+                        .await
+                        .ok();
+                      continue;
+                    }
+
+                    if let Some(approval) = mapper.map_server_request(&id, &method, &params) {
+                      log::info!(
+                        "codex review approval request mapped: approval_id={}, method={method}",
+                        approval.approval_id
+                      );
+                      if turn_request_done && !completion_seen {
+                        completion_last_progress_at = Some(Instant::now());
+                      }
+                      self
+                        .register_approval_request(
+                          &approval.approval_id,
+                          &raw_id,
+                          &approval.server_method,
+                        )
+                        .await;
+                      event_tx.send(approval.event).await.ok();
+                    } else {
+                      log::warn!(
+                        "codex review server request not mapped: method={method}, normalized={normalized_method}"
+                      );
+                      let (message, recoverable) = (
+                        format!("Unsupported Codex server request method `{method}`"),
+                        true,
+                      );
+
+                      event_tx
+                        .send(EngineEvent::Error {
+                          message: message.clone(),
+                          recoverable,
+                        })
+                        .await
+                        .ok();
+
+                      transport
+                        .respond_error(
+                          &raw_id,
+                          -32601,
+                          &message,
+                          Some(serde_json::json!({
+                            "method": method,
+                            "normalizedMethod": normalized_method,
+                          })),
+                        )
+                        .await
+                        .ok();
+                    }
+                  }
+                  Ok(IncomingMessage::Response(_)) => {}
+                  Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!("codex review consumer lagged, skipped {skipped} messages");
+                  }
+                  Err(broadcast::error::RecvError::Closed) => {
+                    break;
+                  }
+                }
+              }
+              _ = tokio::time::sleep(Duration::from_millis(200)), if turn_request_done && !completion_seen => {
+                if let Some(last_progress_at) = completion_last_progress_at {
+                  if Instant::now().duration_since(last_progress_at) >= TURN_COMPLETION_INACTIVITY_TIMEOUT {
+                    log::warn!(
+                      "codex review completion inactivity timeout reached for thread {active_thread_id}; synthesizing completion"
+                    );
+                    break;
+                  }
+                }
+              }
+            }
+        }
+
+        if !rate_limits_done {
+            rate_limits_task.abort();
+        }
+
+        if !completion_seen {
+            event_tx
+                .send(EngineEvent::Error {
+                    message: "Timed out waiting for `turn/completed` from codex review".to_string(),
+                    recoverable: false,
+                })
+                .await
+                .ok();
+            event_tx
+                .send(EngineEvent::TurnCompleted {
+                    token_usage: None,
+                    status: TurnCompletionStatus::Failed,
+                })
+                .await
+                .ok();
+        }
+
+        self.clear_active_turn(&active_thread_id).await;
+        Ok(())
+    }
+
     pub async fn health_report(&self) -> CodexHealthReport {
         let resolution = resolve_codex_executable().await;
         let version_result = self.probe_version_from_resolution(&resolution).await;
@@ -796,13 +1492,22 @@ impl CodexEngine {
 
     pub async fn list_models_runtime(&self) -> Vec<ModelInfo> {
         match self.fetch_models_from_server().await {
-            Ok(models) if !models.is_empty() => models,
-            Ok(_) => self.models(),
+            Ok(models) if !models.is_empty() => {
+                self.store_runtime_model_cache(models.clone()).await;
+                models
+            }
+            Ok(_) => self.runtime_model_fallback().await,
             Err(error) => {
                 log::warn!("failed to load codex models via model/list, using fallback: {error}");
-                self.models()
+                self.runtime_model_fallback().await
             }
         }
+    }
+
+    pub async fn runtime_model_fallback(&self) -> Vec<ModelInfo> {
+        self.runtime_model_cache_snapshot()
+            .await
+            .unwrap_or_else(|| self.models())
     }
 
     pub async fn uses_external_sandbox(&self) -> bool {
@@ -894,6 +1599,63 @@ impl CodexEngine {
         extract_thread_preview(&result)
     }
 
+    pub async fn list_threads(
+        &self,
+        search_term: Option<&str>,
+        archived: Option<bool>,
+    ) -> anyhow::Result<Vec<CodexRemoteThreadSummary>> {
+        let transport = self.ensure_ready_transport().await?;
+        let search_term = search_term.map(str::to_string);
+
+        let threads =
+            fetch_paginated_data(transport.as_ref(), THREAD_LIST_METHODS, move |cursor| {
+                serde_json::json!({
+                  "cursor": cursor,
+                  "limit": 100,
+                  "searchTerm": search_term,
+                  "archived": archived,
+                  "sortKey": "updated_at",
+                  "sourceKinds": ["appServer"],
+                })
+            })
+            .await
+            .context("failed to list codex threads")?;
+
+        Ok(threads
+            .iter()
+            .filter_map(|thread| {
+                extract_codex_remote_thread_summary(thread, archived == Some(true))
+            })
+            .collect())
+    }
+
+    pub async fn read_remote_thread(
+        &self,
+        engine_thread_id: &str,
+    ) -> anyhow::Result<CodexRemoteThreadSummary> {
+        let transport = self.ensure_ready_transport().await?;
+        let params = serde_json::json!({
+          "threadId": engine_thread_id,
+          "includeTurns": false,
+        });
+
+        let response = request_with_fallback(
+            transport.as_ref(),
+            THREAD_READ_METHODS,
+            params,
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to read codex thread")?;
+
+        extract_codex_remote_thread_summary(&response, false)
+            .ok_or_else(|| anyhow::anyhow!("codex thread response missing remote thread summary"))
+    }
+
+    pub async fn unarchive_remote_thread(&self, engine_thread_id: &str) -> anyhow::Result<()> {
+        self.unarchive_thread(engine_thread_id).await
+    }
+
     pub async fn read_thread_sync_snapshot(
         &self,
         engine_thread_id: &str,
@@ -947,7 +1709,7 @@ impl CodexEngine {
 
     async fn fetch_models_from_server(&self) -> anyhow::Result<Vec<ModelInfo>> {
         if !self.is_available().await {
-            return Ok(self.models());
+            return Ok(Vec::new());
         }
 
         let transport = self.ensure_ready_transport().await?;
@@ -955,7 +1717,7 @@ impl CodexEngine {
         let mut cursor: Option<String> = None;
         let mut output = Vec::new();
 
-        loop {
+        for _ in 0..PAGINATION_MAX_PAGES {
             let params = serde_json::json!({
               "includeHidden": true,
               "limit": 200,
@@ -1182,6 +1944,74 @@ impl CodexEngine {
         state.protocol_diagnostics = Some(diagnostics);
     }
 
+    async fn resolve_turn_plan_mode_activation(&self, input: &TurnInput) -> PlanModeActivation {
+        if !input.plan_mode {
+            return PlanModeActivation::Disabled;
+        }
+
+        let cached_diagnostics = {
+            let state = self.state.lock().await;
+            state.protocol_diagnostics.clone()
+        };
+
+        if let Some(diagnostics) = cached_diagnostics.as_ref() {
+            if !diagnostics.stale {
+                if let Some(activation) = plan_mode_activation_from_diagnostics(Some(diagnostics)) {
+                    return activation;
+                }
+            }
+        }
+
+        let refreshed_diagnostics = self.protocol_diagnostics_snapshot().await;
+        plan_mode_activation_from_diagnostics(refreshed_diagnostics.as_ref())
+            .or_else(|| plan_mode_activation_from_diagnostics(cached_diagnostics.as_ref()))
+            .unwrap_or(PlanModeActivation::NativeCollaboration)
+    }
+
+    async fn unsupported_external_auth_tokens_message(&self) -> Option<String> {
+        let state = self.state.lock().await;
+        let auth_mode = state
+            .protocol_diagnostics
+            .as_ref()
+            .and_then(|diagnostics| diagnostics.account.as_ref())
+            .and_then(|account| account.auth_mode.as_deref());
+
+        if auth_mode == Some("chatgptAuthTokens") {
+            Some(unsupported_external_auth_tokens_message(None, None))
+        } else {
+            None
+        }
+    }
+
+    async fn publish_external_auth_tokens_warning(
+        &self,
+        previous_account_id: Option<String>,
+        reason: Option<String>,
+    ) {
+        let diagnostics = update_protocol_diagnostics_with_account_update(
+            self.state.clone(),
+            &serde_json::json!({
+                "authMode": "chatgptAuthTokens",
+            }),
+        )
+        .await;
+
+        if let Some(diagnostics) = diagnostics {
+            let _ = self
+                .runtime_events
+                .send(CodexRuntimeEvent::DiagnosticsUpdated {
+                    diagnostics,
+                    toast: Some(RuntimeToastDto {
+                        variant: "warning".to_string(),
+                        message: unsupported_external_auth_tokens_message(
+                            previous_account_id.as_deref(),
+                            reason.as_deref(),
+                        ),
+                    }),
+                });
+        }
+    }
+
     async fn ensure_runtime_monitor_started(&self, transport: &Arc<CodexTransport>) {
         let transport_tag = Arc::as_ptr(transport) as usize;
         {
@@ -1212,6 +2042,26 @@ impl CodexEngine {
                     Ok(IncomingMessage::Notification { method, params }) => {
                         let normalized_method = normalize_method(&method);
                         match normalized_method.as_str() {
+                            "thread/started" => {
+                                let thread = params.get("thread").unwrap_or(&params);
+                                if let Some(engine_thread_id) =
+                                    extract_any_string(thread, &["id", "threadId", "thread_id"])
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::ThreadSnapshotUpdated {
+                                            engine_thread_id,
+                                            thread_name: extract_thread_title(&params),
+                                            status_type: extract_thread_runtime_status_type(
+                                                &params,
+                                            ),
+                                            active_flags: extract_thread_runtime_active_flags(
+                                                &params,
+                                            ),
+                                            preview: extract_thread_preview(&params),
+                                        },
+                                    );
+                                }
+                            }
                             "thread/status/changed" => {
                                 if let Some(engine_thread_id) =
                                     extract_any_string(&params, &["threadId", "thread_id"])
@@ -1234,6 +2084,41 @@ impl CodexEngine {
                                             engine_thread_id,
                                             status_type,
                                             active_flags,
+                                        },
+                                    );
+                                }
+                            }
+                            "thread/archived" => {
+                                if let Some(engine_thread_id) =
+                                    extract_any_string(&params, &["threadId", "thread_id"])
+                                {
+                                    let _ =
+                                        runtime_events.send(CodexRuntimeEvent::ThreadArchived {
+                                            engine_thread_id,
+                                        });
+                                }
+                            }
+                            "thread/unarchived" => {
+                                if let Some(engine_thread_id) =
+                                    extract_any_string(&params, &["threadId", "thread_id"])
+                                {
+                                    let _ =
+                                        runtime_events.send(CodexRuntimeEvent::ThreadUnarchived {
+                                            engine_thread_id,
+                                        });
+                                }
+                            }
+                            "thread/closed" => {
+                                if let Some(engine_thread_id) =
+                                    extract_any_string(&params, &["threadId", "thread_id"])
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::ThreadSnapshotUpdated {
+                                            engine_thread_id,
+                                            thread_name: None,
+                                            status_type: Some("notLoaded".to_string()),
+                                            active_flags: Vec::new(),
+                                            preview: None,
                                         },
                                     );
                                 }
@@ -1268,12 +2153,20 @@ impl CodexEngine {
                                 }
                             }
                             "account/login/completed" => {
+                                let updated = update_protocol_diagnostics_with_account_login(
+                                    state.clone(),
+                                    &params,
+                                )
+                                .await;
                                 if let Some(diagnostics) =
-                                    update_protocol_diagnostics_with_account_login(
+                                    refresh_protocol_diagnostics_with_fallback(
+                                        transport.as_ref(),
                                         state.clone(),
-                                        &params,
+                                        "after account/login/completed",
+                                        true,
                                     )
                                     .await
+                                    .or(updated)
                                 {
                                     let _ = runtime_events.send(
                                         CodexRuntimeEvent::DiagnosticsUpdated {
@@ -1284,12 +2177,20 @@ impl CodexEngine {
                                 }
                             }
                             "mcpserver/oauthlogin/completed" => {
+                                let updated = update_protocol_diagnostics_with_mcp_oauth(
+                                    state.clone(),
+                                    &params,
+                                )
+                                .await;
                                 if let Some(diagnostics) =
-                                    update_protocol_diagnostics_with_mcp_oauth(
+                                    refresh_protocol_diagnostics_with_fallback(
+                                        transport.as_ref(),
                                         state.clone(),
-                                        &params,
+                                        "after mcpserver/oauthlogin/completed",
+                                        true,
                                     )
                                     .await
+                                    .or(updated)
                                 {
                                     let _ = runtime_events.send(
                                         CodexRuntimeEvent::DiagnosticsUpdated {
@@ -1299,26 +2200,101 @@ impl CodexEngine {
                                     );
                                 }
                             }
-                            "app/list/updated" => {
-                                match refresh_protocol_diagnostics_for_runtime_monitor(
+                            "account/updated" => {
+                                let _ = refresh_protocol_diagnostics_with_fallback(
                                     transport.as_ref(),
                                     state.clone(),
+                                    "after account/updated",
+                                    false,
                                 )
-                                .await
+                                .await;
+                                if let Some(diagnostics) =
+                                    update_protocol_diagnostics_with_account_update(
+                                        state.clone(),
+                                        &params,
+                                    )
+                                    .await
                                 {
-                                    Ok(diagnostics) => {
-                                        let _ = runtime_events.send(
-                                            CodexRuntimeEvent::DiagnosticsUpdated {
-                                                diagnostics,
-                                                toast: None,
-                                            },
-                                        );
-                                    }
-                                    Err(error) => {
-                                        log::debug!(
-                                            "failed to refresh codex diagnostics after app/list update: {error}"
-                                        );
-                                    }
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::DiagnosticsUpdated {
+                                            diagnostics,
+                                            toast: build_account_updated_toast(&params),
+                                        },
+                                    );
+                                }
+                            }
+                            "skills/changed" | "app/list/updated" => {
+                                if let Some(diagnostics) =
+                                    refresh_protocol_diagnostics_with_fallback(
+                                        transport.as_ref(),
+                                        state.clone(),
+                                        &format!("after {normalized_method}"),
+                                        false,
+                                    )
+                                    .await
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::DiagnosticsUpdated {
+                                            diagnostics,
+                                            toast: None,
+                                        },
+                                    );
+                                }
+                            }
+                            "thread/realtime/started"
+                            | "thread/realtime/closed"
+                            | "thread/realtime/error"
+                            | "thread/realtime/itemadded"
+                            | "thread/realtime/outputaudio/delta"
+                            | "thread/realtime/outputaudiodelta" => {
+                                if let Some(diagnostics) =
+                                    update_protocol_diagnostics_with_thread_realtime(
+                                        state.clone(),
+                                        normalized_method.as_str(),
+                                        &params,
+                                    )
+                                    .await
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::DiagnosticsUpdated {
+                                            diagnostics,
+                                            toast: None,
+                                        },
+                                    );
+                                }
+                            }
+                            "windows/worldwritablewarning" => {
+                                if let Some(diagnostics) =
+                                    update_protocol_diagnostics_with_windows_world_writable_warning(
+                                        state.clone(),
+                                        &params,
+                                    )
+                                    .await
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::DiagnosticsUpdated {
+                                            diagnostics,
+                                            toast: build_windows_world_writable_warning_toast(
+                                                &params,
+                                            ),
+                                        },
+                                    );
+                                }
+                            }
+                            "windowssandbox/setupcompleted" | "windows/sandboxsetup/completed" => {
+                                if let Some(diagnostics) =
+                                    update_protocol_diagnostics_with_windows_sandbox_setup(
+                                        state.clone(),
+                                        &params,
+                                    )
+                                    .await
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::DiagnosticsUpdated {
+                                            diagnostics,
+                                            toast: build_windows_sandbox_setup_toast(&params),
+                                        },
+                                    );
                                 }
                             }
                             "serverrequest/resolved" => {
@@ -1333,6 +2309,9 @@ impl CodexEngine {
                                     {
                                         log::debug!(
                                             "codex server request resolved approval: approval_id={approval_id}"
+                                        );
+                                        let _ = runtime_events.send(
+                                            CodexRuntimeEvent::ApprovalResolved { approval_id },
                                         );
                                     } else {
                                         log::debug!(
@@ -1524,26 +2503,32 @@ impl CodexEngine {
             .insert(engine_thread_id.to_string(), runtime);
     }
 
+    async fn store_runtime_model_cache(&self, models: Vec<ModelInfo>) {
+        let mut state = self.state.lock().await;
+        state.runtime_model_cache = Some(models);
+    }
+
+    async fn runtime_model_cache_snapshot(&self) -> Option<Vec<ModelInfo>> {
+        let state = self.state.lock().await;
+        state.runtime_model_cache.clone()
+    }
+
     async fn thread_runtime(&self, engine_thread_id: &str) -> Option<ThreadRuntime> {
         let state = self.state.lock().await;
         state.thread_runtimes.get(engine_thread_id).cloned()
     }
 
-    async fn can_reuse_live_thread(
-        &self,
-        engine_thread_id: &str,
-        requested_runtime: &ThreadRuntime,
-    ) -> bool {
-        let (transport, initialized, runtime_matches) = {
+    async fn can_reuse_live_thread(&self, engine_thread_id: &str) -> bool {
+        let (transport, initialized, known_thread) = {
             let state = self.state.lock().await;
             (
                 state.transport.clone(),
                 state.initialized,
-                state.thread_runtimes.get(engine_thread_id) == Some(requested_runtime),
+                state.thread_runtimes.contains_key(engine_thread_id),
             )
         };
 
-        if !initialized || !runtime_matches {
+        if !initialized || !known_thread {
             return false;
         }
 
@@ -1578,6 +2563,14 @@ struct CodexModel {
     #[serde(default)]
     upgrade: Option<String>,
     #[serde(default)]
+    availability_nux: Option<CodexModelAvailabilityNux>,
+    #[serde(default)]
+    upgrade_info: Option<CodexModelUpgradeInfo>,
+    #[serde(default)]
+    input_modalities: Vec<String>,
+    #[serde(default)]
+    supports_personality: Option<bool>,
+    #[serde(default)]
     default_reasoning_effort: Option<String>,
     #[serde(default)]
     supported_reasoning_efforts: Vec<CodexReasoningEffortOption>,
@@ -1590,6 +2583,24 @@ struct CodexReasoningEffortOption {
     description: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexModelAvailabilityNux {
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexModelUpgradeInfo {
+    model: String,
+    #[serde(default)]
+    upgrade_copy: Option<String>,
+    #[serde(default)]
+    model_link: Option<String>,
+    #[serde(default)]
+    migration_markdown: Option<String>,
+}
+
 fn map_codex_model(value: CodexModel) -> ModelInfo {
     ModelInfo {
         id: value.id.clone(),
@@ -1598,6 +2609,21 @@ fn map_codex_model(value: CodexModel) -> ModelInfo {
         hidden: value.hidden.unwrap_or(false),
         is_default: value.is_default.unwrap_or(false),
         upgrade: value.upgrade,
+        availability_nux: value.availability_nux.map(|nux| ModelAvailabilityNux {
+            message: nux.message,
+        }),
+        upgrade_info: value.upgrade_info.map(|info| ModelUpgradeInfo {
+            model: info.model,
+            upgrade_copy: info.upgrade_copy,
+            model_link: info.model_link,
+            migration_markdown: info.migration_markdown,
+        }),
+        input_modalities: if value.input_modalities.is_empty() {
+            vec!["text".to_string(), "image".to_string()]
+        } else {
+            value.input_modalities
+        },
+        supports_personality: value.supports_personality.unwrap_or(false),
         default_reasoning_effort: value
             .default_reasoning_effort
             .unwrap_or_else(|| "medium".to_string()),
@@ -1907,16 +2933,19 @@ async fn detect_codex_via_login_shell() -> Option<PathBuf> {
     }
 }
 
-async fn request_turn_start_with_plan_fallback(
+async fn request_turn_start(
     transport: &CodexTransport,
     thread_id: &str,
     runtime: Option<ThreadRuntime>,
     input: TurnInput,
+    plan_mode_activation: PlanModeActivation,
 ) -> anyhow::Result<serde_json::Value> {
     let runtime_ref = runtime.as_ref();
+    let attempts_native_plan_mode =
+        should_attempt_native_plan_mode(plan_mode_activation, runtime_ref);
 
     let primary_params =
-        build_turn_start_params(thread_id, runtime_ref, &input, input.plan_mode, false).await?;
+        build_turn_start_params(thread_id, runtime_ref, &input, plan_mode_activation).await?;
     match request_with_fallback(
         transport,
         TURN_START_METHODS,
@@ -1927,16 +2956,24 @@ async fn request_turn_start_with_plan_fallback(
     {
         Ok(result) => Ok(result),
         Err(error) => {
-            if !input.plan_mode || !is_plan_mode_protocol_error(&error.to_string()) {
-                return Err(error);
+            if !input.plan_mode
+                || !attempts_native_plan_mode
+                || !is_plan_mode_protocol_error(&error.to_string())
+            {
+                return Err(error).context("codex turn/start request failed");
             }
 
             log::warn!(
-                "plan mode protocol hints rejected by codex app-server; retrying with prompt fallback: {error}"
+                "native codex plan mode rejected by app-server; retrying with prompt-guided fallback: {error}"
             );
 
-            let fallback_params =
-                build_turn_start_params(thread_id, runtime_ref, &input, false, true).await?;
+            let fallback_params = build_turn_start_params(
+                thread_id,
+                runtime_ref,
+                &input,
+                PlanModeActivation::PromptPrefix,
+            )
+            .await?;
             request_with_fallback(
                 transport,
                 TURN_START_METHODS,
@@ -1944,21 +2981,43 @@ async fn request_turn_start_with_plan_fallback(
                 TURN_REQUEST_TIMEOUT,
             )
             .await
-            .context("plan mode prompt fallback failed")
+            .context("codex turn/start request failed after plan-mode fallback")
         }
     }
+}
+
+async fn request_turn_steer(
+    transport: &CodexTransport,
+    thread_id: &str,
+    expected_turn_id: &str,
+    input: &TurnInput,
+) -> anyhow::Result<serde_json::Value> {
+    let params = serde_json::json!({
+      "threadId": thread_id,
+      "expectedTurnId": expected_turn_id,
+      "input": build_turn_input_items(input, false).await?,
+    });
+
+    request_with_fallback(transport, TURN_STEER_METHODS, params, TURN_REQUEST_TIMEOUT)
+        .await
+        .context("codex turn/steer request failed")
 }
 
 async fn build_turn_start_params(
     thread_id: &str,
     runtime: Option<&ThreadRuntime>,
     input: &TurnInput,
-    include_plan_protocol_hints: bool,
-    force_plan_prompt_prefix: bool,
+    plan_mode_activation: PlanModeActivation,
 ) -> anyhow::Result<serde_json::Value> {
+    let use_native_plan_mode = should_attempt_native_plan_mode(plan_mode_activation, runtime);
     let mut turn_params = serde_json::json!({
       "threadId": thread_id,
-      "input": build_turn_input_items(input, force_plan_prompt_prefix).await?,
+      "input": build_turn_input_items(
+          input,
+          matches!(plan_mode_activation, PlanModeActivation::PromptPrefix)
+              || (input.plan_mode && !use_native_plan_mode),
+      )
+      .await?,
     });
 
     if let Some(runtime) = runtime {
@@ -1969,7 +3028,7 @@ async fn build_turn_start_params(
             );
             params.insert(
                 "approvalPolicy".to_string(),
-                serde_json::Value::String(runtime.approval_policy.clone()),
+                runtime.approval_policy.clone(),
             );
             params.insert("sandboxPolicy".to_string(), runtime.sandbox_policy.clone());
             params.insert(
@@ -1982,14 +3041,29 @@ async fn build_turn_start_params(
                     serde_json::Value::String(effort.clone()),
                 );
             }
-            if include_plan_protocol_hints && input.plan_mode {
+            if let Some(service_tier) = runtime.service_tier.as_ref() {
+                params.insert(
+                    "serviceTier".to_string(),
+                    serde_json::Value::String(service_tier.clone()),
+                );
+            }
+            if let Some(personality) = runtime.personality.as_ref() {
+                params.insert(
+                    "personality".to_string(),
+                    serde_json::Value::String(personality.clone()),
+                );
+            }
+            if let Some(output_schema) = runtime.output_schema.as_ref() {
+                params.insert("outputSchema".to_string(), output_schema.clone());
+            }
+            if use_native_plan_mode {
                 if let Some(collaboration_mode) = plan_mode_protocol_payload(runtime) {
                     params.insert("collaborationMode".to_string(), collaboration_mode);
+                    params.insert(
+                        "summary".to_string(),
+                        serde_json::Value::String("detailed".to_string()),
+                    );
                 }
-                params.insert(
-                    "summary".to_string(),
-                    serde_json::Value::String("detailed".to_string()),
-                );
             }
         }
     }
@@ -2001,18 +3075,41 @@ async fn build_turn_input_items(
     input: &TurnInput,
     force_plan_prompt_prefix: bool,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
-    let message = if force_plan_prompt_prefix && input.plan_mode {
-        format!("{}\n\n{}", PLAN_MODE_PROMPT_PREFIX, input.message)
+    let base_items = if input.input_items.is_empty() {
+        vec![TurnInputItem::Text {
+            text: input.message.clone(),
+        }]
     } else {
-        input.message.clone()
+        input.input_items.clone()
     };
 
-    let mut items = Vec::with_capacity(1 + input.attachments.len());
-    items.push(serde_json::json!({
-      "type": "text",
-      "text": message,
-      "text_elements": [],
-    }));
+    let text_items = apply_plan_prompt_prefix(base_items, force_plan_prompt_prefix);
+    let mut items = Vec::with_capacity(text_items.len() + input.attachments.len());
+    for item in text_items {
+        match item {
+            TurnInputItem::Text { text } => {
+                items.push(serde_json::json!({
+                  "type": "text",
+                  "text": text,
+                  "text_elements": [],
+                }));
+            }
+            TurnInputItem::Skill { name, path } => {
+                items.push(serde_json::json!({
+                  "type": "skill",
+                  "name": name,
+                  "path": path,
+                }));
+            }
+            TurnInputItem::Mention { name, path } => {
+                items.push(serde_json::json!({
+                  "type": "mention",
+                  "name": name,
+                  "path": path,
+                }));
+            }
+        }
+    }
 
     for attachment in &input.attachments {
         match attachment_input_kind(attachment) {
@@ -2042,6 +3139,18 @@ async fn build_turn_input_items(
     Ok(items)
 }
 
+fn should_attempt_native_plan_mode(
+    plan_mode_activation: PlanModeActivation,
+    runtime: Option<&ThreadRuntime>,
+) -> bool {
+    matches!(
+        plan_mode_activation,
+        PlanModeActivation::NativeCollaboration
+    ) && runtime
+        .map(|runtime| !runtime.model_id.trim().is_empty())
+        .unwrap_or(false)
+}
+
 fn plan_mode_protocol_payload(runtime: &ThreadRuntime) -> Option<serde_json::Value> {
     if runtime.model_id.trim().is_empty() {
         return None;
@@ -2063,6 +3172,80 @@ fn plan_mode_protocol_payload(runtime: &ThreadRuntime) -> Option<serde_json::Val
       "mode": "plan",
       "settings": settings,
     }))
+}
+
+fn plan_mode_activation_from_diagnostics(
+    diagnostics: Option<&CodexProtocolDiagnosticsDto>,
+) -> Option<PlanModeActivation> {
+    let diagnostics = diagnostics?;
+    let advertises_plan = diagnostics
+        .collaboration_modes
+        .iter()
+        .any(|mode| mode.eq_ignore_ascii_case("plan"));
+    let availability = diagnostics
+        .method_availability
+        .iter()
+        .find(|entry| entry.method == "collaborationMode/list")
+        .map(|entry| entry.status.as_str());
+
+    match availability {
+        Some("available") => Some(if advertises_plan {
+            PlanModeActivation::NativeCollaboration
+        } else {
+            PlanModeActivation::PromptPrefix
+        }),
+        Some("unsupported") => Some(PlanModeActivation::PromptPrefix),
+        Some("error") => None,
+        Some(_) => None,
+        None if !diagnostics.collaboration_modes.is_empty() => Some(if advertises_plan {
+            PlanModeActivation::NativeCollaboration
+        } else {
+            PlanModeActivation::PromptPrefix
+        }),
+        None => None,
+    }
+}
+
+fn apply_plan_prompt_prefix(items: Vec<TurnInputItem>, include_prefix: bool) -> Vec<TurnInputItem> {
+    if !include_prefix {
+        return items;
+    }
+
+    let mut prefixed = Vec::with_capacity(items.len().saturating_add(1));
+    let mut applied = false;
+    for item in items {
+        match item {
+            TurnInputItem::Text { text } if !applied => {
+                let text = if text.is_empty() {
+                    PLAN_MODE_PROMPT_PREFIX.to_string()
+                } else {
+                    format!("{}\n\n{}", PLAN_MODE_PROMPT_PREFIX, text)
+                };
+                prefixed.push(TurnInputItem::Text { text });
+                applied = true;
+            }
+            other => prefixed.push(other),
+        }
+    }
+
+    if !applied {
+        prefixed.insert(
+            0,
+            TurnInputItem::Text {
+                text: PLAN_MODE_PROMPT_PREFIX.to_string(),
+            },
+        );
+    }
+
+    prefixed
+}
+
+fn is_plan_mode_protocol_error(error: &str) -> bool {
+    let value = error.to_lowercase();
+    value.contains("collaborationmode")
+        || value.contains("collaboration_mode")
+        || value.contains("unknown field `collaboration")
+        || (value.contains("unknown field") && value.contains("plan"))
 }
 
 async fn validate_turn_attachments(attachments: &[TurnAttachment]) -> anyhow::Result<()> {
@@ -2234,14 +3417,6 @@ fn truncate_text_to_max_chars(value: &str, max_chars: usize) -> (String, bool) {
     (truncated, true)
 }
 
-fn is_plan_mode_protocol_error(error: &str) -> bool {
-    let value = error.to_lowercase();
-    value.contains("collaborationmode")
-        || value.contains("collaboration_mode")
-        || value.contains("unknown field `collaboration")
-        || (value.contains("unknown field") && value.contains("plan"))
-}
-
 async fn request_with_fallback(
     transport: &CodexTransport,
     methods: &[&str],
@@ -2273,8 +3448,10 @@ fn build_thread_resume_params(
     thread_id: &str,
     model: &str,
     cwd: &str,
-    approval_policy: &str,
+    approval_policy: &serde_json::Value,
     sandbox_mode: &str,
+    service_tier: Option<&str>,
+    personality: Option<&str>,
 ) -> serde_json::Value {
     serde_json::json!({
       "threadId": thread_id,
@@ -2282,6 +3459,8 @@ fn build_thread_resume_params(
       "cwd": cwd,
       "approvalPolicy": approval_policy,
       "sandbox": sandbox_mode,
+      "serviceTier": service_tier,
+      "personality": personality,
       "persistExtendedHistory": false,
     })
 }
@@ -2617,26 +3796,41 @@ fn thread_runtime_from_start_response(
     response: &serde_json::Value,
     fallback_cwd: &str,
     fallback_model: &str,
-    fallback_approval_policy: &str,
+    fallback_approval_policy: &serde_json::Value,
     fallback_sandbox_policy: &serde_json::Value,
     fallback_reasoning_effort: Option<String>,
+    fallback_service_tier: Option<String>,
+    fallback_personality: Option<String>,
+    fallback_output_schema: Option<serde_json::Value>,
 ) -> ThreadRuntime {
     let mut runtime = ThreadRuntime {
         cwd: extract_any_string(response, &["cwd"]).unwrap_or_else(|| fallback_cwd.to_string()),
         model_id: extract_any_string(response, &["model"])
             .unwrap_or_else(|| fallback_model.to_string()),
-        approval_policy: extract_any_string(response, &["approvalPolicy", "approval_policy"])
-            .unwrap_or_else(|| fallback_approval_policy.to_string()),
+        approval_policy: response
+            .get("approvalPolicy")
+            .cloned()
+            .filter(|value| !value.is_null())
+            .unwrap_or_else(|| fallback_approval_policy.clone()),
         sandbox_policy: response
             .get("sandbox")
             .cloned()
             .filter(|value| !value.is_null())
             .unwrap_or_else(|| fallback_sandbox_policy.clone()),
         reasoning_effort: extract_any_string(response, &["reasoningEffort", "reasoning_effort"]),
+        service_tier: extract_any_string(response, &["serviceTier", "service_tier"]),
+        personality: extract_any_string(response, &["personality"]),
+        output_schema: fallback_output_schema,
     };
 
     if runtime.reasoning_effort.is_none() {
         runtime.reasoning_effort = fallback_reasoning_effort;
+    }
+    if runtime.service_tier.is_none() {
+        runtime.service_tier = fallback_service_tier;
+    }
+    if runtime.personality.is_none() {
+        runtime.personality = fallback_personality;
     }
 
     runtime
@@ -2653,6 +3847,9 @@ fn thread_runtime_from_resume_response(
         &requested_runtime.approval_policy,
         &requested_runtime.sandbox_policy,
         requested_runtime.reasoning_effort.clone(),
+        requested_runtime.service_tier.clone(),
+        requested_runtime.personality.clone(),
+        requested_runtime.output_schema.clone(),
     );
 
     // `thread/resume` can echo the previous thread preview, including stale model or effort.
@@ -2662,6 +3859,9 @@ fn thread_runtime_from_resume_response(
     runtime.approval_policy = requested_runtime.approval_policy.clone();
     runtime.sandbox_policy = requested_runtime.sandbox_policy.clone();
     runtime.reasoning_effort = requested_runtime.reasoning_effort.clone();
+    runtime.service_tier = requested_runtime.service_tier.clone();
+    runtime.personality = requested_runtime.personality.clone();
+    runtime.output_schema = requested_runtime.output_schema.clone();
 
     runtime
 }
@@ -2717,6 +3917,69 @@ fn extract_nested_i64(value: &serde_json::Value, path: &[&str]) -> Option<i64> {
         .and_then(|text| text.trim().parse::<i64>().ok())
 }
 
+fn extract_codex_remote_thread_summary(
+    value: &serde_json::Value,
+    archived: bool,
+) -> Option<CodexRemoteThreadSummary> {
+    let thread = value.get("thread").unwrap_or(value);
+    let engine_thread_id = extract_any_string(thread, &["id"])?;
+    let cwd = extract_any_string(thread, &["cwd"])?;
+    let created_at = extract_any_i64(thread, &["createdAt", "created_at"])?;
+    let updated_at = extract_any_i64(thread, &["updatedAt", "updated_at"]).unwrap_or(created_at);
+
+    Some(CodexRemoteThreadSummary {
+        engine_thread_id,
+        title: extract_thread_title(value),
+        preview: extract_thread_preview(value).unwrap_or_default(),
+        cwd,
+        created_at,
+        updated_at,
+        model_provider: extract_any_string(thread, &["modelProvider", "model_provider"])
+            .unwrap_or_else(|| "unknown".to_string()),
+        source_kind: extract_thread_source_kind(thread.get("source")),
+        status_type: extract_thread_runtime_status_type(value)
+            .unwrap_or_else(|| "unknown".to_string()),
+        active_flags: extract_thread_runtime_active_flags(value),
+        archived,
+    })
+}
+
+fn extract_thread_source_kind(value: Option<&serde_json::Value>) -> String {
+    let Some(value) = value else {
+        return "unknown".to_string();
+    };
+
+    if let Some(kind) = value.as_str() {
+        return kind.to_string();
+    }
+
+    let Some(object) = value.as_object() else {
+        return "unknown".to_string();
+    };
+
+    let Some(sub_agent) = object.get("subAgent").or_else(|| object.get("sub_agent")) else {
+        return "unknown".to_string();
+    };
+
+    if let Some(kind) = sub_agent.as_str() {
+        return match kind {
+            "review" => "subAgentReview".to_string(),
+            "compact" => "subAgentCompact".to_string(),
+            _ => "subAgentOther".to_string(),
+        };
+    }
+
+    let Some(sub_agent_object) = sub_agent.as_object() else {
+        return "subAgentOther".to_string();
+    };
+
+    if sub_agent_object.contains_key("thread_spawn") {
+        return "subAgentThreadSpawn".to_string();
+    }
+
+    "subAgentOther".to_string()
+}
+
 fn extract_thread_title(value: &serde_json::Value) -> Option<String> {
     value
         .get("thread")
@@ -2751,6 +4014,41 @@ fn extract_thread_active_flags_from_status_value(value: Option<&serde_json::Valu
         .unwrap_or_default()
 }
 
+fn normalize_auth_mode(value: &str) -> String {
+    match value.trim() {
+        "apiKey" | "apikey" | "api_key" => "apikey".to_string(),
+        "chatgpt" => "chatgpt".to_string(),
+        "chatgptAuthTokens" | "chatgpt_auth_tokens" => "chatgptAuthTokens".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn provider_from_auth_mode(auth_mode: &str) -> String {
+    match auth_mode {
+        "apikey" => "apiKey".to_string(),
+        "chatgptAuthTokens" => "chatgpt".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn unsupported_external_auth_tokens_message(
+    previous_account_id: Option<&str>,
+    reason: Option<&str>,
+) -> String {
+    match (previous_account_id, reason) {
+        (Some(previous_account_id), Some(reason)) => format!(
+            "Codex is using external ChatGPT auth tokens for account `{previous_account_id}` after `{reason}`, but Panes cannot refresh those tokens. Re-authenticate outside Panes or switch Codex to a managed auth mode."
+        ),
+        (Some(previous_account_id), None) => format!(
+            "Codex is using external ChatGPT auth tokens for account `{previous_account_id}`, but Panes cannot refresh those tokens. Re-authenticate outside Panes or switch Codex to a managed auth mode."
+        ),
+        (None, Some(reason)) => format!(
+            "Codex is using external ChatGPT auth tokens after `{reason}`, but Panes cannot refresh those tokens. Re-authenticate outside Panes or switch Codex to a managed auth mode."
+        ),
+        (None, None) => "Codex is using external ChatGPT auth tokens, but Panes cannot refresh those tokens. Re-authenticate outside Panes or switch Codex to a managed auth mode.".to_string(),
+    }
+}
+
 fn extract_thread_runtime_active_flags(value: &serde_json::Value) -> Vec<String> {
     value
         .get("thread")
@@ -2781,6 +4079,8 @@ fn update_method_availability(
     }
 }
 
+const PAGINATION_MAX_PAGES: usize = 50;
+
 async fn fetch_paginated_data(
     transport: &CodexTransport,
     methods: &[&str],
@@ -2789,7 +4089,7 @@ async fn fetch_paginated_data(
     let mut cursor: Option<String> = None;
     let mut out = Vec::new();
 
-    loop {
+    for _page in 0..PAGINATION_MAX_PAGES {
         let response = request_with_fallback(
             transport,
             methods,
@@ -2934,14 +4234,390 @@ async fn fetch_apps(transport: &CodexTransport) -> MethodCallOutcome<Vec<CodexAp
     )
 }
 
+fn map_skill_entries(entries: &[serde_json::Value]) -> Vec<CodexSkillDto> {
+    let mut skills_by_path = HashMap::<String, CodexSkillDto>::new();
+
+    for entry in entries {
+        let Some(skills) = entry.get("skills").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+
+        for skill in skills {
+            let name =
+                extract_any_string(skill, &["name"]).unwrap_or_else(|| "unknown".to_string());
+            let path = extract_any_string(skill, &["path"]).unwrap_or_else(|| name.clone());
+            skills_by_path
+                .entry(path.clone())
+                .or_insert_with(|| CodexSkillDto {
+                    name,
+                    path,
+                    description: extract_any_string(skill, &["description"])
+                        .or_else(|| {
+                            extract_nested_string(skill, &["interface", "shortDescription"])
+                        })
+                        .or_else(|| {
+                            extract_any_string(skill, &["shortDescription", "short_description"])
+                        })
+                        .unwrap_or_default(),
+                    enabled: skill
+                        .get("enabled")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(true),
+                    scope: extract_any_string(skill, &["scope"])
+                        .unwrap_or_else(|| "unknown".to_string()),
+                });
+        }
+    }
+
+    let mut skills: Vec<_> = skills_by_path.into_values().collect();
+    skills.sort_by(|left, right| {
+        left.scope
+            .cmp(&right.scope)
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    skills
+}
+
+async fn fetch_skills(transport: &CodexTransport) -> MethodCallOutcome<Vec<CodexSkillDto>> {
+    let cwds = env::current_dir()
+        .ok()
+        .map(|cwd| vec![cwd.to_string_lossy().to_string()])
+        .unwrap_or_default();
+
+    let response = match request_with_fallback(
+        transport,
+        SKILLS_LIST_METHODS,
+        serde_json::json!({
+            "cwds": cwds,
+            "forceReload": false,
+        }),
+        DEFAULT_TIMEOUT,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => return method_call_outcome_from_error(error),
+    };
+
+    let entries = response
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| response.as_array())
+        .cloned()
+        .unwrap_or_default();
+    MethodCallOutcome::Available(map_skill_entries(&entries))
+}
+
+fn map_plugin_marketplaces(response: &serde_json::Value) -> Vec<CodexPluginMarketplaceDto> {
+    let mut marketplaces = response
+        .get("marketplaces")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| response.as_array())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|marketplace| {
+            let mut plugins = marketplace
+                .get("plugins")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|plugin| CodexPluginDto {
+                    id: extract_any_string(&plugin, &["id"])
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    name: extract_nested_string(&plugin, &["interface", "displayName"])
+                        .or_else(|| extract_any_string(&plugin, &["name"]))
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    enabled: plugin
+                        .get("enabled")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                    installed: plugin
+                        .get("installed")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                    capabilities: plugin
+                        .get("interface")
+                        .and_then(|interface| interface.get("capabilities"))
+                        .and_then(serde_json::Value::as_array)
+                        .map(|capabilities| {
+                            capabilities
+                                .iter()
+                                .filter_map(serde_json::Value::as_str)
+                                .map(str::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                    developer_name: extract_nested_string(&plugin, &["interface", "developerName"])
+                        .or_else(|| {
+                            extract_nested_string(&plugin, &["interface", "developer_name"])
+                        }),
+                    description: extract_nested_string(&plugin, &["interface", "shortDescription"])
+                        .or_else(|| {
+                            extract_nested_string(&plugin, &["interface", "short_description"])
+                        })
+                        .or_else(|| {
+                            extract_nested_string(&plugin, &["interface", "longDescription"])
+                        })
+                        .or_else(|| {
+                            extract_nested_string(&plugin, &["interface", "long_description"])
+                        }),
+                })
+                .collect::<Vec<_>>();
+            plugins.sort_by(|left, right| {
+                left.name
+                    .cmp(&right.name)
+                    .then_with(|| left.id.cmp(&right.id))
+            });
+
+            CodexPluginMarketplaceDto {
+                name: extract_any_string(&marketplace, &["name"])
+                    .unwrap_or_else(|| "unknown".to_string()),
+                path: extract_any_string(&marketplace, &["path"]).unwrap_or_default(),
+                plugins,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    marketplaces.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    marketplaces
+}
+
+async fn fetch_plugin_marketplaces(
+    transport: &CodexTransport,
+) -> MethodCallOutcome<Vec<CodexPluginMarketplaceDto>> {
+    let response = match request_with_fallback(
+        transport,
+        PLUGIN_LIST_METHODS,
+        serde_json::Value::Null,
+        DEFAULT_TIMEOUT,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => return method_call_outcome_from_error(error),
+    };
+
+    MethodCallOutcome::Available(map_plugin_marketplaces(&response))
+}
+
+fn map_mcp_servers(entries: &[serde_json::Value]) -> Vec<CodexMcpServerDto> {
+    let mut servers = entries
+        .iter()
+        .map(|entry| CodexMcpServerDto {
+            name: extract_any_string(entry, &["name"]).unwrap_or_else(|| "unknown".to_string()),
+            auth_status: extract_any_string(entry, &["authStatus", "auth_status"])
+                .unwrap_or_else(|| "unknown".to_string()),
+            tool_count: entry
+                .get("tools")
+                .and_then(serde_json::Value::as_object)
+                .map(|tools| tools.len())
+                .unwrap_or_default(),
+            resource_count: entry
+                .get("resources")
+                .and_then(serde_json::Value::as_array)
+                .map(|resources| resources.len())
+                .unwrap_or_default(),
+            resource_template_count: entry
+                .get("resourceTemplates")
+                .or_else(|| entry.get("resource_templates"))
+                .and_then(serde_json::Value::as_array)
+                .map(|resources| resources.len())
+                .unwrap_or_default(),
+        })
+        .collect::<Vec<_>>();
+    servers.sort_by(|left, right| left.name.cmp(&right.name));
+    servers
+}
+
+async fn fetch_mcp_servers(
+    transport: &CodexTransport,
+) -> MethodCallOutcome<Vec<CodexMcpServerDto>> {
+    let response = match fetch_paginated_data(transport, MCP_SERVER_STATUS_LIST_METHODS, |cursor| {
+        serde_json::json!({
+            "limit": 200,
+            "cursor": cursor,
+        })
+    })
+    .await
+    {
+        Ok(data) => data,
+        Err(error) => return method_call_outcome_from_error(error),
+    };
+
+    MethodCallOutcome::Available(map_mcp_servers(&response))
+}
+
+fn map_account_state(response: &serde_json::Value) -> CodexAccountStateDto {
+    let account = response.get("account").unwrap_or(&serde_json::Value::Null);
+    CodexAccountStateDto {
+        provider: extract_any_string(account, &["type"]).unwrap_or_else(|| "none".to_string()),
+        auth_mode: extract_any_string(account, &["type"]).map(|value| normalize_auth_mode(&value)),
+        email: extract_any_string(account, &["email"]),
+        plan_type: extract_any_string(account, &["planType", "plan_type"]),
+        requires_openai_auth: response
+            .get("requiresOpenaiAuth")
+            .or_else(|| response.get("requires_openai_auth"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+    }
+}
+
+async fn fetch_account_state(
+    transport: &CodexTransport,
+) -> MethodCallOutcome<CodexAccountStateDto> {
+    let response = match request_with_fallback(
+        transport,
+        ACCOUNT_READ_METHODS,
+        serde_json::Value::Null,
+        DEFAULT_TIMEOUT,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => return method_call_outcome_from_error(error),
+    };
+
+    MethodCallOutcome::Available(map_account_state(&response))
+}
+
+fn format_config_layer_source(source: &serde_json::Value) -> String {
+    let source_type =
+        extract_any_string(source, &["type"]).unwrap_or_else(|| "unknown".to_string());
+    match source_type.as_str() {
+        "mdm" => {
+            let domain = extract_any_string(source, &["domain"]);
+            let key = extract_any_string(source, &["key"]);
+            match (domain, key) {
+                (Some(domain), Some(key)) => format!("mdm:{domain}:{key}"),
+                (Some(domain), None) => format!("mdm:{domain}"),
+                _ => source_type,
+            }
+        }
+        "system" | "user" | "legacyManagedConfigTomlFromFile" => {
+            extract_any_string(source, &["file"])
+                .map(|file| format!("{source_type}:{file}"))
+                .unwrap_or(source_type)
+        }
+        "project" => extract_any_string(source, &["dotCodexFolder", "dot_codex_folder"])
+            .map(|folder| format!("project:{folder}"))
+            .unwrap_or(source_type),
+        _ => source_type,
+    }
+}
+
+fn map_config_layer(value: &serde_json::Value) -> Option<CodexConfigLayerDto> {
+    let source = value.get("name").or_else(|| value.get("source"))?;
+    let version = extract_any_string(value, &["version"])?;
+    Some(CodexConfigLayerDto {
+        source: format_config_layer_source(source),
+        version,
+    })
+}
+
+fn map_config_layers(response: &serde_json::Value) -> Vec<CodexConfigLayerDto> {
+    let mut layers = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    if let Some(entries) = response.get("layers").and_then(serde_json::Value::as_array) {
+        for entry in entries {
+            if let Some(layer) = map_config_layer(entry) {
+                let dedupe_key = format!("{}\u{0}{}", layer.source, layer.version);
+                if seen.insert(dedupe_key) {
+                    layers.push(layer);
+                }
+            }
+        }
+    }
+
+    if layers.is_empty() {
+        if let Some(origins) = response
+            .get("origins")
+            .and_then(serde_json::Value::as_object)
+        {
+            for origin in origins.values() {
+                if let Some(layer) = map_config_layer(origin) {
+                    let dedupe_key = format!("{}\u{0}{}", layer.source, layer.version);
+                    if seen.insert(dedupe_key) {
+                        layers.push(layer);
+                    }
+                }
+            }
+        }
+    }
+
+    layers.sort_by(|left, right| {
+        left.source
+            .cmp(&right.source)
+            .then_with(|| left.version.cmp(&right.version))
+    });
+    layers
+}
+
+fn map_config_state(response: &serde_json::Value) -> CodexConfigStateDto {
+    let config = response.get("config").unwrap_or(response);
+    CodexConfigStateDto {
+        model: extract_any_string(config, &["model"]),
+        model_provider: extract_any_string(config, &["modelProvider", "model_provider"]),
+        service_tier: extract_any_string(config, &["serviceTier", "service_tier"]),
+        approval_policy: config
+            .get("approvalPolicy")
+            .or_else(|| config.get("approval_policy"))
+            .filter(|value| !value.is_null())
+            .cloned(),
+        sandbox_mode: extract_any_string(config, &["sandboxMode", "sandbox_mode"]),
+        web_search: extract_any_string(config, &["webSearch", "web_search"]),
+        profile: extract_any_string(config, &["profile"]),
+        layers: map_config_layers(response),
+    }
+}
+
+async fn fetch_config_state(transport: &CodexTransport) -> MethodCallOutcome<CodexConfigStateDto> {
+    let response = match request_with_fallback(
+        transport,
+        CONFIG_READ_METHODS,
+        serde_json::Value::Null,
+        DEFAULT_TIMEOUT,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => return method_call_outcome_from_error(error),
+    };
+
+    MethodCallOutcome::Available(map_config_state(&response))
+}
+
 async fn refresh_protocol_diagnostics_via_transport(
     transport: &CodexTransport,
     previous: Option<CodexProtocolDiagnosticsDto>,
 ) -> anyhow::Result<CodexProtocolDiagnosticsDto> {
     let mut diagnostics = previous.unwrap_or_default();
-    let experimental = fetch_experimental_features(transport).await;
-    let collaboration = fetch_collaboration_modes(transport).await;
-    let apps = fetch_apps(transport).await;
+    let (
+        experimental,
+        collaboration,
+        apps,
+        skills,
+        plugin_marketplaces,
+        mcp_servers,
+        account,
+        config,
+    ) = tokio::join!(
+        fetch_experimental_features(transport),
+        fetch_collaboration_modes(transport),
+        fetch_apps(transport),
+        fetch_skills(transport),
+        fetch_plugin_marketplaces(transport),
+        fetch_mcp_servers(transport),
+        fetch_account_state(transport),
+        fetch_config_state(transport),
+    );
 
     let experimental_availability = match experimental {
         MethodCallOutcome::Available(value) => {
@@ -2952,11 +4628,14 @@ async fn refresh_protocol_diagnostics_via_transport(
                 detail: None,
             }
         }
-        MethodCallOutcome::Unsupported(detail) => CodexMethodAvailabilityDto {
-            method: "experimentalFeature/list".to_string(),
-            status: "unsupported".to_string(),
-            detail,
-        },
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.experimental_features.clear();
+            CodexMethodAvailabilityDto {
+                method: "experimentalFeature/list".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
         MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
             method: "experimentalFeature/list".to_string(),
             status: "error".to_string(),
@@ -2978,11 +4657,14 @@ async fn refresh_protocol_diagnostics_via_transport(
                 detail: None,
             }
         }
-        MethodCallOutcome::Unsupported(detail) => CodexMethodAvailabilityDto {
-            method: "collaborationMode/list".to_string(),
-            status: "unsupported".to_string(),
-            detail,
-        },
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.collaboration_modes.clear();
+            CodexMethodAvailabilityDto {
+                method: "collaborationMode/list".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
         MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
             method: "collaborationMode/list".to_string(),
             status: "error".to_string(),
@@ -3004,11 +4686,14 @@ async fn refresh_protocol_diagnostics_via_transport(
                 detail: None,
             }
         }
-        MethodCallOutcome::Unsupported(detail) => CodexMethodAvailabilityDto {
-            method: "app/list".to_string(),
-            status: "unsupported".to_string(),
-            detail,
-        },
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.apps.clear();
+            CodexMethodAvailabilityDto {
+                method: "app/list".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
         MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
             method: "app/list".to_string(),
             status: "error".to_string(),
@@ -3016,6 +4701,135 @@ async fn refresh_protocol_diagnostics_via_transport(
         },
     };
     update_method_availability(&mut diagnostics, "app/list", app_availability);
+
+    let skills_availability = match skills {
+        MethodCallOutcome::Available(value) => {
+            diagnostics.skills = value;
+            CodexMethodAvailabilityDto {
+                method: "skills/list".to_string(),
+                status: "available".to_string(),
+                detail: None,
+            }
+        }
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.skills.clear();
+            CodexMethodAvailabilityDto {
+                method: "skills/list".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
+        MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
+            method: "skills/list".to_string(),
+            status: "error".to_string(),
+            detail: Some(detail),
+        },
+    };
+    update_method_availability(&mut diagnostics, "skills/list", skills_availability);
+
+    let plugin_availability = match plugin_marketplaces {
+        MethodCallOutcome::Available(value) => {
+            diagnostics.plugin_marketplaces = value;
+            CodexMethodAvailabilityDto {
+                method: "plugin/list".to_string(),
+                status: "available".to_string(),
+                detail: None,
+            }
+        }
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.plugin_marketplaces.clear();
+            CodexMethodAvailabilityDto {
+                method: "plugin/list".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
+        MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
+            method: "plugin/list".to_string(),
+            status: "error".to_string(),
+            detail: Some(detail),
+        },
+    };
+    update_method_availability(&mut diagnostics, "plugin/list", plugin_availability);
+
+    let mcp_server_availability = match mcp_servers {
+        MethodCallOutcome::Available(value) => {
+            diagnostics.mcp_servers = value;
+            CodexMethodAvailabilityDto {
+                method: "mcpServerStatus/list".to_string(),
+                status: "available".to_string(),
+                detail: None,
+            }
+        }
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.mcp_servers.clear();
+            CodexMethodAvailabilityDto {
+                method: "mcpServerStatus/list".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
+        MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
+            method: "mcpServerStatus/list".to_string(),
+            status: "error".to_string(),
+            detail: Some(detail),
+        },
+    };
+    update_method_availability(
+        &mut diagnostics,
+        "mcpServerStatus/list",
+        mcp_server_availability,
+    );
+
+    let account_availability = match account {
+        MethodCallOutcome::Available(value) => {
+            diagnostics.account = Some(value);
+            CodexMethodAvailabilityDto {
+                method: "account/read".to_string(),
+                status: "available".to_string(),
+                detail: None,
+            }
+        }
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.account = None;
+            CodexMethodAvailabilityDto {
+                method: "account/read".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
+        MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
+            method: "account/read".to_string(),
+            status: "error".to_string(),
+            detail: Some(detail),
+        },
+    };
+    update_method_availability(&mut diagnostics, "account/read", account_availability);
+
+    let config_availability = match config {
+        MethodCallOutcome::Available(value) => {
+            diagnostics.config = Some(value);
+            CodexMethodAvailabilityDto {
+                method: "config/read".to_string(),
+                status: "available".to_string(),
+                detail: None,
+            }
+        }
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.config = None;
+            CodexMethodAvailabilityDto {
+                method: "config/read".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
+        MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
+            method: "config/read".to_string(),
+            status: "error".to_string(),
+            detail: Some(detail),
+        },
+    };
+    update_method_availability(&mut diagnostics, "config/read", config_availability);
 
     diagnostics.fetched_at = Some(Utc::now().to_rfc3339());
     diagnostics.stale = false;
@@ -3041,6 +4855,32 @@ async fn refresh_protocol_diagnostics_for_runtime_monitor(
     Ok(diagnostics)
 }
 
+async fn current_protocol_diagnostics(
+    state: Arc<Mutex<CodexState>>,
+) -> Option<CodexProtocolDiagnosticsDto> {
+    let state = state.lock().await;
+    state.protocol_diagnostics.clone()
+}
+
+async fn refresh_protocol_diagnostics_with_fallback(
+    transport: &CodexTransport,
+    state: Arc<Mutex<CodexState>>,
+    log_context: &str,
+    allow_current_on_failure: bool,
+) -> Option<CodexProtocolDiagnosticsDto> {
+    match refresh_protocol_diagnostics_for_runtime_monitor(transport, state.clone()).await {
+        Ok(diagnostics) => Some(diagnostics),
+        Err(error) => {
+            log::debug!("failed to refresh codex diagnostics {log_context}: {error}");
+            if allow_current_on_failure {
+                current_protocol_diagnostics(state).await
+            } else {
+                None
+            }
+        }
+    }
+}
+
 async fn update_protocol_diagnostics_with_config_warning(
     state: Arc<Mutex<CodexState>>,
     params: &serde_json::Value,
@@ -3057,6 +4897,10 @@ async fn update_protocol_diagnostics_with_config_warning(
         start_line: extract_nested_i64(params, &["range", "start", "line"])
             .and_then(|value| u64::try_from(value).ok()),
         start_column: extract_nested_i64(params, &["range", "start", "column"])
+            .and_then(|value| u64::try_from(value).ok()),
+        end_line: extract_nested_i64(params, &["range", "end", "line"])
+            .and_then(|value| u64::try_from(value).ok()),
+        end_column: extract_nested_i64(params, &["range", "end", "column"])
             .and_then(|value| u64::try_from(value).ok()),
     });
     Some(diagnostics.clone())
@@ -3081,6 +4925,40 @@ async fn update_protocol_diagnostics_with_account_login(
     Some(diagnostics.clone())
 }
 
+async fn update_protocol_diagnostics_with_account_update(
+    state: Arc<Mutex<CodexState>>,
+    params: &serde_json::Value,
+) -> Option<CodexProtocolDiagnosticsDto> {
+    let mut state = state.lock().await;
+    let diagnostics = state
+        .protocol_diagnostics
+        .get_or_insert_with(Default::default);
+    let account = diagnostics
+        .account
+        .get_or_insert_with(|| CodexAccountStateDto {
+            provider: "none".to_string(),
+            auth_mode: None,
+            email: None,
+            plan_type: None,
+            requires_openai_auth: false,
+        });
+
+    if let Some(auth_mode) = extract_any_string(params, &["authMode", "auth_mode"])
+        .map(|value| normalize_auth_mode(&value))
+    {
+        if account.provider == "none" {
+            account.provider = provider_from_auth_mode(&auth_mode);
+        }
+        account.auth_mode = Some(auth_mode);
+    }
+
+    if let Some(plan_type) = extract_any_string(params, &["planType", "plan_type"]) {
+        account.plan_type = Some(plan_type);
+    }
+
+    Some(diagnostics.clone())
+}
+
 async fn update_protocol_diagnostics_with_mcp_oauth(
     state: Arc<Mutex<CodexState>>,
     params: &serde_json::Value,
@@ -3096,6 +4974,86 @@ async fn update_protocol_diagnostics_with_mcp_oauth(
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false),
         error: extract_any_string(params, &["error"]),
+    });
+    Some(diagnostics.clone())
+}
+
+async fn update_protocol_diagnostics_with_thread_realtime(
+    state: Arc<Mutex<CodexState>>,
+    normalized_method: &str,
+    params: &serde_json::Value,
+) -> Option<CodexProtocolDiagnosticsDto> {
+    let mut state = state.lock().await;
+    let diagnostics = state
+        .protocol_diagnostics
+        .get_or_insert_with(Default::default);
+    diagnostics.last_thread_realtime = Some(CodexThreadRealtimeEventDto {
+        kind: normalized_method.to_string(),
+        thread_id: extract_any_string(params, &["threadId", "thread_id"])
+            .unwrap_or_else(|| "unknown".to_string()),
+        session_id: extract_any_string(params, &["sessionId", "session_id"]),
+        reason: extract_any_string(params, &["reason"]),
+        message: extract_any_string(params, &["message"]),
+        item_type: params
+            .get("item")
+            .and_then(|item| extract_any_string(item, &["type"])),
+        sample_rate: extract_nested_i64(params, &["audio", "sampleRate"])
+            .and_then(|value| u64::try_from(value).ok()),
+        num_channels: extract_nested_i64(params, &["audio", "numChannels"])
+            .and_then(|value| u64::try_from(value).ok()),
+        samples_per_channel: extract_nested_i64(params, &["audio", "samplesPerChannel"])
+            .and_then(|value| u64::try_from(value).ok()),
+    });
+    Some(diagnostics.clone())
+}
+
+async fn update_protocol_diagnostics_with_windows_sandbox_setup(
+    state: Arc<Mutex<CodexState>>,
+    params: &serde_json::Value,
+) -> Option<CodexProtocolDiagnosticsDto> {
+    let mut state = state.lock().await;
+    let diagnostics = state
+        .protocol_diagnostics
+        .get_or_insert_with(Default::default);
+    diagnostics.last_windows_sandbox_setup = Some(CodexWindowsSandboxSetupDto {
+        mode: extract_any_string(params, &["mode"]).unwrap_or_else(|| "unknown".to_string()),
+        success: params
+            .get("success")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        error: extract_any_string(params, &["error"]),
+    });
+    Some(diagnostics.clone())
+}
+
+async fn update_protocol_diagnostics_with_windows_world_writable_warning(
+    state: Arc<Mutex<CodexState>>,
+    params: &serde_json::Value,
+) -> Option<CodexProtocolDiagnosticsDto> {
+    let mut state = state.lock().await;
+    let diagnostics = state
+        .protocol_diagnostics
+        .get_or_insert_with(Default::default);
+    diagnostics.last_windows_world_writable_warning = Some(CodexWindowsWorldWritableWarningDto {
+        sample_paths: params
+            .get("samplePaths")
+            .and_then(serde_json::Value::as_array)
+            .map(|paths| {
+                paths
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+        extra_count: params
+            .get("extraCount")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0),
+        failed_scan: params
+            .get("failedScan")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
     });
     Some(diagnostics.clone())
 }
@@ -3136,6 +5094,70 @@ fn build_mcp_oauth_toast(params: &serde_json::Value) -> Option<RuntimeToastDto> 
         message: extract_any_string(params, &["error"])
             .map(|error| format!("{server_name} OAuth failed: {error}"))
             .unwrap_or_else(|| format!("{server_name} OAuth failed.")),
+    })
+}
+
+fn build_account_updated_toast(params: &serde_json::Value) -> Option<RuntimeToastDto> {
+    let auth_mode = extract_any_string(params, &["authMode", "auth_mode"])?;
+    if normalize_auth_mode(&auth_mode) != "chatgptAuthTokens" {
+        return None;
+    }
+
+    Some(RuntimeToastDto {
+        variant: "warning".to_string(),
+        message: unsupported_external_auth_tokens_message(None, Some("auth mode updated")),
+    })
+}
+
+fn build_windows_sandbox_setup_toast(params: &serde_json::Value) -> Option<RuntimeToastDto> {
+    let success = params
+        .get("success")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if success {
+        return None;
+    }
+
+    Some(RuntimeToastDto {
+        variant: "warning".to_string(),
+        message: extract_any_string(params, &["error"]).unwrap_or_else(|| {
+            "Codex Windows sandbox setup did not complete successfully.".to_string()
+        }),
+    })
+}
+
+fn build_windows_world_writable_warning_toast(
+    params: &serde_json::Value,
+) -> Option<RuntimeToastDto> {
+    let sample_paths = params
+        .get("samplePaths")
+        .and_then(serde_json::Value::as_array)
+        .map(|paths| {
+            paths
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    let extra_count = params
+        .get("extraCount")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+
+    let mut message =
+        "Codex detected world-writable Windows paths that may weaken sandbox safety.".to_string();
+    if !sample_paths.is_empty() {
+        message.push_str(&format!(" Examples: {sample_paths}."));
+    }
+    if extra_count > 0 {
+        message.push_str(&format!(" Plus {extra_count} more."));
+    }
+
+    Some(RuntimeToastDto {
+        variant: "warning".to_string(),
+        message,
     })
 }
 
@@ -3355,6 +5377,13 @@ fn is_known_codex_notification_method(normalized_method: &str) -> bool {
             | "turn/completed"
             | "turn/diff/updated"
             | "turn/plan/updated"
+            | "thread/started"
+            | "thread/compacted"
+            | "thread/status/changed"
+            | "thread/name/updated"
+            | "thread/archived"
+            | "thread/unarchived"
+            | "thread/closed"
             | "thread/tokenusage/updated"
             | "account/ratelimits/updated"
             | "account/updated"
@@ -3362,12 +5391,28 @@ fn is_known_codex_notification_method(normalized_method: &str) -> bool {
             | "item/completed"
             | "item/agentmessage/delta"
             | "item/plan/delta"
+            | "item/reasoning/summarypartadded"
+            | "reasoningsummary/partadded"
             | "item/reasoning/summarytextdelta"
             | "item/reasoning/textdelta"
             | "item/mcptoolcall/progress"
             | "item/commandexecution/outputdelta"
             | "item/filechange/outputdelta"
+            | "hook/started"
+            | "hook/completed"
+            | "item/commandexecution/terminalinteraction"
+            | "terminal/interaction"
+            | "thread/realtime/started"
+            | "thread/realtime/closed"
+            | "thread/realtime/error"
+            | "thread/realtime/itemadded"
+            | "thread/realtime/outputaudio/delta"
+            | "thread/realtime/outputaudiodelta"
+            | "windows/worldwritablewarning"
+            | "windowssandbox/setupcompleted"
+            | "windows/sandboxsetup/completed"
             | "model/rerouted"
+            | "deprecationnotice"
             | "error"
     )
 }
@@ -3375,7 +5420,7 @@ fn is_known_codex_notification_method(normalized_method: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     #[test]
     fn normalize_modern_accept_with_execpolicy_from_top_level() {
@@ -3504,8 +5549,10 @@ mod tests {
             "thread-123",
             "gpt-5-codex",
             "/tmp/workspace",
-            "on-request",
+            &json!("on-request"),
             "workspace-write",
+            Some("fast"),
+            Some("friendly"),
         );
 
         assert_eq!(
@@ -3516,8 +5563,211 @@ mod tests {
                 "cwd": "/tmp/workspace",
                 "approvalPolicy": "on-request",
                 "sandbox": "workspace-write",
+                "serviceTier": "fast",
+                "personality": "friendly",
                 "persistExtendedHistory": false,
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn build_turn_start_params_uses_native_plan_mode_for_codex_when_available() {
+        let runtime = ThreadRuntime {
+            cwd: "/tmp/workspace".to_string(),
+            model_id: "gpt-5.4".to_string(),
+            approval_policy: json!("on-request"),
+            sandbox_policy: json!({
+                "type": "workspaceWrite",
+                "writableRoots": ["/tmp/workspace"],
+                "networkAccess": false,
+            }),
+            reasoning_effort: Some("medium".to_string()),
+            service_tier: Some("fast".to_string()),
+            personality: Some("friendly".to_string()),
+            output_schema: Some(json!({"type":"object"})),
+        };
+        let input = TurnInput {
+            message: "Inspect the repo first".to_string(),
+            attachments: Vec::new(),
+            plan_mode: true,
+            input_items: vec![TurnInputItem::Text {
+                text: "Inspect the repo first".to_string(),
+            }],
+        };
+
+        let params = build_turn_start_params(
+            "thread-123",
+            Some(&runtime),
+            &input,
+            PlanModeActivation::NativeCollaboration,
+        )
+        .await
+        .expect("turn/start params");
+
+        assert_eq!(
+            params.get("collaborationMode"),
+            Some(&json!({
+                "mode": "plan",
+                "settings": {
+                    "model": "gpt-5.4",
+                    "reasoning_effort": "medium",
+                }
+            }))
+        );
+        assert_eq!(params.get("summary"), Some(&json!("detailed")));
+
+        let payload = params
+            .get("input")
+            .and_then(Value::as_array)
+            .expect("input array");
+        assert_eq!(payload.len(), 1);
+        assert_eq!(payload[0].get("type").and_then(Value::as_str), Some("text"));
+        let text = payload[0]
+            .get("text")
+            .and_then(Value::as_str)
+            .expect("text payload");
+        assert_eq!(text, "Inspect the repo first");
+    }
+
+    #[tokio::test]
+    async fn build_turn_start_params_uses_prompt_fallback_when_plan_mode_is_not_native() {
+        let runtime = ThreadRuntime {
+            cwd: "/tmp/workspace".to_string(),
+            model_id: "gpt-5.4".to_string(),
+            approval_policy: json!("on-request"),
+            sandbox_policy: json!({
+                "type": "workspaceWrite",
+                "writableRoots": ["/tmp/workspace"],
+                "networkAccess": false,
+            }),
+            reasoning_effort: Some("medium".to_string()),
+            service_tier: Some("fast".to_string()),
+            personality: Some("friendly".to_string()),
+            output_schema: Some(json!({"type":"object"})),
+        };
+        let input = TurnInput {
+            message: "Inspect the repo first".to_string(),
+            attachments: Vec::new(),
+            plan_mode: true,
+            input_items: vec![TurnInputItem::Text {
+                text: "Inspect the repo first".to_string(),
+            }],
+        };
+
+        let params = build_turn_start_params(
+            "thread-123",
+            Some(&runtime),
+            &input,
+            PlanModeActivation::PromptPrefix,
+        )
+        .await
+        .expect("turn/start params");
+
+        assert_eq!(params.get("collaborationMode"), None);
+        assert_eq!(params.get("summary"), None);
+
+        let payload = params
+            .get("input")
+            .and_then(Value::as_array)
+            .expect("input array");
+        let text = payload[0]
+            .get("text")
+            .and_then(Value::as_str)
+            .expect("text payload");
+        assert!(text.starts_with(PLAN_MODE_PROMPT_PREFIX));
+        assert!(text.contains("Inspect the repo first"));
+    }
+
+    #[tokio::test]
+    async fn build_turn_start_params_keeps_non_plan_text_unchanged() {
+        let input = TurnInput {
+            message: "Inspect the repo first".to_string(),
+            attachments: Vec::new(),
+            plan_mode: false,
+            input_items: vec![TurnInputItem::Text {
+                text: "Inspect the repo first".to_string(),
+            }],
+        };
+
+        let params =
+            build_turn_start_params("thread-123", None, &input, PlanModeActivation::Disabled)
+                .await
+                .expect("turn/start params");
+
+        assert_eq!(params.get("collaborationMode"), None);
+        assert_eq!(params.get("summary"), None);
+
+        let payload = params
+            .get("input")
+            .and_then(Value::as_array)
+            .expect("input array");
+        assert_eq!(
+            payload[0].get("text").and_then(Value::as_str),
+            Some("Inspect the repo first")
+        );
+    }
+
+    #[test]
+    fn plan_mode_activation_prefers_native_when_plan_is_advertised() {
+        let diagnostics = CodexProtocolDiagnosticsDto {
+            method_availability: vec![CodexMethodAvailabilityDto {
+                method: "collaborationMode/list".to_string(),
+                status: "available".to_string(),
+                detail: None,
+            }],
+            collaboration_modes: vec!["default".to_string(), "plan".to_string()],
+            experimental_features: Vec::new(),
+            apps: Vec::new(),
+            skills: Vec::new(),
+            plugin_marketplaces: Vec::new(),
+            mcp_servers: Vec::new(),
+            account: None,
+            config: None,
+            last_config_warning: None,
+            last_account_login: None,
+            last_mcp_oauth: None,
+            last_thread_realtime: None,
+            last_windows_sandbox_setup: None,
+            last_windows_world_writable_warning: None,
+            fetched_at: None,
+            stale: false,
+        };
+
+        assert_eq!(
+            plan_mode_activation_from_diagnostics(Some(&diagnostics)),
+            Some(PlanModeActivation::NativeCollaboration)
+        );
+    }
+
+    #[test]
+    fn plan_mode_activation_falls_back_when_plan_is_not_advertised() {
+        let diagnostics = CodexProtocolDiagnosticsDto {
+            method_availability: vec![CodexMethodAvailabilityDto {
+                method: "collaborationMode/list".to_string(),
+                status: "unsupported".to_string(),
+                detail: Some("not implemented".to_string()),
+            }],
+            collaboration_modes: Vec::new(),
+            experimental_features: Vec::new(),
+            apps: Vec::new(),
+            skills: Vec::new(),
+            plugin_marketplaces: Vec::new(),
+            mcp_servers: Vec::new(),
+            account: None,
+            config: None,
+            last_config_warning: None,
+            last_account_login: None,
+            last_mcp_oauth: None,
+            last_thread_realtime: None,
+            last_windows_sandbox_setup: None,
+            last_windows_world_writable_warning: None,
+            fetched_at: None,
+            stale: false,
+        };
+
+        assert_eq!(
+            plan_mode_activation_from_diagnostics(Some(&diagnostics)),
+            Some(PlanModeActivation::PromptPrefix)
         );
     }
 
@@ -3625,14 +5875,17 @@ mod tests {
             &response,
             "/tmp/fallback",
             "gpt-5",
-            "on-request",
+            &json!("on-request"),
             &json!({"type":"workspaceWrite"}),
             Some("medium".to_string()),
+            Some("flex".to_string()),
+            Some("friendly".to_string()),
+            Some(json!({"type":"object"})),
         );
 
         assert_eq!(runtime.cwd, "/tmp/effective");
         assert_eq!(runtime.model_id, "gpt-5.3-codex");
-        assert_eq!(runtime.approval_policy, "untrusted");
+        assert_eq!(runtime.approval_policy, json!("untrusted"));
         assert_eq!(
             runtime.sandbox_policy,
             json!({
@@ -3641,6 +5894,9 @@ mod tests {
             })
         );
         assert_eq!(runtime.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(runtime.service_tier.as_deref(), Some("flex"));
+        assert_eq!(runtime.personality.as_deref(), Some("friendly"));
+        assert_eq!(runtime.output_schema, Some(json!({"type":"object"})));
     }
 
     #[test]
@@ -3650,19 +5906,25 @@ mod tests {
             &response,
             "/tmp/fallback",
             "gpt-5",
-            "on-request",
+            &json!("on-request"),
             &json!({"type":"workspaceWrite","networkAccess":false}),
             Some("medium".to_string()),
+            Some("fast".to_string()),
+            Some("pragmatic".to_string()),
+            Some(json!(true)),
         );
 
         assert_eq!(runtime.cwd, "/tmp/fallback");
         assert_eq!(runtime.model_id, "gpt-5");
-        assert_eq!(runtime.approval_policy, "on-request");
+        assert_eq!(runtime.approval_policy, json!("on-request"));
         assert_eq!(
             runtime.sandbox_policy,
             json!({"type":"workspaceWrite","networkAccess":false})
         );
         assert_eq!(runtime.reasoning_effort.as_deref(), Some("medium"));
+        assert_eq!(runtime.service_tier.as_deref(), Some("fast"));
+        assert_eq!(runtime.personality.as_deref(), Some("pragmatic"));
+        assert_eq!(runtime.output_schema, Some(json!(true)));
     }
 
     #[test]
@@ -3670,13 +5932,16 @@ mod tests {
         let requested_runtime = ThreadRuntime {
             cwd: "/tmp/requested".to_string(),
             model_id: "gpt-5.1-codex-mini".to_string(),
-            approval_policy: "on-request".to_string(),
+            approval_policy: json!("on-request"),
             sandbox_policy: json!({
                 "type": "workspaceWrite",
                 "writableRoots": ["/tmp/requested"],
                 "networkAccess": false,
             }),
             reasoning_effort: Some("medium".to_string()),
+            service_tier: Some("flex".to_string()),
+            personality: Some("friendly".to_string()),
+            output_schema: Some(json!({"type":"object"})),
         };
         let response = json!({
             "cwd": "/tmp/stale",
@@ -3691,6 +5956,70 @@ mod tests {
         let runtime = thread_runtime_from_resume_response(&response, &requested_runtime);
 
         assert_eq!(runtime, requested_runtime);
+    }
+
+    #[test]
+    fn extract_codex_remote_thread_summary_reads_thread_list_shape() {
+        let summary = extract_codex_remote_thread_summary(
+            &json!({
+                "id": "thread-123",
+                "name": "Remote thread",
+                "preview": "Most recent preview",
+                "cwd": "/tmp/workspace",
+                "createdAt": 1710000000,
+                "updatedAt": 1710003600,
+                "modelProvider": "openai",
+                "source": "appServer",
+                "status": {
+                    "type": "active",
+                    "activeFlags": ["waitingOnApproval"]
+                }
+            }),
+            false,
+        )
+        .expect("expected summary");
+
+        assert_eq!(summary.engine_thread_id, "thread-123");
+        assert_eq!(summary.title.as_deref(), Some("Remote thread"));
+        assert_eq!(summary.preview, "Most recent preview");
+        assert_eq!(summary.cwd, "/tmp/workspace");
+        assert_eq!(summary.created_at, 1710000000);
+        assert_eq!(summary.updated_at, 1710003600);
+        assert_eq!(summary.model_provider, "openai");
+        assert_eq!(summary.source_kind, "appServer");
+        assert_eq!(summary.status_type, "active");
+        assert_eq!(summary.active_flags, vec!["waitingOnApproval".to_string()]);
+        assert!(!summary.archived);
+    }
+
+    #[test]
+    fn extract_codex_remote_thread_summary_maps_sub_agent_sources() {
+        let summary = extract_codex_remote_thread_summary(
+            &json!({
+                "thread": {
+                    "id": "thread-456",
+                    "cwd": "/tmp/repo",
+                    "createdAt": 1710000000,
+                    "updatedAt": 1710000001,
+                    "modelProvider": "openai",
+                    "source": {
+                        "subAgent": {
+                            "thread_spawn": true
+                        }
+                    },
+                    "status": {
+                        "type": "idle",
+                        "activeFlags": []
+                    }
+                },
+                "preview": "Preview"
+            }),
+            true,
+        )
+        .expect("expected summary");
+
+        assert_eq!(summary.source_kind, "subAgentThreadSpawn");
+        assert!(summary.archived);
     }
 
     #[tokio::test]
@@ -3712,6 +6041,202 @@ mod tests {
         assert_eq!(approval_id.as_deref(), Some("approval-1"));
         let locked = state.lock().await;
         assert!(locked.approval_requests.is_empty());
+    }
+
+    #[tokio::test]
+    async fn runtime_model_fallback_prefers_cached_runtime_models() {
+        let engine = CodexEngine::default();
+        let cached_models = vec![ModelInfo {
+            id: "cached-model".to_string(),
+            display_name: "cached-model".to_string(),
+            description: "Runtime cached model".to_string(),
+            hidden: false,
+            is_default: true,
+            upgrade: None,
+            availability_nux: None,
+            upgrade_info: None,
+            input_modalities: vec!["text".to_string()],
+            supports_personality: true,
+            default_reasoning_effort: "minimal".to_string(),
+            supported_reasoning_efforts: vec![ReasoningEffortOption {
+                reasoning_effort: "minimal".to_string(),
+                description: "Fastest".to_string(),
+            }],
+        }];
+
+        engine
+            .store_runtime_model_cache(cached_models.clone())
+            .await;
+
+        assert_eq!(
+            engine
+                .runtime_model_fallback()
+                .await
+                .into_iter()
+                .map(|model| model.id)
+                .collect::<Vec<_>>(),
+            cached_models
+                .into_iter()
+                .map(|model| model.id)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn update_protocol_diagnostics_with_config_warning_tracks_end_range() {
+        let state = Arc::new(Mutex::new(CodexState::default()));
+
+        let diagnostics = update_protocol_diagnostics_with_config_warning(
+            state,
+            &json!({
+                "summary": "Bad config",
+                "path": "/tmp/config.toml",
+                "range": {
+                    "start": { "line": 2, "column": 4 },
+                    "end": { "line": 2, "column": 12 }
+                }
+            }),
+        )
+        .await
+        .expect("diagnostics should update");
+
+        let warning = diagnostics
+            .last_config_warning
+            .expect("config warning should be stored");
+        assert_eq!(warning.start_line, Some(2));
+        assert_eq!(warning.start_column, Some(4));
+        assert_eq!(warning.end_line, Some(2));
+        assert_eq!(warning.end_column, Some(12));
+    }
+
+    #[tokio::test]
+    async fn update_protocol_diagnostics_with_windows_and_realtime_notifications() {
+        let state = Arc::new(Mutex::new(CodexState::default()));
+
+        let diagnostics = update_protocol_diagnostics_with_windows_world_writable_warning(
+            state.clone(),
+            &json!({
+                "samplePaths": ["C:/tmp/a", "C:/tmp/b"],
+                "extraCount": 3,
+                "failedScan": true
+            }),
+        )
+        .await
+        .expect("world writable warning should update");
+        assert_eq!(
+            diagnostics
+                .last_windows_world_writable_warning
+                .as_ref()
+                .map(|value| value.extra_count),
+            Some(3)
+        );
+
+        let diagnostics = update_protocol_diagnostics_with_windows_sandbox_setup(
+            state.clone(),
+            &json!({
+                "mode": "unelevated",
+                "success": false,
+                "error": "permission denied"
+            }),
+        )
+        .await
+        .expect("sandbox setup should update");
+        assert_eq!(
+            diagnostics
+                .last_windows_sandbox_setup
+                .as_ref()
+                .map(|value| value.error.as_deref()),
+            Some(Some("permission denied"))
+        );
+
+        let diagnostics = update_protocol_diagnostics_with_thread_realtime(
+            state,
+            &normalize_method("thread/realtime/outputAudio/delta"),
+            &json!({
+                "threadId": "thread-123",
+                "audio": {
+                    "sampleRate": 24000,
+                    "numChannels": 2,
+                    "samplesPerChannel": 480,
+                    "data": "abc"
+                }
+            }),
+        )
+        .await
+        .expect("thread realtime should update");
+        let realtime = diagnostics
+            .last_thread_realtime
+            .expect("thread realtime event should be stored");
+        assert_eq!(realtime.kind, "thread/realtime/outputaudio/delta");
+        assert_eq!(realtime.thread_id, "thread-123");
+        assert_eq!(realtime.sample_rate, Some(24000));
+        assert_eq!(realtime.num_channels, Some(2));
+        assert_eq!(realtime.samples_per_channel, Some(480));
+    }
+
+    #[tokio::test]
+    async fn update_protocol_diagnostics_with_account_update_tracks_auth_mode() {
+        let state = Arc::new(Mutex::new(CodexState::default()));
+
+        let diagnostics = update_protocol_diagnostics_with_account_update(
+            state,
+            &json!({
+                "authMode": "chatgptAuthTokens",
+                "planType": "team"
+            }),
+        )
+        .await
+        .expect("account update should update diagnostics");
+
+        let account = diagnostics
+            .account
+            .expect("account diagnostics should exist");
+        assert_eq!(account.provider, "chatgpt");
+        assert_eq!(account.auth_mode.as_deref(), Some("chatgptAuthTokens"));
+        assert_eq!(account.plan_type.as_deref(), Some("team"));
+    }
+
+    #[test]
+    fn known_codex_notification_methods_include_remaining_runtime_notifications() {
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "thread/started"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "thread/archived"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "thread/unarchived"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "thread/closed"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "item/reasoning/summaryPartAdded"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "item/commandExecution/terminalInteraction"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "thread/realtime/started"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "thread/realtime/outputAudio/delta"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "windows/worldWritableWarning"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "windowsSandbox/setupCompleted"
+        )));
+    }
+
+    #[test]
+    fn unsupported_external_auth_tokens_message_includes_context() {
+        let message =
+            unsupported_external_auth_tokens_message(Some("acc_123"), Some("unauthorized"));
+        assert!(message.contains("acc_123"));
+        assert!(message.contains("unauthorized"));
+        assert!(message.contains("cannot refresh"));
     }
 
     #[test]
@@ -3802,5 +6327,218 @@ mod tests {
 
         assert!(details.contains("missing from PATH on Windows"));
         assert!(details.contains("node"));
+    }
+
+    #[test]
+    fn map_codex_model_preserves_runtime_metadata() {
+        let model = CodexModel {
+            id: "gpt-5.4".to_string(),
+            display_name: Some("gpt-5.4".to_string()),
+            description: Some("Latest frontier agentic coding model.".to_string()),
+            hidden: Some(false),
+            is_default: Some(true),
+            upgrade: Some("gpt-5.5".to_string()),
+            availability_nux: Some(CodexModelAvailabilityNux {
+                message: "Try this model for your current plan.".to_string(),
+            }),
+            upgrade_info: Some(CodexModelUpgradeInfo {
+                model: "gpt-5.5".to_string(),
+                upgrade_copy: Some("Upgrade available".to_string()),
+                model_link: Some("https://example.com".to_string()),
+                migration_markdown: Some("Introducing GPT-5.5".to_string()),
+            }),
+            input_modalities: vec!["text".to_string(), "image".to_string()],
+            supports_personality: Some(true),
+            default_reasoning_effort: Some("minimal".to_string()),
+            supported_reasoning_efforts: vec![CodexReasoningEffortOption {
+                reasoning_effort: "minimal".to_string(),
+                description: "Fastest responses".to_string(),
+            }],
+        };
+
+        let mapped = map_codex_model(model);
+
+        assert_eq!(mapped.upgrade.as_deref(), Some("gpt-5.5"));
+        assert_eq!(
+            mapped
+                .availability_nux
+                .as_ref()
+                .map(|value| value.message.as_str()),
+            Some("Try this model for your current plan.")
+        );
+        assert_eq!(
+            mapped
+                .upgrade_info
+                .as_ref()
+                .map(|value| value.model.as_str()),
+            Some("gpt-5.5")
+        );
+        assert_eq!(
+            mapped
+                .upgrade_info
+                .as_ref()
+                .and_then(|value| value.upgrade_copy.as_deref()),
+            Some("Upgrade available")
+        );
+        assert_eq!(mapped.input_modalities, vec!["text", "image"]);
+        assert!(mapped.supports_personality);
+        assert_eq!(mapped.default_reasoning_effort, "minimal");
+        assert_eq!(
+            mapped.supported_reasoning_efforts[0].reasoning_effort,
+            "minimal"
+        );
+    }
+
+    #[test]
+    fn map_codex_model_defaults_modalities_when_runtime_omits_them() {
+        let model = CodexModel {
+            id: "gpt-5.4".to_string(),
+            display_name: None,
+            description: None,
+            hidden: None,
+            is_default: None,
+            upgrade: None,
+            availability_nux: None,
+            upgrade_info: None,
+            input_modalities: Vec::new(),
+            supports_personality: None,
+            default_reasoning_effort: None,
+            supported_reasoning_efforts: Vec::new(),
+        };
+
+        let mapped = map_codex_model(model);
+
+        assert_eq!(mapped.input_modalities, vec!["text", "image"]);
+        assert!(!mapped.supports_personality);
+    }
+
+    #[test]
+    fn map_skill_entries_flattens_and_sorts_skills() {
+        let mapped = map_skill_entries(&[
+            json!({
+                "cwd": "/tmp/workspace",
+                "skills": [
+                    {
+                        "name": "repo-skill",
+                        "path": "/tmp/workspace/.codex/repo-skill",
+                        "description": "Repo-local skill",
+                        "enabled": true,
+                        "scope": "repo"
+                    },
+                    {
+                        "name": "user-skill",
+                        "path": "/Users/panes/.codex/user-skill",
+                        "description": "User skill",
+                        "enabled": true,
+                        "scope": "user"
+                    }
+                ],
+                "errors": []
+            }),
+            json!({
+                "cwd": "/tmp/workspace",
+                "skills": [
+                    {
+                        "name": "repo-skill",
+                        "path": "/tmp/workspace/.codex/repo-skill",
+                        "description": "Repo-local skill",
+                        "enabled": true,
+                        "scope": "repo"
+                    }
+                ],
+                "errors": []
+            }),
+        ]);
+
+        assert_eq!(
+            mapped
+                .iter()
+                .map(|skill| (skill.scope.as_str(), skill.name.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("repo", "repo-skill"), ("user", "user-skill")]
+        );
+    }
+
+    #[test]
+    fn map_plugin_marketplaces_prefers_display_metadata() {
+        let mapped = map_plugin_marketplaces(&json!({
+            "marketplaces": [
+                {
+                    "name": "default",
+                    "path": "/tmp/plugins",
+                    "plugins": [
+                        {
+                            "id": "deploy",
+                            "name": "deploy",
+                            "enabled": true,
+                            "installed": true,
+                            "interface": {
+                                "displayName": "Deploy Helper",
+                                "developerName": "OpenAI",
+                                "shortDescription": "Ship builds faster",
+                                "capabilities": ["composer", "review"]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }));
+
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].plugins[0].name, "Deploy Helper");
+        assert_eq!(
+            mapped[0].plugins[0].developer_name.as_deref(),
+            Some("OpenAI")
+        );
+        assert_eq!(
+            mapped[0].plugins[0].capabilities,
+            vec!["composer".to_string(), "review".to_string()]
+        );
+    }
+
+    #[test]
+    fn map_config_state_uses_layers_and_structured_values() {
+        let mapped = map_config_state(&json!({
+            "config": {
+                "model": "gpt-5.4",
+                "model_provider": "openai",
+                "service_tier": "flex",
+                "approval_policy": {
+                    "reject": {
+                        "mcp_elicitations": true,
+                        "rules": false,
+                        "sandbox_approval": false
+                    }
+                },
+                "sandbox_mode": "workspace-write",
+                "web_search": "enabled",
+                "profile": "default"
+            },
+            "layers": [
+                {
+                    "name": {
+                        "type": "user",
+                        "file": "/Users/panes/.codex/config.toml"
+                    },
+                    "version": "v2",
+                    "config": {}
+                }
+            ],
+            "origins": {}
+        }));
+
+        assert_eq!(mapped.model.as_deref(), Some("gpt-5.4"));
+        assert_eq!(mapped.model_provider.as_deref(), Some("openai"));
+        assert_eq!(mapped.service_tier.as_deref(), Some("flex"));
+        assert_eq!(mapped.sandbox_mode.as_deref(), Some("workspace-write"));
+        assert_eq!(mapped.web_search.as_deref(), Some("enabled"));
+        assert_eq!(mapped.profile.as_deref(), Some("default"));
+        assert_eq!(mapped.layers.len(), 1);
+        assert_eq!(
+            mapped.layers[0].source,
+            "user:/Users/panes/.codex/config.toml"
+        );
+        assert_eq!(mapped.layers[0].version, "v2");
+        assert!(mapped.approval_policy.is_some());
     }
 }

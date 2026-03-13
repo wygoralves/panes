@@ -106,11 +106,19 @@
       "viewStash": "Open Stash",
       "viewFiles": "Open Files",
       "viewWorktrees": "Open Worktrees",
-      "viewHarnesses": "Open Agent Harnesses"
+      "viewHarnesses": "Open Agent Harnesses",
+      "codexFork": "Fork Codex Thread",
+      "codexCompact": "Compact Codex Thread",
+      "codexRollback": "Rollback Codex Thread",
+      "codexReview": "Start Codex Review"
     },
     "descriptions": {
       "switchThread": "Browse recent threads",
-      "switchWorkspace": "Browse active workspaces"
+      "switchWorkspace": "Browse active workspaces",
+      "codexFork": "Create a new branch from the current thread",
+      "codexCompact": "Compress the thread context window",
+      "codexRollback": "Undo the most recent turns",
+      "codexReview": "Review uncommitted changes with Codex"
     },
     "group": {
       "search": "Search",
@@ -122,6 +130,7 @@
       "files": "Files",
       "threads": "Threads",
       "workspaces": "Workspaces",
+      "codex": "Codex",
       "agents": "Agents",
       "commands": "Commands",
       "quickActions": "Quick Actions",
@@ -160,7 +169,8 @@
       "deleteBranch": "delete branch",
       "applyStash": "apply stash",
       "popStash": "pop stash",
-      "switchRepo": "repo"
+      "switchRepo": "repo",
+      "codexRollback": "rollback"
     },
     "preview": {
       "createBranchReady": "Create branch \"{{name}}\"",
@@ -172,7 +182,10 @@
       "stagedHint_other": "({{count}} staged)",
       "noStagedHint": "(no staged files)",
       "stashWithMessage": "Stash with message: \"{{message}}\"",
-      "stashEmpty": "Press Enter to stash (or type a message)"
+      "stashEmpty": "Press Enter to stash (or type a message)",
+      "codexRollback_one": "Rollback {{count}} turn",
+      "codexRollback_other": "Rollback {{count}} turns",
+      "codexRollbackEmpty": "Type the number of turns to roll back..."
     },
     "placeholders": {
       "checkoutBranch": "Search branches...",
@@ -183,6 +196,7 @@
       "applyStash": "Search stashes...",
       "popStash": "Search stashes...",
       "switchRepo": "Search repos...",
+      "codexRollback": "Number of turns to roll back...",
       "search": "Search messages, files, or threads...",
       "fileMode": "Search files...",
       "auto": "Search files, commands, threads..."
@@ -251,7 +265,11 @@
       "committed": "Committed",
       "commitFailed": "Commit failed",
       "changesStashed": "Changes stashed",
-      "stashFailed": "Stash failed"
+      "stashFailed": "Stash failed",
+      "codexForked": "Created a new forked Codex thread.",
+      "codexCompacted": "Started Codex thread compaction.",
+      "codexRolledBack": "Created a rollback branch ({{count}} turns removed).",
+      "codexReviewStarted": "Started an inline Codex review."
     }
   },
   "terminal": {

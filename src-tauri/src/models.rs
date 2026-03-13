@@ -74,6 +74,31 @@ pub struct ThreadDto {
     pub last_activity_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexRemoteThreadDto {
+    pub engine_thread_id: String,
+    pub title: Option<String>,
+    pub preview: String,
+    pub cwd: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub model_provider: String,
+    pub source_kind: String,
+    pub status_type: String,
+    #[serde(default)]
+    pub active_flags: Vec<String>,
+    pub archived: bool,
+    pub local_thread_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexRemoteThreadPageDto {
+    pub threads: Vec<CodexRemoteThreadDto>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadStatusDto {
@@ -229,8 +254,34 @@ pub struct EngineModelDto {
     pub hidden: bool,
     pub is_default: bool,
     pub upgrade: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub availability_nux: Option<EngineModelAvailabilityNuxDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgrade_info: Option<EngineModelUpgradeInfoDto>,
+    #[serde(default)]
+    pub input_modalities: Vec<String>,
+    #[serde(default)]
+    pub supports_personality: bool,
     pub default_reasoning_effort: String,
     pub supported_reasoning_efforts: Vec<ReasoningEffortOptionDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineModelAvailabilityNuxDto {
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineModelUpgradeInfoDto {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgrade_copy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_link: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub migration_markdown: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,12 +319,28 @@ pub struct CodexProtocolDiagnosticsDto {
     pub collaboration_modes: Vec<String>,
     #[serde(default)]
     pub apps: Vec<CodexAppDto>,
+    #[serde(default)]
+    pub skills: Vec<CodexSkillDto>,
+    #[serde(default)]
+    pub plugin_marketplaces: Vec<CodexPluginMarketplaceDto>,
+    #[serde(default)]
+    pub mcp_servers: Vec<CodexMcpServerDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account: Option<CodexAccountStateDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<CodexConfigStateDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_config_warning: Option<CodexConfigWarningDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_account_login: Option<CodexAccountLoginCompletedDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_mcp_oauth: Option<CodexMcpOauthCompletedDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_thread_realtime: Option<CodexThreadRealtimeEventDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_windows_sandbox_setup: Option<CodexWindowsSandboxSetupDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_windows_world_writable_warning: Option<CodexWindowsWorldWritableWarningDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fetched_at: Option<String>,
     #[serde(default)]
@@ -315,6 +382,94 @@ pub struct CodexAppDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CodexSkillDto {
+    pub name: String,
+    pub path: String,
+    #[serde(default)]
+    pub description: String,
+    pub enabled: bool,
+    #[serde(default)]
+    pub scope: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexPluginMarketplaceDto {
+    pub name: String,
+    pub path: String,
+    #[serde(default)]
+    pub plugins: Vec<CodexPluginDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexPluginDto {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub installed: bool,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub developer_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexMcpServerDto {
+    pub name: String,
+    pub auth_status: String,
+    pub tool_count: usize,
+    pub resource_count: usize,
+    pub resource_template_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexAccountStateDto {
+    pub provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_type: Option<String>,
+    pub requires_openai_auth: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexConfigStateDto {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_policy: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub layers: Vec<CodexConfigLayerDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexConfigLayerDto {
+    pub source: String,
+    #[serde(default)]
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CodexConfigWarningDto {
     pub summary: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -325,6 +480,10 @@ pub struct CodexConfigWarningDto {
     pub start_line: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_column: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_column: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -344,6 +503,44 @@ pub struct CodexMcpOauthCompletedDto {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexThreadRealtimeEventDto {
+    pub kind: String,
+    pub thread_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_rate: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub num_channels: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub samples_per_channel: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexWindowsSandboxSetupDto {
+    pub mode: String,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexWindowsWorldWritableWarningDto {
+    pub sample_paths: Vec<String>,
+    pub extra_count: u64,
+    pub failed_scan: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

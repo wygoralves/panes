@@ -115,6 +115,34 @@ export interface Thread {
   lastActivityAt: string;
 }
 
+export interface CodexRemoteThread {
+  engineThreadId: string;
+  title?: string | null;
+  preview: string;
+  cwd: string;
+  createdAt: string;
+  updatedAt: string;
+  modelProvider: string;
+  sourceKind: string;
+  statusType: string;
+  activeFlags: string[];
+  archived: boolean;
+  localThreadId?: string | null;
+}
+
+export interface CodexRemoteThreadPage {
+  threads: CodexRemoteThread[];
+  nextCursor?: string | null;
+}
+
+export type CodexReviewDelivery = "inline" | "detached";
+
+export type CodexReviewTarget =
+  | { type: "uncommittedChanges" }
+  | { type: "baseBranch"; branch: string }
+  | { type: "commit"; sha: string; title?: string | null }
+  | { type: "custom"; instructions: string };
+
 export type MessageStatus = "completed" | "streaming" | "interrupted" | "error";
 
 export interface Message {
@@ -160,6 +188,7 @@ export interface TextBlock {
   type: "text";
   content: string;
   planMode?: boolean;
+  isSteer?: boolean;
 }
 
 export interface CodeBlock {
@@ -177,8 +206,8 @@ export interface DiffBlock {
 
 export interface NoticeBlock {
   type: "notice";
-  kind: "model_rerouted";
-  level: "info";
+  kind: string;
+  level: "info" | "warning" | "error";
   title: string;
   message: string;
 }
@@ -190,7 +219,7 @@ export interface ActionBlock {
   actionType: ActionType;
   summary: string;
   details: Record<string, unknown>;
-  outputChunks: Array<{ stream: "stdout" | "stderr"; content: string }>;
+  outputChunks: Array<{ stream: "stdout" | "stderr" | "stdin"; content: string }>;
   outputDeferred?: boolean;
   outputDeferredLoaded?: boolean;
   status: "pending" | "running" | "done" | "error";
@@ -205,7 +234,7 @@ export interface ActionBlock {
 
 export interface ActionOutputPayload {
   found: boolean;
-  outputChunks: Array<{ stream: "stdout" | "stderr"; content: string }>;
+  outputChunks: Array<{ stream: "stdout" | "stderr" | "stdin"; content: string }>;
   truncated: boolean;
 }
 
@@ -247,6 +276,17 @@ export interface ApplyNetworkPolicyAmendmentDecision {
   };
 }
 
+export interface PermissionsApprovalResponse {
+  permissions: Record<string, unknown>;
+  scope?: "turn" | "session";
+}
+
+export interface McpServerElicitationResponse {
+  action: "accept" | "decline" | "cancel";
+  content?: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
+}
+
 export interface DynamicToolCallOutputTextItem {
   type: "inputText";
   text: string;
@@ -272,6 +312,8 @@ export type ApprovalResponse =
     }
   | AcceptWithExecpolicyAmendmentDecision
   | ApplyNetworkPolicyAmendmentDecision
+  | PermissionsApprovalResponse
+  | McpServerElicitationResponse
   | DynamicToolCallResponse
   | {
       answers: Record<string, ToolInputAnswer>;
@@ -296,6 +338,28 @@ export interface AttachmentBlock {
   mimeType?: string;
 }
 
+export interface SkillBlock {
+  type: "skill";
+  name: string;
+  path: string;
+}
+
+export interface MentionBlock {
+  type: "mention";
+  name: string;
+  path: string;
+}
+
+export interface SteerBlock {
+  type: "steer";
+  steerId: string;
+  content: string;
+  planMode?: boolean;
+  attachments?: AttachmentBlock[];
+  skills?: SkillBlock[];
+  mentions?: MentionBlock[];
+}
+
 export type ContentBlock =
   | TextBlock
   | CodeBlock
@@ -305,7 +369,10 @@ export type ContentBlock =
   | ApprovalBlock
   | ThinkingBlock
   | ErrorBlock
-  | AttachmentBlock;
+  | AttachmentBlock
+  | SkillBlock
+  | MentionBlock
+  | SteerBlock;
 
 export interface EngineInfo {
   id: string;
@@ -327,8 +394,23 @@ export interface EngineModel {
   hidden: boolean;
   isDefault: boolean;
   upgrade?: string;
+  availabilityNux?: EngineModelAvailabilityNux;
+  upgradeInfo?: EngineModelUpgradeInfo;
+  inputModalities: string[];
+  supportsPersonality: boolean;
   defaultReasoningEffort: string;
   supportedReasoningEfforts: ReasoningEffortOption[];
+}
+
+export interface EngineModelAvailabilityNux {
+  message: string;
+}
+
+export interface EngineModelUpgradeInfo {
+  model: string;
+  upgradeCopy?: string;
+  modelLink?: string;
+  migrationMarkdown?: string;
 }
 
 export interface ReasoningEffortOption {
@@ -370,12 +452,70 @@ export interface CodexApp {
   isAccessible: boolean;
 }
 
+export interface CodexSkill {
+  name: string;
+  path: string;
+  description: string;
+  enabled: boolean;
+  scope: string;
+}
+
+export interface CodexPluginMarketplace {
+  name: string;
+  path: string;
+  plugins: CodexPlugin[];
+}
+
+export interface CodexPlugin {
+  id: string;
+  name: string;
+  enabled: boolean;
+  installed: boolean;
+  capabilities: string[];
+  developerName?: string;
+  description?: string;
+}
+
+export interface CodexMcpServer {
+  name: string;
+  authStatus: string;
+  toolCount: number;
+  resourceCount: number;
+  resourceTemplateCount: number;
+}
+
+export interface CodexAccountState {
+  provider: string;
+  authMode?: string;
+  email?: string;
+  planType?: string;
+  requiresOpenaiAuth: boolean;
+}
+
+export interface CodexConfigLayer {
+  source: string;
+  version: string;
+}
+
+export interface CodexConfigState {
+  model?: string;
+  modelProvider?: string;
+  serviceTier?: string;
+  approvalPolicy?: unknown;
+  sandboxMode?: string;
+  webSearch?: string;
+  profile?: string;
+  layers: CodexConfigLayer[];
+}
+
 export interface CodexConfigWarning {
   summary: string;
   details?: string;
   path?: string;
   startLine?: number;
   startColumn?: number;
+  endLine?: number;
+  endColumn?: number;
 }
 
 export interface CodexAccountLoginCompleted {
@@ -390,14 +530,46 @@ export interface CodexMcpOauthCompleted {
   error?: string;
 }
 
+export interface CodexThreadRealtimeEvent {
+  kind: string;
+  threadId: string;
+  sessionId?: string;
+  reason?: string;
+  message?: string;
+  itemType?: string;
+  sampleRate?: number;
+  numChannels?: number;
+  samplesPerChannel?: number;
+}
+
+export interface CodexWindowsSandboxSetup {
+  mode: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface CodexWindowsWorldWritableWarning {
+  samplePaths: string[];
+  extraCount: number;
+  failedScan: boolean;
+}
+
 export interface CodexProtocolDiagnostics {
   methodAvailability: CodexMethodAvailability[];
   experimentalFeatures: CodexExperimentalFeature[];
   collaborationModes: string[];
   apps: CodexApp[];
+  skills: CodexSkill[];
+  pluginMarketplaces: CodexPluginMarketplace[];
+  mcpServers: CodexMcpServer[];
+  account?: CodexAccountState;
+  config?: CodexConfigState;
   lastConfigWarning?: CodexConfigWarning;
   lastAccountLogin?: CodexAccountLoginCompleted;
   lastMcpOauth?: CodexMcpOauthCompleted;
+  lastThreadRealtime?: CodexThreadRealtimeEvent;
+  lastWindowsSandboxSetup?: CodexWindowsSandboxSetup;
+  lastWindowsWorldWritableWarning?: CodexWindowsWorldWritableWarning;
   fetchedAt?: string;
   stale: boolean;
 }
@@ -831,7 +1003,7 @@ export interface ActionStartedEvent {
 export interface ActionOutputDeltaEvent {
   type: "ActionOutputDelta";
   action_id: string;
-  stream: "stdout" | "stderr";
+  stream: "stdout" | "stderr" | "stdin";
   content: string;
 }
 
@@ -867,6 +1039,11 @@ export interface ApprovalRequestedEvent {
   details: Record<string, unknown>;
 }
 
+export interface ApprovalResolvedEvent {
+  type: "ApprovalResolved";
+  approval_id: string;
+}
+
 export interface ErrorEvent {
   type: "Error";
   message: string;
@@ -893,6 +1070,14 @@ export interface ModelReroutedEvent {
   reason: string;
 }
 
+export interface NoticeEvent {
+  type: "Notice";
+  kind: string;
+  level: "info" | "warning" | "error";
+  title: string;
+  message: string;
+}
+
 export type StreamEvent =
   | TurnStartedEvent
   | TurnCompletedEvent
@@ -904,7 +1089,9 @@ export type StreamEvent =
   | ActionCompletedEvent
   | DiffUpdatedEvent
   | ApprovalRequestedEvent
+  | ApprovalResolvedEvent
   | ModelReroutedEvent
+  | NoticeEvent
   | ErrorEvent
   | UsageLimitsUpdatedEvent;
 
@@ -917,6 +1104,22 @@ export interface ChatAttachment {
   sizeBytes: number;
   mimeType?: string;
 }
+
+export type ChatInputItem =
+  | {
+      type: "text";
+      text: string;
+    }
+  | {
+      type: "skill";
+      name: string;
+      path: string;
+    }
+  | {
+      type: "mention";
+      name: string;
+      path: string;
+    };
 
 // ── Context Usage ───────────────────────────────────────────────────
 

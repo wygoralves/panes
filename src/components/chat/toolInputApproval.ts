@@ -1,4 +1,10 @@
-import type { ApprovalResponse, DynamicToolCallResponse, NetworkPolicyAmendment } from "../../types";
+import type {
+  ApprovalResponse,
+  DynamicToolCallResponse,
+  McpServerElicitationResponse,
+  NetworkPolicyAmendment,
+  PermissionsApprovalResponse,
+} from "../../types";
 
 export interface ToolInputOption {
   label: string;
@@ -15,6 +21,8 @@ export interface ToolInputQuestion {
 
 const REQUEST_USER_INPUT_METHOD = "item/tool/requestuserinput";
 const DYNAMIC_TOOL_CALL_METHOD = "item/tool/call";
+const PERMISSIONS_REQUEST_METHOD = "item/permissions/requestapproval";
+const MCP_ELICITATION_REQUEST_METHOD = "mcpserver/elicitation/request";
 
 function normalizeServerMethod(method: string): string {
   return method
@@ -39,18 +47,46 @@ export function isDynamicToolCallApproval(details?: Record<string, unknown>): bo
   return getApprovalServerMethod(details) === DYNAMIC_TOOL_CALL_METHOD;
 }
 
+export function isPermissionsRequestApproval(details?: Record<string, unknown>): boolean {
+  return getApprovalServerMethod(details) === PERMISSIONS_REQUEST_METHOD;
+}
+
+export function isMcpElicitationApproval(details?: Record<string, unknown>): boolean {
+  return getApprovalServerMethod(details) === MCP_ELICITATION_REQUEST_METHOD;
+}
+
 export function requiresCustomApprovalPayload(details?: Record<string, unknown>): boolean {
-  return isDynamicToolCallApproval(details);
+  return isDynamicToolCallApproval(details) || isMcpElicitationApproval(details);
 }
 
 export function defaultAdvancedApprovalPayload(
   details?: Record<string, unknown>
 ): ApprovalResponse {
+  if (isRequestUserInputApproval(details)) {
+    return {
+      answers: {},
+    };
+  }
+
   if (isDynamicToolCallApproval(details)) {
     return {
       success: true,
       contentItems: [],
     };
+  }
+
+  if (isMcpElicitationApproval(details)) {
+    const content = defaultMcpElicitationContent(details);
+    if (content && Object.keys(content).length > 0) {
+      return {
+        action: "accept",
+        content,
+      } satisfies McpServerElicitationResponse;
+    }
+
+    return {
+      action: "accept",
+    } satisfies McpServerElicitationResponse;
   }
 
   return { decision: "accept" };
@@ -165,6 +201,132 @@ export function parseDynamicToolCallArguments(
     return null;
   }
   return value as Record<string, unknown>;
+}
+
+export function parseRequestedPermissions(
+  details?: Record<string, unknown>
+): Record<string, unknown> | null {
+  const value = readDetailsValue(details, "permissions", "permissions");
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+export function buildPermissionsApprovalResponse(
+  details: Record<string, unknown> | undefined,
+  scope: "turn" | "session",
+): PermissionsApprovalResponse {
+  return {
+    permissions: parseRequestedPermissions(details) ?? {},
+    scope,
+  };
+}
+
+export function buildPermissionsDeclineResponse(): PermissionsApprovalResponse {
+  return {
+    permissions: {},
+    scope: "turn",
+  };
+}
+
+export function parseMcpElicitationServerName(
+  details?: Record<string, unknown>
+): string | undefined {
+  const value = readDetailsValue(details, "serverName", "server_name");
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export function parseMcpElicitationMessage(
+  details?: Record<string, unknown>
+): string | undefined {
+  const value = readDetailsValue(details, "message", "message");
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export function parseMcpElicitationMode(
+  details?: Record<string, unknown>
+): "form" | "url" | undefined {
+  const value = readDetailsValue(details, "mode", "mode");
+  return value === "form" || value === "url" ? value : undefined;
+}
+
+export function parseMcpElicitationUrl(
+  details?: Record<string, unknown>
+): string | undefined {
+  const value = readDetailsValue(details, "url", "url");
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export function parseMcpElicitationSchema(
+  details?: Record<string, unknown>
+): Record<string, unknown> | null {
+  const value = readDetailsValue(details, "requestedSchema", "requested_schema");
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function defaultMcpElicitationContent(
+  details?: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  if (parseMcpElicitationMode(details) !== "form") {
+    return undefined;
+  }
+
+  const schema = parseMcpElicitationSchema(details);
+  const properties =
+    schema && typeof schema.properties === "object" && schema.properties !== null
+      ? (schema.properties as Record<string, unknown>)
+      : null;
+  if (!properties) {
+    return {};
+  }
+
+  const content: Record<string, unknown> = {};
+  for (const [field, rawSchema] of Object.entries(properties)) {
+    if (typeof rawSchema !== "object" || rawSchema === null || Array.isArray(rawSchema)) {
+      content[field] = "";
+      continue;
+    }
+
+    const propertySchema = rawSchema as Record<string, unknown>;
+    if (propertySchema.default !== undefined) {
+      content[field] = propertySchema.default;
+      continue;
+    }
+
+    const propertyType = propertySchema.type;
+    if (propertyType === "boolean") {
+      content[field] = false;
+      continue;
+    }
+    if (propertyType === "number" || propertyType === "integer") {
+      content[field] = 0;
+      continue;
+    }
+    if (propertyType === "array") {
+      content[field] = [];
+      continue;
+    }
+
+    content[field] = "";
+  }
+
+  return content;
 }
 
 export function buildDynamicToolCallResponse(

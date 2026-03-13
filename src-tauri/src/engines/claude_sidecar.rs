@@ -671,6 +671,10 @@ impl Engine for ClaudeSidecarEngine {
                 hidden: false,
                 is_default: false,
                 upgrade: None,
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string(), "image".to_string()],
+                supports_personality: false,
                 default_reasoning_effort: "high".to_string(),
                 supported_reasoning_efforts: vec![
                     ReasoningEffortOption {
@@ -694,6 +698,10 @@ impl Engine for ClaudeSidecarEngine {
                 hidden: false,
                 is_default: true,
                 upgrade: Some("claude-opus-4-6".to_string()),
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string(), "image".to_string()],
+                supports_personality: false,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![
                     ReasoningEffortOption {
@@ -717,6 +725,10 @@ impl Engine for ClaudeSidecarEngine {
                 hidden: false,
                 is_default: false,
                 upgrade: Some("claude-sonnet-4-6".to_string()),
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string(), "image".to_string()],
+                supports_personality: false,
                 default_reasoning_effort: "low".to_string(),
                 supported_reasoning_efforts: vec![
                     ReasoningEffortOption {
@@ -820,6 +832,7 @@ impl Engine for ClaudeSidecarEngine {
             message,
             attachments,
             plan_mode,
+            input_items: _,
         } = input;
 
         let mut params = serde_json::json!({
@@ -837,7 +850,12 @@ impl Engine for ClaudeSidecarEngine {
                 .collect::<Vec<_>>(),
             "cwd": cwd,
             "model": thread_config.model_id,
-            "approvalPolicy": thread_config.sandbox.approval_policy.clone(),
+            "approvalPolicy": thread_config
+                .sandbox
+                .approval_policy
+                .as_ref()
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
             "allowNetwork": thread_config.sandbox.allow_network,
             "writableRoots": thread_config.sandbox.writable_roots.clone(),
             "sandboxMode": thread_config.sandbox.sandbox_mode.clone(),
@@ -1070,6 +1088,14 @@ impl Engine for ClaudeSidecarEngine {
         }
 
         Ok(())
+    }
+
+    async fn steer_message(
+        &self,
+        _engine_thread_id: &str,
+        _input: TurnInput,
+    ) -> Result<(), anyhow::Error> {
+        anyhow::bail!("Claude does not support mid-turn steering")
     }
 
     async fn respond_to_approval(

@@ -6,7 +6,13 @@ import type {
   ApprovalResponse,
   ActionOutputPayload,
   ChatAttachment,
+  ChatInputItem,
+  CodexReviewDelivery,
+  CodexReviewTarget,
+  CodexRemoteThreadPage,
   ContentBlock,
+  CodexApp,
+  CodexSkill,
   DependencyReport,
   EngineCheckResult,
   EngineRuntimeUpdatedEvent,
@@ -126,6 +132,28 @@ export const ipc = {
   listThreads: (workspaceId: string) => invoke<Thread[]>("list_threads", { workspaceId }),
   listArchivedThreads: (workspaceId: string) =>
     invoke<Thread[]>("list_archived_threads", { workspaceId }),
+  listCodexRemoteThreads: (
+    workspaceId: string,
+    options?: {
+      cursor?: string | null;
+      limit?: number | null;
+      searchTerm?: string | null;
+      archived?: boolean | null;
+    },
+  ) =>
+    invoke<CodexRemoteThreadPage>("list_codex_remote_threads", {
+      workspaceId,
+      cursor: options?.cursor ?? null,
+      limit: options?.limit ?? null,
+      searchTerm: options?.searchTerm ?? null,
+      archived: options?.archived ?? null,
+    }),
+  attachCodexRemoteThread: (workspaceId: string, engineThreadId: string, modelId: string) =>
+    invoke<Thread>("attach_codex_remote_thread", {
+      workspaceId,
+      engineThreadId,
+      modelId,
+    }),
   createThread: (
     workspaceId: string,
     repoId: string | null,
@@ -156,7 +184,7 @@ export const ipc = {
   setThreadExecutionPolicy: (
     threadId: string,
     patch: {
-      approvalPolicy?: string | null;
+      approvalPolicy?: unknown;
       sandboxMode?: string | null;
       allowNetwork?: boolean | null;
     },
@@ -170,21 +198,49 @@ export const ipc = {
       updateAllowNetwork: Object.prototype.hasOwnProperty.call(patch, "allowNetwork"),
       allowNetwork: patch.allowNetwork ?? null,
     }),
+  setThreadCodexConfig: (
+    threadId: string,
+    patch: {
+      personality?: string | null;
+      serviceTier?: string | null;
+      outputSchema?: unknown;
+    },
+  ) =>
+    invoke<Thread>("set_thread_codex_config", {
+      threadId,
+      updatePersonality: Object.prototype.hasOwnProperty.call(patch, "personality"),
+      personality: patch.personality ?? null,
+      updateServiceTier: Object.prototype.hasOwnProperty.call(patch, "serviceTier"),
+      serviceTier: patch.serviceTier ?? null,
+      updateOutputSchema: Object.prototype.hasOwnProperty.call(patch, "outputSchema"),
+      outputSchema: patch.outputSchema ?? null,
+    }),
   archiveThread: (threadId: string) => invoke<void>("archive_thread", { threadId }),
   restoreThread: (threadId: string) => invoke<Thread>("restore_thread", { threadId }),
   syncThreadFromEngine: (threadId: string) =>
     invoke<Thread>("sync_thread_from_engine", { threadId }),
+  forkCodexThread: (threadId: string) =>
+    invoke<Thread>("fork_codex_thread", { threadId }),
+  rollbackCodexThread: (threadId: string, numTurns: number) =>
+    invoke<Thread>("rollback_codex_thread", { threadId, numTurns }),
+  compactCodexThread: (threadId: string) =>
+    invoke<Thread>("compact_codex_thread", { threadId }),
   deleteThread: (threadId: string) => invoke<void>("delete_thread", { threadId }),
   listEngines: () => invoke<EngineInfo[]>("list_engines"),
   engineHealth: (engineId: string) => invoke<EngineHealth>("engine_health", { engineId }),
   prewarmEngine: (engineId: string) => invoke<void>("prewarm_engine", { engineId }),
   runEngineCheck: (engineId: string, command: string) =>
     invoke<EngineCheckResult>("run_engine_check", { engineId, command }),
+  listCodexSkills: (cwd: string) =>
+    invoke<CodexSkill[]>("list_codex_skills", { cwd }),
+  listCodexApps: () => invoke<CodexApp[]>("list_codex_apps"),
   sendMessage: (
     threadId: string,
     message: string,
     modelId?: string | null,
+    reasoningEffort?: string | null,
     attachments?: ChatAttachment[] | null,
+    inputItems?: ChatInputItem[] | null,
     planMode?: boolean | null,
     clientTurnId?: string | null,
   ) =>
@@ -192,9 +248,35 @@ export const ipc = {
       threadId,
       message,
       modelId: modelId ?? null,
+      reasoningEffort: reasoningEffort ?? null,
       attachments: attachments ?? null,
+      inputItems: inputItems ?? null,
       planMode: planMode ?? null,
       clientTurnId: clientTurnId ?? null,
+    }),
+  steerMessage: (
+    threadId: string,
+    message: string,
+    attachments?: ChatAttachment[] | null,
+    inputItems?: ChatInputItem[] | null,
+    planMode?: boolean | null,
+  ) =>
+    invoke<void>("steer_message", {
+      threadId,
+      message,
+      attachments: attachments ?? null,
+      inputItems: inputItems ?? null,
+      planMode: planMode ?? null,
+    }),
+  startCodexReview: (
+    threadId: string,
+    target: CodexReviewTarget,
+    delivery: CodexReviewDelivery,
+  ) =>
+    invoke<Thread>("start_codex_review", {
+      threadId,
+      target,
+      delivery,
     }),
   cancelTurn: (threadId: string) => invoke<void>("cancel_turn", { threadId }),
   respondApproval: (threadId: string, approvalId: string, response: ApprovalResponse) =>

@@ -33,6 +33,14 @@ interface ThreadState {
   refreshAllThreads: (workspaceIds: string[]) => Promise<void>;
   removeThread: (threadId: string) => Promise<void>;
   restoreThread: (threadId: string) => Promise<void>;
+  forkCodexThread: (threadId: string) => Promise<Thread | null>;
+  rollbackCodexThread: (threadId: string, numTurns: number) => Promise<Thread | null>;
+  compactCodexThread: (threadId: string) => Promise<Thread | null>;
+  attachCodexRemoteThread: (
+    workspaceId: string,
+    engineThreadId: string,
+    modelId: string,
+  ) => Promise<Thread | null>;
   setActiveThread: (threadId: string | null) => void;
   applyThreadUpdateLocal: (thread: Thread) => boolean;
   setThreadReasoningEffortLocal: (threadId: string, reasoningEffort: string | null) => void;
@@ -371,6 +379,132 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       });
     } catch (error) {
       set({ loading: false, error: String(error) });
+    }
+  },
+  forkCodexThread: async (threadId) => {
+    set({ loading: true, error: undefined });
+    try {
+      const forked = await ipc.forkCodexThread(threadId);
+      localStorage.setItem(LAST_THREAD_KEY, forked.id);
+      set((state) => {
+        const workspaceId = forked.workspaceId;
+        const workspaceThreads = state.threadsByWorkspace[workspaceId] ?? [];
+        const nextWorkspaceThreads = [
+          forked,
+          ...workspaceThreads.filter((thread) => thread.id !== forked.id),
+        ];
+        const threadsByWorkspace = mergeWorkspaceThreads(
+          state.threadsByWorkspace,
+          workspaceId,
+          nextWorkspaceThreads,
+        );
+
+        return {
+          threadsByWorkspace,
+          threads: flattenThreadsByWorkspace(threadsByWorkspace),
+          activeThreadId: forked.id,
+          loading: false,
+        };
+      });
+      return forked;
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      return null;
+    }
+  },
+  rollbackCodexThread: async (threadId, numTurns) => {
+    set({ loading: true, error: undefined });
+    try {
+      const rolledBack = await ipc.rollbackCodexThread(threadId, numTurns);
+      localStorage.setItem(LAST_THREAD_KEY, rolledBack.id);
+      set((state) => {
+        const workspaceId = rolledBack.workspaceId;
+        const workspaceThreads = state.threadsByWorkspace[workspaceId] ?? [];
+        const nextWorkspaceThreads = [
+          rolledBack,
+          ...workspaceThreads.filter((thread) => thread.id !== rolledBack.id),
+        ];
+        const threadsByWorkspace = mergeWorkspaceThreads(
+          state.threadsByWorkspace,
+          workspaceId,
+          nextWorkspaceThreads,
+        );
+
+        return {
+          threadsByWorkspace,
+          threads: flattenThreadsByWorkspace(threadsByWorkspace),
+          activeThreadId: rolledBack.id,
+          loading: false,
+        };
+      });
+      return rolledBack;
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      return null;
+    }
+  },
+  compactCodexThread: async (threadId) => {
+    set({ loading: true, error: undefined });
+    try {
+      const compacted = await ipc.compactCodexThread(threadId);
+      set((state) => {
+        const workspaceId = compacted.workspaceId;
+        const workspaceThreads = state.threadsByWorkspace[workspaceId] ?? [];
+        const nextWorkspaceThreads = workspaceThreads.map((thread) =>
+          thread.id === compacted.id ? compacted : thread,
+        );
+        const threadsByWorkspace = mergeWorkspaceThreads(
+          state.threadsByWorkspace,
+          workspaceId,
+          nextWorkspaceThreads,
+        );
+
+        return {
+          threadsByWorkspace,
+          threads: flattenThreadsByWorkspace(threadsByWorkspace),
+          loading: false,
+        };
+      });
+      return compacted;
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      return null;
+    }
+  },
+  attachCodexRemoteThread: async (workspaceId, engineThreadId, modelId) => {
+    set({ loading: true, error: undefined });
+    try {
+      const attached = await ipc.attachCodexRemoteThread(workspaceId, engineThreadId, modelId);
+      localStorage.setItem(LAST_THREAD_KEY, attached.id);
+      set((state) => {
+        const workspaceThreads = state.threadsByWorkspace[workspaceId] ?? [];
+        const nextWorkspaceThreads = [
+          attached,
+          ...workspaceThreads.filter((thread) => thread.id !== attached.id),
+        ];
+        const threadsByWorkspace = mergeWorkspaceThreads(
+          state.threadsByWorkspace,
+          workspaceId,
+          nextWorkspaceThreads,
+        );
+        const archivedThreads = state.archivedThreadsByWorkspace[workspaceId] ?? [];
+        const archivedThreadsByWorkspace = {
+          ...state.archivedThreadsByWorkspace,
+          [workspaceId]: archivedThreads.filter((thread) => thread.id !== attached.id),
+        };
+
+        return {
+          threadsByWorkspace,
+          archivedThreadsByWorkspace,
+          threads: flattenThreadsByWorkspace(threadsByWorkspace),
+          activeThreadId: attached.id,
+          loading: false,
+        };
+      });
+      return attached;
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      return null;
     }
   },
   setActiveThread: (threadId) => {

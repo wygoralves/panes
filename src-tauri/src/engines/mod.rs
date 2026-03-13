@@ -2,15 +2,20 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    engines::{claude_sidecar::ClaudeSidecarEngine, codex::CodexEngine},
+    engines::{
+        claude_sidecar::ClaudeSidecarEngine,
+        codex::{CodexEngine, CodexForkedThread, CodexReviewStarted},
+    },
     models::{
-        EngineCapabilitiesDto, EngineHealthDto, EngineInfoDto, EngineModelDto,
+        CodexAppDto, CodexSkillDto, EngineCapabilitiesDto, EngineHealthDto, EngineInfoDto,
+        EngineModelAvailabilityNuxDto, EngineModelDto, EngineModelUpgradeInfoDto,
         ReasoningEffortOptionDto, ThreadDto,
     },
 };
@@ -41,9 +46,12 @@ pub enum ThreadScope {
 pub struct SandboxPolicy {
     pub writable_roots: Vec<String>,
     pub allow_network: bool,
-    pub approval_policy: Option<String>,
+    pub approval_policy: Option<Value>,
     pub reasoning_effort: Option<String>,
     pub sandbox_mode: Option<String>,
+    pub service_tier: Option<String>,
+    pub personality: Option<String>,
+    pub output_schema: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +62,10 @@ pub struct ModelInfo {
     pub hidden: bool,
     pub is_default: bool,
     pub upgrade: Option<String>,
+    pub availability_nux: Option<ModelAvailabilityNux>,
+    pub upgrade_info: Option<ModelUpgradeInfo>,
+    pub input_modalities: Vec<String>,
+    pub supports_personality: bool,
     pub default_reasoning_effort: String,
     pub supported_reasoning_efforts: Vec<ReasoningEffortOption>,
 }
@@ -62,6 +74,19 @@ pub struct ModelInfo {
 pub struct ReasoningEffortOption {
     pub reasoning_effort: String,
     pub description: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelAvailabilityNux {
+    pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelUpgradeInfo {
+    pub model: String,
+    pub upgrade_copy: Option<String>,
+    pub model_link: Option<String>,
+    pub migration_markdown: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -203,6 +228,21 @@ pub struct ThreadSyncSnapshot {
 }
 
 #[derive(Debug, Clone)]
+pub struct CodexRemoteThreadSummary {
+    pub engine_thread_id: String,
+    pub title: Option<String>,
+    pub preview: String,
+    pub cwd: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub model_provider: String,
+    pub source_kind: String,
+    pub status_type: String,
+    pub active_flags: Vec<String>,
+    pub archived: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct TurnAttachment {
     pub file_name: String,
     pub file_path: String,
@@ -215,6 +255,15 @@ pub struct TurnInput {
     pub message: String,
     pub attachments: Vec<TurnAttachment>,
     pub plan_mode: bool,
+    pub input_items: Vec<TurnInputItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TurnInputItem {
+    Text { text: String },
+    Skill { name: String, path: String },
+    Mention { name: String, path: String },
 }
 
 #[async_trait]
@@ -239,6 +288,12 @@ pub trait Engine: Send + Sync {
         input: TurnInput,
         event_tx: mpsc::Sender<EngineEvent>,
         cancellation: CancellationToken,
+    ) -> Result<(), anyhow::Error>;
+
+    async fn steer_message(
+        &self,
+        engine_thread_id: &str,
+        input: TurnInput,
     ) -> Result<(), anyhow::Error>;
 
     async fn respond_to_approval(
@@ -272,16 +327,17 @@ impl EngineManager {
     }
 
     pub async fn list_engines(&self) -> anyhow::Result<Vec<EngineInfoDto>> {
-        let codex_models =
-            match timeout(Duration::from_secs(4), self.codex.list_models_runtime()).await {
-                Ok(models) => models,
-                Err(_) => {
-                    log::warn!(
-                    "timed out loading codex runtime models; falling back to static model catalog"
-                );
-                    self.codex.models()
-                }
-            };
+        let codex_models = match timeout(Duration::from_secs(4), self.codex.list_models_runtime())
+            .await
+        {
+            Ok(models) => models,
+            Err(_) => {
+                log::warn!(
+                        "timed out loading codex runtime models; falling back to cached or static model catalog"
+                    );
+                self.codex.runtime_model_fallback().await
+            }
+        };
         let claude_models = self.claude.models();
 
         Ok(vec![
@@ -340,6 +396,87 @@ impl EngineManager {
         }
     }
 
+    pub async fn list_codex_skills(&self, cwd: &str) -> anyhow::Result<Vec<CodexSkillDto>> {
+        self.codex.list_skills(cwd).await
+    }
+
+    pub async fn list_codex_apps(&self) -> anyhow::Result<Vec<CodexAppDto>> {
+        self.codex.list_apps().await
+    }
+
+    pub async fn fork_codex_thread(
+        &self,
+        engine_thread_id: &str,
+        cwd: &str,
+        model: &str,
+        sandbox: SandboxPolicy,
+    ) -> anyhow::Result<CodexForkedThread> {
+        self.codex
+            .fork_thread(engine_thread_id, cwd, model, sandbox)
+            .await
+    }
+
+    pub async fn rollback_codex_thread(
+        &self,
+        engine_thread_id: &str,
+        num_turns: u32,
+    ) -> anyhow::Result<ThreadSyncSnapshot> {
+        self.codex
+            .rollback_thread(engine_thread_id, num_turns)
+            .await
+    }
+
+    pub async fn compact_codex_thread(&self, engine_thread_id: &str) -> anyhow::Result<()> {
+        self.codex.compact_thread(engine_thread_id).await
+    }
+
+    pub async fn archive_codex_thread(&self, engine_thread_id: &str) -> anyhow::Result<()> {
+        self.codex.archive_thread(engine_thread_id).await
+    }
+
+    pub async fn list_codex_remote_threads(
+        &self,
+        search_term: Option<&str>,
+        archived: Option<bool>,
+    ) -> anyhow::Result<Vec<CodexRemoteThreadSummary>> {
+        self.codex.list_threads(search_term, archived).await
+    }
+
+    pub async fn read_codex_remote_thread(
+        &self,
+        engine_thread_id: &str,
+    ) -> anyhow::Result<CodexRemoteThreadSummary> {
+        self.codex.read_remote_thread(engine_thread_id).await
+    }
+
+    pub async fn unarchive_codex_remote_thread(
+        &self,
+        engine_thread_id: &str,
+    ) -> anyhow::Result<()> {
+        self.codex.unarchive_remote_thread(engine_thread_id).await
+    }
+
+    pub async fn start_codex_review(
+        &self,
+        source_engine_thread_id: &str,
+        target: Value,
+        delivery: Option<&str>,
+        event_tx: mpsc::Sender<EngineEvent>,
+        cancellation: CancellationToken,
+        started_tx: oneshot::Sender<CodexReviewStarted>,
+    ) -> anyhow::Result<()> {
+        self.codex
+            .start_review(
+                source_engine_thread_id,
+                target,
+                delivery,
+                event_tx,
+                cancellation,
+                started_tx,
+            )
+            .await
+    }
+
     pub async fn ensure_engine_thread(
         &self,
         thread: &ThreadDto,
@@ -386,6 +523,27 @@ impl EngineManager {
                 .send_message(engine_thread_id, input, event_tx, cancellation)
                 .await
                 .context("claude send_message failed"),
+            _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
+        }
+    }
+
+    pub async fn steer_message(
+        &self,
+        thread: &ThreadDto,
+        engine_thread_id: &str,
+        input: TurnInput,
+    ) -> anyhow::Result<()> {
+        match thread.engine_id.as_str() {
+            "codex" => self
+                .codex
+                .steer_message(engine_thread_id, input)
+                .await
+                .context("codex steer_message failed"),
+            "claude" => self
+                .claude
+                .steer_message(engine_thread_id, input)
+                .await
+                .context("claude steer_message failed"),
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         }
     }
@@ -496,6 +654,19 @@ fn map_model_info(model: ModelInfo) -> EngineModelDto {
         hidden: model.hidden,
         is_default: model.is_default,
         upgrade: model.upgrade,
+        availability_nux: model
+            .availability_nux
+            .map(|value| EngineModelAvailabilityNuxDto {
+                message: value.message,
+            }),
+        upgrade_info: model.upgrade_info.map(|value| EngineModelUpgradeInfoDto {
+            model: value.model,
+            upgrade_copy: value.upgrade_copy,
+            model_link: value.model_link,
+            migration_markdown: value.migration_markdown,
+        }),
+        input_modalities: model.input_modalities,
+        supports_personality: model.supports_personality,
         default_reasoning_effort: model.default_reasoning_effort,
         supported_reasoning_efforts: model
             .supported_reasoning_efforts

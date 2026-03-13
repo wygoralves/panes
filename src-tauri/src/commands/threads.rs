@@ -1,11 +1,16 @@
-use chrono::Utc;
-use serde_json::json;
+use chrono::{DateTime, Utc};
+use serde_json::{json, Value};
 use tauri::State;
 
 use crate::{
     db,
     engines::validate_engine_sandbox_mode,
-    models::{ThreadDto, ThreadStatusDto},
+    engines::CodexRemoteThreadSummary,
+    engines::SandboxPolicy,
+    models::{
+        CodexRemoteThreadDto, CodexRemoteThreadPageDto, RepoDto, ThreadDto, ThreadStatusDto,
+        TrustLevelDto,
+    },
     state::AppState,
 };
 
@@ -42,6 +47,347 @@ pub async fn list_archived_threads(
         db::threads::list_archived_threads_for_workspace(db, &workspace_id)
     })
     .await
+}
+
+#[tauri::command]
+pub async fn list_codex_remote_threads(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    cursor: Option<String>,
+    limit: Option<u32>,
+    search_term: Option<String>,
+    archived: Option<bool>,
+) -> Result<CodexRemoteThreadPageDto, String> {
+    let db = state.db.clone();
+    let (workspace_root, repos) = run_db(db.clone(), {
+        let workspace_id = workspace_id.clone();
+        move |db| {
+            let workspace = db::workspaces::find_workspace_by_id(db, &workspace_id)?
+                .ok_or_else(|| anyhow::anyhow!("workspace not found: {workspace_id}"))?;
+            let repos = db::repos::get_repos(db, &workspace_id)?;
+            Ok((workspace.root_path, repos))
+        }
+    })
+    .await?;
+
+    let allowed_roots = collect_remote_thread_roots(&workspace_root, &repos);
+    let normalized_search_term = normalize_remote_thread_search_term(search_term);
+    let remote_threads = state
+        .engines
+        .list_codex_remote_threads(normalized_search_term.as_deref(), archived)
+        .await
+        .map_err(err_to_string)?;
+    let matching_threads = remote_threads
+        .into_iter()
+        .filter(|thread| allowed_roots.contains(thread.cwd.as_str()))
+        .collect::<Vec<_>>();
+
+    let offset = parse_codex_remote_thread_cursor(cursor.as_deref())?;
+    let page_size = normalize_codex_remote_thread_limit(limit);
+    let page_end = offset.saturating_add(page_size).min(matching_threads.len());
+    let page_threads = if offset >= matching_threads.len() {
+        Vec::new()
+    } else {
+        matching_threads[offset..page_end].to_vec()
+    };
+    let next_cursor = (page_end < matching_threads.len()).then(|| page_end.to_string());
+
+    run_db(db, move |db| {
+        let threads = page_threads
+            .into_iter()
+            .map(|thread| {
+                let local_thread_id = db::threads::find_thread_by_engine_thread_id(
+                    db,
+                    "codex",
+                    &thread.engine_thread_id,
+                )?
+                .filter(|local| local.workspace_id == workspace_id)
+                .map(|local| local.id);
+                Ok(map_codex_remote_thread_dto(thread, local_thread_id))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        Ok(CodexRemoteThreadPageDto {
+            threads,
+            next_cursor,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn attach_codex_remote_thread(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    engine_thread_id: String,
+    model_id: String,
+) -> Result<ThreadDto, String> {
+    let normalized_model_id =
+        validate_model_for_engine(state.inner(), "codex", model_id.trim()).await?;
+    let db = state.db.clone();
+    let (workspace_root, repos, existing_local_thread) = run_db(db.clone(), {
+        let workspace_id = workspace_id.clone();
+        let engine_thread_id = engine_thread_id.clone();
+        move |db| {
+            let workspace = db::workspaces::find_workspace_by_id(db, &workspace_id)?
+                .ok_or_else(|| anyhow::anyhow!("workspace not found: {workspace_id}"))?;
+            let repos = db::repos::get_repos(db, &workspace_id)?;
+            let existing =
+                db::threads::find_thread_by_engine_thread_id(db, "codex", &engine_thread_id)?
+                    .filter(|thread| thread.workspace_id == workspace_id);
+            Ok((workspace.root_path, repos, existing))
+        }
+    })
+    .await?;
+
+    let mut remote_thread = state
+        .engines
+        .read_codex_remote_thread(&engine_thread_id)
+        .await
+        .map_err(err_to_string)?;
+    if remote_thread.archived {
+        state
+            .engines
+            .unarchive_codex_remote_thread(&engine_thread_id)
+            .await
+            .map_err(err_to_string)?;
+        remote_thread.archived = false;
+    }
+    let repo_id = resolve_codex_remote_thread_repo_id(&workspace_root, &repos, &remote_thread.cwd)?;
+    let title = build_codex_remote_thread_title(&remote_thread);
+    let metadata = build_codex_remote_thread_metadata(&remote_thread, &normalized_model_id);
+
+    if let Some(existing) = existing_local_thread {
+        return run_db(db, move |db| {
+            let thread = match db::threads::restore_thread(db, &existing.id) {
+                Ok(restored) => restored,
+                Err(_) => existing,
+            };
+            db::threads::update_thread_runtime_snapshot(
+                db,
+                &thread.id,
+                Some(&title),
+                map_codex_thread_status_to_local(
+                    Some(remote_thread.status_type.as_str()),
+                    &remote_thread.active_flags,
+                    false,
+                ),
+                Some(&metadata),
+            )
+        })
+        .await;
+    }
+
+    run_db(db, move |db| {
+        let created = db::threads::create_thread(
+            db,
+            &workspace_id,
+            repo_id.as_deref(),
+            "codex",
+            &normalized_model_id,
+            &title,
+        )?;
+        db::threads::set_engine_thread_id(db, &created.id, &engine_thread_id)?;
+        db::threads::update_thread_runtime_snapshot(
+            db,
+            &created.id,
+            Some(&title),
+            map_codex_thread_status_to_local(
+                Some(remote_thread.status_type.as_str()),
+                &remote_thread.active_flags,
+                false,
+            ),
+            Some(&metadata),
+        )
+    })
+    .await
+}
+
+async fn validate_model_for_engine(
+    state: &AppState,
+    engine_id: &str,
+    requested_model_id: &str,
+) -> Result<String, String> {
+    let normalized_model_id = requested_model_id.trim();
+    if normalized_model_id.is_empty() {
+        return Err("model id cannot be empty".to_string());
+    }
+
+    if let Ok(engines) = state.engines.list_engines().await {
+        if let Some(engine) = engines.iter().find(|engine| engine.id == engine_id) {
+            if engine
+                .models
+                .iter()
+                .any(|model| model.id == normalized_model_id)
+            {
+                return Ok(normalized_model_id.to_string());
+            }
+
+            let available = engine
+                .models
+                .iter()
+                .map(|model| model.id.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "model `{normalized_model_id}` is not supported by engine `{engine_id}`. available models: {available}"
+            ));
+        }
+    }
+
+    Ok(normalized_model_id.to_string())
+}
+
+fn collect_remote_thread_roots(
+    workspace_root: &str,
+    repos: &[RepoDto],
+) -> std::collections::HashSet<String> {
+    let mut roots = std::collections::HashSet::with_capacity(repos.len() + 1);
+    roots.insert(workspace_root.to_string());
+    for repo in repos {
+        roots.insert(repo.path.clone());
+    }
+    roots
+}
+
+fn normalize_remote_thread_search_term(search_term: Option<String>) -> Option<String> {
+    search_term
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn parse_codex_remote_thread_cursor(cursor: Option<&str>) -> Result<usize, String> {
+    let Some(cursor) = cursor.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(0);
+    };
+
+    cursor.parse::<usize>().map_err(|_| {
+        format!("invalid Codex remote thread cursor `{cursor}`. expected a non-negative offset")
+    })
+}
+
+fn normalize_codex_remote_thread_limit(limit: Option<u32>) -> usize {
+    limit.unwrap_or(20).clamp(1, 100) as usize
+}
+
+fn map_codex_remote_thread_dto(
+    thread: CodexRemoteThreadSummary,
+    local_thread_id: Option<String>,
+) -> CodexRemoteThreadDto {
+    CodexRemoteThreadDto {
+        engine_thread_id: thread.engine_thread_id,
+        title: thread.title,
+        preview: thread.preview,
+        cwd: thread.cwd,
+        created_at: codex_remote_thread_timestamp_to_rfc3339(thread.created_at),
+        updated_at: codex_remote_thread_timestamp_to_rfc3339(thread.updated_at),
+        model_provider: thread.model_provider,
+        source_kind: thread.source_kind,
+        status_type: thread.status_type,
+        active_flags: thread.active_flags,
+        archived: thread.archived,
+        local_thread_id,
+    }
+}
+
+fn codex_remote_thread_timestamp_to_rfc3339(timestamp: i64) -> String {
+    DateTime::<Utc>::from_timestamp(timestamp, 0)
+        .unwrap_or_else(Utc::now)
+        .to_rfc3339()
+}
+
+fn resolve_codex_remote_thread_repo_id(
+    workspace_root: &str,
+    repos: &[RepoDto],
+    cwd: &str,
+) -> Result<Option<String>, String> {
+    if cwd == workspace_root {
+        return Ok(None);
+    }
+
+    if let Some(repo) = repos.iter().find(|repo| repo.path == cwd) {
+        return Ok(Some(repo.id.clone()));
+    }
+
+    Err(format!(
+        "Codex thread cwd `{cwd}` is outside the active workspace and cannot be attached"
+    ))
+}
+
+fn build_codex_remote_thread_title(thread: &CodexRemoteThreadSummary) -> String {
+    if let Some(title) = thread
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return normalize_thread_title(title).unwrap_or_else(|_| {
+            format!(
+                "Codex thread {}",
+                short_thread_label(&thread.engine_thread_id)
+            )
+        });
+    }
+
+    if let Some(preview) = thread
+        .preview
+        .trim()
+        .split('\n')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return normalize_thread_title(preview).unwrap_or_else(|_| {
+            format!(
+                "Codex thread {}",
+                short_thread_label(&thread.engine_thread_id)
+            )
+        });
+    }
+
+    format!(
+        "Codex thread {}",
+        short_thread_label(&thread.engine_thread_id)
+    )
+}
+
+fn short_thread_label(engine_thread_id: &str) -> String {
+    engine_thread_id.chars().take(8).collect()
+}
+
+fn build_codex_remote_thread_metadata(thread: &CodexRemoteThreadSummary, model_id: &str) -> Value {
+    let mut metadata = merge_codex_runtime_metadata(
+        None,
+        Some(thread.status_type.as_str()),
+        &thread.active_flags,
+        Some(thread.preview.as_str()),
+        true,
+        Some("remote_thread_attached"),
+    );
+
+    if let Some(object) = metadata.as_object_mut() {
+        object.insert("lastModelId".to_string(), json!(model_id));
+        object.insert("codexTranscriptImported".to_string(), json!(false));
+        object.insert(
+            "codexModelProvider".to_string(),
+            json!(thread.model_provider),
+        );
+        object.insert("codexSourceKind".to_string(), json!(thread.source_kind));
+        object.insert("codexRemoteArchived".to_string(), json!(thread.archived));
+        object.insert("codexRemoteCwd".to_string(), json!(thread.cwd));
+        object.insert(
+            "codexRemoteCreatedAt".to_string(),
+            json!(codex_remote_thread_timestamp_to_rfc3339(thread.created_at)),
+        );
+        object.insert(
+            "codexRemoteUpdatedAt".to_string(),
+            json!(codex_remote_thread_timestamp_to_rfc3339(thread.updated_at)),
+        );
+    }
+
+    metadata
 }
 
 #[tauri::command]
@@ -388,11 +734,170 @@ pub async fn sync_thread_from_engine(
 }
 
 #[tauri::command]
+pub async fn fork_codex_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<ThreadDto, String> {
+    if state.turns.get(&thread_id).await.is_some() {
+        return Err("cannot fork a thread while a turn is still active".to_string());
+    }
+
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if thread.engine_id != "codex" {
+        return Err("native fork is only available for Codex threads".to_string());
+    }
+    let engine_thread_id = thread
+        .engine_thread_id
+        .clone()
+        .ok_or_else(|| "Codex thread has not been initialized yet".to_string())?;
+    let (cwd, model_id, sandbox) = build_codex_branch_context(state.inner(), &thread).await?;
+
+    let forked = state
+        .engines
+        .fork_codex_thread(&engine_thread_id, &cwd, &model_id, sandbox)
+        .await
+        .map_err(err_to_string)?;
+
+    create_codex_branch_thread(
+        state.inner(),
+        &thread,
+        &forked.engine_thread_id,
+        &forked.model_id,
+        forked.title.as_deref(),
+        forked.preview.as_deref(),
+        forked.raw_status.as_deref(),
+        &forked.active_flags,
+        None,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn rollback_codex_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+    num_turns: u32,
+) -> Result<ThreadDto, String> {
+    if num_turns == 0 {
+        return Err("rollback requires at least one turn".to_string());
+    }
+    if state.turns.get(&thread_id).await.is_some() {
+        return Err("cannot rollback a thread while a turn is still active".to_string());
+    }
+
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if thread.engine_id != "codex" {
+        return Err("native rollback is only available for Codex threads".to_string());
+    }
+    let engine_thread_id = thread
+        .engine_thread_id
+        .clone()
+        .ok_or_else(|| "Codex thread has not been initialized yet".to_string())?;
+    let (cwd, model_id, sandbox) = build_codex_branch_context(state.inner(), &thread).await?;
+
+    let forked = state
+        .engines
+        .fork_codex_thread(&engine_thread_id, &cwd, &model_id, sandbox)
+        .await
+        .map_err(err_to_string)?;
+    let rollback_snapshot = match state
+        .engines
+        .rollback_codex_thread(&forked.engine_thread_id, num_turns)
+        .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(rollback_error) => {
+            if let Err(cleanup_error) = state
+                .engines
+                .archive_codex_thread(&forked.engine_thread_id)
+                .await
+            {
+                log::warn!(
+                    "failed to clean up forked engine thread {} after rollback failure: {cleanup_error}",
+                    forked.engine_thread_id
+                );
+            }
+            return Err(err_to_string(rollback_error));
+        }
+    };
+
+    create_codex_branch_thread(
+        state.inner(),
+        &thread,
+        &forked.engine_thread_id,
+        &forked.model_id,
+        rollback_snapshot
+            .title
+            .as_deref()
+            .or(forked.title.as_deref()),
+        rollback_snapshot
+            .preview
+            .as_deref()
+            .or(forked.preview.as_deref()),
+        rollback_snapshot
+            .raw_status
+            .as_deref()
+            .or(forked.raw_status.as_deref()),
+        &rollback_snapshot.active_flags,
+        Some(num_turns),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn compact_codex_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<ThreadDto, String> {
+    if state.turns.get(&thread_id).await.is_some() {
+        return Err("cannot compact a thread while a turn is still active".to_string());
+    }
+
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if thread.engine_id != "codex" {
+        return Err("native compact is only available for Codex threads".to_string());
+    }
+    let engine_thread_id = thread
+        .engine_thread_id
+        .clone()
+        .ok_or_else(|| "Codex thread has not been initialized yet".to_string())?;
+
+    state
+        .engines
+        .compact_codex_thread(&engine_thread_id)
+        .await
+        .map_err(err_to_string)?;
+
+    Ok(thread)
+}
+
+#[tauri::command]
 pub async fn set_thread_execution_policy(
     state: State<'_, AppState>,
     thread_id: String,
     update_approval_policy: bool,
-    approval_policy: Option<String>,
+    approval_policy: Option<Value>,
     update_sandbox_mode: bool,
     sandbox_mode: Option<String>,
     update_allow_network: bool,
@@ -415,7 +920,7 @@ async fn set_thread_execution_policy_inner(
     state: &AppState,
     thread_id: String,
     update_approval_policy: bool,
-    approval_policy: Option<String>,
+    approval_policy: Option<Value>,
     update_sandbox_mode: bool,
     sandbox_mode: Option<String>,
     update_allow_network: bool,
@@ -510,6 +1015,123 @@ async fn set_thread_execution_policy_inner(
     })
     .await?
     .ok_or_else(|| format!("thread not found after execution policy update: {thread_id}"))
+}
+
+#[tauri::command]
+pub async fn set_thread_codex_config(
+    state: State<'_, AppState>,
+    thread_id: String,
+    update_personality: bool,
+    personality: Option<String>,
+    update_service_tier: bool,
+    service_tier: Option<String>,
+    update_output_schema: bool,
+    output_schema: Option<Value>,
+) -> Result<ThreadDto, String> {
+    set_thread_codex_config_inner(
+        state.inner(),
+        thread_id,
+        update_personality,
+        personality,
+        update_service_tier,
+        service_tier,
+        update_output_schema,
+        output_schema,
+    )
+    .await
+}
+
+async fn set_thread_codex_config_inner(
+    state: &AppState,
+    thread_id: String,
+    update_personality: bool,
+    personality: Option<String>,
+    update_service_tier: bool,
+    service_tier: Option<String>,
+    update_output_schema: bool,
+    output_schema: Option<Value>,
+) -> Result<ThreadDto, String> {
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if thread.engine_id != "codex" {
+        return Err("Codex thread config is only available for Codex threads".to_string());
+    }
+
+    let normalized_personality = if update_personality {
+        normalize_thread_personality(personality)?
+    } else {
+        None
+    };
+    let normalized_service_tier = if update_service_tier {
+        normalize_thread_service_tier(service_tier)?
+    } else {
+        None
+    };
+    let normalized_output_schema = if update_output_schema {
+        normalize_thread_output_schema(output_schema)?
+    } else {
+        None
+    };
+
+    let mut metadata = thread.engine_metadata.unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        metadata = json!({});
+    }
+
+    if let Some(object) = metadata.as_object_mut() {
+        if update_personality {
+            match normalized_personality {
+                Some(value) => {
+                    object.insert("personality".to_string(), json!(value));
+                }
+                None => {
+                    object.remove("personality");
+                }
+            }
+        }
+
+        if update_service_tier {
+            match normalized_service_tier {
+                Some(value) => {
+                    object.insert("serviceTier".to_string(), json!(value));
+                }
+                None => {
+                    object.remove("serviceTier");
+                }
+            }
+        }
+
+        if update_output_schema {
+            match normalized_output_schema {
+                Some(value) => {
+                    object.insert("outputSchema".to_string(), value);
+                }
+                None => {
+                    object.remove("outputSchema");
+                }
+            }
+        }
+    }
+
+    run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        let metadata = metadata.clone();
+        move |db| db::threads::update_engine_metadata(db, &thread_id, &metadata)
+    })
+    .await?;
+
+    run_db(db, {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found after Codex config update: {thread_id}"))
 }
 
 async fn validate_reasoning_effort(
@@ -649,6 +1271,492 @@ fn merge_codex_runtime_metadata(
     metadata
 }
 
+async fn build_codex_branch_context(
+    state: &AppState,
+    thread: &ThreadDto,
+) -> Result<(String, String, SandboxPolicy), String> {
+    let db = state.db.clone();
+    let (workspace, repos, selected_repo) = run_db(db, {
+        let workspace_id = thread.workspace_id.clone();
+        let thread_id = thread.id.clone();
+        let repo_id = thread.repo_id.clone();
+        move |db| {
+            let workspace = db::workspaces::list_workspaces(db)?
+                .into_iter()
+                .find(|item| item.id == workspace_id)
+                .ok_or_else(|| anyhow::anyhow!("workspace not found for thread {thread_id}"))?;
+            let repos = db::repos::get_repos(db, &workspace_id)?;
+            let selected_repo = if let Some(repo_id) = repo_id.as_deref() {
+                db::repos::find_repo_by_id(db, repo_id)?
+            } else {
+                None
+            };
+            Ok((workspace, repos, selected_repo))
+        }
+    })
+    .await?;
+
+    let workspace_root = workspace.root_path.clone();
+    let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref())?;
+    let sandbox_mode = sandbox_mode_override
+        .clone()
+        .unwrap_or_else(|| "workspace-write".to_string());
+    let workspace_writable_roots = if selected_repo.is_some() {
+        None
+    } else {
+        Some(resolve_workspace_writable_roots(
+            repos.iter().map(|repo| repo.path.as_str()),
+            workspace_root.as_str(),
+            thread.engine_metadata.as_ref(),
+        )?)
+    };
+    let trust_level = selected_repo
+        .as_ref()
+        .map(|repo| repo.trust_level.clone())
+        .unwrap_or_else(|| aggregate_workspace_trust_level(&repos));
+    let codex_external_sandbox_active = state.engines.codex_uses_external_sandbox().await;
+
+    if unsupported_thread_sandbox_override_for_external_sandbox(
+        sandbox_mode_override.as_deref(),
+        codex_external_sandbox_active,
+    ) {
+        return Err(
+            "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode. Clear the override or restore local Codex sandboxing first.".to_string(),
+        );
+    }
+
+    validate_engine_sandbox_mode(thread.engine_id.as_str(), Some(sandbox_mode.as_str()))?;
+
+    if workspace_write_confirmation_required(
+        workspace_writable_roots.as_ref(),
+        sandbox_mode.as_str(),
+        workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
+    ) {
+        return Err(
+            "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
+        );
+    }
+
+    let writable_roots = match selected_repo.as_ref() {
+        Some(repo) => vec![repo.path.clone()],
+        None => workspace_writable_roots
+            .as_ref()
+            .map(|resolution| resolution.roots.clone())
+            .unwrap_or_else(|| vec![workspace_root.clone()]),
+    };
+    let allow_network = if sandbox_mode.eq_ignore_ascii_case("danger-full-access") {
+        true
+    } else {
+        thread_allow_network_override(thread.engine_metadata.as_ref())
+            .unwrap_or_else(|| allow_network_for_trust_level(&trust_level))
+    };
+    let approval_policy_override = thread_approval_policy_override_value(
+        thread.engine_id.as_str(),
+        thread.engine_metadata.as_ref(),
+    )?;
+
+    Ok((
+        selected_repo
+            .as_ref()
+            .map(|repo| repo.path.clone())
+            .unwrap_or(workspace_root),
+        thread_last_model_id(thread.engine_metadata.as_ref())
+            .unwrap_or_else(|| thread.model_id.clone()),
+        SandboxPolicy {
+            writable_roots,
+            allow_network,
+            approval_policy: Some(approval_policy_override.unwrap_or_else(|| {
+                Value::String(
+                    approval_policy_for_engine_and_trust_level(
+                        thread.engine_id.as_str(),
+                        &trust_level,
+                    )
+                    .to_string(),
+                )
+            })),
+            reasoning_effort: thread_reasoning_effort(thread.engine_metadata.as_ref()),
+            sandbox_mode: Some(sandbox_mode),
+            service_tier: thread_service_tier(thread.engine_metadata.as_ref()),
+            personality: thread_personality(thread.engine_metadata.as_ref()),
+            output_schema: thread_output_schema(thread.engine_metadata.as_ref()),
+        },
+    ))
+}
+
+async fn create_codex_branch_thread(
+    state: &AppState,
+    source_thread: &ThreadDto,
+    engine_thread_id: &str,
+    model_id: &str,
+    title: Option<&str>,
+    preview: Option<&str>,
+    raw_status: Option<&str>,
+    active_flags: &[String],
+    rollback_turns: Option<u32>,
+) -> Result<ThreadDto, String> {
+    if !codex_transcript_imported(source_thread.engine_metadata.as_ref()) {
+        return Err(
+            "native Codex history tools require a locally mirrored transcript. Attached remote threads without imported history cannot be forked or rolled back yet."
+                .to_string(),
+        );
+    }
+
+    let db = state.db.clone();
+    run_db(db.clone(), {
+        let source_thread = source_thread.clone();
+        let engine_thread_id = engine_thread_id.to_string();
+        let model_id = model_id.to_string();
+        let title = title.map(str::to_string);
+        let preview = preview.map(str::to_string);
+        let raw_status = raw_status.map(str::to_string);
+        let active_flags = active_flags.to_vec();
+        move |db| {
+            let clone_local_history = should_clone_local_branch_history(&source_thread);
+            let created = db::threads::create_thread(
+                db,
+                &source_thread.workspace_id,
+                source_thread.repo_id.as_deref(),
+                &source_thread.engine_id,
+                &model_id,
+                title.as_deref().unwrap_or(&source_thread.title),
+            )?;
+            db::threads::set_engine_thread_id(db, &created.id, &engine_thread_id)?;
+            if clone_local_history {
+                db::messages::clone_thread_messages(db, &source_thread.id, &created.id)?;
+                if let Some(turns) = rollback_turns {
+                    db::messages::drop_last_turns(db, &created.id, turns)?;
+                }
+            }
+            db::threads::refresh_thread_message_stats(db, &created.id)?;
+
+            let metadata = clone_codex_branch_metadata(
+                source_thread.engine_metadata.as_ref(),
+                &model_id,
+                raw_status.as_deref(),
+                &active_flags,
+                preview.as_deref(),
+                !clone_local_history,
+                (!clone_local_history).then_some("branch_thread_requires_sync"),
+            );
+            let next_status =
+                map_codex_thread_status_to_local(raw_status.as_deref(), &active_flags, false);
+            db::threads::update_thread_runtime_snapshot(
+                db,
+                &created.id,
+                title.as_deref(),
+                next_status,
+                Some(&metadata),
+            )
+        }
+    })
+    .await
+}
+
+fn is_codex_thread_sync_required(metadata: Option<&Value>) -> bool {
+    metadata
+        .and_then(|value| value.get("codexSyncRequired"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn should_clone_local_branch_history(source_thread: &ThreadDto) -> bool {
+    !is_codex_thread_sync_required(source_thread.engine_metadata.as_ref())
+        && source_thread.message_count > 0
+}
+
+fn clone_codex_branch_metadata(
+    existing: Option<&Value>,
+    model_id: &str,
+    raw_status: Option<&str>,
+    active_flags: &[String],
+    preview: Option<&str>,
+    sync_required: bool,
+    sync_reason: Option<&str>,
+) -> Value {
+    let mut metadata = existing.cloned().unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        metadata = json!({});
+    }
+
+    if let Some(object) = metadata.as_object_mut() {
+        object.remove("manualTitle");
+        object.remove("manualTitleUpdatedAt");
+        object.insert("lastModelId".to_string(), json!(model_id));
+        object.insert("codexTranscriptImported".to_string(), json!(true));
+    }
+
+    merge_codex_runtime_metadata(
+        Some(metadata),
+        raw_status,
+        active_flags,
+        preview,
+        sync_required,
+        sync_reason,
+    )
+}
+
+fn codex_transcript_imported(metadata: Option<&Value>) -> bool {
+    metadata
+        .and_then(|value| value.get("codexTranscriptImported"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+}
+
+fn workspace_write_opt_in_enabled(metadata: Option<&Value>) -> bool {
+    metadata
+        .and_then(|value| value.get("workspaceWriteOptIn"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn aggregate_workspace_trust_level(repos: &[RepoDto]) -> TrustLevelDto {
+    if repos
+        .iter()
+        .any(|repo| matches!(repo.trust_level, TrustLevelDto::Restricted))
+    {
+        return TrustLevelDto::Restricted;
+    }
+
+    if !repos.is_empty()
+        && repos
+            .iter()
+            .all(|repo| matches!(repo.trust_level, TrustLevelDto::Trusted))
+    {
+        return TrustLevelDto::Trusted;
+    }
+
+    TrustLevelDto::Standard
+}
+
+fn approval_policy_for_engine_and_trust_level(
+    engine_id: &str,
+    trust_level: &TrustLevelDto,
+) -> &'static str {
+    match engine_id {
+        "claude" => match trust_level {
+            TrustLevelDto::Trusted => "trusted",
+            TrustLevelDto::Standard => "standard",
+            TrustLevelDto::Restricted => "restricted",
+        },
+        _ => match trust_level {
+            TrustLevelDto::Trusted | TrustLevelDto::Standard => "on-request",
+            TrustLevelDto::Restricted => "untrusted",
+        },
+    }
+}
+
+fn allow_network_for_trust_level(trust_level: &TrustLevelDto) -> bool {
+    matches!(trust_level, TrustLevelDto::Trusted)
+}
+
+fn thread_approval_policy_override_value(
+    engine_id: &str,
+    metadata: Option<&Value>,
+) -> Result<Option<Value>, String> {
+    match engine_id {
+        "claude" => Ok(metadata
+            .and_then(|value| value.get("claudePermissionMode"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| matches!(*value, "trusted" | "standard" | "restricted"))
+            .map(|value| Value::String(value.to_string()))),
+        _ => metadata
+            .and_then(|value| value.get("sandboxApprovalPolicy"))
+            .cloned()
+            .map(normalize_codex_approval_policy)
+            .transpose(),
+    }
+}
+
+fn thread_allow_network_override(metadata: Option<&Value>) -> Option<bool> {
+    metadata
+        .and_then(|value| value.get("sandboxAllowNetwork"))
+        .and_then(Value::as_bool)
+}
+
+fn thread_sandbox_mode(metadata: Option<&Value>) -> Result<Option<String>, String> {
+    let value = metadata
+        .and_then(|value| value.get("sandboxMode"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    let normalized = match value.to_lowercase().as_str() {
+        "readonly" | "read-only" | "read_only" => "read-only",
+        "workspacewrite" | "workspace-write" | "workspace_write" => "workspace-write",
+        "dangerfullaccess" | "danger-full-access" | "danger_full_access" => "danger-full-access",
+        _ => {
+            return Err(format!(
+                "invalid sandbox mode `{value}` on thread metadata. expected one of: read-only, workspace-write, danger-full-access"
+            ))
+        }
+    };
+
+    Ok(Some(normalized.to_string()))
+}
+
+fn workspace_writable_roots_from_metadata(
+    metadata: Option<&Value>,
+) -> Result<Option<Vec<String>>, String> {
+    let Some(raw_roots) = metadata.and_then(|value| value.get("workspaceWritableRoots")) else {
+        return Ok(None);
+    };
+
+    let roots = raw_roots.as_array().ok_or_else(|| {
+        "invalid `workspaceWritableRoots` on thread metadata. expected an array of paths"
+            .to_string()
+    })?;
+
+    let mut normalized = Vec::with_capacity(roots.len());
+    for root in roots {
+        let root = root
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                "invalid `workspaceWritableRoots` on thread metadata. expected non-empty string paths"
+                    .to_string()
+            })?;
+        normalized.push(root.to_string());
+    }
+
+    Ok(Some(normalized))
+}
+
+struct WorkspaceWritableRootsResolution {
+    roots: Vec<String>,
+    requires_confirmation: bool,
+}
+
+fn resolve_workspace_writable_roots<'a>(
+    repo_paths: impl IntoIterator<Item = &'a str>,
+    workspace_root: &str,
+    metadata: Option<&Value>,
+) -> Result<WorkspaceWritableRootsResolution, String> {
+    let available_roots: Vec<String> = repo_paths.into_iter().map(ToOwned::to_owned).collect();
+    let confirmed_roots = workspace_writable_roots_from_metadata(metadata)?;
+
+    if let Some(confirmed_roots) = confirmed_roots {
+        if confirmed_roots.is_empty() {
+            return Ok(WorkspaceWritableRootsResolution {
+                roots: vec![workspace_root.to_string()],
+                requires_confirmation: false,
+            });
+        }
+
+        let available_set: std::collections::HashSet<&str> =
+            available_roots.iter().map(String::as_str).collect();
+        let mut filtered_roots = Vec::with_capacity(confirmed_roots.len());
+        for root in confirmed_roots {
+            if available_set.contains(root.as_str()) {
+                filtered_roots.push(root);
+            }
+        }
+        if !filtered_roots.is_empty() {
+            return Ok(WorkspaceWritableRootsResolution {
+                roots: filtered_roots,
+                requires_confirmation: false,
+            });
+        }
+
+        return Ok(match available_roots.len() {
+            0 => WorkspaceWritableRootsResolution {
+                roots: vec![workspace_root.to_string()],
+                requires_confirmation: false,
+            },
+            1 => WorkspaceWritableRootsResolution {
+                roots: available_roots,
+                requires_confirmation: false,
+            },
+            _ => WorkspaceWritableRootsResolution {
+                roots: available_roots,
+                requires_confirmation: true,
+            },
+        });
+    }
+
+    if available_roots.is_empty() {
+        Ok(WorkspaceWritableRootsResolution {
+            roots: vec![workspace_root.to_string()],
+            requires_confirmation: false,
+        })
+    } else {
+        Ok(WorkspaceWritableRootsResolution {
+            roots: available_roots,
+            requires_confirmation: false,
+        })
+    }
+}
+
+fn sandbox_mode_requires_workspace_opt_in(mode: &str) -> bool {
+    !mode.eq_ignore_ascii_case("read-only")
+}
+
+fn workspace_write_confirmation_required(
+    resolution: Option<&WorkspaceWritableRootsResolution>,
+    sandbox_mode: &str,
+    opt_in_enabled: bool,
+) -> bool {
+    let Some(resolution) = resolution else {
+        return false;
+    };
+
+    sandbox_mode_requires_workspace_opt_in(sandbox_mode)
+        && (resolution.requires_confirmation || (resolution.roots.len() > 1 && !opt_in_enabled))
+}
+
+fn unsupported_thread_sandbox_override_for_external_sandbox(
+    sandbox_mode: Option<&str>,
+    external_sandbox_active: bool,
+) -> bool {
+    external_sandbox_active && matches!(sandbox_mode, Some("read-only" | "workspace-write"))
+}
+
+fn thread_reasoning_effort(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("reasoningEffort"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
+fn thread_last_model_id(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("lastModelId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn thread_service_tier(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("serviceTier"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| matches!(*value, "fast" | "flex"))
+        .map(ToOwned::to_owned)
+}
+
+fn thread_personality(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("personality"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| matches!(*value, "none" | "friendly" | "pragmatic"))
+        .map(ToOwned::to_owned)
+}
+
+fn thread_output_schema(metadata: Option<&Value>) -> Option<Value> {
+    metadata
+        .and_then(|value| value.get("outputSchema"))
+        .cloned()
+}
+
 fn map_codex_thread_status_to_local(
     raw_status: Option<&str>,
     active_flags: &[String],
@@ -688,31 +1796,132 @@ fn approval_policy_metadata_key(engine_id: &str) -> &'static str {
 
 fn normalize_thread_approval_policy_for_engine(
     engine_id: &str,
-    value: Option<String>,
-) -> Result<Option<String>, String> {
+    value: Option<Value>,
+) -> Result<Option<Value>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    match engine_id {
+        "claude" => {
+            let normalized = value
+                .as_str()
+                .map(str::trim)
+                .filter(|candidate| !candidate.is_empty())
+                .map(str::to_lowercase)
+                .ok_or_else(|| {
+                    "invalid Claude permission mode. expected a string value".to_string()
+                })?;
+
+            match normalized.as_str() {
+                "restricted" | "standard" | "trusted" => {
+                    Ok(Some(Value::String(normalized)))
+                }
+                _ => Err(format!(
+                    "invalid Claude permission mode `{normalized}`. expected one of: restricted, standard, trusted"
+                )),
+            }
+        }
+        _ => normalize_codex_approval_policy(value).map(Some),
+    }
+}
+
+fn normalize_codex_approval_policy(value: Value) -> Result<Value, String> {
+    match value {
+        Value::String(raw) => {
+            let normalized = raw.trim().to_lowercase();
+            match normalized.as_str() {
+                "untrusted" | "on-failure" | "on-request" | "never" => {
+                    Ok(Value::String(normalized))
+                }
+                _ => Err(format!(
+                    "invalid approval policy `{normalized}`. expected one of: untrusted, on-failure, on-request, never"
+                )),
+            }
+        }
+        Value::Object(object) => {
+            let reject = object
+                .get("reject")
+                .and_then(Value::as_object)
+                .ok_or_else(|| {
+                    "invalid structured approval policy. expected a `reject` object".to_string()
+                })?;
+
+            for required_key in ["mcp_elicitations", "rules", "sandbox_approval"] {
+                if !reject.get(required_key).and_then(Value::as_bool).is_some() {
+                    return Err(format!(
+                        "invalid structured approval policy. missing boolean reject.{required_key}"
+                    ));
+                }
+            }
+
+            if reject.contains_key("request_permissions")
+                && reject
+                    .get("request_permissions")
+                    .and_then(Value::as_bool)
+                    .is_none()
+            {
+                return Err(
+                    "invalid structured approval policy. reject.request_permissions must be a boolean"
+                        .to_string(),
+                );
+            }
+
+            Ok(Value::Object(object))
+        }
+        _ => Err(
+            "invalid approval policy. expected a string mode or structured reject object"
+                .to_string(),
+        ),
+    }
+}
+
+fn normalize_thread_personality(value: Option<String>) -> Result<Option<String>, String> {
     let normalized = value
         .as_deref()
         .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .filter(|candidate| !candidate.is_empty())
         .map(str::to_lowercase);
 
     let Some(normalized) = normalized else {
         return Ok(None);
     };
 
-    match engine_id {
-        "claude" => match normalized.as_str() {
-            "restricted" | "standard" | "trusted" => Ok(Some(normalized)),
-            _ => Err(format!(
-                "invalid Claude permission mode `{normalized}`. expected one of: restricted, standard, trusted"
-            )),
-        },
-        _ => match normalized.as_str() {
-            "untrusted" | "on-failure" | "on-request" | "never" => Ok(Some(normalized)),
-            _ => Err(format!(
-                "invalid approval policy `{normalized}`. expected one of: untrusted, on-failure, on-request, never"
-            )),
-        },
+    match normalized.as_str() {
+        "none" | "friendly" | "pragmatic" => Ok(Some(normalized)),
+        _ => Err(format!(
+            "invalid personality `{normalized}`. expected one of: none, friendly, pragmatic"
+        )),
+    }
+}
+
+fn normalize_thread_service_tier(value: Option<String>) -> Result<Option<String>, String> {
+    let normalized = value
+        .as_deref()
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty())
+        .map(str::to_lowercase);
+
+    let Some(normalized) = normalized else {
+        return Ok(None);
+    };
+
+    match normalized.as_str() {
+        "fast" | "flex" => Ok(Some(normalized)),
+        _ => Err(format!(
+            "invalid service tier `{normalized}`. expected one of: fast, flex"
+        )),
+    }
+}
+
+fn normalize_thread_output_schema(value: Option<Value>) -> Result<Option<Value>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    match value {
+        Value::Object(_) | Value::Bool(_) => Ok(Some(value)),
+        _ => Err("invalid output schema. expected a JSON Schema object or boolean".to_string()),
     }
 }
 
@@ -881,24 +2090,65 @@ mod tests {
     #[test]
     fn normalize_thread_approval_policy_accepts_claude_modes() {
         assert_eq!(
-            normalize_thread_approval_policy_for_engine("claude", Some("trusted".to_string()))
-                .unwrap(),
-            Some("trusted".to_string())
+            normalize_thread_approval_policy_for_engine("claude", Some(json!("trusted"))).unwrap(),
+            Some(json!("trusted"))
         );
         assert_eq!(
-            normalize_thread_approval_policy_for_engine("claude", Some("STANDARD".to_string()))
-                .unwrap(),
-            Some("standard".to_string())
+            normalize_thread_approval_policy_for_engine("claude", Some(json!("STANDARD"))).unwrap(),
+            Some(json!("standard"))
         );
     }
 
     #[test]
     fn normalize_thread_approval_policy_rejects_codex_values_for_claude() {
-        assert!(normalize_thread_approval_policy_for_engine(
-            "claude",
-            Some("on-request".to_string())
+        assert!(
+            normalize_thread_approval_policy_for_engine("claude", Some(json!("on-request")))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn normalize_thread_approval_policy_accepts_structured_codex_policy() {
+        let normalized = normalize_thread_approval_policy_for_engine(
+            "codex",
+            Some(json!({
+                "reject": {
+                    "mcp_elicitations": false,
+                    "request_permissions": true,
+                    "rules": true,
+                    "sandbox_approval": false
+                }
+            })),
         )
-        .is_err());
+        .expect("expected structured policy to validate");
+
+        assert_eq!(
+            normalized,
+            Some(json!({
+                "reject": {
+                    "mcp_elicitations": false,
+                    "request_permissions": true,
+                    "rules": true,
+                    "sandbox_approval": false
+                }
+            }))
+        );
+    }
+
+    #[test]
+    fn normalize_thread_personality_accepts_known_values() {
+        assert_eq!(
+            normalize_thread_personality(Some("Friendly".to_string())).unwrap(),
+            Some("friendly".to_string())
+        );
+        assert_eq!(
+            normalize_thread_service_tier(Some(" FLEX ".to_string())).unwrap(),
+            Some("flex".to_string())
+        );
+        assert_eq!(
+            normalize_thread_output_schema(Some(json!(true))).unwrap(),
+            Some(json!(true))
+        );
     }
 
     #[test]
@@ -1005,6 +2255,205 @@ mod tests {
         );
     }
 
+    #[test]
+    fn resolve_codex_remote_thread_repo_id_accepts_workspace_root_and_repo_roots() {
+        let repos = vec![RepoDto {
+            id: "repo-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            name: "repo".to_string(),
+            path: "/workspace/repo".to_string(),
+            default_branch: "main".to_string(),
+            is_active: true,
+            trust_level: TrustLevelDto::Standard,
+        }];
+
+        assert_eq!(
+            resolve_codex_remote_thread_repo_id("/workspace", &repos, "/workspace").unwrap(),
+            None
+        );
+        assert_eq!(
+            resolve_codex_remote_thread_repo_id("/workspace", &repos, "/workspace/repo").unwrap(),
+            Some("repo-1".to_string())
+        );
+        assert!(resolve_codex_remote_thread_repo_id("/workspace", &repos, "/elsewhere").is_err());
+    }
+
+    #[test]
+    fn build_codex_remote_thread_title_prefers_thread_title_then_preview() {
+        let titled = CodexRemoteThreadSummary {
+            engine_thread_id: "thread-12345678".to_string(),
+            title: Some("  Remote title  ".to_string()),
+            preview: "Preview line".to_string(),
+            cwd: "/workspace".to_string(),
+            created_at: 1_710_000_000,
+            updated_at: 1_710_000_001,
+            model_provider: "openai".to_string(),
+            source_kind: "appServer".to_string(),
+            status_type: "idle".to_string(),
+            active_flags: Vec::new(),
+            archived: false,
+        };
+        let preview_only = CodexRemoteThreadSummary {
+            title: None,
+            preview: "First line\nSecond line".to_string(),
+            ..titled.clone()
+        };
+
+        assert_eq!(build_codex_remote_thread_title(&titled), "Remote title");
+        assert_eq!(build_codex_remote_thread_title(&preview_only), "First line");
+    }
+
+    #[test]
+    fn build_codex_remote_thread_metadata_sets_remote_fields() {
+        let summary = CodexRemoteThreadSummary {
+            engine_thread_id: "thread-12345678".to_string(),
+            title: Some("Remote title".to_string()),
+            preview: "Preview line".to_string(),
+            cwd: "/workspace".to_string(),
+            created_at: 1_710_000_000,
+            updated_at: 1_710_000_001,
+            model_provider: "openai".to_string(),
+            source_kind: "appServer".to_string(),
+            status_type: "active".to_string(),
+            active_flags: vec!["waitingOnApproval".to_string()],
+            archived: true,
+        };
+
+        let metadata = build_codex_remote_thread_metadata(&summary, "gpt-5.4");
+
+        assert_eq!(metadata.get("lastModelId"), Some(&json!("gpt-5.4")));
+        assert_eq!(metadata.get("codexTranscriptImported"), Some(&json!(false)));
+        assert_eq!(metadata.get("codexModelProvider"), Some(&json!("openai")));
+        assert_eq!(metadata.get("codexSourceKind"), Some(&json!("appServer")));
+        assert_eq!(metadata.get("codexRemoteArchived"), Some(&json!(true)));
+        assert_eq!(metadata.get("codexRemoteCwd"), Some(&json!("/workspace")));
+        assert_eq!(metadata.get("codexThreadStatus"), Some(&json!("active")));
+        assert_eq!(
+            metadata.get("codexThreadActiveFlags"),
+            Some(&json!(["waitingOnApproval"]))
+        );
+        assert_eq!(metadata.get("codexPreview"), Some(&json!("Preview line")));
+        assert_eq!(metadata.get("codexSyncRequired"), Some(&json!(true)));
+        assert_eq!(
+            metadata.get("codexSyncReason"),
+            Some(&json!("remote_thread_attached"))
+        );
+    }
+
+    #[test]
+    fn clone_codex_branch_metadata_marks_local_transcript_as_imported() {
+        let metadata = clone_codex_branch_metadata(
+            Some(&json!({
+                "codexTranscriptImported": false,
+                "manualTitle": true,
+            })),
+            "gpt-5.4",
+            Some("idle"),
+            &[],
+            Some("Preview"),
+            false,
+            None,
+        );
+
+        assert_eq!(metadata.get("codexTranscriptImported"), Some(&json!(true)));
+        assert_eq!(metadata.get("lastModelId"), Some(&json!("gpt-5.4")));
+        assert_eq!(metadata.get("manualTitle"), None);
+    }
+
+    #[test]
+    fn should_clone_local_branch_history_requires_synced_local_messages() {
+        let mut thread = ThreadDto {
+            id: "thread-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            repo_id: None,
+            engine_id: "codex".to_string(),
+            model_id: "gpt-5.4".to_string(),
+            engine_thread_id: Some("engine-thread-1".to_string()),
+            engine_metadata: Some(json!({
+                "codexSyncRequired": false,
+            })),
+            title: "Thread".to_string(),
+            status: ThreadStatusDto::Idle,
+            message_count: 2,
+            total_tokens: 0,
+            created_at: "2026-03-13T00:00:00Z".to_string(),
+            last_activity_at: "2026-03-13T00:00:00Z".to_string(),
+        };
+
+        assert!(should_clone_local_branch_history(&thread));
+
+        thread.message_count = 0;
+        assert!(!should_clone_local_branch_history(&thread));
+
+        thread.message_count = 2;
+        thread.engine_metadata = Some(json!({
+            "codexSyncRequired": true,
+        }));
+        assert!(!should_clone_local_branch_history(&thread));
+    }
+
+    #[tokio::test]
+    async fn create_codex_branch_thread_rejects_threads_without_imported_transcript() {
+        let state = test_app_state();
+        let mut thread = test_thread(&state, "codex", "gpt-5.4");
+        thread.engine_metadata = Some(json!({
+            "codexTranscriptImported": false,
+        }));
+
+        let error = create_codex_branch_thread(
+            &state,
+            &thread,
+            "engine-thread-branch",
+            "gpt-5.4",
+            Some("Fork"),
+            None,
+            Some("idle"),
+            &[],
+            None,
+        )
+        .await
+        .expect_err("expected branch creation to reject missing local transcript");
+
+        assert!(error.contains("locally mirrored transcript"));
+    }
+
+    #[test]
+    fn clone_codex_branch_metadata_preserves_sync_needed_state() {
+        let metadata = clone_codex_branch_metadata(
+            Some(&json!({
+                "manualTitle": true,
+                "manualTitleUpdatedAt": "2026-03-12T00:00:00Z",
+                "codexPreview": "old preview",
+                "codexThreadStatus": "active",
+                "codexThreadActiveFlags": ["waitingOnApproval"],
+                "codexSyncRequired": false,
+                "serviceTier": "fast",
+            })),
+            "gpt-5.4",
+            Some("active"),
+            &["waitingOnApproval".to_string()],
+            Some("Fresh preview"),
+            true,
+            Some("branch_thread_requires_sync"),
+        );
+
+        assert_eq!(metadata.get("manualTitle"), None);
+        assert_eq!(metadata.get("manualTitleUpdatedAt"), None);
+        assert_eq!(metadata.get("lastModelId"), Some(&json!("gpt-5.4")));
+        assert_eq!(metadata.get("codexPreview"), Some(&json!("Fresh preview")));
+        assert_eq!(metadata.get("codexThreadStatus"), Some(&json!("active")));
+        assert_eq!(
+            metadata.get("codexThreadActiveFlags"),
+            Some(&json!(["waitingOnApproval"]))
+        );
+        assert_eq!(metadata.get("codexSyncRequired"), Some(&json!(true)));
+        assert_eq!(
+            metadata.get("codexSyncReason"),
+            Some(&json!("branch_thread_requires_sync"))
+        );
+        assert_eq!(metadata.get("serviceTier"), Some(&json!("fast")));
+    }
+
     #[tokio::test]
     async fn set_thread_execution_policy_allows_claude_read_only() {
         let state = test_app_state();
@@ -1080,5 +2529,65 @@ mod tests {
         .expect_err("expected danger-full-access to be rejected");
 
         assert!(error.contains("Claude sandbox mode `danger-full-access` is not supported"));
+    }
+
+    #[tokio::test]
+    async fn set_thread_codex_config_persists_values() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "codex", "gpt-5.4");
+
+        let updated = set_thread_codex_config_inner(
+            &state,
+            thread.id.clone(),
+            true,
+            Some("Friendly".to_string()),
+            true,
+            Some("FLEX".to_string()),
+            true,
+            Some(json!({
+                "type": "object",
+                "properties": {
+                    "summary": { "type": "string" }
+                }
+            })),
+        )
+        .await
+        .expect("expected codex config update to succeed");
+
+        let metadata = updated
+            .engine_metadata
+            .expect("expected engine metadata to be present");
+        assert_eq!(metadata.get("personality"), Some(&json!("friendly")));
+        assert_eq!(metadata.get("serviceTier"), Some(&json!("flex")));
+        assert_eq!(
+            metadata.get("outputSchema"),
+            Some(&json!({
+                "type": "object",
+                "properties": {
+                    "summary": { "type": "string" }
+                }
+            }))
+        );
+    }
+
+    #[tokio::test]
+    async fn set_thread_codex_config_rejects_non_codex_threads() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+
+        let error = set_thread_codex_config_inner(
+            &state,
+            thread.id.clone(),
+            true,
+            Some("friendly".to_string()),
+            false,
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect_err("expected non-codex thread to be rejected");
+
+        assert!(error.contains("Codex thread config is only available for Codex threads"));
     }
 }

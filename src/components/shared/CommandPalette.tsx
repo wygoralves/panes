@@ -34,6 +34,8 @@ import {
   ListX,
   FolderGit2,
   Power,
+  RotateCcw,
+  Minimize2,
 } from "lucide-react";
 import { ipc, writeCommandToNewSession } from "../../lib/ipc";
 import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
@@ -118,13 +120,14 @@ type SubFlow =
   | { type: "delete-branch"; query: string; branches: GitBranch[]; loading: boolean }
   | { type: "apply-stash"; query: string; stashes: GitStash[]; loading: boolean }
   | { type: "pop-stash"; query: string; stashes: GitStash[]; loading: boolean }
-  | { type: "switch-repo"; query: string };
+  | { type: "switch-repo"; query: string }
+  | { type: "codex-rollback"; value: string };
 
 /* ------------------------------------------------------------------ */
 /*  Command registry types                                             */
 /* ------------------------------------------------------------------ */
 
-type CommandGroup = "layout" | "git" | "harness" | "navigation" | "view";
+type CommandGroup = "layout" | "git" | "harness" | "navigation" | "view" | "codex";
 
 interface CommandContext {
   activeWorkspaceId: string | null;
@@ -646,6 +649,98 @@ export function getStaticCommands(
     action: ({ close }) => {
       useUiStore.getState().setActiveView("harnesses");
       close();
+    },
+  },
+  // Codex thread actions
+  {
+    id: "codex-fork",
+    label: t("commandPalette.commands.codexFork"),
+    description: t("commandPalette.descriptions.codexFork"),
+    icon: GitBranchIcon,
+    group: "codex",
+    keywords: ["fork", "codex", "thread", "branch", "duplicate"],
+    isAvailable: () => {
+      const { threads, activeThreadId } = useThreadStore.getState();
+      const thread = threads.find((th) => th.id === activeThreadId);
+      return !!thread && thread.engineId === "codex" && !!thread.engineThreadId;
+    },
+    action: async ({ close }) => {
+      close();
+      const { activeThreadId, forkCodexThread } = useThreadStore.getState();
+      if (!activeThreadId) return;
+      try {
+        const forked = await forkCodexThread(activeThreadId);
+        if (forked) {
+          useThreadStore.getState().setActiveThread(forked.id);
+          toast.success(t("commandPalette.toasts.codexForked"));
+        }
+      } catch (err) {
+        toast.error(String(err));
+      }
+    },
+  },
+  {
+    id: "codex-compact",
+    label: t("commandPalette.commands.codexCompact"),
+    description: t("commandPalette.descriptions.codexCompact"),
+    icon: Minimize2,
+    group: "codex",
+    keywords: ["compact", "context", "compress", "codex"],
+    isAvailable: () => {
+      const { threads, activeThreadId } = useThreadStore.getState();
+      const thread = threads.find((th) => th.id === activeThreadId);
+      return !!thread && thread.engineId === "codex" && !!thread.engineThreadId;
+    },
+    action: async ({ close }) => {
+      close();
+      const { activeThreadId, compactCodexThread } = useThreadStore.getState();
+      if (!activeThreadId) return;
+      try {
+        await compactCodexThread(activeThreadId);
+        toast.success(t("commandPalette.toasts.codexCompacted"));
+      } catch (err) {
+        toast.error(String(err));
+      }
+    },
+  },
+  {
+    id: "codex-rollback",
+    label: t("commandPalette.commands.codexRollback"),
+    description: t("commandPalette.descriptions.codexRollback"),
+    icon: RotateCcw,
+    group: "codex",
+    keywords: ["rollback", "undo", "turns", "codex"],
+    isAvailable: () => {
+      const { threads, activeThreadId } = useThreadStore.getState();
+      const thread = threads.find((th) => th.id === activeThreadId);
+      return !!thread && thread.engineId === "codex" && !!thread.engineThreadId;
+    },
+    action: ({ openSubFlow }) => {
+      openSubFlow({ type: "codex-rollback" as SubFlow["type"], value: "1" } as SubFlow);
+    },
+  },
+  {
+    id: "codex-review",
+    label: t("commandPalette.commands.codexReview"),
+    description: t("commandPalette.descriptions.codexReview"),
+    icon: Search,
+    group: "codex",
+    keywords: ["review", "code review", "codex", "diff"],
+    isAvailable: () => {
+      const { threads, activeThreadId } = useThreadStore.getState();
+      const thread = threads.find((th) => th.id === activeThreadId);
+      return !!thread && thread.engineId === "codex" && !!thread.engineThreadId;
+    },
+    action: async ({ close }) => {
+      close();
+      const { activeThreadId } = useThreadStore.getState();
+      if (!activeThreadId) return;
+      try {
+        await ipc.startCodexReview(activeThreadId, { type: "uncommittedChanges" }, "inline");
+        toast.success(t("commandPalette.toasts.codexReviewStarted"));
+      } catch (err) {
+        toast.error(String(err));
+      }
     },
   },
   ];
@@ -1288,6 +1383,19 @@ export function CommandPalette({ open, onClose }: Props) {
           }],
         }];
       }
+      if (subFlow.type === "codex-rollback") {
+        const n = Number.parseInt(subFlow.value, 10);
+        const valid = Number.isFinite(n) && n >= 1;
+        return [{
+          label: t("commandPalette.subFlow.codexRollback"),
+          items: [{
+            type: "sub-action",
+            label: valid
+              ? t("commandPalette.preview.codexRollback", { count: n })
+              : t("commandPalette.preview.codexRollbackEmpty"),
+          }],
+        }];
+      }
       if (subFlow.type === "delete-branch") {
         const items: ResultItem[] = subFlow.branches.map((b) => ({
           type: "branch" as const,
@@ -1493,6 +1601,7 @@ export function CommandPalette({ open, onClose }: Props) {
       }
 
       const groupOrder: Array<{ key: CommandGroup; label: string }> = [
+        { key: "codex", label: t("commandPalette.group.codex") },
         { key: "layout", label: t("commandPalette.group.layout") },
         { key: "navigation", label: t("commandPalette.group.navigation") },
         { key: "git", label: t("commandPalette.group.git") },
@@ -1890,6 +1999,24 @@ export function CommandPalette({ open, onClose }: Props) {
       }
       return;
     }
+
+    if (subFlow.type === "codex-rollback") {
+      const numTurns = Number.parseInt(subFlow.value, 10);
+      if (!Number.isFinite(numTurns) || numTurns < 1) return;
+      onClose();
+      const { activeThreadId, rollbackCodexThread } = useThreadStore.getState();
+      if (!activeThreadId) return;
+      try {
+        const rolled = await rollbackCodexThread(activeThreadId, numTurns);
+        if (rolled) {
+          useThreadStore.getState().setActiveThread(rolled.id);
+          toast.success(t("commandPalette.toasts.codexRolledBack", { count: numTurns }));
+        }
+      } catch (err) {
+        toast.error(String(err));
+      }
+      return;
+    }
   }, [subFlow, activeRepoPath, onClose, flatItems, activeIndex, executeItem, t]);
 
   /* ---- Keyboard handler ---- */
@@ -1963,6 +2090,8 @@ export function CommandPalette({ open, onClose }: Props) {
           setSubFlow({ ...subFlow, value });
         } else if (subFlow.type === "stash") {
           setSubFlow({ ...subFlow, value });
+        } else if (subFlow.type === "codex-rollback") {
+          setSubFlow({ ...subFlow, value });
         } else if (subFlow.type === "apply-stash" || subFlow.type === "pop-stash") {
           setSubFlow({ ...subFlow, query: value });
         } else if (subFlow.type === "switch-repo") {
@@ -1986,6 +2115,7 @@ export function CommandPalette({ open, onClose }: Props) {
       if (subFlow.type === "create-branch") return subFlow.value;
       if (subFlow.type === "commit") return subFlow.value;
       if (subFlow.type === "stash") return subFlow.value;
+      if (subFlow.type === "codex-rollback") return subFlow.value;
       if (subFlow.type === "apply-stash") return subFlow.query;
       if (subFlow.type === "pop-stash") return subFlow.query;
       if (subFlow.type === "switch-repo") return subFlow.query;
@@ -2001,6 +2131,7 @@ export function CommandPalette({ open, onClose }: Props) {
       if (subFlow.type === "create-branch") return t("commandPalette.placeholders.createBranch");
       if (subFlow.type === "commit") return t("commandPalette.placeholders.commit");
       if (subFlow.type === "stash") return t("commandPalette.placeholders.stash");
+      if (subFlow.type === "codex-rollback") return t("commandPalette.placeholders.codexRollback");
       if (subFlow.type === "apply-stash") return t("commandPalette.placeholders.applyStash");
       if (subFlow.type === "pop-stash") return t("commandPalette.placeholders.popStash");
       if (subFlow.type === "switch-repo") return t("commandPalette.placeholders.switchRepo");
@@ -2023,6 +2154,7 @@ export function CommandPalette({ open, onClose }: Props) {
         "apply-stash": t("commandPalette.subFlow.applyStash"),
         "pop-stash": t("commandPalette.subFlow.popStash"),
         "switch-repo": t("commandPalette.subFlow.switchRepo"),
+        "codex-rollback": t("commandPalette.subFlow.codexRollback"),
       };
       return <span style={STYLES.modeBadge}>{labels[subFlow.type]}</span>;
     }

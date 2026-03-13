@@ -97,6 +97,19 @@ pub fn answer_approval(db: &Database, approval_id: &str, decision: &str) -> anyh
     Ok(())
 }
 
+#[cfg(test)]
+pub fn resolve_approval(db: &Database, approval_id: &str) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    conn.execute(
+        "UPDATE approvals
+     SET status = 'answered', answered_at = COALESCE(answered_at, datetime('now'))
+     WHERE id = ?1",
+        params![approval_id],
+    )
+    .context("failed to resolve approval")?;
+    Ok(())
+}
+
 pub fn find_approval_message_id(
     db: &Database,
     approval_id: &str,
@@ -111,6 +124,26 @@ pub fn find_approval_message_id(
         .optional()
         .context("failed to load approval message id")?;
     Ok(message_id)
+}
+
+pub fn find_approval_context(
+    db: &Database,
+    approval_id: &str,
+) -> anyhow::Result<Option<(String, String)>> {
+    let conn = db.connect()?;
+    let context = conn
+        .query_row(
+            "SELECT thread_id, message_id
+             FROM approvals
+             WHERE id = ?1
+               AND thread_id IS NOT NULL
+               AND message_id IS NOT NULL",
+            params![approval_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .context("failed to load approval context")?;
+    Ok(context)
 }
 
 pub fn append_event_log(

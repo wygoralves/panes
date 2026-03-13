@@ -31,6 +31,7 @@ interface PermissionPickerProps {
   customPolicyCount?: number;
   approvalTitle?: string;
   approvalValue?: string;
+  approvalSelectedLabel?: string | null;
   approvalOptions?: PermissionOption[];
   onApprovalChange?: (value: string) => void;
   sandboxValue?: string;
@@ -64,6 +65,7 @@ export function PermissionPicker({
   customPolicyCount = 0,
   approvalTitle,
   approvalValue,
+  approvalSelectedLabel,
   approvalOptions,
   onApprovalChange,
   sandboxValue,
@@ -111,7 +113,10 @@ export function PermissionPicker({
         id: "approval",
         icon: <Shield size={13} />,
         title: resolvedApprovalTitle,
-        currentLabel: findOption(approvalOptions, approvalValue)?.label ?? null,
+        currentLabel:
+          approvalSelectedLabel ??
+          findOption(approvalOptions, approvalValue)?.label ??
+          null,
         options: approvalOptions,
         value: approvalValue,
         onChange: onApprovalChange,
@@ -188,8 +193,8 @@ export function PermissionPicker({
     }
     if (approvalValue) {
       const label = findOption(approvalOptions, approvalValue)?.label;
-      if (label) {
-        lines.push(`${resolvedApprovalTitle}: ${label}`);
+      if (approvalSelectedLabel ?? label) {
+        lines.push(`${resolvedApprovalTitle}: ${approvalSelectedLabel ?? label}`);
       }
     }
     if (sandboxValue) {
@@ -211,6 +216,7 @@ export function PermissionPicker({
     return lines;
   }, [
     approvalOptions,
+    approvalSelectedLabel,
     approvalValue,
     networkOptions,
     networkValue,

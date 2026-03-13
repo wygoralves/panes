@@ -106,11 +106,19 @@
       "viewStash": "Abrir Stash",
       "viewFiles": "Abrir Files",
       "viewWorktrees": "Abrir Worktrees",
-      "viewHarnesses": "Abrir Agent Harnesses"
+      "viewHarnesses": "Abrir Agent Harnesses",
+      "codexFork": "Criar fork da thread Codex",
+      "codexCompact": "Compactar thread Codex",
+      "codexRollback": "Reverter thread Codex",
+      "codexReview": "Iniciar revisão Codex"
     },
     "descriptions": {
       "switchThread": "Navegue pelas threads recentes",
-      "switchWorkspace": "Navegue pelos workspaces ativos"
+      "switchWorkspace": "Navegue pelos workspaces ativos",
+      "codexFork": "Criar uma nova ramificação a partir da thread atual",
+      "codexCompact": "Comprimir a janela de contexto da thread",
+      "codexRollback": "Desfazer as rodadas mais recentes",
+      "codexReview": "Revisar alterações não commitadas com o Codex"
     },
     "group": {
       "search": "Busca",
@@ -122,6 +130,7 @@
       "files": "Arquivos",
       "threads": "Threads",
       "workspaces": "Workspaces",
+      "codex": "Codex",
       "agents": "Agentes",
       "commands": "Comandos",
       "quickActions": "Ações rápidas",
@@ -160,7 +169,8 @@
       "deleteBranch": "excluir branch",
       "applyStash": "aplicar stash",
       "popStash": "pop stash",
-      "switchRepo": "repo"
+      "switchRepo": "repo",
+      "codexRollback": "reverter"
     },
     "preview": {
       "createBranchReady": "Criar branch \"{{name}}\"",
@@ -172,7 +182,10 @@
       "stagedHint_other": "({{count}} preparados)",
       "noStagedHint": "(nenhum arquivo preparado)",
       "stashWithMessage": "Fazer stash com a mensagem: \"{{message}}\"",
-      "stashEmpty": "Pressione Enter para fazer stash (ou digite uma mensagem)"
+      "stashEmpty": "Pressione Enter para fazer stash (ou digite uma mensagem)",
+      "codexRollback_one": "Rollback de {{count}} turno",
+      "codexRollback_other": "Rollback de {{count}} turnos",
+      "codexRollbackEmpty": "Digite o número de rodadas para reverter..."
     },
     "placeholders": {
       "checkoutBranch": "Busque branches...",
@@ -183,6 +196,7 @@
       "applyStash": "Busque stashes...",
       "popStash": "Busque stashes...",
       "switchRepo": "Busque repos...",
+      "codexRollback": "Número de rodadas para reverter...",
       "search": "Busque mensagens, arquivos ou threads...",
       "fileMode": "Busque arquivos...",
       "auto": "Busque arquivos, comandos e threads..."
@@ -251,7 +265,11 @@
       "committed": "Commit concluído",
       "commitFailed": "Falha no commit",
       "changesStashed": "Alterações guardadas em stash",
-      "stashFailed": "Falha no stash"
+      "stashFailed": "Falha no stash",
+      "codexForked": "Nova thread Codex criada a partir de fork.",
+      "codexCompacted": "Compactação da thread Codex iniciada.",
+      "codexRolledBack": "Branch de rollback criada ({{count}} rodadas removidas).",
+      "codexReviewStarted": "Revisão inline do Codex iniciada."
     }
   },
   "terminal": {
