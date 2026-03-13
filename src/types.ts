@@ -177,8 +177,8 @@ export interface DiffBlock {
 
 export interface NoticeBlock {
   type: "notice";
-  kind: "model_rerouted";
-  level: "info";
+  kind: string;
+  level: "info" | "warning" | "error";
   title: string;
   message: string;
 }
@@ -247,6 +247,17 @@ export interface ApplyNetworkPolicyAmendmentDecision {
   };
 }
 
+export interface PermissionsApprovalResponse {
+  permissions: Record<string, unknown>;
+  scope?: "turn" | "session";
+}
+
+export interface McpServerElicitationResponse {
+  action: "accept" | "decline" | "cancel";
+  content?: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
+}
+
 export interface DynamicToolCallOutputTextItem {
   type: "inputText";
   text: string;
@@ -272,6 +283,8 @@ export type ApprovalResponse =
     }
   | AcceptWithExecpolicyAmendmentDecision
   | ApplyNetworkPolicyAmendmentDecision
+  | PermissionsApprovalResponse
+  | McpServerElicitationResponse
   | DynamicToolCallResponse
   | {
       answers: Record<string, ToolInputAnswer>;
@@ -930,6 +943,14 @@ export interface ModelReroutedEvent {
   reason: string;
 }
 
+export interface NoticeEvent {
+  type: "Notice";
+  kind: string;
+  level: "info" | "warning" | "error";
+  title: string;
+  message: string;
+}
+
 export type StreamEvent =
   | TurnStartedEvent
   | TurnCompletedEvent
@@ -942,6 +963,7 @@ export type StreamEvent =
   | DiffUpdatedEvent
   | ApprovalRequestedEvent
   | ModelReroutedEvent
+  | NoticeEvent
   | ErrorEvent
   | UsageLimitsUpdatedEvent;
 

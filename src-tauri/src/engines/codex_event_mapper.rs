@@ -135,6 +135,14 @@ impl TurnEventMapper {
                     Vec::new()
                 }
             }
+            "threadcompacted" | "contextcompacted" => vec![EngineEvent::Notice {
+                kind: "context_compacted".to_string(),
+                level: "info".to_string(),
+                title: "Context compacted".to_string(),
+                message: "Codex compacted the active thread context to keep the conversation moving."
+                    .to_string(),
+            }],
+            "deprecationnotice" => map_deprecation_notice(params).into_iter().collect(),
             "itemstarted" => self.map_item_started(params),
             "itemcompleted" => self.map_item_completed(params),
             "itemcommandexecutionoutputdelta" | "itemfilechangeoutputdelta" => {
@@ -262,6 +270,14 @@ impl TurnEventMapper {
                 ActionType::Other,
                 extract_first_question_text(params)
                     .unwrap_or_else(|| "Codex requested user input".to_string()),
+            ),
+            "mcpserverelicitationrequest" => (
+                ActionType::Other,
+                summarize_mcp_elicitation_request(params),
+            ),
+            "itempermissionsrequestapproval" => (
+                ActionType::Other,
+                summarize_permissions_request(params),
             ),
             "itemtoolcall" => (
                 ActionType::Other,
@@ -646,6 +662,83 @@ fn extract_first_question_text(params: &Value) -> Option<String> {
     let questions = params.get("questions")?.as_array()?;
     let first = questions.first()?;
     extract_any_string(first, &["question", "header"])
+}
+
+fn map_deprecation_notice(params: &Value) -> Option<EngineEvent> {
+    let summary = extract_any_string(params, &["summary"])?;
+    let details = extract_any_string(params, &["details"]);
+    let message = match details {
+        Some(details) if !details.is_empty() => format!("{summary}\n\n{details}"),
+        _ => summary,
+    };
+
+    Some(EngineEvent::Notice {
+        kind: "deprecation_notice".to_string(),
+        level: "warning".to_string(),
+        title: "Deprecation notice".to_string(),
+        message,
+    })
+}
+
+fn summarize_permissions_request(params: &Value) -> String {
+    if let Some(reason) = extract_any_string(params, &["reason"]) {
+        if !reason.is_empty() {
+            return reason;
+        }
+    }
+
+    let mut requested = Vec::new();
+    let permissions = params.get("permissions");
+    let file_system = permissions
+        .and_then(|value| value.get("fileSystem").or_else(|| value.get("file_system")));
+    if let Some(file_system) = file_system {
+        if has_nonempty_array(file_system.get("write")) {
+            requested.push("write access");
+        }
+        if has_nonempty_array(file_system.get("read")) {
+            requested.push("read access");
+        }
+    }
+
+    let network = permissions
+        .and_then(|value| value.get("network"))
+        .and_then(|value| value.get("enabled"))
+        .and_then(Value::as_bool);
+    if network == Some(true) {
+        requested.push("network access");
+    }
+
+    let macos = permissions.and_then(|value| value.get("macos"));
+    if macos.and_then(Value::as_object).is_some() {
+        requested.push("macOS permissions");
+    }
+
+    if requested.is_empty() {
+        "Codex requested additional permissions".to_string()
+    } else {
+        format!("Codex requested {}", requested.join(", "))
+    }
+}
+
+fn summarize_mcp_elicitation_request(params: &Value) -> String {
+    let server_name =
+        extract_any_string(params, &["serverName", "server_name"]).unwrap_or_else(|| {
+            "MCP server".to_string()
+        });
+    let message = extract_any_string(params, &["message"]).unwrap_or_default();
+
+    if message.is_empty() {
+        format!("{server_name} requested input")
+    } else {
+        format!("{server_name} requested input: {message}")
+    }
+}
+
+fn has_nonempty_array(value: Option<&Value>) -> bool {
+    value
+        .and_then(Value::as_array)
+        .map(|items| !items.is_empty())
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Clone)]
@@ -1094,6 +1187,85 @@ mod tests {
     }
 
     #[test]
+    fn map_server_request_permissions_uses_item_id() {
+        let mut mapper = TurnEventMapper::default();
+        let params = json!({
+            "threadId": "thr_123",
+            "turnId": "turn_123",
+            "itemId": "perm_42",
+            "reason": "Need write access to apply the requested patch",
+            "permissions": {
+                "fileSystem": {
+                    "write": ["/tmp/project"]
+                }
+            }
+        });
+
+        let approval = mapper
+            .map_server_request("request-4", "item/permissions/requestApproval", &params)
+            .expect("expected approval request");
+
+        assert_eq!(approval.approval_id, "perm_42");
+        assert_eq!(approval.server_method, "item/permissions/requestapproval");
+
+        match approval.event {
+            EngineEvent::ApprovalRequested {
+                action_type,
+                summary,
+                details,
+                ..
+            } => {
+                assert!(matches!(action_type, ActionType::Other));
+                assert_eq!(summary, "Need write access to apply the requested patch");
+                assert_eq!(
+                    details.get("_serverMethod").and_then(Value::as_str),
+                    Some("item/permissions/requestApproval")
+                );
+            }
+            _ => panic!("expected approval request event"),
+        }
+    }
+
+    #[test]
+    fn map_server_request_mcp_elicitation_uses_request_id_when_no_stable_id_exists() {
+        let mut mapper = TurnEventMapper::default();
+        let params = json!({
+            "threadId": "thr_123",
+            "turnId": "turn_123",
+            "serverName": "docs",
+            "message": "Choose a scope",
+            "mode": "form",
+            "requestedSchema": {
+                "type": "object",
+                "properties": {
+                    "scope": {
+                        "type": "string"
+                    }
+                }
+            }
+        });
+
+        let approval = mapper
+            .map_server_request("request-5", "mcpServer/elicitation/request", &params)
+            .expect("expected approval request");
+
+        assert_eq!(approval.approval_id, "request-5");
+        assert_eq!(approval.server_method, "mcpserver/elicitation/request");
+
+        match approval.event {
+            EngineEvent::ApprovalRequested {
+                action_type,
+                summary,
+                ..
+            } => {
+                assert!(matches!(action_type, ActionType::Other));
+                assert_eq!(summary, "docs requested input: Choose a scope");
+            }
+            _ => panic!("expected approval request event"),
+        }
+    }
+
+    #[test]
     fn map_notification_supports_snake_case_method_names() {
         let mut mapper = TurnEventMapper::default();
         let params = json!({
@@ -1171,6 +1343,65 @@ mod tests {
                 assert_eq!(reason, "highRiskCyberActivity");
             }
             _ => panic!("expected model rerouted event"),
+        }
+    }
+
+    #[test]
+    fn map_notification_emits_context_compacted_notice() {
+        let mut mapper = TurnEventMapper::default();
+
+        let events = mapper.map_notification(
+            "thread/compacted",
+            &json!({
+                "threadId": "thr_123",
+                "turnId": "turn_123"
+            }),
+        );
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            EngineEvent::Notice {
+                kind,
+                level,
+                title,
+                message,
+            } => {
+                assert_eq!(kind, "context_compacted");
+                assert_eq!(level, "info");
+                assert_eq!(title, "Context compacted");
+                assert!(message.contains("compacted"));
+            }
+            other => panic!("expected notice event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_notification_emits_deprecation_notice() {
+        let mut mapper = TurnEventMapper::default();
+
+        let events = mapper.map_notification(
+            "deprecationNotice",
+            &json!({
+                "summary": "The legacy approval API is deprecated.",
+                "details": "Use item/permissions/requestApproval instead."
+            }),
+        );
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            EngineEvent::Notice {
+                kind,
+                level,
+                title,
+                message,
+            } => {
+                assert_eq!(kind, "deprecation_notice");
+                assert_eq!(level, "warning");
+                assert_eq!(title, "Deprecation notice");
+                assert!(message.contains("legacy approval API"));
+                assert!(message.contains("item/permissions/requestApproval"));
+            }
+            other => panic!("expected notice event, got {other:?}"),
         }
     }
 

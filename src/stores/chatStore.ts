@@ -146,6 +146,7 @@ function eventHasVisibleAssistantContent(event: StreamEvent): boolean {
     case "DiffUpdated":
     case "ActionProgressUpdated":
     case "ModelRerouted":
+    case "Notice":
     case "Error":
       return true;
     default:
@@ -174,6 +175,52 @@ function resolveApprovalDecision(response: ApprovalResponse): ApprovalBlock["dec
     }
     return decision as ApprovalBlock["decision"];
   }
+
+  if ("action" in response && typeof response.action === "string") {
+    const action = String(response.action).trim();
+    if (action === "accept" || action === "decline" || action === "cancel") {
+      return action;
+    }
+    return "custom";
+  }
+
+  if ("permissions" in response) {
+    const scope = response.scope;
+    const permissions =
+      typeof response.permissions === "object" &&
+      response.permissions !== null &&
+      !Array.isArray(response.permissions)
+        ? (response.permissions as Record<string, unknown>)
+        : null;
+    const hasGrantedPermission =
+      permissions !== null &&
+      Object.values(permissions).some((value) => {
+        if (Array.isArray(value)) {
+          return value.length > 0;
+        }
+        if (typeof value === "object" && value !== null) {
+          return Object.values(value as Record<string, unknown>).some((nested) => {
+            if (Array.isArray(nested)) {
+              return nested.length > 0;
+            }
+            if (typeof nested === "object" && nested !== null) {
+              return Object.keys(nested as Record<string, unknown>).length > 0;
+            }
+            return nested === true || typeof nested === "string";
+          });
+        }
+        return value === true || typeof value === "string";
+      });
+
+    if (!hasGrantedPermission) {
+      return "decline";
+    }
+    if (scope === "session") {
+      return "accept_for_session";
+    }
+    return "accept";
+  }
+
   return "custom";
 }
 
@@ -998,6 +1045,19 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
         message: `Switched from ${fromModel || "the requested model"} to ${toModel}${reason ? ` (${reason})` : ""}.`,
       });
     }
+  }
+
+  if (event.type === "Notice") {
+    assistant.blocks = upsertNoticeBlock(assistant.blocks ?? [], {
+      type: "notice",
+      kind: String(event.kind ?? "notice"),
+      level:
+        event.level === "warning" || event.level === "error"
+          ? event.level
+          : "info",
+      title: String(event.title ?? "Notice"),
+      message: String(event.message ?? ""),
+    });
   }
 
   if (event.type === "Error") {

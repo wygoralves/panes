@@ -39,6 +39,9 @@ import { MessageBlocks } from "./MessageBlocks";
 import { resolveEngineCapabilities } from "./engineCapabilities";
 import { buildCodexInputItems } from "./codexInputItems";
 import {
+  buildPermissionsApprovalResponse,
+  buildPermissionsDeclineResponse,
+  isPermissionsRequestApproval,
   isRequestUserInputApproval,
   parseApprovalCommand,
   parseApprovalReason,
@@ -3672,6 +3675,7 @@ export function ChatPanel() {
               <div className="approval-rows">
                 {pendingApprovals.slice(-3).map((approval) => {
                   const details = approval.details ?? {};
+                  const isPermissionsRequest = isPermissionsRequestApproval(details);
                   const isToolInputRequest = isRequestUserInputApproval(details);
                   const requiresCustomPayload = requiresCustomApprovalPayload(details);
                   const isClaudeApproval = activeThread?.engineId === "claude";
@@ -3746,7 +3750,7 @@ export function ChatPanel() {
                           </span>
                         ) : (
                           <>
-                            {supportsCancel && (
+                            {supportsCancel && !isPermissionsRequest && (
                               <button
                                 type="button"
                                 className="approval-btn approval-btn-cancel"
@@ -3763,7 +3767,9 @@ export function ChatPanel() {
                                 className="approval-btn approval-btn-deny"
                                 onClick={() =>
                                   void respondApproval(approval.approvalId, {
-                                    decision: "decline",
+                                    ...(isPermissionsRequest
+                                      ? buildPermissionsDeclineResponse()
+                                      : { decision: "decline" }),
                                   })
                                 }
                               >
@@ -3777,14 +3783,16 @@ export function ChatPanel() {
                                 className="approval-btn approval-btn-session"
                                 onClick={() =>
                                   void respondApproval(approval.approvalId, {
-                                    decision: "accept_for_session",
+                                    ...(isPermissionsRequest
+                                      ? buildPermissionsApprovalResponse(details, "session")
+                                      : { decision: "accept_for_session" }),
                                   })
                                 }
                               >
                                 {t("panel.approvalActions.allowSession")}
                               </button>
                             )}
-                            {!isClaudeApproval && proposedExecpolicyAmendment.length > 0 && (
+                            {!isClaudeApproval && !isPermissionsRequest && proposedExecpolicyAmendment.length > 0 && (
                               <button
                                 type="button"
                                 className="approval-btn approval-btn-session"
@@ -3799,7 +3807,7 @@ export function ChatPanel() {
                                 {t("panel.allowWithPolicy")}
                               </button>
                             )}
-                            {!isClaudeApproval && proposedNetworkPolicyAmendments.map((amendment) => (
+                            {!isClaudeApproval && !isPermissionsRequest && proposedNetworkPolicyAmendments.map((amendment) => (
                               <button
                                 key={`${amendment.action}:${amendment.host}`}
                                 type="button"
@@ -3828,7 +3836,12 @@ export function ChatPanel() {
                                 type="button"
                                 className="approval-btn approval-btn-allow"
                                 onClick={() =>
-                                  void respondApproval(approval.approvalId, { decision: "accept" })
+                                  void respondApproval(
+                                    approval.approvalId,
+                                    isPermissionsRequest
+                                      ? buildPermissionsApprovalResponse(details, "turn")
+                                      : { decision: "accept" },
+                                  )
                                 }
                               >
                                 {t("panel.approvalActions.allow")}

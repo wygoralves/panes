@@ -54,6 +54,12 @@ pub enum EngineEvent {
         to_model: String,
         reason: String,
     },
+    Notice {
+        kind: String,
+        level: String,
+        title: String,
+        message: String,
+    },
     Error {
         message: String,
         recoverable: bool,

@@ -762,10 +762,7 @@ async fn respond_to_approval_inner(
         .await
         .map_err(err_to_string)?;
 
-    let decision = normalized_response
-        .get("decision")
-        .and_then(|value| value.as_str())
-        .unwrap_or("custom");
+    let decision = approval_response_decision_for_persistence(&normalized_response);
     run_db(db, {
         let approval_id = approval_id.clone();
         let thread_id = thread_id.clone();
@@ -787,6 +784,61 @@ async fn respond_to_approval_inner(
     .await?;
 
     Ok(())
+}
+
+fn approval_response_decision_for_persistence(response: &Value) -> &'static str {
+    if let Some(decision) = response.get("decision").and_then(Value::as_str) {
+        return match decision {
+            "deny" => "decline",
+            "acceptForSession" => "accept_for_session",
+            "accept" => "accept",
+            "decline" => "decline",
+            "cancel" => "cancel",
+            "accept_for_session" => "accept_for_session",
+            _ => "custom",
+        };
+    }
+
+    if let Some(action) = response.get("action").and_then(Value::as_str) {
+        return match action {
+            "accept" => "accept",
+            "decline" => "decline",
+            "cancel" => "cancel",
+            _ => "custom",
+        };
+    }
+
+    if response.get("permissions").is_some() {
+        if permission_profile_is_empty(response.get("permissions")) {
+            return "decline";
+        }
+        if matches!(
+            response.get("scope").and_then(Value::as_str),
+            Some("session")
+        ) {
+            return "accept_for_session";
+        }
+        return "accept";
+    }
+
+    "custom"
+}
+
+fn permission_profile_is_empty(value: Option<&Value>) -> bool {
+    fn has_granted_permission(value: &Value) -> bool {
+        match value {
+            Value::Bool(value) => *value,
+            Value::String(value) => !value.trim().is_empty() && value != "none",
+            Value::Array(items) => items.iter().any(has_granted_permission),
+            Value::Object(map) => map.values().any(has_granted_permission),
+            _ => false,
+        }
+    }
+
+    match value {
+        Some(value) => !has_granted_permission(value),
+        None => true,
+    }
 }
 
 #[tauri::command]
@@ -1990,6 +2042,22 @@ fn apply_event_to_blocks(
             progress.turn_model_id = Some(to_model.to_string());
             progress.force_persist = true;
         }
+        EngineEvent::Notice {
+            kind,
+            level,
+            title,
+            message,
+        } => {
+            let block = ContentBlock::Notice {
+                kind: kind.to_string(),
+                level: level.to_string(),
+                title: title.to_string(),
+                message: message.to_string(),
+            };
+            progress.blocks_changed =
+                upsert_notice_block(blocks, action_index, approval_index, kind, block);
+            progress.force_persist = true;
+        }
         EngineEvent::ApprovalRequested {
             approval_id,
             action_type,
@@ -2980,6 +3048,88 @@ mod tests {
             }
             other => panic!("expected action block, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn generic_notice_blocks_are_upserted_by_kind() {
+        let mut blocks = Vec::new();
+        let mut action_index = HashMap::new();
+        let mut approval_index = HashMap::new();
+
+        let first = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::Notice {
+                kind: "deprecation_notice".to_string(),
+                level: "warning".to_string(),
+                title: "Deprecation notice".to_string(),
+                message: "Use the newer API.".to_string(),
+            },
+            1000,
+        );
+        assert!(first.blocks_changed);
+
+        let second = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::Notice {
+                kind: "deprecation_notice".to_string(),
+                level: "warning".to_string(),
+                title: "Deprecation notice".to_string(),
+                message: "Use the newer permissions API.".to_string(),
+            },
+            1000,
+        );
+        assert!(second.blocks_changed);
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Notice { message, .. } if message == "Use the newer permissions API."
+        ));
+    }
+
+    #[test]
+    fn approval_response_persistence_tracks_permissions_session_scope() {
+        let response = serde_json::json!({
+            "permissions": {
+                "network": {
+                    "enabled": true
+                }
+            },
+            "scope": "session"
+        });
+
+        assert_eq!(
+            approval_response_decision_for_persistence(&response),
+            "accept_for_session"
+        );
+    }
+
+    #[test]
+    fn approval_response_persistence_tracks_mcp_elicitation_actions() {
+        let response = serde_json::json!({
+            "action": "decline"
+        });
+
+        assert_eq!(
+            approval_response_decision_for_persistence(&response),
+            "decline"
+        );
+    }
+
+    #[test]
+    fn approval_response_persistence_treats_empty_permissions_as_decline() {
+        let response = serde_json::json!({
+            "permissions": {},
+            "scope": "turn"
+        });
+
+        assert_eq!(
+            approval_response_decision_for_persistence(&response),
+            "decline"
+        );
     }
 
     #[tokio::test]

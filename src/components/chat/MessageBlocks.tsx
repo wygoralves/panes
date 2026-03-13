@@ -33,13 +33,21 @@ import {
   buildDynamicToolCallResponse,
   defaultAdvancedApprovalPayload,
   isDynamicToolCallApproval,
+  isMcpElicitationApproval,
+  isPermissionsRequestApproval,
   isRequestUserInputApproval,
   parseApprovalCommand,
   parseApprovalReason,
   parseDynamicToolCallArguments,
   parseDynamicToolCallName,
+  parseMcpElicitationMessage,
+  parseMcpElicitationMode,
+  parseMcpElicitationSchema,
+  parseMcpElicitationServerName,
+  parseMcpElicitationUrl,
   parseProposedExecpolicyAmendment,
   parseProposedNetworkPolicyAmendments,
+  parseRequestedPermissions,
   parseToolInputQuestions,
   requiresCustomApprovalPayload,
 } from "./toolInputApproval";
@@ -525,6 +533,16 @@ const APPROVAL_INTERNAL_KEYS = new Set([
   "arguments",
   "tool",
   "name",
+  "permissions",
+  "serverName",
+  "server_name",
+  "message",
+  "mode",
+  "url",
+  "requestedSchema",
+  "requested_schema",
+  "elicitationId",
+  "elicitation_id",
 ]);
 
 function extractApprovalDetails(details: Record<string, unknown>) {
@@ -555,10 +573,13 @@ function ApprovalCard({
   const details = block.details ?? {};
   const isToolInputRequest = isRequestUserInputApproval(details);
   const isDynamicToolCall = isDynamicToolCallApproval(details);
+  const isPermissionsRequest = isPermissionsRequestApproval(details);
+  const isMcpElicitation = isMcpElicitationApproval(details);
   const requiresCustomPayload = requiresCustomApprovalPayload(details);
   const toolInputQuestions = isToolInputRequest ? parseToolInputQuestions(details) : [];
   const proposedExecpolicyAmendment = parseProposedExecpolicyAmendment(details);
   const proposedNetworkPolicyAmendments = parseProposedNetworkPolicyAmendments(details);
+  const requestedPermissions = isPermissionsRequest ? parseRequestedPermissions(details) : null;
   const showStructuredToolInput =
     isPending && !isClaudeThread && isToolInputRequest && toolInputQuestions.length > 0;
   const showClaudeUnsupportedApproval =
@@ -566,14 +587,21 @@ function ApprovalCard({
     isClaudeThread &&
     (isToolInputRequest ||
       isDynamicToolCall ||
+      isMcpElicitation ||
       requiresCustomPayload ||
       proposedExecpolicyAmendment.length > 0 ||
       proposedNetworkPolicyAmendments.length > 0);
   const dynamicToolName = parseDynamicToolCallName(details);
   const dynamicToolArguments = parseDynamicToolCallArguments(details);
+  const mcpServerName = parseMcpElicitationServerName(details);
+  const mcpMessage = parseMcpElicitationMessage(details);
+  const mcpMode = parseMcpElicitationMode(details);
+  const mcpUrl = parseMcpElicitationUrl(details);
+  const mcpSchema = parseMcpElicitationSchema(details);
 
   const { command, reason, commandActionCount, remainingDetails, hasRemainingDetails } =
     extractApprovalDetails(details);
+  const displayReason = isMcpElicitation ? mcpMessage ?? reason : reason;
 
   const defaultAdvancedPayload = useMemo(
     () => JSON.stringify(defaultAdvancedApprovalPayload(details), null, 2),
@@ -664,13 +692,29 @@ function ApprovalCard({
       </div>
 
       {/* Details */}
-      {!isToolInputRequest && (command || reason || commandActionCount > 0 || hasRemainingDetails) && (
+      {!isToolInputRequest && (command || displayReason || commandActionCount > 0 || requestedPermissions || mcpUrl || mcpSchema || hasRemainingDetails) && (
         <div className="acard-details">
           {command && (
             <pre className="acard-command">{command}</pre>
           )}
-          {!command && reason && (
-            <p className="acard-reason">{reason}</p>
+          {!command && displayReason && (
+            <p className="acard-reason">{displayReason}</p>
+          )}
+          {isMcpElicitation && mcpServerName && (
+            <p className="acard-meta">{mcpServerName}</p>
+          )}
+          {isMcpElicitation && mcpMode === "url" && mcpUrl && (
+            <pre className="acard-command">{mcpUrl}</pre>
+          )}
+          {isPermissionsRequest && requestedPermissions && (
+            <pre className="acard-remaining-pre">
+              {JSON.stringify(requestedPermissions, null, 2)}
+            </pre>
+          )}
+          {isMcpElicitation && mcpMode === "form" && mcpSchema && (
+            <pre className="acard-remaining-pre">
+              {JSON.stringify(mcpSchema, null, 2)}
+            </pre>
           )}
           {commandActionCount > 0 && (
             <p className="acard-meta">

@@ -622,9 +622,28 @@ impl Engine for CodexEngine {
                     }
                     let normalized_method = normalize_method(&method);
                     if method_signature(&method) == "accountchatgptauthtokensrefresh" {
+                        let reason = extract_any_string(&params, &["reason"])
+                            .unwrap_or_else(|| "unauthorized".to_string());
+                        let previous_account_id =
+                            extract_any_string(&params, &["previousAccountId", "previous_account_id"]);
+                        let message = match previous_account_id {
+                            Some(previous_account_id) => format!(
+                                "Codex requested ChatGPT token refresh for account `{previous_account_id}` after `{reason}`, but Panes does not manage chatgptAuthTokens authentication."
+                            ),
+                            None => format!(
+                                "Codex requested ChatGPT token refresh after `{reason}`, but Panes does not manage chatgptAuthTokens authentication."
+                            ),
+                        };
                         log::warn!(
                             "codex requested external ChatGPT token refresh, but Panes does not manage chatgptAuthTokens mode"
                         );
+                        event_tx
+                            .send(EngineEvent::Error {
+                                message,
+                                recoverable: true,
+                            })
+                            .await
+                            .ok();
                         transport
                         .respond_error(
                           &raw_id,
@@ -3728,6 +3747,7 @@ fn is_known_codex_notification_method(normalized_method: &str) -> bool {
             | "turn/completed"
             | "turn/diff/updated"
             | "turn/plan/updated"
+            | "thread/compacted"
             | "thread/tokenusage/updated"
             | "account/ratelimits/updated"
             | "account/updated"
@@ -3741,6 +3761,7 @@ fn is_known_codex_notification_method(normalized_method: &str) -> bool {
             | "item/commandexecution/outputdelta"
             | "item/filechange/outputdelta"
             | "model/rerouted"
+            | "deprecationnotice"
             | "error"
     )
 }

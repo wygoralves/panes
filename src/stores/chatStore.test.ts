@@ -256,6 +256,172 @@ describe("chatStore send", () => {
     vi.useRealTimers();
   });
 
+  it("stores generic notice events as notice blocks", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    mockIpc.sendMessage.mockResolvedValueOnce("assistant-message-id");
+    await expect(
+      useChatStore.getState().send("hello", {
+        engineId: "codex",
+        modelId: "gpt-5.3-codex",
+      }),
+    ).resolves.toBe(true);
+
+    streamHandler!({
+      type: "Notice",
+      kind: "deprecation_notice",
+      level: "warning",
+      title: "Deprecation notice",
+      message: "Use the newer approval API.",
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    const assistant = useChatStore
+      .getState()
+      .messages.find((message) => message.role === "assistant" && message.blocks?.length);
+    expect(assistant?.blocks).toEqual([
+      {
+        type: "notice",
+        kind: "deprecation_notice",
+        level: "warning",
+        title: "Deprecation notice",
+        message: "Use the newer approval API.",
+      },
+    ]);
+
+    vi.useRealTimers();
+  });
+
+  it("infers accept_for_session for permission approval responses", async () => {
+    mockIpc.respondApproval.mockResolvedValueOnce(undefined);
+    useChatStore.setState({
+      threadId: "thread-1",
+      messages: [
+        {
+          id: "assistant-approval",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "streaming",
+          schemaVersion: 1,
+          blocks: [
+            {
+              type: "approval",
+              approvalId: "approval-1",
+              actionType: "other",
+              summary: "Codex requested network access",
+              details: {},
+              status: "pending",
+            },
+          ],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: false,
+        },
+      ],
+      olderCursor: null,
+      hasOlderMessages: false,
+      loadingOlderMessages: false,
+      olderLoadBlockedUntil: 0,
+      status: "streaming",
+      streaming: true,
+      usageLimits: null,
+      error: undefined,
+      unlisten: undefined,
+    });
+
+    await useChatStore.getState().respondApproval("approval-1", {
+      permissions: {
+        network: {
+          enabled: true,
+        },
+      },
+      scope: "session",
+    });
+
+    expect(mockIpc.respondApproval).toHaveBeenCalledWith("thread-1", "approval-1", {
+      permissions: {
+        network: {
+          enabled: true,
+        },
+      },
+      scope: "session",
+    });
+    expect(useChatStore.getState().messages[0]?.blocks).toEqual([
+      {
+        type: "approval",
+        approvalId: "approval-1",
+        actionType: "other",
+        summary: "Codex requested network access",
+        details: {},
+        status: "answered",
+        decision: "accept_for_session",
+      },
+    ]);
+  });
+
+  it("infers MCP elicitation decisions from action responses", async () => {
+    mockIpc.respondApproval.mockResolvedValueOnce(undefined);
+    useChatStore.setState({
+      threadId: "thread-1",
+      messages: [
+        {
+          id: "assistant-approval-2",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "streaming",
+          schemaVersion: 1,
+          blocks: [
+            {
+              type: "approval",
+              approvalId: "approval-2",
+              actionType: "other",
+              summary: "docs requested input",
+              details: {},
+              status: "pending",
+            },
+          ],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: false,
+        },
+      ],
+      olderCursor: null,
+      hasOlderMessages: false,
+      loadingOlderMessages: false,
+      olderLoadBlockedUntil: 0,
+      status: "streaming",
+      streaming: true,
+      usageLimits: null,
+      error: undefined,
+      unlisten: undefined,
+    });
+
+    await useChatStore.getState().respondApproval("approval-2", {
+      action: "decline",
+    });
+
+    expect(useChatStore.getState().messages[0]?.blocks).toEqual([
+      {
+        type: "approval",
+        approvalId: "approval-2",
+        actionType: "other",
+        summary: "docs requested input",
+        details: {},
+        status: "answered",
+        decision: "decline",
+      },
+    ]);
+  });
+
   it("stores only the latest MCP progress message on the matching action block", async () => {
     vi.useFakeTimers();
 
