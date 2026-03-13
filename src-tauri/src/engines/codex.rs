@@ -2122,6 +2122,7 @@ impl CodexEngine {
                             | "thread/realtime/closed"
                             | "thread/realtime/error"
                             | "thread/realtime/itemadded"
+                            | "thread/realtime/outputaudio/delta"
                             | "thread/realtime/outputaudiodelta" => {
                                 if let Some(diagnostics) =
                                     update_protocol_diagnostics_with_thread_realtime(
@@ -2157,7 +2158,8 @@ impl CodexEngine {
                                     );
                                 }
                             }
-                            "windows/sandboxsetup/completed" => {
+                            "windowssandbox/setupcompleted"
+                            | "windows/sandboxsetup/completed" => {
                                 if let Some(diagnostics) =
                                     update_protocol_diagnostics_with_windows_sandbox_setup(
                                         state.clone(),
@@ -5054,6 +5056,7 @@ fn is_known_codex_notification_method(normalized_method: &str) -> bool {
             | "item/completed"
             | "item/agentmessage/delta"
             | "item/plan/delta"
+            | "item/reasoning/summarypartadded"
             | "reasoningsummary/partadded"
             | "item/reasoning/summarytextdelta"
             | "item/reasoning/textdelta"
@@ -5062,13 +5065,16 @@ fn is_known_codex_notification_method(normalized_method: &str) -> bool {
             | "item/filechange/outputdelta"
             | "hook/started"
             | "hook/completed"
+            | "item/commandexecution/terminalinteraction"
             | "terminal/interaction"
             | "thread/realtime/started"
             | "thread/realtime/closed"
             | "thread/realtime/error"
             | "thread/realtime/itemadded"
+            | "thread/realtime/outputaudio/delta"
             | "thread/realtime/outputaudiodelta"
             | "windows/worldwritablewarning"
+            | "windowssandbox/setupcompleted"
             | "windows/sandboxsetup/completed"
             | "model/rerouted"
             | "deprecationnotice"
@@ -5683,7 +5689,7 @@ mod tests {
 
         let diagnostics = update_protocol_diagnostics_with_thread_realtime(
             state,
-            "thread/realtime/outputaudiodelta",
+            &normalize_method("thread/realtime/outputAudio/delta"),
             &json!({
                 "threadId": "thread-123",
                 "audio": {
@@ -5699,7 +5705,7 @@ mod tests {
         let realtime = diagnostics
             .last_thread_realtime
             .expect("thread realtime event should be stored");
-        assert_eq!(realtime.kind, "thread/realtime/outputaudiodelta");
+        assert_eq!(realtime.kind, "thread/realtime/outputaudio/delta");
         assert_eq!(realtime.thread_id, "thread-123");
         assert_eq!(realtime.sample_rate, Some(24000));
         assert_eq!(realtime.num_channels, Some(2));
@@ -5708,15 +5714,28 @@ mod tests {
 
     #[test]
     fn known_codex_notification_methods_include_remaining_runtime_notifications() {
-        assert!(is_known_codex_notification_method("thread/started"));
-        assert!(is_known_codex_notification_method("thread/archived"));
-        assert!(is_known_codex_notification_method("thread/unarchived"));
-        assert!(is_known_codex_notification_method("thread/closed"));
-        assert!(is_known_codex_notification_method("reasoningsummary/partadded"));
-        assert!(is_known_codex_notification_method("thread/realtime/started"));
-        assert!(is_known_codex_notification_method("thread/realtime/outputaudiodelta"));
-        assert!(is_known_codex_notification_method("windows/worldwritablewarning"));
-        assert!(is_known_codex_notification_method("windows/sandboxsetup/completed"));
+        assert!(is_known_codex_notification_method(&normalize_method("thread/started")));
+        assert!(is_known_codex_notification_method(&normalize_method("thread/archived")));
+        assert!(is_known_codex_notification_method(&normalize_method("thread/unarchived")));
+        assert!(is_known_codex_notification_method(&normalize_method("thread/closed")));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "item/reasoning/summaryPartAdded"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "item/commandExecution/terminalInteraction"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "thread/realtime/started"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "thread/realtime/outputAudio/delta"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "windows/worldWritableWarning"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "windowsSandbox/setupCompleted"
+        )));
     }
 
     #[test]

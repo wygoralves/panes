@@ -103,7 +103,9 @@ impl TurnEventMapper {
                     vec![EngineEvent::ThinkingDelta { content }]
                 }
             }
-            "reasoningsummarypartadded" => self.map_reasoning_summary_part_added(params),
+            "itemreasoningsummarypartadded" | "reasoningsummarypartadded" => {
+                self.map_reasoning_summary_part_added(params)
+            }
             "itemreasoningsummarytextdelta" | "itemreasoningtextdelta" => {
                 let content =
                     extract_any_string(params, &["delta", "text", "content"]).unwrap_or_default();
@@ -155,7 +157,9 @@ impl TurnEventMapper {
             "itemcommandexecutionoutputdelta" | "itemfilechangeoutputdelta" => {
                 self.map_output_delta(params).into_iter().collect()
             }
-            "terminalinteraction" => self.map_terminal_interaction(params).into_iter().collect(),
+            "itemcommandexecutionterminalinteraction" | "terminalinteraction" => {
+                self.map_terminal_interaction(params).into_iter().collect()
+            }
             "error" => {
                 let message = extract_nested_string(params, &["error", "message"])
                     .or_else(|| extract_any_string(params, &["message"]))
@@ -1734,7 +1738,7 @@ mod tests {
         };
 
         let events = mapper.map_notification(
-            "terminal/interaction",
+            "item/commandExecution/terminalInteraction",
             &json!({
                 "threadId": "thr_123",
                 "turnId": "turn_123",
@@ -1764,7 +1768,7 @@ mod tests {
         let mut mapper = TurnEventMapper::default();
 
         let first = mapper.map_notification(
-            "reasoningSummary/partAdded",
+            "item/reasoning/summaryPartAdded",
             &json!({
                 "itemId": "reasoning_123",
                 "summaryIndex": 0,
@@ -1773,7 +1777,7 @@ mod tests {
             }),
         );
         let second = mapper.map_notification(
-            "reasoningSummary/partAdded",
+            "item/reasoning/summaryPartAdded",
             &json!({
                 "itemId": "reasoning_123",
                 "summaryIndex": 1,
