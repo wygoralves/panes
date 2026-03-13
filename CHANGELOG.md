@@ -1,5 +1,40 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.40.0...vnull) (2026-03-13)
+
+### Features
+
+* **codex:** add mid-turn steering ([8774268](https://github.com/wygoralves/panes/commit/87742681adc78c4d84a965223ffb995475631ff4))
+* **codex:** add native review turns ([eea919d](https://github.com/wygoralves/panes/commit/eea919d7dcd50cfa8f145c924bc5b04e5d24d3a5))
+* **codex:** add native thread branching tools ([fc4f3ad](https://github.com/wygoralves/panes/commit/fc4f3ad8e06c2ed3d26582db6c072345328b95cb))
+* **codex:** add turn configuration parity ([1b9e272](https://github.com/wygoralves/panes/commit/1b9e272474418bea50d25fa8613feaae449896ef))
+* **codex:** address more review findings across backend, stores, and components ([37d878a](https://github.com/wygoralves/panes/commit/37d878a1da1a3f6fa3b1374a99933d9b771ed0d6))
+* **codex:** address more review findings across backend, stores, and components ([d04683e](https://github.com/wygoralves/panes/commit/d04683ef24813abd5bea6eb4ce9a26765949f8bc))
+* **codex:** address review findings across backend, stores, and components ([58482f2](https://github.com/wygoralves/panes/commit/58482f296e85d13e0a66f52c213a4d99135e0684))
+* **codex:** align plan questionnaire to not have ui leakages ([ffa3106](https://github.com/wygoralves/panes/commit/ffa3106849cb58f234c224fc5dee10e4953df48f))
+* **codex:** close notification parity gaps ([589795e](https://github.com/wygoralves/panes/commit/589795e10e0b1a6fad4f546cbbdc47f59ece9e80))
+* **codex:** close runtime notification parity gaps ([de379ba](https://github.com/wygoralves/panes/commit/de379bad20e7ba73af001f5cb0e26d0d31c59978))
+* **codex:** expand approval request parity ([d317435](https://github.com/wygoralves/panes/commit/d317435e49033da8b302d244190ed07cab191ffc))
+* **codex:** finishing touches on UI for tool input questionnaire ([23f745b](https://github.com/wygoralves/panes/commit/23f745b3c832ab69a9e4d58a69eb8b8a21f64058))
+* **codex:** improve compatibility with plan mode ([23affdd](https://github.com/wygoralves/panes/commit/23affddb13ef5e1a037610ab61eb19bd6c1af272))
+* **codex:** improve fast UX and fix fmt issues ([ee62694](https://github.com/wygoralves/panes/commit/ee6269438971abb35a1368c7bd4e052704e212a6))
+* **codex:** improve UI for slash commands ([2374c6e](https://github.com/wygoralves/panes/commit/2374c6e97c93b347545a9b1558469c6bef7d8e3e))
+* **codex:** inline steer messages in active assistant bubble ([ba17a7f](https://github.com/wygoralves/panes/commit/ba17a7fd0dcc9907db2f634e040978df3920db81))
+* **codex:** keep Codex thread state and approval controls consistent ([a88fc01](https://github.com/wygoralves/panes/commit/a88fc016167307915dd6002f465d767341269469))
+* **codex:** make plan mode prompt-guided ([6c0de0f](https://github.com/wygoralves/panes/commit/6c0de0f0efdabbcdd5527a674251d07f8cc6c109))
+* **codex:** polish components in slash commands ([abac5b1](https://github.com/wygoralves/panes/commit/abac5b1b8c4ca00a73b95bffe73bb6525e9ef1bf))
+* **codex:** polish UI for tool input questionnaire ([45de9ca](https://github.com/wygoralves/panes/commit/45de9ca7a8be7f3d64d596d427b85ce5bae8b3f7))
+* **codex:** preserve runtime model metadata ([14a69b5](https://github.com/wygoralves/panes/commit/14a69b51c61dd64cda7c085543b7accff2b640d2))
+* **codex:** resume remote app-server threads ([63c3863](https://github.com/wygoralves/panes/commit/63c38635f406e58d8ab009f35ac26105627b67f7))
+* **codex:** reuse codex threads across model changes ([d06b964](https://github.com/wygoralves/panes/commit/d06b964839862950c42743fba6b358e3d791c0bf))
+* **codex:** support skills and app mentions ([6766105](https://github.com/wygoralves/panes/commit/6766105063dea0907daee0c23b6bf8b0d1ec4709))
+* **codex:** surface runtime diagnostics ([51df6ee](https://github.com/wygoralves/panes/commit/51df6ee6cce6444095aa768e0fba57a1a96e1724))
+
+### Bug Fixes
+
+* **codex:** align live notification method shapes ([7841bf7](https://github.com/wygoralves/panes/commit/7841bf75d4ed3756d86485d1376837d1f7a513f3))
+* **codex:** surface unsupported external auth mode ([3501bb2](https://github.com/wygoralves/panes/commit/3501bb23062791f23ab43c336c7d266d8cbcbe18))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.39.0...vnull) (2026-03-13)
 
 ### Features
