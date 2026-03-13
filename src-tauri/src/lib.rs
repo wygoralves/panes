@@ -165,6 +165,7 @@ pub fn run() {
             commands::power::get_keep_awake_state,
             commands::power::set_keep_awake_enabled,
             commands::chat::send_message,
+            commands::chat::steer_message,
             commands::chat::cancel_turn,
             commands::chat::respond_to_approval,
             commands::chat::get_thread_messages,

@@ -1225,6 +1225,7 @@ export function ChatPanel() {
     loadingOlderMessages,
     loadOlderMessages,
     send,
+    steer,
     cancel,
     respondApproval,
     hydrateActionOutput,
@@ -1240,6 +1241,7 @@ export function ChatPanel() {
       loadingOlderMessages: state.loadingOlderMessages,
       loadOlderMessages: state.loadOlderMessages,
       send: state.send,
+      steer: state.steer,
       cancel: state.cancel,
       respondApproval: state.respondApproval,
       hydrateActionOutput: state.hydrateActionOutput,
@@ -1449,6 +1451,32 @@ export function ChatPanel() {
     activeWorkspaceId,
     selectedEngineId,
     selectedModelId,
+  ]);
+  const canSteerActiveTurn = useMemo(() => {
+    if (
+      !streaming ||
+      !threadId ||
+      !activeThread ||
+      !activeWorkspaceId ||
+      selectedEngineId !== "codex"
+    ) {
+      return false;
+    }
+
+    const activeScopeRepoId = activeRepo?.id ?? null;
+    return (
+      activeThread.id === threadId &&
+      activeThread.workspaceId === activeWorkspaceId &&
+      activeThread.repoId === activeScopeRepoId &&
+      activeThread.engineId === "codex"
+    );
+  }, [
+    activeRepo?.id,
+    activeThread,
+    activeWorkspaceId,
+    selectedEngineId,
+    streaming,
+    threadId,
   ]);
   const codexReferencesAvailable = codexSkills.length > 0 || codexApps.length > 0;
 
@@ -2015,6 +2043,13 @@ export function ChatPanel() {
       return;
     }
 
+    setCodexSkills([]);
+    setCodexApps([]);
+    setCodexReferenceCatalogState({
+      skillsLoaded: false,
+      appsLoaded: false,
+    });
+
     let disposed = false;
     void loadCodexReferenceCatalogs().then(
       ({ skills, apps, skillsLoaded, appsLoaded }) => {
@@ -2514,8 +2549,37 @@ export function ChatPanel() {
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!input.trim() || !activeWorkspaceId || !selectedModelId || streaming) return;
+    if (!input.trim() || !activeWorkspaceId) return;
     const text = input.trim();
+    const currentAttachments = [...attachments];
+
+    if (streaming) {
+      if (!canSteerActiveTurn) {
+        return;
+      }
+
+      const activeThreadId = threadId ?? activeThread?.id ?? null;
+      if (!activeThreadId) {
+        return;
+      }
+
+      const inputItems = await resolveCodexInputItems(text, "codex");
+      const steered = await steer(text, {
+        threadIdOverride: activeThreadId,
+        attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
+        inputItems,
+        planMode,
+      });
+      if (steered) {
+        setInput("");
+        setAttachments([]);
+      }
+      return;
+    }
+
+    if (!selectedModelId) {
+      return;
+    }
 
     const activeScopeRepoId = activeRepo?.id ?? null;
     const activeThreadInScope = activeThread
@@ -2595,8 +2659,6 @@ export function ChatPanel() {
         return;
       }
     }
-
-    const currentAttachments = [...attachments];
 
     if (selectedReasoningEffort) {
       await ipc.setThreadReasoningEffort(targetThreadId, selectedReasoningEffort, selectedModelId);
@@ -3834,7 +3896,7 @@ export function ChatPanel() {
                   isComposing: e.nativeEvent.isComposing,
                 })) {
                   e.preventDefault();
-                  if (streaming) {
+                  if (streaming && !canSteerActiveTurn) {
                     return;
                   }
                   void onSubmit(e);
@@ -4048,32 +4110,36 @@ export function ChatPanel() {
 
               <div style={{ flex: 1 }} />
 
-              {/* Stop / Send button */}
-              {streaming ? (
-                <button
-                  type="button"
-                  onClick={() => void cancel()}
-                  style={{
-                    padding: "5px 10px",
-                    borderRadius: "var(--radius-sm)",
-                    background: "rgba(248, 113, 113, 0.10)",
-                    color: "var(--danger)",
-                    border: "1px solid rgba(248, 113, 113, 0.2)",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 5,
-                  }}
-                >
-                  <Square size={11} fill="currentColor" />
-                  {t("panel.stop")}
-                </button>
-              ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {streaming && (
+                  <button
+                    type="button"
+                    onClick={() => void cancel()}
+                    style={{
+                      padding: "5px 10px",
+                      borderRadius: "var(--radius-sm)",
+                      background: "rgba(248, 113, 113, 0.10)",
+                      color: "var(--danger)",
+                      border: "1px solid rgba(248, 113, 113, 0.2)",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
+                    }}
+                  >
+                    <Square size={11} fill="currentColor" />
+                    {t("panel.stop")}
+                  </button>
+                )}
+
+                {(!streaming || canSteerActiveTurn) && (
                 <button
                   type="submit"
                   disabled={!activeWorkspaceId || !input.trim()}
+                  title={streaming ? t("panel.sendFollowUp") : undefined}
+                  aria-label={streaming ? t("panel.sendFollowUp") : undefined}
                   style={{
                     width: 30,
                     height: 30,
@@ -4099,7 +4165,8 @@ export function ChatPanel() {
                 >
                   <Send size={13} />
                 </button>
-              )}
+                )}
+              </div>
             </div>
           </div>
 

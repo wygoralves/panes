@@ -221,6 +221,20 @@ export const ipc = {
       planMode: planMode ?? null,
       clientTurnId: clientTurnId ?? null,
     }),
+  steerMessage: (
+    threadId: string,
+    message: string,
+    attachments?: ChatAttachment[] | null,
+    inputItems?: ChatInputItem[] | null,
+    planMode?: boolean | null,
+  ) =>
+    invoke<void>("steer_message", {
+      threadId,
+      message,
+      attachments: attachments ?? null,
+      inputItems: inputItems ?? null,
+      planMode: planMode ?? null,
+    }),
   cancelTurn: (threadId: string) => invoke<void>("cancel_turn", { threadId }),
   respondApproval: (threadId: string, approvalId: string, response: ApprovalResponse) =>
     invoke<void>("respond_to_approval", { threadId, approvalId, response }),

@@ -1090,6 +1090,14 @@ impl Engine for ClaudeSidecarEngine {
         Ok(())
     }
 
+    async fn steer_message(
+        &self,
+        _engine_thread_id: &str,
+        _input: TurnInput,
+    ) -> Result<(), anyhow::Error> {
+        anyhow::bail!("Claude does not support mid-turn steering")
+    }
+
     async fn respond_to_approval(
         &self,
         approval_id: &str,

@@ -330,37 +330,8 @@ pub async fn send_message(
         let model_id = effective_model_id.clone();
         let reasoning_effort = reasoning_effort.clone();
         move |db| {
-            let mut user_blocks =
-                Vec::with_capacity(input_items.len().saturating_add(attachments.len()).saturating_add(1));
-            for item in &input_items {
-                match item {
-                    TurnInputItem::Skill { name, path } => {
-                        user_blocks.push(ContentBlock::Skill {
-                            name: name.clone(),
-                            path: path.clone(),
-                        });
-                    }
-                    TurnInputItem::Mention { name, path } => {
-                        user_blocks.push(ContentBlock::Mention {
-                            name: name.clone(),
-                            path: path.clone(),
-                        });
-                    }
-                    TurnInputItem::Text { .. } => {}
-                }
-            }
-            for attachment in &attachments {
-                user_blocks.push(ContentBlock::Attachment {
-                    file_name: attachment.file_name.clone(),
-                    file_path: attachment.file_path.clone(),
-                    size_bytes: attachment.size_bytes,
-                    mime_type: attachment.mime_type.clone(),
-                });
-            }
-            user_blocks.push(ContentBlock::Text {
-                content: message.clone(),
-                plan_mode: if plan_mode_enabled { Some(true) } else { None },
-            });
+            let user_blocks =
+                build_user_blocks(&message, &input_items, &attachments, plan_mode_enabled);
             db::messages::insert_user_message(
                 db,
                 &thread_id,
@@ -488,6 +459,141 @@ pub async fn send_message(
     });
 
     Ok(assistant_message.id)
+}
+
+#[tauri::command]
+pub async fn steer_message(
+    state: State<'_, AppState>,
+    thread_id: String,
+    message: String,
+    attachments: Option<Vec<ChatAttachmentPayload>>,
+    input_items: Option<Vec<ChatInputItemPayload>>,
+    plan_mode: Option<bool>,
+) -> Result<(), String> {
+    if state.turns.get(&thread_id).await.is_none() {
+        return Err(
+            "No active turn is running for this thread yet. Wait for Codex to start the turn before steering."
+                .to_string(),
+        );
+    }
+
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if thread.engine_id != "codex" {
+        return Err("Mid-turn steering is only available for Codex threads.".to_string());
+    }
+
+    let engine_thread_id = thread
+        .engine_thread_id
+        .clone()
+        .ok_or_else(|| format!("thread `{thread_id}` has no active engine thread id"))?;
+    let attachments = normalize_attachments(attachments)?;
+    let input_items = normalize_input_items(message.as_str(), input_items)?;
+    let plan_mode = plan_mode.unwrap_or(false);
+    let turn_input = TurnInput {
+        message: message.clone(),
+        attachments: attachments.clone(),
+        plan_mode,
+        input_items: input_items.clone(),
+    };
+    let effective_model_id =
+        thread_last_model_id(thread.engine_metadata.as_ref()).unwrap_or_else(|| thread.model_id.clone());
+    let reasoning_effort = thread_reasoning_effort(thread.engine_metadata.as_ref());
+    let user_blocks = build_user_blocks(&message, &input_items, &attachments, plan_mode);
+
+    let user_message = run_db(db.clone(), {
+        let thread_id = thread.id.clone();
+        let message = message.clone();
+        let user_blocks = user_blocks.clone();
+        let engine_id = thread.engine_id.clone();
+        let model_id = effective_model_id.clone();
+        let reasoning_effort = reasoning_effort.clone();
+        move |db| {
+            db::messages::insert_user_message(
+                db,
+                &thread_id,
+                &message,
+                Some(serde_json::to_value(&user_blocks)?),
+                Some(engine_id.as_str()),
+                Some(model_id.as_str()),
+                reasoning_effort.as_deref(),
+            )
+        }
+    })
+    .await?;
+
+    if let Err(error) = state
+        .engines
+        .steer_message(&thread, &engine_thread_id, turn_input)
+        .await
+    {
+        let rollback_result = run_db(db, {
+            let message_id = user_message.id.clone();
+            move |db| db::messages::delete_message(db, &message_id)
+        })
+        .await;
+        if let Err(rollback_error) = rollback_result {
+            log::warn!(
+                "failed to roll back persisted steer message {} after steer error: {}",
+                user_message.id,
+                rollback_error
+            );
+        }
+
+        return Err(err_to_string(error));
+    }
+
+    Ok(())
+}
+
+fn build_user_blocks(
+    message: &str,
+    input_items: &[TurnInputItem],
+    attachments: &[TurnAttachment],
+    plan_mode: bool,
+) -> Vec<ContentBlock> {
+    let mut user_blocks =
+        Vec::with_capacity(input_items.len().saturating_add(attachments.len()).saturating_add(1));
+
+    for item in input_items {
+        match item {
+            TurnInputItem::Skill { name, path } => {
+                user_blocks.push(ContentBlock::Skill {
+                    name: name.clone(),
+                    path: path.clone(),
+                });
+            }
+            TurnInputItem::Mention { name, path } => {
+                user_blocks.push(ContentBlock::Mention {
+                    name: name.clone(),
+                    path: path.clone(),
+                });
+            }
+            TurnInputItem::Text { .. } => {}
+        }
+    }
+
+    for attachment in attachments {
+        user_blocks.push(ContentBlock::Attachment {
+            file_name: attachment.file_name.clone(),
+            file_path: attachment.file_path.clone(),
+            size_bytes: attachment.size_bytes,
+            mime_type: attachment.mime_type.clone(),
+        });
+    }
+
+    user_blocks.push(ContentBlock::Text {
+        content: message.to_string(),
+        plan_mode: if plan_mode { Some(true) } else { None },
+    });
+
+    user_blocks
 }
 
 fn normalize_input_items(
@@ -2374,6 +2480,15 @@ fn thread_reasoning_effort(metadata: Option<&Value>) -> Option<String> {
     metadata
         .and_then(|value| value.get("reasoningEffort"))
         .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
+fn thread_last_model_id(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("lastModelId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
 }
 

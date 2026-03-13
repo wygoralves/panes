@@ -3,6 +3,7 @@ import type { ApprovalResponse, StreamEvent } from "../types";
 
 const mockIpc = vi.hoisted(() => ({
   sendMessage: vi.fn(),
+  steerMessage: vi.fn(),
   getThreadMessagesWindow: vi.fn(),
   respondApproval: vi.fn(),
   syncThreadFromEngine: vi.fn(),
@@ -40,6 +41,7 @@ describe("chatStore send", () => {
       messages: [],
       nextCursor: null,
     });
+    mockIpc.steerMessage.mockResolvedValue(undefined);
     mockIpc.syncThreadFromEngine.mockResolvedValue({
       id: "thread-1",
       workspaceId: "workspace-1",
@@ -319,6 +321,82 @@ describe("chatStore send", () => {
     vi.useRealTimers();
   });
 
+  it("adds an optimistic user message immediately while steering an active turn", async () => {
+    useChatStore.setState({
+      threadId: "thread-1",
+      messages: [
+        {
+          id: "assistant-1",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "streaming",
+          schemaVersion: 1,
+          blocks: [],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: false,
+        },
+      ],
+      olderCursor: null,
+      hasOlderMessages: false,
+      loadingOlderMessages: false,
+      olderLoadBlockedUntil: 0,
+      status: "streaming",
+      streaming: true,
+      usageLimits: null,
+      error: undefined,
+      unlisten: undefined,
+    });
+
+    await expect(
+      useChatStore.getState().steer("follow up", {
+        inputItems: [{ type: "mention", name: "Docs", path: "app://docs" }],
+      }),
+    ).resolves.toBe(true);
+
+    expect(mockIpc.steerMessage).toHaveBeenCalledWith(
+      "thread-1",
+      "follow up",
+      null,
+      [{ type: "mention", name: "Docs", path: "app://docs" }],
+      false,
+    );
+    expect(useChatStore.getState().messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "user",
+          content: "follow up",
+          blocks: [
+            { type: "mention", name: "Docs", path: "app://docs" },
+            { type: "text", content: "follow up", planMode: undefined },
+          ],
+        }),
+      ]),
+    );
+  });
+
+  it("rolls back the optimistic steer message when the steer request fails", async () => {
+    useChatStore.setState({
+      threadId: "thread-1",
+      messages: [],
+      olderCursor: null,
+      hasOlderMessages: false,
+      loadingOlderMessages: false,
+      olderLoadBlockedUntil: 0,
+      status: "streaming",
+      streaming: true,
+      usageLimits: null,
+      error: undefined,
+      unlisten: undefined,
+    });
+    mockIpc.steerMessage.mockRejectedValueOnce(new Error("steer failed"));
+
+    await expect(useChatStore.getState().steer("follow up")).resolves.toBe(false);
+
+    expect(useChatStore.getState().messages).toEqual([]);
+    expect(useChatStore.getState().error).toContain("steer failed");
+  });
+
   it("syncs dirty Codex thread metadata before binding the message window", async () => {
     const thread = {
       id: "thread-1",
@@ -410,4 +488,5 @@ describe("chatStore send", () => {
       },
     ]);
   });
+
 });

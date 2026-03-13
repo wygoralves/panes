@@ -54,6 +54,13 @@ pub fn insert_assistant_placeholder(
     )
 }
 
+pub fn delete_message(db: &Database, message_id: &str) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    conn.execute("DELETE FROM messages WHERE id = ?1", params![message_id])
+        .context("failed to delete message")?;
+    Ok(())
+}
+
 pub fn update_assistant_blocks_json(
     db: &Database,
     message_id: &str,

@@ -46,6 +46,7 @@ const COLLABORATION_MODE_LIST_METHODS: &[&str] = &["collaborationMode/list"];
 const SKILLS_LIST_METHODS: &[&str] = &["skills/list"];
 const APP_LIST_METHODS: &[&str] = &["app/list"];
 const TURN_START_METHODS: &[&str] = &["turn/start"];
+const TURN_STEER_METHODS: &[&str] = &["turn/steer"];
 const TURN_INTERRUPT_METHODS: &[&str] = &["turn/interrupt"];
 const COMMAND_EXEC_METHODS: &[&str] = &["command/exec"];
 const MODEL_LIST_METHODS: &[&str] = &["model/list", "models/list"];
@@ -733,6 +734,35 @@ impl Engine for CodexEngine {
         }
 
         self.clear_active_turn(&thread_id).await;
+        Ok(())
+    }
+
+    async fn steer_message(
+        &self,
+        engine_thread_id: &str,
+        input: TurnInput,
+    ) -> Result<(), anyhow::Error> {
+        let transport = self.ensure_ready_transport().await?;
+        validate_turn_attachments(&input.attachments).await?;
+
+        let expected_turn_id = self
+            .active_turn_id(engine_thread_id)
+            .await
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Codex has not reported an active turn id for thread {engine_thread_id} yet"
+                )
+            })?;
+
+        request_turn_steer(
+            transport.as_ref(),
+            engine_thread_id,
+            &expected_turn_id,
+            &input,
+        )
+        .await
+        .context("turn/steer request failed")?;
+
         Ok(())
     }
 
@@ -2179,6 +2209,23 @@ async fn request_turn_start_with_plan_fallback(
             .context("plan mode prompt fallback failed")
         }
     }
+}
+
+async fn request_turn_steer(
+    transport: &CodexTransport,
+    thread_id: &str,
+    expected_turn_id: &str,
+    input: &TurnInput,
+) -> anyhow::Result<serde_json::Value> {
+    let params = serde_json::json!({
+      "threadId": thread_id,
+      "expectedTurnId": expected_turn_id,
+      "input": build_turn_input_items(input, input.plan_mode).await?,
+    });
+
+    request_with_fallback(transport, TURN_STEER_METHODS, params, DEFAULT_TIMEOUT)
+        .await
+        .context("codex turn/steer request failed")
 }
 
 async fn build_turn_start_params(

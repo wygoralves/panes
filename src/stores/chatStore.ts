@@ -43,6 +43,15 @@ interface ChatState {
       planMode?: boolean;
     },
   ) => Promise<boolean>;
+  steer: (
+    message: string,
+    options?: {
+      threadIdOverride?: string;
+      attachments?: ChatAttachment[];
+      inputItems?: ChatInputItem[];
+      planMode?: boolean;
+    },
+  ) => Promise<boolean>;
   cancel: () => Promise<void>;
   respondApproval: (approvalId: string, response: ApprovalResponse) => Promise<void>;
   hydrateActionOutput: (messageId: string, actionId: string) => Promise<void>;
@@ -263,6 +272,62 @@ function createStreamingAssistantMessage(
     status: "streaming",
     schemaVersion: 1,
     blocks: [],
+    createdAt: new Date().toISOString(),
+    hydration: "full",
+    hasDeferredContent: false,
+  };
+}
+
+function createOptimisticUserMessage(
+  threadId: string,
+  message: string,
+  options?: {
+    attachments?: ChatAttachment[];
+    inputItems?: ChatInputItem[];
+    planMode?: boolean;
+  },
+): Message {
+  const attachments = options?.attachments ?? [];
+  const inputItems = options?.inputItems ?? [];
+  const planMode = options?.planMode ?? false;
+  const userBlocks: ContentBlock[] = [];
+
+  for (const inputItem of inputItems) {
+    if (inputItem.type === "skill") {
+      userBlocks.push({
+        type: "skill",
+        name: inputItem.name,
+        path: inputItem.path,
+      });
+    } else if (inputItem.type === "mention") {
+      userBlocks.push({
+        type: "mention",
+        name: inputItem.name,
+        path: inputItem.path,
+      });
+    }
+  }
+
+  for (const attachment of attachments) {
+    userBlocks.push({
+      type: "attachment",
+      fileName: attachment.fileName,
+      filePath: attachment.filePath,
+      sizeBytes: attachment.sizeBytes,
+      mimeType: attachment.mimeType,
+    });
+  }
+
+  userBlocks.push({ type: "text", content: message, planMode: planMode || undefined });
+
+  return {
+    id: crypto.randomUUID(),
+    threadId,
+    role: "user",
+    content: message,
+    blocks: userBlocks,
+    status: "completed",
+    schemaVersion: 1,
     createdAt: new Date().toISOString(),
     hydration: "full",
     hasDeferredContent: false,
@@ -1324,49 +1389,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const attachments = options?.attachments ?? [];
     const inputItems = options?.inputItems ?? [];
     const planMode = options?.planMode ?? false;
-    const displayContent = message;
-
-    const userBlocks: ContentBlock[] = [];
-    for (const inputItem of inputItems) {
-      if (inputItem.type === "skill") {
-        userBlocks.push({
-          type: "skill",
-          name: inputItem.name,
-          path: inputItem.path,
-        });
-      } else if (inputItem.type === "mention") {
-        userBlocks.push({
-          type: "mention",
-          name: inputItem.name,
-          path: inputItem.path,
-        });
-      }
-    }
-    if (attachments.length > 0) {
-      for (const attachment of attachments) {
-        userBlocks.push({
-          type: "attachment",
-          fileName: attachment.fileName,
-          filePath: attachment.filePath,
-          sizeBytes: attachment.sizeBytes,
-          mimeType: attachment.mimeType,
-        });
-      }
-    }
-    userBlocks.push({ type: "text", content: displayContent, planMode: planMode || undefined });
-
-    const userMessage: Message = {
-      id: crypto.randomUUID(),
-      threadId,
-      role: "user",
-      content: displayContent,
-      blocks: userBlocks,
-      status: "completed",
-      schemaVersion: 1,
-      createdAt: new Date().toISOString(),
-      hydration: "full",
-      hasDeferredContent: false,
-    };
+    const userMessage = createOptimisticUserMessage(threadId, message, {
+      attachments,
+      inputItems,
+      planMode,
+    });
     const optimisticAssistantMessage = createStreamingAssistantMessage(threadId, {
       id: optimisticAssistantMessageId,
       clientTurnId,
@@ -1401,6 +1428,50 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: state.messages.filter((item) => item.id !== optimisticAssistantMessage.id),
         status: "error",
         streaming: false,
+        error: String(error),
+      }));
+      return false;
+    }
+  },
+  steer: async (message, options) => {
+    const state = get();
+    if (!state.streaming) {
+      set({ error: "No turn is currently in progress for this thread." });
+      return false;
+    }
+
+    const threadId = options?.threadIdOverride ?? state.threadId;
+    if (!threadId) {
+      set({ error: "No active thread selected" });
+      return false;
+    }
+
+    const attachments = options?.attachments ?? [];
+    const inputItems = options?.inputItems ?? [];
+    const planMode = options?.planMode ?? false;
+    const userMessage = createOptimisticUserMessage(threadId, message, {
+      attachments,
+      inputItems,
+      planMode,
+    });
+
+    set((current) => ({
+      messages: applyHydrationWindow([...current.messages, userMessage]),
+      error: undefined,
+    }));
+
+    try {
+      await ipc.steerMessage(
+        threadId,
+        message,
+        attachments.length > 0 ? attachments : null,
+        inputItems.length > 0 ? inputItems : null,
+        planMode,
+      );
+      return true;
+    } catch (error) {
+      set((current) => ({
+        messages: current.messages.filter((item) => item.id !== userMessage.id),
         error: String(error),
       }));
       return false;

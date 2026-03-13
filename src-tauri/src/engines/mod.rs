@@ -272,6 +272,12 @@ pub trait Engine: Send + Sync {
         cancellation: CancellationToken,
     ) -> Result<(), anyhow::Error>;
 
+    async fn steer_message(
+        &self,
+        engine_thread_id: &str,
+        input: TurnInput,
+    ) -> Result<(), anyhow::Error>;
+
     async fn respond_to_approval(
         &self,
         approval_id: &str,
@@ -425,6 +431,27 @@ impl EngineManager {
                 .send_message(engine_thread_id, input, event_tx, cancellation)
                 .await
                 .context("claude send_message failed"),
+            _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
+        }
+    }
+
+    pub async fn steer_message(
+        &self,
+        thread: &ThreadDto,
+        engine_thread_id: &str,
+        input: TurnInput,
+    ) -> anyhow::Result<()> {
+        match thread.engine_id.as_str() {
+            "codex" => self
+                .codex
+                .steer_message(engine_thread_id, input)
+                .await
+                .context("codex steer_message failed"),
+            "claude" => self
+                .claude
+                .steer_message(engine_thread_id, input)
+                .await
+                .context("claude steer_message failed"),
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         }
     }

@@ -148,6 +148,7 @@
     "trustWorkspace": "Trust workspace",
     "dropFiles": "Drop files to attach",
     "attachFiles": "Attach files",
+    "sendFollowUp": "Send follow-up",
     "enablePlanMode": "Enable plan mode (Shift+Tab)",
     "disablePlanMode": "Disable plan mode (Shift+Tab)",
     "planMode": "Plan",
