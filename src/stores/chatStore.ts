@@ -7,6 +7,7 @@ import type {
   ActionBlock,
   ApprovalBlock,
   ChatAttachment,
+  ChatInputItem,
   ContentBlock,
   ContextUsage,
   Message,
@@ -38,6 +39,7 @@ interface ChatState {
       engineId?: string | null;
       reasoningEffort?: string | null;
       attachments?: ChatAttachment[];
+      inputItems?: ChatInputItem[];
       planMode?: boolean;
     },
   ) => Promise<boolean>;
@@ -1320,10 +1322,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
 
     const attachments = options?.attachments ?? [];
+    const inputItems = options?.inputItems ?? [];
     const planMode = options?.planMode ?? false;
     const displayContent = message;
 
     const userBlocks: ContentBlock[] = [];
+    for (const inputItem of inputItems) {
+      if (inputItem.type === "skill") {
+        userBlocks.push({
+          type: "skill",
+          name: inputItem.name,
+          path: inputItem.path,
+        });
+      } else if (inputItem.type === "mention") {
+        userBlocks.push({
+          type: "mention",
+          name: inputItem.name,
+          path: inputItem.path,
+        });
+      }
+    }
     if (attachments.length > 0) {
       for (const attachment of attachments) {
         userBlocks.push({
@@ -1372,6 +1390,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         message,
         options?.modelId ?? null,
         attachments.length > 0 ? attachments : null,
+        inputItems.length > 0 ? inputItems : null,
         planMode,
         clientTurnId,
       );

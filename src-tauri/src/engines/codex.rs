@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 use crate::models::{
     CodexAccountLoginCompletedDto, CodexAppDto, CodexConfigWarningDto, CodexExperimentalFeatureDto,
     CodexMcpOauthCompletedDto, CodexMethodAvailabilityDto, CodexProtocolDiagnosticsDto,
-    RuntimeToastDto,
+    CodexSkillDto, RuntimeToastDto,
 };
 use crate::{process_utils, runtime_env};
 
@@ -31,6 +31,7 @@ use super::{
     codex_transport::CodexTransport, ActionResult, Engine, EngineEvent, EngineThread,
     ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo, ReasoningEffortOption, SandboxPolicy,
     ThreadScope, ThreadSyncSnapshot, TurnAttachment, TurnCompletionStatus, TurnInput,
+    TurnInputItem,
 };
 
 const INITIALIZE_METHODS: &[&str] = &["initialize"];
@@ -42,6 +43,7 @@ const THREAD_UNARCHIVE_METHODS: &[&str] = &["thread/unarchive"];
 const THREAD_SET_NAME_METHODS: &[&str] = &["thread/name/set"];
 const EXPERIMENTAL_FEATURE_LIST_METHODS: &[&str] = &["experimentalFeature/list"];
 const COLLABORATION_MODE_LIST_METHODS: &[&str] = &["collaborationMode/list"];
+const SKILLS_LIST_METHODS: &[&str] = &["skills/list"];
 const APP_LIST_METHODS: &[&str] = &["app/list"];
 const TURN_START_METHODS: &[&str] = &["turn/start"];
 const TURN_INTERRUPT_METHODS: &[&str] = &["turn/interrupt"];
@@ -843,6 +845,80 @@ impl CodexEngine {
 
     pub async fn prewarm(&self) -> anyhow::Result<()> {
         self.ensure_ready_transport().await.map(|_| ())
+    }
+
+    pub async fn list_skills(&self, cwd: &str) -> anyhow::Result<Vec<CodexSkillDto>> {
+        let transport = self.ensure_ready_transport().await?;
+        let response = request_with_fallback(
+            transport.as_ref(),
+            SKILLS_LIST_METHODS,
+            serde_json::json!({
+                "cwds": [cwd],
+                "forceReload": false,
+            }),
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to list codex skills")?;
+
+        let entries = response
+            .get("data")
+            .and_then(serde_json::Value::as_array)
+            .or_else(|| response.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let mut skills = BTreeSet::new();
+        let mut mapped = Vec::new();
+
+        for entry in entries {
+            let Some(skill_entries) = entry.get("skills").and_then(serde_json::Value::as_array) else {
+                continue;
+            };
+
+            for skill in skill_entries {
+                let name = extract_any_string(skill, &["name"]).unwrap_or_default();
+                let path = extract_any_string(skill, &["path"]).unwrap_or_default();
+                if name.trim().is_empty() || path.trim().is_empty() {
+                    continue;
+                }
+
+                let dedupe_key = format!("{name}\u{0}{path}");
+                if !skills.insert(dedupe_key) {
+                    continue;
+                }
+
+                mapped.push(CodexSkillDto {
+                    name,
+                    path,
+                    description: extract_any_string(skill, &["description"])
+                        .unwrap_or_default(),
+                    enabled: skill
+                        .get("enabled")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(true),
+                    scope: extract_any_string(skill, &["scope"])
+                        .unwrap_or_else(|| "user".to_string()),
+                });
+            }
+        }
+
+        mapped.sort_by(|left, right| {
+            left.name
+                .cmp(&right.name)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        Ok(mapped)
+    }
+
+    pub async fn list_apps(&self) -> anyhow::Result<Vec<CodexAppDto>> {
+        let transport = self.ensure_ready_transport().await?;
+        match fetch_apps(transport.as_ref()).await {
+            MethodCallOutcome::Available(apps) => Ok(apps),
+            MethodCallOutcome::Unsupported(detail) => {
+                anyhow::bail!("codex app/list unsupported: {}", detail.unwrap_or_default())
+            }
+            MethodCallOutcome::Error(detail) => anyhow::bail!(detail),
+        }
     }
 
     pub async fn health_report(&self) -> CodexHealthReport {
@@ -2169,18 +2245,41 @@ async fn build_turn_input_items(
     input: &TurnInput,
     force_plan_prompt_prefix: bool,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
-    let message = if force_plan_prompt_prefix && input.plan_mode {
-        format!("{}\n\n{}", PLAN_MODE_PROMPT_PREFIX, input.message)
+    let base_items = if input.input_items.is_empty() {
+        vec![TurnInputItem::Text {
+            text: input.message.clone(),
+        }]
     } else {
-        input.message.clone()
+        input.input_items.clone()
     };
 
-    let mut items = Vec::with_capacity(1 + input.attachments.len());
-    items.push(serde_json::json!({
-      "type": "text",
-      "text": message,
-      "text_elements": [],
-    }));
+    let text_items = apply_plan_prompt_prefix(base_items, force_plan_prompt_prefix && input.plan_mode);
+    let mut items = Vec::with_capacity(text_items.len() + input.attachments.len());
+    for item in text_items {
+        match item {
+            TurnInputItem::Text { text } => {
+                items.push(serde_json::json!({
+                  "type": "text",
+                  "text": text,
+                  "text_elements": [],
+                }));
+            }
+            TurnInputItem::Skill { name, path } => {
+                items.push(serde_json::json!({
+                  "type": "skill",
+                  "name": name,
+                  "path": path,
+                }));
+            }
+            TurnInputItem::Mention { name, path } => {
+                items.push(serde_json::json!({
+                  "type": "mention",
+                  "name": name,
+                  "path": path,
+                }));
+            }
+        }
+    }
 
     for attachment in &input.attachments {
         match attachment_input_kind(attachment) {
@@ -2208,6 +2307,40 @@ async fn build_turn_input_items(
     }
 
     Ok(items)
+}
+
+fn apply_plan_prompt_prefix(items: Vec<TurnInputItem>, include_prefix: bool) -> Vec<TurnInputItem> {
+    if !include_prefix {
+        return items;
+    }
+
+    let mut prefixed = Vec::with_capacity(items.len().saturating_add(1));
+    let mut applied = false;
+    for item in items {
+        match item {
+            TurnInputItem::Text { text } if !applied => {
+                let text = if text.is_empty() {
+                    PLAN_MODE_PROMPT_PREFIX.to_string()
+                } else {
+                    format!("{}\n\n{}", PLAN_MODE_PROMPT_PREFIX, text)
+                };
+                prefixed.push(TurnInputItem::Text { text });
+                applied = true;
+            }
+            other => prefixed.push(other),
+        }
+    }
+
+    if !applied {
+        prefixed.insert(
+            0,
+            TurnInputItem::Text {
+                text: PLAN_MODE_PROMPT_PREFIX.to_string(),
+            },
+        );
+    }
+
+    prefixed
 }
 
 fn plan_mode_protocol_payload(runtime: &ThreadRuntime) -> Option<serde_json::Value> {

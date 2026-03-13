@@ -37,6 +37,7 @@ import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { isLinuxDesktop } from "../../lib/windowActions";
 import { MessageBlocks } from "./MessageBlocks";
 import { resolveEngineCapabilities } from "./engineCapabilities";
+import { buildCodexInputItems } from "./codexInputItems";
 import {
   isRequestUserInputApproval,
   parseApprovalCommand,
@@ -61,6 +62,9 @@ import type {
   ApprovalBlock,
   ApprovalResponse,
   ChatAttachment,
+  ChatInputItem,
+  CodexApp,
+  CodexSkill,
   ContentBlock,
   EngineHealth,
   Message,
@@ -148,6 +152,10 @@ type ThreadExecutionPolicyPatch = Partial<{
   sandboxMode: ThreadSandboxModeValue;
   networkPolicy: ThreadNetworkPolicyValue;
 }>;
+interface CodexReferenceCatalogState {
+  skillsLoaded: boolean;
+  appsLoaded: boolean;
+}
 
 function getTrustLevelOptions(
   t: TFunction<"chat">,
@@ -908,8 +916,14 @@ function MessageRowView({
       .map((block) => block.content)
       .join("\n");
   }, [message.blocks, message.content]);
-  const userAttachments = useMemo(
-    () => (message.blocks ?? []).filter((b) => b.type === "attachment"),
+  const userAuxiliaryBlocks = useMemo(
+    () =>
+      (message.blocks ?? []).filter(
+        (block) =>
+          block.type === "attachment" ||
+          block.type === "skill" ||
+          block.type === "mention",
+      ),
     [message.blocks],
   );
   const userPlanMode = useMemo(
@@ -956,21 +970,35 @@ function MessageRowView({
               wordBreak: "break-word",
             }}
           >
-            {userAttachments.length > 0 && (
+            {userAuxiliaryBlocks.length > 0 && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
-                {userAttachments.map((block, i) => {
-                  if (block.type !== "attachment") return null;
-                  const mime = block.mimeType ?? "";
-                  const AttachIcon = mime.startsWith("image/")
-                    ? Image
-                    : mime.startsWith("text/") || mime.includes("json")
-                      ? FileText
-                      : File;
+                {userAuxiliaryBlocks.map((block, i) => {
+                  if (block.type === "attachment") {
+                    const mime = block.mimeType ?? "";
+                    const AttachIcon = mime.startsWith("image/")
+                      ? Image
+                      : mime.startsWith("text/") || mime.includes("json")
+                        ? FileText
+                        : File;
+                    return (
+                      <span key={i} className="chat-attachment-chip">
+                        <AttachIcon size={10} />
+                        <span className="chat-attachment-chip-name" style={{ fontSize: 10 }}>
+                          {block.fileName}
+                        </span>
+                      </span>
+                    );
+                  }
+
                   return (
                     <span key={i} className="chat-attachment-chip">
-                      <AttachIcon size={10} />
+                      {block.type === "skill" ? (
+                        <SquareTerminal size={10} />
+                      ) : (
+                        <MessageSquare size={10} />
+                      )}
                       <span className="chat-attachment-chip-name" style={{ fontSize: 10 }}>
-                        {block.fileName}
+                        {block.name}
                       </span>
                     </span>
                   );
@@ -1175,6 +1203,13 @@ export function ChatPanel() {
   const [selectedEngineId, setSelectedEngineId] = useState("codex");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [selectedEffort, setSelectedEffort] = useState("medium");
+  const [codexSkills, setCodexSkills] = useState<CodexSkill[]>([]);
+  const [codexApps, setCodexApps] = useState<CodexApp[]>([]);
+  const [codexReferenceCatalogState, setCodexReferenceCatalogState] =
+    useState<CodexReferenceCatalogState>({
+      skillsLoaded: false,
+      appsLoaded: false,
+    });
   const [selectedPersonality, setSelectedPersonality] = useState<CodexPersonalityValue>("inherit");
   const [selectedServiceTier, setSelectedServiceTier] = useState<CodexServiceTierValue>("inherit");
   const [outputSchemaText, setOutputSchemaText] = useState("");
@@ -1305,6 +1340,7 @@ export function ChatPanel() {
     threadPaths: string[];
     text: string;
     attachments: ChatAttachment[];
+    inputItems: ChatInputItem[] | null;
     planMode: boolean;
     engineId: string;
     modelId: string;
@@ -1344,6 +1380,7 @@ export function ChatPanel() {
     () => availableModels.filter((m) => !m.hidden),
     [availableModels],
   );
+  const codexReferenceRoot = activeRepo?.path ?? activeWorkspace?.rootPath ?? null;
 
   const legacyModels = useMemo(
     () => availableModels.filter((m) => m.hidden),
@@ -1413,6 +1450,84 @@ export function ChatPanel() {
     selectedEngineId,
     selectedModelId,
   ]);
+  const codexReferencesAvailable = codexSkills.length > 0 || codexApps.length > 0;
+
+  const loadCodexReferenceCatalogs = useCallback(async (): Promise<{
+    skills: CodexSkill[];
+    apps: CodexApp[];
+    skillsLoaded: boolean;
+    appsLoaded: boolean;
+  }> => {
+    if (!codexReferenceRoot) {
+      return {
+        skills: [],
+        apps: [],
+        skillsLoaded: false,
+        appsLoaded: false,
+      };
+    }
+
+    const [skillsResult, appsResult] = await Promise.allSettled([
+      ipc.listCodexSkills(codexReferenceRoot),
+      ipc.listCodexApps(),
+    ]);
+    const skillsLoaded = skillsResult.status === "fulfilled";
+    const appsLoaded = appsResult.status === "fulfilled";
+    const skills =
+      skillsResult.status === "fulfilled"
+        ? skillsResult.value.filter((skill) => skill.enabled)
+        : [];
+    const apps =
+      appsResult.status === "fulfilled"
+        ? appsResult.value.filter((app) => app.isEnabled && app.isAccessible)
+        : [];
+
+    return {
+      skills,
+      apps,
+      skillsLoaded,
+      appsLoaded,
+    };
+  }, [codexReferenceRoot]);
+
+  const resolveCodexInputItems = useCallback(
+    async (message: string, engineId: string): Promise<ChatInputItem[] | undefined> => {
+      if (engineId !== "codex") {
+        return undefined;
+      }
+
+      let skills = codexSkills;
+      let apps = codexApps;
+      let skillsLoaded = codexReferenceCatalogState.skillsLoaded;
+      let appsLoaded = codexReferenceCatalogState.appsLoaded;
+      if ((!skillsLoaded || !appsLoaded) && message.includes("$")) {
+        const loaded = await loadCodexReferenceCatalogs();
+        if (loaded.skillsLoaded) {
+          skills = loaded.skills;
+          skillsLoaded = true;
+          setCodexSkills(skills);
+        }
+        if (loaded.appsLoaded) {
+          apps = loaded.apps;
+          appsLoaded = true;
+          setCodexApps(apps);
+        }
+        setCodexReferenceCatalogState({
+          skillsLoaded,
+          appsLoaded,
+        });
+      }
+
+      return buildCodexInputItems(message, skills, apps);
+    },
+    [
+      codexApps,
+      codexReferenceCatalogState.appsLoaded,
+      codexReferenceCatalogState.skillsLoaded,
+      codexSkills,
+      loadCodexReferenceCatalogs,
+    ],
+  );
 
   const supportedEfforts = useMemo(
     () => selectedModel?.supportedReasoningEfforts ?? [],
@@ -1890,6 +2005,41 @@ export function ChatPanel() {
   }, [activeWorkspaceId, activeThread?.engineId, engines, selectedEngineId]);
 
   useEffect(() => {
+    if (selectedEngineId !== "codex" || !activeWorkspaceId || !codexReferenceRoot) {
+      setCodexSkills([]);
+      setCodexApps([]);
+      setCodexReferenceCatalogState({
+        skillsLoaded: false,
+        appsLoaded: false,
+      });
+      return;
+    }
+
+    let disposed = false;
+    void loadCodexReferenceCatalogs().then(
+      ({ skills, apps, skillsLoaded, appsLoaded }) => {
+      if (disposed) {
+        return;
+      }
+        if (skillsLoaded) {
+          setCodexSkills(skills);
+        }
+        if (appsLoaded) {
+          setCodexApps(apps);
+        }
+        setCodexReferenceCatalogState({
+          skillsLoaded,
+          appsLoaded,
+        });
+      },
+    );
+
+    return () => {
+      disposed = true;
+    };
+  }, [activeWorkspaceId, codexReferenceRoot, loadCodexReferenceCatalogs, selectedEngineId]);
+
+  useEffect(() => {
     if (!selectedModel) {
       return;
     }
@@ -2365,6 +2515,7 @@ export function ChatPanel() {
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (!input.trim() || !activeWorkspaceId || !selectedModelId || streaming) return;
+    const text = input.trim();
 
     const activeScopeRepoId = activeRepo?.id ?? null;
     const activeThreadInScope = activeThread
@@ -2404,6 +2555,8 @@ export function ChatPanel() {
       await bindChatThread(createdThreadId);
     }
 
+    const inputItems = await resolveCodexInputItems(text, selectedEngineId);
+
     const currentThread =
       useThreadStore.getState().threads.find((thread) => thread.id === targetThreadId) ??
       activeThread;
@@ -2427,8 +2580,9 @@ export function ChatPanel() {
           workspaceId: activeWorkspaceId,
           threadId: targetThreadId,
           threadPaths: availableRepoPaths,
-          text: input.trim(),
+          text,
           attachments: [...attachments],
+          inputItems: inputItems ?? null,
           planMode,
           engineId: selectedEngineId,
           modelId: selectedModelId!,
@@ -2442,7 +2596,6 @@ export function ChatPanel() {
       }
     }
 
-    const text = input.trim();
     const currentAttachments = [...attachments];
 
     if (selectedReasoningEffort) {
@@ -2460,6 +2613,7 @@ export function ChatPanel() {
       modelId: selectedModelId,
       reasoningEffort: selectedReasoningEffort,
       attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
+      inputItems,
       planMode,
     });
     if (sent) {
@@ -2499,6 +2653,7 @@ export function ChatPanel() {
         modelId: prompt.modelId,
         reasoningEffort: prompt.effort,
         attachments: prompt.attachments.length > 0 ? prompt.attachments : undefined,
+        inputItems: prompt.inputItems ?? undefined,
         planMode: prompt.planMode,
       });
       if (!sent) {

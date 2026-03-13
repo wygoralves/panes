@@ -296,6 +296,18 @@ export interface AttachmentBlock {
   mimeType?: string;
 }
 
+export interface SkillBlock {
+  type: "skill";
+  name: string;
+  path: string;
+}
+
+export interface MentionBlock {
+  type: "mention";
+  name: string;
+  path: string;
+}
+
 export type ContentBlock =
   | TextBlock
   | CodeBlock
@@ -305,7 +317,9 @@ export type ContentBlock =
   | ApprovalBlock
   | ThinkingBlock
   | ErrorBlock
-  | AttachmentBlock;
+  | AttachmentBlock
+  | SkillBlock
+  | MentionBlock;
 
 export interface EngineInfo {
   id: string;
@@ -383,6 +397,14 @@ export interface CodexApp {
   description?: string;
   isEnabled: boolean;
   isAccessible: boolean;
+}
+
+export interface CodexSkill {
+  name: string;
+  path: string;
+  description: string;
+  enabled: boolean;
+  scope: string;
 }
 
 export interface CodexConfigWarning {
@@ -932,6 +954,22 @@ export interface ChatAttachment {
   sizeBytes: number;
   mimeType?: string;
 }
+
+export type ChatInputItem =
+  | {
+      type: "text";
+      text: string;
+    }
+  | {
+      type: "skill";
+      name: string;
+      path: string;
+    }
+  | {
+      type: "mention";
+      name: string;
+      path: string;
+    };
 
 // ── Context Usage ───────────────────────────────────────────────────
 

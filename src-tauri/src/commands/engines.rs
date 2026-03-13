@@ -7,7 +7,7 @@ use tokio::process::Command;
 #[cfg(not(target_os = "windows"))]
 use crate::runtime_env;
 use crate::{
-    models::{EngineCheckResultDto, EngineHealthDto, EngineInfoDto},
+    models::{CodexAppDto, CodexSkillDto, EngineCheckResultDto, EngineHealthDto, EngineInfoDto},
     process_utils,
     state::AppState,
 };
@@ -36,6 +36,23 @@ pub async fn prewarm_engine(state: State<'_, AppState>, engine_id: String) -> Re
         .prewarm(&engine_id)
         .await
         .map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn list_codex_skills(
+    state: State<'_, AppState>,
+    cwd: String,
+) -> Result<Vec<CodexSkillDto>, String> {
+    state
+        .engines
+        .list_codex_skills(cwd.trim())
+        .await
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn list_codex_apps(state: State<'_, AppState>) -> Result<Vec<CodexAppDto>, String> {
+    state.engines.list_codex_apps().await.map_err(err_to_string)
 }
 
 #[tauri::command]

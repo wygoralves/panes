@@ -341,6 +341,16 @@ pub struct CodexAppDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CodexSkillDto {
+    pub name: String,
+    pub path: String,
+    pub description: String,
+    pub enabled: bool,
+    pub scope: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CodexConfigWarningDto {
     pub summary: String,
     #[serde(skip_serializing_if = "Option::is_none")]

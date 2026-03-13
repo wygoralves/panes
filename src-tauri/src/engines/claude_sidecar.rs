@@ -832,6 +832,7 @@ impl Engine for ClaudeSidecarEngine {
             message,
             attachments,
             plan_mode,
+            input_items: _,
         } = input;
 
         let mut params = serde_json::json!({

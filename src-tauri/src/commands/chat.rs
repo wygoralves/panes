@@ -15,6 +15,7 @@ use crate::{
     engines::{
         normalize_approval_response_for_engine, validate_engine_sandbox_mode, EngineEvent,
         OutputStream, SandboxPolicy, ThreadScope, TurnAttachment, TurnCompletionStatus, TurnInput,
+        TurnInputItem,
     },
     models::{
         ActionOutputDto, MessageDto, MessageStatusDto, MessageWindowCursorDto, MessageWindowDto,
@@ -101,6 +102,12 @@ enum ContentBlock {
         #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
     },
+
+    #[serde(rename = "skill")]
+    Skill { name: String, path: String },
+
+    #[serde(rename = "mention")]
+    Mention { name: String, path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +156,14 @@ pub struct ChatAttachmentPayload {
     pub mime_type: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ChatInputItemPayload {
+    Text { text: String },
+    Skill { name: String, path: String },
+    Mention { name: String, path: String },
+}
+
 async fn run_db<T, F>(db: crate::db::Database, operation: F) -> Result<T, String>
 where
     T: Send + 'static,
@@ -168,6 +183,7 @@ pub async fn send_message(
     message: String,
     model_id: Option<String>,
     attachments: Option<Vec<ChatAttachmentPayload>>,
+    input_items: Option<Vec<ChatInputItemPayload>>,
     plan_mode: Option<bool>,
     client_turn_id: Option<String>,
 ) -> Result<String, String> {
@@ -190,11 +206,13 @@ pub async fn send_message(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let attachments = normalize_attachments(attachments)?;
+    let input_items = normalize_input_items(message.as_str(), input_items)?;
     let plan_mode = plan_mode.unwrap_or(false);
     let turn_input = TurnInput {
         message: message.clone(),
         attachments: attachments.clone(),
         plan_mode,
+        input_items: input_items.clone(),
     };
     let effective_model_id =
         resolve_turn_model_id(state.inner(), &thread, requested_model_id).await?;
@@ -306,12 +324,31 @@ pub async fn send_message(
         let thread_id = thread.id.clone();
         let message = message.clone();
         let attachments = attachments.clone();
+        let input_items = input_items.clone();
         let plan_mode_enabled = plan_mode;
         let engine_id = thread.engine_id.clone();
         let model_id = effective_model_id.clone();
         let reasoning_effort = reasoning_effort.clone();
         move |db| {
-            let mut user_blocks = Vec::with_capacity(attachments.len().saturating_add(1));
+            let mut user_blocks =
+                Vec::with_capacity(input_items.len().saturating_add(attachments.len()).saturating_add(1));
+            for item in &input_items {
+                match item {
+                    TurnInputItem::Skill { name, path } => {
+                        user_blocks.push(ContentBlock::Skill {
+                            name: name.clone(),
+                            path: path.clone(),
+                        });
+                    }
+                    TurnInputItem::Mention { name, path } => {
+                        user_blocks.push(ContentBlock::Mention {
+                            name: name.clone(),
+                            path: path.clone(),
+                        });
+                    }
+                    TurnInputItem::Text { .. } => {}
+                }
+            }
             for attachment in &attachments {
                 user_blocks.push(ContentBlock::Attachment {
                     file_name: attachment.file_name.clone(),
@@ -451,6 +488,78 @@ pub async fn send_message(
     });
 
     Ok(assistant_message.id)
+}
+
+fn normalize_input_items(
+    message: &str,
+    input_items: Option<Vec<ChatInputItemPayload>>,
+) -> Result<Vec<TurnInputItem>, String> {
+    let mut normalized = Vec::new();
+
+    for item in input_items.unwrap_or_default() {
+        match item {
+            ChatInputItemPayload::Text { text } => {
+                if !text.is_empty() {
+                    normalized.push(TurnInputItem::Text { text });
+                }
+            }
+            ChatInputItemPayload::Skill { name, path } => {
+                let name = name.trim();
+                let path = path.trim();
+                if name.is_empty() || path.is_empty() {
+                    return Err("skill input items require non-empty name and path".to_string());
+                }
+                normalized.push(TurnInputItem::Skill {
+                    name: name.to_string(),
+                    path: path.to_string(),
+                });
+            }
+            ChatInputItemPayload::Mention { name, path } => {
+                let name = name.trim();
+                let path = path.trim();
+                if name.is_empty() || path.is_empty() {
+                    return Err("mention input items require non-empty name and path".to_string());
+                }
+                normalized.push(TurnInputItem::Mention {
+                    name: name.to_string(),
+                    path: path.to_string(),
+                });
+            }
+        }
+    }
+
+    if normalized.is_empty() {
+        normalized.push(TurnInputItem::Text {
+            text: message.to_string(),
+        });
+        return Ok(normalized);
+    }
+
+    let has_text_item = normalized
+        .iter()
+        .any(|item| matches!(item, TurnInputItem::Text { text } if !text.is_empty()));
+    if !has_text_item && !message.trim().is_empty() {
+        return Err(
+            "input items must include at least one text segment when message text is provided"
+                .to_string(),
+        );
+    }
+
+    let mut merged = Vec::with_capacity(normalized.len());
+    for item in normalized {
+        match item {
+            TurnInputItem::Text { text } => {
+                if let Some(TurnInputItem::Text { text: current }) = merged.last_mut() {
+                    current.push_str(&text);
+                } else {
+                    merged.push(TurnInputItem::Text { text });
+                }
+            }
+            other => merged.push(other),
+        }
+    }
+
+    Ok(merged)
 }
 
 fn normalize_attachments(
@@ -2443,6 +2552,81 @@ mod tests {
         assert!(!unsupported_thread_sandbox_override_for_external_sandbox(
             None, true,
         ));
+    }
+
+    #[test]
+    fn normalize_input_items_merges_adjacent_text_and_preserves_typed_items() {
+        let normalized = normalize_input_items(
+            "fallback",
+            Some(vec![
+                ChatInputItemPayload::Text {
+                    text: "Use ".to_string(),
+                },
+                ChatInputItemPayload::Text {
+                    text: "$lint".to_string(),
+                },
+                ChatInputItemPayload::Skill {
+                    name: "lint".to_string(),
+                    path: "/tmp/skills/lint".to_string(),
+                },
+                ChatInputItemPayload::Mention {
+                    name: "Docs".to_string(),
+                    path: "app://docs".to_string(),
+                },
+                ChatInputItemPayload::Text {
+                    text: " now".to_string(),
+                },
+            ]),
+        )
+        .expect("input items should normalize");
+
+        assert_eq!(
+            normalized,
+            vec![
+                TurnInputItem::Text {
+                    text: "Use $lint".to_string(),
+                },
+                TurnInputItem::Skill {
+                    name: "lint".to_string(),
+                    path: "/tmp/skills/lint".to_string(),
+                },
+                TurnInputItem::Mention {
+                    name: "Docs".to_string(),
+                    path: "app://docs".to_string(),
+                },
+                TurnInputItem::Text {
+                    text: " now".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn normalize_input_items_rejects_blank_typed_entries() {
+        let error = normalize_input_items(
+            "fallback",
+            Some(vec![ChatInputItemPayload::Skill {
+                name: " ".to_string(),
+                path: "/tmp/skills/lint".to_string(),
+            }]),
+        )
+        .expect_err("blank skill names should be rejected");
+
+        assert!(error.contains("skill input items require non-empty name and path"));
+    }
+
+    #[test]
+    fn normalize_input_items_rejects_non_empty_message_without_text_segments() {
+        let error = normalize_input_items(
+            "Use lint",
+            Some(vec![ChatInputItemPayload::Skill {
+                name: "lint".to_string(),
+                path: "/tmp/skills/lint".to_string(),
+            }]),
+        )
+        .expect_err("non-empty message text requires a text segment");
+
+        assert!(error.contains("input items must include at least one text segment"));
     }
 
     #[test]

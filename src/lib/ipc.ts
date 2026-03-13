@@ -6,7 +6,10 @@ import type {
   ApprovalResponse,
   ActionOutputPayload,
   ChatAttachment,
+  ChatInputItem,
   ContentBlock,
+  CodexApp,
+  CodexSkill,
   DependencyReport,
   EngineCheckResult,
   EngineRuntimeUpdatedEvent,
@@ -197,11 +200,15 @@ export const ipc = {
   prewarmEngine: (engineId: string) => invoke<void>("prewarm_engine", { engineId }),
   runEngineCheck: (engineId: string, command: string) =>
     invoke<EngineCheckResult>("run_engine_check", { engineId, command }),
+  listCodexSkills: (cwd: string) =>
+    invoke<CodexSkill[]>("list_codex_skills", { cwd }),
+  listCodexApps: () => invoke<CodexApp[]>("list_codex_apps"),
   sendMessage: (
     threadId: string,
     message: string,
     modelId?: string | null,
     attachments?: ChatAttachment[] | null,
+    inputItems?: ChatInputItem[] | null,
     planMode?: boolean | null,
     clientTurnId?: string | null,
   ) =>
@@ -210,6 +217,7 @@ export const ipc = {
       message,
       modelId: modelId ?? null,
       attachments: attachments ?? null,
+      inputItems: inputItems ?? null,
       planMode: planMode ?? null,
       clientTurnId: clientTurnId ?? null,
     }),

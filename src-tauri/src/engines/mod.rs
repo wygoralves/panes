@@ -2,6 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{timeout, Duration};
@@ -10,8 +11,9 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     engines::{claude_sidecar::ClaudeSidecarEngine, codex::CodexEngine},
     models::{
-        EngineCapabilitiesDto, EngineHealthDto, EngineInfoDto, EngineModelAvailabilityNuxDto,
-        EngineModelDto, EngineModelUpgradeInfoDto, ReasoningEffortOptionDto, ThreadDto,
+        CodexAppDto, CodexSkillDto, EngineCapabilitiesDto, EngineHealthDto, EngineInfoDto,
+        EngineModelAvailabilityNuxDto, EngineModelDto, EngineModelUpgradeInfoDto,
+        ReasoningEffortOptionDto, ThreadDto,
     },
 };
 
@@ -235,6 +237,15 @@ pub struct TurnInput {
     pub message: String,
     pub attachments: Vec<TurnAttachment>,
     pub plan_mode: bool,
+    pub input_items: Vec<TurnInputItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TurnInputItem {
+    Text { text: String },
+    Skill { name: String, path: String },
+    Mention { name: String, path: String },
 }
 
 #[async_trait]
@@ -358,6 +369,14 @@ impl EngineManager {
             "claude" => self.claude.prewarm().await,
             _ => anyhow::bail!("unknown engine: {engine_id}"),
         }
+    }
+
+    pub async fn list_codex_skills(&self, cwd: &str) -> anyhow::Result<Vec<CodexSkillDto>> {
+        self.codex.list_skills(cwd).await
+    }
+
+    pub async fn list_codex_apps(&self) -> anyhow::Result<Vec<CodexAppDto>> {
+        self.codex.list_apps().await
     }
 
     pub async fn ensure_engine_thread(
