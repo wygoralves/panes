@@ -3387,6 +3387,57 @@ button, input, textarea, select {
   justify-content: flex-end;
 }
 
+.tool-input-preview-card {
+  margin: 0 16px;
+  border-radius: calc(var(--radius-sm) + 2px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-3);
+  overflow: hidden;
+}
+
+.tool-input-preview-body {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.tool-input-preview-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tool-input-preview-count {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-1);
+}
+
+.tool-input-preview-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: var(--radius-xs);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.tool-input-preview-footer {
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tool-input-preview-note {
+  display: block;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
 .chat-status-bar {
   display: flex;
   align-items: center;

@@ -639,6 +639,60 @@ function extractApprovalDetails(details: Record<string, unknown>) {
   return { command, reason, commandActionCount, remainingDetails, hasRemainingDetails };
 }
 
+function ToolInputApprovalCard({
+  block,
+  questionCount,
+  isPending,
+  isClaudeThread,
+  decisionLabel,
+  decisionBackground,
+  decisionColor,
+}: {
+  block: ApprovalBlock;
+  questionCount: number;
+  isPending: boolean;
+  isClaudeThread: boolean;
+  decisionLabel: string;
+  decisionBackground: string;
+  decisionColor: string;
+}) {
+  const { t } = useTranslation("chat");
+  if (questionCount <= 0) {
+    return null;
+  }
+
+  return (
+    <div className="tool-input-preview-card">
+      <div className="tool-input-preview-body">
+        <div className="tool-input-preview-header">
+          <span className="tool-input-preview-count">
+            {t("messageBlocks.approval.pendingQuestions", {
+              count: questionCount,
+            })}
+          </span>
+
+          {!isPending && block.decision ? (
+            <span
+              className="tool-input-preview-status"
+              style={{ background: decisionBackground, color: decisionColor }}
+            >
+              {decisionLabel}
+            </span>
+          ) : null}
+        </div>
+
+        {isPending && !isClaudeThread ? (
+          <div className="tool-input-preview-footer">
+            <span className="tool-input-preview-note">
+              {t("messageBlocks.toolInput.answerInComposer")}
+            </span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function ApprovalCard({
   block,
   engineId,
@@ -720,6 +774,20 @@ function ApprovalCard({
   } else if (block.decision === "accept" || block.decision === "accept_for_session") {
     decisionBackground = "rgba(52,211,153,0.12)";
     decisionColor = "var(--success)";
+  }
+
+  if (isToolInputRequest && toolInputQuestions.length > 0 && !showClaudeUnsupportedApproval) {
+    return (
+      <ToolInputApprovalCard
+        block={block}
+        questionCount={toolInputQuestions.length}
+        isPending={isPending}
+        isClaudeThread={isClaudeThread}
+        decisionLabel={decisionLabel}
+        decisionBackground={decisionBackground}
+        decisionColor={decisionColor}
+      />
+    );
   }
 
   function submitAdvancedJsonPayload() {
@@ -841,23 +909,6 @@ function ApprovalCard({
           )}
         </div>
       )}
-
-      {/* Tool input questions */}
-      {isToolInputRequest && toolInputQuestions.length > 0 && (
-        <div className="acard-section">
-          <p className="acard-reason">
-            {t("messageBlocks.approval.pendingQuestions", {
-              count: toolInputQuestions.length,
-            })}
-          </p>
-          {isPending && !isClaudeThread && (
-            <p className="acard-meta">
-              {t("messageBlocks.toolInput.answerInComposer")}
-            </p>
-          )}
-        </div>
-      )}
-
       {showClaudeUnsupportedApproval && (
         <div className="acard-section">
           <p className="acard-reason">
