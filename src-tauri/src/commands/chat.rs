@@ -43,6 +43,8 @@ enum ContentBlock {
         content: String,
         #[serde(rename = "planMode", skip_serializing_if = "Option::is_none")]
         plan_mode: Option<bool>,
+        #[serde(rename = "isSteer", skip_serializing_if = "Option::is_none")]
+        is_steer: Option<bool>,
     },
 
     #[serde(rename = "diff")]
@@ -400,7 +402,13 @@ pub async fn send_message(
         let reasoning_effort = reasoning_effort.clone();
         move |db| {
             let user_blocks =
-                build_user_blocks(&message, &input_items, &attachments, plan_mode_enabled);
+                build_user_blocks(
+                    &message,
+                    &input_items,
+                    &attachments,
+                    plan_mode_enabled,
+                    false,
+                );
             db::messages::insert_user_message(
                 db,
                 &thread_id,
@@ -591,7 +599,7 @@ pub async fn start_codex_review(
                 source_thread.clone()
             };
 
-            let user_blocks = build_user_blocks(&review_message, &[], &[], false);
+            let user_blocks = build_user_blocks(&review_message, &[], &[], false, false);
             db::messages::insert_user_message(
                 db,
                 &review_thread.id,
@@ -702,7 +710,7 @@ pub async fn steer_message(
     let effective_model_id = thread_last_model_id(thread.engine_metadata.as_ref())
         .unwrap_or_else(|| thread.model_id.clone());
     let reasoning_effort = thread_reasoning_effort(thread.engine_metadata.as_ref());
-    let user_blocks = build_user_blocks(&message, &input_items, &attachments, plan_mode);
+    let user_blocks = build_user_blocks(&message, &input_items, &attachments, plan_mode, true);
 
     let user_message = run_db(db.clone(), {
         let thread_id = thread.id.clone();
@@ -754,6 +762,7 @@ fn build_user_blocks(
     input_items: &[TurnInputItem],
     attachments: &[TurnAttachment],
     plan_mode: bool,
+    is_steer: bool,
 ) -> Vec<ContentBlock> {
     let mut user_blocks = Vec::with_capacity(
         input_items
@@ -792,6 +801,7 @@ fn build_user_blocks(
     user_blocks.push(ContentBlock::Text {
         content: message.to_string(),
         plan_mode: if plan_mode { Some(true) } else { None },
+        is_steer: if is_steer { Some(true) } else { None },
     });
 
     user_blocks
@@ -2964,6 +2974,7 @@ fn append_text_delta(blocks: &mut Vec<ContentBlock>, content: &str) -> bool {
     blocks.push(ContentBlock::Text {
         content: content.to_string(),
         plan_mode: None,
+        is_steer: None,
     });
     true
 }

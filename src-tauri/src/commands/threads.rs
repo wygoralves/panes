@@ -363,12 +363,13 @@ fn build_codex_remote_thread_metadata(thread: &CodexRemoteThreadSummary, model_i
         Some(thread.status_type.as_str()),
         &thread.active_flags,
         Some(thread.preview.as_str()),
-        false,
-        None,
+        true,
+        Some("remote_thread_attached"),
     );
 
     if let Some(object) = metadata.as_object_mut() {
         object.insert("lastModelId".to_string(), json!(model_id));
+        object.insert("codexTranscriptImported".to_string(), json!(false));
         object.insert(
             "codexModelProvider".to_string(),
             json!(thread.model_provider),
@@ -1378,6 +1379,13 @@ async fn create_codex_branch_thread(
     active_flags: &[String],
     rollback_turns: Option<u32>,
 ) -> Result<ThreadDto, String> {
+    if !codex_transcript_imported(source_thread.engine_metadata.as_ref()) {
+        return Err(
+            "native Codex history tools require a locally mirrored transcript. Attached remote threads without imported history cannot be forked or rolled back yet."
+                .to_string(),
+        );
+    }
+
     let db = state.db.clone();
     run_db(db.clone(), {
         let source_thread = source_thread.clone();
@@ -1388,6 +1396,7 @@ async fn create_codex_branch_thread(
         let raw_status = raw_status.map(str::to_string);
         let active_flags = active_flags.to_vec();
         move |db| {
+            let clone_local_history = should_clone_local_branch_history(&source_thread);
             let created = db::threads::create_thread(
                 db,
                 &source_thread.workspace_id,
@@ -1397,9 +1406,11 @@ async fn create_codex_branch_thread(
                 title.as_deref().unwrap_or(&source_thread.title),
             )?;
             db::threads::set_engine_thread_id(db, &created.id, &engine_thread_id)?;
-            db::messages::clone_thread_messages(db, &source_thread.id, &created.id)?;
-            if let Some(turns) = rollback_turns {
-                db::messages::drop_last_turns(db, &created.id, turns)?;
+            if clone_local_history {
+                db::messages::clone_thread_messages(db, &source_thread.id, &created.id)?;
+                if let Some(turns) = rollback_turns {
+                    db::messages::drop_last_turns(db, &created.id, turns)?;
+                }
             }
             db::threads::refresh_thread_message_stats(db, &created.id)?;
 
@@ -1409,6 +1420,8 @@ async fn create_codex_branch_thread(
                 raw_status.as_deref(),
                 &active_flags,
                 preview.as_deref(),
+                !clone_local_history,
+                (!clone_local_history).then_some("branch_thread_requires_sync"),
             );
             let next_status =
                 map_codex_thread_status_to_local(raw_status.as_deref(), &active_flags, false);
@@ -1424,12 +1437,26 @@ async fn create_codex_branch_thread(
     .await
 }
 
+fn is_codex_thread_sync_required(metadata: Option<&Value>) -> bool {
+    metadata
+        .and_then(|value| value.get("codexSyncRequired"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn should_clone_local_branch_history(source_thread: &ThreadDto) -> bool {
+    !is_codex_thread_sync_required(source_thread.engine_metadata.as_ref())
+        && source_thread.message_count > 0
+}
+
 fn clone_codex_branch_metadata(
     existing: Option<&Value>,
     model_id: &str,
     raw_status: Option<&str>,
     active_flags: &[String],
     preview: Option<&str>,
+    sync_required: bool,
+    sync_reason: Option<&str>,
 ) -> Value {
     let mut metadata = existing.cloned().unwrap_or_else(|| json!({}));
     if !metadata.is_object() {
@@ -1440,6 +1467,7 @@ fn clone_codex_branch_metadata(
         object.remove("manualTitle");
         object.remove("manualTitleUpdatedAt");
         object.insert("lastModelId".to_string(), json!(model_id));
+        object.insert("codexTranscriptImported".to_string(), json!(true));
     }
 
     merge_codex_runtime_metadata(
@@ -1447,9 +1475,16 @@ fn clone_codex_branch_metadata(
         raw_status,
         active_flags,
         preview,
-        false,
-        None,
+        sync_required,
+        sync_reason,
     )
+}
+
+fn codex_transcript_imported(metadata: Option<&Value>) -> bool {
+    metadata
+        .and_then(|value| value.get("codexTranscriptImported"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
 }
 
 fn workspace_write_opt_in_enabled(metadata: Option<&Value>) -> bool {
@@ -2272,6 +2307,10 @@ mod tests {
         let metadata = build_codex_remote_thread_metadata(&summary, "gpt-5.4");
 
         assert_eq!(metadata.get("lastModelId"), Some(&json!("gpt-5.4")));
+        assert_eq!(
+            metadata.get("codexTranscriptImported"),
+            Some(&json!(false))
+        );
         assert_eq!(metadata.get("codexModelProvider"), Some(&json!("openai")));
         assert_eq!(metadata.get("codexSourceKind"), Some(&json!("appServer")));
         assert_eq!(metadata.get("codexRemoteArchived"), Some(&json!(true)));
@@ -2282,6 +2321,128 @@ mod tests {
             Some(&json!(["waitingOnApproval"]))
         );
         assert_eq!(metadata.get("codexPreview"), Some(&json!("Preview line")));
+        assert_eq!(metadata.get("codexSyncRequired"), Some(&json!(true)));
+        assert_eq!(
+            metadata.get("codexSyncReason"),
+            Some(&json!("remote_thread_attached"))
+        );
+    }
+
+    #[test]
+    fn clone_codex_branch_metadata_marks_local_transcript_as_imported() {
+        let metadata = clone_codex_branch_metadata(
+            Some(&json!({
+                "codexTranscriptImported": false,
+                "manualTitle": true,
+            })),
+            "gpt-5.4",
+            Some("idle"),
+            &[],
+            Some("Preview"),
+            false,
+            None,
+        );
+
+        assert_eq!(
+            metadata.get("codexTranscriptImported"),
+            Some(&json!(true))
+        );
+        assert_eq!(metadata.get("lastModelId"), Some(&json!("gpt-5.4")));
+        assert_eq!(metadata.get("manualTitle"), None);
+    }
+
+    #[test]
+    fn should_clone_local_branch_history_requires_synced_local_messages() {
+        let mut thread = ThreadDto {
+            id: "thread-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            repo_id: None,
+            engine_id: "codex".to_string(),
+            model_id: "gpt-5.4".to_string(),
+            engine_thread_id: Some("engine-thread-1".to_string()),
+            engine_metadata: Some(json!({
+                "codexSyncRequired": false,
+            })),
+            title: "Thread".to_string(),
+            status: ThreadStatusDto::Idle,
+            message_count: 2,
+            total_tokens: 0,
+            created_at: "2026-03-13T00:00:00Z".to_string(),
+            last_activity_at: "2026-03-13T00:00:00Z".to_string(),
+        };
+
+        assert!(should_clone_local_branch_history(&thread));
+
+        thread.message_count = 0;
+        assert!(!should_clone_local_branch_history(&thread));
+
+        thread.message_count = 2;
+        thread.engine_metadata = Some(json!({
+            "codexSyncRequired": true,
+        }));
+        assert!(!should_clone_local_branch_history(&thread));
+    }
+
+    #[tokio::test]
+    async fn create_codex_branch_thread_rejects_threads_without_imported_transcript() {
+        let state = test_app_state();
+        let mut thread = test_thread(&state, "codex", "gpt-5.4");
+        thread.engine_metadata = Some(json!({
+            "codexTranscriptImported": false,
+        }));
+
+        let error = create_codex_branch_thread(
+            &state,
+            &thread,
+            "engine-thread-branch",
+            "gpt-5.4",
+            Some("Fork"),
+            None,
+            Some("idle"),
+            &[],
+            None,
+        )
+        .await
+        .expect_err("expected branch creation to reject missing local transcript");
+
+        assert!(error.contains("locally mirrored transcript"));
+    }
+
+    #[test]
+    fn clone_codex_branch_metadata_preserves_sync_needed_state() {
+        let metadata = clone_codex_branch_metadata(
+            Some(&json!({
+                "manualTitle": true,
+                "manualTitleUpdatedAt": "2026-03-12T00:00:00Z",
+                "codexPreview": "old preview",
+                "codexThreadStatus": "active",
+                "codexThreadActiveFlags": ["waitingOnApproval"],
+                "codexSyncRequired": false,
+                "serviceTier": "fast",
+            })),
+            "gpt-5.4",
+            Some("active"),
+            &["waitingOnApproval".to_string()],
+            Some("Fresh preview"),
+            true,
+            Some("branch_thread_requires_sync"),
+        );
+
+        assert_eq!(metadata.get("manualTitle"), None);
+        assert_eq!(metadata.get("manualTitleUpdatedAt"), None);
+        assert_eq!(metadata.get("lastModelId"), Some(&json!("gpt-5.4")));
+        assert_eq!(metadata.get("codexPreview"), Some(&json!("Fresh preview")));
+        assert_eq!(metadata.get("codexThreadStatus"), Some(&json!("active")));
+        assert_eq!(
+            metadata.get("codexThreadActiveFlags"),
+            Some(&json!(["waitingOnApproval"]))
+        );
+        assert_eq!(metadata.get("codexSyncRequired"), Some(&json!(true)));
+        assert_eq!(
+            metadata.get("codexSyncReason"),
+            Some(&json!("branch_thread_requires_sync"))
+        );
+        assert_eq!(metadata.get("serviceTier"), Some(&json!("fast")));
     }
 
     #[tokio::test]

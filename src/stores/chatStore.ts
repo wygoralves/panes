@@ -94,6 +94,49 @@ function isCodexThreadSyncRequired(metadata: Record<string, unknown> | undefined
   return metadata?.codexSyncRequired === true;
 }
 
+function isThreadTurnActive(status: ThreadStatus): boolean {
+  return status === "streaming" || status === "awaiting_approval";
+}
+
+function applyRuntimeStateFromEvent(
+  status: ThreadStatus,
+  streaming: boolean,
+  event: StreamEvent,
+): Pick<ChatState, "status" | "streaming"> {
+  if (event.type === "UsageLimitsUpdated") {
+    return { status, streaming };
+  }
+
+  if (event.type === "ApprovalRequested") {
+    return { status: "awaiting_approval", streaming: true };
+  }
+
+  if (event.type === "ApprovalResolved") {
+    return { status: "streaming", streaming: true };
+  }
+
+  if (event.type === "Error" && !event.recoverable) {
+    return { status: "error", streaming: false };
+  }
+
+  if (event.type === "TurnCompleted") {
+    const completionStatus = String(event.status ?? "completed");
+    if (completionStatus === "failed") {
+      return { status: "error", streaming: false };
+    }
+    if (completionStatus === "interrupted") {
+      return { status: "idle", streaming: false };
+    }
+    return { status: "completed", streaming: false };
+  }
+
+  if (event.type === "TurnStarted" || eventHasVisibleAssistantContent(event)) {
+    return { status: "streaming", streaming: true };
+  }
+
+  return { status, streaming };
+}
+
 function recordPendingTurnMetric(
   threadId: string,
   flag: keyof Pick<
@@ -517,6 +560,12 @@ function createSteerBlockFromMessage(message: Message): SteerBlock {
   };
 }
 
+function messageHasSteerMarker(message: Message): boolean {
+  return (message.blocks ?? []).some(
+    (block) => block.type === "text" && block.isSteer === true,
+  );
+}
+
 function appendSteerBlockToAssistantMessage(message: Message, steerBlock: SteerBlock): Message {
   const existingBlocks = message.blocks ?? [];
   if (
@@ -605,7 +654,7 @@ function collapseTrailingSteerMessages(messages: Message[]): Message[] {
     const isSteerCandidate =
       message.role === "user" &&
       previous?.role === "assistant" &&
-      previous.status === "streaming" &&
+      (messageHasSteerMarker(message) || previous.status === "streaming") &&
       nextMessage?.role !== "assistant";
 
     if (isSteerCandidate) {
@@ -621,6 +670,10 @@ function collapseTrailingSteerMessages(messages: Message[]): Message[] {
   }
 
   return changed ? collapsed : messages;
+}
+
+function isThreadStatusStreaming(status: ThreadStatus): boolean {
+  return isThreadTurnActive(status);
 }
 
 function hasRenderableAssistantContent(message: Message): boolean {
@@ -931,7 +984,10 @@ function applyHydrationWindow(messages: Message[]): Message[] {
   return nextMessages;
 }
 
-function normalizeMessages(messages: Message[]): Message[] {
+function normalizeMessages(
+  messages: Message[],
+  options?: { collapseTrailingSteers?: boolean },
+): Message[] {
   let nextMessages = messages;
   for (let index = 0; index < nextMessages.length; index += 1) {
     const message = nextMessages[index];
@@ -957,7 +1013,9 @@ function normalizeMessages(messages: Message[]): Message[] {
     }
   }
 
-  return collapseTrailingSteerMessages(nextMessages);
+  return options?.collapseTrailingSteers === false
+    ? nextMessages
+    : collapseTrailingSteerMessages(nextMessages);
 }
 
 function toIsoTimestamp(value: number | null | undefined): string | null {
@@ -1397,11 +1455,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     try {
       const threadState = useThreadStore.getState();
-      const activeThread = threadState.threads.find((thread) => thread.id === threadId);
+      let activeThread = threadState.threads.find((thread) => thread.id === threadId);
       if (activeThread?.engineId === "codex" && isCodexThreadSyncRequired(activeThread.engineMetadata)) {
         try {
           const syncedThread = await ipc.syncThreadFromEngine(threadId);
           threadState.applyThreadUpdateLocal(syncedThread);
+          activeThread = syncedThread;
         } catch (error) {
           console.warn(`Failed to sync Codex thread ${threadId}:`, error);
         }
@@ -1464,6 +1523,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
           let nextMessages = state.messages;
           let nextStreaming = state.streaming;
+          let nextStatus = state.status;
           let nextUsageLimits = state.usageLimits;
           let hydrationRecalcRequired = false;
           for (const queuedEvent of batch) {
@@ -1476,7 +1536,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (nextMessages.length !== previousLength) {
               hydrationRecalcRequired = true;
             }
-            nextStreaming = queuedEvent.type !== "TurnCompleted";
+            const nextRuntimeState = applyRuntimeStateFromEvent(
+              nextStatus,
+              nextStreaming,
+              queuedEvent,
+            );
+            nextStatus = nextRuntimeState.status;
+            nextStreaming = nextRuntimeState.streaming;
             if (queuedEvent.type === "TurnCompleted") {
               pendingTurnMetaByThread.delete(threadId);
             }
@@ -1487,6 +1553,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
           if (
             nextMessages === state.messages &&
+            nextStatus === state.status &&
             nextStreaming === state.streaming &&
             nextUsageLimits === state.usageLimits
           ) {
@@ -1496,6 +1563,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return {
             ...state,
             messages: nextMessages,
+            status: nextStatus,
             streaming: nextStreaming,
             usageLimits: nextUsageLimits,
           };
@@ -1571,6 +1639,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
 
+      const threadStatus = activeThread?.status ?? "idle";
       set({
         threadId,
         messages,
@@ -1580,8 +1649,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         olderLoadBlockedUntil: 0,
         unlisten,
         error: undefined,
-        streaming: false,
-        status: "idle",
+        streaming: isThreadStatusStreaming(threadStatus),
+        status: threadStatus,
         usageLimits: null,
       });
     } catch (error) {
@@ -1633,7 +1702,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         cursor,
         MESSAGE_WINDOW_INITIAL_LIMIT,
       );
-      const olderMessages = normalizeMessages(olderWindow.messages).map((message) =>
+      const olderMessages = normalizeMessages(olderWindow.messages, {
+        collapseTrailingSteers: false,
+      }).map((message) =>
         summarizeMessageForMemory(message),
       );
       set((current) => {
@@ -1641,9 +1712,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return current;
         }
         const nextCursor = olderWindow.nextCursor;
+        const mergedMessages = collapseTrailingSteerMessages([
+          ...olderMessages,
+          ...current.messages,
+        ]);
         return {
           ...current,
-          messages: applyHydrationWindow([...olderMessages, ...current.messages]),
+          messages: applyHydrationWindow(mergedMessages),
           olderCursor: nextCursor,
           hasOlderMessages: nextCursor !== null,
           loadingOlderMessages: false,

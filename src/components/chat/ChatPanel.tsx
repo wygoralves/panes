@@ -1223,6 +1223,7 @@ export function ChatPanel() {
   const [activeCommandPanel, setActiveCommandPanel] = useState<ActiveSlashCommand | null>(null);
   const [commandPanelBusy, setCommandPanelBusy] = useState(false);
   const [commandPanelError, setCommandPanelError] = useState<string | null>(null);
+  const commandPanelBusyRef = useRef(false);
   // runtimePickerOpenSection removed — runtime info panels are inline slash command panels
   const [selectedEngineId, setSelectedEngineId] = useState("codex");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
@@ -1809,16 +1810,23 @@ export function ChatPanel() {
 
   const pendingToolInputApproval = useMemo(
     () => {
+      if (activeThread?.engineId === "claude") {
+        return null;
+      }
+
       for (let index = pendingApprovals.length - 1; index >= 0; index -= 1) {
         const approval = pendingApprovals[index];
-        if (isRequestUserInputApproval(approval.details ?? {})) {
+        if (
+          isRequestUserInputApproval(approval.details ?? {}) &&
+          parseToolInputQuestions(approval.details ?? {}).length > 0
+        ) {
           return approval;
         }
       }
 
       return null;
     },
-    [pendingApprovals],
+    [activeThread?.engineId, pendingApprovals],
   );
 
   const pendingApprovalBannerRows = useMemo(
@@ -1828,7 +1836,10 @@ export function ChatPanel() {
           return true;
         }
 
-        return activeThread?.engineId === "claude";
+        return (
+          activeThread?.engineId === "claude" ||
+          parseToolInputQuestions(approval.details ?? {}).length === 0
+        );
       }),
     [activeThread?.engineId, pendingApprovals],
   );
@@ -1846,6 +1857,10 @@ export function ChatPanel() {
       pendingToolInputQuestions.length > 0 &&
       activeThread?.engineId !== "claude",
   );
+  const pendingToolInputSupportsDecline =
+    activeThreadApprovalDecisionCapabilities.includes("decline");
+  const pendingToolInputSupportsCancel =
+    activeThreadApprovalDecisionCapabilities.includes("cancel");
 
   const appendAttachmentsFromPaths = useCallback((paths: string[]) => {
     if (!activeWorkspaceId || paths.length === 0) {
@@ -2800,6 +2815,9 @@ export function ChatPanel() {
     activeThread.engineId === "codex" &&
     !!activeThread.engineThreadId &&
     !streaming;
+  const canUseNativeCodexHistoryTools =
+    canManageActiveCodexThread &&
+    activeThread?.engineMetadata?.codexTranscriptImported !== false;
 
   const isCodexEngine = selectedEngineId === "codex";
 
@@ -2819,7 +2837,7 @@ export function ChatPanel() {
         description: t("threadPicker.forkDescription"),
         icon: GitBranch,
         codexOnly: true,
-        disabled: !canManageActiveCodexThread,
+        disabled: !canUseNativeCodexHistoryTools,
       },
       {
         id: "rollback",
@@ -2827,7 +2845,7 @@ export function ChatPanel() {
         description: t("threadPicker.rollbackDescription"),
         icon: RotateCcw,
         codexOnly: true,
-        disabled: !canManageActiveCodexThread,
+        disabled: !canUseNativeCodexHistoryTools,
       },
       {
         id: "compact",
@@ -2878,7 +2896,7 @@ export function ChatPanel() {
         disabled: !isCodexEngine,
       },
     ],
-    [canManageActiveCodexThread, isCodexEngine, t],
+    [canManageActiveCodexThread, canUseNativeCodexHistoryTools, isCodexEngine, t],
   );
 
   const filteredSlashCommands = useMemo(() => {
@@ -2915,6 +2933,10 @@ export function ChatPanel() {
     command: ActiveSlashCommand,
     payload?: import("./ChatCommandPanel").SlashCommandPayload,
   ) {
+    if (commandPanelBusyRef.current) {
+      return;
+    }
+    commandPanelBusyRef.current = true;
     setCommandPanelBusy(true);
     setCommandPanelError(null);
     try {
@@ -2951,7 +2973,7 @@ export function ChatPanel() {
               updateApprovalPolicy: false,
               approvalPolicy: null,
             });
-            toast.success(`Service tier → ${payload.serviceTier}`);
+            toast.success(t("panel.toasts.serviceTierUpdated", { value: payload.serviceTier }));
           }
           break;
         case "personality":
@@ -2967,7 +2989,7 @@ export function ChatPanel() {
               updateApprovalPolicy: false,
               approvalPolicy: null,
             });
-            toast.success(`Personality → ${payload.personality}`);
+            toast.success(t("panel.toasts.personalityUpdated", { value: payload.personality }));
           }
           break;
       }
@@ -2975,6 +2997,7 @@ export function ChatPanel() {
     } catch (err) {
       setCommandPanelError(err instanceof Error ? err.message : String(err));
     } finally {
+      commandPanelBusyRef.current = false;
       setCommandPanelBusy(false);
     }
   }
@@ -4129,6 +4152,9 @@ export function ChatPanel() {
                   const isPermissionsRequest = isPermissionsRequestApproval(details);
                   const isToolInputRequest = isRequestUserInputApproval(details);
                   const requiresCustomPayload = requiresCustomApprovalPayload(details);
+                  const toolInputQuestionCount = isToolInputRequest
+                    ? parseToolInputQuestions(details).length
+                    : 0;
                   const isClaudeApproval = activeThread?.engineId === "claude";
                   const supportsDecline =
                     activeThreadApprovalDecisionCapabilities.includes("decline");
@@ -4148,6 +4174,12 @@ export function ChatPanel() {
                       requiresCustomPayload ||
                       proposedExecpolicyAmendment.length > 0 ||
                       proposedNetworkPolicyAmendments.length > 0);
+                  const showToolInputComposerHint =
+                    isToolInputRequest &&
+                    !isClaudeApproval &&
+                    toolInputQuestionCount > 0;
+                  const hidePositiveApprovalActions =
+                    isToolInputRequest && toolInputQuestionCount === 0;
                   const command = parseApprovalCommand(details);
                   const reason = parseApprovalReason(details);
 
@@ -4193,9 +4225,9 @@ export function ChatPanel() {
                               </button>
                             )}
                           </>
-                        ) : isToolInputRequest || requiresCustomPayload ? (
+                        ) : showToolInputComposerHint || requiresCustomPayload ? (
                           <span className="approval-row-hint">
-                            {isToolInputRequest
+                            {showToolInputComposerHint
                               ? t("panel.respondInCard")
                               : t("panel.respondInCustomCard")}
                           </span>
@@ -4206,7 +4238,12 @@ export function ChatPanel() {
                                 type="button"
                                 className="approval-btn approval-btn-cancel"
                                 onClick={() =>
-                                  void respondApproval(approval.approvalId, { decision: "cancel" })
+                                  void respondApproval(
+                                    approval.approvalId,
+                                    isToolInputRequest
+                                      ? { action: "cancel" }
+                                      : { decision: "cancel" },
+                                  )
                                 }
                               >
                                 {t("panel.approvalActions.cancel")}
@@ -4220,15 +4257,19 @@ export function ChatPanel() {
                                   void respondApproval(approval.approvalId, {
                                     ...(isPermissionsRequest
                                       ? buildPermissionsDeclineResponse()
-                                      : { decision: "decline" }),
+                                      : isToolInputRequest
+                                        ? { action: "decline" }
+                                        : { decision: "decline" }),
                                   })
                                 }
                               >
                                 {t("panel.approvalActions.deny")}
                               </button>
                             )}
-                            <span className="approval-actions-gap" />
-                            {supportsSession && (
+                            {!hidePositiveApprovalActions && (
+                              <span className="approval-actions-gap" />
+                            )}
+                            {!hidePositiveApprovalActions && supportsSession && (
                               <button
                                 type="button"
                                 className="approval-btn approval-btn-session"
@@ -4243,7 +4284,7 @@ export function ChatPanel() {
                                 {t("panel.approvalActions.allowSession")}
                               </button>
                             )}
-                            {!isClaudeApproval && !isPermissionsRequest && proposedExecpolicyAmendment.length > 0 && (
+                            {!hidePositiveApprovalActions && !isClaudeApproval && !isPermissionsRequest && proposedExecpolicyAmendment.length > 0 && (
                               <button
                                 type="button"
                                 className="approval-btn approval-btn-session"
@@ -4258,7 +4299,7 @@ export function ChatPanel() {
                                 {t("panel.allowWithPolicy")}
                               </button>
                             )}
-                            {!isClaudeApproval && !isPermissionsRequest && proposedNetworkPolicyAmendments.map((amendment) => (
+                            {!hidePositiveApprovalActions && !isClaudeApproval && !isPermissionsRequest && proposedNetworkPolicyAmendments.map((amendment) => (
                               <button
                                 key={`${amendment.action}:${amendment.host}`}
                                 type="button"
@@ -4282,7 +4323,7 @@ export function ChatPanel() {
                                   : t("panel.approvalActions.blockHost")}
                               </button>
                             ))}
-                            {supportsAccept && (
+                            {!hidePositiveApprovalActions && supportsAccept && (
                               <button
                                 type="button"
                                 className="approval-btn approval-btn-allow"
@@ -4315,6 +4356,22 @@ export function ChatPanel() {
             {showPendingToolInputComposer && pendingToolInputApproval ? (
               <ToolInputQuestionnaire
                 details={pendingToolInputApproval.details ?? {}}
+                onCancel={
+                  pendingToolInputSupportsCancel
+                    ? () =>
+                        void respondApproval(pendingToolInputApproval.approvalId, {
+                          action: "cancel",
+                        })
+                    : undefined
+                }
+                onDecline={
+                  pendingToolInputSupportsDecline
+                    ? () =>
+                        void respondApproval(pendingToolInputApproval.approvalId, {
+                          action: "decline",
+                        })
+                    : undefined
+                }
                 onSubmit={(response) => {
                   void respondApproval(pendingToolInputApproval.approvalId, response);
                 }}

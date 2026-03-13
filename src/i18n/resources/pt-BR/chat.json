@@ -349,6 +349,8 @@
       "codexThreadRolledBack": "Uma nova ramificação com rollback dos últimos {{count}} turnos foi criada.",
       "codexThreadCompactionStarted": "A compactação da thread do Codex foi iniciada.",
       "codexThreadResumed": "A thread remota do Codex selecionada foi anexada.",
+      "serviceTierUpdated": "Camada de serviço -> {{value}}",
+      "personalityUpdated": "Personalidade -> {{value}}",
       "claudeSandboxUnsupported": "Claude suporta apenas os modos de sandbox somente leitura e escrita no workspace.",
       "fullAccessNetworkWarning": "O modo acesso total habilita temporariamente o acesso à rede.",
       "updateExecutionPolicyFailed": "Falha ao atualizar a política de execução da thread: {{error}}",

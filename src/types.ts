@@ -188,6 +188,7 @@ export interface TextBlock {
   type: "text";
   content: string;
   planMode?: boolean;
+  isSteer?: boolean;
 }
 
 export interface CodeBlock {

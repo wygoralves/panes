@@ -121,7 +121,9 @@ pub fn drop_last_turns(db: &Database, thread_id: &str, num_turns: u32) -> anyhow
     let user_message_indexes = messages
         .iter()
         .enumerate()
-        .filter_map(|(index, message)| (message.role == "user").then_some(index))
+        .filter_map(|(index, message)| {
+            (message.role == "user" && !message_has_steer_marker(message)).then_some(index)
+        })
         .collect::<Vec<_>>();
 
     let turns_to_drop = usize::try_from(num_turns).unwrap_or(usize::MAX);
@@ -201,6 +203,23 @@ pub fn drop_last_turns(db: &Database, thread_id: &str, num_turns: u32) -> anyhow
     tx.commit()
         .context("failed to commit thread rollback transaction")?;
     Ok(message_ids.len())
+}
+
+fn message_has_steer_marker(message: &MessageDto) -> bool {
+    let Some(blocks) = message.blocks.as_ref().and_then(Value::as_array) else {
+        return false;
+    };
+
+    blocks.iter().any(|block| {
+        let Some(block_type) = block.get("type").and_then(Value::as_str) else {
+            return false;
+        };
+        if block_type != "text" {
+            return false;
+        }
+
+        block.get("isSteer").and_then(Value::as_bool).unwrap_or(false)
+    })
 }
 
 pub fn update_assistant_blocks_json(
@@ -1064,6 +1083,16 @@ mod tests {
         ])
     }
 
+    fn steer_blocks_json(content: &str) -> Value {
+        json!([
+            {
+                "type": "text",
+                "content": content,
+                "isSteer": true
+            }
+        ])
+    }
+
     fn approval_block_status(blocks: &Value) -> Option<(&str, Option<&str>)> {
         let items = blocks.as_array()?;
         let approval = items.first()?.as_object()?;
@@ -1613,8 +1642,58 @@ mod tests {
                 "SELECT COUNT(*) FROM approvals WHERE thread_id = ?1",
                 params![thread_id],
                 |row| row.get(0),
-            )
-            .unwrap();
+        )
+        .unwrap();
         assert_eq!(approval_count, 0);
+    }
+
+    #[test]
+    fn drop_last_turns_ignores_mid_turn_steer_messages() {
+        let db = test_db();
+        let thread_id = test_thread(&db);
+        insert_user_message(&db, &thread_id, "turn 1", None, None, None, None).unwrap();
+        insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            Some("answer 1".to_string()),
+            Some(json!([{ "type": "text", "content": "answer 1" }])),
+            MessageStatusDto::Completed,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        insert_user_message(&db, &thread_id, "turn 2", None, None, None, None).unwrap();
+        insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            Some("working".to_string()),
+            Some(json!([{ "type": "text", "content": "working" }])),
+            MessageStatusDto::Completed,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        insert_user_message(
+            &db,
+            &thread_id,
+            "focus on tests",
+            Some(steer_blocks_json("focus on tests")),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let removed = drop_last_turns(&db, &thread_id, 1).unwrap();
+        assert_eq!(removed, 3);
+
+        let remaining_messages = get_thread_messages(&db, &thread_id).unwrap();
+        assert_eq!(remaining_messages.len(), 2);
+        assert_eq!(remaining_messages[0].content.as_deref(), Some("turn 1"));
+        assert_eq!(remaining_messages[1].content.as_deref(), Some("answer 1"));
     }
 }

@@ -712,6 +712,8 @@ function ApprovalCard({
   const isMcpElicitation = isMcpElicitationApproval(details);
   const requiresCustomPayload = requiresCustomApprovalPayload(details);
   const toolInputQuestions = isToolInputRequest ? parseToolInputQuestions(details) : [];
+  const requiresAdvancedJsonFallback =
+    requiresCustomPayload || (isToolInputRequest && toolInputQuestions.length === 0);
   const proposedExecpolicyAmendment = parseProposedExecpolicyAmendment(details);
   const proposedNetworkPolicyAmendments = parseProposedNetworkPolicyAmendments(details);
   const requestedPermissions = isPermissionsRequest ? parseRequestedPermissions(details) : null;
@@ -974,7 +976,7 @@ function ApprovalCard({
         </div>
       )}
 
-      {isPending && !isClaudeThread && requiresCustomPayload && (
+      {isPending && !isClaudeThread && requiresAdvancedJsonFallback && (
         <div className="acard-section">
           <p className="acard-reason">
             {t("messageBlocks.approval.customPayloadHint")}
@@ -984,8 +986,8 @@ function ApprovalCard({
 
       {/* Standard approval — no inline buttons; the approval banner handles it */}
 
-      {/* Advanced JSON — only for custom payload requests */}
-      {isPending && !isClaudeThread && requiresCustomPayload && (
+      {/* Advanced JSON — for custom payload requests and malformed tool-input fallbacks */}
+      {isPending && !isClaudeThread && requiresAdvancedJsonFallback && (
         <div className="acard-section">
           <div className="acard-advanced">
             <textarea

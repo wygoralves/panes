@@ -121,6 +121,7 @@ export function ChatCommandPanel({
     case "fast":
       return (
         <OptionPickerPanel
+          busy={busy}
           icon={Zap}
           title={t("configPicker.serviceTier")}
           description={t("configPicker.serviceTierDescription")}
@@ -137,6 +138,7 @@ export function ChatCommandPanel({
     case "personality":
       return (
         <OptionPickerPanel
+          busy={busy}
           icon={UserCircle}
           title={t("configPicker.personality")}
           description={
@@ -278,6 +280,7 @@ function ConfirmPanel({
 /* ── Option picker panel (fast / personality / effort) ── */
 
 function OptionPickerPanel({
+  busy,
   icon: Icon,
   title,
   description,
@@ -286,6 +289,7 @@ function OptionPickerPanel({
   onSelect,
   onDismiss,
 }: {
+  busy: boolean;
   icon: typeof Zap;
   title: string;
   description: string;
@@ -305,6 +309,7 @@ function OptionPickerPanel({
           type="button"
           className="chat-command-panel-close"
           onClick={onDismiss}
+          disabled={busy}
         >
           <X size={12} />
         </button>
@@ -319,6 +324,7 @@ function OptionPickerPanel({
             type="button"
             className={`chat-command-panel-toggle${opt.value === currentValue ? " chat-command-panel-toggle-active" : ""}`}
             onClick={() => onSelect(opt.value)}
+            disabled={busy}
           >
             {opt.label}
           </button>
@@ -705,4 +711,3 @@ function InfoListPanel({
     </div>
   );
 }
-

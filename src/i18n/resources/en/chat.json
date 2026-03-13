@@ -349,6 +349,8 @@
       "codexThreadRolledBack": "Created a new rollback branch with the last {{count}} turn removed.",
       "codexThreadCompactionStarted": "Started Codex thread compaction.",
       "codexThreadResumed": "Attached the selected remote Codex thread.",
+      "serviceTierUpdated": "Service tier -> {{value}}",
+      "personalityUpdated": "Personality -> {{value}}",
       "claudeSandboxUnsupported": "Claude supports only read-only and workspace-write sandbox modes.",
       "fullAccessNetworkWarning": "Full access sandbox temporarily enables network access.",
       "updateExecutionPolicyFailed": "Failed to update thread execution policy: {{error}}",

@@ -780,7 +780,7 @@ describe("chatStore send", () => {
     expect(useChatStore.getState().error).toContain("steer failed");
   });
 
-  it("folds persisted steer messages into the preceding assistant when binding", async () => {
+  it("folds persisted steer messages into the preceding completed assistant when binding", async () => {
     mockIpc.getThreadMessagesWindow.mockResolvedValueOnce({
       messages: [
         {
@@ -793,7 +793,7 @@ describe("chatStore send", () => {
           turnModelId: "gpt-5.3-codex",
           turnReasoningEffort: "medium",
           schemaVersion: 1,
-          status: "streaming",
+          status: "completed",
           tokenUsage: null,
           createdAt: new Date().toISOString(),
         },
@@ -802,7 +802,7 @@ describe("chatStore send", () => {
           threadId: "thread-1",
           role: "user",
           content: "focus on the failing test",
-          blocks: [{ type: "text", content: "focus on the failing test" }],
+          blocks: [{ type: "text", content: "focus on the failing test", isSteer: true }],
           turnEngineId: "codex",
           turnModelId: "gpt-5.3-codex",
           turnReasoningEffort: "medium",
@@ -820,6 +820,7 @@ describe("chatStore send", () => {
     expect(useChatStore.getState().messages).toHaveLength(1);
     expect(useChatStore.getState().messages[0]).toMatchObject({
       role: "assistant",
+      status: "completed",
       blocks: [
         {
           type: "steer",
@@ -902,6 +903,79 @@ describe("chatStore send", () => {
       "user-regular",
       "assistant-latest",
     ]);
+  });
+
+  it.each([
+    { status: "streaming" as const, expectedStreaming: true },
+    { status: "awaiting_approval" as const, expectedStreaming: true },
+  ])(
+    "preserves the bound thread runtime status when loading a $status thread",
+    async ({ status, expectedStreaming }) => {
+      const thread = {
+        id: "thread-1",
+        workspaceId: "workspace-1",
+        repoId: null,
+        engineId: "codex" as const,
+        modelId: "gpt-5.3-codex",
+        engineThreadId: "engine-thread-1",
+        engineMetadata: {
+          codexSyncRequired: false,
+        },
+        title: "Thread 1",
+        status,
+        messageCount: 0,
+        totalTokens: 0,
+        createdAt: new Date().toISOString(),
+        lastActivityAt: new Date().toISOString(),
+      };
+
+      useThreadStore.setState({
+        threads: [thread],
+        threadsByWorkspace: {
+          "workspace-1": [thread],
+        },
+        archivedThreadsByWorkspace: {},
+        activeThreadId: "thread-1",
+        loading: false,
+        error: undefined,
+      });
+
+      await useChatStore.getState().setActiveThread("thread-1");
+
+      expect(useChatStore.getState()).toMatchObject({
+        status,
+        streaming: expectedStreaming,
+      });
+    },
+  );
+
+  it("marks the thread as awaiting approval while a streamed approval is pending", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    streamHandler!({
+      type: "ApprovalRequested",
+      approval_id: "approval-runtime-2",
+      action_type: "command",
+      summary: "Run command",
+      details: {},
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(useChatStore.getState()).toMatchObject({
+      status: "awaiting_approval",
+      streaming: true,
+    });
+
+    vi.useRealTimers();
   });
 
   it("syncs dirty Codex thread metadata before binding the message window", async () => {
