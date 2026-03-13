@@ -147,6 +147,9 @@ pub enum CodexRuntimeEvent {
         diagnostics: CodexProtocolDiagnosticsDto,
         toast: Option<RuntimeToastDto>,
     },
+    ApprovalResolved {
+        approval_id: String,
+    },
     ThreadStatusChanged {
         engine_thread_id: String,
         status_type: String,
@@ -2002,6 +2005,9 @@ impl CodexEngine {
                                     {
                                         log::debug!(
                                             "codex server request resolved approval: approval_id={approval_id}"
+                                        );
+                                        let _ = runtime_events.send(
+                                            CodexRuntimeEvent::ApprovalResolved { approval_id },
                                         );
                                     } else {
                                         log::debug!(
@@ -4668,6 +4674,9 @@ fn is_known_codex_notification_method(normalized_method: &str) -> bool {
             | "item/mcptoolcall/progress"
             | "item/commandexecution/outputdelta"
             | "item/filechange/outputdelta"
+            | "hook/started"
+            | "hook/completed"
+            | "terminal/interaction"
             | "model/rerouted"
             | "deprecationnotice"
             | "error"

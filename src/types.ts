@@ -198,7 +198,7 @@ export interface ActionBlock {
   actionType: ActionType;
   summary: string;
   details: Record<string, unknown>;
-  outputChunks: Array<{ stream: "stdout" | "stderr"; content: string }>;
+  outputChunks: Array<{ stream: "stdout" | "stderr" | "stdin"; content: string }>;
   outputDeferred?: boolean;
   outputDeferredLoaded?: boolean;
   status: "pending" | "running" | "done" | "error";
@@ -213,7 +213,7 @@ export interface ActionBlock {
 
 export interface ActionOutputPayload {
   found: boolean;
-  outputChunks: Array<{ stream: "stdout" | "stderr"; content: string }>;
+  outputChunks: Array<{ stream: "stdout" | "stderr" | "stdin"; content: string }>;
   truncated: boolean;
 }
 
@@ -941,7 +941,7 @@ export interface ActionStartedEvent {
 export interface ActionOutputDeltaEvent {
   type: "ActionOutputDelta";
   action_id: string;
-  stream: "stdout" | "stderr";
+  stream: "stdout" | "stderr" | "stdin";
   content: string;
 }
 
@@ -975,6 +975,11 @@ export interface ApprovalRequestedEvent {
   action_type: ActionType;
   summary: string;
   details: Record<string, unknown>;
+}
+
+export interface ApprovalResolvedEvent {
+  type: "ApprovalResolved";
+  approval_id: string;
 }
 
 export interface ErrorEvent {
@@ -1022,6 +1027,7 @@ export type StreamEvent =
   | ActionCompletedEvent
   | DiffUpdatedEvent
   | ApprovalRequestedEvent
+  | ApprovalResolvedEvent
   | ModelReroutedEvent
   | NoticeEvent
   | ErrorEvent

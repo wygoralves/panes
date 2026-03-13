@@ -224,6 +224,63 @@ function resolveApprovalDecision(response: ApprovalResponse): ApprovalBlock["dec
   return "custom";
 }
 
+function normalizeActionOutputStream(
+  stream: unknown,
+): ActionBlock["outputChunks"][number]["stream"] {
+  return stream === "stderr" || stream === "stdin" ? stream : "stdout";
+}
+
+function resolveApprovalInMessages(
+  messages: Message[],
+  approvalId: string,
+  decision?: ApprovalBlock["decision"],
+): Message[] {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const message = messages[messageIndex];
+    const blocks = message.blocks;
+    if (!blocks || blocks.length === 0) {
+      continue;
+    }
+
+    const approvalIndex = blocks.findIndex(
+      (block) => block.type === "approval" && block.approvalId === approvalId,
+    );
+    if (approvalIndex < 0) {
+      continue;
+    }
+
+    const approvalBlock = blocks[approvalIndex] as ApprovalBlock;
+    if (
+      approvalBlock.status === "answered" &&
+      (decision === undefined || approvalBlock.decision === decision)
+    ) {
+      return messages;
+    }
+
+    const nextBlocks = [...blocks];
+    nextBlocks[approvalIndex] =
+      decision === undefined
+        ? {
+            ...approvalBlock,
+            status: "answered",
+          }
+        : {
+            ...approvalBlock,
+            status: "answered",
+            decision,
+          };
+
+    const nextMessages = [...messages];
+    nextMessages[messageIndex] = {
+      ...message,
+      blocks: nextBlocks,
+    };
+    return nextMessages;
+  }
+
+  return messages;
+}
+
 function trimActionOutputChunks(
   chunks: ActionBlock["outputChunks"],
 ): {
@@ -814,6 +871,10 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     return messages;
   }
 
+  if (event.type === "ApprovalResolved") {
+    return resolveApprovalInMessages(messages, String(event.approval_id ?? ""));
+  }
+
   const assistantTarget = resolveAssistantTargetFromEvent(threadId, event);
   const { messages: ensuredMessages, assistantIndex } = ensureAssistantMessage(
     messages,
@@ -888,7 +949,7 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
 
   if (event.type === "ActionOutputDelta") {
     const actionId = String(event.action_id ?? "");
-    const stream = String(event.stream ?? "stdout") as "stdout" | "stderr";
+    const stream = normalizeActionOutputStream(event.stream);
     const content = String(event.content ?? "");
     if (actionId && content) {
       const blocks = assistant.blocks ?? [];
@@ -1561,45 +1622,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await ipc.respondApproval(threadId, approvalId, response);
     const decision = resolveApprovalDecision(response);
     set((state) => {
-      for (let messageIndex = 0; messageIndex < state.messages.length; messageIndex += 1) {
-        const message = state.messages[messageIndex];
-        const blocks = message.blocks;
-        if (!blocks || blocks.length === 0) {
-          continue;
-        }
-
-        const approvalIndex = blocks.findIndex(
-          (block) => block.type === "approval" && block.approvalId === approvalId,
-        );
-        if (approvalIndex < 0) {
-          continue;
-        }
-
-        const approvalBlock = blocks[approvalIndex] as ApprovalBlock;
-        if (approvalBlock.status === "answered" && approvalBlock.decision === decision) {
-          return state;
-        }
-
-        const nextBlocks = [...blocks];
-        nextBlocks[approvalIndex] = {
-          ...approvalBlock,
-          status: "answered",
-          decision,
-        };
-
-        const nextMessages = [...state.messages];
-        nextMessages[messageIndex] = {
-          ...message,
-          blocks: nextBlocks,
-        };
-
-        return {
-          ...state,
-          messages: nextMessages,
-        };
+      const nextMessages = resolveApprovalInMessages(state.messages, approvalId, decision);
+      if (nextMessages === state.messages) {
+        return state;
       }
 
-      return state;
+      return {
+        ...state,
+        messages: nextMessages,
+      };
     });
   },
   hydrateActionOutput: async (messageId, actionId) => {
@@ -1617,7 +1648,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const normalizedChunks: ActionBlock["outputChunks"] = payload.outputChunks.map((chunk) => ({
-        stream: chunk.stream === "stderr" ? "stderr" : "stdout",
+        stream: normalizeActionOutputStream(chunk.stream),
         content: String(chunk.content ?? ""),
       }));
       const { chunks: trimmedChunks, truncated: trimmedByFrontend } =

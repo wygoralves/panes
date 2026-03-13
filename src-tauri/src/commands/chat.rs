@@ -2200,7 +2200,9 @@ fn coalesced_event_content_len(event: &EngineEvent) -> usize {
 fn same_output_stream(left: &OutputStream, right: &OutputStream) -> bool {
     matches!(
         (left, right),
-        (OutputStream::Stdout, OutputStream::Stdout) | (OutputStream::Stderr, OutputStream::Stderr)
+        (OutputStream::Stdout, OutputStream::Stdout)
+            | (OutputStream::Stderr, OutputStream::Stderr)
+            | (OutputStream::Stdin, OutputStream::Stdin)
     )
 }
 
@@ -2753,6 +2755,7 @@ fn apply_event_to_blocks(
                     let stream_name = match stream {
                         OutputStream::Stdout => "stdout",
                         OutputStream::Stderr => "stderr",
+                        OutputStream::Stdin => "stdin",
                     };
                     let chunk_content = truncate_chars(content, max_output_chars);
                     if chunk_content.is_empty() {

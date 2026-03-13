@@ -5,6 +5,7 @@ const mockIpc = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   steerMessage: vi.fn(),
   getThreadMessagesWindow: vi.fn(),
+  getActionOutput: vi.fn(),
   respondApproval: vi.fn(),
   syncThreadFromEngine: vi.fn(),
 }));
@@ -40,6 +41,11 @@ describe("chatStore send", () => {
     mockIpc.getThreadMessagesWindow.mockResolvedValue({
       messages: [],
       nextCursor: null,
+    });
+    mockIpc.getActionOutput.mockResolvedValue({
+      found: true,
+      outputChunks: [],
+      truncated: false,
     });
     mockIpc.steerMessage.mockResolvedValue(undefined);
     mockIpc.syncThreadFromEngine.mockResolvedValue({
@@ -299,6 +305,201 @@ describe("chatStore send", () => {
     ]);
 
     vi.useRealTimers();
+  });
+
+  it("preserves stdin action output chunks from streamed events", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    mockIpc.sendMessage.mockResolvedValueOnce("assistant-message-id");
+    await expect(
+      useChatStore.getState().send("hello", {
+        engineId: "codex",
+        modelId: "gpt-5.3-codex",
+      }),
+    ).resolves.toBe(true);
+
+    expect(streamHandler).not.toBeNull();
+    streamHandler!({
+      type: "ActionStarted",
+      action_id: "action-stdin",
+      engine_action_id: "cmd-stdin",
+      action_type: "command",
+      summary: "pnpm test",
+      details: {},
+    });
+    streamHandler!({
+      type: "ActionOutputDelta",
+      action_id: "action-stdin",
+      stream: "stdin",
+      content: "pnpm test\n",
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    const assistant = useChatStore
+      .getState()
+      .messages.find((message) => message.role === "assistant" && message.blocks?.length);
+    expect(assistant?.blocks).toEqual([
+      {
+        type: "action",
+        actionId: "action-stdin",
+        engineActionId: "cmd-stdin",
+        actionType: "command",
+        summary: "pnpm test",
+        details: {},
+        outputChunks: [
+          {
+            stream: "stdin",
+            content: "pnpm test\n",
+          },
+        ],
+        outputDeferred: false,
+        outputDeferredLoaded: true,
+        status: "running",
+      },
+    ]);
+
+    vi.useRealTimers();
+  });
+
+  it("marks approvals as answered when the runtime resolves them externally", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    mockIpc.getThreadMessagesWindow.mockResolvedValueOnce({
+      messages: [
+        {
+          id: "assistant-approval",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "completed",
+          schemaVersion: 1,
+          blocks: [
+            {
+              type: "approval",
+              approvalId: "approval-runtime-1",
+              actionType: "command",
+              summary: "Run command",
+              details: {},
+              status: "pending",
+            },
+          ],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: false,
+        },
+      ],
+      nextCursor: null,
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    expect(streamHandler).not.toBeNull();
+    streamHandler!({
+      type: "ApprovalResolved",
+      approval_id: "approval-runtime-1",
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(useChatStore.getState().messages[0]?.blocks).toEqual([
+      {
+        type: "approval",
+        approvalId: "approval-runtime-1",
+        actionType: "command",
+        summary: "Run command",
+        details: {},
+        status: "answered",
+      },
+    ]);
+
+    vi.useRealTimers();
+  });
+
+  it("preserves stdin chunks when hydrating deferred action output", async () => {
+    useChatStore.setState({
+      threadId: "thread-1",
+      messages: [
+        {
+          id: "assistant-action",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "completed",
+          schemaVersion: 1,
+          blocks: [
+            {
+              type: "action",
+              actionId: "action-hydrate",
+              engineActionId: "cmd-hydrate",
+              actionType: "command",
+              summary: "pnpm test",
+              details: {},
+              outputChunks: [],
+              outputDeferred: true,
+              outputDeferredLoaded: false,
+              status: "done",
+            },
+          ],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: true,
+        },
+      ],
+      olderCursor: null,
+      hasOlderMessages: false,
+      loadingOlderMessages: false,
+      olderLoadBlockedUntil: 0,
+      status: "idle",
+      streaming: false,
+      usageLimits: null,
+      error: undefined,
+      unlisten: undefined,
+    });
+    mockIpc.getActionOutput.mockResolvedValueOnce({
+      found: true,
+      outputChunks: [
+        {
+          stream: "stdin",
+          content: "pnpm test\n",
+        },
+      ],
+      truncated: false,
+    });
+
+    await useChatStore.getState().hydrateActionOutput("assistant-action", "action-hydrate");
+
+    expect(useChatStore.getState().messages[0]?.blocks).toEqual([
+      {
+        type: "action",
+        actionId: "action-hydrate",
+        engineActionId: "cmd-hydrate",
+        actionType: "command",
+        summary: "pnpm test",
+        details: {},
+        outputChunks: [
+          {
+            stream: "stdin",
+            content: "pnpm test\n",
+          },
+        ],
+        outputDeferred: false,
+        outputDeferredLoaded: true,
+        status: "done",
+      },
+    ]);
   });
 
   it("infers accept_for_session for permission approval responses", async () => {

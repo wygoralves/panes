@@ -326,6 +326,9 @@ async fn handle_codex_runtime_event(
                 },
             );
         }
+        CodexRuntimeEvent::ApprovalResolved { approval_id } => {
+            resolve_codex_runtime_approval(app, state, &approval_id).await;
+        }
         CodexRuntimeEvent::ThreadStatusChanged {
             engine_thread_id,
             status_type,
@@ -397,6 +400,71 @@ async fn handle_codex_runtime_event(
                 );
             }
         }
+    }
+}
+
+async fn resolve_codex_runtime_approval(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    approval_id: &str,
+) {
+    let Some((thread_id, message_id)) = run_db(state.db.clone(), {
+        let approval_id = approval_id.to_string();
+        move |db| db::actions::find_approval_context(db, &approval_id)
+    })
+    .await
+    .ok()
+    .flatten() else {
+        return;
+    };
+
+    let has_local_turn = state.turns.get(&thread_id).await.is_some();
+    let updated_thread = match run_db(state.db.clone(), {
+        let approval_id = approval_id.to_string();
+        let thread_id = thread_id.clone();
+        let message_id = message_id.clone();
+        move |db| {
+            db::actions::resolve_approval(db, &approval_id)?;
+            let _ =
+                db::messages::mark_approval_block_resolved(db, &message_id, &approval_id, None)?;
+
+            let updated_thread = if has_local_turn {
+                db::threads::update_thread_status(db, &thread_id, ThreadStatusDto::Streaming)?;
+                db::threads::get_thread(db, &thread_id)?
+            } else {
+                None
+            };
+
+            Ok(updated_thread)
+        }
+    })
+    .await
+    {
+        Ok(updated_thread) => updated_thread,
+        Err(error) => {
+            log::warn!("failed to reconcile resolved runtime approval {approval_id}: {error}");
+            return;
+        }
+    };
+
+    let stream_event_topic = format!("stream-event-{thread_id}");
+    let _ = app.emit(
+        &stream_event_topic,
+        serde_json::json!({
+            "type": "ApprovalResolved",
+            "approval_id": approval_id,
+        }),
+    );
+
+    if let Some(thread) = updated_thread {
+        let _ = app.emit(
+            "thread-updated",
+            ThreadUpdatedEvent {
+                thread_id: thread.id.clone(),
+                workspace_id: thread.workspace_id.clone(),
+                thread: Some(thread),
+            },
+        );
     }
 }
 

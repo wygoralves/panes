@@ -144,11 +144,15 @@ impl TurnEventMapper {
                         .to_string(),
             }],
             "deprecationnotice" => map_deprecation_notice(params).into_iter().collect(),
+            "hookstarted" | "hookcompleted" => map_hook_notification(method_key.as_str(), params)
+                .into_iter()
+                .collect(),
             "itemstarted" => self.map_item_started(params),
             "itemcompleted" => self.map_item_completed(params),
             "itemcommandexecutionoutputdelta" | "itemfilechangeoutputdelta" => {
                 self.map_output_delta(params).into_iter().collect()
             }
+            "terminalinteraction" => self.map_terminal_interaction(params).into_iter().collect(),
             "error" => {
                 let message = extract_nested_string(params, &["error", "message"])
                     .or_else(|| extract_any_string(params, &["message"]))
@@ -388,6 +392,18 @@ impl TurnEventMapper {
 
                 events
             }
+            "collabAgentToolCall" => {
+                let engine_item_id = extract_any_string(item, &["id"]);
+                let action_id = self.resolve_or_register_action(engine_item_id.as_deref());
+
+                vec![EngineEvent::ActionStarted {
+                    action_id,
+                    engine_action_id: engine_item_id,
+                    action_type: ActionType::Other,
+                    summary: summarize_collab_agent_tool_call(item),
+                    details: item.clone(),
+                }]
+            }
             "agentMessage" => Vec::new(),
             "plan" => {
                 let text = extract_any_string(item, &["text"]).unwrap_or_default();
@@ -420,7 +436,11 @@ impl TurnEventMapper {
             extract_any_string(item, &["type"]).unwrap_or_else(|| "unknown".to_string());
 
         match item_type.as_str() {
-            "commandExecution" | "fileChange" | "webSearch" | "mcpToolCall" => {
+            "commandExecution"
+            | "fileChange"
+            | "webSearch"
+            | "mcpToolCall"
+            | "collabAgentToolCall" => {
                 let engine_item_id = extract_any_string(item, &["id"]);
                 let Some(action_id) = self.resolve_action_for_completion(engine_item_id.as_deref())
                 else {
@@ -432,8 +452,16 @@ impl TurnEventMapper {
                 let normalized_status = status.to_lowercase();
                 let success = normalized_status == "completed";
 
-                let output = extract_any_string(item, &["aggregatedOutput", "output", "text"]);
-                let mut error = extract_item_error(item);
+                let output = if item_type == "collabAgentToolCall" {
+                    collab_agent_completion_output(item)
+                } else {
+                    extract_any_string(item, &["aggregatedOutput", "output", "text"])
+                };
+                let mut error = if item_type == "collabAgentToolCall" {
+                    collab_agent_error(item, &normalized_status)
+                } else {
+                    extract_item_error(item)
+                };
                 if !success && error.is_none() {
                     error = Some(match normalized_status.as_str() {
                         "declined" => "Action was declined by user approval policy".to_string(),
@@ -506,6 +534,21 @@ impl TurnEventMapper {
         Some(EngineEvent::ActionOutputDelta {
             action_id,
             stream,
+            content,
+        })
+    }
+
+    fn map_terminal_interaction(&self, params: &Value) -> Option<EngineEvent> {
+        let item_id = extract_any_string(params, &["itemId", "item_id", "id"])?;
+        let action_id = self.resolve_action_for_output(Some(&item_id))?;
+        let content = extract_any_string(params, &["stdin"])?;
+        if content.is_empty() {
+            return None;
+        }
+
+        Some(EngineEvent::ActionOutputDelta {
+            action_id,
+            stream: OutputStream::Stdin,
             content,
         })
     }
@@ -679,6 +722,75 @@ fn map_deprecation_notice(params: &Value) -> Option<EngineEvent> {
     })
 }
 
+fn map_hook_notification(method_key: &str, params: &Value) -> Option<EngineEvent> {
+    let run = params.get("run")?;
+    let hook_id = extract_any_string(run, &["id"]).unwrap_or_else(|| "unknown".to_string());
+    let event_name =
+        extract_any_string(run, &["eventName", "event_name"]).unwrap_or_else(|| "hook".to_string());
+    let handler_type = extract_any_string(run, &["handlerType", "handler_type"])
+        .unwrap_or_else(|| "handler".to_string());
+    let execution_mode =
+        extract_any_string(run, &["executionMode", "execution_mode"]).unwrap_or_default();
+    let scope = extract_any_string(run, &["scope"]).unwrap_or_default();
+    let source_path = extract_any_string(run, &["sourcePath", "source_path"]).unwrap_or_default();
+    let status = extract_any_string(run, &["status"]).unwrap_or_else(|| {
+        if method_key == "hookstarted" {
+            "running".to_string()
+        } else {
+            "completed".to_string()
+        }
+    });
+
+    let mut message_lines = vec![format!(
+        "{event_name} hook via {handler_type}{}{}",
+        if execution_mode.is_empty() {
+            String::new()
+        } else {
+            format!(" ({execution_mode})")
+        },
+        if scope.is_empty() {
+            String::new()
+        } else {
+            format!(" [{scope}]")
+        }
+    )];
+
+    if !source_path.is_empty() {
+        message_lines.push(format!("Source: {source_path}"));
+    }
+
+    if let Some(status_message) = extract_any_string(run, &["statusMessage", "status_message"]) {
+        if !status_message.is_empty() {
+            message_lines.push(status_message);
+        }
+    }
+
+    if let Some(entries_text) = summarize_hook_entries(run.get("entries").and_then(Value::as_array))
+    {
+        if !entries_text.is_empty() {
+            message_lines.push(entries_text);
+        }
+    }
+
+    let (kind_prefix, title) = if method_key == "hookstarted" {
+        ("hook_started", "Hook started")
+    } else {
+        ("hook_completed", "Hook completed")
+    };
+    let level = match status.as_str() {
+        "failed" => "error",
+        "blocked" | "stopped" => "warning",
+        _ => "info",
+    };
+
+    Some(EngineEvent::Notice {
+        kind: format!("{kind_prefix}_{hook_id}"),
+        level: level.to_string(),
+        title: title.to_string(),
+        message: message_lines.join("\n"),
+    })
+}
+
 fn summarize_permissions_request(params: &Value) -> String {
     if let Some(reason) = extract_any_string(params, &["reason"]) {
         if !reason.is_empty() {
@@ -728,6 +840,97 @@ fn summarize_mcp_elicitation_request(params: &Value) -> String {
         format!("{server_name} requested input")
     } else {
         format!("{server_name} requested input: {message}")
+    }
+}
+
+fn summarize_hook_entries(entries: Option<&Vec<Value>>) -> Option<String> {
+    let entries = entries?;
+    let lines = entries
+        .iter()
+        .filter_map(|entry| {
+            let text = extract_any_string(entry, &["text"])?;
+            if text.is_empty() {
+                return None;
+            }
+            let kind = extract_any_string(entry, &["kind"]).unwrap_or_default();
+            if kind.is_empty() {
+                Some(text)
+            } else {
+                Some(format!("{kind}: {text}"))
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+fn summarize_collab_agent_tool_call(item: &Value) -> String {
+    let tool = extract_any_string(item, &["tool"]).unwrap_or_else(|| "agent_call".to_string());
+    format!("Collaborative agent: {tool}")
+}
+
+fn collab_agent_completion_output(item: &Value) -> Option<String> {
+    let mut lines = Vec::new();
+
+    if let Some(receiver_ids) = item.get("receiverThreadIds").and_then(Value::as_array) {
+        let receivers = receiver_ids
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        if !receivers.is_empty() {
+            lines.push(format!("Receiver threads: {}", receivers.join(", ")));
+        }
+    }
+
+    if let Some(agents_states) = item.get("agentsStates").and_then(Value::as_object) {
+        let states = agents_states
+            .iter()
+            .filter_map(|(agent_id, state)| {
+                let status = extract_any_string(state, &["status"])?;
+                let message = extract_any_string(state, &["message"]).unwrap_or_default();
+                if message.is_empty() {
+                    Some(format!("{agent_id}: {status}"))
+                } else {
+                    Some(format!("{agent_id}: {status} ({message})"))
+                }
+            })
+            .collect::<Vec<_>>();
+        if !states.is_empty() {
+            lines.push(format!("Agent states: {}", states.join("; ")));
+        }
+    }
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+fn collab_agent_error(item: &Value, normalized_status: &str) -> Option<String> {
+    if let Some(agents_states) = item.get("agentsStates").and_then(Value::as_object) {
+        for (agent_id, state) in agents_states {
+            let status = extract_any_string(state, &["status"]).unwrap_or_default();
+            if matches!(status.as_str(), "errored" | "shutdown" | "notFound") {
+                let message = extract_any_string(state, &["message"]).unwrap_or_default();
+                return Some(if message.is_empty() {
+                    format!("Agent {agent_id} ended with status `{status}`")
+                } else {
+                    format!("Agent {agent_id} ended with status `{status}`: {message}")
+                });
+            }
+        }
+    }
+
+    if normalized_status == "failed" {
+        extract_any_string(item, &["prompt"])
+            .map(|prompt| format!("Collaborative agent failed: {prompt}"))
+    } else {
+        None
     }
 }
 
@@ -1399,6 +1602,138 @@ mod tests {
                 assert!(message.contains("item/permissions/requestApproval"));
             }
             other => panic!("expected notice event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_notification_emits_hook_notice() {
+        let mut mapper = TurnEventMapper::default();
+
+        let events = mapper.map_notification(
+            "hook/completed",
+            &json!({
+                "threadId": "thr_123",
+                "run": {
+                    "id": "hook_123",
+                    "eventName": "sessionStart",
+                    "executionMode": "sync",
+                    "handlerType": "command",
+                    "scope": "thread",
+                    "sourcePath": "/tmp/hooks/session-start.sh",
+                    "startedAt": 1735689600000i64,
+                    "displayOrder": 1,
+                    "status": "completed",
+                    "entries": [
+                        {
+                            "kind": "feedback",
+                            "text": "Workspace warmed."
+                        }
+                    ]
+                }
+            }),
+        );
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            EngineEvent::Notice {
+                kind,
+                level,
+                title,
+                message,
+            } => {
+                assert_eq!(kind, "hook_completed_hook_123");
+                assert_eq!(level, "info");
+                assert_eq!(title, "Hook completed");
+                assert!(message.contains("sessionStart hook via command"));
+                assert!(message.contains("/tmp/hooks/session-start.sh"));
+                assert!(message.contains("Workspace warmed."));
+            }
+            other => panic!("expected notice event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_item_started_maps_collab_agent_tool_call() {
+        let mut mapper = TurnEventMapper::default();
+
+        let events = mapper.map_notification(
+            "item/started",
+            &json!({
+                "threadId": "thr_123",
+                "turnId": "turn_123",
+                "item": {
+                    "id": "collab_123",
+                    "type": "collabAgentToolCall",
+                    "tool": "spawnAgent",
+                    "status": "inProgress",
+                    "senderThreadId": "thr_123",
+                    "receiverThreadIds": ["thr_child"],
+                    "agentsStates": {}
+                }
+            }),
+        );
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            EngineEvent::ActionStarted {
+                action_type,
+                summary,
+                engine_action_id,
+                ..
+            } => {
+                assert!(matches!(action_type, ActionType::Other));
+                assert_eq!(summary, "Collaborative agent: spawnAgent");
+                assert_eq!(engine_action_id.as_deref(), Some("collab_123"));
+            }
+            other => panic!("expected action started event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_notification_emits_terminal_input_as_action_output() {
+        let mut mapper = TurnEventMapper::default();
+        let started_events = mapper.map_notification(
+            "item/started",
+            &json!({
+                "item": {
+                    "id": "cmd_123",
+                    "type": "commandExecution",
+                    "command": "pnpm test",
+                    "commandActions": [],
+                    "cwd": "/tmp/project",
+                    "status": "inProgress"
+                }
+            }),
+        );
+
+        let action_id = match &started_events[0] {
+            EngineEvent::ActionStarted { action_id, .. } => action_id.clone(),
+            other => panic!("expected action started event, got {other:?}"),
+        };
+
+        let events = mapper.map_notification(
+            "terminal/interaction",
+            &json!({
+                "threadId": "thr_123",
+                "turnId": "turn_123",
+                "itemId": "cmd_123",
+                "processId": "pty_123",
+                "stdin": "pnpm test\n"
+            }),
+        );
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            EngineEvent::ActionOutputDelta {
+                action_id: actual_action_id,
+                stream,
+                content,
+            } => {
+                assert_eq!(actual_action_id, &action_id);
+                assert!(matches!(stream, OutputStream::Stdin));
+                assert_eq!(content, "pnpm test\n");
+            }
+            other => panic!("expected action output delta, got {other:?}"),
         }
     }
 

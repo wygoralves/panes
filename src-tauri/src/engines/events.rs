@@ -107,6 +107,7 @@ impl ActionType {
 pub enum OutputStream {
     Stdout,
     Stderr,
+    Stdin,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
