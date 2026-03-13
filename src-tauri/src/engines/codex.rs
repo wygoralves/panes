@@ -42,6 +42,9 @@ const THREAD_READ_METHODS: &[&str] = &["thread/read"];
 const THREAD_ARCHIVE_METHODS: &[&str] = &["thread/archive"];
 const THREAD_UNARCHIVE_METHODS: &[&str] = &["thread/unarchive"];
 const THREAD_SET_NAME_METHODS: &[&str] = &["thread/name/set"];
+const THREAD_FORK_METHODS: &[&str] = &["thread/fork"];
+const THREAD_ROLLBACK_METHODS: &[&str] = &["thread/rollback"];
+const THREAD_COMPACT_START_METHODS: &[&str] = &["thread/compact/start"];
 const EXPERIMENTAL_FEATURE_LIST_METHODS: &[&str] = &["experimentalFeature/list"];
 const COLLABORATION_MODE_LIST_METHODS: &[&str] = &["collaborationMode/list"];
 const SKILLS_LIST_METHODS: &[&str] = &["skills/list"];
@@ -152,6 +155,16 @@ pub enum CodexRuntimeEvent {
         engine_thread_id: String,
         thread_name: Option<String>,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct CodexForkedThread {
+    pub engine_thread_id: String,
+    pub model_id: String,
+    pub title: Option<String>,
+    pub preview: Option<String>,
+    pub raw_status: Option<String>,
+    pub active_flags: Vec<String>,
 }
 
 #[async_trait]
@@ -930,6 +943,116 @@ impl CodexEngine {
             }
             MethodCallOutcome::Error(detail) => anyhow::bail!(detail),
         }
+    }
+
+    pub async fn fork_thread(
+        &self,
+        engine_thread_id: &str,
+        cwd: &str,
+        model: &str,
+        sandbox: SandboxPolicy,
+    ) -> anyhow::Result<CodexForkedThread> {
+        let transport = self.ensure_ready_transport().await?;
+        let approval_policy = sandbox
+            .approval_policy
+            .clone()
+            .unwrap_or_else(|| serde_json::Value::String("on-request".to_string()));
+        let force_external_sandbox = self.resolve_external_sandbox_mode().await;
+        let sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
+        let sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
+        let requested_runtime = ThreadRuntime {
+            cwd: cwd.to_string(),
+            model_id: model.to_string(),
+            approval_policy: approval_policy.clone(),
+            sandbox_policy: sandbox_policy.clone(),
+            reasoning_effort: sandbox.reasoning_effort.clone(),
+            service_tier: sandbox.service_tier.clone(),
+            personality: sandbox.personality.clone(),
+            output_schema: sandbox.output_schema.clone(),
+        };
+
+        let response = request_with_fallback(
+            transport.as_ref(),
+            THREAD_FORK_METHODS,
+            serde_json::json!({
+                "threadId": engine_thread_id,
+                "cwd": cwd,
+                "model": model,
+                "approvalPolicy": approval_policy,
+                "sandbox": sandbox_mode,
+                "serviceTier": sandbox.service_tier,
+            }),
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to fork codex thread")?;
+
+        let new_engine_thread_id = extract_thread_id(&response)
+            .ok_or_else(|| anyhow::anyhow!("missing thread id in thread/fork response"))?;
+        let runtime = thread_runtime_from_start_response(
+            &response,
+            &requested_runtime.cwd,
+            &requested_runtime.model_id,
+            &requested_runtime.approval_policy,
+            &requested_runtime.sandbox_policy,
+            requested_runtime.reasoning_effort.clone(),
+            requested_runtime.service_tier.clone(),
+            requested_runtime.personality.clone(),
+            requested_runtime.output_schema.clone(),
+        );
+        self.store_thread_runtime(&new_engine_thread_id, runtime).await;
+
+        Ok(CodexForkedThread {
+            engine_thread_id: new_engine_thread_id,
+            model_id: extract_any_string(&response, &["model"])
+                .unwrap_or_else(|| model.to_string()),
+            title: extract_thread_title(&response),
+            preview: extract_thread_preview(&response),
+            raw_status: extract_thread_runtime_status_type(&response),
+            active_flags: extract_thread_runtime_active_flags(&response),
+        })
+    }
+
+    pub async fn rollback_thread(
+        &self,
+        engine_thread_id: &str,
+        num_turns: u32,
+    ) -> anyhow::Result<ThreadSyncSnapshot> {
+        let transport = self.ensure_ready_transport().await?;
+        let response = request_with_fallback(
+            transport.as_ref(),
+            THREAD_ROLLBACK_METHODS,
+            serde_json::json!({
+                "threadId": engine_thread_id,
+                "numTurns": num_turns,
+            }),
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to rollback codex thread")?;
+
+        Ok(ThreadSyncSnapshot {
+            title: extract_thread_title(&response),
+            preview: extract_thread_preview(&response),
+            raw_status: extract_thread_runtime_status_type(&response),
+            active_flags: extract_thread_runtime_active_flags(&response),
+        })
+    }
+
+    pub async fn compact_thread(&self, engine_thread_id: &str) -> anyhow::Result<()> {
+        let transport = self.ensure_ready_transport().await?;
+        request_with_fallback(
+            transport.as_ref(),
+            THREAD_COMPACT_START_METHODS,
+            serde_json::json!({
+                "threadId": engine_thread_id,
+            }),
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to start codex thread compaction")?;
+
+        Ok(())
     }
 
     pub async fn health_report(&self) -> CodexHealthReport {

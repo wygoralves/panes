@@ -243,6 +243,34 @@ pub fn update_thread_title(db: &Database, thread_id: &str, title: &str) -> anyho
     Ok(())
 }
 
+pub fn refresh_thread_message_stats(db: &Database, thread_id: &str) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    let (message_count, total_tokens, latest_message_at): (i64, i64, Option<String>) = conn
+        .query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(COALESCE(token_input, 0) + COALESCE(token_output, 0)), 0),
+                MAX(created_at)
+             FROM messages
+             WHERE thread_id = ?1",
+            params![thread_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .context("failed to recalculate thread message stats")?;
+
+    conn.execute(
+        "UPDATE threads
+         SET message_count = ?1,
+             total_tokens = ?2,
+             last_activity_at = COALESCE(?3, datetime('now'))
+         WHERE id = ?4",
+        params![message_count, total_tokens, latest_message_at, thread_id],
+    )
+    .context("failed to persist recalculated thread message stats")?;
+
+    Ok(())
+}
+
 pub fn update_thread_runtime_snapshot(
     db: &Database,
     thread_id: &str,
@@ -409,7 +437,9 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
-    use crate::db::{workspaces, ConnectionPool, SQLITE_POOL_MAX_IDLE};
+    use crate::db::{
+        messages, workspaces, ConnectionPool, SQLITE_POOL_MAX_IDLE,
+    };
 
     use super::*;
 
@@ -475,5 +505,44 @@ mod tests {
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );
+    }
+
+    #[test]
+    fn refresh_thread_message_stats_recomputes_counters_from_messages() {
+        let db = test_db();
+        let thread = test_thread(&db, "Stats");
+        messages::insert_user_message(
+            &db,
+            &thread.id,
+            "Count this turn",
+            None,
+            Some("codex"),
+            Some("gpt-5.3-codex"),
+            Some("low"),
+        )
+        .unwrap();
+        let assistant = messages::insert_assistant_placeholder(
+            &db,
+            &thread.id,
+            Some("codex"),
+            Some("gpt-5.3-codex"),
+            Some("low"),
+        )
+        .unwrap();
+        messages::complete_assistant_message(
+            &db,
+            &assistant.id,
+            crate::models::MessageStatusDto::Completed,
+            Some((13, 21)),
+            Some("gpt-5.3-codex"),
+        )
+        .unwrap();
+
+        refresh_thread_message_stats(&db, &thread.id).unwrap();
+
+        let refreshed = get_thread(&db, &thread.id).unwrap().unwrap();
+        assert_eq!(refreshed.message_count, 2);
+        assert_eq!(refreshed.total_tokens, 34);
+        assert!(!refreshed.last_activity_at.is_empty());
     }
 }

@@ -1,4 +1,5 @@
 use anyhow::Context;
+use chrono::{Duration as ChronoDuration, Utc};
 use std::collections::HashMap;
 
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
@@ -59,6 +60,147 @@ pub fn delete_message(db: &Database, message_id: &str) -> anyhow::Result<()> {
     conn.execute("DELETE FROM messages WHERE id = ?1", params![message_id])
         .context("failed to delete message")?;
     Ok(())
+}
+
+pub fn clone_thread_messages(
+    db: &Database,
+    source_thread_id: &str,
+    target_thread_id: &str,
+) -> anyhow::Result<usize> {
+    let messages = get_thread_messages(db, source_thread_id)?;
+    let mut conn = db.connect()?;
+    let tx = conn
+        .transaction()
+        .context("failed to start thread message clone transaction")?;
+
+    for (index, message) in messages.iter().enumerate() {
+        let token_usage = message.token_usage.as_ref().cloned().unwrap_or(TokenUsageDto {
+            input: 0,
+            output: 0,
+        });
+        let created_at = (Utc::now() + ChronoDuration::milliseconds(index as i64))
+            .format("%Y-%m-%d %H:%M:%S%.3f")
+            .to_string();
+
+        tx.execute(
+            "INSERT INTO messages (
+                id, thread_id, role, content, blocks_json, turn_engine_id, turn_model_id,
+                turn_reasoning_effort, schema_version, stream_seq, status, token_input,
+                token_output, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13)",
+            params![
+                Uuid::new_v4().to_string(),
+                target_thread_id,
+                message.role,
+                message.content,
+                message.blocks.as_ref().map(Value::to_string),
+                message.turn_engine_id,
+                message.turn_model_id,
+                message.turn_reasoning_effort,
+                message.schema_version,
+                message.status.as_str(),
+                token_usage.input as i64,
+                token_usage.output as i64,
+                created_at,
+            ],
+        )
+        .context("failed to clone thread message")?;
+    }
+
+    tx.commit()
+        .context("failed to commit thread message clone transaction")?;
+    Ok(messages.len())
+}
+
+pub fn drop_last_turns(
+    db: &Database,
+    thread_id: &str,
+    num_turns: u32,
+) -> anyhow::Result<usize> {
+    let messages = get_thread_messages(db, thread_id)?;
+    let user_message_indexes = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, message)| (message.role == "user").then_some(index))
+        .collect::<Vec<_>>();
+
+    let turns_to_drop = usize::try_from(num_turns).unwrap_or(usize::MAX);
+    if turns_to_drop == 0 {
+        anyhow::bail!("num_turns must be at least 1");
+    }
+    if user_message_indexes.len() < turns_to_drop {
+        anyhow::bail!(
+            "cannot drop {turns_to_drop} turns from local thread history with only {} user turns",
+            user_message_indexes.len()
+        );
+    }
+
+    let cutoff_index = user_message_indexes[user_message_indexes.len() - turns_to_drop];
+    let message_ids = messages
+        .iter()
+        .skip(cutoff_index)
+        .map(|message| message.id.clone())
+        .collect::<Vec<_>>();
+    if message_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let placeholders = std::iter::repeat_n("?", message_ids.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let delete_actions_sql =
+        format!("DELETE FROM actions WHERE thread_id = ? AND message_id IN ({placeholders})");
+    let delete_approvals_sql =
+        format!("DELETE FROM approvals WHERE thread_id = ? AND message_id IN ({placeholders})");
+    let delete_messages_sql =
+        format!("DELETE FROM messages WHERE thread_id = ? AND id IN ({placeholders})");
+
+    let mut conn = db.connect()?;
+    let tx = conn
+        .transaction()
+        .context("failed to start thread rollback transaction")?;
+
+    let mut actions_params = Vec::with_capacity(message_ids.len() + 1);
+    actions_params.push(rusqlite::types::Value::from(thread_id.to_string()));
+    actions_params.extend(
+        message_ids
+            .iter()
+            .cloned()
+            .map(rusqlite::types::Value::from),
+    );
+    tx.execute(&delete_actions_sql, params_from_iter(actions_params))
+        .context("failed to delete rolled-back thread actions")?;
+
+    let mut approvals_params = Vec::with_capacity(message_ids.len() + 1);
+    approvals_params.push(rusqlite::types::Value::from(thread_id.to_string()));
+    approvals_params.extend(
+        message_ids
+            .iter()
+            .cloned()
+            .map(rusqlite::types::Value::from),
+    );
+    tx.execute(&delete_approvals_sql, params_from_iter(approvals_params))
+        .context("failed to delete rolled-back thread approvals")?;
+    tx.execute(
+        "DELETE FROM approvals WHERE thread_id = ?1 AND status = 'pending'",
+        params![thread_id],
+    )
+    .context("failed to clear pending approvals after rollback")?;
+
+    let mut message_params = Vec::with_capacity(message_ids.len() + 1);
+    message_params.push(rusqlite::types::Value::from(thread_id.to_string()));
+    message_params.extend(
+        message_ids
+            .iter()
+            .cloned()
+            .map(rusqlite::types::Value::from),
+    );
+    tx.execute(&delete_messages_sql, params_from_iter(message_params))
+        .context("failed to delete rolled-back thread messages")?;
+
+    tx.commit()
+        .context("failed to commit thread rollback transaction")?;
+    Ok(message_ids.len())
 }
 
 pub fn update_assistant_blocks_json(
@@ -1232,5 +1374,128 @@ mod tests {
         let (status, decision) = approval_block_status(blocks).unwrap();
         assert_eq!(status, "answered");
         assert_eq!(decision, Some("accept"));
+    }
+
+    #[test]
+    fn clone_thread_messages_copies_message_history_and_metadata() {
+        let db = test_db();
+        let source_thread_id = test_thread(&db);
+        let target_thread_id = test_thread(&db);
+
+        let user_message = insert_user_message(
+            &db,
+            &source_thread_id,
+            "Branch this history",
+            Some(json!([{ "type": "text", "content": "Branch this history" }])),
+            Some("codex"),
+            Some("gpt-5.3-codex"),
+            Some("medium"),
+        )
+        .unwrap();
+        let assistant_message = insert_message(
+            &db,
+            &source_thread_id,
+            "assistant",
+            Some("Created branch preview".to_string()),
+            Some(json!([{ "type": "text", "content": "Created branch preview" }])),
+            MessageStatusDto::Completed,
+            Some("codex"),
+            Some("gpt-5.3-codex"),
+            Some("medium"),
+        )
+        .unwrap();
+        let conn = db.connect().unwrap();
+        conn.execute(
+            "UPDATE messages SET token_input = 7, token_output = 11 WHERE id = ?1",
+            params![assistant_message.id],
+        )
+        .unwrap();
+        drop(conn);
+
+        let cloned = clone_thread_messages(&db, &source_thread_id, &target_thread_id).unwrap();
+        assert_eq!(cloned, 2);
+
+        let source_messages = get_thread_messages(&db, &source_thread_id).unwrap();
+        let target_messages = get_thread_messages(&db, &target_thread_id).unwrap();
+        assert_eq!(source_messages.len(), target_messages.len());
+        assert_ne!(source_messages[0].id, target_messages[0].id);
+        assert_eq!(target_messages[0].role, "user");
+        assert_eq!(target_messages[0].content.as_deref(), Some("Branch this history"));
+        assert_eq!(target_messages[0].turn_engine_id.as_deref(), Some("codex"));
+        assert_eq!(target_messages[0].turn_model_id.as_deref(), Some("gpt-5.3-codex"));
+        assert_eq!(target_messages[0].turn_reasoning_effort.as_deref(), Some("medium"));
+        assert_eq!(target_messages[0].status, MessageStatusDto::Completed);
+        assert_eq!(target_messages[1].role, "assistant");
+        assert_eq!(target_messages[1].content.as_deref(), Some("Created branch preview"));
+        assert_eq!(target_messages[1].status, MessageStatusDto::Completed);
+        assert_eq!(
+            target_messages[1].token_usage.as_ref().map(|usage| (usage.input, usage.output)),
+            Some((7, 11))
+        );
+        assert!(
+            target_messages[0].created_at <= target_messages[1].created_at,
+            "cloned message ordering should be preserved",
+        );
+        let _ = user_message;
+    }
+
+    #[test]
+    fn drop_last_turns_removes_latest_turn_and_pending_approvals() {
+        let db = test_db();
+        let thread_id = test_thread(&db);
+        insert_user_message(&db, &thread_id, "turn 1", None, None, None, None).unwrap();
+        insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            Some("answer 1".to_string()),
+            Some(json!([])),
+            MessageStatusDto::Completed,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        insert_user_message(&db, &thread_id, "turn 2", None, None, None, None).unwrap();
+        let pending_assistant = insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            None,
+            Some(approval_blocks_json("approval-rollback")),
+            MessageStatusDto::Streaming,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        actions::insert_approval(
+            &db,
+            "approval-rollback",
+            &thread_id,
+            &pending_assistant.id,
+            &ActionType::Command,
+            "Run cleanup",
+            &json!({}),
+        )
+        .unwrap();
+
+        let removed = drop_last_turns(&db, &thread_id, 1).unwrap();
+        assert_eq!(removed, 2);
+
+        let remaining_messages = get_thread_messages(&db, &thread_id).unwrap();
+        assert_eq!(remaining_messages.len(), 2);
+        assert_eq!(remaining_messages[0].content.as_deref(), Some("turn 1"));
+        assert_eq!(remaining_messages[1].content.as_deref(), Some("answer 1"));
+
+        let conn = db.connect().unwrap();
+        let approval_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM approvals WHERE thread_id = ?1",
+                params![thread_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(approval_count, 0);
     }
 }

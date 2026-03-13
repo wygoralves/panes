@@ -194,6 +194,12 @@ export const ipc = {
   restoreThread: (threadId: string) => invoke<Thread>("restore_thread", { threadId }),
   syncThreadFromEngine: (threadId: string) =>
     invoke<Thread>("sync_thread_from_engine", { threadId }),
+  forkCodexThread: (threadId: string) =>
+    invoke<Thread>("fork_codex_thread", { threadId }),
+  rollbackCodexThread: (threadId: string, numTurns: number) =>
+    invoke<Thread>("rollback_codex_thread", { threadId, numTurns }),
+  compactCodexThread: (threadId: string) =>
+    invoke<Thread>("compact_codex_thread", { threadId }),
   deleteThread: (threadId: string) => invoke<void>("delete_thread", { threadId }),
   listEngines: () => invoke<EngineInfo[]>("list_engines"),
   engineHealth: (engineId: string) => invoke<EngineHealth>("engine_health", { engineId }),

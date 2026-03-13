@@ -141,6 +141,24 @@
       "mcpOauth": "OAuth do MCP"
     }
   },
+  "threadPicker": {
+    "title": "Ferramentas da thread",
+    "shortTitle": "Thread",
+    "subtitle": "As ações nativas de histórico do Codex criam ou alteram a thread vinculada no app-server.",
+    "working": "Processando...",
+    "invalidTurns": "A quantidade de turnos para rollback precisa ser 1 ou maior.",
+    "forkTitle": "Ramificar thread",
+    "forkDescription": "Cria uma nova thread derivada do Codex a partir do histórico atual mantido no servidor.",
+    "forkAction": "Ramificar",
+    "rollbackTitle": "Rollback em ramificação",
+    "rollbackDescription": "Cria uma nova thread ramificada e remove os turnos mais recentes do histórico local e do servidor.",
+    "rollbackTurns": "Turnos a remover",
+    "rollbackWarning": "Rollback não desfaz mudanças no sistema de arquivos. Ele só ramifica o histórico do chat.",
+    "rollbackAction": "Rollback",
+    "compactTitle": "Compactar contexto",
+    "compactDescription": "Pede ao Codex para compactar o contexto da thread ativa no servidor.",
+    "compactAction": "Compactar"
+  },
   "policy": {
     "trustTitle": "Confiança",
     "approvalTitleCodex": "Aprovação",
@@ -247,6 +265,13 @@
     "toasts": {
       "codexSandboxUnavailable": "As opções de sandbox somente leitura e escrita no workspace do Codex ficam indisponíveis enquanto o Panes usa sandbox externo.",
       "codexOnlySandbox": "As opções de sandbox só estão disponíveis para threads do Codex.",
+      "codexThreadToolUnavailable": "As ferramentas nativas de thread do Codex só estão disponíveis para threads ativas do Codex com histórico no servidor.",
+      "codexThreadForkFailed": "Falha ao ramificar a thread ativa do Codex.",
+      "codexThreadRollbackFailed": "Falha ao fazer rollback da thread ativa do Codex.",
+      "codexThreadCompactFailed": "Falha ao iniciar a compactação da thread do Codex.",
+      "codexThreadForked": "Uma nova thread ramificada do Codex foi criada.",
+      "codexThreadRolledBack": "Uma nova ramificação com rollback dos últimos {{count}} turnos foi criada.",
+      "codexThreadCompactionStarted": "A compactação da thread do Codex foi iniciada.",
       "claudeSandboxUnsupported": "Claude suporta apenas os modos de sandbox somente leitura e escrita no workspace.",
       "fullAccessNetworkWarning": "O modo acesso total habilita temporariamente o acesso à rede.",
       "updateExecutionPolicyFailed": "Falha ao atualizar a política de execução da thread: {{error}}",

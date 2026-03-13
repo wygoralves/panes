@@ -5,8 +5,9 @@ use tauri::State;
 use crate::{
     db,
     engines::validate_engine_sandbox_mode,
-    models::{ThreadDto, ThreadStatusDto},
+    models::{RepoDto, ThreadDto, ThreadStatusDto, TrustLevelDto},
     state::AppState,
+    engines::SandboxPolicy,
 };
 
 const MAX_THREAD_TITLE_CHARS: usize = 120;
@@ -388,6 +389,141 @@ pub async fn sync_thread_from_engine(
 }
 
 #[tauri::command]
+pub async fn fork_codex_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<ThreadDto, String> {
+    if state.turns.get(&thread_id).await.is_some() {
+        return Err("cannot fork a thread while a turn is still active".to_string());
+    }
+
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if thread.engine_id != "codex" {
+        return Err("native fork is only available for Codex threads".to_string());
+    }
+    let engine_thread_id = thread
+        .engine_thread_id
+        .clone()
+        .ok_or_else(|| "Codex thread has not been initialized yet".to_string())?;
+    let (cwd, model_id, sandbox) = build_codex_branch_context(state.inner(), &thread).await?;
+
+    let forked = state
+        .engines
+        .fork_codex_thread(&engine_thread_id, &cwd, &model_id, sandbox)
+        .await
+        .map_err(err_to_string)?;
+
+    create_codex_branch_thread(
+        state.inner(),
+        &thread,
+        &forked.engine_thread_id,
+        &forked.model_id,
+        forked.title.as_deref(),
+        forked.preview.as_deref(),
+        forked.raw_status.as_deref(),
+        &forked.active_flags,
+        None,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn rollback_codex_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+    num_turns: u32,
+) -> Result<ThreadDto, String> {
+    if num_turns == 0 {
+        return Err("rollback requires at least one turn".to_string());
+    }
+    if state.turns.get(&thread_id).await.is_some() {
+        return Err("cannot rollback a thread while a turn is still active".to_string());
+    }
+
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if thread.engine_id != "codex" {
+        return Err("native rollback is only available for Codex threads".to_string());
+    }
+    let engine_thread_id = thread
+        .engine_thread_id
+        .clone()
+        .ok_or_else(|| "Codex thread has not been initialized yet".to_string())?;
+    let (cwd, model_id, sandbox) = build_codex_branch_context(state.inner(), &thread).await?;
+
+    let forked = state
+        .engines
+        .fork_codex_thread(&engine_thread_id, &cwd, &model_id, sandbox)
+        .await
+        .map_err(err_to_string)?;
+    let rollback_snapshot = state
+        .engines
+        .rollback_codex_thread(&forked.engine_thread_id, num_turns)
+        .await
+        .map_err(err_to_string)?;
+
+    create_codex_branch_thread(
+        state.inner(),
+        &thread,
+        &forked.engine_thread_id,
+        &forked.model_id,
+        rollback_snapshot.title.as_deref().or(forked.title.as_deref()),
+        rollback_snapshot.preview.as_deref().or(forked.preview.as_deref()),
+        rollback_snapshot.raw_status.as_deref().or(forked.raw_status.as_deref()),
+        &rollback_snapshot.active_flags,
+        Some(num_turns),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn compact_codex_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<ThreadDto, String> {
+    if state.turns.get(&thread_id).await.is_some() {
+        return Err("cannot compact a thread while a turn is still active".to_string());
+    }
+
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if thread.engine_id != "codex" {
+        return Err("native compact is only available for Codex threads".to_string());
+    }
+    let engine_thread_id = thread
+        .engine_thread_id
+        .clone()
+        .ok_or_else(|| "Codex thread has not been initialized yet".to_string())?;
+
+    state
+        .engines
+        .compact_codex_thread(&engine_thread_id)
+        .await
+        .map_err(err_to_string)?;
+
+    Ok(thread)
+}
+
+#[tauri::command]
 pub async fn set_thread_execution_policy(
     state: State<'_, AppState>,
     thread_id: String,
@@ -764,6 +900,445 @@ fn merge_codex_runtime_metadata(
     }
 
     metadata
+}
+
+async fn build_codex_branch_context(
+    state: &AppState,
+    thread: &ThreadDto,
+) -> Result<(String, String, SandboxPolicy), String> {
+    let db = state.db.clone();
+    let (workspace, repos, selected_repo) = run_db(db, {
+        let workspace_id = thread.workspace_id.clone();
+        let thread_id = thread.id.clone();
+        let repo_id = thread.repo_id.clone();
+        move |db| {
+            let workspace = db::workspaces::list_workspaces(db)?
+                .into_iter()
+                .find(|item| item.id == workspace_id)
+                .ok_or_else(|| anyhow::anyhow!("workspace not found for thread {thread_id}"))?;
+            let repos = db::repos::get_repos(db, &workspace_id)?;
+            let selected_repo = if let Some(repo_id) = repo_id.as_deref() {
+                db::repos::find_repo_by_id(db, repo_id)?
+            } else {
+                None
+            };
+            Ok((workspace, repos, selected_repo))
+        }
+    })
+    .await?;
+
+    let workspace_root = workspace.root_path.clone();
+    let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref())?;
+    let sandbox_mode = sandbox_mode_override
+        .clone()
+        .unwrap_or_else(|| "workspace-write".to_string());
+    let workspace_writable_roots = if selected_repo.is_some() {
+        None
+    } else {
+        Some(resolve_workspace_writable_roots(
+            repos.iter().map(|repo| repo.path.as_str()),
+            workspace_root.as_str(),
+            thread.engine_metadata.as_ref(),
+        )?)
+    };
+    let trust_level = selected_repo
+        .as_ref()
+        .map(|repo| repo.trust_level.clone())
+        .unwrap_or_else(|| aggregate_workspace_trust_level(&repos));
+    let codex_external_sandbox_active = state.engines.codex_uses_external_sandbox().await;
+
+    if unsupported_thread_sandbox_override_for_external_sandbox(
+        sandbox_mode_override.as_deref(),
+        codex_external_sandbox_active,
+    ) {
+        return Err(
+            "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode. Clear the override or restore local Codex sandboxing first.".to_string(),
+        );
+    }
+
+    validate_engine_sandbox_mode(thread.engine_id.as_str(), Some(sandbox_mode.as_str()))?;
+
+    if workspace_write_confirmation_required(
+        workspace_writable_roots.as_ref(),
+        sandbox_mode.as_str(),
+        workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
+    ) {
+        return Err(
+            "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
+        );
+    }
+
+    let writable_roots = match selected_repo.as_ref() {
+        Some(repo) => vec![repo.path.clone()],
+        None => workspace_writable_roots
+            .as_ref()
+            .map(|resolution| resolution.roots.clone())
+            .unwrap_or_else(|| vec![workspace_root.clone()]),
+    };
+    let allow_network =
+        if sandbox_mode.eq_ignore_ascii_case("danger-full-access") {
+            true
+        } else {
+            thread_allow_network_override(thread.engine_metadata.as_ref())
+                .unwrap_or_else(|| allow_network_for_trust_level(&trust_level))
+        };
+    let approval_policy_override = thread_approval_policy_override_value(
+        thread.engine_id.as_str(),
+        thread.engine_metadata.as_ref(),
+    )?;
+
+    Ok((
+        selected_repo
+            .as_ref()
+            .map(|repo| repo.path.clone())
+            .unwrap_or(workspace_root),
+        thread_last_model_id(thread.engine_metadata.as_ref()).unwrap_or_else(|| thread.model_id.clone()),
+        SandboxPolicy {
+            writable_roots,
+            allow_network,
+            approval_policy: Some(approval_policy_override.unwrap_or_else(|| {
+                Value::String(
+                    approval_policy_for_engine_and_trust_level(
+                        thread.engine_id.as_str(),
+                        &trust_level,
+                    )
+                    .to_string(),
+                )
+            })),
+            reasoning_effort: thread_reasoning_effort(thread.engine_metadata.as_ref()),
+            sandbox_mode: Some(sandbox_mode),
+            service_tier: thread_service_tier(thread.engine_metadata.as_ref()),
+            personality: thread_personality(thread.engine_metadata.as_ref()),
+            output_schema: thread_output_schema(thread.engine_metadata.as_ref()),
+        },
+    ))
+}
+
+async fn create_codex_branch_thread(
+    state: &AppState,
+    source_thread: &ThreadDto,
+    engine_thread_id: &str,
+    model_id: &str,
+    title: Option<&str>,
+    preview: Option<&str>,
+    raw_status: Option<&str>,
+    active_flags: &[String],
+    rollback_turns: Option<u32>,
+) -> Result<ThreadDto, String> {
+    let db = state.db.clone();
+    run_db(db.clone(), {
+        let source_thread = source_thread.clone();
+        let engine_thread_id = engine_thread_id.to_string();
+        let model_id = model_id.to_string();
+        let title = title.map(str::to_string);
+        let preview = preview.map(str::to_string);
+        let raw_status = raw_status.map(str::to_string);
+        let active_flags = active_flags.to_vec();
+        move |db| {
+            let created = db::threads::create_thread(
+                db,
+                &source_thread.workspace_id,
+                source_thread.repo_id.as_deref(),
+                &source_thread.engine_id,
+                &model_id,
+                title.as_deref().unwrap_or(&source_thread.title),
+            )?;
+            db::threads::set_engine_thread_id(db, &created.id, &engine_thread_id)?;
+            db::messages::clone_thread_messages(db, &source_thread.id, &created.id)?;
+            if let Some(turns) = rollback_turns {
+                db::messages::drop_last_turns(db, &created.id, turns)?;
+            }
+            db::threads::refresh_thread_message_stats(db, &created.id)?;
+
+            let metadata = clone_codex_branch_metadata(
+                source_thread.engine_metadata.as_ref(),
+                &model_id,
+                raw_status.as_deref(),
+                &active_flags,
+                preview.as_deref(),
+            );
+            let next_status = map_codex_thread_status_to_local(raw_status.as_deref(), &active_flags, false);
+            db::threads::update_thread_runtime_snapshot(
+                db,
+                &created.id,
+                title.as_deref(),
+                next_status,
+                Some(&metadata),
+            )
+        }
+    })
+    .await
+}
+
+fn clone_codex_branch_metadata(
+    existing: Option<&Value>,
+    model_id: &str,
+    raw_status: Option<&str>,
+    active_flags: &[String],
+    preview: Option<&str>,
+) -> Value {
+    let mut metadata = existing.cloned().unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        metadata = json!({});
+    }
+
+    if let Some(object) = metadata.as_object_mut() {
+        object.remove("manualTitle");
+        object.remove("manualTitleUpdatedAt");
+        object.insert("lastModelId".to_string(), json!(model_id));
+    }
+
+    merge_codex_runtime_metadata(Some(metadata), raw_status, active_flags, preview, false, None)
+}
+
+fn workspace_write_opt_in_enabled(metadata: Option<&Value>) -> bool {
+    metadata
+        .and_then(|value| value.get("workspaceWriteOptIn"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn aggregate_workspace_trust_level(repos: &[RepoDto]) -> TrustLevelDto {
+    if repos
+        .iter()
+        .any(|repo| matches!(repo.trust_level, TrustLevelDto::Restricted))
+    {
+        return TrustLevelDto::Restricted;
+    }
+
+    if !repos.is_empty()
+        && repos
+            .iter()
+            .all(|repo| matches!(repo.trust_level, TrustLevelDto::Trusted))
+    {
+        return TrustLevelDto::Trusted;
+    }
+
+    TrustLevelDto::Standard
+}
+
+fn approval_policy_for_engine_and_trust_level(
+    engine_id: &str,
+    trust_level: &TrustLevelDto,
+) -> &'static str {
+    match engine_id {
+        "claude" => match trust_level {
+            TrustLevelDto::Trusted => "trusted",
+            TrustLevelDto::Standard => "standard",
+            TrustLevelDto::Restricted => "restricted",
+        },
+        _ => match trust_level {
+            TrustLevelDto::Trusted | TrustLevelDto::Standard => "on-request",
+            TrustLevelDto::Restricted => "untrusted",
+        },
+    }
+}
+
+fn allow_network_for_trust_level(trust_level: &TrustLevelDto) -> bool {
+    matches!(trust_level, TrustLevelDto::Trusted)
+}
+
+fn thread_approval_policy_override_value(
+    engine_id: &str,
+    metadata: Option<&Value>,
+) -> Result<Option<Value>, String> {
+    match engine_id {
+        "claude" => Ok(metadata
+            .and_then(|value| value.get("claudePermissionMode"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| matches!(*value, "trusted" | "standard" | "restricted"))
+            .map(|value| Value::String(value.to_string()))),
+        _ => metadata
+            .and_then(|value| value.get("sandboxApprovalPolicy"))
+            .cloned()
+            .map(normalize_codex_approval_policy)
+            .transpose(),
+    }
+}
+
+fn thread_allow_network_override(metadata: Option<&Value>) -> Option<bool> {
+    metadata
+        .and_then(|value| value.get("sandboxAllowNetwork"))
+        .and_then(Value::as_bool)
+}
+
+fn thread_sandbox_mode(metadata: Option<&Value>) -> Result<Option<String>, String> {
+    let value = metadata
+        .and_then(|value| value.get("sandboxMode"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    let normalized = match value.to_lowercase().as_str() {
+        "readonly" | "read-only" | "read_only" => "read-only",
+        "workspacewrite" | "workspace-write" | "workspace_write" => "workspace-write",
+        "dangerfullaccess" | "danger-full-access" | "danger_full_access" => "danger-full-access",
+        _ => {
+            return Err(format!(
+                "invalid sandbox mode `{value}` on thread metadata. expected one of: read-only, workspace-write, danger-full-access"
+            ))
+        }
+    };
+
+    Ok(Some(normalized.to_string()))
+}
+
+fn workspace_writable_roots_from_metadata(metadata: Option<&Value>) -> Result<Option<Vec<String>>, String> {
+    let Some(raw_roots) = metadata.and_then(|value| value.get("workspaceWritableRoots")) else {
+        return Ok(None);
+    };
+
+    let roots = raw_roots.as_array().ok_or_else(|| {
+        "invalid `workspaceWritableRoots` on thread metadata. expected an array of paths".to_string()
+    })?;
+
+    let mut normalized = Vec::with_capacity(roots.len());
+    for root in roots {
+        let root = root
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                "invalid `workspaceWritableRoots` on thread metadata. expected non-empty string paths"
+                    .to_string()
+            })?;
+        normalized.push(root.to_string());
+    }
+
+    Ok(Some(normalized))
+}
+
+struct WorkspaceWritableRootsResolution {
+    roots: Vec<String>,
+    requires_confirmation: bool,
+}
+
+fn resolve_workspace_writable_roots<'a>(
+    repo_paths: impl IntoIterator<Item = &'a str>,
+    workspace_root: &str,
+    metadata: Option<&Value>,
+) -> Result<WorkspaceWritableRootsResolution, String> {
+    let available_roots: Vec<String> = repo_paths.into_iter().map(ToOwned::to_owned).collect();
+    let confirmed_roots = workspace_writable_roots_from_metadata(metadata)?;
+
+    if let Some(confirmed_roots) = confirmed_roots {
+        if confirmed_roots.is_empty() {
+            return Ok(WorkspaceWritableRootsResolution {
+                roots: vec![workspace_root.to_string()],
+                requires_confirmation: false,
+            });
+        }
+
+        let available_set: std::collections::HashSet<&str> =
+            available_roots.iter().map(String::as_str).collect();
+        let mut filtered_roots = Vec::with_capacity(confirmed_roots.len());
+        for root in confirmed_roots {
+            if available_set.contains(root.as_str()) {
+                filtered_roots.push(root);
+            }
+        }
+        if !filtered_roots.is_empty() {
+            return Ok(WorkspaceWritableRootsResolution {
+                roots: filtered_roots,
+                requires_confirmation: false,
+            });
+        }
+
+        return Ok(match available_roots.len() {
+            0 => WorkspaceWritableRootsResolution {
+                roots: vec![workspace_root.to_string()],
+                requires_confirmation: false,
+            },
+            1 => WorkspaceWritableRootsResolution {
+                roots: available_roots,
+                requires_confirmation: false,
+            },
+            _ => WorkspaceWritableRootsResolution {
+                roots: available_roots,
+                requires_confirmation: true,
+            },
+        });
+    }
+
+    if available_roots.is_empty() {
+        Ok(WorkspaceWritableRootsResolution {
+            roots: vec![workspace_root.to_string()],
+            requires_confirmation: false,
+        })
+    } else {
+        Ok(WorkspaceWritableRootsResolution {
+            roots: available_roots,
+            requires_confirmation: false,
+        })
+    }
+}
+
+fn sandbox_mode_requires_workspace_opt_in(mode: &str) -> bool {
+    !mode.eq_ignore_ascii_case("read-only")
+}
+
+fn workspace_write_confirmation_required(
+    resolution: Option<&WorkspaceWritableRootsResolution>,
+    sandbox_mode: &str,
+    opt_in_enabled: bool,
+) -> bool {
+    let Some(resolution) = resolution else {
+        return false;
+    };
+
+    sandbox_mode_requires_workspace_opt_in(sandbox_mode)
+        && (resolution.requires_confirmation || (resolution.roots.len() > 1 && !opt_in_enabled))
+}
+
+fn unsupported_thread_sandbox_override_for_external_sandbox(
+    sandbox_mode: Option<&str>,
+    external_sandbox_active: bool,
+) -> bool {
+    external_sandbox_active && matches!(sandbox_mode, Some("read-only" | "workspace-write"))
+}
+
+fn thread_reasoning_effort(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("reasoningEffort"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
+fn thread_last_model_id(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("lastModelId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn thread_service_tier(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("serviceTier"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| matches!(*value, "fast" | "flex"))
+        .map(ToOwned::to_owned)
+}
+
+fn thread_personality(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("personality"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| matches!(*value, "none" | "friendly" | "pragmatic"))
+        .map(ToOwned::to_owned)
+}
+
+fn thread_output_schema(metadata: Option<&Value>) -> Option<Value> {
+    metadata.and_then(|value| value.get("outputSchema")).cloned()
 }
 
 fn map_codex_thread_status_to_local(

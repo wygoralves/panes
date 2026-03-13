@@ -57,6 +57,7 @@ import {
   type CodexServiceTierValue,
 } from "./CodexConfigPicker";
 import { CodexRuntimePicker } from "./CodexRuntimePicker";
+import { CodexThreadPicker } from "./CodexThreadPicker";
 import { PermissionPicker } from "./PermissionPicker";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
@@ -1297,6 +1298,9 @@ export function ChatPanel() {
   const {
     activeThread,
     createThread,
+    forkCodexThread,
+    rollbackCodexThread,
+    compactCodexThread,
     refreshThreads,
     setActiveThread: setActiveThreadInStore,
     applyThreadUpdateLocal,
@@ -1307,6 +1311,9 @@ export function ChatPanel() {
     useShallow((state) => ({
       activeThread: state.threads.find((thread) => thread.id === state.activeThreadId) ?? null,
       createThread: state.createThread,
+      forkCodexThread: state.forkCodexThread,
+      rollbackCodexThread: state.rollbackCodexThread,
+      compactCodexThread: state.compactCodexThread,
       refreshThreads: state.refreshThreads,
       setActiveThread: state.setActiveThread,
       applyThreadUpdateLocal: state.applyThreadUpdateLocal,
@@ -2593,6 +2600,49 @@ export function ChatPanel() {
       );
       return false;
     }
+  }
+
+  async function onForkCodexThread() {
+    if (!activeThread || activeThread.engineId !== "codex") {
+      throw new Error(t("panel.toasts.codexThreadToolUnavailable"));
+    }
+
+    const forkedThread = await forkCodexThread(activeThread.id);
+    if (!forkedThread) {
+      throw new Error(t("panel.toasts.codexThreadForkFailed"));
+    }
+
+    setActiveThreadInStore(forkedThread.id);
+    await bindChatThread(forkedThread.id);
+    toast.success(t("panel.toasts.codexThreadForked"));
+  }
+
+  async function onRollbackCodexThread(numTurns: number) {
+    if (!activeThread || activeThread.engineId !== "codex") {
+      throw new Error(t("panel.toasts.codexThreadToolUnavailable"));
+    }
+
+    const rolledBackThread = await rollbackCodexThread(activeThread.id, numTurns);
+    if (!rolledBackThread) {
+      throw new Error(t("panel.toasts.codexThreadRollbackFailed"));
+    }
+
+    setActiveThreadInStore(rolledBackThread.id);
+    await bindChatThread(rolledBackThread.id);
+    toast.success(t("panel.toasts.codexThreadRolledBack", { count: numTurns }));
+  }
+
+  async function onCompactCodexThread() {
+    if (!activeThread || activeThread.engineId !== "codex") {
+      throw new Error(t("panel.toasts.codexThreadToolUnavailable"));
+    }
+
+    const compactedThread = await compactCodexThread(activeThread.id);
+    if (!compactedThread) {
+      throw new Error(t("panel.toasts.codexThreadCompactFailed"));
+    }
+
+    toast.success(t("panel.toasts.codexThreadCompactionStarted"));
   }
 
   async function onSubmit(event: FormEvent) {
@@ -4050,6 +4100,17 @@ export function ChatPanel() {
                     skills={
                       codexReferenceCatalogState.skillsLoaded ? codexSkills : undefined
                     }
+                  />
+                  <CodexThreadPicker
+                    disabled={
+                      !activeThread ||
+                      activeThread.engineId !== "codex" ||
+                      !activeThread.engineThreadId ||
+                      streaming
+                    }
+                    onFork={onForkCodexThread}
+                    onRollback={onRollbackCodexThread}
+                    onCompact={onCompactCodexThread}
                   />
                   <CodexConfigPicker
                     activeCount={codexConfigActiveCount}

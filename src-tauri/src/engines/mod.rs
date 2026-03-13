@@ -9,7 +9,10 @@ use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    engines::{claude_sidecar::ClaudeSidecarEngine, codex::CodexEngine},
+    engines::{
+        claude_sidecar::ClaudeSidecarEngine,
+        codex::{CodexEngine, CodexForkedThread},
+    },
     models::{
         CodexAppDto, CodexSkillDto, EngineCapabilitiesDto, EngineHealthDto, EngineInfoDto,
         EngineModelAvailabilityNuxDto, EngineModelDto, EngineModelUpgradeInfoDto,
@@ -384,6 +387,30 @@ impl EngineManager {
 
     pub async fn list_codex_apps(&self) -> anyhow::Result<Vec<CodexAppDto>> {
         self.codex.list_apps().await
+    }
+
+    pub async fn fork_codex_thread(
+        &self,
+        engine_thread_id: &str,
+        cwd: &str,
+        model: &str,
+        sandbox: SandboxPolicy,
+    ) -> anyhow::Result<CodexForkedThread> {
+        self.codex
+            .fork_thread(engine_thread_id, cwd, model, sandbox)
+            .await
+    }
+
+    pub async fn rollback_codex_thread(
+        &self,
+        engine_thread_id: &str,
+        num_turns: u32,
+    ) -> anyhow::Result<ThreadSyncSnapshot> {
+        self.codex.rollback_thread(engine_thread_id, num_turns).await
+    }
+
+    pub async fn compact_codex_thread(&self, engine_thread_id: &str) -> anyhow::Result<()> {
+        self.codex.compact_thread(engine_thread_id).await
     }
 
     pub async fn ensure_engine_thread(

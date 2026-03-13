@@ -141,6 +141,24 @@
       "mcpOauth": "MCP OAuth"
     }
   },
+  "threadPicker": {
+    "title": "Thread tools",
+    "shortTitle": "Thread",
+    "subtitle": "Native Codex history actions create or modify the linked app-server thread.",
+    "working": "Working...",
+    "invalidTurns": "Rollback turns must be 1 or greater.",
+    "forkTitle": "Fork thread",
+    "forkDescription": "Create a new Codex branch thread from the current server-backed history.",
+    "forkAction": "Fork",
+    "rollbackTitle": "Rollback into branch",
+    "rollbackDescription": "Create a new branch thread and remove the latest turns from its local and server history.",
+    "rollbackTurns": "Turns to remove",
+    "rollbackWarning": "Rollback does not undo filesystem changes. It only branches the chat history.",
+    "rollbackAction": "Rollback",
+    "compactTitle": "Compact context",
+    "compactDescription": "Ask Codex to compact the active thread context on the server.",
+    "compactAction": "Compact"
+  },
   "policy": {
     "trustTitle": "Trust",
     "approvalTitleCodex": "Approval",
@@ -247,6 +265,13 @@
     "toasts": {
       "codexSandboxUnavailable": "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode.",
       "codexOnlySandbox": "Sandbox overrides are only available for Codex threads.",
+      "codexThreadToolUnavailable": "Native Codex thread tools are only available for active Codex threads with server history.",
+      "codexThreadForkFailed": "Failed to fork the active Codex thread.",
+      "codexThreadRollbackFailed": "Failed to rollback the active Codex thread.",
+      "codexThreadCompactFailed": "Failed to start Codex thread compaction.",
+      "codexThreadForked": "Created a new forked Codex thread.",
+      "codexThreadRolledBack": "Created a new rollback branch with the last {{count}} turn removed.",
+      "codexThreadCompactionStarted": "Started Codex thread compaction.",
       "claudeSandboxUnsupported": "Claude supports only read-only and workspace-write sandbox modes.",
       "fullAccessNetworkWarning": "Full access sandbox temporarily enables network access.",
       "updateExecutionPolicyFailed": "Failed to update thread execution policy: {{error}}",
