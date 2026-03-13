@@ -849,7 +849,12 @@ impl Engine for ClaudeSidecarEngine {
                 .collect::<Vec<_>>(),
             "cwd": cwd,
             "model": thread_config.model_id,
-            "approvalPolicy": thread_config.sandbox.approval_policy.clone(),
+            "approvalPolicy": thread_config
+                .sandbox
+                .approval_policy
+                .as_ref()
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
             "allowNetwork": thread_config.sandbox.allow_network,
             "writableRoots": thread_config.sandbox.writable_roots.clone(),
             "sandboxMode": thread_config.sandbox.sandbox_mode.clone(),

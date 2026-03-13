@@ -49,6 +49,45 @@
     "sandbox": "Sandbox",
     "network": "Network"
   },
+  "configPicker": {
+    "title": "Turn configuration",
+    "shortTitle": "Config",
+    "subtitle": "Codex thread overrides are applied on the next turn and persisted for later turns.",
+    "customCount": "{{count}} custom",
+    "personality": "Personality",
+    "personalityDescription": "Set Codex tone for future turns on this thread.",
+    "personalityUnsupported": "The selected model does not advertise personality support. You can still clear an existing override here.",
+    "serviceTier": "Service tier",
+    "serviceTierDescription": "Choose the tradeoff between lower latency and flex capacity.",
+    "outputSchema": "Output schema",
+    "outputSchemaDescription": "Optional JSON Schema constraint for final assistant responses on this thread.",
+    "outputSchemaPlaceholder": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"summary\": { \"type\": \"string\" }\n  },\n  \"required\": [\"summary\"],\n  \"additionalProperties\": false\n}",
+    "outputSchemaHint": "Paste a JSON Schema object or `true`/`false`.",
+    "outputSchemaSet": "Output schema enabled",
+    "approvalPolicy": "Advanced approval policy",
+    "approvalPolicyDescription": "Optional structured reject object. When set, it overrides the simple approval picker for Codex.",
+    "approvalPolicyPlaceholder": "{\n  \"reject\": {\n    \"mcp_elicitations\": true,\n    \"rules\": false,\n    \"sandbox_approval\": false\n  }\n}",
+    "applySchema": "Apply schema",
+    "clearSchema": "Clear schema",
+    "clearCustomApproval": "Clear custom approval policy",
+    "save": "Save",
+    "saving": "Saving...",
+    "reset": "Reset",
+    "inherit": "Auto",
+    "personalities": {
+      "none": "None",
+      "friendly": "Friendly",
+      "pragmatic": "Pragmatic"
+    },
+    "serviceTiers": {
+      "fast": "Fast",
+      "flex": "Flex"
+    },
+    "invalidJson": "Invalid JSON: {{error}}",
+    "invalidApprovalPolicy": "Approval policy must be a JSON object.",
+    "invalidOutputSchemaType": "expected a JSON Schema object or boolean",
+    "invalidOutputSchema": "Output schema must be valid JSON Schema object or boolean: {{error}}"
+  },
   "policy": {
     "trustTitle": "Trust",
     "approvalTitleCodex": "Approval",
@@ -156,7 +195,11 @@
       "codexOnlySandbox": "Sandbox overrides are only available for Codex threads.",
       "claudeSandboxUnsupported": "Claude supports only read-only and workspace-write sandbox modes.",
       "fullAccessNetworkWarning": "Full access sandbox temporarily enables network access.",
-      "updateExecutionPolicyFailed": "Failed to update thread execution policy: {{error}}"
+      "updateExecutionPolicyFailed": "Failed to update thread execution policy: {{error}}",
+      "updateCodexConfigFailed": "Failed to update Codex turn config: {{error}}",
+      "invalidOutputSchema": "Output schema must be valid JSON Schema object or boolean: {{error}}",
+      "invalidCustomApprovalPolicy": "Structured approval policy must be a JSON object.",
+      "invalidCustomApprovalPolicyWithError": "Structured approval policy is invalid JSON: {{error}}"
     }
   },
   "messageBlocks": {

@@ -5275,6 +5275,139 @@ button, input, textarea, select {
   color: var(--bg-0);
 }
 
+.codex-config-popover {
+  width: min(420px, calc(100vw - 16px));
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-1) 92%, black);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(18px);
+}
+
+.codex-config-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.codex-config-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.codex-config-subtitle {
+  margin-top: 2px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+.codex-config-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-2);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.codex-config-fields {
+  display: grid;
+  gap: 10px;
+}
+
+.codex-config-field {
+  display: grid;
+  gap: 5px;
+}
+
+.codex-config-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.codex-config-select,
+.codex-config-textarea {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font-size: 12px;
+  padding: 8px 10px;
+}
+
+.codex-config-textarea {
+  min-height: 96px;
+  resize: vertical;
+  font-family: var(--font-mono);
+  line-height: 1.5;
+}
+
+.codex-config-textarea-wrap {
+  position: relative;
+}
+
+.codex-config-select:focus,
+.codex-config-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.codex-config-clear {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-1);
+  color: var(--text-3);
+}
+
+.codex-config-clear:hover {
+  color: var(--text-1);
+  border-color: var(--text-3);
+}
+
+.codex-config-note {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+.codex-config-error {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.12);
+  color: rgb(252, 165, 165);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.codex-config-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 /* ── Context Usage Bar ─────────────────────────────────────────────── */
 
 .chat-context-bar {

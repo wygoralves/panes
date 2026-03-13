@@ -46,6 +46,12 @@ import {
   requiresCustomApprovalPayload,
 } from "./toolInputApproval";
 import { ModelPicker } from "./ModelPicker";
+import {
+  CodexConfigPicker,
+  type CodexConfigPatch,
+  type CodexPersonalityValue,
+  type CodexServiceTierValue,
+} from "./CodexConfigPicker";
 import { PermissionPicker } from "./PermissionPicker";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
@@ -122,11 +128,15 @@ type CodexThreadApprovalPolicyValue =
   | "untrusted"
   | "on-failure"
   | "on-request"
-  | "never";
+  | "never"
+  | "custom";
 type ClaudeThreadPermissionModeValue = "inherit" | "restricted" | "standard" | "trusted";
 type ThreadApprovalPolicyValue =
   | CodexThreadApprovalPolicyValue
   | ClaudeThreadPermissionModeValue;
+type ThreadApprovalPolicyStateValue =
+  | ThreadApprovalPolicyValue
+  | Record<string, unknown>;
 type ThreadSandboxModeValue =
   | "inherit"
   | "read-only"
@@ -134,7 +144,7 @@ type ThreadSandboxModeValue =
   | "danger-full-access";
 type ThreadNetworkPolicyValue = "inherit" | "enabled" | "restricted";
 type ThreadExecutionPolicyPatch = Partial<{
-  approvalPolicy: ThreadApprovalPolicyValue;
+  approvalPolicy: ThreadApprovalPolicyStateValue;
   sandboxMode: ThreadSandboxModeValue;
   networkPolicy: ThreadNetworkPolicyValue;
 }>;
@@ -489,6 +499,20 @@ function formatEngineModelLabel(
   return effortLabel ? `${baseLabel} ${effortLabel}` : baseLabel;
 }
 
+function serializePrettyJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return "";
+  }
+}
+
+function isCustomCodexApprovalPolicyValue(
+  value: unknown,
+): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function readCodexThreadApprovalPolicyValue(thread: Thread | null): CodexThreadApprovalPolicyValue {
   const value = thread?.engineMetadata?.sandboxApprovalPolicy;
   if (
@@ -499,7 +523,39 @@ function readCodexThreadApprovalPolicyValue(thread: Thread | null): CodexThreadA
   ) {
     return value;
   }
+  if (isCustomCodexApprovalPolicyValue(value)) {
+    return "custom";
+  }
   return "inherit";
+}
+
+function readCodexThreadCustomApprovalPolicyText(thread: Thread | null): string {
+  const value = thread?.engineMetadata?.sandboxApprovalPolicy;
+  return isCustomCodexApprovalPolicyValue(value) ? serializePrettyJson(value) : "";
+}
+
+function readThreadPersonalityValue(thread: Thread | null): CodexPersonalityValue {
+  const value = thread?.engineMetadata?.personality;
+  if (value === "none" || value === "friendly" || value === "pragmatic") {
+    return value;
+  }
+  return "inherit";
+}
+
+function readThreadServiceTierValue(thread: Thread | null): CodexServiceTierValue {
+  const value = thread?.engineMetadata?.serviceTier;
+  if (value === "fast" || value === "flex") {
+    return value;
+  }
+  return "inherit";
+}
+
+function readThreadOutputSchemaText(thread: Thread | null): string {
+  const value = thread?.engineMetadata?.outputSchema;
+  if (value === undefined || value === null) {
+    return "";
+  }
+  return serializePrettyJson(value);
 }
 
 function readClaudeThreadPermissionModeValue(
@@ -560,12 +616,16 @@ function readThreadWorkspaceWritableRoots(thread: Thread | null): string[] {
 }
 
 function readThreadExecutionPolicyState(thread: Thread | null): {
-  approvalPolicy: ThreadApprovalPolicyValue;
+  approvalPolicy: ThreadApprovalPolicyStateValue;
   sandboxMode: ThreadSandboxModeValue;
   networkPolicy: ThreadNetworkPolicyValue;
 } {
+  const rawApprovalPolicy = thread?.engineMetadata?.sandboxApprovalPolicy;
   return {
-    approvalPolicy: readThreadApprovalPolicyValue(thread),
+    approvalPolicy:
+      thread?.engineId === "codex" && isCustomCodexApprovalPolicyValue(rawApprovalPolicy)
+        ? rawApprovalPolicy
+        : readThreadApprovalPolicyValue(thread),
     sandboxMode: readThreadSandboxModeValue(thread),
     networkPolicy: readThreadStoredNetworkPolicyValue(thread),
   };
@@ -576,9 +636,17 @@ function applyThreadExecutionPolicyPatch(
   patch: ThreadExecutionPolicyPatch,
 ): Thread {
   const metadata = { ...(thread.engineMetadata ?? {}) };
+  const currentCodexApprovalPolicy = thread.engineMetadata?.sandboxApprovalPolicy;
+  const nextApprovalPolicy =
+    Object.prototype.hasOwnProperty.call(patch, "approvalPolicy")
+      ? patch.approvalPolicy
+      : isCustomCodexApprovalPolicyValue(currentCodexApprovalPolicy)
+        ? currentCodexApprovalPolicy
+        : readThreadApprovalPolicyValue(thread);
   const nextState = {
     ...readThreadExecutionPolicyState(thread),
     ...patch,
+    approvalPolicy: nextApprovalPolicy,
   };
 
   if (thread.engineId === "claude") {
@@ -592,16 +660,18 @@ function applyThreadExecutionPolicyPatch(
       delete metadata.claudePermissionMode;
     }
   } else {
-    if (
+    if (isCustomCodexApprovalPolicyValue(nextState.approvalPolicy)) {
+      metadata.sandboxApprovalPolicy = nextState.approvalPolicy;
+    } else if (
       nextState.approvalPolicy === "untrusted" ||
       nextState.approvalPolicy === "on-failure" ||
       nextState.approvalPolicy === "on-request" ||
       nextState.approvalPolicy === "never"
     ) {
       metadata.sandboxApprovalPolicy = nextState.approvalPolicy;
-      } else {
-        delete metadata.sandboxApprovalPolicy;
-      }
+    } else {
+      delete metadata.sandboxApprovalPolicy;
+    }
   }
 
   if (nextState.sandboxMode === "inherit") {
@@ -625,12 +695,12 @@ function applyThreadExecutionPolicyPatch(
 function toThreadExecutionPolicyRequest(
   patch: ThreadExecutionPolicyPatch,
 ): {
-  approvalPolicy?: string | null;
+  approvalPolicy?: unknown;
   sandboxMode?: string | null;
   allowNetwork?: boolean | null;
 } {
   const request: {
-    approvalPolicy?: string | null;
+    approvalPolicy?: unknown;
     sandboxMode?: string | null;
     allowNetwork?: boolean | null;
   } = {};
@@ -651,6 +721,41 @@ function toThreadExecutionPolicyRequest(
   }
 
   return request;
+}
+
+function parseStoredOutputSchema(
+  text: string,
+): Record<string, unknown> | boolean | null {
+  const normalized = text.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = JSON.parse(normalized) as unknown;
+  if (
+    typeof parsed !== "boolean" &&
+    (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+  ) {
+    throw new Error("output schema must be a JSON Schema object or boolean");
+  }
+
+  return parsed as Record<string, unknown> | boolean;
+}
+
+function parseStoredApprovalPolicy(
+  text: string,
+): Record<string, unknown> | null {
+  const normalized = text.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = JSON.parse(normalized) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("approval policy must be a JSON object");
+  }
+
+  return parsed as Record<string, unknown>;
 }
 
 function encodeModelOptionValue(engineId: string, modelId: string): string {
@@ -1070,6 +1175,10 @@ export function ChatPanel() {
   const [selectedEngineId, setSelectedEngineId] = useState("codex");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [selectedEffort, setSelectedEffort] = useState("medium");
+  const [selectedPersonality, setSelectedPersonality] = useState<CodexPersonalityValue>("inherit");
+  const [selectedServiceTier, setSelectedServiceTier] = useState<CodexServiceTierValue>("inherit");
+  const [outputSchemaText, setOutputSchemaText] = useState("");
+  const [customApprovalPolicyText, setCustomApprovalPolicyText] = useState("");
   const [editingThreadTitle, setEditingThreadTitle] = useState(false);
   const [threadTitleDraft, setThreadTitleDraft] = useState("");
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(
@@ -1200,6 +1309,10 @@ export function ChatPanel() {
     engineId: string;
     modelId: string;
     effort: string | null;
+    personality: CodexPersonalityValue;
+    serviceTier: CodexServiceTierValue;
+    outputSchemaText: string;
+    customApprovalPolicyText: string;
   } | null>(null);
 
   const trustLevelOptions = useMemo(() => getTrustLevelOptions(t), [t]);
@@ -1257,6 +1370,49 @@ export function ChatPanel() {
     () => availableModels.find((model) => model.id === selectedModelId) ?? availableModels[0] ?? null,
     [availableModels, selectedModelId],
   );
+  const selectedModelSupportsPersonality = selectedEngineId === "codex" &&
+    selectedModel?.supportsPersonality === true;
+  const codexConfigActiveCount =
+    (selectedPersonality !== "inherit" ? 1 : 0) +
+    (selectedServiceTier !== "inherit" ? 1 : 0) +
+    (outputSchemaText.trim().length > 0 ? 1 : 0) +
+    (customApprovalPolicyText.trim().length > 0 ? 1 : 0);
+  const selectedOutputSchemaValue = useMemo(() => {
+    try {
+      return parseStoredOutputSchema(outputSchemaText);
+    } catch {
+      return null;
+    }
+  }, [outputSchemaText]);
+  const selectedCustomApprovalPolicyValue = useMemo(() => {
+    try {
+      return parseStoredApprovalPolicy(customApprovalPolicyText);
+    } catch {
+      return null;
+    }
+  }, [customApprovalPolicyText]);
+  const activeThreadMatchesComposer = useMemo(() => {
+    if (!activeThread || !activeWorkspaceId || !selectedModelId) {
+      return false;
+    }
+
+    const activeScopeRepoId = activeRepo?.id ?? null;
+    const inScope =
+      activeThread.workspaceId === activeWorkspaceId &&
+      activeThread.repoId === activeScopeRepoId;
+    const engineMatch = activeThread.engineId === selectedEngineId;
+    const modelMatch =
+      activeThread.modelId === selectedModelId ||
+      readThreadLastModelId(activeThread) === selectedModelId;
+
+    return inScope && engineMatch && modelMatch;
+  }, [
+    activeRepo?.id,
+    activeThread,
+    activeWorkspaceId,
+    selectedEngineId,
+    selectedModelId,
+  ]);
 
   const supportedEfforts = useMemo(
     () => selectedModel?.supportedReasoningEfforts ?? [],
@@ -1335,6 +1491,10 @@ export function ChatPanel() {
     activeThread?.engineId === "claude"
       ? claudeThreadPermissionModeOptions
       : codexThreadApprovalPolicyOptions;
+  const activeThreadApprovalSelectedLabel =
+    activeThread?.engineId === "codex" && activeThreadApprovalPolicy === "custom"
+      ? t("permissionPicker.custom")
+      : undefined;
   const activeThreadSandboxMode = readThreadSandboxModeValue(activeThread);
   const activeThreadNetworkPolicy = readThreadNetworkPolicyValue(activeThread);
   const activeThreadCapabilities = useMemo(
@@ -1768,6 +1928,17 @@ export function ChatPanel() {
   ]);
 
   useEffect(() => {
+    if (activeThread?.engineId !== "codex") {
+      return;
+    }
+
+    setSelectedPersonality(readThreadPersonalityValue(activeThread));
+    setSelectedServiceTier(readThreadServiceTierValue(activeThread));
+    setOutputSchemaText(readThreadOutputSchemaText(activeThread));
+    setCustomApprovalPolicyText(readCodexThreadCustomApprovalPolicyText(activeThread));
+  }, [activeThread?.engineId, activeThread?.id, activeThread?.engineMetadata]);
+
+  useEffect(() => {
     if (!activeThread) {
       lastSyncedThreadIdRef.current = null;
       manuallyOverrodeThreadSelectionRef.current = false;
@@ -2035,6 +2206,162 @@ export function ChatPanel() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [cancel]);
 
+  function parseOutputSchemaDraft(
+    draftText: string = outputSchemaText,
+  ): { ok: true; value: unknown | null } | { ok: false } {
+    try {
+      return { ok: true, value: parseStoredOutputSchema(draftText) };
+    } catch (error) {
+      toast.error(
+        t("configPicker.invalidOutputSchema", {
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      return { ok: false };
+    }
+  }
+
+  function parseCustomApprovalPolicyDraft(
+    draftText: string = customApprovalPolicyText,
+  ):
+    | { ok: true; value: Record<string, unknown> | null }
+    | { ok: false } {
+    try {
+      return { ok: true, value: parseStoredApprovalPolicy(draftText) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(
+        message === "approval policy must be a JSON object"
+          ? t("panel.toasts.invalidCustomApprovalPolicy")
+          : t("panel.toasts.invalidCustomApprovalPolicyWithError", {
+              error: message,
+            }),
+      );
+      return { ok: false };
+    }
+  }
+
+  async function onCodexConfigSave(patch: CodexConfigPatch) {
+    const nextPersonality =
+      (patch.updatePersonality
+        ? (patch.personality ?? "inherit")
+        : selectedPersonality) as CodexPersonalityValue;
+    const nextServiceTier =
+      (patch.updateServiceTier
+        ? (patch.serviceTier ?? "inherit")
+        : selectedServiceTier) as CodexServiceTierValue;
+    const nextOutputSchemaText = patch.updateOutputSchema
+      ? serializePrettyJson(patch.outputSchema)
+      : outputSchemaText;
+    const nextCustomApprovalPolicyText = patch.updateApprovalPolicy
+      ? serializePrettyJson(patch.approvalPolicy)
+      : customApprovalPolicyText;
+    const applyLocalState = () => {
+      setSelectedPersonality(nextPersonality);
+      setSelectedServiceTier(nextServiceTier);
+      setOutputSchemaText(nextOutputSchemaText);
+      setCustomApprovalPolicyText(nextCustomApprovalPolicyText);
+    };
+
+    if (!activeThreadMatchesComposer || activeThread?.engineId !== "codex") {
+      applyLocalState();
+      return;
+    }
+
+    try {
+      if (patch.updatePersonality || patch.updateServiceTier || patch.updateOutputSchema) {
+        const updatedThread = await ipc.setThreadCodexConfig(activeThread.id, {
+          personality: patch.updatePersonality ? patch.personality : undefined,
+          serviceTier: patch.updateServiceTier ? patch.serviceTier : undefined,
+          outputSchema: patch.updateOutputSchema ? patch.outputSchema : undefined,
+        });
+        applyThreadUpdateLocal(updatedThread);
+      }
+
+      if (patch.updateApprovalPolicy) {
+        const updatedThread = await ipc.setThreadExecutionPolicy(activeThread.id, {
+          approvalPolicy: patch.approvalPolicy,
+        });
+        applyThreadUpdateLocal(updatedThread);
+      }
+
+      applyLocalState();
+    } catch (error) {
+      throw new Error(
+        t("panel.toasts.updateCodexConfigFailed", { error: String(error) }),
+      );
+    }
+  }
+
+  async function applyCodexConfigToThread(
+    targetThreadId: string,
+    config?: {
+      engineId: string;
+      personality: CodexPersonalityValue;
+      serviceTier: CodexServiceTierValue;
+      outputSchemaText: string;
+      customApprovalPolicyText: string;
+    },
+  ): Promise<boolean> {
+    const effectiveEngineId = config?.engineId ?? selectedEngineId;
+    if (effectiveEngineId !== "codex") {
+      return true;
+    }
+
+    const effectiveConfig = config ?? {
+      engineId: selectedEngineId,
+      personality: selectedPersonality,
+      serviceTier: selectedServiceTier,
+      outputSchemaText,
+      customApprovalPolicyText,
+    };
+
+    const outputSchemaDraft = parseOutputSchemaDraft(effectiveConfig.outputSchemaText);
+    if (!outputSchemaDraft.ok) {
+      return false;
+    }
+    const customApprovalDraft =
+      parseCustomApprovalPolicyDraft(effectiveConfig.customApprovalPolicyText);
+    if (!customApprovalDraft.ok) {
+      return false;
+    }
+
+    try {
+      const updatedConfigThread = await ipc.setThreadCodexConfig(targetThreadId, {
+        personality:
+          effectiveConfig.personality === "inherit" ? null : effectiveConfig.personality,
+        serviceTier:
+          effectiveConfig.serviceTier === "inherit" ? null : effectiveConfig.serviceTier,
+        outputSchema: outputSchemaDraft.value,
+      });
+      applyThreadUpdateLocal(updatedConfigThread);
+
+      const latestThread =
+        useThreadStore.getState().threads.find((thread) => thread.id === targetThreadId) ??
+        updatedConfigThread;
+      const approvalMode = readCodexThreadApprovalPolicyValue(latestThread);
+
+      if (customApprovalDraft.value) {
+        const updatedThread = await ipc.setThreadExecutionPolicy(targetThreadId, {
+          approvalPolicy: customApprovalDraft.value,
+        });
+        applyThreadUpdateLocal(updatedThread);
+      } else if (approvalMode === "custom") {
+        const updatedThread = await ipc.setThreadExecutionPolicy(targetThreadId, {
+          approvalPolicy: null,
+        });
+        applyThreadUpdateLocal(updatedThread);
+      }
+
+      return true;
+    } catch (error) {
+      toast.error(
+        t("panel.toasts.updateCodexConfigFailed", { error: String(error) }),
+      );
+      return false;
+    }
+  }
+
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (!input.trim() || !activeWorkspaceId || !selectedModelId || streaming) return;
@@ -2106,6 +2433,10 @@ export function ChatPanel() {
           engineId: selectedEngineId,
           modelId: selectedModelId!,
           effort: selectedReasoningEffort,
+          personality: selectedPersonality,
+          serviceTier: selectedServiceTier,
+          outputSchemaText,
+          customApprovalPolicyText,
         });
         return;
       }
@@ -2117,6 +2448,9 @@ export function ChatPanel() {
     if (selectedReasoningEffort) {
       await ipc.setThreadReasoningEffort(targetThreadId, selectedReasoningEffort, selectedModelId);
       setThreadReasoningEffortLocal(targetThreadId, selectedReasoningEffort);
+    }
+    if (!(await applyCodexConfigToThread(targetThreadId))) {
+      return;
     }
     setThreadLastModelLocal(targetThreadId, selectedModelId);
 
@@ -2145,6 +2479,17 @@ export function ChatPanel() {
       if (prompt.effort) {
         await ipc.setThreadReasoningEffort(prompt.threadId, prompt.effort, prompt.modelId);
         setThreadReasoningEffortLocal(prompt.threadId, prompt.effort);
+      }
+      if (!(await applyCodexConfigToThread(prompt.threadId, {
+        engineId: prompt.engineId,
+        personality: prompt.personality,
+        serviceTier: prompt.serviceTier,
+        outputSchemaText: prompt.outputSchemaText,
+        customApprovalPolicyText: prompt.customApprovalPolicyText,
+      }))) {
+        setInput(prompt.text);
+        setAttachments(prompt.attachments);
+        return;
       }
       setThreadLastModelLocal(prompt.threadId, prompt.modelId);
 
@@ -3422,6 +3767,22 @@ export function ChatPanel() {
                 disabled={availableModels.length === 0}
               />
 
+              {selectedEngineId === "codex" && (
+                <>
+                  <div className="chat-toolbar-divider" />
+                  <CodexConfigPicker
+                    activeCount={codexConfigActiveCount}
+                    personalitySupported={selectedModelSupportsPersonality}
+                    personalityValue={selectedPersonality}
+                    serviceTierValue={selectedServiceTier}
+                    outputSchemaValue={selectedOutputSchemaValue}
+                    structuredApprovalPolicyValue={selectedCustomApprovalPolicyValue}
+                    onSave={onCodexConfigSave}
+                    disabled={!activeWorkspaceId}
+                  />
+                </>
+              )}
+
               {(activeRepo ||
                 repos.length > 0 ||
                 activeThread?.engineId === "codex" ||
@@ -3456,6 +3817,11 @@ export function ChatPanel() {
                         ? activeThreadApprovalPolicy
                         : undefined
                     }
+                    approvalSelectedLabel={
+                      activeThread?.engineId === "codex"
+                        ? activeThreadApprovalSelectedLabel
+                        : undefined
+                    }
                     approvalOptions={
                       activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
                         ? activeThreadApprovalOptions
@@ -3463,10 +3829,14 @@ export function ChatPanel() {
                     }
                     onApprovalChange={
                       activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
-                        ? (value) =>
+                        ? (value) => {
+                            if (activeThread?.engineId === "codex") {
+                              setCustomApprovalPolicyText("");
+                            }
                             void onThreadExecutionPolicyChange({
                               approvalPolicy: value as ThreadApprovalPolicyValue,
-                            })
+                            });
+                          }
                         : undefined
                     }
                     sandboxValue={

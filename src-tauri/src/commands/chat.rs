@@ -367,22 +367,37 @@ pub async fn send_message(
             thread_allow_network_override(thread.engine_metadata.as_ref())
                 .unwrap_or_else(|| allow_network_for_trust_level(&trust_level))
         };
+    let personality = if thread.engine_id == "codex"
+        && model_supports_personality(state.inner(), &thread.engine_id, &effective_model_id).await
+    {
+        thread_personality(thread.engine_metadata.as_ref())
+    } else {
+        None
+    };
+
+    let approval_policy_override =
+        thread_approval_policy_override_value(thread.engine_id.as_str(), thread.engine_metadata.as_ref())?;
 
     let sandbox = SandboxPolicy {
         writable_roots,
         allow_network,
         approval_policy: Some(
-            thread_approval_policy_override(
-                thread.engine_id.as_str(),
-                thread.engine_metadata.as_ref(),
-            )
+            approval_policy_override
             .unwrap_or_else(|| {
-                approval_policy_for_engine_and_trust_level(thread.engine_id.as_str(), &trust_level)
-                    .to_string()
+                Value::String(
+                    approval_policy_for_engine_and_trust_level(
+                        thread.engine_id.as_str(),
+                        &trust_level,
+                    )
+                    .to_string(),
+                )
             }),
         ),
         reasoning_effort,
         sandbox_mode: Some(sandbox_mode),
+        service_tier: thread_service_tier(thread.engine_metadata.as_ref()),
+        personality,
+        output_schema: thread_output_schema(thread.engine_metadata.as_ref()),
     };
 
     let engine_thread_id = state
@@ -2079,20 +2094,21 @@ fn allow_network_for_trust_level(trust_level: &TrustLevelDto) -> bool {
     matches!(trust_level, TrustLevelDto::Trusted)
 }
 
-fn thread_approval_policy_override(engine_id: &str, metadata: Option<&Value>) -> Option<String> {
+fn thread_approval_policy_override_value(
+    engine_id: &str,
+    metadata: Option<&Value>,
+) -> Result<Option<Value>, String> {
     match engine_id {
-        "claude" => metadata
+        "claude" => Ok(metadata
             .and_then(|value| value.get("claudePermissionMode"))
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| matches!(*value, "trusted" | "standard" | "restricted"))
-            .map(ToOwned::to_owned),
+            .map(|value| Value::String(value.to_string()))),
         _ => metadata
             .and_then(|value| value.get("sandboxApprovalPolicy"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| matches!(*value, "untrusted" | "on-failure" | "on-request" | "never"))
-            .map(ToOwned::to_owned),
+            .map(normalize_codex_approval_policy_value)
+            .transpose(),
     }
 }
 
@@ -2250,6 +2266,79 @@ fn thread_reasoning_effort(metadata: Option<&Value>) -> Option<String> {
         .and_then(|value| value.get("reasoningEffort"))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
+}
+
+fn thread_service_tier(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("serviceTier"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| matches!(*value, "fast" | "flex"))
+        .map(ToOwned::to_owned)
+}
+
+fn thread_personality(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("personality"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| matches!(*value, "none" | "friendly" | "pragmatic"))
+        .map(ToOwned::to_owned)
+}
+
+fn thread_output_schema(metadata: Option<&Value>) -> Option<Value> {
+    metadata.and_then(|value| value.get("outputSchema")).cloned()
+}
+
+fn normalize_codex_approval_policy_value(value: &Value) -> Result<Value, String> {
+    match value {
+        Value::String(raw) => {
+            let normalized = raw.trim();
+            if matches!(normalized, "untrusted" | "on-failure" | "on-request" | "never") {
+                Ok(Value::String(normalized.to_string()))
+            } else {
+                Err(format!(
+                    "invalid approval policy `{normalized}`. expected one of: untrusted, on-failure, on-request, never"
+                ))
+            }
+        }
+        Value::Object(object) => {
+            let reject = object
+                .get("reject")
+                .and_then(Value::as_object)
+                .ok_or_else(|| "invalid structured approval policy. expected a `reject` object".to_string())?;
+
+            for required_key in ["mcp_elicitations", "rules", "sandbox_approval"] {
+                if !reject
+                    .get(required_key)
+                    .and_then(Value::as_bool)
+                    .is_some()
+                {
+                    return Err(format!(
+                        "invalid structured approval policy. missing boolean reject.{required_key}"
+                    ));
+                }
+            }
+
+            if reject.contains_key("request_permissions")
+                && reject
+                    .get("request_permissions")
+                    .and_then(Value::as_bool)
+                    .is_none()
+            {
+                return Err(
+                    "invalid structured approval policy. reject.request_permissions must be a boolean"
+                        .to_string(),
+                );
+            }
+
+            Ok(Value::Object(object.clone()))
+        }
+        _ => Err(
+            "invalid approval policy. expected a string mode or structured reject object"
+                .to_string(),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -2470,13 +2559,30 @@ mod tests {
         });
 
         assert_eq!(
-            thread_approval_policy_override("claude", Some(&metadata)).as_deref(),
-            Some("restricted")
+            thread_approval_policy_override_value("claude", Some(&metadata)).unwrap(),
+            Some(Value::String("restricted".to_string()))
         );
         assert_eq!(
-            thread_approval_policy_override("codex", Some(&metadata)).as_deref(),
-            Some("never")
+            thread_approval_policy_override_value("codex", Some(&metadata)).unwrap(),
+            Some(Value::String("never".to_string()))
         );
+    }
+
+    #[test]
+    fn invalid_structured_codex_approval_policy_is_rejected() {
+        let metadata = serde_json::json!({
+            "sandboxApprovalPolicy": {
+                "reject": {
+                    "rules": true,
+                    "sandbox_approval": false
+                }
+            }
+        });
+
+        let error = thread_approval_policy_override_value("codex", Some(&metadata))
+            .expect_err("expected malformed structured approval policy to fail");
+
+        assert!(error.contains("reject.mcp_elicitations"));
     }
 
     #[test]
@@ -2677,6 +2783,23 @@ async fn resolve_turn_model_id(
     }
 
     Ok(requested_model_id.to_string())
+}
+
+async fn model_supports_personality(
+    state: &AppState,
+    engine_id: &str,
+    model_id: &str,
+) -> bool {
+    let Ok(engines) = state.engines.list_engines().await else {
+        return false;
+    };
+
+    engines
+        .iter()
+        .find(|engine| engine.id == engine_id)
+        .and_then(|engine| engine.models.iter().find(|model| model.id == model_id))
+        .map(|model| model.supports_personality)
+        .unwrap_or(false)
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {

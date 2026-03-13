@@ -78,9 +78,12 @@ struct PendingApproval {
 struct ThreadRuntime {
     cwd: String,
     model_id: String,
-    approval_policy: String,
+    approval_policy: serde_json::Value,
     sandbox_policy: serde_json::Value,
     reasoning_effort: Option<String>,
+    service_tier: Option<String>,
+    personality: Option<String>,
+    output_schema: Option<serde_json::Value>,
 }
 
 #[derive(Default)]
@@ -302,7 +305,7 @@ impl Engine for CodexEngine {
         let approval_policy = sandbox
             .approval_policy
             .clone()
-            .unwrap_or_else(|| "on-request".to_string());
+            .unwrap_or_else(|| serde_json::Value::String("on-request".to_string()));
         let mut force_external_sandbox = self.resolve_external_sandbox_mode().await;
         let mut sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
         let mut sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
@@ -312,6 +315,9 @@ impl Engine for CodexEngine {
             approval_policy: approval_policy.clone(),
             sandbox_policy: sandbox_policy.clone(),
             reasoning_effort: sandbox.reasoning_effort.clone(),
+            service_tier: sandbox.service_tier.clone(),
+            personality: sandbox.personality.clone(),
+            output_schema: sandbox.output_schema.clone(),
         };
 
         let transport = self.ensure_ready_transport().await?;
@@ -347,6 +353,8 @@ impl Engine for CodexEngine {
                 &cwd,
                 &approval_policy,
                 &sandbox_mode,
+                sandbox.service_tier.as_deref(),
+                sandbox.personality.as_deref(),
             );
 
             match request_with_fallback(
@@ -376,6 +384,8 @@ impl Engine for CodexEngine {
           "cwd": cwd.clone(),
           "approvalPolicy": approval_policy.clone(),
           "sandbox": sandbox_mode,
+          "serviceTier": sandbox.service_tier.clone(),
+          "personality": sandbox.personality.clone(),
           "experimentalRawEvents": false,
           "persistExtendedHistory": false,
         });
@@ -410,6 +420,9 @@ impl Engine for CodexEngine {
             &requested_runtime.approval_policy,
             &requested_runtime.sandbox_policy,
             requested_runtime.reasoning_effort.clone(),
+            requested_runtime.service_tier.clone(),
+            requested_runtime.personality.clone(),
+            requested_runtime.output_schema.clone(),
         );
         self.store_thread_runtime(&engine_thread_id, runtime).await;
 
@@ -2110,10 +2123,7 @@ async fn build_turn_start_params(
                 "cwd".to_string(),
                 serde_json::Value::String(runtime.cwd.clone()),
             );
-            params.insert(
-                "approvalPolicy".to_string(),
-                serde_json::Value::String(runtime.approval_policy.clone()),
-            );
+            params.insert("approvalPolicy".to_string(), runtime.approval_policy.clone());
             params.insert("sandboxPolicy".to_string(), runtime.sandbox_policy.clone());
             params.insert(
                 "model".to_string(),
@@ -2124,6 +2134,21 @@ async fn build_turn_start_params(
                     "effort".to_string(),
                     serde_json::Value::String(effort.clone()),
                 );
+            }
+            if let Some(service_tier) = runtime.service_tier.as_ref() {
+                params.insert(
+                    "serviceTier".to_string(),
+                    serde_json::Value::String(service_tier.clone()),
+                );
+            }
+            if let Some(personality) = runtime.personality.as_ref() {
+                params.insert(
+                    "personality".to_string(),
+                    serde_json::Value::String(personality.clone()),
+                );
+            }
+            if let Some(output_schema) = runtime.output_schema.as_ref() {
+                params.insert("outputSchema".to_string(), output_schema.clone());
             }
             if include_plan_protocol_hints && input.plan_mode {
                 if let Some(collaboration_mode) = plan_mode_protocol_payload(runtime) {
@@ -2416,8 +2441,10 @@ fn build_thread_resume_params(
     thread_id: &str,
     model: &str,
     cwd: &str,
-    approval_policy: &str,
+    approval_policy: &serde_json::Value,
     sandbox_mode: &str,
+    service_tier: Option<&str>,
+    personality: Option<&str>,
 ) -> serde_json::Value {
     serde_json::json!({
       "threadId": thread_id,
@@ -2425,6 +2452,8 @@ fn build_thread_resume_params(
       "cwd": cwd,
       "approvalPolicy": approval_policy,
       "sandbox": sandbox_mode,
+      "serviceTier": service_tier,
+      "personality": personality,
       "persistExtendedHistory": false,
     })
 }
@@ -2760,26 +2789,41 @@ fn thread_runtime_from_start_response(
     response: &serde_json::Value,
     fallback_cwd: &str,
     fallback_model: &str,
-    fallback_approval_policy: &str,
+    fallback_approval_policy: &serde_json::Value,
     fallback_sandbox_policy: &serde_json::Value,
     fallback_reasoning_effort: Option<String>,
+    fallback_service_tier: Option<String>,
+    fallback_personality: Option<String>,
+    fallback_output_schema: Option<serde_json::Value>,
 ) -> ThreadRuntime {
     let mut runtime = ThreadRuntime {
         cwd: extract_any_string(response, &["cwd"]).unwrap_or_else(|| fallback_cwd.to_string()),
         model_id: extract_any_string(response, &["model"])
             .unwrap_or_else(|| fallback_model.to_string()),
-        approval_policy: extract_any_string(response, &["approvalPolicy", "approval_policy"])
-            .unwrap_or_else(|| fallback_approval_policy.to_string()),
+        approval_policy: response
+            .get("approvalPolicy")
+            .cloned()
+            .filter(|value| !value.is_null())
+            .unwrap_or_else(|| fallback_approval_policy.clone()),
         sandbox_policy: response
             .get("sandbox")
             .cloned()
             .filter(|value| !value.is_null())
             .unwrap_or_else(|| fallback_sandbox_policy.clone()),
         reasoning_effort: extract_any_string(response, &["reasoningEffort", "reasoning_effort"]),
+        service_tier: extract_any_string(response, &["serviceTier", "service_tier"]),
+        personality: extract_any_string(response, &["personality"]),
+        output_schema: fallback_output_schema,
     };
 
     if runtime.reasoning_effort.is_none() {
         runtime.reasoning_effort = fallback_reasoning_effort;
+    }
+    if runtime.service_tier.is_none() {
+        runtime.service_tier = fallback_service_tier;
+    }
+    if runtime.personality.is_none() {
+        runtime.personality = fallback_personality;
     }
 
     runtime
@@ -2796,6 +2840,9 @@ fn thread_runtime_from_resume_response(
         &requested_runtime.approval_policy,
         &requested_runtime.sandbox_policy,
         requested_runtime.reasoning_effort.clone(),
+        requested_runtime.service_tier.clone(),
+        requested_runtime.personality.clone(),
+        requested_runtime.output_schema.clone(),
     );
 
     // `thread/resume` can echo the previous thread preview, including stale model or effort.
@@ -2805,6 +2852,9 @@ fn thread_runtime_from_resume_response(
     runtime.approval_policy = requested_runtime.approval_policy.clone();
     runtime.sandbox_policy = requested_runtime.sandbox_policy.clone();
     runtime.reasoning_effort = requested_runtime.reasoning_effort.clone();
+    runtime.service_tier = requested_runtime.service_tier.clone();
+    runtime.personality = requested_runtime.personality.clone();
+    runtime.output_schema = requested_runtime.output_schema.clone();
 
     runtime
 }
@@ -3647,8 +3697,10 @@ mod tests {
             "thread-123",
             "gpt-5-codex",
             "/tmp/workspace",
-            "on-request",
+            &json!("on-request"),
             "workspace-write",
+            Some("fast"),
+            Some("friendly"),
         );
 
         assert_eq!(
@@ -3659,6 +3711,8 @@ mod tests {
                 "cwd": "/tmp/workspace",
                 "approvalPolicy": "on-request",
                 "sandbox": "workspace-write",
+                "serviceTier": "fast",
+                "personality": "friendly",
                 "persistExtendedHistory": false,
             })
         );
@@ -3768,14 +3822,17 @@ mod tests {
             &response,
             "/tmp/fallback",
             "gpt-5",
-            "on-request",
+            &json!("on-request"),
             &json!({"type":"workspaceWrite"}),
             Some("medium".to_string()),
+            Some("flex".to_string()),
+            Some("friendly".to_string()),
+            Some(json!({"type":"object"})),
         );
 
         assert_eq!(runtime.cwd, "/tmp/effective");
         assert_eq!(runtime.model_id, "gpt-5.3-codex");
-        assert_eq!(runtime.approval_policy, "untrusted");
+        assert_eq!(runtime.approval_policy, json!("untrusted"));
         assert_eq!(
             runtime.sandbox_policy,
             json!({
@@ -3784,6 +3841,9 @@ mod tests {
             })
         );
         assert_eq!(runtime.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(runtime.service_tier.as_deref(), Some("flex"));
+        assert_eq!(runtime.personality.as_deref(), Some("friendly"));
+        assert_eq!(runtime.output_schema, Some(json!({"type":"object"})));
     }
 
     #[test]
@@ -3793,19 +3853,25 @@ mod tests {
             &response,
             "/tmp/fallback",
             "gpt-5",
-            "on-request",
+            &json!("on-request"),
             &json!({"type":"workspaceWrite","networkAccess":false}),
             Some("medium".to_string()),
+            Some("fast".to_string()),
+            Some("pragmatic".to_string()),
+            Some(json!(true)),
         );
 
         assert_eq!(runtime.cwd, "/tmp/fallback");
         assert_eq!(runtime.model_id, "gpt-5");
-        assert_eq!(runtime.approval_policy, "on-request");
+        assert_eq!(runtime.approval_policy, json!("on-request"));
         assert_eq!(
             runtime.sandbox_policy,
             json!({"type":"workspaceWrite","networkAccess":false})
         );
         assert_eq!(runtime.reasoning_effort.as_deref(), Some("medium"));
+        assert_eq!(runtime.service_tier.as_deref(), Some("fast"));
+        assert_eq!(runtime.personality.as_deref(), Some("pragmatic"));
+        assert_eq!(runtime.output_schema, Some(json!(true)));
     }
 
     #[test]
@@ -3813,13 +3879,16 @@ mod tests {
         let requested_runtime = ThreadRuntime {
             cwd: "/tmp/requested".to_string(),
             model_id: "gpt-5.1-codex-mini".to_string(),
-            approval_policy: "on-request".to_string(),
+            approval_policy: json!("on-request"),
             sandbox_policy: json!({
                 "type": "workspaceWrite",
                 "writableRoots": ["/tmp/requested"],
                 "networkAccess": false,
             }),
             reasoning_effort: Some("medium".to_string()),
+            service_tier: Some("flex".to_string()),
+            personality: Some("friendly".to_string()),
+            output_schema: Some(json!({"type":"object"})),
         };
         let response = json!({
             "cwd": "/tmp/stale",

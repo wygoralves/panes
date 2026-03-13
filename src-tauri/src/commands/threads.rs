@@ -1,5 +1,5 @@
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{json, Value};
 use tauri::State;
 
 use crate::{
@@ -392,7 +392,7 @@ pub async fn set_thread_execution_policy(
     state: State<'_, AppState>,
     thread_id: String,
     update_approval_policy: bool,
-    approval_policy: Option<String>,
+    approval_policy: Option<Value>,
     update_sandbox_mode: bool,
     sandbox_mode: Option<String>,
     update_allow_network: bool,
@@ -415,7 +415,7 @@ async fn set_thread_execution_policy_inner(
     state: &AppState,
     thread_id: String,
     update_approval_policy: bool,
-    approval_policy: Option<String>,
+    approval_policy: Option<Value>,
     update_sandbox_mode: bool,
     sandbox_mode: Option<String>,
     update_allow_network: bool,
@@ -510,6 +510,123 @@ async fn set_thread_execution_policy_inner(
     })
     .await?
     .ok_or_else(|| format!("thread not found after execution policy update: {thread_id}"))
+}
+
+#[tauri::command]
+pub async fn set_thread_codex_config(
+    state: State<'_, AppState>,
+    thread_id: String,
+    update_personality: bool,
+    personality: Option<String>,
+    update_service_tier: bool,
+    service_tier: Option<String>,
+    update_output_schema: bool,
+    output_schema: Option<Value>,
+) -> Result<ThreadDto, String> {
+    set_thread_codex_config_inner(
+        state.inner(),
+        thread_id,
+        update_personality,
+        personality,
+        update_service_tier,
+        service_tier,
+        update_output_schema,
+        output_schema,
+    )
+    .await
+}
+
+async fn set_thread_codex_config_inner(
+    state: &AppState,
+    thread_id: String,
+    update_personality: bool,
+    personality: Option<String>,
+    update_service_tier: bool,
+    service_tier: Option<String>,
+    update_output_schema: bool,
+    output_schema: Option<Value>,
+) -> Result<ThreadDto, String> {
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if thread.engine_id != "codex" {
+        return Err("Codex thread config is only available for Codex threads".to_string());
+    }
+
+    let normalized_personality = if update_personality {
+        normalize_thread_personality(personality)?
+    } else {
+        None
+    };
+    let normalized_service_tier = if update_service_tier {
+        normalize_thread_service_tier(service_tier)?
+    } else {
+        None
+    };
+    let normalized_output_schema = if update_output_schema {
+        normalize_thread_output_schema(output_schema)?
+    } else {
+        None
+    };
+
+    let mut metadata = thread.engine_metadata.unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        metadata = json!({});
+    }
+
+    if let Some(object) = metadata.as_object_mut() {
+        if update_personality {
+            match normalized_personality {
+                Some(value) => {
+                    object.insert("personality".to_string(), json!(value));
+                }
+                None => {
+                    object.remove("personality");
+                }
+            }
+        }
+
+        if update_service_tier {
+            match normalized_service_tier {
+                Some(value) => {
+                    object.insert("serviceTier".to_string(), json!(value));
+                }
+                None => {
+                    object.remove("serviceTier");
+                }
+            }
+        }
+
+        if update_output_schema {
+            match normalized_output_schema {
+                Some(value) => {
+                    object.insert("outputSchema".to_string(), value);
+                }
+                None => {
+                    object.remove("outputSchema");
+                }
+            }
+        }
+    }
+
+    run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        let metadata = metadata.clone();
+        move |db| db::threads::update_engine_metadata(db, &thread_id, &metadata)
+    })
+    .await?;
+
+    run_db(db, {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found after Codex config update: {thread_id}"))
 }
 
 async fn validate_reasoning_effort(
@@ -688,31 +805,136 @@ fn approval_policy_metadata_key(engine_id: &str) -> &'static str {
 
 fn normalize_thread_approval_policy_for_engine(
     engine_id: &str,
-    value: Option<String>,
-) -> Result<Option<String>, String> {
+    value: Option<Value>,
+) -> Result<Option<Value>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    match engine_id {
+        "claude" => {
+            let normalized = value
+                .as_str()
+                .map(str::trim)
+                .filter(|candidate| !candidate.is_empty())
+                .map(str::to_lowercase)
+                .ok_or_else(|| {
+                    "invalid Claude permission mode. expected a string value".to_string()
+                })?;
+
+            match normalized.as_str() {
+                "restricted" | "standard" | "trusted" => {
+                    Ok(Some(Value::String(normalized)))
+                }
+                _ => Err(format!(
+                    "invalid Claude permission mode `{normalized}`. expected one of: restricted, standard, trusted"
+                )),
+            }
+        }
+        _ => normalize_codex_approval_policy(value).map(Some),
+    }
+}
+
+fn normalize_codex_approval_policy(value: Value) -> Result<Value, String> {
+    match value {
+        Value::String(raw) => {
+            let normalized = raw.trim().to_lowercase();
+            match normalized.as_str() {
+                "untrusted" | "on-failure" | "on-request" | "never" => {
+                    Ok(Value::String(normalized))
+                }
+                _ => Err(format!(
+                    "invalid approval policy `{normalized}`. expected one of: untrusted, on-failure, on-request, never"
+                )),
+            }
+        }
+        Value::Object(object) => {
+            let reject = object
+                .get("reject")
+                .and_then(Value::as_object)
+                .ok_or_else(|| "invalid structured approval policy. expected a `reject` object".to_string())?;
+
+            for required_key in ["mcp_elicitations", "rules", "sandbox_approval"] {
+                if !reject
+                    .get(required_key)
+                    .and_then(Value::as_bool)
+                    .is_some()
+                {
+                    return Err(format!(
+                        "invalid structured approval policy. missing boolean reject.{required_key}"
+                    ));
+                }
+            }
+
+            if reject.contains_key("request_permissions")
+                && reject
+                    .get("request_permissions")
+                    .and_then(Value::as_bool)
+                    .is_none()
+            {
+                return Err(
+                    "invalid structured approval policy. reject.request_permissions must be a boolean"
+                        .to_string(),
+                );
+            }
+
+            Ok(Value::Object(object))
+        }
+        _ => Err(
+            "invalid approval policy. expected a string mode or structured reject object"
+                .to_string(),
+        ),
+    }
+}
+
+fn normalize_thread_personality(value: Option<String>) -> Result<Option<String>, String> {
     let normalized = value
         .as_deref()
         .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .filter(|candidate| !candidate.is_empty())
         .map(str::to_lowercase);
 
     let Some(normalized) = normalized else {
         return Ok(None);
     };
 
-    match engine_id {
-        "claude" => match normalized.as_str() {
-            "restricted" | "standard" | "trusted" => Ok(Some(normalized)),
-            _ => Err(format!(
-                "invalid Claude permission mode `{normalized}`. expected one of: restricted, standard, trusted"
-            )),
-        },
-        _ => match normalized.as_str() {
-            "untrusted" | "on-failure" | "on-request" | "never" => Ok(Some(normalized)),
-            _ => Err(format!(
-                "invalid approval policy `{normalized}`. expected one of: untrusted, on-failure, on-request, never"
-            )),
-        },
+    match normalized.as_str() {
+        "none" | "friendly" | "pragmatic" => Ok(Some(normalized)),
+        _ => Err(format!(
+            "invalid personality `{normalized}`. expected one of: none, friendly, pragmatic"
+        )),
+    }
+}
+
+fn normalize_thread_service_tier(value: Option<String>) -> Result<Option<String>, String> {
+    let normalized = value
+        .as_deref()
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty())
+        .map(str::to_lowercase);
+
+    let Some(normalized) = normalized else {
+        return Ok(None);
+    };
+
+    match normalized.as_str() {
+        "fast" | "flex" => Ok(Some(normalized)),
+        _ => Err(format!(
+            "invalid service tier `{normalized}`. expected one of: fast, flex"
+        )),
+    }
+}
+
+fn normalize_thread_output_schema(value: Option<Value>) -> Result<Option<Value>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    match value {
+        Value::Object(_) | Value::Bool(_) => Ok(Some(value)),
+        _ => Err(
+            "invalid output schema. expected a JSON Schema object or boolean".to_string(),
+        ),
     }
 }
 
@@ -881,14 +1103,14 @@ mod tests {
     #[test]
     fn normalize_thread_approval_policy_accepts_claude_modes() {
         assert_eq!(
-            normalize_thread_approval_policy_for_engine("claude", Some("trusted".to_string()))
+            normalize_thread_approval_policy_for_engine("claude", Some(json!("trusted")))
                 .unwrap(),
-            Some("trusted".to_string())
+            Some(json!("trusted"))
         );
         assert_eq!(
-            normalize_thread_approval_policy_for_engine("claude", Some("STANDARD".to_string()))
+            normalize_thread_approval_policy_for_engine("claude", Some(json!("STANDARD")))
                 .unwrap(),
-            Some("standard".to_string())
+            Some(json!("standard"))
         );
     }
 
@@ -896,9 +1118,53 @@ mod tests {
     fn normalize_thread_approval_policy_rejects_codex_values_for_claude() {
         assert!(normalize_thread_approval_policy_for_engine(
             "claude",
-            Some("on-request".to_string())
+            Some(json!("on-request"))
         )
         .is_err());
+    }
+
+    #[test]
+    fn normalize_thread_approval_policy_accepts_structured_codex_policy() {
+        let normalized = normalize_thread_approval_policy_for_engine(
+            "codex",
+            Some(json!({
+                "reject": {
+                    "mcp_elicitations": false,
+                    "request_permissions": true,
+                    "rules": true,
+                    "sandbox_approval": false
+                }
+            })),
+        )
+        .expect("expected structured policy to validate");
+
+        assert_eq!(
+            normalized,
+            Some(json!({
+                "reject": {
+                    "mcp_elicitations": false,
+                    "request_permissions": true,
+                    "rules": true,
+                    "sandbox_approval": false
+                }
+            }))
+        );
+    }
+
+    #[test]
+    fn normalize_thread_personality_accepts_known_values() {
+        assert_eq!(
+            normalize_thread_personality(Some("Friendly".to_string())).unwrap(),
+            Some("friendly".to_string())
+        );
+        assert_eq!(
+            normalize_thread_service_tier(Some(" FLEX ".to_string())).unwrap(),
+            Some("flex".to_string())
+        );
+        assert_eq!(
+            normalize_thread_output_schema(Some(json!(true))).unwrap(),
+            Some(json!(true))
+        );
     }
 
     #[test]
@@ -1080,5 +1346,65 @@ mod tests {
         .expect_err("expected danger-full-access to be rejected");
 
         assert!(error.contains("Claude sandbox mode `danger-full-access` is not supported"));
+    }
+
+    #[tokio::test]
+    async fn set_thread_codex_config_persists_values() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "codex", "gpt-5.4");
+
+        let updated = set_thread_codex_config_inner(
+            &state,
+            thread.id.clone(),
+            true,
+            Some("Friendly".to_string()),
+            true,
+            Some("FLEX".to_string()),
+            true,
+            Some(json!({
+                "type": "object",
+                "properties": {
+                    "summary": { "type": "string" }
+                }
+            })),
+        )
+        .await
+        .expect("expected codex config update to succeed");
+
+        let metadata = updated
+            .engine_metadata
+            .expect("expected engine metadata to be present");
+        assert_eq!(metadata.get("personality"), Some(&json!("friendly")));
+        assert_eq!(metadata.get("serviceTier"), Some(&json!("flex")));
+        assert_eq!(
+            metadata.get("outputSchema"),
+            Some(&json!({
+                "type": "object",
+                "properties": {
+                    "summary": { "type": "string" }
+                }
+            }))
+        );
+    }
+
+    #[tokio::test]
+    async fn set_thread_codex_config_rejects_non_codex_threads() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+
+        let error = set_thread_codex_config_inner(
+            &state,
+            thread.id.clone(),
+            true,
+            Some("friendly".to_string()),
+            false,
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect_err("expected non-codex thread to be rejected");
+
+        assert!(error.contains("Codex thread config is only available for Codex threads"));
     }
 }

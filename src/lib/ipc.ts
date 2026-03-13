@@ -156,7 +156,7 @@ export const ipc = {
   setThreadExecutionPolicy: (
     threadId: string,
     patch: {
-      approvalPolicy?: string | null;
+      approvalPolicy?: unknown;
       sandboxMode?: string | null;
       allowNetwork?: boolean | null;
     },
@@ -169,6 +169,23 @@ export const ipc = {
       sandboxMode: patch.sandboxMode ?? null,
       updateAllowNetwork: Object.prototype.hasOwnProperty.call(patch, "allowNetwork"),
       allowNetwork: patch.allowNetwork ?? null,
+    }),
+  setThreadCodexConfig: (
+    threadId: string,
+    patch: {
+      personality?: string | null;
+      serviceTier?: string | null;
+      outputSchema?: unknown;
+    },
+  ) =>
+    invoke<Thread>("set_thread_codex_config", {
+      threadId,
+      updatePersonality: Object.prototype.hasOwnProperty.call(patch, "personality"),
+      personality: patch.personality ?? null,
+      updateServiceTier: Object.prototype.hasOwnProperty.call(patch, "serviceTier"),
+      serviceTier: patch.serviceTier ?? null,
+      updateOutputSchema: Object.prototype.hasOwnProperty.call(patch, "outputSchema"),
+      outputSchema: patch.outputSchema ?? null,
     }),
   archiveThread: (threadId: string) => invoke<void>("archive_thread", { threadId }),
   restoreThread: (threadId: string) => invoke<Thread>("restore_thread", { threadId }),

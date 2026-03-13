@@ -41,9 +41,12 @@ pub enum ThreadScope {
 pub struct SandboxPolicy {
     pub writable_roots: Vec<String>,
     pub allow_network: bool,
-    pub approval_policy: Option<String>,
+    pub approval_policy: Option<Value>,
     pub reasoning_effort: Option<String>,
     pub sandbox_mode: Option<String>,
+    pub service_tier: Option<String>,
+    pub personality: Option<String>,
+    pub output_schema: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
