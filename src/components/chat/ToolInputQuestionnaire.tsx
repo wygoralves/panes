@@ -144,7 +144,7 @@ export function ToolInputQuestionnaire({ details, onSubmit, onCancel, onDecline 
       </div>
 
       <div className="chat-tool-input-actions">
-        <div style={{ display: "flex", gap: 8 }}>
+        <div className="chat-tool-input-actions-left">
           {onCancel ? (
             <button
               type="button"

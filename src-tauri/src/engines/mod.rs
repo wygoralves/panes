@@ -430,6 +430,10 @@ impl EngineManager {
         self.codex.compact_thread(engine_thread_id).await
     }
 
+    pub async fn archive_codex_thread(&self, engine_thread_id: &str) -> anyhow::Result<()> {
+        self.codex.archive_thread(engine_thread_id).await
+    }
+
     pub async fn list_codex_remote_threads(
         &self,
         search_term: Option<&str>,

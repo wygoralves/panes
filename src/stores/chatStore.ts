@@ -651,10 +651,11 @@ function collapseTrailingSteerMessages(messages: Message[]): Message[] {
     const previous = collapsed[collapsed.length - 1];
     const nextMessage = messages[index + 1];
 
+    const isAtTail = index === messages.length - 1;
     const isSteerCandidate =
       message.role === "user" &&
       previous?.role === "assistant" &&
-      (messageHasSteerMarker(message) || previous.status === "streaming") &&
+      (messageHasSteerMarker(message) || (isAtTail && previous.status === "streaming")) &&
       nextMessage?.role !== "assistant";
 
     if (isSteerCandidate) {

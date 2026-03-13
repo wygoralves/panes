@@ -42,10 +42,15 @@
   --code-bg: #050505;
 
   /* Radii */
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
   --radius-xl: 20px;
+
+  /* Semantic aliases */
+  --error: var(--danger);
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* Linear-style layout */
   --sidebar-bg: #0a0a0a;
@@ -5398,6 +5403,11 @@ button, input, textarea, select {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+}
+
+.chat-tool-input-actions-left {
+  display: flex;
   gap: 8px;
 }
 

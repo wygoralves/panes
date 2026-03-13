@@ -488,7 +488,12 @@ async fn resolve_codex_runtime_approval(
                 db::messages::mark_approval_block_resolved(db, &message_id, &approval_id, None)?;
 
             let updated_thread = if has_local_turn {
-                db::threads::update_thread_status(db, &thread_id, ThreadStatusDto::Streaming)?;
+                db::threads::update_thread_status_if_current(
+                    db,
+                    &thread_id,
+                    ThreadStatusDto::AwaitingApproval,
+                    ThreadStatusDto::Streaming,
+                )?;
                 db::threads::get_thread(db, &thread_id)?
             } else {
                 None

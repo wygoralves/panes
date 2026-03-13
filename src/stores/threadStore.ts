@@ -447,7 +447,24 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     set({ loading: true, error: undefined });
     try {
       const compacted = await ipc.compactCodexThread(threadId);
-      set({ loading: false });
+      set((state) => {
+        const workspaceId = compacted.workspaceId;
+        const workspaceThreads = state.threadsByWorkspace[workspaceId] ?? [];
+        const nextWorkspaceThreads = workspaceThreads.map((thread) =>
+          thread.id === compacted.id ? compacted : thread,
+        );
+        const threadsByWorkspace = mergeWorkspaceThreads(
+          state.threadsByWorkspace,
+          workspaceId,
+          nextWorkspaceThreads,
+        );
+
+        return {
+          threadsByWorkspace,
+          threads: flattenThreadsByWorkspace(threadsByWorkspace),
+          loading: false,
+        };
+      });
       return compacted;
     } catch (error) {
       set({ loading: false, error: String(error) });

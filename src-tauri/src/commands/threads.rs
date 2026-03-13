@@ -814,11 +814,26 @@ pub async fn rollback_codex_thread(
         .fork_codex_thread(&engine_thread_id, &cwd, &model_id, sandbox)
         .await
         .map_err(err_to_string)?;
-    let rollback_snapshot = state
+    let rollback_snapshot = match state
         .engines
         .rollback_codex_thread(&forked.engine_thread_id, num_turns)
         .await
-        .map_err(err_to_string)?;
+    {
+        Ok(snapshot) => snapshot,
+        Err(rollback_error) => {
+            if let Err(cleanup_error) = state
+                .engines
+                .archive_codex_thread(&forked.engine_thread_id)
+                .await
+            {
+                log::warn!(
+                    "failed to clean up forked engine thread {} after rollback failure: {cleanup_error}",
+                    forked.engine_thread_id
+                );
+            }
+            return Err(err_to_string(rollback_error));
+        }
+    };
 
     create_codex_branch_thread(
         state.inner(),

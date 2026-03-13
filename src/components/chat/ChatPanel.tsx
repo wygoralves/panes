@@ -2913,18 +2913,11 @@ export function ChatPanel() {
   function handleSlashCommandSelect(commandId: string) {
     setSlashMenuOpen(false);
     setSlashMenuQuery("");
-    setInput("");
 
     const cmd = slashCommands.find((c) => c.id === commandId);
     if (!cmd || cmd.disabled) return;
 
-    // Info panels open inline like other slash commands
-    if (commandId === "skills" || commandId === "mcp" || commandId === "experimental") {
-      setActiveCommandPanel({ type: commandId } as ActiveSlashCommand);
-      setCommandPanelError(null);
-      return;
-    }
-
+    setInput("");
     setActiveCommandPanel({ type: commandId } as ActiveSlashCommand);
     setCommandPanelError(null);
   }

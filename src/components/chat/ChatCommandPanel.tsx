@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   FlaskConical,
   GitBranch,
@@ -122,6 +122,7 @@ export function ChatCommandPanel({
       return (
         <OptionPickerPanel
           busy={busy}
+          error={error}
           icon={Zap}
           title={t("configPicker.serviceTier")}
           description={t("configPicker.serviceTierDescription")}
@@ -139,6 +140,7 @@ export function ChatCommandPanel({
       return (
         <OptionPickerPanel
           busy={busy}
+          error={error}
           icon={UserCircle}
           title={t("configPicker.personality")}
           description={
@@ -261,7 +263,7 @@ function ConfirmPanel({
           onClick={onDismiss}
           disabled={busy}
         >
-          Cancel
+          {t("panel.approvalActions.cancel")}
         </button>
         <button
           type="button"
@@ -281,6 +283,7 @@ function ConfirmPanel({
 
 function OptionPickerPanel({
   busy,
+  error,
   icon: Icon,
   title,
   description,
@@ -290,6 +293,7 @@ function OptionPickerPanel({
   onDismiss,
 }: {
   busy: boolean;
+  error: string | null;
   icon: typeof Zap;
   title: string;
   description: string;
@@ -317,6 +321,7 @@ function OptionPickerPanel({
       {description && (
         <div className="chat-command-panel-desc">{description}</div>
       )}
+      {error && <div className="chat-command-panel-error">{error}</div>}
       <div className="chat-command-panel-toggle-group">
         {options.map((opt) => (
           <button
@@ -421,7 +426,7 @@ function RollbackPanel({
           onClick={onDismiss}
           disabled={busy}
         >
-          Cancel
+          {t("panel.approvalActions.cancel")}
         </button>
         <button
           type="button"
@@ -461,6 +466,10 @@ function ReviewPanel({
   const [commitSha, setCommitSha] = useState("");
   const [customInstructions, setCustomInstructions] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setBaseBranch(defaultBaseBranch ?? "");
+  }, [defaultBaseBranch]);
 
   function handleConfirm() {
     let target: CodexReviewTarget;
@@ -632,7 +641,7 @@ function ReviewPanel({
           onClick={onDismiss}
           disabled={busy}
         >
-          Cancel
+          {t("panel.approvalActions.cancel")}
         </button>
         <button
           type="button"

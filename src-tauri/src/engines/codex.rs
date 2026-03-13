@@ -4069,6 +4069,8 @@ fn update_method_availability(
     }
 }
 
+const PAGINATION_MAX_PAGES: usize = 50;
+
 async fn fetch_paginated_data(
     transport: &CodexTransport,
     methods: &[&str],
@@ -4077,7 +4079,7 @@ async fn fetch_paginated_data(
     let mut cursor: Option<String> = None;
     let mut out = Vec::new();
 
-    loop {
+    for _page in 0..PAGINATION_MAX_PAGES {
         let response = request_with_fallback(
             transport,
             methods,

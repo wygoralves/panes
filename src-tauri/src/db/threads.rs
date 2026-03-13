@@ -140,6 +140,24 @@ pub fn update_thread_status(
     Ok(())
 }
 
+pub fn update_thread_status_if_current(
+    db: &Database,
+    thread_id: &str,
+    expected_current: ThreadStatusDto,
+    new_status: ThreadStatusDto,
+) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    conn.execute(
+        "UPDATE threads
+     SET status = ?1, last_activity_at = datetime('now')
+     WHERE id = ?2
+       AND status = ?3",
+        params![new_status.as_str(), thread_id, expected_current.as_str()],
+    )
+    .context("failed to conditionally update thread status")?;
+    Ok(())
+}
+
 pub fn set_engine_thread_id(
     db: &Database,
     thread_id: &str,
