@@ -8,10 +8,16 @@ import type {
   CodexSkill,
 } from "../../types";
 
+export type RuntimePickerSection = "skills" | "mcp" | "experimental" | null;
+
 interface CodexRuntimePickerProps {
   diagnostics?: CodexProtocolDiagnostics;
   skills?: CodexSkill[];
   disabled?: boolean;
+  /** When set, opens the picker and scrolls to this section */
+  externalOpenSection?: RuntimePickerSection;
+  /** Called when the externally-triggered open is consumed */
+  onExternalOpenConsumed?: () => void;
 }
 
 function humanizeIdentifier(value: string): string {
@@ -105,12 +111,15 @@ function getMethodIssues(methodAvailability: CodexMethodAvailability[]): CodexMe
 function Section({
   title,
   children,
+  sectionId,
 }: {
   title: string;
   children: ReactNode;
+  sectionId?: string;
 }) {
   return (
     <section
+      data-runtime-section={sectionId}
       style={{
         display: "grid",
         gap: 8,
@@ -209,9 +218,12 @@ export function CodexRuntimePicker({
   diagnostics,
   skills,
   disabled = false,
+  externalOpenSection,
+  onExternalOpenConsumed,
 }: CodexRuntimePickerProps) {
   const { t } = useTranslation("chat");
   const [open, setOpen] = useState(false);
+  const [scrollToSection, setScrollToSection] = useState<RuntimePickerSection>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ bottom: 0, left: 0 });
@@ -280,6 +292,30 @@ export function CodexRuntimePicker({
       ? "advertised"
       : "notAdvertised";
   }, [diagnostics]);
+
+  // Handle external open request from slash commands
+  useEffect(() => {
+    if (externalOpenSection) {
+      setOpen(true);
+      setScrollToSection(externalOpenSection);
+      onExternalOpenConsumed?.();
+    }
+  }, [externalOpenSection, onExternalOpenConsumed]);
+
+  // Scroll to requested section when popover opens
+  useEffect(() => {
+    if (open && scrollToSection && popoverRef.current) {
+      const sectionEl = popoverRef.current.querySelector(
+        `[data-runtime-section="${scrollToSection}"]`,
+      );
+      if (sectionEl) {
+        requestAnimationFrame(() => {
+          sectionEl.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
+      setScrollToSection(null);
+    }
+  }, [open, scrollToSection]);
 
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) {
@@ -519,14 +555,14 @@ export function CodexRuntimePicker({
                   </div>
                 </Section>
 
-                <Section title={t("runtimePicker.sections.features")}>
+                <Section title={t("runtimePicker.sections.features")} sectionId="experimental">
                   <ChipList
                     items={enabledFeatures}
                     emptyLabel={t("runtimePicker.none")}
                   />
                 </Section>
 
-                <Section title={t("runtimePicker.sections.skills")}>
+                <Section title={t("runtimePicker.sections.skills")} sectionId="skills">
                   <ChipList
                     items={skillLabels}
                     emptyLabel={t("runtimePicker.none")}
@@ -589,7 +625,7 @@ export function CodexRuntimePicker({
                   )}
                 </Section>
 
-                <Section title={t("runtimePicker.sections.mcpServers")}>
+                <Section title={t("runtimePicker.sections.mcpServers")} sectionId="mcp">
                   {diagnostics.mcpServers.length > 0 ? (
                     <div style={{ display: "grid", gap: 8 }}>
                       {diagnostics.mcpServers.map((server) => (

@@ -420,5 +420,21 @@
     "windowWeeklyLeft": "Semana restante",
     "resets": "reinicia {{time}}",
     "usageUnavailable": "Limites de uso indisponíveis no servidor"
+  },
+  "slashCommands": {
+    "panels": {
+      "skills": {
+        "title": "Skills",
+        "empty": "Nenhuma skill carregada neste runtime."
+      },
+      "mcp": {
+        "title": "Servidores MCP",
+        "empty": "Nenhum servidor MCP conectado."
+      },
+      "experimental": {
+        "title": "Recursos experimentais",
+        "empty": "Nenhum recurso experimental disponível."
+      }
+    }
   }
 }

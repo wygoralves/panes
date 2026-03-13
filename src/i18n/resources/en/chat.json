@@ -420,5 +420,21 @@
     "windowWeeklyLeft": "Weekly left",
     "resets": "resets {{time}}",
     "usageUnavailable": "Usage limits unavailable from server"
+  },
+  "slashCommands": {
+    "panels": {
+      "skills": {
+        "title": "Skills",
+        "empty": "No skills loaded on this runtime."
+      },
+      "mcp": {
+        "title": "MCP servers",
+        "empty": "No MCP servers connected."
+      },
+      "experimental": {
+        "title": "Experimental features",
+        "empty": "No experimental features available."
+      }
+    }
   }
 }

@@ -19,6 +19,14 @@ import {
   ListChecks,
   Clock,
   Zap,
+  RotateCcw,
+  Minimize2,
+  Search,
+  Scissors,
+  Sparkles,
+  Server,
+  FlaskConical,
+  UserCircle,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
@@ -51,15 +59,15 @@ import {
 } from "./toolInputApproval";
 import { ModelPicker } from "./ModelPicker";
 import {
-  CodexConfigPicker,
   type CodexConfigPatch,
   type CodexPersonalityValue,
   type CodexServiceTierValue,
 } from "./CodexConfigPicker";
-import { CodexRuntimePicker } from "./CodexRuntimePicker";
-import { CodexReviewPicker } from "./CodexReviewPicker";
-import { CodexThreadPicker } from "./CodexThreadPicker";
+// CodexRuntimePicker removed from toolbar — runtime info accessed via /slash commands
 import { PermissionPicker } from "./PermissionPicker";
+// CodexReviewPicker and CodexThreadPicker replaced by slash commands (ChatSlashMenu + ChatCommandPanel)
+import { ChatSlashMenu, type SlashCommand } from "./ChatSlashMenu";
+import { ChatCommandPanel, type ActiveSlashCommand } from "./ChatCommandPanel";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { getHarnessIcon } from "../shared/HarnessLogos";
@@ -1012,7 +1020,7 @@ function MessageRowView({
               </div>
             )}
             {userPlanMode && (
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 6, fontSize: 10, color: "var(--text-3)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6, fontSize: 10, color: "var(--text-3)" }}>
                 <ListChecks size={10} />
                 <span>{t("panel.planMode")}</span>
               </div>
@@ -1206,6 +1214,13 @@ export function ChatPanel() {
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [isFileDropOver, setIsFileDropOver] = useState(false);
   const [planMode, setPlanMode] = useState(false);
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+  const [slashMenuQuery, setSlashMenuQuery] = useState("");
+  const [slashMenuActiveIndex, setSlashMenuActiveIndex] = useState(0);
+  const [activeCommandPanel, setActiveCommandPanel] = useState<ActiveSlashCommand | null>(null);
+  const [commandPanelBusy, setCommandPanelBusy] = useState(false);
+  const [commandPanelError, setCommandPanelError] = useState<string | null>(null);
+  // runtimePickerOpenSection removed — runtime info panels are inline slash command panels
   const [selectedEngineId, setSelectedEngineId] = useState("codex");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [selectedEffort, setSelectedEffort] = useState("medium");
@@ -2719,6 +2734,204 @@ export function ChatPanel() {
     toast.success(t("panel.toasts.codexThreadResumed"));
   }
 
+  /* ── Slash command system ── */
+
+  const canManageActiveCodexThread =
+    !!activeThread &&
+    activeThread.engineId === "codex" &&
+    !!activeThread.engineThreadId &&
+    !streaming;
+
+  const isCodexEngine = selectedEngineId === "codex";
+
+  const slashCommands: SlashCommand[] = useMemo(
+    () => [
+      {
+        id: "review",
+        name: "review",
+        description: t("reviewPicker.subtitle"),
+        icon: Search,
+        codexOnly: true,
+        disabled: !canManageActiveCodexThread,
+      },
+      {
+        id: "fork",
+        name: "fork",
+        description: t("threadPicker.forkDescription"),
+        icon: GitBranch,
+        codexOnly: true,
+        disabled: !canManageActiveCodexThread,
+      },
+      {
+        id: "rollback",
+        name: "rollback",
+        description: t("threadPicker.rollbackDescription"),
+        icon: RotateCcw,
+        codexOnly: true,
+        disabled: !canManageActiveCodexThread,
+      },
+      {
+        id: "compact",
+        name: "compact",
+        description: t("threadPicker.compactDescription"),
+        icon: Scissors,
+        codexOnly: true,
+        disabled: !canManageActiveCodexThread,
+      },
+      {
+        id: "fast",
+        name: "fast",
+        description: t("configPicker.serviceTierDescription"),
+        icon: Zap,
+        codexOnly: true,
+        disabled: !isCodexEngine,
+      },
+      {
+        id: "personality",
+        name: "personality",
+        description: t("configPicker.personalityDescription"),
+        icon: UserCircle,
+        codexOnly: true,
+        disabled: !isCodexEngine,
+      },
+      {
+        id: "skills",
+        name: "skills",
+        description: "View loaded Codex skills",
+        icon: Sparkles,
+        codexOnly: true,
+        disabled: !isCodexEngine,
+      },
+      {
+        id: "mcp",
+        name: "MCP",
+        description: "View MCP server status",
+        icon: Server,
+        codexOnly: true,
+        disabled: !isCodexEngine,
+      },
+      {
+        id: "experimental",
+        name: "experimental",
+        description: "View experimental features",
+        icon: FlaskConical,
+        codexOnly: true,
+        disabled: !isCodexEngine,
+      },
+    ],
+    [canManageActiveCodexThread, isCodexEngine, t],
+  );
+
+  const filteredSlashCommands = useMemo(() => {
+    if (!slashMenuQuery) return slashCommands;
+    const q = slashMenuQuery.toLowerCase();
+    return slashCommands.filter(
+      (c) =>
+        c.name.toLowerCase().startsWith(q) ||
+        c.id.startsWith(q) ||
+        c.description.toLowerCase().includes(q),
+    );
+  }, [slashCommands, slashMenuQuery]);
+
+  function handleSlashCommandSelect(commandId: string) {
+    setSlashMenuOpen(false);
+    setSlashMenuQuery("");
+    setInput("");
+
+    const cmd = slashCommands.find((c) => c.id === commandId);
+    if (!cmd || cmd.disabled) return;
+
+    // Info panels open inline like other slash commands
+    if (commandId === "skills" || commandId === "mcp" || commandId === "experimental") {
+      setActiveCommandPanel({ type: commandId } as ActiveSlashCommand);
+      setCommandPanelError(null);
+      return;
+    }
+
+    setActiveCommandPanel({ type: commandId } as ActiveSlashCommand);
+    setCommandPanelError(null);
+  }
+
+  async function handleCommandPanelConfirm(
+    command: ActiveSlashCommand,
+    payload?: import("./ChatCommandPanel").SlashCommandPayload,
+  ) {
+    setCommandPanelBusy(true);
+    setCommandPanelError(null);
+    try {
+      switch (command.type) {
+        case "fork":
+          await onForkCodexThread();
+          break;
+        case "compact":
+          await onCompactCodexThread();
+          break;
+        case "rollback":
+          if (payload?.numTurns) {
+            await onRollbackCodexThread(payload.numTurns);
+          }
+          break;
+        case "review":
+          if (payload?.target && payload?.delivery) {
+            await onStartCodexReview({
+              target: payload.target,
+              delivery: payload.delivery,
+            });
+          }
+          break;
+        case "fast":
+          if (payload?.serviceTier !== undefined) {
+            const tier = payload.serviceTier === "inherit" ? null : payload.serviceTier;
+            await onCodexConfigSave({
+              updatePersonality: false,
+              personality: null,
+              updateServiceTier: true,
+              serviceTier: tier,
+              updateOutputSchema: false,
+              outputSchema: null,
+              updateApprovalPolicy: false,
+              approvalPolicy: null,
+            });
+            toast.success(`Service tier → ${payload.serviceTier}`);
+          }
+          break;
+        case "personality":
+          if (payload?.personality !== undefined) {
+            const p = payload.personality === "inherit" ? null : payload.personality;
+            await onCodexConfigSave({
+              updatePersonality: true,
+              personality: p,
+              updateServiceTier: false,
+              serviceTier: null,
+              updateOutputSchema: false,
+              outputSchema: null,
+              updateApprovalPolicy: false,
+              approvalPolicy: null,
+            });
+            toast.success(`Personality → ${payload.personality}`);
+          }
+          break;
+      }
+      setActiveCommandPanel(null);
+    } catch (err) {
+      setCommandPanelError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCommandPanelBusy(false);
+    }
+  }
+
+  function handleSlashDetection(value: string, cursorPos: number) {
+    const textBeforeCursor = value.slice(0, cursorPos);
+    const slashMatch = /(?:^|\s)(\/([a-z]*))$/.exec(textBeforeCursor);
+    if (slashMatch) {
+      setSlashMenuOpen(true);
+      setSlashMenuQuery(slashMatch[2] ?? "");
+      setSlashMenuActiveIndex(0);
+    } else if (slashMenuOpen) {
+      setSlashMenuOpen(false);
+    }
+  }
+
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (!input.trim() || !activeWorkspaceId) return;
@@ -4072,12 +4285,80 @@ export function ChatPanel() {
               </div>
             )}
 
+            {/* Slash command panel (inline) */}
+            {activeCommandPanel && (
+              <ChatCommandPanel
+                command={activeCommandPanel}
+                busy={commandPanelBusy}
+                error={commandPanelError}
+                defaultBaseBranch={
+                  (activeThread?.repoId
+                    ? repos.find((repo) => repo.id === activeThread.repoId)?.defaultBranch
+                    : activeRepo?.defaultBranch) ?? null
+                }
+                currentServiceTier={selectedServiceTier}
+                currentPersonality={selectedPersonality}
+                personalitySupported={selectedModelSupportsPersonality}
+                skills={
+                  codexReferenceCatalogState.skillsLoaded
+                    ? codexSkills
+                    : (codexProtocolDiagnostics?.skills ?? [])
+                }
+                mcpServers={codexProtocolDiagnostics?.mcpServers}
+                experimentalFeatures={codexProtocolDiagnostics?.experimentalFeatures}
+                onConfirm={handleCommandPanelConfirm}
+                onDismiss={() => {
+                  setActiveCommandPanel(null);
+                  setCommandPanelError(null);
+                }}
+              />
+            )}
+
             <textarea
               ref={inputRef}
               rows={3}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value);
+                handleSlashDetection(
+                  e.target.value,
+                  e.target.selectionStart ?? e.target.value.length,
+                );
+              }}
               onKeyDown={(e) => {
+                /* ── Slash menu keyboard nav ── */
+                if (slashMenuOpen) {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setSlashMenuActiveIndex((i) =>
+                      Math.min(i + 1, filteredSlashCommands.length - 1),
+                    );
+                    return;
+                  }
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setSlashMenuActiveIndex((i) => Math.max(i - 1, 0));
+                    return;
+                  }
+                  if (e.key === "Enter" || e.key === "Tab") {
+                    e.preventDefault();
+                    const cmd = filteredSlashCommands[slashMenuActiveIndex];
+                    if (cmd) handleSlashCommandSelect(cmd.id);
+                    return;
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setSlashMenuOpen(false);
+                    return;
+                  }
+                }
+                /* ── Command panel dismiss ── */
+                if (activeCommandPanel && e.key === "Escape") {
+                  e.preventDefault();
+                  setActiveCommandPanel(null);
+                  setCommandPanelError(null);
+                  return;
+                }
                 if (shouldSubmitChatInput({
                   key: e.key,
                   ctrlKey: e.ctrlKey,
@@ -4115,6 +4396,18 @@ export function ChatPanel() {
                 fontFamily: "inherit",
                 caretColor: planMode ? "var(--accent-2)" : "var(--accent)",
               }}
+            />
+
+            {/* Slash command menu (portal) */}
+            <ChatSlashMenu
+              visible={slashMenuOpen && filteredSlashCommands.length > 0}
+              query={slashMenuQuery}
+              commands={filteredSlashCommands}
+              anchorRef={inputRef}
+              activeIndex={slashMenuActiveIndex}
+              onSelect={handleSlashCommandSelect}
+              onDismiss={() => setSlashMenuOpen(false)}
+              onActiveChange={setSlashMenuActiveIndex}
             />
 
             {/* Input toolbar with selectors */}
@@ -4178,55 +4471,7 @@ export function ChatPanel() {
                 disabled={availableModels.length === 0}
               />
 
-              {selectedEngineId === "codex" && (
-                <>
-                  <div className="chat-toolbar-divider" />
-                  <CodexRuntimePicker
-                    diagnostics={codexProtocolDiagnostics}
-                    skills={
-                      codexReferenceCatalogState.skillsLoaded ? codexSkills : undefined
-                    }
-                  />
-                  <CodexReviewPicker
-                    disabled={
-                      !activeThread ||
-                      activeThread.engineId !== "codex" ||
-                      !activeThread.engineThreadId ||
-                      streaming
-                    }
-                    defaultBaseBranch={
-                      (activeThread?.repoId
-                        ? repos.find((repo) => repo.id === activeThread.repoId)?.defaultBranch
-                        : activeRepo?.defaultBranch) ?? null
-                    }
-                    onStartReview={onStartCodexReview}
-                  />
-                  <CodexThreadPicker
-                    disabled={!activeWorkspaceId || !selectedModelId || streaming}
-                    workspaceId={activeWorkspaceId}
-                    modelId={selectedModelId ?? null}
-                    canManageActiveThread={
-                      !!activeThread &&
-                      activeThread.engineId === "codex" &&
-                      !!activeThread.engineThreadId
-                    }
-                    onFork={onForkCodexThread}
-                    onRollback={onRollbackCodexThread}
-                    onCompact={onCompactCodexThread}
-                    onAttachRemoteThread={onAttachCodexRemoteThread}
-                  />
-                  <CodexConfigPicker
-                    activeCount={codexConfigActiveCount}
-                    personalitySupported={selectedModelSupportsPersonality}
-                    personalityValue={selectedPersonality}
-                    serviceTierValue={selectedServiceTier}
-                    outputSchemaValue={selectedOutputSchemaValue}
-                    structuredApprovalPolicyValue={selectedCustomApprovalPolicyValue}
-                    onSave={onCodexConfigSave}
-                    disabled={!activeWorkspaceId}
-                  />
-                </>
-              )}
+              {/* Codex Runtime + Config removed from toolbar — accessed via /slash commands */}
 
               {(activeRepo ||
                 repos.length > 0 ||
