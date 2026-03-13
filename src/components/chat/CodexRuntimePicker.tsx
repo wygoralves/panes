@@ -228,6 +228,24 @@ export function CodexRuntimePicker({
       (diagnostics?.collaborationModes ?? []).map((mode) => humanizeIdentifier(mode)),
     [diagnostics?.collaborationModes],
   );
+  const planModeAdvertisement = useMemo<
+    "advertised" | "notAdvertised" | "unknown"
+  >(() => {
+    if (!diagnostics) {
+      return "unknown";
+    }
+
+    const collaborationModeStatus = diagnostics.methodAvailability.find(
+      (entry) => entry.method === "collaborationMode/list",
+    )?.status;
+    if (collaborationModeStatus && collaborationModeStatus !== "available") {
+      return "unknown";
+    }
+
+    return diagnostics.collaborationModes.includes("plan")
+      ? "advertised"
+      : "notAdvertised";
+  }, [diagnostics]);
 
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) {
@@ -445,6 +463,13 @@ export function CodexRuntimePicker({
                     items={collaborationModes}
                     emptyLabel={t("runtimePicker.none")}
                   />
+                  <div className="codex-config-note">
+                    {planModeAdvertisement === "advertised"
+                      ? t("runtimePicker.planModePromptGuided")
+                      : planModeAdvertisement === "notAdvertised"
+                        ? t("runtimePicker.planModePromptGuidedFallback")
+                        : t("runtimePicker.planModePromptGuidedUnknown")}
+                  </div>
                 </Section>
 
                 <Section title={t("runtimePicker.sections.features")}>

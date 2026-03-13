@@ -488,7 +488,7 @@ impl Engine for CodexEngine {
         let runtime_for_turn = runtime.clone();
         let input_for_turn = input.clone();
         let turn_task = tokio::spawn(async move {
-            request_turn_start_with_plan_fallback(
+            request_turn_start(
                 transport_for_turn.as_ref(),
                 &thread_id_for_turn,
                 runtime_for_turn,
@@ -2627,7 +2627,7 @@ async fn detect_codex_via_login_shell() -> Option<PathBuf> {
     }
 }
 
-async fn request_turn_start_with_plan_fallback(
+async fn request_turn_start(
     transport: &CodexTransport,
     thread_id: &str,
     runtime: Option<ThreadRuntime>,
@@ -2635,38 +2635,10 @@ async fn request_turn_start_with_plan_fallback(
 ) -> anyhow::Result<serde_json::Value> {
     let runtime_ref = runtime.as_ref();
 
-    let primary_params =
-        build_turn_start_params(thread_id, runtime_ref, &input, input.plan_mode, false).await?;
-    match request_with_fallback(
-        transport,
-        TURN_START_METHODS,
-        primary_params,
-        TURN_REQUEST_TIMEOUT,
-    )
-    .await
-    {
-        Ok(result) => Ok(result),
-        Err(error) => {
-            if !input.plan_mode || !is_plan_mode_protocol_error(&error.to_string()) {
-                return Err(error);
-            }
-
-            log::warn!(
-                "plan mode protocol hints rejected by codex app-server; retrying with prompt fallback: {error}"
-            );
-
-            let fallback_params =
-                build_turn_start_params(thread_id, runtime_ref, &input, false, true).await?;
-            request_with_fallback(
-                transport,
-                TURN_START_METHODS,
-                fallback_params,
-                TURN_REQUEST_TIMEOUT,
-            )
-            .await
-            .context("plan mode prompt fallback failed")
-        }
-    }
+    let params = build_turn_start_params(thread_id, runtime_ref, &input).await?;
+    request_with_fallback(transport, TURN_START_METHODS, params, TURN_REQUEST_TIMEOUT)
+        .await
+        .context("codex turn/start request failed")
 }
 
 async fn request_turn_steer(
@@ -2678,7 +2650,7 @@ async fn request_turn_steer(
     let params = serde_json::json!({
       "threadId": thread_id,
       "expectedTurnId": expected_turn_id,
-      "input": build_turn_input_items(input, input.plan_mode).await?,
+      "input": build_turn_input_items(input).await?,
     });
 
     request_with_fallback(transport, TURN_STEER_METHODS, params, DEFAULT_TIMEOUT)
@@ -2690,12 +2662,10 @@ async fn build_turn_start_params(
     thread_id: &str,
     runtime: Option<&ThreadRuntime>,
     input: &TurnInput,
-    include_plan_protocol_hints: bool,
-    force_plan_prompt_prefix: bool,
 ) -> anyhow::Result<serde_json::Value> {
     let mut turn_params = serde_json::json!({
       "threadId": thread_id,
-      "input": build_turn_input_items(input, force_plan_prompt_prefix).await?,
+      "input": build_turn_input_items(input).await?,
     });
 
     if let Some(runtime) = runtime {
@@ -2734,25 +2704,13 @@ async fn build_turn_start_params(
             if let Some(output_schema) = runtime.output_schema.as_ref() {
                 params.insert("outputSchema".to_string(), output_schema.clone());
             }
-            if include_plan_protocol_hints && input.plan_mode {
-                if let Some(collaboration_mode) = plan_mode_protocol_payload(runtime) {
-                    params.insert("collaborationMode".to_string(), collaboration_mode);
-                }
-                params.insert(
-                    "summary".to_string(),
-                    serde_json::Value::String("detailed".to_string()),
-                );
-            }
         }
     }
 
     Ok(turn_params)
 }
 
-async fn build_turn_input_items(
-    input: &TurnInput,
-    force_plan_prompt_prefix: bool,
-) -> anyhow::Result<Vec<serde_json::Value>> {
+async fn build_turn_input_items(input: &TurnInput) -> anyhow::Result<Vec<serde_json::Value>> {
     let base_items = if input.input_items.is_empty() {
         vec![TurnInputItem::Text {
             text: input.message.clone(),
@@ -2761,8 +2719,7 @@ async fn build_turn_input_items(
         input.input_items.clone()
     };
 
-    let text_items =
-        apply_plan_prompt_prefix(base_items, force_plan_prompt_prefix && input.plan_mode);
+    let text_items = apply_plan_prompt_prefix(base_items, input.plan_mode);
     let mut items = Vec::with_capacity(text_items.len() + input.attachments.len());
     for item in text_items {
         match item {
@@ -2850,29 +2807,6 @@ fn apply_plan_prompt_prefix(items: Vec<TurnInputItem>, include_prefix: bool) -> 
     }
 
     prefixed
-}
-
-fn plan_mode_protocol_payload(runtime: &ThreadRuntime) -> Option<serde_json::Value> {
-    if runtime.model_id.trim().is_empty() {
-        return None;
-    }
-
-    let mut settings = serde_json::Map::new();
-    settings.insert(
-        "model".to_string(),
-        serde_json::Value::String(runtime.model_id.clone()),
-    );
-    if let Some(effort) = runtime.reasoning_effort.as_ref() {
-        settings.insert(
-            "reasoning_effort".to_string(),
-            serde_json::Value::String(effort.clone()),
-        );
-    }
-
-    Some(serde_json::json!({
-      "mode": "plan",
-      "settings": settings,
-    }))
 }
 
 async fn validate_turn_attachments(attachments: &[TurnAttachment]) -> anyhow::Result<()> {
@@ -3042,14 +2976,6 @@ fn truncate_text_to_max_chars(value: &str, max_chars: usize) -> (String, bool) {
 
     let truncated: String = value.chars().take(max_chars).collect();
     (truncated, true)
-}
-
-fn is_plan_mode_protocol_error(error: &str) -> bool {
-    let value = error.to_lowercase();
-    value.contains("collaborationmode")
-        || value.contains("collaboration_mode")
-        || value.contains("unknown field `collaboration")
-        || (value.contains("unknown field") && value.contains("plan"))
 }
 
 async fn request_with_fallback(
@@ -4751,7 +4677,7 @@ fn is_known_codex_notification_method(normalized_method: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     #[test]
     fn normalize_modern_accept_with_execpolicy_from_top_level() {
@@ -4898,6 +4824,80 @@ mod tests {
                 "personality": "friendly",
                 "persistExtendedHistory": false,
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn build_turn_start_params_uses_prompt_guided_plan_mode_for_codex() {
+        let runtime = ThreadRuntime {
+            cwd: "/tmp/workspace".to_string(),
+            model_id: "gpt-5.4".to_string(),
+            approval_policy: json!("on-request"),
+            sandbox_policy: json!({
+                "type": "workspaceWrite",
+                "writableRoots": ["/tmp/workspace"],
+                "networkAccess": false,
+            }),
+            reasoning_effort: Some("medium".to_string()),
+            service_tier: Some("fast".to_string()),
+            personality: Some("friendly".to_string()),
+            output_schema: Some(json!({"type":"object"})),
+        };
+        let input = TurnInput {
+            message: "Inspect the repo first".to_string(),
+            attachments: Vec::new(),
+            plan_mode: true,
+            input_items: vec![TurnInputItem::Text {
+                text: "Inspect the repo first".to_string(),
+            }],
+        };
+
+        let params = build_turn_start_params("thread-123", Some(&runtime), &input)
+            .await
+            .expect("turn/start params");
+
+        assert_eq!(params.get("collaborationMode"), None);
+        assert_eq!(params.get("summary"), None);
+
+        let payload = params
+            .get("input")
+            .and_then(Value::as_array)
+            .expect("input array");
+        assert_eq!(payload.len(), 1);
+        assert_eq!(payload[0].get("type").and_then(Value::as_str), Some("text"));
+        let text = payload[0]
+            .get("text")
+            .and_then(Value::as_str)
+            .expect("text payload");
+        assert!(text.starts_with(PLAN_MODE_PROMPT_PREFIX));
+        assert!(text.contains("Inspect the repo first"));
+    }
+
+    #[tokio::test]
+    async fn build_turn_start_params_keeps_non_plan_text_unchanged() {
+        let input = TurnInput {
+            message: "Inspect the repo first".to_string(),
+            attachments: Vec::new(),
+            plan_mode: false,
+            input_items: vec![TurnInputItem::Text {
+                text: "Inspect the repo first".to_string(),
+            }],
+        };
+
+        let params = build_turn_start_params("thread-123", None, &input)
+            .await
+            .expect("turn/start params");
+
+        assert_eq!(params.get("collaborationMode"), None);
+        assert_eq!(params.get("summary"), None);
+
+        let payload = params
+            .get("input")
+            .and_then(Value::as_array)
+            .expect("input array");
+        assert_eq!(
+            payload[0].get("text").and_then(Value::as_str),
+            Some("Inspect the repo first")
         );
     }
 

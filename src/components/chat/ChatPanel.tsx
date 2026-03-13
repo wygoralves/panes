@@ -1274,6 +1274,28 @@ export function ChatPanel() {
     [health],
   );
   const codexProtocolDiagnostics = health.codex?.protocolDiagnostics;
+  const codexPlanModeAdvertisement = useMemo<
+    "advertised" | "notAdvertised" | "unknown"
+  >(() => {
+    if (!codexProtocolDiagnostics) {
+      return "unknown";
+    }
+
+    const collaborationModeStatus = codexProtocolDiagnostics.methodAvailability.find(
+      (entry) => entry.method === "collaborationMode/list",
+    )?.status;
+    if (collaborationModeStatus && collaborationModeStatus !== "available") {
+      return "unknown";
+    }
+
+    return codexProtocolDiagnostics.collaborationModes.includes("plan")
+      ? "advertised"
+      : "notAdvertised";
+  }, [
+    codexProtocolDiagnostics,
+    codexProtocolDiagnostics?.collaborationModes,
+    codexProtocolDiagnostics?.methodAvailability,
+  ]);
   const preferredOnboardingChatSelection = useMemo(
     () => resolvePreferredOnboardingChatSelection(onboardingSelectedChatEngines, engines),
     [engines, onboardingSelectedChatEngines],
@@ -3989,7 +4011,15 @@ export function ChatPanel() {
             {planMode && (
               <div className="chat-plan-mode-banner">
                 <ListChecks size={12} />
-                <span>{t("panel.planModeBanner")}</span>
+                <span>
+                  {selectedEngineId === "codex"
+                    ? codexPlanModeAdvertisement === "advertised"
+                      ? t("panel.planModeBannerCodex")
+                      : codexPlanModeAdvertisement === "notAdvertised"
+                        ? t("panel.planModeBannerCodexFallback")
+                        : t("panel.planModeBannerCodexUnknown")
+                    : t("panel.planModeBanner")}
+                </span>
               </div>
             )}
 
@@ -4096,9 +4126,13 @@ export function ChatPanel() {
                 onClick={() => setPlanMode((prev) => !prev)}
                 disabled={!activeWorkspaceId}
                 title={
-                  planMode
-                    ? t("panel.disablePlanMode")
-                    : t("panel.enablePlanMode")
+                  selectedEngineId === "codex"
+                    ? planMode
+                      ? t("panel.disablePlanModeCodex")
+                      : t("panel.enablePlanModeCodex")
+                    : planMode
+                      ? t("panel.disablePlanMode")
+                      : t("panel.enablePlanMode")
                 }
               >
                 <ListChecks size={12} />
