@@ -514,27 +514,24 @@ function ReviewPanel({
           <span className="chat-command-panel-field-label">
             {t("reviewPicker.targetLabel")}
           </span>
-          <select
-            className="chat-command-panel-select"
-            value={targetMode}
-            onChange={(e) =>
-              setTargetMode(e.target.value as ReviewTargetMode)
-            }
-            disabled={busy}
-          >
-            <option value="uncommittedChanges">
-              {t("reviewPicker.targets.uncommittedChanges")}
-            </option>
-            <option value="baseBranch">
-              {t("reviewPicker.targets.baseBranch")}
-            </option>
-            <option value="commit">
-              {t("reviewPicker.targets.commit")}
-            </option>
-            <option value="custom">
-              {t("reviewPicker.targets.custom")}
-            </option>
-          </select>
+          <div className="chat-command-panel-toggle-group">
+            {([
+              { value: "uncommittedChanges", label: t("reviewPicker.targets.uncommittedChanges") },
+              { value: "baseBranch", label: t("reviewPicker.targets.baseBranch") },
+              { value: "commit", label: t("reviewPicker.targets.commit") },
+              { value: "custom", label: t("reviewPicker.targets.custom") },
+            ] as const).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                className={`chat-command-panel-toggle${targetMode === opt.value ? " chat-command-panel-toggle-active" : ""}`}
+                onClick={() => setTargetMode(opt.value)}
+                disabled={busy}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </label>
 
         {targetMode === "baseBranch" && (
