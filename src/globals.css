@@ -5216,6 +5216,187 @@ button, input, textarea, select {
   flex-shrink: 0;
 }
 
+.chat-input-box-tool-input {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  box-shadow: 0 0 0 1px rgba(255, 107, 107, 0.08);
+}
+
+.chat-tool-input-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px 14px;
+  animation: slide-up var(--duration-normal) var(--ease-out) both;
+}
+
+.chat-tool-input-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.chat-tool-input-step-count {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.chat-tool-input-step-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.chat-tool-input-question {
+  font-size: 15px;
+  line-height: 1.45;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.chat-tool-input-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chat-tool-input-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out),
+              background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out),
+              transform var(--duration-fast) var(--ease-out);
+}
+
+.chat-tool-input-option:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-1);
+}
+
+.chat-tool-input-option-active {
+  border-color: rgba(255, 107, 107, 0.28);
+  background: rgba(255, 107, 107, 0.12);
+  color: var(--text-1);
+  box-shadow: inset 0 0 0 1px rgba(255, 107, 107, 0.08);
+}
+
+.chat-tool-input-option-active:hover {
+  border-color: rgba(255, 107, 107, 0.28);
+  background: rgba(255, 107, 107, 0.12);
+  color: var(--text-1);
+}
+
+.chat-tool-input-option-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.chat-tool-input-editor {
+  display: grid;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chat-tool-input-textarea {
+  width: 100%;
+  min-height: 84px;
+  resize: none;
+  border: none;
+  background: transparent;
+  color: var(--text-1);
+  font-size: 14px;
+  line-height: 1.6;
+  font-family: inherit;
+  outline: none;
+}
+
+.chat-tool-input-textarea::placeholder {
+  color: var(--text-3);
+}
+
+.chat-tool-input-hint {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
+.chat-tool-input-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.chat-tool-input-btn-primary,
+.chat-tool-input-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out),
+              border-color var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out),
+              opacity var(--duration-fast) var(--ease-out);
+}
+
+.chat-tool-input-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: var(--accent-glow);
+}
+
+.chat-tool-input-btn-primary:hover {
+  background: color-mix(in srgb, var(--accent) 88%, white);
+}
+
+.chat-tool-input-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: default;
+  box-shadow: none;
+}
+
+.chat-tool-input-btn-secondary {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-2);
+}
+
+.chat-tool-input-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-1);
+}
+
 /* ── Toolbar Buttons ───────────────────────────────────────────────── */
 
 .chat-toolbar-btn {

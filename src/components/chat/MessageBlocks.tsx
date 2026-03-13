@@ -30,7 +30,6 @@ import type {
   SteerBlock,
   ThinkingBlock,
 } from "../../types";
-import { ToolInputQuestionnaire } from "./ToolInputQuestionnaire";
 import {
   buildDynamicToolCallResponse,
   defaultAdvancedApprovalPayload,
@@ -662,8 +661,6 @@ function ApprovalCard({
   const proposedExecpolicyAmendment = parseProposedExecpolicyAmendment(details);
   const proposedNetworkPolicyAmendments = parseProposedNetworkPolicyAmendments(details);
   const requestedPermissions = isPermissionsRequest ? parseRequestedPermissions(details) : null;
-  const showStructuredToolInput =
-    isPending && !isClaudeThread && isToolInputRequest && toolInputQuestions.length > 0;
   const showClaudeUnsupportedApproval =
     isPending &&
     isClaudeThread &&
@@ -853,15 +850,11 @@ function ApprovalCard({
               count: toolInputQuestions.length,
             })}
           </p>
-        </div>
-      )}
-
-      {showStructuredToolInput && (
-        <div className="acard-section">
-          <ToolInputQuestionnaire
-            details={details}
-            onSubmit={(response) => onApproval(block.approvalId, response)}
-          />
+          {isPending && !isClaudeThread && (
+            <p className="acard-meta">
+              {t("messageBlocks.toolInput.answerInComposer")}
+            </p>
+          )}
         </div>
       )}
 
@@ -930,7 +923,7 @@ function ApprovalCard({
         </div>
       )}
 
-      {isPending && !isClaudeThread && requiresCustomPayload && !showStructuredToolInput && (
+      {isPending && !isClaudeThread && requiresCustomPayload && (
         <div className="acard-section">
           <p className="acard-reason">
             {t("messageBlocks.approval.customPayloadHint")}

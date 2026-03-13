@@ -406,6 +406,15 @@
       "sendPayload": "Send payload"
     },
     "toolInput": {
+      "answerInComposer": "Answer this in the chat box below.",
+      "questionCounter": "{{current}} / {{total}}",
+      "recommended": "Recommended",
+      "customAnswerPlaceholder": "Type your own answer",
+      "customAnswerPlaceholderOptional": "Type your own answer, or leave this blank to use the selected option",
+      "selectedOptionFallback": "Type your own answer, or leave this blank to use the selected option",
+      "answerRequiredHint": "Type an answer to continue.",
+      "previousQuestion": "Back",
+      "nextQuestion": "Next question",
       "otherAnswerPlaceholder": "Other answer (optional)",
       "sendAnswers": "Send answers"
     }

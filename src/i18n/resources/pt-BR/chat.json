@@ -406,6 +406,15 @@
       "sendPayload": "Enviar payload"
     },
     "toolInput": {
+      "answerInComposer": "Responda isso na caixa de chat abaixo.",
+      "questionCounter": "{{current}} / {{total}}",
+      "recommended": "Recomendado",
+      "customAnswerPlaceholder": "Digite sua própria resposta",
+      "customAnswerPlaceholderOptional": "Digite sua própria resposta, ou deixe em branco para usar a opção selecionada",
+      "selectedOptionFallback": "Digite sua própria resposta, ou deixe em branco para usar a opção selecionada",
+      "answerRequiredHint": "Digite uma resposta para continuar.",
+      "previousQuestion": "Voltar",
+      "nextQuestion": "Próxima pergunta",
       "otherAnswerPlaceholder": "Outra resposta (opcional)",
       "sendAnswers": "Enviar respostas"
     }

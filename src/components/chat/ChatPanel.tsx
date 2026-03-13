@@ -47,6 +47,7 @@ import { MessageBlocks } from "./MessageBlocks";
 import { resolveEngineCapabilities } from "./engineCapabilities";
 import { buildCodexInputItems } from "./codexInputItems";
 import { resolveReasoningEffortForModel } from "./reasoningEffort";
+import { ToolInputQuestionnaire } from "./ToolInputQuestionnaire";
 import {
   buildPermissionsApprovalResponse,
   buildPermissionsDeclineResponse,
@@ -56,6 +57,7 @@ import {
   parseApprovalReason,
   parseProposedExecpolicyAmendment,
   parseProposedNetworkPolicyAmendments,
+  parseToolInputQuestions,
   requiresCustomApprovalPayload,
 } from "./toolInputApproval";
 import { ModelPicker } from "./ModelPicker";
@@ -1804,6 +1806,46 @@ export function ChatPanel() {
 
     return approvals;
   }, [messages]);
+
+  const pendingToolInputApproval = useMemo(
+    () => {
+      for (let index = pendingApprovals.length - 1; index >= 0; index -= 1) {
+        const approval = pendingApprovals[index];
+        if (isRequestUserInputApproval(approval.details ?? {})) {
+          return approval;
+        }
+      }
+
+      return null;
+    },
+    [pendingApprovals],
+  );
+
+  const pendingApprovalBannerRows = useMemo(
+    () =>
+      pendingApprovals.filter((approval) => {
+        if (!isRequestUserInputApproval(approval.details ?? {})) {
+          return true;
+        }
+
+        return activeThread?.engineId === "claude";
+      }),
+    [activeThread?.engineId, pendingApprovals],
+  );
+
+  const pendingToolInputQuestions = useMemo(
+    () =>
+      pendingToolInputApproval
+        ? parseToolInputQuestions(pendingToolInputApproval.details ?? {})
+        : [],
+    [pendingToolInputApproval],
+  );
+
+  const showPendingToolInputComposer = Boolean(
+    pendingToolInputApproval &&
+      pendingToolInputQuestions.length > 0 &&
+      activeThread?.engineId !== "claude",
+  );
 
   const appendAttachmentsFromPaths = useCallback((paths: string[]) => {
     if (!activeWorkspaceId || paths.length === 0) {
@@ -4049,7 +4091,7 @@ export function ChatPanel() {
           }}
         >
           {/* Pending approvals */}
-          {pendingApprovals.length > 0 && (
+          {pendingApprovalBannerRows.length > 0 && (
             <div className="chat-approval-banner">
               <div className="approval-header">
                 <span className="approval-header-icon">
@@ -4082,7 +4124,7 @@ export function ChatPanel() {
               </div>
 
               <div className="approval-rows">
-                {pendingApprovals.slice(-3).map((approval) => {
+                {pendingApprovalBannerRows.slice(-3).map((approval) => {
                   const details = approval.details ?? {};
                   const isPermissionsRequest = isPermissionsRequestApproval(details);
                   const isToolInputRequest = isRequestUserInputApproval(details);
@@ -4267,175 +4309,188 @@ export function ChatPanel() {
           )}
 
           {/* Input container */}
-          <div className={`chat-input-box ${planMode ? "chat-input-box-plan" : ""}`}>
-            {/* Plan mode indicator banner */}
-            {planMode && (
-              <div className="chat-plan-mode-banner">
-                <ListChecks size={12} />
-                <span>
-                  {selectedEngineId === "codex"
-                    ? codexPlanModeAdvertisement === "advertised"
-                      ? t("panel.planModeBannerCodex")
-                      : codexPlanModeAdvertisement === "notAdvertised"
-                        ? t("panel.planModeBannerCodexFallback")
-                        : t("panel.planModeBannerCodexUnknown")
-                    : t("panel.planModeBanner")}
-                </span>
-              </div>
-            )}
-
-            {/* Attachment chips */}
-            {attachments.length > 0 && (
-              <div className="chat-attachments-bar">
-                {attachments.map((attachment) => {
-                  const IconComponent = getAttachmentIcon(attachment.mimeType);
-                  return (
-                    <div key={attachment.id} className="chat-attachment-chip">
-                      <IconComponent size={12} />
-                      <span className="chat-attachment-chip-name">{attachment.fileName}</span>
-                      {attachment.sizeBytes > 0 && (
-                        <span className="chat-attachment-chip-size">
-                          {formatFileSize(attachment.sizeBytes)}
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        className="chat-attachment-chip-remove"
-                        onClick={() => removeAttachment(attachment.id)}
-                        title={t("attachments.remove")}
-                      >
-                        <X size={10} />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Slash command panel (inline) */}
-            {activeCommandPanel && (
-              <ChatCommandPanel
-                command={activeCommandPanel}
-                busy={commandPanelBusy}
-                error={commandPanelError}
-                defaultBaseBranch={
-                  (activeThread?.repoId
-                    ? repos.find((repo) => repo.id === activeThread.repoId)?.defaultBranch
-                    : activeRepo?.defaultBranch) ?? null
-                }
-                currentServiceTier={selectedServiceTier}
-                currentPersonality={selectedPersonality}
-                personalitySupported={selectedModelSupportsPersonality}
-                skills={
-                  codexReferenceCatalogState.skillsLoaded
-                    ? codexSkills
-                    : (codexProtocolDiagnostics?.skills ?? [])
-                }
-                mcpServers={codexProtocolDiagnostics?.mcpServers}
-                experimentalFeatures={codexProtocolDiagnostics?.experimentalFeatures}
-                onConfirm={handleCommandPanelConfirm}
-                onDismiss={() => {
-                  setActiveCommandPanel(null);
-                  setCommandPanelError(null);
+          <div
+            className={`chat-input-box ${planMode ? "chat-input-box-plan" : ""} ${showPendingToolInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
+          >
+            {showPendingToolInputComposer && pendingToolInputApproval ? (
+              <ToolInputQuestionnaire
+                details={pendingToolInputApproval.details ?? {}}
+                onSubmit={(response) => {
+                  void respondApproval(pendingToolInputApproval.approvalId, response);
                 }}
               />
-            )}
+            ) : (
+              <>
+                {/* Plan mode indicator banner */}
+                {planMode && (
+                  <div className="chat-plan-mode-banner">
+                    <ListChecks size={12} />
+                    <span>
+                      {selectedEngineId === "codex"
+                        ? codexPlanModeAdvertisement === "advertised"
+                          ? t("panel.planModeBannerCodex")
+                          : codexPlanModeAdvertisement === "notAdvertised"
+                            ? t("panel.planModeBannerCodexFallback")
+                            : t("panel.planModeBannerCodexUnknown")
+                        : t("panel.planModeBanner")}
+                    </span>
+                  </div>
+                )}
 
-            <textarea
-              ref={inputRef}
-              rows={3}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                handleSlashDetection(
-                  e.target.value,
-                  e.target.selectionStart ?? e.target.value.length,
-                );
-              }}
-              onKeyDown={(e) => {
-                /* ── Slash menu keyboard nav ── */
-                if (slashMenuOpen) {
-                  if (e.key === "ArrowDown") {
-                    e.preventDefault();
-                    setSlashMenuActiveIndex((i) =>
-                      Math.min(i + 1, filteredSlashCommands.length - 1),
+                {/* Attachment chips */}
+                {attachments.length > 0 && (
+                  <div className="chat-attachments-bar">
+                    {attachments.map((attachment) => {
+                      const IconComponent = getAttachmentIcon(attachment.mimeType);
+                      return (
+                        <div key={attachment.id} className="chat-attachment-chip">
+                          <IconComponent size={12} />
+                          <span className="chat-attachment-chip-name">{attachment.fileName}</span>
+                          {attachment.sizeBytes > 0 && (
+                            <span className="chat-attachment-chip-size">
+                              {formatFileSize(attachment.sizeBytes)}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            className="chat-attachment-chip-remove"
+                            onClick={() => removeAttachment(attachment.id)}
+                            title={t("attachments.remove")}
+                          >
+                            <X size={10} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Slash command panel (inline) */}
+                {activeCommandPanel && (
+                  <ChatCommandPanel
+                    command={activeCommandPanel}
+                    busy={commandPanelBusy}
+                    error={commandPanelError}
+                    defaultBaseBranch={
+                      (activeThread?.repoId
+                        ? repos.find((repo) => repo.id === activeThread.repoId)?.defaultBranch
+                        : activeRepo?.defaultBranch) ?? null
+                    }
+                    currentServiceTier={selectedServiceTier}
+                    currentPersonality={selectedPersonality}
+                    personalitySupported={selectedModelSupportsPersonality}
+                    skills={
+                      codexReferenceCatalogState.skillsLoaded
+                        ? codexSkills
+                        : (codexProtocolDiagnostics?.skills ?? [])
+                    }
+                    mcpServers={codexProtocolDiagnostics?.mcpServers}
+                    experimentalFeatures={codexProtocolDiagnostics?.experimentalFeatures}
+                    onConfirm={handleCommandPanelConfirm}
+                    onDismiss={() => {
+                      setActiveCommandPanel(null);
+                      setCommandPanelError(null);
+                    }}
+                  />
+                )}
+
+                <textarea
+                  ref={inputRef}
+                  rows={3}
+                  value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    handleSlashDetection(
+                      e.target.value,
+                      e.target.selectionStart ?? e.target.value.length,
                     );
-                    return;
+                  }}
+                  onKeyDown={(e) => {
+                    /* ── Slash menu keyboard nav ── */
+                    if (slashMenuOpen) {
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setSlashMenuActiveIndex((i) =>
+                          Math.min(i + 1, filteredSlashCommands.length - 1),
+                        );
+                        return;
+                      }
+                      if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setSlashMenuActiveIndex((i) => Math.max(i - 1, 0));
+                        return;
+                      }
+                      if (e.key === "Enter" || e.key === "Tab") {
+                        e.preventDefault();
+                        const cmd = filteredSlashCommands[slashMenuActiveIndex];
+                        if (cmd) handleSlashCommandSelect(cmd.id);
+                        return;
+                      }
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        setSlashMenuOpen(false);
+                        return;
+                      }
+                    }
+                    /* ── Command panel dismiss ── */
+                    if (activeCommandPanel && e.key === "Escape") {
+                      e.preventDefault();
+                      setActiveCommandPanel(null);
+                      setCommandPanelError(null);
+                      return;
+                    }
+                    if (shouldSubmitChatInput({
+                      key: e.key,
+                      ctrlKey: e.ctrlKey,
+                      metaKey: e.metaKey,
+                      shiftKey: e.shiftKey,
+                      isComposing: e.nativeEvent.isComposing,
+                    })) {
+                      e.preventDefault();
+                      if (streaming && !canSteerActiveTurn) {
+                        return;
+                      }
+                      void onSubmit(e);
+                    }
+                    if (e.shiftKey && e.key === "Tab") {
+                      e.preventDefault();
+                      if (activeWorkspaceId) {
+                        setPlanMode((prev) => !prev);
+                      }
+                    }
+                  }}
+                  placeholder={
+                    planMode
+                      ? t("panel.placeholders.plan")
+                      : t("panel.placeholders.chat")
                   }
-                  if (e.key === "ArrowUp") {
-                    e.preventDefault();
-                    setSlashMenuActiveIndex((i) => Math.max(i - 1, 0));
-                    return;
-                  }
-                  if (e.key === "Enter" || e.key === "Tab") {
-                    e.preventDefault();
-                    const cmd = filteredSlashCommands[slashMenuActiveIndex];
-                    if (cmd) handleSlashCommandSelect(cmd.id);
-                    return;
-                  }
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    setSlashMenuOpen(false);
-                    return;
-                  }
-                }
-                /* ── Command panel dismiss ── */
-                if (activeCommandPanel && e.key === "Escape") {
-                  e.preventDefault();
-                  setActiveCommandPanel(null);
-                  setCommandPanelError(null);
-                  return;
-                }
-                if (shouldSubmitChatInput({
-                  key: e.key,
-                  ctrlKey: e.ctrlKey,
-                  metaKey: e.metaKey,
-                  shiftKey: e.shiftKey,
-                  isComposing: e.nativeEvent.isComposing,
-                })) {
-                  e.preventDefault();
-                  if (streaming && !canSteerActiveTurn) {
-                    return;
-                  }
-                  void onSubmit(e);
-                }
-                if (e.shiftKey && e.key === "Tab") {
-                  e.preventDefault();
-                  if (activeWorkspaceId) {
-                    setPlanMode((prev) => !prev);
-                  }
-                }
-              }}
-              placeholder={
-                planMode
-                  ? t("panel.placeholders.plan")
-                  : t("panel.placeholders.chat")
-              }
-              disabled={!activeWorkspaceId}
-              style={{
-                width: "100%",
-                padding: "12px 14px",
-                background: "transparent",
-                color: "var(--text-1)",
-                fontSize: 13,
-                lineHeight: 1.6,
-                resize: "none",
-                fontFamily: "inherit",
-                caretColor: planMode ? "var(--accent-2)" : "var(--accent)",
-              }}
-            />
+                  disabled={!activeWorkspaceId}
+                  style={{
+                    width: "100%",
+                    padding: "12px 14px",
+                    background: "transparent",
+                    color: "var(--text-1)",
+                    fontSize: 13,
+                    lineHeight: 1.6,
+                    resize: "none",
+                    fontFamily: "inherit",
+                    caretColor: planMode ? "var(--accent-2)" : "var(--accent)",
+                  }}
+                />
 
-            {/* Slash command menu (portal) */}
-            <ChatSlashMenu
-              visible={slashMenuOpen && filteredSlashCommands.length > 0}
-              query={slashMenuQuery}
-              commands={filteredSlashCommands}
-              anchorRef={inputRef}
-              activeIndex={slashMenuActiveIndex}
-              onSelect={handleSlashCommandSelect}
-              onDismiss={() => setSlashMenuOpen(false)}
-              onActiveChange={setSlashMenuActiveIndex}
-            />
+                {/* Slash command menu (portal) */}
+                <ChatSlashMenu
+                  visible={slashMenuOpen && filteredSlashCommands.length > 0}
+                  query={slashMenuQuery}
+                  commands={filteredSlashCommands}
+                  anchorRef={inputRef}
+                  activeIndex={slashMenuActiveIndex}
+                  onSelect={handleSlashCommandSelect}
+                  onDismiss={() => setSlashMenuOpen(false)}
+                  onActiveChange={setSlashMenuActiveIndex}
+                />
+              </>
+            )}
 
             {/* Input toolbar with selectors */}
             <div
@@ -4447,77 +4502,83 @@ export function ChatPanel() {
               }}
             >
               {/* Attach file button */}
-              <button
-                type="button"
-                className="chat-toolbar-btn"
-                onClick={() => void handleAddAttachment()}
-                disabled={!activeWorkspaceId}
-                title={t("panel.attachFiles")}
-              >
-                <Plus size={12} />
-                {attachments.length > 0 && (
-                  <span className="chat-toolbar-badge">{attachments.length}</span>
-                )}
-              </button>
+              {!showPendingToolInputComposer && (
+                <button
+                  type="button"
+                  className="chat-toolbar-btn"
+                  onClick={() => void handleAddAttachment()}
+                  disabled={!activeWorkspaceId}
+                  title={t("panel.attachFiles")}
+                >
+                  <Plus size={12} />
+                  {attachments.length > 0 && (
+                    <span className="chat-toolbar-badge">{attachments.length}</span>
+                  )}
+                </button>
+              )}
 
-              {/* Plan mode toggle */}
-              <button
-                type="button"
-                className={`chat-toolbar-btn chat-toolbar-btn-bordered ${planMode ? "chat-toolbar-btn-active" : ""}`}
-                onClick={() => setPlanMode((prev) => !prev)}
-                disabled={!activeWorkspaceId}
-                title={
-                  selectedEngineId === "codex"
-                    ? planMode
-                      ? t("panel.disablePlanModeCodex")
-                      : t("panel.enablePlanModeCodex")
-                    : planMode
-                      ? t("panel.disablePlanMode")
-                      : t("panel.enablePlanMode")
-                }
-              >
-                <ListChecks size={12} />
-                <span style={{ fontSize: 11 }}>{t("panel.planShort")}</span>
-              </button>
+              {!showPendingToolInputComposer && (
+                <button
+                  type="button"
+                  className={`chat-toolbar-btn chat-toolbar-btn-bordered ${planMode ? "chat-toolbar-btn-active" : ""}`}
+                  onClick={() => setPlanMode((prev) => !prev)}
+                  disabled={!activeWorkspaceId}
+                  title={
+                    selectedEngineId === "codex"
+                      ? planMode
+                        ? t("panel.disablePlanModeCodex")
+                        : t("panel.enablePlanModeCodex")
+                      : planMode
+                        ? t("panel.disablePlanMode")
+                        : t("panel.enablePlanMode")
+                  }
+                >
+                  <ListChecks size={12} />
+                  <span style={{ fontSize: 11 }}>{t("panel.planShort")}</span>
+                </button>
+              )}
 
-              <div className="chat-toolbar-divider" />
+              {!showPendingToolInputComposer && <div className="chat-toolbar-divider" />}
 
               {/* Engine + Model + Effort selector */}
-              <ModelPicker
-                engines={engines}
-                health={health}
-                selectedEngineId={selectedEngineId}
-                selectedModelId={selectedModelId ?? selectedModel?.id ?? ""}
-                selectedEffort={selectedEffort}
-                onEngineModelChange={(engineId, modelId) => {
-                  manuallyOverrodeThreadSelectionRef.current = true;
-                  selectedEngineIdRef.current = engineId;
-                  if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
-                  const nextEngine =
-                    engines.find((engine) => engine.id === engineId) ?? null;
-                  const nextModel =
-                    nextEngine?.models.find((model) => model.id === modelId) ?? null;
-                  const nextEffort = resolveReasoningEffortForModel(
-                    nextModel,
-                    selectedEffortRef.current,
-                  );
-                  selectedModelIdRef.current = modelId;
-                  setSelectedModelId(modelId);
-                  if (nextEffort && nextEffort !== selectedEffort) {
-                    selectedEffortRef.current = nextEffort;
-                    setSelectedEffort(nextEffort);
-                  }
-                }}
-                onEffortChange={(effort) => void onReasoningEffortChange(effort)}
-                disabled={availableModels.length === 0}
-              />
+              {!showPendingToolInputComposer && (
+                <ModelPicker
+                  engines={engines}
+                  health={health}
+                  selectedEngineId={selectedEngineId}
+                  selectedModelId={selectedModelId ?? selectedModel?.id ?? ""}
+                  selectedEffort={selectedEffort}
+                  onEngineModelChange={(engineId, modelId) => {
+                    manuallyOverrodeThreadSelectionRef.current = true;
+                    selectedEngineIdRef.current = engineId;
+                    if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
+                    const nextEngine =
+                      engines.find((engine) => engine.id === engineId) ?? null;
+                    const nextModel =
+                      nextEngine?.models.find((model) => model.id === modelId) ?? null;
+                    const nextEffort = resolveReasoningEffortForModel(
+                      nextModel,
+                      selectedEffortRef.current,
+                    );
+                    selectedModelIdRef.current = modelId;
+                    setSelectedModelId(modelId);
+                    if (nextEffort && nextEffort !== selectedEffort) {
+                      selectedEffortRef.current = nextEffort;
+                      setSelectedEffort(nextEffort);
+                    }
+                  }}
+                  onEffortChange={(effort) => void onReasoningEffortChange(effort)}
+                  disabled={availableModels.length === 0}
+                />
+              )}
 
               {/* Codex Runtime + Config removed from toolbar — accessed via /slash commands */}
 
-              {(activeRepo ||
-                repos.length > 0 ||
-                activeThread?.engineId === "codex" ||
-                activeThread?.engineId === "claude") && (
+              {!showPendingToolInputComposer &&
+                (activeRepo ||
+                  repos.length > 0 ||
+                  activeThread?.engineId === "codex" ||
+                  activeThread?.engineId === "claude") && (
                 <>
                   <div className="chat-toolbar-divider" />
                   <PermissionPicker
@@ -4648,7 +4709,7 @@ export function ChatPanel() {
                   </button>
                 )}
 
-                {(!streaming || canSteerActiveTurn) && (
+                {(!streaming || canSteerActiveTurn) && !showPendingToolInputComposer && (
                 <button
                   type="submit"
                   disabled={!activeWorkspaceId || !input.trim()}
