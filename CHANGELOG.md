@@ -1,5 +1,25 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.39.0...vnull) (2026-03-13)
+
+### Features
+
+* **onboarding:** add finishing touches to panes onboarding ux ([5b06ae0](https://github.com/wygoralves/panes/commit/5b06ae05ee13bcda20250939843d0bc4fd977944))
+* **onboarding:** add onboarding state foundation ([c1da1f7](https://github.com/wygoralves/panes/commit/c1da1f7d17913366799069f44a324566afc6d37b))
+* **onboarding:** improve visuals of the onboarding flow ([9b4a018](https://github.com/wygoralves/panes/commit/9b4a018b2817edd57237a05bc16efd6f792c7e66))
+* **onboarding:** more  finishing touches to panes onboarding ux ([a621877](https://github.com/wygoralves/panes/commit/a62187785847cd0f91af94ef51d52d65e8a027b4))
+* **onboarding:** more ui improvements to the onboarding flow ([434ae50](https://github.com/wygoralves/panes/commit/434ae506eeabfb208597fdaa923a16e7f1fcabd1))
+* **onboarding:** more ui improvements to the onboarding flow ([e768cbf](https://github.com/wygoralves/panes/commit/e768cbf80d715e253acfb0c97e09599ebad31aed))
+* **onboarding:** more ui polish and i18n fixes  to the onboarding flow ([ee39e19](https://github.com/wygoralves/panes/commit/ee39e19bc9fdbea36abf5d31c34c9659d7e94bdc))
+* **onboarding:** unify first-run onboarding flow ([d3e6a04](https://github.com/wygoralves/panes/commit/d3e6a042c45d772af70c6c22e7f4fb63d68b8dea))
+
+### Bug Fixes
+
+* **onboarding:** fix behavior regressions on onboarding flow ([3261e69](https://github.com/wygoralves/panes/commit/3261e691d09c0d3a1b5f2285d3059dfbfd7e5f83))
+* **onboarding:** fix persistance of chat harness selection and some windows bugfixes ([672e10b](https://github.com/wygoralves/panes/commit/672e10be5b0f1476efaf553a0680b699e9238d02))
+* **onboarding:** harden install and reopen recovery ([432b742](https://github.com/wygoralves/panes/commit/432b7425d565e74c1f10a71366cc1381d8148f0b))
+* **onboarding:** serialize installs and readiness gating ([347e02f](https://github.com/wygoralves/panes/commit/347e02fc5fe9b02f07c1e058617955c057f91491))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.38.0...vnull) (2026-03-12)
 
 ### Features
