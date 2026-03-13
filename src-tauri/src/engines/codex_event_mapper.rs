@@ -13,6 +13,7 @@ pub struct TurnEventMapper {
     engine_action_to_internal: HashMap<String, String>,
     pending_actions_without_engine_id: Vec<String>,
     pending_mcp_progress_by_engine_id: HashMap<String, String>,
+    reasoning_summary_parts_by_item_id: HashMap<String, i64>,
     latest_token_usage: Option<TokenUsage>,
     latest_usage_limits: UsageLimitsSnapshot,
     streamed_agent_message_items: HashSet<String>,
@@ -63,6 +64,7 @@ impl TurnEventMapper {
                     status,
                 });
                 self.latest_token_usage = None;
+                self.reasoning_summary_parts_by_item_id.clear();
                 events
             }
             "turndiffupdated" => {
@@ -101,6 +103,7 @@ impl TurnEventMapper {
                     vec![EngineEvent::ThinkingDelta { content }]
                 }
             }
+            "reasoningsummarypartadded" => self.map_reasoning_summary_part_added(params),
             "itemreasoningsummarytextdelta" | "itemreasoningtextdelta" => {
                 let content =
                     extract_any_string(params, &["delta", "text", "content"]).unwrap_or_default();
@@ -588,6 +591,25 @@ impl TurnEventMapper {
             to_model,
             reason,
         }]
+    }
+
+    fn map_reasoning_summary_part_added(&mut self, params: &Value) -> Vec<EngineEvent> {
+        let Some(item_id) = extract_any_string(params, &["itemId", "item_id"]) else {
+            return Vec::new();
+        };
+        let summary_index = extract_any_i64(params, &["summaryIndex", "summary_index"])
+            .unwrap_or_default();
+        let previous = self
+            .reasoning_summary_parts_by_item_id
+            .insert(item_id, summary_index);
+
+        if summary_index <= 0 || previous.is_none() || previous >= Some(summary_index) {
+            Vec::new()
+        } else {
+            vec![EngineEvent::ThinkingDelta {
+                content: "\n".to_string(),
+            }]
+        }
     }
 
     fn resolve_or_register_action(&mut self, engine_action_id: Option<&str>) -> String {
@@ -1734,6 +1756,37 @@ mod tests {
                 assert_eq!(content, "pnpm test\n");
             }
             other => panic!("expected action output delta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_notification_separates_reasoning_summary_parts() {
+        let mut mapper = TurnEventMapper::default();
+
+        let first = mapper.map_notification(
+            "reasoningSummary/partAdded",
+            &json!({
+                "itemId": "reasoning_123",
+                "summaryIndex": 0,
+                "threadId": "thr_123",
+                "turnId": "turn_123"
+            }),
+        );
+        let second = mapper.map_notification(
+            "reasoningSummary/partAdded",
+            &json!({
+                "itemId": "reasoning_123",
+                "summaryIndex": 1,
+                "threadId": "thr_123",
+                "turnId": "turn_123"
+            }),
+        );
+
+        assert!(first.is_empty());
+        assert_eq!(second.len(), 1);
+        match &second[0] {
+            EngineEvent::ThinkingDelta { content } => assert_eq!(content, "\n"),
+            other => panic!("expected thinking delta, got {other:?}"),
         }
     }
 

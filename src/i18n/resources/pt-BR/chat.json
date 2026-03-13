@@ -141,7 +141,11 @@
     "events": {
       "configWarning": "Aviso de configuração",
       "accountLogin": "Login da conta",
-      "mcpOauth": "OAuth do MCP"
+      "mcpOauth": "OAuth do MCP",
+      "windowsSandboxSetup": "Configuração do sandbox no Windows",
+      "windowsWorldWritableWarning": "Aviso de paths world-writable no Windows",
+      "threadRealtime": "Realtime da thread",
+      "scanIncomplete": "Varredura incompleta"
     }
   },
   "threadPicker": {

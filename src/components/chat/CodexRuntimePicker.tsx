@@ -68,6 +68,35 @@ function formatJsonValue(value: unknown, noneLabel: string): string {
   }
 }
 
+function formatConfigWarningLocation(
+  warning: CodexProtocolDiagnostics["lastConfigWarning"],
+): string | null {
+  if (!warning) {
+    return null;
+  }
+
+  const lineParts: string[] = [];
+  if (typeof warning.startLine === "number") {
+    lineParts.push(String(warning.startLine));
+    if (typeof warning.startColumn === "number") {
+      lineParts[lineParts.length - 1] += `:${warning.startColumn}`;
+    }
+  }
+  if (typeof warning.endLine === "number") {
+    let end = String(warning.endLine);
+    if (typeof warning.endColumn === "number") {
+      end += `:${warning.endColumn}`;
+    }
+    lineParts.push(end);
+  }
+
+  if (!lineParts.length) {
+    return null;
+  }
+
+  return lineParts.length === 1 ? lineParts[0] : `${lineParts[0]}-${lineParts[1]}`;
+}
+
 function getMethodIssues(methodAvailability: CodexMethodAvailability[]): CodexMethodAvailability[] {
   return methodAvailability.filter((entry) => entry.status !== "available");
 }
@@ -194,7 +223,9 @@ export function CodexRuntimePicker({
     methodIssues.length +
     (diagnostics?.lastConfigWarning ? 1 : 0) +
     (diagnostics?.lastAccountLogin?.success === false ? 1 : 0) +
-    (diagnostics?.lastMcpOauth?.success === false ? 1 : 0);
+    (diagnostics?.lastMcpOauth?.success === false ? 1 : 0) +
+    (diagnostics?.lastWindowsSandboxSetup?.success === false ? 1 : 0) +
+    (diagnostics?.lastWindowsWorldWritableWarning ? 1 : 0);
   const enabledFeatures = useMemo(
     () =>
       (diagnostics?.experimentalFeatures ?? [])
@@ -606,7 +637,10 @@ export function CodexRuntimePicker({
 
                 {(diagnostics.lastConfigWarning ||
                   diagnostics.lastAccountLogin ||
-                  diagnostics.lastMcpOauth) ? (
+                  diagnostics.lastMcpOauth ||
+                  diagnostics.lastWindowsSandboxSetup ||
+                  diagnostics.lastWindowsWorldWritableWarning ||
+                  diagnostics.lastThreadRealtime) ? (
                   <Section title={t("runtimePicker.sections.events")}>
                     <div style={{ display: "grid", gap: 8 }}>
                       {diagnostics.lastConfigWarning ? (
@@ -618,6 +652,7 @@ export function CodexRuntimePicker({
                             {[
                               diagnostics.lastConfigWarning.summary,
                               diagnostics.lastConfigWarning.path,
+                              formatConfigWarningLocation(diagnostics.lastConfigWarning),
                               diagnostics.lastConfigWarning.details,
                             ]
                               .filter(Boolean)
@@ -648,6 +683,66 @@ export function CodexRuntimePicker({
                                 ? t("runtimePicker.statusCurrent")
                                 : diagnostics.lastMcpOauth.error ?? t("runtimePicker.unknown")
                             }`}
+                          </div>
+                        </div>
+                      ) : null}
+                      {diagnostics.lastWindowsSandboxSetup ? (
+                        <div>
+                          <div style={{ color: "var(--text-1)", fontSize: 11, fontWeight: 600 }}>
+                            {t("runtimePicker.events.windowsSandboxSetup")}
+                          </div>
+                          <div className="codex-config-note">
+                            {[
+                              humanizeIdentifier(diagnostics.lastWindowsSandboxSetup.mode),
+                              diagnostics.lastWindowsSandboxSetup.success
+                                ? t("runtimePicker.statusCurrent")
+                                : diagnostics.lastWindowsSandboxSetup.error ??
+                                  t("runtimePicker.unknown"),
+                            ].join(" · ")}
+                          </div>
+                        </div>
+                      ) : null}
+                      {diagnostics.lastWindowsWorldWritableWarning ? (
+                        <div>
+                          <div style={{ color: "var(--text-1)", fontSize: 11, fontWeight: 600 }}>
+                            {t("runtimePicker.events.windowsWorldWritableWarning")}
+                          </div>
+                          <div className="codex-config-note">
+                            {[
+                              diagnostics.lastWindowsWorldWritableWarning.samplePaths.join(", "),
+                              diagnostics.lastWindowsWorldWritableWarning.extraCount > 0
+                                ? `+${diagnostics.lastWindowsWorldWritableWarning.extraCount}`
+                                : null,
+                              diagnostics.lastWindowsWorldWritableWarning.failedScan
+                                ? t("runtimePicker.events.scanIncomplete")
+                                : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </div>
+                        </div>
+                      ) : null}
+                      {diagnostics.lastThreadRealtime ? (
+                        <div>
+                          <div style={{ color: "var(--text-1)", fontSize: 11, fontWeight: 600 }}>
+                            {t("runtimePicker.events.threadRealtime")}
+                          </div>
+                          <div className="codex-config-note">
+                            {[
+                              humanizeIdentifier(diagnostics.lastThreadRealtime.kind),
+                              diagnostics.lastThreadRealtime.threadId,
+                              diagnostics.lastThreadRealtime.itemType
+                                ? humanizeIdentifier(diagnostics.lastThreadRealtime.itemType)
+                                : null,
+                              diagnostics.lastThreadRealtime.sessionId,
+                              diagnostics.lastThreadRealtime.reason,
+                              diagnostics.lastThreadRealtime.message,
+                              diagnostics.lastThreadRealtime.sampleRate
+                                ? `${diagnostics.lastThreadRealtime.sampleRate} Hz`
+                                : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
                           </div>
                         </div>
                       ) : null}

@@ -23,7 +23,9 @@ use crate::models::{
     CodexAccountLoginCompletedDto, CodexAccountStateDto, CodexAppDto, CodexConfigLayerDto,
     CodexConfigStateDto, CodexConfigWarningDto, CodexExperimentalFeatureDto,
     CodexMcpOauthCompletedDto, CodexMcpServerDto, CodexMethodAvailabilityDto, CodexPluginDto,
-    CodexPluginMarketplaceDto, CodexProtocolDiagnosticsDto, CodexSkillDto, RuntimeToastDto,
+    CodexPluginMarketplaceDto, CodexProtocolDiagnosticsDto, CodexSkillDto,
+    CodexThreadRealtimeEventDto, CodexWindowsSandboxSetupDto,
+    CodexWindowsWorldWritableWarningDto, RuntimeToastDto,
 };
 use crate::{process_utils, runtime_env};
 
@@ -159,6 +161,19 @@ pub enum CodexRuntimeEvent {
     ThreadNameUpdated {
         engine_thread_id: String,
         thread_name: Option<String>,
+    },
+    ThreadSnapshotUpdated {
+        engine_thread_id: String,
+        thread_name: Option<String>,
+        status_type: Option<String>,
+        active_flags: Vec<String>,
+        preview: Option<String>,
+    },
+    ThreadArchived {
+        engine_thread_id: String,
+    },
+    ThreadUnarchived {
+        engine_thread_id: String,
     },
 }
 
@@ -1930,6 +1945,24 @@ impl CodexEngine {
                     Ok(IncomingMessage::Notification { method, params }) => {
                         let normalized_method = normalize_method(&method);
                         match normalized_method.as_str() {
+                            "thread/started" => {
+                                let thread = params.get("thread").unwrap_or(&params);
+                                if let Some(engine_thread_id) =
+                                    extract_any_string(thread, &["id", "threadId", "thread_id"])
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::ThreadSnapshotUpdated {
+                                            engine_thread_id,
+                                            thread_name: extract_thread_title(&params),
+                                            status_type: extract_thread_runtime_status_type(&params),
+                                            active_flags: extract_thread_runtime_active_flags(
+                                                &params,
+                                            ),
+                                            preview: extract_thread_preview(&params),
+                                        },
+                                    );
+                                }
+                            }
                             "thread/status/changed" => {
                                 if let Some(engine_thread_id) =
                                     extract_any_string(&params, &["threadId", "thread_id"])
@@ -1952,6 +1985,40 @@ impl CodexEngine {
                                             engine_thread_id,
                                             status_type,
                                             active_flags,
+                                        },
+                                    );
+                                }
+                            }
+                            "thread/archived" => {
+                                if let Some(engine_thread_id) =
+                                    extract_any_string(&params, &["threadId", "thread_id"])
+                                {
+                                    let _ =
+                                        runtime_events.send(CodexRuntimeEvent::ThreadArchived {
+                                            engine_thread_id,
+                                        });
+                                }
+                            }
+                            "thread/unarchived" => {
+                                if let Some(engine_thread_id) =
+                                    extract_any_string(&params, &["threadId", "thread_id"])
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::ThreadUnarchived { engine_thread_id },
+                                    );
+                                }
+                            }
+                            "thread/closed" => {
+                                if let Some(engine_thread_id) =
+                                    extract_any_string(&params, &["threadId", "thread_id"])
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::ThreadSnapshotUpdated {
+                                            engine_thread_id,
+                                            thread_name: None,
+                                            status_type: Some("notLoaded".to_string()),
+                                            active_flags: Vec::new(),
+                                            preview: None,
                                         },
                                     );
                                 }
@@ -2047,6 +2114,61 @@ impl CodexEngine {
                                         CodexRuntimeEvent::DiagnosticsUpdated {
                                             diagnostics,
                                             toast: None,
+                                        },
+                                    );
+                                }
+                            }
+                            "thread/realtime/started"
+                            | "thread/realtime/closed"
+                            | "thread/realtime/error"
+                            | "thread/realtime/itemadded"
+                            | "thread/realtime/outputaudiodelta" => {
+                                if let Some(diagnostics) =
+                                    update_protocol_diagnostics_with_thread_realtime(
+                                        state.clone(),
+                                        normalized_method.as_str(),
+                                        &params,
+                                    )
+                                    .await
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::DiagnosticsUpdated {
+                                            diagnostics,
+                                            toast: None,
+                                        },
+                                    );
+                                }
+                            }
+                            "windows/worldwritablewarning" => {
+                                if let Some(diagnostics) =
+                                    update_protocol_diagnostics_with_windows_world_writable_warning(
+                                        state.clone(),
+                                        &params,
+                                    )
+                                    .await
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::DiagnosticsUpdated {
+                                            diagnostics,
+                                            toast: build_windows_world_writable_warning_toast(
+                                                &params,
+                                            ),
+                                        },
+                                    );
+                                }
+                            }
+                            "windows/sandboxsetup/completed" => {
+                                if let Some(diagnostics) =
+                                    update_protocol_diagnostics_with_windows_sandbox_setup(
+                                        state.clone(),
+                                        &params,
+                                    )
+                                    .await
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::DiagnosticsUpdated {
+                                            diagnostics,
+                                            toast: build_windows_sandbox_setup_toast(&params),
                                         },
                                     );
                                 }
@@ -4485,6 +4607,10 @@ async fn update_protocol_diagnostics_with_config_warning(
             .and_then(|value| u64::try_from(value).ok()),
         start_column: extract_nested_i64(params, &["range", "start", "column"])
             .and_then(|value| u64::try_from(value).ok()),
+        end_line: extract_nested_i64(params, &["range", "end", "line"])
+            .and_then(|value| u64::try_from(value).ok()),
+        end_column: extract_nested_i64(params, &["range", "end", "column"])
+            .and_then(|value| u64::try_from(value).ok()),
     });
     Some(diagnostics.clone())
 }
@@ -4527,6 +4653,86 @@ async fn update_protocol_diagnostics_with_mcp_oauth(
     Some(diagnostics.clone())
 }
 
+async fn update_protocol_diagnostics_with_thread_realtime(
+    state: Arc<Mutex<CodexState>>,
+    normalized_method: &str,
+    params: &serde_json::Value,
+) -> Option<CodexProtocolDiagnosticsDto> {
+    let mut state = state.lock().await;
+    let diagnostics = state
+        .protocol_diagnostics
+        .get_or_insert_with(Default::default);
+    diagnostics.last_thread_realtime = Some(CodexThreadRealtimeEventDto {
+        kind: normalized_method.to_string(),
+        thread_id: extract_any_string(params, &["threadId", "thread_id"])
+            .unwrap_or_else(|| "unknown".to_string()),
+        session_id: extract_any_string(params, &["sessionId", "session_id"]),
+        reason: extract_any_string(params, &["reason"]),
+        message: extract_any_string(params, &["message"]),
+        item_type: params
+            .get("item")
+            .and_then(|item| extract_any_string(item, &["type"])),
+        sample_rate: extract_nested_i64(params, &["audio", "sampleRate"])
+            .and_then(|value| u64::try_from(value).ok()),
+        num_channels: extract_nested_i64(params, &["audio", "numChannels"])
+            .and_then(|value| u64::try_from(value).ok()),
+        samples_per_channel: extract_nested_i64(params, &["audio", "samplesPerChannel"])
+            .and_then(|value| u64::try_from(value).ok()),
+    });
+    Some(diagnostics.clone())
+}
+
+async fn update_protocol_diagnostics_with_windows_sandbox_setup(
+    state: Arc<Mutex<CodexState>>,
+    params: &serde_json::Value,
+) -> Option<CodexProtocolDiagnosticsDto> {
+    let mut state = state.lock().await;
+    let diagnostics = state
+        .protocol_diagnostics
+        .get_or_insert_with(Default::default);
+    diagnostics.last_windows_sandbox_setup = Some(CodexWindowsSandboxSetupDto {
+        mode: extract_any_string(params, &["mode"]).unwrap_or_else(|| "unknown".to_string()),
+        success: params
+            .get("success")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        error: extract_any_string(params, &["error"]),
+    });
+    Some(diagnostics.clone())
+}
+
+async fn update_protocol_diagnostics_with_windows_world_writable_warning(
+    state: Arc<Mutex<CodexState>>,
+    params: &serde_json::Value,
+) -> Option<CodexProtocolDiagnosticsDto> {
+    let mut state = state.lock().await;
+    let diagnostics = state
+        .protocol_diagnostics
+        .get_or_insert_with(Default::default);
+    diagnostics.last_windows_world_writable_warning = Some(CodexWindowsWorldWritableWarningDto {
+        sample_paths: params
+            .get("samplePaths")
+            .and_then(serde_json::Value::as_array)
+            .map(|paths| {
+                paths
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+        extra_count: params
+            .get("extraCount")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0),
+        failed_scan: params
+            .get("failedScan")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+    });
+    Some(diagnostics.clone())
+}
+
 fn build_config_warning_toast(_params: &serde_json::Value) -> Option<RuntimeToastDto> {
     None
 }
@@ -4563,6 +4769,58 @@ fn build_mcp_oauth_toast(params: &serde_json::Value) -> Option<RuntimeToastDto> 
         message: extract_any_string(params, &["error"])
             .map(|error| format!("{server_name} OAuth failed: {error}"))
             .unwrap_or_else(|| format!("{server_name} OAuth failed.")),
+    })
+}
+
+fn build_windows_sandbox_setup_toast(params: &serde_json::Value) -> Option<RuntimeToastDto> {
+    let success = params
+        .get("success")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if success {
+        return None;
+    }
+
+    Some(RuntimeToastDto {
+        variant: "warning".to_string(),
+        message: extract_any_string(params, &["error"]).unwrap_or_else(|| {
+            "Codex Windows sandbox setup did not complete successfully.".to_string()
+        }),
+    })
+}
+
+fn build_windows_world_writable_warning_toast(
+    params: &serde_json::Value,
+) -> Option<RuntimeToastDto> {
+    let sample_paths = params
+        .get("samplePaths")
+        .and_then(serde_json::Value::as_array)
+        .map(|paths| {
+            paths
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    let extra_count = params
+        .get("extraCount")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+
+    let mut message = "Codex detected world-writable Windows paths that may weaken sandbox safety."
+        .to_string();
+    if !sample_paths.is_empty() {
+        message.push_str(&format!(" Examples: {sample_paths}."));
+    }
+    if extra_count > 0 {
+        message.push_str(&format!(" Plus {extra_count} more."));
+    }
+
+    Some(RuntimeToastDto {
+        variant: "warning".to_string(),
+        message,
     })
 }
 
@@ -4782,7 +5040,13 @@ fn is_known_codex_notification_method(normalized_method: &str) -> bool {
             | "turn/completed"
             | "turn/diff/updated"
             | "turn/plan/updated"
+            | "thread/started"
             | "thread/compacted"
+            | "thread/status/changed"
+            | "thread/name/updated"
+            | "thread/archived"
+            | "thread/unarchived"
+            | "thread/closed"
             | "thread/tokenusage/updated"
             | "account/ratelimits/updated"
             | "account/updated"
@@ -4790,6 +5054,7 @@ fn is_known_codex_notification_method(normalized_method: &str) -> bool {
             | "item/completed"
             | "item/agentmessage/delta"
             | "item/plan/delta"
+            | "reasoningsummary/partadded"
             | "item/reasoning/summarytextdelta"
             | "item/reasoning/textdelta"
             | "item/mcptoolcall/progress"
@@ -4798,6 +5063,13 @@ fn is_known_codex_notification_method(normalized_method: &str) -> bool {
             | "hook/started"
             | "hook/completed"
             | "terminal/interaction"
+            | "thread/realtime/started"
+            | "thread/realtime/closed"
+            | "thread/realtime/error"
+            | "thread/realtime/itemadded"
+            | "thread/realtime/outputaudiodelta"
+            | "windows/worldwritablewarning"
+            | "windows/sandboxsetup/completed"
             | "model/rerouted"
             | "deprecationnotice"
             | "error"
@@ -5340,6 +5612,111 @@ mod tests {
                 .map(|model| model.id)
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[tokio::test]
+    async fn update_protocol_diagnostics_with_config_warning_tracks_end_range() {
+        let state = Arc::new(Mutex::new(CodexState::default()));
+
+        let diagnostics = update_protocol_diagnostics_with_config_warning(
+            state,
+            &json!({
+                "summary": "Bad config",
+                "path": "/tmp/config.toml",
+                "range": {
+                    "start": { "line": 2, "column": 4 },
+                    "end": { "line": 2, "column": 12 }
+                }
+            }),
+        )
+        .await
+        .expect("diagnostics should update");
+
+        let warning = diagnostics
+            .last_config_warning
+            .expect("config warning should be stored");
+        assert_eq!(warning.start_line, Some(2));
+        assert_eq!(warning.start_column, Some(4));
+        assert_eq!(warning.end_line, Some(2));
+        assert_eq!(warning.end_column, Some(12));
+    }
+
+    #[tokio::test]
+    async fn update_protocol_diagnostics_with_windows_and_realtime_notifications() {
+        let state = Arc::new(Mutex::new(CodexState::default()));
+
+        let diagnostics = update_protocol_diagnostics_with_windows_world_writable_warning(
+            state.clone(),
+            &json!({
+                "samplePaths": ["C:/tmp/a", "C:/tmp/b"],
+                "extraCount": 3,
+                "failedScan": true
+            }),
+        )
+        .await
+        .expect("world writable warning should update");
+        assert_eq!(
+            diagnostics
+                .last_windows_world_writable_warning
+                .as_ref()
+                .map(|value| value.extra_count),
+            Some(3)
+        );
+
+        let diagnostics = update_protocol_diagnostics_with_windows_sandbox_setup(
+            state.clone(),
+            &json!({
+                "mode": "unelevated",
+                "success": false,
+                "error": "permission denied"
+            }),
+        )
+        .await
+        .expect("sandbox setup should update");
+        assert_eq!(
+            diagnostics
+                .last_windows_sandbox_setup
+                .as_ref()
+                .map(|value| value.error.as_deref()),
+            Some(Some("permission denied"))
+        );
+
+        let diagnostics = update_protocol_diagnostics_with_thread_realtime(
+            state,
+            "thread/realtime/outputaudiodelta",
+            &json!({
+                "threadId": "thread-123",
+                "audio": {
+                    "sampleRate": 24000,
+                    "numChannels": 2,
+                    "samplesPerChannel": 480,
+                    "data": "abc"
+                }
+            }),
+        )
+        .await
+        .expect("thread realtime should update");
+        let realtime = diagnostics
+            .last_thread_realtime
+            .expect("thread realtime event should be stored");
+        assert_eq!(realtime.kind, "thread/realtime/outputaudiodelta");
+        assert_eq!(realtime.thread_id, "thread-123");
+        assert_eq!(realtime.sample_rate, Some(24000));
+        assert_eq!(realtime.num_channels, Some(2));
+        assert_eq!(realtime.samples_per_channel, Some(480));
+    }
+
+    #[test]
+    fn known_codex_notification_methods_include_remaining_runtime_notifications() {
+        assert!(is_known_codex_notification_method("thread/started"));
+        assert!(is_known_codex_notification_method("thread/archived"));
+        assert!(is_known_codex_notification_method("thread/unarchived"));
+        assert!(is_known_codex_notification_method("thread/closed"));
+        assert!(is_known_codex_notification_method("reasoningsummary/partadded"));
+        assert!(is_known_codex_notification_method("thread/realtime/started"));
+        assert!(is_known_codex_notification_method("thread/realtime/outputaudiodelta"));
+        assert!(is_known_codex_notification_method("windows/worldwritablewarning"));
+        assert!(is_known_codex_notification_method("windows/sandboxsetup/completed"));
     }
 
     #[test]

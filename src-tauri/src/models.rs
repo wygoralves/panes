@@ -335,6 +335,12 @@ pub struct CodexProtocolDiagnosticsDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_mcp_oauth: Option<CodexMcpOauthCompletedDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_thread_realtime: Option<CodexThreadRealtimeEventDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_windows_sandbox_setup: Option<CodexWindowsSandboxSetupDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_windows_world_writable_warning: Option<CodexWindowsWorldWritableWarningDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fetched_at: Option<String>,
     #[serde(default)]
     pub stale: bool,
@@ -468,6 +474,10 @@ pub struct CodexConfigWarningDto {
     pub start_line: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_column: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_column: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -487,6 +497,44 @@ pub struct CodexMcpOauthCompletedDto {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexThreadRealtimeEventDto {
+    pub kind: String,
+    pub thread_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_rate: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub num_channels: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub samples_per_channel: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexWindowsSandboxSetupDto {
+    pub mode: String,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexWindowsWorldWritableWarningDto {
+    pub sample_paths: Vec<String>,
+    pub extra_count: u64,
+    pub failed_scan: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -501,6 +501,8 @@ export interface CodexConfigWarning {
   path?: string;
   startLine?: number;
   startColumn?: number;
+  endLine?: number;
+  endColumn?: number;
 }
 
 export interface CodexAccountLoginCompleted {
@@ -513,6 +515,30 @@ export interface CodexMcpOauthCompleted {
   name: string;
   success: boolean;
   error?: string;
+}
+
+export interface CodexThreadRealtimeEvent {
+  kind: string;
+  threadId: string;
+  sessionId?: string;
+  reason?: string;
+  message?: string;
+  itemType?: string;
+  sampleRate?: number;
+  numChannels?: number;
+  samplesPerChannel?: number;
+}
+
+export interface CodexWindowsSandboxSetup {
+  mode: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface CodexWindowsWorldWritableWarning {
+  samplePaths: string[];
+  extraCount: number;
+  failedScan: boolean;
 }
 
 export interface CodexProtocolDiagnostics {
@@ -528,6 +554,9 @@ export interface CodexProtocolDiagnostics {
   lastConfigWarning?: CodexConfigWarning;
   lastAccountLogin?: CodexAccountLoginCompleted;
   lastMcpOauth?: CodexMcpOauthCompleted;
+  lastThreadRealtime?: CodexThreadRealtimeEvent;
+  lastWindowsSandboxSetup?: CodexWindowsSandboxSetup;
+  lastWindowsWorldWritableWarning?: CodexWindowsWorldWritableWarning;
   fetchedAt?: string;
   stale: boolean;
 }
