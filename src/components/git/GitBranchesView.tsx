@@ -1,8 +1,9 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Plus, X, MoreHorizontal, GitBranch, GitBranchPlus, Pencil, Trash2, Loader2, Search } from "lucide-react";
 import { formatDateTime } from "../../lib/formatters";
+import { getActionMenuPosition } from "./actionMenuPosition";
 import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -15,6 +16,11 @@ interface Props {
 
 interface ActionMenuState {
   branchName: string;
+  triggerRect: {
+    top: number;
+    bottom: number;
+    right: number;
+  };
   top: number;
   left: number;
 }
@@ -130,17 +136,51 @@ export function GitBranchesView({ repo, onError }: Props) {
     };
   }, [actionMenu, closeMenu]);
 
+  useLayoutEffect(() => {
+    if (!actionMenu || !actionMenuRef.current) return;
+    const next = getActionMenuPosition({
+      triggerRect: actionMenu.triggerRect,
+      menuWidth: actionMenuRef.current.offsetWidth,
+      menuHeight: actionMenuRef.current.offsetHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    });
+    if (next.top === actionMenu.top && next.left === actionMenu.left) return;
+    setActionMenu((current) =>
+      current && current.branchName === actionMenu.branchName
+        ? { ...current, ...next }
+        : current,
+    );
+  }, [actionMenu]);
+
   function openActionMenu(branchName: string, e: React.MouseEvent<HTMLButtonElement>) {
     if (actionMenu?.branchName === branchName) {
       closeMenu();
       return;
     }
     const rect = e.currentTarget.getBoundingClientRect();
+    const branch = branches.find((item) => item.name === branchName);
+    const actionCount =
+      (branch && !branch.isCurrent ? 1 : 0) +
+      (branch && !branch.isRemote ? 1 : 0) +
+      (branch && !branch.isRemote && !branch.isCurrent ? 1 : 0);
+    const estimatedHeight = Math.max(1, actionCount) * 32 + 8;
     actionTriggerRef.current = e.currentTarget;
+    const triggerRect = {
+      top: rect.top,
+      bottom: rect.bottom,
+      right: rect.right,
+    };
     setActionMenu({
       branchName,
-      top: rect.bottom + 4,
-      left: rect.right - 140,
+      triggerRect,
+      ...getActionMenuPosition({
+        triggerRect,
+        menuWidth: 140,
+        menuHeight: estimatedHeight,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      }),
     });
   }
 
