@@ -2917,6 +2917,17 @@ export function ChatPanel() {
     const cmd = slashCommands.find((c) => c.id === commandId);
     if (!cmd || cmd.disabled) return;
 
+    // /fast is a simple toggle — no panel needed
+    if (commandId === "fast") {
+      setInput("");
+      const nextTier = selectedServiceTier === "fast" ? "inherit" : "fast";
+      handleCommandPanelConfirm(
+        { type: "fast" } as ActiveSlashCommand,
+        { serviceTier: nextTier },
+      );
+      return;
+    }
+
     setInput("");
     setActiveCommandPanel({ type: commandId } as ActiveSlashCommand);
     setCommandPanelError(null);
@@ -2966,7 +2977,13 @@ export function ChatPanel() {
               updateApprovalPolicy: false,
               approvalPolicy: null,
             });
-            toast.success(t("panel.toasts.serviceTierUpdated", { value: payload.serviceTier }));
+            toast.success(
+              t("panel.toasts.fastToggled", {
+                state: payload.serviceTier === "fast"
+                  ? t("panel.toasts.on")
+                  : t("panel.toasts.off"),
+              }),
+            );
           }
           break;
         case "personality":
@@ -4598,6 +4615,7 @@ export function ChatPanel() {
                   selectedEngineId={selectedEngineId}
                   selectedModelId={selectedModelId ?? selectedModel?.id ?? ""}
                   selectedEffort={selectedEffort}
+                  serviceTier={selectedServiceTier !== "inherit" ? selectedServiceTier : null}
                   onEngineModelChange={(engineId, modelId) => {
                     manuallyOverrodeThreadSelectionRef.current = true;
                     selectedEngineIdRef.current = engineId;

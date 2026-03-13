@@ -569,6 +569,63 @@ describe("chatStore send", () => {
     ]);
   });
 
+  it("treats 'none' permission values as a decline", async () => {
+    mockIpc.respondApproval.mockResolvedValueOnce(undefined);
+    useChatStore.setState({
+      threadId: "thread-1",
+      messages: [
+        {
+          id: "assistant-approval-none",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "streaming",
+          schemaVersion: 1,
+          blocks: [
+            {
+              type: "approval",
+              approvalId: "approval-none",
+              actionType: "other",
+              summary: "Network access",
+              details: {},
+              status: "pending",
+            },
+          ],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: false,
+        },
+      ],
+      olderCursor: null,
+      hasOlderMessages: false,
+      loadingOlderMessages: false,
+      olderLoadBlockedUntil: 0,
+      status: "streaming",
+      streaming: true,
+      usageLimits: null,
+      error: undefined,
+      unlisten: undefined,
+    });
+
+    await useChatStore.getState().respondApproval("approval-none", {
+      permissions: {
+        network: "none",
+      },
+      scope: "turn",
+    });
+
+    expect(useChatStore.getState().messages[0]?.blocks).toEqual([
+      {
+        type: "approval",
+        approvalId: "approval-none",
+        actionType: "other",
+        summary: "Network access",
+        details: {},
+        status: "answered",
+        decision: "decline",
+      },
+    ]);
+  });
+
   it("infers MCP elicitation decisions from action responses", async () => {
     mockIpc.respondApproval.mockResolvedValueOnce(undefined);
     useChatStore.setState({

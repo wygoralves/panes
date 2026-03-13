@@ -97,6 +97,7 @@ pub fn answer_approval(db: &Database, approval_id: &str, decision: &str) -> anyh
     Ok(())
 }
 
+#[cfg(test)]
 pub fn resolve_approval(db: &Database, approval_id: &str) -> anyhow::Result<()> {
     let conn = db.connect()?;
     conn.execute(

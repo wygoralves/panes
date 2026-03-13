@@ -14,6 +14,7 @@ interface ModelPickerProps {
   selectedEngineId: string;
   selectedModelId: string | null;
   selectedEffort: string;
+  serviceTier?: string | null;
   onEngineModelChange: (engineId: string, modelId: string) => void;
   onEffortChange: (effort: string) => void;
   disabled?: boolean;
@@ -117,6 +118,7 @@ export function ModelPicker({
   selectedEngineId,
   selectedModelId,
   selectedEffort,
+  serviceTier,
   onEngineModelChange,
   onEffortChange,
   disabled = false,
@@ -221,6 +223,9 @@ export function ModelPicker({
       <span className="mp-trigger-label">{triggerLabel}</span>
       {selectedEffort && currentModel?.supportedReasoningEfforts?.length ? (
         <span className="mp-trigger-effort">{shortEffortLabel(t, selectedEffort)}</span>
+      ) : null}
+      {serviceTier === "fast" ? (
+        <span className="mp-trigger-fast">{t("modelPicker.fastOn")}</span>
       ) : null}
       <ChevronDown
         size={10}

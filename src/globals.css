@@ -6972,6 +6972,18 @@ button, input, textarea, select {
   line-height: 1.4;
 }
 
+.mp-trigger-fast {
+  font-size: 9px;
+  font-weight: 600;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: 99px;
+  background: var(--accent-1-dim);
+  color: var(--accent-1);
+  line-height: 1.4;
+}
+
 .mp-trigger-chevron {
   flex-shrink: 0;
   opacity: 0.5;

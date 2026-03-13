@@ -6,6 +6,7 @@
     "legacy": "Legado ({{count}})",
     "thinking": "Raciocínio",
     "default": "padrão",
+    "fastOn": "Fast",
     "supportsPersonality": "Personalidade",
     "upgradeAvailable": "Upgrade disponível: {{model}}",
     "modalities": {
@@ -351,6 +352,9 @@
       "codexThreadCompactionStarted": "A compactação da thread do Codex foi iniciada.",
       "codexThreadResumed": "A thread remota do Codex selecionada foi anexada.",
       "serviceTierUpdated": "Camada de serviço -> {{value}}",
+      "fastToggled": "Modo fast {{state}}",
+      "on": "ligado",
+      "off": "desligado",
       "personalityUpdated": "Personalidade -> {{value}}",
       "claudeSandboxUnsupported": "Claude suporta apenas os modos de sandbox somente leitura e escrita no workspace.",
       "fullAccessNetworkWarning": "O modo acesso total habilita temporariamente o acesso à rede.",

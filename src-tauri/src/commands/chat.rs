@@ -401,14 +401,13 @@ pub async fn send_message(
         let model_id = effective_model_id.clone();
         let reasoning_effort = reasoning_effort.clone();
         move |db| {
-            let user_blocks =
-                build_user_blocks(
-                    &message,
-                    &input_items,
-                    &attachments,
-                    plan_mode_enabled,
-                    false,
-                );
+            let user_blocks = build_user_blocks(
+                &message,
+                &input_items,
+                &attachments,
+                plan_mode_enabled,
+                false,
+            );
             db::messages::insert_user_message(
                 db,
                 &thread_id,
@@ -644,10 +643,16 @@ pub async fn start_codex_review(
     };
 
     if matches!(effective_delivery, CodexReviewDeliveryPayload::Detached) {
-        let _ = state
+        if !state
             .turns
             .try_register(&review_thread.id, cancellation.clone())
-            .await;
+            .await
+        {
+            log::warn!(
+                "failed to register cancellation token for detached review thread {}",
+                review_thread.id
+            );
+        }
     }
 
     let state_cloned = state.inner().clone();

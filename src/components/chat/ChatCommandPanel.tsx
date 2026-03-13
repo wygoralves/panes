@@ -119,23 +119,8 @@ export function ChatCommandPanel({
         />
       );
     case "fast":
-      return (
-        <OptionPickerPanel
-          busy={busy}
-          error={error}
-          icon={Zap}
-          title={t("configPicker.serviceTier")}
-          description={t("configPicker.serviceTierDescription")}
-          options={[
-            { value: "inherit", label: t("configPicker.inherit") },
-            { value: "fast", label: t("configPicker.serviceTiers.fast") },
-            { value: "flex", label: t("configPicker.serviceTiers.flex") },
-          ]}
-          currentValue={currentServiceTier ?? "inherit"}
-          onSelect={(value) => onConfirm(command, { serviceTier: value })}
-          onDismiss={onDismiss}
-        />
-      );
+      // /fast is handled as a direct toggle in ChatPanel — no panel needed
+      return null;
     case "personality":
       return (
         <OptionPickerPanel

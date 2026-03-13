@@ -2322,10 +2322,7 @@ mod tests {
         let metadata = build_codex_remote_thread_metadata(&summary, "gpt-5.4");
 
         assert_eq!(metadata.get("lastModelId"), Some(&json!("gpt-5.4")));
-        assert_eq!(
-            metadata.get("codexTranscriptImported"),
-            Some(&json!(false))
-        );
+        assert_eq!(metadata.get("codexTranscriptImported"), Some(&json!(false)));
         assert_eq!(metadata.get("codexModelProvider"), Some(&json!("openai")));
         assert_eq!(metadata.get("codexSourceKind"), Some(&json!("appServer")));
         assert_eq!(metadata.get("codexRemoteArchived"), Some(&json!(true)));
@@ -2358,10 +2355,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(
-            metadata.get("codexTranscriptImported"),
-            Some(&json!(true))
-        );
+        assert_eq!(metadata.get("codexTranscriptImported"), Some(&json!(true)));
         assert_eq!(metadata.get("lastModelId"), Some(&json!("gpt-5.4")));
         assert_eq!(metadata.get("manualTitle"), None);
     }

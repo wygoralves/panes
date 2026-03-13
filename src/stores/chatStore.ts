@@ -651,7 +651,6 @@ function collapseTrailingSteerMessages(messages: Message[]): Message[] {
     const previous = collapsed[collapsed.length - 1];
     const nextMessage = messages[index + 1];
 
-    const isAtTail = index === messages.length - 1;
     const isSteerCandidate =
       message.role === "user" &&
       previous?.role === "assistant" &&
