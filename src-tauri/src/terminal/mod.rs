@@ -23,6 +23,8 @@ use crate::models::{
     TerminalOutputThrottleSnapshotDto, TerminalRendererDiagnosticsDto, TerminalReplayChunkDto,
     TerminalResizeSnapshotDto, TerminalResumeSessionDto, TerminalSessionDto,
 };
+#[cfg(target_os = "windows")]
+use crate::process_utils;
 use crate::runtime_env;
 
 const TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS: u64 = 16;
@@ -1735,7 +1737,9 @@ fn detect_foreground_process(shell_pid: u32) -> Option<(u32, String)> {
     let script = format!(
         "$children = @(Get-CimInstance Win32_Process -Filter 'ParentProcessId = {shell_pid}' | Sort-Object ProcessId | Select-Object ProcessId, Name, CommandLine); if ($children.Count -eq 0) {{ exit 1 }}; $children | ConvertTo-Json -Compress"
     );
-    let output = std::process::Command::new("powershell.exe")
+    let mut command = std::process::Command::new("powershell.exe");
+    process_utils::configure_std_command(&mut command);
+    let output = command
         .args([
             "-NoLogo",
             "-NoProfile",

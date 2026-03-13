@@ -587,6 +587,66 @@ button, input, textarea, select {
   50% { box-shadow: 0 0 20px rgba(255, 107, 107, 0.3); }
 }
 
+/* ── Onboarding ── */
+
+.ob-interactive {
+  transition: border-color 120ms, background 120ms;
+}
+.ob-interactive:not(.ob-selected):hover {
+  border-color: rgba(255, 255, 255, 0.24) !important;
+}
+
+@keyframes ob-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes ob-heading-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ob-step-enter-forward {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes ob-step-enter-back {
+  from { opacity: 0; transform: translateX(-20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes ob-card-cascade {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ob-greeting-logo {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes ob-greeting-text {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ob-greeting-line {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes ob-backdrop-in { from, to { opacity: 1; } }
+  @keyframes ob-heading-in { from, to { opacity: 1; transform: none; } }
+  @keyframes ob-step-enter-forward { from, to { opacity: 1; transform: none; } }
+  @keyframes ob-step-enter-back { from, to { opacity: 1; transform: none; } }
+  @keyframes ob-card-cascade { from, to { opacity: 1; transform: none; } }
+  @keyframes ob-greeting-logo { from, to { opacity: 1; transform: none; } }
+  @keyframes ob-greeting-text { from, to { opacity: 1; transform: none; } }
+  @keyframes ob-greeting-line { from, to { transform: scaleX(1); } }
+}
+
 @keyframes thinking-pulse {
   0%, 100% { opacity: 0.45; filter: drop-shadow(0 0 0 transparent); }
   50% { opacity: 1; filter: drop-shadow(0 0 4px rgba(96, 165, 250, 0.5)); }

@@ -6,6 +6,7 @@ use tokio::process::Command;
 
 use crate::engines::codex::resolve_codex_executable;
 use crate::models::{DepStatus, DependencyReport, InstallProgressEvent, InstallResult};
+use crate::process_utils;
 use crate::runtime_env;
 
 // ---------------------------------------------------------------------------
@@ -200,6 +201,7 @@ async fn run_install_process(
     );
 
     let mut command = Command::new(program);
+    process_utils::configure_tokio_command(&mut command);
     command.args(args);
     if let Some(augmented_path) = runtime_env::augmented_path_with_prepend(
         Path::new(program)
@@ -289,7 +291,9 @@ async fn run_install_process(
 // ---------------------------------------------------------------------------
 
 async fn get_command_version(path: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new(path).args(args).output().await.ok()?;
+    let mut command = Command::new(path);
+    process_utils::configure_tokio_command(&mut command);
+    let output = command.args(args).output().await.ok()?;
     if !output.status.success() {
         return None;
     }
@@ -303,6 +307,7 @@ async fn get_command_version(path: &Path, args: &[&str]) -> Option<String> {
 
 async fn get_command_version_with_augmented_path(path: &Path, args: &[&str]) -> Option<String> {
     let mut command = Command::new(path);
+    process_utils::configure_tokio_command(&mut command);
     if let Some(augmented_path) = executable_augmented_path(path) {
         command.env("PATH", augmented_path);
     }

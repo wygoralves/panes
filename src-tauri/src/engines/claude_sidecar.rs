@@ -18,7 +18,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::runtime_env;
+use crate::{process_utils, runtime_env};
 
 use super::{
     normalize_approval_response_for_engine, ActionResult, ActionType, Engine, EngineEvent,
@@ -142,6 +142,7 @@ impl ClaudeTransport {
             .unwrap_or_else(|| PathBuf::from("."));
 
         let mut command = Command::new(&node);
+        process_utils::configure_tokio_command(&mut command);
         if let Some(augmented_path) = executable_augmented_path(&node) {
             command.env("PATH", augmented_path);
         }

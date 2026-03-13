@@ -24,7 +24,7 @@ use crate::models::{
     CodexMcpOauthCompletedDto, CodexMethodAvailabilityDto, CodexProtocolDiagnosticsDto,
     RuntimeToastDto,
 };
-use crate::runtime_env;
+use crate::{process_utils, runtime_env};
 
 use super::{
     codex_event_mapper::TurnEventMapper, codex_protocol::IncomingMessage,
@@ -1862,6 +1862,7 @@ fn codex_augmented_path(executable: &Path) -> Option<OsString> {
 
 fn codex_command(executable: &Path) -> Command {
     let mut command = Command::new(executable);
+    process_utils::configure_tokio_command(&mut command);
     if let Some(augmented_path) = codex_augmented_path(executable) {
         command.env("PATH", augmented_path);
     }

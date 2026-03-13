@@ -1,87 +1,99 @@
 {
-  "status": {
-    "detected": "Detected",
-    "detectedWithPath": "{{version}}{{path}}",
-    "at": "at"
+  "greeting": {
+    "title": "Welcome to Panes",
+    "subtitle": "Your local cockpit for AI-assisted coding.",
+    "cta": "Get started"
   },
-  "scanning": {
-    "checking": "Checking your system..."
-  },
-  "deps": {
-    "node": {
-      "label": "Node.js",
-      "auto": "Not found - will install via Homebrew",
-      "manual": "Not found - install Node.js 20+ manually"
-    },
-    "codex": {
-      "label": "Codex CLI",
-      "auto": "Not found - will install via npm",
-      "manual": "Not found - install with: npm install -g @openai/codex"
-    },
-    "git": {
-      "label": "Git",
-      "manual": "Not found - some git features will be unavailable"
+  "workflow": {
+    "title": "How do you prefer to work?",
+    "subtitle": "Pick the workflow Panes should optimize first. You can reopen onboarding later and switch.",
+    "options": {
+      "cli": {
+        "title": "CLI Agents",
+        "description": "Browse the agent CLIs Panes already supports, install the ones you want, and then choose the workspace where you want to start."
+      },
+      "chat": {
+        "title": "Chat with Codex / Claude",
+        "description": "Choose Codex, Claude, or both. Panes will verify what is ready, help install what is missing, and then send you to a workspace."
+      }
     }
   },
-  "actions": {
-    "autoSetup": "Set up automatically",
-    "manualInstructions": "Manual setup instructions",
-    "getStarted": "Get Started",
-    "recheck": "Check again"
+  "cliProviders": {
+    "title": "Pick your CLI agents",
+    "subtitle": "See which providers are already available on this machine and install any missing ones before opening your first workspace.",
+    "helper": "Launch is intentionally skipped here. The onboarding ends after you confirm a workspace, then Panes takes you to the harness panel.",
+    "scanning": "Scanning available providers..."
   },
-  "manual": {
-    "title": "Manual installation",
-    "installNode": "Install Node.js",
-    "installCodex": "Install Codex CLI",
-    "installGit": "Install Git",
-    "nodeAltOrDownload": "Or download from https://nodejs.org",
-    "nodeAltInstall": "Install Node.js 20+ from https://nodejs.org",
-    "nodeAltPackageManagerDetected": "Install Node.js 20+ using {{manager}} or from https://nodejs.org",
-    "nodeAltPackageManager": "Install Node.js 20+ using your OS package manager or from https://nodejs.org",
-    "gitAltOrDownload": "Or download from https://git-scm.com/downloads",
-    "gitAltInstall": "Install Git from https://git-scm.com/downloads",
-    "gitAltPackageManagerDetected": "Install Git using {{manager}} or from https://git-scm.com/downloads",
-    "gitAltPackageManager": "Install Git using your OS package manager or from https://git-scm.com/downloads",
+  "chatEngines": {
+    "title": "Pick your chat harnesses",
+    "subtitle": "Choose which harnesses you want ready inside Panes chat.",
+    "helper": "You can select Codex, Claude, or both. If you pick both, the next step checks both runtimes before you continue.",
+    "options": {
+      "codex": {
+        "description": "Chat powered by the Codex App Server. May install Node.js and the Codex CLI if they are missing."
+      },
+      "claude": {
+        "description": "Chat powered by the Claude Agent SDK. Does not require installing the Claude CLI separately."
+      }
+    }
+  },
+  "chatReadiness": {
+    "title": "Verify chat readiness",
+    "subtitle": "Panes is checking the selected engines, plus the dependencies they actually need for chat.",
+    "helper": "Warnings about future auth setup are informational in this version. The goal here is to get the runtime installed and a workspace selected.",
+    "loading": "Checking selected engines...",
+    "readyHint": "Everything selected for chat is ready. Continue to choose the workspace you want to use first.",
+    "authDeferred": "Codex still needs account sign-in, but that does not block onboarding in this version. Finish onboarding now and complete Codex auth afterward.",
+    "nodeInstallAvailable": "Node.js is missing. Panes can install it automatically so the selected chat engines can run.",
+    "nodeInstallManual": "Node.js is missing. Install Node.js 20+ manually, then refresh the readiness check.",
+    "codexInstallAvailable": "Codex CLI is missing. Panes can install it automatically for the Codex chat engine.",
+    "codexInstallManual": "Codex CLI is missing. Install it manually, then refresh the readiness check.",
+    "deps": {
+      "node": "Node.js"
+    },
+    "status": {
+      "ready": "Ready",
+      "attention": "Needs attention",
+      "pending": "Health data has not loaded yet."
+    },
+    "sections": {
+      "warnings": "Warnings",
+      "checks": "Checks",
+      "fixes": "Suggested next steps",
+      "showNotes": "Show warnings",
+      "hideNotes": "Hide warnings"
+    }
+  },
+  "workspace": {
+    "title": "Confirm your first workspace",
+    "subtitle": "Choose the workspace Panes should open after onboarding. Even if one is already active, confirm it here explicitly.",
+    "helper": "Select an existing workspace or open a new folder. Onboarding completes only after this confirmation.",
+    "empty": "No workspaces are available yet. Open a folder to continue.",
+    "current": "Current workspace"
+  },
+  "steps": {
+    "workflow": "Workflow",
+    "cliProviders": "Providers",
+    "chatEngines": "Engines",
+    "chatReadiness": "Readiness",
+    "workspace": "Workspace"
+  },
+  "actions": {
+    "back": "Back",
+    "continue": "Continue",
+    "finish": "Finish onboarding",
+    "openFolder": "Open folder",
+    "refreshProviders": "Refresh providers",
+    "refreshStatus": "Refresh status",
+    "install": "Install",
+    "openWebsite": "Open website",
     "copied": "Copied"
   },
   "install": {
     "waiting": "Waiting...",
-    "installing": "Installing {{name}}...",
-    "finishing": "Finishing up..."
+    "installing": "Installing {{name}}..."
   },
-  "diagnostics": {
-    "title": "Codex diagnostics",
-    "methodsSummary": "{{available}} available, {{unsupported}} unsupported, {{errors}} errors",
-    "notFetched": "Runtime diagnostics have not been fetched yet.",
-    "notAvailable": "Codex is not available yet.",
-    "capabilitiesSummary": "{{experimental}} experimental features, {{apps}} apps, {{modes}} collaboration modes",
-    "capabilities": "Capabilities",
-    "methods": "Methods",
-    "lastConfigWarning": "Last config warning",
-    "lastAccountLogin": "Last account login",
-    "lastMcpOauth": "Last MCP OAuth",
-    "fetched": "Fetched",
-    "line": "line {{line}}",
-    "success": "Success",
-    "failed": "Failed",
-    "successLower": "success",
-    "failedLower": "failed",
-    "stale": "(stale)"
-  },
-  "error": {
-    "unexpected": "An unexpected error occurred during setup.",
-    "nodeInstallFailed": "Node.js installation failed",
-    "codexInstallFailed": "Codex CLI installation failed"
-  },
-  "header": {
-    "completeTitle": "Setup Complete",
-    "installingTitle": "Installing Dependencies",
-    "errorTitle": "Setup Error",
-    "systemTitle": "System Setup",
-    "completeSubtitle": "All checks passed. You are ready to go.",
-    "scanningSubtitle": "Checking your system...",
-    "installingSubtitle": "Installing missing dependencies.",
-    "errorSubtitle": "Review the setup error and retry.",
-    "planSubtitle": "Review the detected dependencies before continuing."
+  "footer": {
+    "stepCounter": "Step {{current}} of {{total}}"
   }
 }

@@ -8,6 +8,7 @@ use tokio::process::Command;
 use crate::runtime_env;
 use crate::{
     models::{EngineCheckResultDto, EngineHealthDto, EngineInfoDto},
+    process_utils,
     state::AppState,
 };
 
@@ -86,6 +87,7 @@ async fn execute_engine_check_command(command: &str) -> anyhow::Result<EngineChe
 #[cfg(target_os = "windows")]
 fn build_shell_command(command: &str) -> Command {
     let mut cmd = Command::new("cmd");
+    process_utils::configure_tokio_command(&mut cmd);
     cmd.arg("/C").arg(command);
     cmd
 }
@@ -94,6 +96,7 @@ fn build_shell_command(command: &str) -> Command {
 fn build_shell_command(command: &str) -> Command {
     let spec = runtime_env::command_shell_for_string(command);
     let mut cmd = Command::new(&spec.program);
+    process_utils::configure_tokio_command(&mut cmd);
     cmd.args(&spec.args);
     if let Some(augmented_path) = runtime_env::augmented_path_with_prepend(
         spec.program

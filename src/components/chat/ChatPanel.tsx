@@ -24,6 +24,7 @@ import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import { useChatStore } from "../../stores/chatStore";
 import { useEngineStore } from "../../stores/engineStore";
+import { useOnboardingStore } from "../../stores/onboardingStore";
 import { useThreadStore } from "../../stores/threadStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -31,6 +32,7 @@ import { useGitStore } from "../../stores/gitStore";
 import { useTerminalStore, type LayoutMode } from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
+import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { isLinuxDesktop } from "../../lib/windowActions";
 import { MessageBlocks } from "./MessageBlocks";
@@ -1109,9 +1111,15 @@ export function ChatPanel() {
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar;
   const engines = useEngineStore((s) => s.engines);
   const health = useEngineStore((s) => s.health);
+  const onboardingOpen = useOnboardingStore((s) => s.open);
+  const onboardingSelectedChatEngines = useOnboardingStore((s) => s.selectedChatEngines);
   const codexExternalSandboxActive = useMemo(
     () => codexUsesExternalSandbox(health),
     [health],
+  );
+  const preferredOnboardingChatSelection = useMemo(
+    () => resolvePreferredOnboardingChatSelection(onboardingSelectedChatEngines, engines),
+    [engines, onboardingSelectedChatEngines],
   );
   const {
     repos,
@@ -1663,6 +1671,23 @@ export function ChatPanel() {
       setSelectedEngineId(engines[0].id);
     }
   }, [engines, selectedEngineId]);
+
+  useEffect(() => {
+    if (onboardingOpen || activeThread || !preferredOnboardingChatSelection) {
+      return;
+    }
+
+    setSelectedEngineId((current) =>
+      current === preferredOnboardingChatSelection.engineId
+        ? current
+        : preferredOnboardingChatSelection.engineId,
+    );
+    setSelectedModelId((current) =>
+      current === preferredOnboardingChatSelection.modelId
+        ? current
+        : preferredOnboardingChatSelection.modelId,
+    );
+  }, [activeThread, onboardingOpen, preferredOnboardingChatSelection]);
 
   useEffect(() => {
     if (!selectedModel) {
