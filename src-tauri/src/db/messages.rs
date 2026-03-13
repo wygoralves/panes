@@ -188,11 +188,10 @@ pub fn drop_last_turns(db: &Database, thread_id: &str, num_turns: u32) -> anyhow
             .context("failed to delete rolled-back thread messages")?;
     }
 
-    tx.execute(
-        "DELETE FROM approvals WHERE thread_id = ?1 AND status = 'pending'",
-        params![thread_id],
-    )
-    .context("failed to clear pending approvals after rollback")?;
+    // Note: all approvals (including pending ones) for the deleted messages are already
+    // removed by the chunked delete_approvals_sql above, which scopes deletions to
+    // message_id IN (...). The previous thread-wide pending approval sweep is intentionally
+    // removed here to avoid deleting pending approvals that belong to retained messages.
 
     tx.commit()
         .context("failed to commit thread rollback transaction")?;
@@ -307,7 +306,7 @@ pub fn get_thread_messages(db: &Database, thread_id: &str) -> anyhow::Result<Vec
             token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at
      FROM messages
      WHERE thread_id = ?1
-     ORDER BY created_at ASC",
+     ORDER BY created_at ASC, rowid ASC",
     )?;
 
     let rows = stmt.query_map(params![thread_id], map_message_row)?;

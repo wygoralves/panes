@@ -643,6 +643,13 @@ pub async fn start_codex_review(
         }
     };
 
+    if matches!(effective_delivery, CodexReviewDeliveryPayload::Detached) {
+        let _ = state
+            .turns
+            .try_register(&review_thread.id, cancellation.clone())
+            .await;
+    }
+
     let state_cloned = state.inner().clone();
     let app_handle = app.clone();
     let review_thread_for_task = review_thread.clone();
@@ -2246,6 +2253,7 @@ async fn run_codex_review_turn(
     );
 
     state.turns.finish(&source_thread.id).await;
+    state.turns.finish(&review_thread.id).await;
 }
 
 fn is_coalescable_stream_event(event: &EngineEvent) -> bool {

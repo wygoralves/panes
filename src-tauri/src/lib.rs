@@ -18,6 +18,9 @@ mod workspace_startup;
 
 use std::sync::Arc;
 
+use anyhow::Context;
+use rusqlite::OptionalExtension;
+
 use config::app_config::AppConfig;
 use db::Database;
 use engines::{CodexRuntimeEvent, EngineManager};
@@ -483,17 +486,101 @@ async fn resolve_codex_runtime_approval(
         let thread_id = thread_id.clone();
         let message_id = message_id.clone();
         move |db| {
-            db::actions::resolve_approval(db, &approval_id)?;
-            let _ =
-                db::messages::mark_approval_block_resolved(db, &message_id, &approval_id, None)?;
+            let mut conn = db.connect()?;
+            let tx = conn
+                .transaction()
+                .context("failed to start approval resolution transaction")?;
 
+            // Resolve the approval record.
+            tx.execute(
+                "UPDATE approvals
+                 SET status = 'answered', answered_at = COALESCE(answered_at, datetime('now'))
+                 WHERE id = ?1",
+                rusqlite::params![approval_id],
+            )
+            .context("failed to resolve approval")?;
+
+            // Update the approval block inside the message's blocks_json (best-effort).
+            let raw_blocks: Option<String> = tx
+                .query_row(
+                    "SELECT blocks_json FROM messages WHERE id = ?1",
+                    rusqlite::params![message_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .context("failed to load message blocks for approval update")?;
+            if let Some(raw_blocks) = raw_blocks {
+                let mut blocks_value: serde_json::Value =
+                    serde_json::from_str(&raw_blocks).unwrap_or_else(|_| serde_json::json!([]));
+                let changed = if let Some(items) = blocks_value.as_array_mut() {
+                    let mut any_changed = false;
+                    for block in items.iter_mut() {
+                        let Some(object) = block.as_object_mut() else {
+                            continue;
+                        };
+                        if object.get("type").and_then(serde_json::Value::as_str)
+                            != Some("approval")
+                        {
+                            continue;
+                        }
+                        let bid = object
+                            .get("approvalId")
+                            .and_then(serde_json::Value::as_str)
+                            .or_else(|| {
+                                object
+                                    .get("approval_id")
+                                    .and_then(serde_json::Value::as_str)
+                            });
+                        if bid != Some(approval_id.as_str()) {
+                            continue;
+                        }
+                        let should_update = object
+                            .get("status")
+                            .and_then(serde_json::Value::as_str)
+                            .map(|v| v != "answered")
+                            .unwrap_or(true);
+                        if should_update {
+                            object.insert(
+                                "status".to_string(),
+                                serde_json::Value::String("answered".to_string()),
+                            );
+                            any_changed = true;
+                        }
+                    }
+                    any_changed
+                } else {
+                    false
+                };
+                if changed {
+                    tx.execute(
+                        "UPDATE messages SET blocks_json = ?1 WHERE id = ?2",
+                        rusqlite::params![blocks_value.to_string(), message_id],
+                    )
+                    .context("failed to persist answered approval in message blocks")?;
+                }
+            }
+
+            // Conditionally advance the thread status.
+            if has_local_turn {
+                tx.execute(
+                    "UPDATE threads
+                     SET status = ?1, last_activity_at = datetime('now')
+                     WHERE id = ?2
+                       AND status = ?3",
+                    rusqlite::params![
+                        ThreadStatusDto::Streaming.as_str(),
+                        thread_id,
+                        ThreadStatusDto::AwaitingApproval.as_str()
+                    ],
+                )
+                .context("failed to conditionally update thread status")?;
+            }
+
+            tx.commit()
+                .context("failed to commit approval resolution transaction")?;
+
+            // Read the updated thread after the transaction has committed (non-atomic read is fine).
             let updated_thread = if has_local_turn {
-                db::threads::update_thread_status_if_current(
-                    db,
-                    &thread_id,
-                    ThreadStatusDto::AwaitingApproval,
-                    ThreadStatusDto::Streaming,
-                )?;
                 db::threads::get_thread(db, &thread_id)?
             } else {
                 None

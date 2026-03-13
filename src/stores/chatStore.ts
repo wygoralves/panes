@@ -253,10 +253,10 @@ function resolveApprovalDecision(response: ApprovalResponse): ApprovalBlock["dec
             if (typeof nested === "object" && nested !== null) {
               return Object.keys(nested as Record<string, unknown>).length > 0;
             }
-            return nested === true || typeof nested === "string";
+            return nested === true || (typeof nested === "string" && nested.toLowerCase() !== "none");
           });
         }
-        return value === true || typeof value === "string";
+        return value === true || (typeof value === "string" && value.toLowerCase() !== "none");
       });
 
     if (!hasGrantedPermission) {
@@ -1891,22 +1891,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
 
+    // Apply optimistic update BEFORE the IPC call
+    const decision = resolveApprovalDecision(response);
+    const previousMessages = get().messages;
+    set((state) => {
+      const nextMessages = resolveApprovalInMessages(state.messages, approvalId, decision);
+      if (nextMessages === state.messages) {
+        return state;
+      }
+      return { ...state, messages: nextMessages };
+    });
+
     try {
       await ipc.respondApproval(threadId, approvalId, response);
-      const decision = resolveApprovalDecision(response);
-      set((state) => {
-        const nextMessages = resolveApprovalInMessages(state.messages, approvalId, decision);
-        if (nextMessages === state.messages) {
-          return state;
-        }
-
-        return {
-          ...state,
-          messages: nextMessages,
-        };
-      });
     } catch (error) {
-      set({ error: String(error) });
+      // Roll back the optimistic update on failure
+      set({ messages: previousMessages, error: String(error) });
     }
   },
   hydrateActionOutput: async (messageId, actionId) => {

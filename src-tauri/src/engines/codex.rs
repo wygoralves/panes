@@ -557,6 +557,7 @@ impl Engine for CodexEngine {
                 }
               }
               _ = cancellation.cancelled() => {
+                turn_task.abort();
                 self
                   .interrupt(&thread_id)
                   .await
@@ -1172,6 +1173,8 @@ impl CodexEngine {
                 }
               }
               _ = cancellation.cancelled() => {
+                review_task.abort();
+                drop(started_tx.take());
                 self
                   .interrupt(&active_thread_id)
                   .await
@@ -1190,15 +1193,22 @@ impl CodexEngine {
                         )
                         .await;
                     }
+                    drop(started_tx.take());
                     return Err(error).context("review/start request failed");
                   }
                   Err(error) => {
+                    drop(started_tx.take());
                     return Err(anyhow::Error::from(error).context("review/start task join failed"));
                   }
                 };
 
-                let review_thread_id = extract_any_string(&result, &["reviewThreadId", "review_thread_id"])
-                    .ok_or_else(|| anyhow::anyhow!("missing review thread id in review/start response"))?;
+                let review_thread_id = match extract_any_string(&result, &["reviewThreadId", "review_thread_id"]) {
+                    Some(id) => id,
+                    None => {
+                        drop(started_tx.take());
+                        return Err(anyhow::anyhow!("missing review thread id in review/start response"));
+                    }
+                };
                 active_thread_id = review_thread_id.clone();
                 if let Some(started_tx) = started_tx.take() {
                     let _ = started_tx.send(CodexReviewStarted {
@@ -1707,7 +1717,7 @@ impl CodexEngine {
         let mut cursor: Option<String> = None;
         let mut output = Vec::new();
 
-        loop {
+        for _ in 0..PAGINATION_MAX_PAGES {
             let params = serde_json::json!({
               "includeHidden": true,
               "limit": 200,
@@ -2985,10 +2995,10 @@ async fn request_turn_steer(
     let params = serde_json::json!({
       "threadId": thread_id,
       "expectedTurnId": expected_turn_id,
-      "input": build_turn_input_items(input, input.plan_mode).await?,
+      "input": build_turn_input_items(input, false).await?,
     });
 
-    request_with_fallback(transport, TURN_STEER_METHODS, params, DEFAULT_TIMEOUT)
+    request_with_fallback(transport, TURN_STEER_METHODS, params, TURN_REQUEST_TIMEOUT)
         .await
         .context("codex turn/steer request failed")
 }

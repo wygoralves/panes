@@ -86,6 +86,7 @@ pub struct CodexRemoteThreadDto {
     pub model_provider: String,
     pub source_kind: String,
     pub status_type: String,
+    #[serde(default)]
     pub active_flags: Vec<String>,
     pub archived: bool,
     pub local_thread_id: Option<String>,
@@ -384,8 +385,10 @@ pub struct CodexAppDto {
 pub struct CodexSkillDto {
     pub name: String,
     pub path: String,
+    #[serde(default)]
     pub description: String,
     pub enabled: bool,
+    #[serde(default)]
     pub scope: String,
 }
 
@@ -461,6 +464,7 @@ pub struct CodexConfigStateDto {
 #[serde(rename_all = "camelCase")]
 pub struct CodexConfigLayerDto {
     pub source: String,
+    #[serde(default)]
     pub version: String,
 }
 
