@@ -27,6 +27,7 @@ function humanizeIdentifier(value: string): string {
     .split(/\s+/)
     .map((segment) => {
       const lower = segment.toLowerCase();
+      if (lower === "apikey") return "API key";
       if (lower === "api") return "API";
       if (lower === "oauth") return "OAuth";
       if (lower === "mcp") return "MCP";
@@ -214,6 +215,7 @@ export function CodexRuntimePicker({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ bottom: 0, left: 0 });
+  const externalAuthTokensUnsupported = diagnostics?.account?.authMode === "chatgptAuthTokens";
 
   const methodIssues = useMemo(
     () => getMethodIssues(diagnostics?.methodAvailability ?? []),
@@ -225,7 +227,8 @@ export function CodexRuntimePicker({
     (diagnostics?.lastAccountLogin?.success === false ? 1 : 0) +
     (diagnostics?.lastMcpOauth?.success === false ? 1 : 0) +
     (diagnostics?.lastWindowsSandboxSetup?.success === false ? 1 : 0) +
-    (diagnostics?.lastWindowsWorldWritableWarning ? 1 : 0);
+    (diagnostics?.lastWindowsWorldWritableWarning ? 1 : 0) +
+    (externalAuthTokensUnsupported ? 1 : 0);
   const enabledFeatures = useMemo(
     () =>
       (diagnostics?.experimentalFeatures ?? [])
@@ -399,6 +402,14 @@ export function CodexRuntimePicker({
                       }
                     />
                     <FieldRow
+                      label={t("runtimePicker.fields.authMode")}
+                      value={
+                        account.authMode
+                          ? humanizeIdentifier(account.authMode)
+                          : t("runtimePicker.none")
+                      }
+                    />
+                    <FieldRow
                       label={t("runtimePicker.fields.email")}
                       value={account.email ?? t("runtimePicker.none")}
                     />
@@ -418,6 +429,11 @@ export function CodexRuntimePicker({
                           : t("runtimePicker.no")
                       }
                     />
+                    {externalAuthTokensUnsupported ? (
+                      <div className="codex-config-note">
+                        {t("runtimePicker.externalAuthTokensUnsupported")}
+                      </div>
+                    ) : null}
                   </Section>
                 ) : null}
 

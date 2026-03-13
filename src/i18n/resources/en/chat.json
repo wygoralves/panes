@@ -102,6 +102,7 @@
     "fetchedAt": "Fetched at",
     "issues": "{{count}} issues",
     "requiresOpenaiAuth": "Requires OpenAI auth",
+    "externalAuthTokensUnsupported": "External ChatGPT auth tokens are not supported by Panes. Codex can run, but token refresh must be handled outside the app.",
     "none": "None",
     "unknown": "Unknown",
     "yes": "Yes",
@@ -120,6 +121,7 @@
     },
     "fields": {
       "provider": "Provider",
+      "authMode": "Auth mode",
       "email": "Email",
       "plan": "Plan",
       "model": "Model",

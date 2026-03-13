@@ -474,6 +474,7 @@ export interface CodexMcpServer {
 
 export interface CodexAccountState {
   provider: string;
+  authMode?: string;
   email?: string;
   planType?: string;
   requiresOpenaiAuth: boolean;

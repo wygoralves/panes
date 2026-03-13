@@ -102,6 +102,7 @@
     "fetchedAt": "Coletado em",
     "issues": "{{count}} problemas",
     "requiresOpenaiAuth": "Exige autenticação OpenAI",
+    "externalAuthTokensUnsupported": "Tokens externos de autenticação do ChatGPT não são suportados pelo Panes. O Codex pode rodar, mas a renovação do token precisa acontecer fora do app.",
     "none": "Nenhum",
     "unknown": "Desconhecido",
     "yes": "Sim",
@@ -120,6 +121,7 @@
     },
     "fields": {
       "provider": "Provedor",
+      "authMode": "Modo de autenticação",
       "email": "Email",
       "plan": "Plano",
       "model": "Modelo",

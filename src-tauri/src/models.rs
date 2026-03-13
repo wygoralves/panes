@@ -428,6 +428,8 @@ pub struct CodexMcpServerDto {
 pub struct CodexAccountStateDto {
     pub provider: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan_type: Option<String>,

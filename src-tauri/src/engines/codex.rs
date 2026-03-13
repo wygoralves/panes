@@ -24,8 +24,8 @@ use crate::models::{
     CodexConfigStateDto, CodexConfigWarningDto, CodexExperimentalFeatureDto,
     CodexMcpOauthCompletedDto, CodexMcpServerDto, CodexMethodAvailabilityDto, CodexPluginDto,
     CodexPluginMarketplaceDto, CodexProtocolDiagnosticsDto, CodexSkillDto,
-    CodexThreadRealtimeEventDto, CodexWindowsSandboxSetupDto,
-    CodexWindowsWorldWritableWarningDto, RuntimeToastDto,
+    CodexThreadRealtimeEventDto, CodexWindowsSandboxSetupDto, CodexWindowsWorldWritableWarningDto,
+    RuntimeToastDto,
 };
 use crate::{process_utils, runtime_env};
 
@@ -483,6 +483,9 @@ impl Engine for CodexEngine {
         cancellation: CancellationToken,
     ) -> Result<(), anyhow::Error> {
         let transport = self.ensure_ready_transport().await?;
+        if let Some(message) = self.unsupported_external_auth_tokens_message().await {
+            return Err(anyhow::anyhow!(message));
+        }
 
         let mut mapper = TurnEventMapper::default();
         let mut subscription = transport.subscribe();
@@ -665,21 +668,22 @@ impl Engine for CodexEngine {
                     }
                     let normalized_method = normalize_method(&method);
                     if method_signature(&method) == "accountchatgptauthtokensrefresh" {
-                        let reason = extract_any_string(&params, &["reason"])
-                            .unwrap_or_else(|| "unauthorized".to_string());
+                        let reason = extract_any_string(&params, &["reason"]);
                         let previous_account_id =
                             extract_any_string(&params, &["previousAccountId", "previous_account_id"]);
-                        let message = match previous_account_id {
-                            Some(previous_account_id) => format!(
-                                "Codex requested ChatGPT token refresh for account `{previous_account_id}` after `{reason}`, but Panes does not manage chatgptAuthTokens authentication."
-                            ),
-                            None => format!(
-                                "Codex requested ChatGPT token refresh after `{reason}`, but Panes does not manage chatgptAuthTokens authentication."
-                            ),
-                        };
+                        let message = unsupported_external_auth_tokens_message(
+                            previous_account_id.as_deref(),
+                            reason.as_deref(),
+                        );
                         log::warn!(
                             "codex requested external ChatGPT token refresh, but Panes does not manage chatgptAuthTokens mode"
                         );
+                        self
+                            .publish_external_auth_tokens_warning(
+                                previous_account_id.clone(),
+                                reason.clone(),
+                            )
+                            .await;
                         event_tx
                             .send(EngineEvent::Error {
                                 message,
@@ -1091,6 +1095,9 @@ impl CodexEngine {
         started_tx: oneshot::Sender<CodexReviewStarted>,
     ) -> Result<(), anyhow::Error> {
         let transport = self.ensure_ready_transport().await?;
+        if let Some(message) = self.unsupported_external_auth_tokens_message().await {
+            return Err(anyhow::anyhow!(message));
+        }
 
         let mut mapper = TurnEventMapper::default();
         let mut subscription = transport.subscribe();
@@ -1285,21 +1292,22 @@ impl CodexEngine {
                     }
                     let normalized_method = normalize_method(&method);
                     if method_signature(&method) == "accountchatgptauthtokensrefresh" {
-                        let reason = extract_any_string(&params, &["reason"])
-                            .unwrap_or_else(|| "unauthorized".to_string());
+                        let reason = extract_any_string(&params, &["reason"]);
                         let previous_account_id =
                             extract_any_string(&params, &["previousAccountId", "previous_account_id"]);
-                        let message = match previous_account_id {
-                            Some(previous_account_id) => format!(
-                                "Codex requested ChatGPT token refresh for account `{previous_account_id}` after `{reason}`, but Panes does not manage chatgptAuthTokens authentication."
-                            ),
-                            None => format!(
-                                "Codex requested ChatGPT token refresh after `{reason}`, but Panes does not manage chatgptAuthTokens authentication."
-                            ),
-                        };
+                        let message = unsupported_external_auth_tokens_message(
+                            previous_account_id.as_deref(),
+                            reason.as_deref(),
+                        );
                         log::warn!(
                             "codex requested external ChatGPT token refresh during review, but Panes does not manage chatgptAuthTokens mode"
                         );
+                        self
+                            .publish_external_auth_tokens_warning(
+                                previous_account_id.clone(),
+                                reason.clone(),
+                            )
+                            .await;
                         event_tx
                             .send(EngineEvent::Error {
                                 message,
@@ -1915,6 +1923,50 @@ impl CodexEngine {
         state.protocol_diagnostics = Some(diagnostics);
     }
 
+    async fn unsupported_external_auth_tokens_message(&self) -> Option<String> {
+        let state = self.state.lock().await;
+        let auth_mode = state
+            .protocol_diagnostics
+            .as_ref()
+            .and_then(|diagnostics| diagnostics.account.as_ref())
+            .and_then(|account| account.auth_mode.as_deref());
+
+        if auth_mode == Some("chatgptAuthTokens") {
+            Some(unsupported_external_auth_tokens_message(None, None))
+        } else {
+            None
+        }
+    }
+
+    async fn publish_external_auth_tokens_warning(
+        &self,
+        previous_account_id: Option<String>,
+        reason: Option<String>,
+    ) {
+        let diagnostics = update_protocol_diagnostics_with_account_update(
+            self.state.clone(),
+            &serde_json::json!({
+                "authMode": "chatgptAuthTokens",
+            }),
+        )
+        .await;
+
+        if let Some(diagnostics) = diagnostics {
+            let _ = self
+                .runtime_events
+                .send(CodexRuntimeEvent::DiagnosticsUpdated {
+                    diagnostics,
+                    toast: Some(RuntimeToastDto {
+                        variant: "warning".to_string(),
+                        message: unsupported_external_auth_tokens_message(
+                            previous_account_id.as_deref(),
+                            reason.as_deref(),
+                        ),
+                    }),
+                });
+        }
+    }
+
     async fn ensure_runtime_monitor_started(&self, transport: &Arc<CodexTransport>) {
         let transport_tag = Arc::as_ptr(transport) as usize;
         {
@@ -1954,7 +2006,9 @@ impl CodexEngine {
                                         CodexRuntimeEvent::ThreadSnapshotUpdated {
                                             engine_thread_id,
                                             thread_name: extract_thread_title(&params),
-                                            status_type: extract_thread_runtime_status_type(&params),
+                                            status_type: extract_thread_runtime_status_type(
+                                                &params,
+                                            ),
                                             active_flags: extract_thread_runtime_active_flags(
                                                 &params,
                                             ),
@@ -2003,9 +2057,10 @@ impl CodexEngine {
                                 if let Some(engine_thread_id) =
                                     extract_any_string(&params, &["threadId", "thread_id"])
                                 {
-                                    let _ = runtime_events.send(
-                                        CodexRuntimeEvent::ThreadUnarchived { engine_thread_id },
-                                    );
+                                    let _ =
+                                        runtime_events.send(CodexRuntimeEvent::ThreadUnarchived {
+                                            engine_thread_id,
+                                        });
                                 }
                             }
                             "thread/closed" => {
@@ -2100,7 +2155,30 @@ impl CodexEngine {
                                     );
                                 }
                             }
-                            "account/updated" | "skills/changed" | "app/list/updated" => {
+                            "account/updated" => {
+                                let _ = refresh_protocol_diagnostics_with_fallback(
+                                    transport.as_ref(),
+                                    state.clone(),
+                                    "after account/updated",
+                                    false,
+                                )
+                                .await;
+                                if let Some(diagnostics) =
+                                    update_protocol_diagnostics_with_account_update(
+                                        state.clone(),
+                                        &params,
+                                    )
+                                    .await
+                                {
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::DiagnosticsUpdated {
+                                            diagnostics,
+                                            toast: build_account_updated_toast(&params),
+                                        },
+                                    );
+                                }
+                            }
+                            "skills/changed" | "app/list/updated" => {
                                 if let Some(diagnostics) =
                                     refresh_protocol_diagnostics_with_fallback(
                                         transport.as_ref(),
@@ -2158,8 +2236,7 @@ impl CodexEngine {
                                     );
                                 }
                             }
-                            "windowssandbox/setupcompleted"
-                            | "windows/sandboxsetup/completed" => {
+                            "windowssandbox/setupcompleted" | "windows/sandboxsetup/completed" => {
                                 if let Some(diagnostics) =
                                     update_protocol_diagnostics_with_windows_sandbox_setup(
                                         state.clone(),
@@ -3763,6 +3840,41 @@ fn extract_thread_active_flags_from_status_value(value: Option<&serde_json::Valu
         .unwrap_or_default()
 }
 
+fn normalize_auth_mode(value: &str) -> String {
+    match value.trim() {
+        "apiKey" | "apikey" | "api_key" => "apikey".to_string(),
+        "chatgpt" => "chatgpt".to_string(),
+        "chatgptAuthTokens" | "chatgpt_auth_tokens" => "chatgptAuthTokens".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn provider_from_auth_mode(auth_mode: &str) -> String {
+    match auth_mode {
+        "apikey" => "apiKey".to_string(),
+        "chatgptAuthTokens" => "chatgpt".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn unsupported_external_auth_tokens_message(
+    previous_account_id: Option<&str>,
+    reason: Option<&str>,
+) -> String {
+    match (previous_account_id, reason) {
+        (Some(previous_account_id), Some(reason)) => format!(
+            "Codex is using external ChatGPT auth tokens for account `{previous_account_id}` after `{reason}`, but Panes cannot refresh those tokens. Re-authenticate outside Panes or switch Codex to a managed auth mode."
+        ),
+        (Some(previous_account_id), None) => format!(
+            "Codex is using external ChatGPT auth tokens for account `{previous_account_id}`, but Panes cannot refresh those tokens. Re-authenticate outside Panes or switch Codex to a managed auth mode."
+        ),
+        (None, Some(reason)) => format!(
+            "Codex is using external ChatGPT auth tokens after `{reason}`, but Panes cannot refresh those tokens. Re-authenticate outside Panes or switch Codex to a managed auth mode."
+        ),
+        (None, None) => "Codex is using external ChatGPT auth tokens, but Panes cannot refresh those tokens. Re-authenticate outside Panes or switch Codex to a managed auth mode.".to_string(),
+    }
+}
+
 fn extract_thread_runtime_active_flags(value: &serde_json::Value) -> Vec<String> {
     value
         .get("thread")
@@ -4170,6 +4282,7 @@ fn map_account_state(response: &serde_json::Value) -> CodexAccountStateDto {
     let account = response.get("account").unwrap_or(&serde_json::Value::Null);
     CodexAccountStateDto {
         provider: extract_any_string(account, &["type"]).unwrap_or_else(|| "none".to_string()),
+        auth_mode: extract_any_string(account, &["type"]).map(|value| normalize_auth_mode(&value)),
         email: extract_any_string(account, &["email"]),
         plan_type: extract_any_string(account, &["planType", "plan_type"]),
         requires_openai_auth: response
@@ -4636,6 +4749,40 @@ async fn update_protocol_diagnostics_with_account_login(
     Some(diagnostics.clone())
 }
 
+async fn update_protocol_diagnostics_with_account_update(
+    state: Arc<Mutex<CodexState>>,
+    params: &serde_json::Value,
+) -> Option<CodexProtocolDiagnosticsDto> {
+    let mut state = state.lock().await;
+    let diagnostics = state
+        .protocol_diagnostics
+        .get_or_insert_with(Default::default);
+    let account = diagnostics
+        .account
+        .get_or_insert_with(|| CodexAccountStateDto {
+            provider: "none".to_string(),
+            auth_mode: None,
+            email: None,
+            plan_type: None,
+            requires_openai_auth: false,
+        });
+
+    if let Some(auth_mode) = extract_any_string(params, &["authMode", "auth_mode"])
+        .map(|value| normalize_auth_mode(&value))
+    {
+        if account.provider == "none" {
+            account.provider = provider_from_auth_mode(&auth_mode);
+        }
+        account.auth_mode = Some(auth_mode);
+    }
+
+    if let Some(plan_type) = extract_any_string(params, &["planType", "plan_type"]) {
+        account.plan_type = Some(plan_type);
+    }
+
+    Some(diagnostics.clone())
+}
+
 async fn update_protocol_diagnostics_with_mcp_oauth(
     state: Arc<Mutex<CodexState>>,
     params: &serde_json::Value,
@@ -4774,6 +4921,18 @@ fn build_mcp_oauth_toast(params: &serde_json::Value) -> Option<RuntimeToastDto> 
     })
 }
 
+fn build_account_updated_toast(params: &serde_json::Value) -> Option<RuntimeToastDto> {
+    let auth_mode = extract_any_string(params, &["authMode", "auth_mode"])?;
+    if normalize_auth_mode(&auth_mode) != "chatgptAuthTokens" {
+        return None;
+    }
+
+    Some(RuntimeToastDto {
+        variant: "warning".to_string(),
+        message: unsupported_external_auth_tokens_message(None, Some("auth mode updated")),
+    })
+}
+
 fn build_windows_sandbox_setup_toast(params: &serde_json::Value) -> Option<RuntimeToastDto> {
     let success = params
         .get("success")
@@ -4811,8 +4970,8 @@ fn build_windows_world_writable_warning_toast(
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
 
-    let mut message = "Codex detected world-writable Windows paths that may weaken sandbox safety."
-        .to_string();
+    let mut message =
+        "Codex detected world-writable Windows paths that may weaken sandbox safety.".to_string();
     if !sample_paths.is_empty() {
         message.push_str(&format!(" Examples: {sample_paths}."));
     }
@@ -5712,12 +5871,42 @@ mod tests {
         assert_eq!(realtime.samples_per_channel, Some(480));
     }
 
+    #[tokio::test]
+    async fn update_protocol_diagnostics_with_account_update_tracks_auth_mode() {
+        let state = Arc::new(Mutex::new(CodexState::default()));
+
+        let diagnostics = update_protocol_diagnostics_with_account_update(
+            state,
+            &json!({
+                "authMode": "chatgptAuthTokens",
+                "planType": "team"
+            }),
+        )
+        .await
+        .expect("account update should update diagnostics");
+
+        let account = diagnostics
+            .account
+            .expect("account diagnostics should exist");
+        assert_eq!(account.provider, "chatgpt");
+        assert_eq!(account.auth_mode.as_deref(), Some("chatgptAuthTokens"));
+        assert_eq!(account.plan_type.as_deref(), Some("team"));
+    }
+
     #[test]
     fn known_codex_notification_methods_include_remaining_runtime_notifications() {
-        assert!(is_known_codex_notification_method(&normalize_method("thread/started")));
-        assert!(is_known_codex_notification_method(&normalize_method("thread/archived")));
-        assert!(is_known_codex_notification_method(&normalize_method("thread/unarchived")));
-        assert!(is_known_codex_notification_method(&normalize_method("thread/closed")));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "thread/started"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "thread/archived"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "thread/unarchived"
+        )));
+        assert!(is_known_codex_notification_method(&normalize_method(
+            "thread/closed"
+        )));
         assert!(is_known_codex_notification_method(&normalize_method(
             "item/reasoning/summaryPartAdded"
         )));
@@ -5736,6 +5925,15 @@ mod tests {
         assert!(is_known_codex_notification_method(&normalize_method(
             "windowsSandbox/setupCompleted"
         )));
+    }
+
+    #[test]
+    fn unsupported_external_auth_tokens_message_includes_context() {
+        let message =
+            unsupported_external_auth_tokens_message(Some("acc_123"), Some("unauthorized"));
+        assert!(message.contains("acc_123"));
+        assert!(message.contains("unauthorized"));
+        assert!(message.contains("cannot refresh"));
     }
 
     #[test]
