@@ -4310,7 +4310,7 @@ export function ChatPanel() {
 
           {/* Input container */}
           <div
-            className={`chat-input-box ${planMode ? "chat-input-box-plan" : ""} ${showPendingToolInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
+            className={`chat-input-box ${planMode && !showPendingToolInputComposer ? "chat-input-box-plan" : ""} ${showPendingToolInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
           >
             {showPendingToolInputComposer && pendingToolInputApproval ? (
               <ToolInputQuestionnaire
@@ -4686,7 +4686,7 @@ export function ChatPanel() {
               <div style={{ flex: 1 }} />
 
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {streaming && (
+                {streaming && !showPendingToolInputComposer && (
                   <button
                     type="button"
                     onClick={() => void cancel()}
