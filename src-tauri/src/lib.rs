@@ -402,6 +402,62 @@ async fn handle_codex_runtime_event(
                 );
             }
         }
+        CodexRuntimeEvent::ThreadSnapshotUpdated {
+            engine_thread_id,
+            thread_name,
+            status_type,
+            active_flags,
+            preview,
+        } => {
+            if let Some(updated_thread) = apply_codex_runtime_thread_update(
+                state,
+                &engine_thread_id,
+                thread_name.as_deref(),
+                status_type.as_deref(),
+                &active_flags,
+                preview.as_deref(),
+                Some(false),
+                None,
+            )
+            .await
+            {
+                let _ = app.emit(
+                    "thread-updated",
+                    ThreadUpdatedEvent {
+                        thread_id: updated_thread.id.clone(),
+                        workspace_id: updated_thread.workspace_id.clone(),
+                        thread: Some(updated_thread),
+                    },
+                );
+            }
+        }
+        CodexRuntimeEvent::ThreadArchived { engine_thread_id } => {
+            if let Some((thread_id, workspace_id)) =
+                archive_codex_runtime_thread(state, &engine_thread_id).await
+            {
+                let _ = app.emit(
+                    "thread-updated",
+                    ThreadUpdatedEvent {
+                        thread_id,
+                        workspace_id,
+                        thread: None,
+                    },
+                );
+            }
+        }
+        CodexRuntimeEvent::ThreadUnarchived { engine_thread_id } => {
+            if let Some(updated_thread) = restore_codex_runtime_thread(state, &engine_thread_id).await
+            {
+                let _ = app.emit(
+                    "thread-updated",
+                    ThreadUpdatedEvent {
+                        thread_id: updated_thread.id.clone(),
+                        workspace_id: updated_thread.workspace_id.clone(),
+                        thread: Some(updated_thread),
+                    },
+                );
+            }
+        }
     }
 }
 
@@ -511,6 +567,52 @@ async fn apply_codex_runtime_thread_update(
                 next_status,
                 Some(&metadata),
             )
+        }
+    })
+    .await
+    .ok()
+}
+
+async fn archive_codex_runtime_thread(
+    state: &AppState,
+    engine_thread_id: &str,
+) -> Option<(String, String)> {
+    let thread = run_db(state.db.clone(), {
+        let engine_thread_id = engine_thread_id.to_string();
+        move |db| db::threads::find_thread_by_engine_thread_id(db, "codex", &engine_thread_id)
+    })
+    .await
+    .ok()??;
+
+    run_db(state.db.clone(), {
+        let thread_id = thread.id.clone();
+        move |db| match db::threads::archive_thread(db, &thread_id) {
+            Ok(()) => Ok(()),
+            Err(error) if error.to_string().contains("already archived") => Ok(()),
+            Err(error) => Err(error),
+        }
+    })
+    .await
+    .ok()?;
+
+    Some((thread.id, thread.workspace_id))
+}
+
+async fn restore_codex_runtime_thread(state: &AppState, engine_thread_id: &str) -> Option<ThreadDto> {
+    let thread = run_db(state.db.clone(), {
+        let engine_thread_id = engine_thread_id.to_string();
+        move |db| db::threads::find_thread_by_engine_thread_id(db, "codex", &engine_thread_id)
+    })
+    .await
+    .ok()??;
+
+    run_db(state.db.clone(), {
+        let thread_id = thread.id.clone();
+        let existing = thread.clone();
+        move |db| match db::threads::restore_thread(db, &thread_id) {
+            Ok(restored) => Ok(restored),
+            Err(error) if error.to_string().contains("not archived") => Ok(existing),
+            Err(error) => Err(error),
         }
     })
     .await

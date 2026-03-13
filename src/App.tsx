@@ -79,6 +79,7 @@ export function App() {
   const keepAwakeEnabled = useKeepAwakeStore((s) => s.state?.enabled ?? false);
   const refreshAllThreads = useThreadStore((s) => s.refreshAllThreads);
   const refreshThreads = useThreadStore((s) => s.refreshThreads);
+  const refreshArchivedThreads = useThreadStore((s) => s.refreshArchivedThreads);
   const applyThreadUpdateLocal = useThreadStore((s) => s.applyThreadUpdateLocal);
   const commandPaletteOpen = useUiStore((s) => s.commandPaletteOpen);
   const closeCommandPalette = useUiStore((s) => s.closeCommandPalette);
@@ -125,6 +126,7 @@ export function App() {
             console.warn(`Failed to sync active Codex thread ${thread.id}:`, error);
           }
           void refreshThreads(workspaceId);
+          void refreshArchivedThreads(workspaceId);
           return;
         }
         if (applied) {
@@ -132,6 +134,7 @@ export function App() {
         }
       }
       void refreshThreads(workspaceId);
+      void refreshArchivedThreads(workspaceId);
     }).then((fn) => {
       unlisten = fn;
     });
@@ -141,7 +144,7 @@ export function App() {
         unlisten();
       }
     };
-  }, [applyThreadUpdateLocal, refreshThreads]);
+  }, [applyThreadUpdateLocal, refreshArchivedThreads, refreshThreads]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
