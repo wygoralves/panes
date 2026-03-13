@@ -20,9 +20,10 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::models::{
-    CodexAccountLoginCompletedDto, CodexAppDto, CodexConfigWarningDto, CodexExperimentalFeatureDto,
-    CodexMcpOauthCompletedDto, CodexMethodAvailabilityDto, CodexProtocolDiagnosticsDto,
-    CodexSkillDto, RuntimeToastDto,
+    CodexAccountLoginCompletedDto, CodexAccountStateDto, CodexAppDto, CodexConfigLayerDto,
+    CodexConfigStateDto, CodexConfigWarningDto, CodexExperimentalFeatureDto,
+    CodexMcpOauthCompletedDto, CodexMcpServerDto, CodexMethodAvailabilityDto, CodexPluginDto,
+    CodexPluginMarketplaceDto, CodexProtocolDiagnosticsDto, CodexSkillDto, RuntimeToastDto,
 };
 use crate::{process_utils, runtime_env};
 
@@ -45,6 +46,10 @@ const EXPERIMENTAL_FEATURE_LIST_METHODS: &[&str] = &["experimentalFeature/list"]
 const COLLABORATION_MODE_LIST_METHODS: &[&str] = &["collaborationMode/list"];
 const SKILLS_LIST_METHODS: &[&str] = &["skills/list"];
 const APP_LIST_METHODS: &[&str] = &["app/list"];
+const PLUGIN_LIST_METHODS: &[&str] = &["plugin/list"];
+const MCP_SERVER_STATUS_LIST_METHODS: &[&str] = &["mcpServerStatus/list"];
+const CONFIG_READ_METHODS: &[&str] = &["config/read"];
+const ACCOUNT_READ_METHODS: &[&str] = &["account/read"];
 const TURN_START_METHODS: &[&str] = &["turn/start"];
 const TURN_STEER_METHODS: &[&str] = &["turn/steer"];
 const TURN_INTERRUPT_METHODS: &[&str] = &["turn/interrupt"];
@@ -764,14 +769,11 @@ impl Engine for CodexEngine {
         let transport = self.ensure_ready_transport().await?;
         validate_turn_attachments(&input.attachments).await?;
 
-        let expected_turn_id = self
-            .active_turn_id(engine_thread_id)
-            .await
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Codex has not reported an active turn id for thread {engine_thread_id} yet"
-                )
-            })?;
+        let expected_turn_id = self.active_turn_id(engine_thread_id).await.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Codex has not reported an active turn id for thread {engine_thread_id} yet"
+            )
+        })?;
 
         request_turn_steer(
             transport.as_ref(),
@@ -916,47 +918,7 @@ impl CodexEngine {
             .or_else(|| response.as_array())
             .cloned()
             .unwrap_or_default();
-        let mut skills = BTreeSet::new();
-        let mut mapped = Vec::new();
-
-        for entry in entries {
-            let Some(skill_entries) = entry.get("skills").and_then(serde_json::Value::as_array) else {
-                continue;
-            };
-
-            for skill in skill_entries {
-                let name = extract_any_string(skill, &["name"]).unwrap_or_default();
-                let path = extract_any_string(skill, &["path"]).unwrap_or_default();
-                if name.trim().is_empty() || path.trim().is_empty() {
-                    continue;
-                }
-
-                let dedupe_key = format!("{name}\u{0}{path}");
-                if !skills.insert(dedupe_key) {
-                    continue;
-                }
-
-                mapped.push(CodexSkillDto {
-                    name,
-                    path,
-                    description: extract_any_string(skill, &["description"])
-                        .unwrap_or_default(),
-                    enabled: skill
-                        .get("enabled")
-                        .and_then(serde_json::Value::as_bool)
-                        .unwrap_or(true),
-                    scope: extract_any_string(skill, &["scope"])
-                        .unwrap_or_else(|| "user".to_string()),
-                });
-            }
-        }
-
-        mapped.sort_by(|left, right| {
-            left.name
-                .cmp(&right.name)
-                .then_with(|| left.path.cmp(&right.path))
-        });
-        Ok(mapped)
+        Ok(map_skill_entries(&entries))
     }
 
     pub async fn list_apps(&self) -> anyhow::Result<Vec<CodexAppDto>> {
@@ -1498,12 +1460,20 @@ impl CodexEngine {
                                 }
                             }
                             "account/login/completed" => {
+                                let updated = update_protocol_diagnostics_with_account_login(
+                                    state.clone(),
+                                    &params,
+                                )
+                                .await;
                                 if let Some(diagnostics) =
-                                    update_protocol_diagnostics_with_account_login(
+                                    refresh_protocol_diagnostics_with_fallback(
+                                        transport.as_ref(),
                                         state.clone(),
-                                        &params,
+                                        "after account/login/completed",
+                                        true,
                                     )
                                     .await
+                                    .or(updated)
                                 {
                                     let _ = runtime_events.send(
                                         CodexRuntimeEvent::DiagnosticsUpdated {
@@ -1514,12 +1484,20 @@ impl CodexEngine {
                                 }
                             }
                             "mcpserver/oauthlogin/completed" => {
+                                let updated = update_protocol_diagnostics_with_mcp_oauth(
+                                    state.clone(),
+                                    &params,
+                                )
+                                .await;
                                 if let Some(diagnostics) =
-                                    update_protocol_diagnostics_with_mcp_oauth(
+                                    refresh_protocol_diagnostics_with_fallback(
+                                        transport.as_ref(),
                                         state.clone(),
-                                        &params,
+                                        "after mcpserver/oauthlogin/completed",
+                                        true,
                                     )
                                     .await
+                                    .or(updated)
                                 {
                                     let _ = runtime_events.send(
                                         CodexRuntimeEvent::DiagnosticsUpdated {
@@ -1529,26 +1507,22 @@ impl CodexEngine {
                                     );
                                 }
                             }
-                            "app/list/updated" => {
-                                match refresh_protocol_diagnostics_for_runtime_monitor(
-                                    transport.as_ref(),
-                                    state.clone(),
-                                )
-                                .await
+                            "account/updated" | "skills/changed" | "app/list/updated" => {
+                                if let Some(diagnostics) =
+                                    refresh_protocol_diagnostics_with_fallback(
+                                        transport.as_ref(),
+                                        state.clone(),
+                                        &format!("after {normalized_method}"),
+                                        false,
+                                    )
+                                    .await
                                 {
-                                    Ok(diagnostics) => {
-                                        let _ = runtime_events.send(
-                                            CodexRuntimeEvent::DiagnosticsUpdated {
-                                                diagnostics,
-                                                toast: None,
-                                            },
-                                        );
-                                    }
-                                    Err(error) => {
-                                        log::debug!(
-                                            "failed to refresh codex diagnostics after app/list update: {error}"
-                                        );
-                                    }
+                                    let _ = runtime_events.send(
+                                        CodexRuntimeEvent::DiagnosticsUpdated {
+                                            diagnostics,
+                                            toast: None,
+                                        },
+                                    );
                                 }
                             }
                             "serverrequest/resolved" => {
@@ -1864,9 +1838,9 @@ fn map_codex_model(value: CodexModel) -> ModelInfo {
         hidden: value.hidden.unwrap_or(false),
         is_default: value.is_default.unwrap_or(false),
         upgrade: value.upgrade,
-        availability_nux: value
-            .availability_nux
-            .map(|nux| ModelAvailabilityNux { message: nux.message }),
+        availability_nux: value.availability_nux.map(|nux| ModelAvailabilityNux {
+            message: nux.message,
+        }),
         upgrade_info: value.upgrade_info.map(|info| ModelUpgradeInfo {
             model: info.model,
             upgrade_copy: info.upgrade_copy,
@@ -2265,7 +2239,10 @@ async fn build_turn_start_params(
                 "cwd".to_string(),
                 serde_json::Value::String(runtime.cwd.clone()),
             );
-            params.insert("approvalPolicy".to_string(), runtime.approval_policy.clone());
+            params.insert(
+                "approvalPolicy".to_string(),
+                runtime.approval_policy.clone(),
+            );
             params.insert("sandboxPolicy".to_string(), runtime.sandbox_policy.clone());
             params.insert(
                 "model".to_string(),
@@ -2319,7 +2296,8 @@ async fn build_turn_input_items(
         input.input_items.clone()
     };
 
-    let text_items = apply_plan_prompt_prefix(base_items, force_plan_prompt_prefix && input.plan_mode);
+    let text_items =
+        apply_plan_prompt_prefix(base_items, force_plan_prompt_prefix && input.plan_mode);
     let mut items = Vec::with_capacity(text_items.len() + input.attachments.len());
     for item in text_items {
         match item {
@@ -3326,14 +3304,389 @@ async fn fetch_apps(transport: &CodexTransport) -> MethodCallOutcome<Vec<CodexAp
     )
 }
 
+fn map_skill_entries(entries: &[serde_json::Value]) -> Vec<CodexSkillDto> {
+    let mut skills_by_path = HashMap::<String, CodexSkillDto>::new();
+
+    for entry in entries {
+        let Some(skills) = entry.get("skills").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+
+        for skill in skills {
+            let name =
+                extract_any_string(skill, &["name"]).unwrap_or_else(|| "unknown".to_string());
+            let path = extract_any_string(skill, &["path"]).unwrap_or_else(|| name.clone());
+            skills_by_path
+                .entry(path.clone())
+                .or_insert_with(|| CodexSkillDto {
+                    name,
+                    path,
+                    description: extract_any_string(skill, &["description"])
+                        .or_else(|| {
+                            extract_nested_string(skill, &["interface", "shortDescription"])
+                        })
+                        .or_else(|| {
+                            extract_any_string(skill, &["shortDescription", "short_description"])
+                        })
+                        .unwrap_or_default(),
+                    enabled: skill
+                        .get("enabled")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(true),
+                    scope: extract_any_string(skill, &["scope"])
+                        .unwrap_or_else(|| "unknown".to_string()),
+                });
+        }
+    }
+
+    let mut skills: Vec<_> = skills_by_path.into_values().collect();
+    skills.sort_by(|left, right| {
+        left.scope
+            .cmp(&right.scope)
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    skills
+}
+
+async fn fetch_skills(transport: &CodexTransport) -> MethodCallOutcome<Vec<CodexSkillDto>> {
+    let cwds = env::current_dir()
+        .ok()
+        .map(|cwd| vec![cwd.to_string_lossy().to_string()])
+        .unwrap_or_default();
+
+    let response = match request_with_fallback(
+        transport,
+        SKILLS_LIST_METHODS,
+        serde_json::json!({
+            "cwds": cwds,
+            "forceReload": false,
+        }),
+        DEFAULT_TIMEOUT,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => return method_call_outcome_from_error(error),
+    };
+
+    let entries = response
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| response.as_array())
+        .cloned()
+        .unwrap_or_default();
+    MethodCallOutcome::Available(map_skill_entries(&entries))
+}
+
+fn map_plugin_marketplaces(response: &serde_json::Value) -> Vec<CodexPluginMarketplaceDto> {
+    let mut marketplaces = response
+        .get("marketplaces")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| response.as_array())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|marketplace| {
+            let mut plugins = marketplace
+                .get("plugins")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|plugin| CodexPluginDto {
+                    id: extract_any_string(&plugin, &["id"])
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    name: extract_nested_string(&plugin, &["interface", "displayName"])
+                        .or_else(|| extract_any_string(&plugin, &["name"]))
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    enabled: plugin
+                        .get("enabled")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                    installed: plugin
+                        .get("installed")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                    capabilities: plugin
+                        .get("interface")
+                        .and_then(|interface| interface.get("capabilities"))
+                        .and_then(serde_json::Value::as_array)
+                        .map(|capabilities| {
+                            capabilities
+                                .iter()
+                                .filter_map(serde_json::Value::as_str)
+                                .map(str::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                    developer_name: extract_nested_string(&plugin, &["interface", "developerName"])
+                        .or_else(|| {
+                            extract_nested_string(&plugin, &["interface", "developer_name"])
+                        }),
+                    description: extract_nested_string(&plugin, &["interface", "shortDescription"])
+                        .or_else(|| {
+                            extract_nested_string(&plugin, &["interface", "short_description"])
+                        })
+                        .or_else(|| {
+                            extract_nested_string(&plugin, &["interface", "longDescription"])
+                        })
+                        .or_else(|| {
+                            extract_nested_string(&plugin, &["interface", "long_description"])
+                        }),
+                })
+                .collect::<Vec<_>>();
+            plugins.sort_by(|left, right| {
+                left.name
+                    .cmp(&right.name)
+                    .then_with(|| left.id.cmp(&right.id))
+            });
+
+            CodexPluginMarketplaceDto {
+                name: extract_any_string(&marketplace, &["name"])
+                    .unwrap_or_else(|| "unknown".to_string()),
+                path: extract_any_string(&marketplace, &["path"]).unwrap_or_default(),
+                plugins,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    marketplaces.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    marketplaces
+}
+
+async fn fetch_plugin_marketplaces(
+    transport: &CodexTransport,
+) -> MethodCallOutcome<Vec<CodexPluginMarketplaceDto>> {
+    let response = match request_with_fallback(
+        transport,
+        PLUGIN_LIST_METHODS,
+        serde_json::Value::Null,
+        DEFAULT_TIMEOUT,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => return method_call_outcome_from_error(error),
+    };
+
+    MethodCallOutcome::Available(map_plugin_marketplaces(&response))
+}
+
+fn map_mcp_servers(entries: &[serde_json::Value]) -> Vec<CodexMcpServerDto> {
+    let mut servers = entries
+        .iter()
+        .map(|entry| CodexMcpServerDto {
+            name: extract_any_string(entry, &["name"]).unwrap_or_else(|| "unknown".to_string()),
+            auth_status: extract_any_string(entry, &["authStatus", "auth_status"])
+                .unwrap_or_else(|| "unknown".to_string()),
+            tool_count: entry
+                .get("tools")
+                .and_then(serde_json::Value::as_object)
+                .map(|tools| tools.len())
+                .unwrap_or_default(),
+            resource_count: entry
+                .get("resources")
+                .and_then(serde_json::Value::as_array)
+                .map(|resources| resources.len())
+                .unwrap_or_default(),
+            resource_template_count: entry
+                .get("resourceTemplates")
+                .or_else(|| entry.get("resource_templates"))
+                .and_then(serde_json::Value::as_array)
+                .map(|resources| resources.len())
+                .unwrap_or_default(),
+        })
+        .collect::<Vec<_>>();
+    servers.sort_by(|left, right| left.name.cmp(&right.name));
+    servers
+}
+
+async fn fetch_mcp_servers(
+    transport: &CodexTransport,
+) -> MethodCallOutcome<Vec<CodexMcpServerDto>> {
+    let response = match fetch_paginated_data(transport, MCP_SERVER_STATUS_LIST_METHODS, |cursor| {
+        serde_json::json!({
+            "limit": 200,
+            "cursor": cursor,
+        })
+    })
+    .await
+    {
+        Ok(data) => data,
+        Err(error) => return method_call_outcome_from_error(error),
+    };
+
+    MethodCallOutcome::Available(map_mcp_servers(&response))
+}
+
+fn map_account_state(response: &serde_json::Value) -> CodexAccountStateDto {
+    let account = response.get("account").unwrap_or(&serde_json::Value::Null);
+    CodexAccountStateDto {
+        provider: extract_any_string(account, &["type"]).unwrap_or_else(|| "none".to_string()),
+        email: extract_any_string(account, &["email"]),
+        plan_type: extract_any_string(account, &["planType", "plan_type"]),
+        requires_openai_auth: response
+            .get("requiresOpenaiAuth")
+            .or_else(|| response.get("requires_openai_auth"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+    }
+}
+
+async fn fetch_account_state(
+    transport: &CodexTransport,
+) -> MethodCallOutcome<CodexAccountStateDto> {
+    let response = match request_with_fallback(
+        transport,
+        ACCOUNT_READ_METHODS,
+        serde_json::Value::Null,
+        DEFAULT_TIMEOUT,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => return method_call_outcome_from_error(error),
+    };
+
+    MethodCallOutcome::Available(map_account_state(&response))
+}
+
+fn format_config_layer_source(source: &serde_json::Value) -> String {
+    let source_type =
+        extract_any_string(source, &["type"]).unwrap_or_else(|| "unknown".to_string());
+    match source_type.as_str() {
+        "mdm" => {
+            let domain = extract_any_string(source, &["domain"]);
+            let key = extract_any_string(source, &["key"]);
+            match (domain, key) {
+                (Some(domain), Some(key)) => format!("mdm:{domain}:{key}"),
+                (Some(domain), None) => format!("mdm:{domain}"),
+                _ => source_type,
+            }
+        }
+        "system" | "user" | "legacyManagedConfigTomlFromFile" => {
+            extract_any_string(source, &["file"])
+                .map(|file| format!("{source_type}:{file}"))
+                .unwrap_or(source_type)
+        }
+        "project" => extract_any_string(source, &["dotCodexFolder", "dot_codex_folder"])
+            .map(|folder| format!("project:{folder}"))
+            .unwrap_or(source_type),
+        _ => source_type,
+    }
+}
+
+fn map_config_layer(value: &serde_json::Value) -> Option<CodexConfigLayerDto> {
+    let source = value.get("name").or_else(|| value.get("source"))?;
+    let version = extract_any_string(value, &["version"])?;
+    Some(CodexConfigLayerDto {
+        source: format_config_layer_source(source),
+        version,
+    })
+}
+
+fn map_config_layers(response: &serde_json::Value) -> Vec<CodexConfigLayerDto> {
+    let mut layers = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    if let Some(entries) = response.get("layers").and_then(serde_json::Value::as_array) {
+        for entry in entries {
+            if let Some(layer) = map_config_layer(entry) {
+                let dedupe_key = format!("{}\u{0}{}", layer.source, layer.version);
+                if seen.insert(dedupe_key) {
+                    layers.push(layer);
+                }
+            }
+        }
+    }
+
+    if layers.is_empty() {
+        if let Some(origins) = response
+            .get("origins")
+            .and_then(serde_json::Value::as_object)
+        {
+            for origin in origins.values() {
+                if let Some(layer) = map_config_layer(origin) {
+                    let dedupe_key = format!("{}\u{0}{}", layer.source, layer.version);
+                    if seen.insert(dedupe_key) {
+                        layers.push(layer);
+                    }
+                }
+            }
+        }
+    }
+
+    layers.sort_by(|left, right| {
+        left.source
+            .cmp(&right.source)
+            .then_with(|| left.version.cmp(&right.version))
+    });
+    layers
+}
+
+fn map_config_state(response: &serde_json::Value) -> CodexConfigStateDto {
+    let config = response.get("config").unwrap_or(response);
+    CodexConfigStateDto {
+        model: extract_any_string(config, &["model"]),
+        model_provider: extract_any_string(config, &["modelProvider", "model_provider"]),
+        service_tier: extract_any_string(config, &["serviceTier", "service_tier"]),
+        approval_policy: config
+            .get("approvalPolicy")
+            .or_else(|| config.get("approval_policy"))
+            .filter(|value| !value.is_null())
+            .cloned(),
+        sandbox_mode: extract_any_string(config, &["sandboxMode", "sandbox_mode"]),
+        web_search: extract_any_string(config, &["webSearch", "web_search"]),
+        profile: extract_any_string(config, &["profile"]),
+        layers: map_config_layers(response),
+    }
+}
+
+async fn fetch_config_state(transport: &CodexTransport) -> MethodCallOutcome<CodexConfigStateDto> {
+    let response = match request_with_fallback(
+        transport,
+        CONFIG_READ_METHODS,
+        serde_json::Value::Null,
+        DEFAULT_TIMEOUT,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => return method_call_outcome_from_error(error),
+    };
+
+    MethodCallOutcome::Available(map_config_state(&response))
+}
+
 async fn refresh_protocol_diagnostics_via_transport(
     transport: &CodexTransport,
     previous: Option<CodexProtocolDiagnosticsDto>,
 ) -> anyhow::Result<CodexProtocolDiagnosticsDto> {
     let mut diagnostics = previous.unwrap_or_default();
-    let experimental = fetch_experimental_features(transport).await;
-    let collaboration = fetch_collaboration_modes(transport).await;
-    let apps = fetch_apps(transport).await;
+    let (
+        experimental,
+        collaboration,
+        apps,
+        skills,
+        plugin_marketplaces,
+        mcp_servers,
+        account,
+        config,
+    ) = tokio::join!(
+        fetch_experimental_features(transport),
+        fetch_collaboration_modes(transport),
+        fetch_apps(transport),
+        fetch_skills(transport),
+        fetch_plugin_marketplaces(transport),
+        fetch_mcp_servers(transport),
+        fetch_account_state(transport),
+        fetch_config_state(transport),
+    );
 
     let experimental_availability = match experimental {
         MethodCallOutcome::Available(value) => {
@@ -3344,11 +3697,14 @@ async fn refresh_protocol_diagnostics_via_transport(
                 detail: None,
             }
         }
-        MethodCallOutcome::Unsupported(detail) => CodexMethodAvailabilityDto {
-            method: "experimentalFeature/list".to_string(),
-            status: "unsupported".to_string(),
-            detail,
-        },
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.experimental_features.clear();
+            CodexMethodAvailabilityDto {
+                method: "experimentalFeature/list".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
         MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
             method: "experimentalFeature/list".to_string(),
             status: "error".to_string(),
@@ -3370,11 +3726,14 @@ async fn refresh_protocol_diagnostics_via_transport(
                 detail: None,
             }
         }
-        MethodCallOutcome::Unsupported(detail) => CodexMethodAvailabilityDto {
-            method: "collaborationMode/list".to_string(),
-            status: "unsupported".to_string(),
-            detail,
-        },
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.collaboration_modes.clear();
+            CodexMethodAvailabilityDto {
+                method: "collaborationMode/list".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
         MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
             method: "collaborationMode/list".to_string(),
             status: "error".to_string(),
@@ -3396,11 +3755,14 @@ async fn refresh_protocol_diagnostics_via_transport(
                 detail: None,
             }
         }
-        MethodCallOutcome::Unsupported(detail) => CodexMethodAvailabilityDto {
-            method: "app/list".to_string(),
-            status: "unsupported".to_string(),
-            detail,
-        },
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.apps.clear();
+            CodexMethodAvailabilityDto {
+                method: "app/list".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
         MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
             method: "app/list".to_string(),
             status: "error".to_string(),
@@ -3408,6 +3770,135 @@ async fn refresh_protocol_diagnostics_via_transport(
         },
     };
     update_method_availability(&mut diagnostics, "app/list", app_availability);
+
+    let skills_availability = match skills {
+        MethodCallOutcome::Available(value) => {
+            diagnostics.skills = value;
+            CodexMethodAvailabilityDto {
+                method: "skills/list".to_string(),
+                status: "available".to_string(),
+                detail: None,
+            }
+        }
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.skills.clear();
+            CodexMethodAvailabilityDto {
+                method: "skills/list".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
+        MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
+            method: "skills/list".to_string(),
+            status: "error".to_string(),
+            detail: Some(detail),
+        },
+    };
+    update_method_availability(&mut diagnostics, "skills/list", skills_availability);
+
+    let plugin_availability = match plugin_marketplaces {
+        MethodCallOutcome::Available(value) => {
+            diagnostics.plugin_marketplaces = value;
+            CodexMethodAvailabilityDto {
+                method: "plugin/list".to_string(),
+                status: "available".to_string(),
+                detail: None,
+            }
+        }
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.plugin_marketplaces.clear();
+            CodexMethodAvailabilityDto {
+                method: "plugin/list".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
+        MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
+            method: "plugin/list".to_string(),
+            status: "error".to_string(),
+            detail: Some(detail),
+        },
+    };
+    update_method_availability(&mut diagnostics, "plugin/list", plugin_availability);
+
+    let mcp_server_availability = match mcp_servers {
+        MethodCallOutcome::Available(value) => {
+            diagnostics.mcp_servers = value;
+            CodexMethodAvailabilityDto {
+                method: "mcpServerStatus/list".to_string(),
+                status: "available".to_string(),
+                detail: None,
+            }
+        }
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.mcp_servers.clear();
+            CodexMethodAvailabilityDto {
+                method: "mcpServerStatus/list".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
+        MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
+            method: "mcpServerStatus/list".to_string(),
+            status: "error".to_string(),
+            detail: Some(detail),
+        },
+    };
+    update_method_availability(
+        &mut diagnostics,
+        "mcpServerStatus/list",
+        mcp_server_availability,
+    );
+
+    let account_availability = match account {
+        MethodCallOutcome::Available(value) => {
+            diagnostics.account = Some(value);
+            CodexMethodAvailabilityDto {
+                method: "account/read".to_string(),
+                status: "available".to_string(),
+                detail: None,
+            }
+        }
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.account = None;
+            CodexMethodAvailabilityDto {
+                method: "account/read".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
+        MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
+            method: "account/read".to_string(),
+            status: "error".to_string(),
+            detail: Some(detail),
+        },
+    };
+    update_method_availability(&mut diagnostics, "account/read", account_availability);
+
+    let config_availability = match config {
+        MethodCallOutcome::Available(value) => {
+            diagnostics.config = Some(value);
+            CodexMethodAvailabilityDto {
+                method: "config/read".to_string(),
+                status: "available".to_string(),
+                detail: None,
+            }
+        }
+        MethodCallOutcome::Unsupported(detail) => {
+            diagnostics.config = None;
+            CodexMethodAvailabilityDto {
+                method: "config/read".to_string(),
+                status: "unsupported".to_string(),
+                detail,
+            }
+        }
+        MethodCallOutcome::Error(detail) => CodexMethodAvailabilityDto {
+            method: "config/read".to_string(),
+            status: "error".to_string(),
+            detail: Some(detail),
+        },
+    };
+    update_method_availability(&mut diagnostics, "config/read", config_availability);
 
     diagnostics.fetched_at = Some(Utc::now().to_rfc3339());
     diagnostics.stale = false;
@@ -3431,6 +3922,32 @@ async fn refresh_protocol_diagnostics_for_runtime_monitor(
         state.protocol_diagnostics = Some(diagnostics.clone());
     }
     Ok(diagnostics)
+}
+
+async fn current_protocol_diagnostics(
+    state: Arc<Mutex<CodexState>>,
+) -> Option<CodexProtocolDiagnosticsDto> {
+    let state = state.lock().await;
+    state.protocol_diagnostics.clone()
+}
+
+async fn refresh_protocol_diagnostics_with_fallback(
+    transport: &CodexTransport,
+    state: Arc<Mutex<CodexState>>,
+    log_context: &str,
+    allow_current_on_failure: bool,
+) -> Option<CodexProtocolDiagnosticsDto> {
+    match refresh_protocol_diagnostics_for_runtime_monitor(transport, state.clone()).await {
+        Ok(diagnostics) => Some(diagnostics),
+        Err(error) => {
+            log::debug!("failed to refresh codex diagnostics {log_context}: {error}");
+            if allow_current_on_failure {
+                current_protocol_diagnostics(state).await
+            } else {
+                None
+            }
+        }
+    }
 }
 
 async fn update_protocol_diagnostics_with_config_warning(
@@ -4148,7 +4665,9 @@ mod tests {
             }],
         }];
 
-        engine.store_runtime_model_cache(cached_models.clone()).await;
+        engine
+            .store_runtime_model_cache(cached_models.clone())
+            .await;
 
         assert_eq!(
             engine
@@ -4285,11 +4804,17 @@ mod tests {
 
         assert_eq!(mapped.upgrade.as_deref(), Some("gpt-5.5"));
         assert_eq!(
-            mapped.availability_nux.as_ref().map(|value| value.message.as_str()),
+            mapped
+                .availability_nux
+                .as_ref()
+                .map(|value| value.message.as_str()),
             Some("Try this model for your current plan.")
         );
         assert_eq!(
-            mapped.upgrade_info.as_ref().map(|value| value.model.as_str()),
+            mapped
+                .upgrade_info
+                .as_ref()
+                .map(|value| value.model.as_str()),
             Some("gpt-5.5")
         );
         assert_eq!(
@@ -4329,5 +4854,135 @@ mod tests {
 
         assert_eq!(mapped.input_modalities, vec!["text", "image"]);
         assert!(!mapped.supports_personality);
+    }
+
+    #[test]
+    fn map_skill_entries_flattens_and_sorts_skills() {
+        let mapped = map_skill_entries(&[
+            json!({
+                "cwd": "/tmp/workspace",
+                "skills": [
+                    {
+                        "name": "repo-skill",
+                        "path": "/tmp/workspace/.codex/repo-skill",
+                        "description": "Repo-local skill",
+                        "enabled": true,
+                        "scope": "repo"
+                    },
+                    {
+                        "name": "user-skill",
+                        "path": "/Users/panes/.codex/user-skill",
+                        "description": "User skill",
+                        "enabled": true,
+                        "scope": "user"
+                    }
+                ],
+                "errors": []
+            }),
+            json!({
+                "cwd": "/tmp/workspace",
+                "skills": [
+                    {
+                        "name": "repo-skill",
+                        "path": "/tmp/workspace/.codex/repo-skill",
+                        "description": "Repo-local skill",
+                        "enabled": true,
+                        "scope": "repo"
+                    }
+                ],
+                "errors": []
+            }),
+        ]);
+
+        assert_eq!(
+            mapped
+                .iter()
+                .map(|skill| (skill.scope.as_str(), skill.name.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("repo", "repo-skill"), ("user", "user-skill")]
+        );
+    }
+
+    #[test]
+    fn map_plugin_marketplaces_prefers_display_metadata() {
+        let mapped = map_plugin_marketplaces(&json!({
+            "marketplaces": [
+                {
+                    "name": "default",
+                    "path": "/tmp/plugins",
+                    "plugins": [
+                        {
+                            "id": "deploy",
+                            "name": "deploy",
+                            "enabled": true,
+                            "installed": true,
+                            "interface": {
+                                "displayName": "Deploy Helper",
+                                "developerName": "OpenAI",
+                                "shortDescription": "Ship builds faster",
+                                "capabilities": ["composer", "review"]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }));
+
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].plugins[0].name, "Deploy Helper");
+        assert_eq!(
+            mapped[0].plugins[0].developer_name.as_deref(),
+            Some("OpenAI")
+        );
+        assert_eq!(
+            mapped[0].plugins[0].capabilities,
+            vec!["composer".to_string(), "review".to_string()]
+        );
+    }
+
+    #[test]
+    fn map_config_state_uses_layers_and_structured_values() {
+        let mapped = map_config_state(&json!({
+            "config": {
+                "model": "gpt-5.4",
+                "model_provider": "openai",
+                "service_tier": "flex",
+                "approval_policy": {
+                    "reject": {
+                        "mcp_elicitations": true,
+                        "rules": false,
+                        "sandbox_approval": false
+                    }
+                },
+                "sandbox_mode": "workspace-write",
+                "web_search": "enabled",
+                "profile": "default"
+            },
+            "layers": [
+                {
+                    "name": {
+                        "type": "user",
+                        "file": "/Users/panes/.codex/config.toml"
+                    },
+                    "version": "v2",
+                    "config": {}
+                }
+            ],
+            "origins": {}
+        }));
+
+        assert_eq!(mapped.model.as_deref(), Some("gpt-5.4"));
+        assert_eq!(mapped.model_provider.as_deref(), Some("openai"));
+        assert_eq!(mapped.service_tier.as_deref(), Some("flex"));
+        assert_eq!(mapped.sandbox_mode.as_deref(), Some("workspace-write"));
+        assert_eq!(mapped.web_search.as_deref(), Some("enabled"));
+        assert_eq!(mapped.profile.as_deref(), Some("default"));
+        assert_eq!(mapped.layers.len(), 1);
+        assert_eq!(
+            mapped.layers[0].source,
+            "user:/Users/panes/.codex/config.toml"
+        );
+        assert_eq!(mapped.layers[0].version, "v2");
+        assert!(mapped.approval_policy.is_some());
     }
 }

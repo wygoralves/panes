@@ -294,6 +294,16 @@ pub struct CodexProtocolDiagnosticsDto {
     pub collaboration_modes: Vec<String>,
     #[serde(default)]
     pub apps: Vec<CodexAppDto>,
+    #[serde(default)]
+    pub skills: Vec<CodexSkillDto>,
+    #[serde(default)]
+    pub plugin_marketplaces: Vec<CodexPluginMarketplaceDto>,
+    #[serde(default)]
+    pub mcp_servers: Vec<CodexMcpServerDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account: Option<CodexAccountStateDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<CodexConfigStateDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_config_warning: Option<CodexConfigWarningDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -347,6 +357,79 @@ pub struct CodexSkillDto {
     pub description: String,
     pub enabled: bool,
     pub scope: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexPluginMarketplaceDto {
+    pub name: String,
+    pub path: String,
+    #[serde(default)]
+    pub plugins: Vec<CodexPluginDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexPluginDto {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub installed: bool,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub developer_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexMcpServerDto {
+    pub name: String,
+    pub auth_status: String,
+    pub tool_count: usize,
+    pub resource_count: usize,
+    pub resource_template_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexAccountStateDto {
+    pub provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_type: Option<String>,
+    pub requires_openai_auth: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexConfigStateDto {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_policy: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub layers: Vec<CodexConfigLayerDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexConfigLayerDto {
+    pub source: String,
+    pub version: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -383,24 +383,20 @@ pub async fn send_message(
         None
     };
 
-    let approval_policy_override =
-        thread_approval_policy_override_value(thread.engine_id.as_str(), thread.engine_metadata.as_ref())?;
+    let approval_policy_override = thread_approval_policy_override_value(
+        thread.engine_id.as_str(),
+        thread.engine_metadata.as_ref(),
+    )?;
 
     let sandbox = SandboxPolicy {
         writable_roots,
         allow_network,
-        approval_policy: Some(
-            approval_policy_override
-            .unwrap_or_else(|| {
-                Value::String(
-                    approval_policy_for_engine_and_trust_level(
-                        thread.engine_id.as_str(),
-                        &trust_level,
-                    )
+        approval_policy: Some(approval_policy_override.unwrap_or_else(|| {
+            Value::String(
+                approval_policy_for_engine_and_trust_level(thread.engine_id.as_str(), &trust_level)
                     .to_string(),
-                )
-            }),
-        ),
+            )
+        })),
         reasoning_effort,
         sandbox_mode: Some(sandbox_mode),
         service_tier: thread_service_tier(thread.engine_metadata.as_ref()),
@@ -502,8 +498,8 @@ pub async fn steer_message(
         plan_mode,
         input_items: input_items.clone(),
     };
-    let effective_model_id =
-        thread_last_model_id(thread.engine_metadata.as_ref()).unwrap_or_else(|| thread.model_id.clone());
+    let effective_model_id = thread_last_model_id(thread.engine_metadata.as_ref())
+        .unwrap_or_else(|| thread.model_id.clone());
     let reasoning_effort = thread_reasoning_effort(thread.engine_metadata.as_ref());
     let user_blocks = build_user_blocks(&message, &input_items, &attachments, plan_mode);
 
@@ -558,8 +554,12 @@ fn build_user_blocks(
     attachments: &[TurnAttachment],
     plan_mode: bool,
 ) -> Vec<ContentBlock> {
-    let mut user_blocks =
-        Vec::with_capacity(input_items.len().saturating_add(attachments.len()).saturating_add(1));
+    let mut user_blocks = Vec::with_capacity(
+        input_items
+            .len()
+            .saturating_add(attachments.len())
+            .saturating_add(1),
+    );
 
     for item in input_items {
         match item {
@@ -2579,14 +2579,19 @@ fn thread_personality(metadata: Option<&Value>) -> Option<String> {
 }
 
 fn thread_output_schema(metadata: Option<&Value>) -> Option<Value> {
-    metadata.and_then(|value| value.get("outputSchema")).cloned()
+    metadata
+        .and_then(|value| value.get("outputSchema"))
+        .cloned()
 }
 
 fn normalize_codex_approval_policy_value(value: &Value) -> Result<Value, String> {
     match value {
         Value::String(raw) => {
             let normalized = raw.trim();
-            if matches!(normalized, "untrusted" | "on-failure" | "on-request" | "never") {
+            if matches!(
+                normalized,
+                "untrusted" | "on-failure" | "on-request" | "never"
+            ) {
                 Ok(Value::String(normalized.to_string()))
             } else {
                 Err(format!(
@@ -2598,14 +2603,12 @@ fn normalize_codex_approval_policy_value(value: &Value) -> Result<Value, String>
             let reject = object
                 .get("reject")
                 .and_then(Value::as_object)
-                .ok_or_else(|| "invalid structured approval policy. expected a `reject` object".to_string())?;
+                .ok_or_else(|| {
+                    "invalid structured approval policy. expected a `reject` object".to_string()
+                })?;
 
             for required_key in ["mcp_elicitations", "rules", "sandbox_approval"] {
-                if !reject
-                    .get(required_key)
-                    .and_then(Value::as_bool)
-                    .is_some()
-                {
+                if !reject.get(required_key).and_then(Value::as_bool).is_some() {
                     return Err(format!(
                         "invalid structured approval policy. missing boolean reject.{required_key}"
                     ));
@@ -3234,11 +3237,7 @@ async fn resolve_turn_model_id(
     Ok(requested_model_id.to_string())
 }
 
-async fn model_supports_personality(
-    state: &AppState,
-    engine_id: &str,
-    model_id: &str,
-) -> bool {
+async fn model_supports_personality(state: &AppState, engine_id: &str, model_id: &str) -> bool {
     let Ok(engines) = state.engines.list_engines().await else {
         return false;
     };

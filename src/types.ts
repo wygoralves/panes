@@ -420,6 +420,53 @@ export interface CodexSkill {
   scope: string;
 }
 
+export interface CodexPluginMarketplace {
+  name: string;
+  path: string;
+  plugins: CodexPlugin[];
+}
+
+export interface CodexPlugin {
+  id: string;
+  name: string;
+  enabled: boolean;
+  installed: boolean;
+  capabilities: string[];
+  developerName?: string;
+  description?: string;
+}
+
+export interface CodexMcpServer {
+  name: string;
+  authStatus: string;
+  toolCount: number;
+  resourceCount: number;
+  resourceTemplateCount: number;
+}
+
+export interface CodexAccountState {
+  provider: string;
+  email?: string;
+  planType?: string;
+  requiresOpenaiAuth: boolean;
+}
+
+export interface CodexConfigLayer {
+  source: string;
+  version: string;
+}
+
+export interface CodexConfigState {
+  model?: string;
+  modelProvider?: string;
+  serviceTier?: string;
+  approvalPolicy?: unknown;
+  sandboxMode?: string;
+  webSearch?: string;
+  profile?: string;
+  layers: CodexConfigLayer[];
+}
+
 export interface CodexConfigWarning {
   summary: string;
   details?: string;
@@ -445,6 +492,11 @@ export interface CodexProtocolDiagnostics {
   experimentalFeatures: CodexExperimentalFeature[];
   collaborationModes: string[];
   apps: CodexApp[];
+  skills: CodexSkill[];
+  pluginMarketplaces: CodexPluginMarketplace[];
+  mcpServers: CodexMcpServer[];
+  account?: CodexAccountState;
+  config?: CodexConfigState;
   lastConfigWarning?: CodexConfigWarning;
   lastAccountLogin?: CodexAccountLoginCompleted;
   lastMcpOauth?: CodexMcpOauthCompleted;

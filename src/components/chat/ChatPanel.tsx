@@ -56,6 +56,7 @@ import {
   type CodexPersonalityValue,
   type CodexServiceTierValue,
 } from "./CodexConfigPicker";
+import { CodexRuntimePicker } from "./CodexRuntimePicker";
 import { PermissionPicker } from "./PermissionPicker";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
@@ -1270,6 +1271,7 @@ export function ChatPanel() {
     () => codexUsesExternalSandbox(health),
     [health],
   );
+  const codexProtocolDiagnostics = health.codex?.protocolDiagnostics;
   const preferredOnboardingChatSelection = useMemo(
     () => resolvePreferredOnboardingChatSelection(onboardingSelectedChatEngines, engines),
     [engines, onboardingSelectedChatEngines],
@@ -2054,28 +2056,71 @@ export function ChatPanel() {
     });
 
     let disposed = false;
-    void loadCodexReferenceCatalogs().then(
-      ({ skills, apps, skillsLoaded, appsLoaded }) => {
+    void loadCodexReferenceCatalogs().then(({ skills, apps, skillsLoaded, appsLoaded }) => {
       if (disposed) {
         return;
       }
+      if (skillsLoaded) {
+        setCodexSkills(skills);
+      }
+      if (appsLoaded) {
+        setCodexApps(apps);
+      }
+      setCodexReferenceCatalogState({
+        skillsLoaded,
+        appsLoaded,
+      });
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, [activeWorkspaceId, codexReferenceRoot, loadCodexReferenceCatalogs, selectedEngineId]);
+
+  useEffect(() => {
+    if (
+      selectedEngineId !== "codex" ||
+      !activeWorkspaceId ||
+      !codexReferenceRoot ||
+      !codexProtocolDiagnostics?.fetchedAt ||
+      (!codexReferenceCatalogState.skillsLoaded &&
+        !codexReferenceCatalogState.appsLoaded)
+    ) {
+      return;
+    }
+
+    let disposed = false;
+    void loadCodexReferenceCatalogs().then(
+      ({ skills, apps, skillsLoaded, appsLoaded }) => {
+        if (disposed) {
+          return;
+        }
+
         if (skillsLoaded) {
           setCodexSkills(skills);
         }
         if (appsLoaded) {
           setCodexApps(apps);
         }
-        setCodexReferenceCatalogState({
-          skillsLoaded,
-          appsLoaded,
-        });
+        setCodexReferenceCatalogState((current) => ({
+          skillsLoaded: current.skillsLoaded || skillsLoaded,
+          appsLoaded: current.appsLoaded || appsLoaded,
+        }));
       },
     );
 
     return () => {
       disposed = true;
     };
-  }, [activeWorkspaceId, codexReferenceRoot, loadCodexReferenceCatalogs, selectedEngineId]);
+  }, [
+    activeWorkspaceId,
+    codexProtocolDiagnostics?.fetchedAt,
+    codexReferenceCatalogState.appsLoaded,
+    codexReferenceCatalogState.skillsLoaded,
+    codexReferenceRoot,
+    loadCodexReferenceCatalogs,
+    selectedEngineId,
+  ]);
 
   useEffect(() => {
     if (!selectedModel) {
@@ -4000,6 +4045,12 @@ export function ChatPanel() {
               {selectedEngineId === "codex" && (
                 <>
                   <div className="chat-toolbar-divider" />
+                  <CodexRuntimePicker
+                    diagnostics={codexProtocolDiagnostics}
+                    skills={
+                      codexReferenceCatalogState.skillsLoaded ? codexSkills : undefined
+                    }
+                  />
                   <CodexConfigPicker
                     activeCount={codexConfigActiveCount}
                     personalitySupported={selectedModelSupportsPersonality}

@@ -852,14 +852,12 @@ fn normalize_codex_approval_policy(value: Value) -> Result<Value, String> {
             let reject = object
                 .get("reject")
                 .and_then(Value::as_object)
-                .ok_or_else(|| "invalid structured approval policy. expected a `reject` object".to_string())?;
+                .ok_or_else(|| {
+                    "invalid structured approval policy. expected a `reject` object".to_string()
+                })?;
 
             for required_key in ["mcp_elicitations", "rules", "sandbox_approval"] {
-                if !reject
-                    .get(required_key)
-                    .and_then(Value::as_bool)
-                    .is_some()
-                {
+                if !reject.get(required_key).and_then(Value::as_bool).is_some() {
                     return Err(format!(
                         "invalid structured approval policy. missing boolean reject.{required_key}"
                     ));
@@ -932,9 +930,7 @@ fn normalize_thread_output_schema(value: Option<Value>) -> Result<Option<Value>,
 
     match value {
         Value::Object(_) | Value::Bool(_) => Ok(Some(value)),
-        _ => Err(
-            "invalid output schema. expected a JSON Schema object or boolean".to_string(),
-        ),
+        _ => Err("invalid output schema. expected a JSON Schema object or boolean".to_string()),
     }
 }
 
@@ -1103,24 +1099,21 @@ mod tests {
     #[test]
     fn normalize_thread_approval_policy_accepts_claude_modes() {
         assert_eq!(
-            normalize_thread_approval_policy_for_engine("claude", Some(json!("trusted")))
-                .unwrap(),
+            normalize_thread_approval_policy_for_engine("claude", Some(json!("trusted"))).unwrap(),
             Some(json!("trusted"))
         );
         assert_eq!(
-            normalize_thread_approval_policy_for_engine("claude", Some(json!("STANDARD")))
-                .unwrap(),
+            normalize_thread_approval_policy_for_engine("claude", Some(json!("STANDARD"))).unwrap(),
             Some(json!("standard"))
         );
     }
 
     #[test]
     fn normalize_thread_approval_policy_rejects_codex_values_for_claude() {
-        assert!(normalize_thread_approval_policy_for_engine(
-            "claude",
-            Some(json!("on-request"))
-        )
-        .is_err());
+        assert!(
+            normalize_thread_approval_policy_for_engine("claude", Some(json!("on-request")))
+                .is_err()
+        );
     }
 
     #[test]

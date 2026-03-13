@@ -309,16 +309,17 @@ impl EngineManager {
     }
 
     pub async fn list_engines(&self) -> anyhow::Result<Vec<EngineInfoDto>> {
-        let codex_models =
-            match timeout(Duration::from_secs(4), self.codex.list_models_runtime()).await {
-                Ok(models) => models,
-                Err(_) => {
-                    log::warn!(
+        let codex_models = match timeout(Duration::from_secs(4), self.codex.list_models_runtime())
+            .await
+        {
+            Ok(models) => models,
+            Err(_) => {
+                log::warn!(
                         "timed out loading codex runtime models; falling back to cached or static model catalog"
                     );
-                    self.codex.runtime_model_fallback().await
-                }
-            };
+                self.codex.runtime_model_fallback().await
+            }
+        };
         let claude_models = self.claude.models();
 
         Ok(vec![
@@ -562,9 +563,11 @@ fn map_model_info(model: ModelInfo) -> EngineModelDto {
         hidden: model.hidden,
         is_default: model.is_default,
         upgrade: model.upgrade,
-        availability_nux: model.availability_nux.map(|value| EngineModelAvailabilityNuxDto {
-            message: value.message,
-        }),
+        availability_nux: model
+            .availability_nux
+            .map(|value| EngineModelAvailabilityNuxDto {
+                message: value.message,
+            }),
         upgrade_info: model.upgrade_info.map(|value| EngineModelUpgradeInfoDto {
             model: value.model,
             upgrade_copy: value.upgrade_copy,

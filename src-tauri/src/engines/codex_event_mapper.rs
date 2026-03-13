@@ -139,8 +139,9 @@ impl TurnEventMapper {
                 kind: "context_compacted".to_string(),
                 level: "info".to_string(),
                 title: "Context compacted".to_string(),
-                message: "Codex compacted the active thread context to keep the conversation moving."
-                    .to_string(),
+                message:
+                    "Codex compacted the active thread context to keep the conversation moving."
+                        .to_string(),
             }],
             "deprecationnotice" => map_deprecation_notice(params).into_iter().collect(),
             "itemstarted" => self.map_item_started(params),
@@ -271,14 +272,12 @@ impl TurnEventMapper {
                 extract_first_question_text(params)
                     .unwrap_or_else(|| "Codex requested user input".to_string()),
             ),
-            "mcpserverelicitationrequest" => (
-                ActionType::Other,
-                summarize_mcp_elicitation_request(params),
-            ),
-            "itempermissionsrequestapproval" => (
-                ActionType::Other,
-                summarize_permissions_request(params),
-            ),
+            "mcpserverelicitationrequest" => {
+                (ActionType::Other, summarize_mcp_elicitation_request(params))
+            }
+            "itempermissionsrequestapproval" => {
+                (ActionType::Other, summarize_permissions_request(params))
+            }
             "itemtoolcall" => (
                 ActionType::Other,
                 extract_any_string(params, &["tool", "name"])
@@ -689,8 +688,8 @@ fn summarize_permissions_request(params: &Value) -> String {
 
     let mut requested = Vec::new();
     let permissions = params.get("permissions");
-    let file_system = permissions
-        .and_then(|value| value.get("fileSystem").or_else(|| value.get("file_system")));
+    let file_system =
+        permissions.and_then(|value| value.get("fileSystem").or_else(|| value.get("file_system")));
     if let Some(file_system) = file_system {
         if has_nonempty_array(file_system.get("write")) {
             requested.push("write access");
@@ -721,10 +720,8 @@ fn summarize_permissions_request(params: &Value) -> String {
 }
 
 fn summarize_mcp_elicitation_request(params: &Value) -> String {
-    let server_name =
-        extract_any_string(params, &["serverName", "server_name"]).unwrap_or_else(|| {
-            "MCP server".to_string()
-        });
+    let server_name = extract_any_string(params, &["serverName", "server_name"])
+        .unwrap_or_else(|| "MCP server".to_string());
     let message = extract_any_string(params, &["message"]).unwrap_or_default();
 
     if message.is_empty() {
