@@ -349,6 +349,16 @@ export interface MentionBlock {
   path: string;
 }
 
+export interface SteerBlock {
+  type: "steer";
+  steerId: string;
+  content: string;
+  planMode?: boolean;
+  attachments?: AttachmentBlock[];
+  skills?: SkillBlock[];
+  mentions?: MentionBlock[];
+}
+
 export type ContentBlock =
   | TextBlock
   | CodeBlock
@@ -360,7 +370,8 @@ export type ContentBlock =
   | ErrorBlock
   | AttachmentBlock
   | SkillBlock
-  | MentionBlock;
+  | MentionBlock
+  | SteerBlock;
 
 export interface EngineInfo {
   id: string;

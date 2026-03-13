@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Circle,
   AlertTriangle,
+  CornerDownRight,
   ChevronRight,
   FileCode2,
   FileDiff,
@@ -26,6 +27,7 @@ import type {
   DiffBlock,
   MessageStatus,
   NoticeBlock,
+  SteerBlock,
   ThinkingBlock,
 } from "../../types";
 import { ToolInputQuestionnaire } from "./ToolInputQuestionnaire";
@@ -245,6 +247,86 @@ function NoticeBlockView({ block }: { block: NoticeBlock }) {
           {block.title}
         </div>
         <div>{block.message}</div>
+      </div>
+    </div>
+  );
+}
+
+function SteerBlockView({ block }: { block: SteerBlock }) {
+  const attachmentBlocks = block.attachments ?? [];
+  const skillBlocks = block.skills ?? [];
+  const mentionBlocks = block.mentions ?? [];
+  const hasContent = block.content.trim().length > 0;
+
+  return (
+    <div
+      style={{
+        margin: "2px 12px 8px",
+        padding: "9px 12px",
+        borderRadius: "var(--radius-sm)",
+        border: "1px solid rgba(255, 107, 107, 0.16)",
+        background: "rgba(255, 107, 107, 0.06)",
+        color: "var(--text-2)",
+        fontSize: 12,
+        lineHeight: 1.5,
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 8,
+      }}
+    >
+      <CornerDownRight size={14} style={{ flexShrink: 0, color: "var(--danger)", marginTop: 1 }} />
+      <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
+        {hasContent && (
+          <div
+            style={{
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {block.content}
+          </div>
+        )}
+
+        {(skillBlocks.length > 0 || mentionBlocks.length > 0 || attachmentBlocks.length > 0) && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {skillBlocks.map((skill) => (
+              <span
+                key={`skill:${skill.path}`}
+                className="chat-attachment-chip"
+                style={{ display: "inline-flex" }}
+              >
+                <span className="chat-attachment-chip-name">{`$${skill.name}`}</span>
+              </span>
+            ))}
+            {mentionBlocks.map((mention) => (
+              <span
+                key={`mention:${mention.path}`}
+                className="chat-attachment-chip"
+                style={{ display: "inline-flex" }}
+              >
+                <span className="chat-attachment-chip-name">{`@${mention.name}`}</span>
+              </span>
+            ))}
+            {attachmentBlocks.map((attachment) => {
+              const mime = attachment.mimeType ?? "";
+              const AttachIcon = mime.startsWith("image/")
+                ? Image
+                : mime.startsWith("text/") || mime.includes("json") || mime.includes("javascript")
+                  ? FileText
+                  : File;
+              return (
+                <span
+                  key={`attachment:${attachment.filePath}:${attachment.fileName}`}
+                  className="chat-attachment-chip"
+                  style={{ display: "inline-flex" }}
+                >
+                  <AttachIcon size={12} />
+                  <span className="chat-attachment-chip-name">{attachment.fileName}</span>
+                </span>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1014,6 +1096,11 @@ function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadAc
         /* ── Notice ── */
         if (block.type === "notice") {
           return <NoticeBlockView key={blockKey} block={block} />;
+        }
+
+        /* ── Steer ── */
+        if (block.type === "steer") {
+          return <SteerBlockView key={blockKey} block={block} />;
         }
 
         /* ── Action ── */

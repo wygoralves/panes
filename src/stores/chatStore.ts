@@ -6,13 +6,17 @@ import type {
   ApprovalResponse,
   ActionBlock,
   ApprovalBlock,
+  AttachmentBlock,
   ChatAttachment,
   ChatInputItem,
   ContentBlock,
   ContextUsage,
+  MentionBlock,
   Message,
   MessageWindowCursor,
   NoticeBlock,
+  SkillBlock,
+  SteerBlock,
   StreamEvent,
   ThreadStatus
 } from "../types";
@@ -438,6 +442,187 @@ function createOptimisticUserMessage(
   };
 }
 
+function createSteerBlock(
+  message: string,
+  options?: {
+    attachments?: ChatAttachment[];
+    inputItems?: ChatInputItem[];
+    planMode?: boolean;
+    steerId?: string;
+  },
+): SteerBlock {
+  const attachments = (options?.attachments ?? []).map<AttachmentBlock>((attachment) => ({
+    type: "attachment",
+    fileName: attachment.fileName,
+    filePath: attachment.filePath,
+    sizeBytes: attachment.sizeBytes,
+    mimeType: attachment.mimeType,
+  }));
+  const skills: SkillBlock[] = [];
+  const mentions: MentionBlock[] = [];
+
+  for (const inputItem of options?.inputItems ?? []) {
+    if (inputItem.type === "skill") {
+      skills.push({
+        type: "skill",
+        name: inputItem.name,
+        path: inputItem.path,
+      });
+    } else if (inputItem.type === "mention") {
+      mentions.push({
+        type: "mention",
+        name: inputItem.name,
+        path: inputItem.path,
+      });
+    }
+  }
+
+  return {
+    type: "steer",
+    steerId: options?.steerId ?? crypto.randomUUID(),
+    content: message,
+    planMode: options?.planMode || undefined,
+    attachments: attachments.length > 0 ? attachments : undefined,
+    skills: skills.length > 0 ? skills : undefined,
+    mentions: mentions.length > 0 ? mentions : undefined,
+  };
+}
+
+function createSteerBlockFromMessage(message: Message): SteerBlock {
+  const blocks = Array.isArray(message.blocks) ? message.blocks : [];
+  const content =
+    typeof message.content === "string" && message.content.length > 0
+      ? message.content
+      : blocks
+          .filter((block): block is Extract<ContentBlock, { type: "text" }> => block.type === "text")
+          .map((block) => block.content)
+          .join("\n");
+  const attachments = blocks.filter(
+    (block): block is AttachmentBlock => block.type === "attachment",
+  );
+  const skills = blocks.filter((block): block is SkillBlock => block.type === "skill");
+  const mentions = blocks.filter((block): block is MentionBlock => block.type === "mention");
+  const planMode = blocks.some(
+    (block) => block.type === "text" && Boolean(block.planMode),
+  );
+
+  return {
+    type: "steer",
+    steerId: message.id,
+    content,
+    planMode: planMode || undefined,
+    attachments: attachments.length > 0 ? attachments : undefined,
+    skills: skills.length > 0 ? skills : undefined,
+    mentions: mentions.length > 0 ? mentions : undefined,
+  };
+}
+
+function appendSteerBlockToAssistantMessage(message: Message, steerBlock: SteerBlock): Message {
+  const existingBlocks = message.blocks ?? [];
+  if (
+    existingBlocks.some(
+      (block) => block.type === "steer" && block.steerId === steerBlock.steerId,
+    )
+  ) {
+    return message;
+  }
+
+  const blocks = [steerBlock, ...existingBlocks];
+  return {
+    ...message,
+    blocks,
+    hydration: "full",
+    hasDeferredContent: hasDeferredActionOutput(blocks),
+  };
+}
+
+function resolveActiveAssistantTarget(threadId: string): AssistantMessageTarget {
+  const pendingTurnMeta = pendingTurnMetaByThread.get(threadId);
+  return {
+    clientTurnId: pendingTurnMeta?.clientTurnId ?? null,
+    assistantMessageId: pendingTurnMeta?.assistantMessageId ?? null,
+  };
+}
+
+function appendSteerBlockToActiveAssistant(
+  messages: Message[],
+  threadId: string,
+  steerBlock: SteerBlock,
+): Message[] {
+  const { messages: ensuredMessages, assistantIndex } = ensureAssistantMessage(
+    messages,
+    threadId,
+    resolveActiveAssistantTarget(threadId),
+  );
+  const assistant = ensuredMessages[assistantIndex];
+  const nextAssistant = appendSteerBlockToAssistantMessage(assistant, steerBlock);
+  if (nextAssistant === assistant) {
+    return ensuredMessages;
+  }
+
+  return [
+    ...ensuredMessages.slice(0, assistantIndex),
+    nextAssistant,
+    ...ensuredMessages.slice(assistantIndex + 1),
+  ];
+}
+
+function removeSteerBlock(messages: Message[], steerId: string): Message[] {
+  let nextMessages = messages;
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    const blocks = message.blocks ?? [];
+    const nextBlocks = blocks.filter(
+      (block) => !(block.type === "steer" && block.steerId === steerId),
+    );
+    if (nextBlocks.length === blocks.length) {
+      continue;
+    }
+
+    if (nextMessages === messages) {
+      nextMessages = [...messages];
+    }
+    nextMessages[index] = {
+      ...message,
+      blocks: nextBlocks,
+      hydration: "full",
+      hasDeferredContent: hasDeferredActionOutput(nextBlocks),
+    };
+  }
+
+  return nextMessages;
+}
+
+function collapseTrailingSteerMessages(messages: Message[]): Message[] {
+  let changed = false;
+  const collapsed: Message[] = [];
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    const previous = collapsed[collapsed.length - 1];
+    const nextMessage = messages[index + 1];
+
+    const isSteerCandidate =
+      message.role === "user" &&
+      previous?.role === "assistant" &&
+      previous.status === "streaming" &&
+      nextMessage?.role !== "assistant";
+
+    if (isSteerCandidate) {
+      collapsed[collapsed.length - 1] = appendSteerBlockToAssistantMessage(
+        previous,
+        createSteerBlockFromMessage(message),
+      );
+      changed = true;
+      continue;
+    }
+
+    collapsed.push(message);
+  }
+
+  return changed ? collapsed : messages;
+}
+
 function hasRenderableAssistantContent(message: Message): boolean {
   if (typeof message.content === "string" && message.content.trim().length > 0) {
     return true;
@@ -748,8 +933,8 @@ function applyHydrationWindow(messages: Message[]): Message[] {
 
 function normalizeMessages(messages: Message[]): Message[] {
   let nextMessages = messages;
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index];
+  for (let index = 0; index < nextMessages.length; index += 1) {
+    const message = nextMessages[index];
     const normalizedBlocks = normalizeBlocks(message.blocks);
     const normalizedContent =
       message.role === "user" && normalizedBlocks && typeof message.content === "string"
@@ -772,7 +957,7 @@ function normalizeMessages(messages: Message[]): Message[] {
     }
   }
 
-  return nextMessages;
+  return collapseTrailingSteerMessages(nextMessages);
 }
 
 function toIsoTimestamp(value: number | null | undefined): string | null {
@@ -1571,14 +1756,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const attachments = options?.attachments ?? [];
     const inputItems = options?.inputItems ?? [];
     const planMode = options?.planMode ?? false;
-    const userMessage = createOptimisticUserMessage(threadId, message, {
+    const steerBlock = createSteerBlock(message, {
       attachments,
       inputItems,
       planMode,
     });
 
     set((current) => ({
-      messages: applyHydrationWindow([...current.messages, userMessage]),
+      messages: applyHydrationWindow(
+        appendSteerBlockToActiveAssistant(current.messages, threadId, steerBlock),
+      ),
       error: undefined,
     }));
 
@@ -1593,7 +1780,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return true;
     } catch (error) {
       set((current) => ({
-        messages: current.messages.filter((item) => item.id !== userMessage.id),
+        messages: applyHydrationWindow(removeSteerBlock(current.messages, steerBlock.steerId)),
         error: String(error),
       }));
       return false;

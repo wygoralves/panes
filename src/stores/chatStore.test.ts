@@ -688,7 +688,7 @@ describe("chatStore send", () => {
     vi.useRealTimers();
   });
 
-  it("adds an optimistic user message immediately while steering an active turn", async () => {
+  it("adds a steer block to the active assistant while steering an active turn", async () => {
     useChatStore.setState({
       threadId: "thread-1",
       messages: [
@@ -728,24 +728,35 @@ describe("chatStore send", () => {
       [{ type: "mention", name: "Docs", path: "app://docs" }],
       false,
     );
-    expect(useChatStore.getState().messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          role: "user",
+    expect(useChatStore.getState().messages).toHaveLength(1);
+    expect(useChatStore.getState().messages[0]).toMatchObject({
+      role: "assistant",
+      blocks: [
+        {
+          type: "steer",
           content: "follow up",
-          blocks: [
-            { type: "mention", name: "Docs", path: "app://docs" },
-            { type: "text", content: "follow up", planMode: undefined },
-          ],
-        }),
-      ]),
-    );
+          mentions: [{ type: "mention", name: "Docs", path: "app://docs" }],
+        },
+      ],
+    });
   });
 
-  it("rolls back the optimistic steer message when the steer request fails", async () => {
+  it("rolls back the optimistic steer block when the steer request fails", async () => {
     useChatStore.setState({
       threadId: "thread-1",
-      messages: [],
+      messages: [
+        {
+          id: "assistant-1",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "streaming",
+          schemaVersion: 1,
+          blocks: [],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: false,
+        },
+      ],
       olderCursor: null,
       hasOlderMessages: false,
       loadingOlderMessages: false,
@@ -760,8 +771,137 @@ describe("chatStore send", () => {
 
     await expect(useChatStore.getState().steer("follow up")).resolves.toBe(false);
 
-    expect(useChatStore.getState().messages).toEqual([]);
+    expect(useChatStore.getState().messages).toEqual([
+      expect.objectContaining({
+        role: "assistant",
+        blocks: [],
+      }),
+    ]);
     expect(useChatStore.getState().error).toContain("steer failed");
+  });
+
+  it("folds persisted steer messages into the preceding assistant when binding", async () => {
+    mockIpc.getThreadMessagesWindow.mockResolvedValueOnce({
+      messages: [
+        {
+          id: "assistant-1",
+          threadId: "thread-1",
+          role: "assistant",
+          content: null,
+          blocks: [{ type: "text", content: "Working on it" }],
+          turnEngineId: "codex",
+          turnModelId: "gpt-5.3-codex",
+          turnReasoningEffort: "medium",
+          schemaVersion: 1,
+          status: "streaming",
+          tokenUsage: null,
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: "steer-user-1",
+          threadId: "thread-1",
+          role: "user",
+          content: "focus on the failing test",
+          blocks: [{ type: "text", content: "focus on the failing test" }],
+          turnEngineId: "codex",
+          turnModelId: "gpt-5.3-codex",
+          turnReasoningEffort: "medium",
+          schemaVersion: 1,
+          status: "completed",
+          tokenUsage: null,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      nextCursor: null,
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    expect(useChatStore.getState().messages).toHaveLength(1);
+    expect(useChatStore.getState().messages[0]).toMatchObject({
+      role: "assistant",
+      blocks: [
+        {
+          type: "steer",
+          steerId: "steer-user-1",
+          content: "focus on the failing test",
+        },
+        {
+          type: "text",
+          content: "Working on it",
+        },
+      ],
+    });
+  });
+
+  it("keeps regular user turns intact when loading older history", async () => {
+    mockIpc.getThreadMessagesWindow
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            id: "assistant-latest",
+            threadId: "thread-1",
+            role: "assistant",
+            content: null,
+            blocks: [{ type: "text", content: "Latest reply" }],
+            turnEngineId: "codex",
+            turnModelId: "gpt-5.3-codex",
+            turnReasoningEffort: "medium",
+            schemaVersion: 1,
+            status: "completed",
+            tokenUsage: null,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+        nextCursor: {
+          createdAt: "2026-03-13T00:00:00.000Z",
+          id: "cursor-1",
+          rowId: 1,
+        },
+      })
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            id: "assistant-earlier",
+            threadId: "thread-1",
+            role: "assistant",
+            content: null,
+            blocks: [{ type: "text", content: "Earlier reply" }],
+            turnEngineId: "codex",
+            turnModelId: "gpt-5.3-codex",
+            turnReasoningEffort: "medium",
+            schemaVersion: 1,
+            status: "completed",
+            tokenUsage: null,
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: "user-regular",
+            threadId: "thread-1",
+            role: "user",
+            content: "A normal next turn",
+            blocks: [{ type: "text", content: "A normal next turn" }],
+            turnEngineId: "codex",
+            turnModelId: "gpt-5.3-codex",
+            turnReasoningEffort: "medium",
+            schemaVersion: 1,
+            status: "completed",
+            tokenUsage: null,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+        nextCursor: null,
+      });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+    await useChatStore.getState().loadOlderMessages();
+
+    expect(useChatStore.getState().messages).toHaveLength(3);
+    expect(useChatStore.getState().messages.map((message) => message.id)).toEqual([
+      "assistant-earlier",
+      "user-regular",
+      "assistant-latest",
+    ]);
   });
 
   it("syncs dirty Codex thread metadata before binding the message window", async () => {
