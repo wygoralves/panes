@@ -12692,6 +12692,7 @@ function emitDeniedToolCompletion(context, toolUseId, errorMessage) {
   }
   const actionId = context.actionIdsByToolUseId.get(toolUseId);
   if (!actionId) {
+    context.suppressedToolUseIds.add(toolUseId);
     return;
   }
   context.actionIdsByToolUseId.delete(toolUseId);
@@ -13222,13 +13223,13 @@ async function handleQuery(req) {
                 }
                 const actionId = getActionIdForToolUse(context, toolUseId);
                 const output = hookInput?.tool_response ?? hookInput?.tool_result ?? hookInput?.result;
-                const outputStr = serializeToolOutput(output);
                 emitToolOutputChunks(id, actionId, output);
                 emit({
                   id,
                   type: "action_completed",
                   actionId,
                   success: true,
+                  output: serializeToolOutput(output) || void 0,
                   durationMs: 0
                 });
                 return {};
@@ -13347,22 +13348,10 @@ async function handleQuery(req) {
           const block = streamEvent.content_block;
           if (block?.type === "tool_use") {
             const toolUseId = block.id || block.tool_use_id;
-            const toolName = block.name || "unknown";
-            if (typeof toolUseId === "string" && toolUseId.length > 0 && !context.actionIdsByToolUseId.has(toolUseId)) {
+            if (typeof toolUseId === "string" && toolUseId.length > 0) {
               if (Number.isInteger(streamEvent.index)) {
                 context.streamToolUseIdsByIndex.set(streamEvent.index, toolUseId);
               }
-              const actionId = `claude-action-${++context.actionCounter}`;
-              context.actionIdsByToolUseId.set(toolUseId, actionId);
-              emit({
-                id,
-                type: "action_started",
-                actionId,
-                actionType: mapToolNameToActionType(toolName),
-                toolName,
-                summary: summarizeTool(toolName, block.input ?? {}),
-                details: block.input ?? {}
-              });
             }
           }
           continue;
@@ -13371,15 +13360,6 @@ async function handleQuery(req) {
           const toolUseId = context.streamToolUseIdsByIndex.get(streamEvent.index);
           if (typeof toolUseId === "string") {
             context.streamToolUseIdsByIndex.delete(streamEvent.index);
-            const actionId = context.actionIdsByToolUseId.get(toolUseId);
-            if (actionId) {
-              emit({
-                id,
-                type: "action_progress_updated",
-                actionId,
-                message: "Claude finished preparing tool input."
-              });
-            }
           }
           continue;
         }
@@ -13489,7 +13469,11 @@ function handleShutdown(signal) {
     emitTurnCompleted(context, "interrupted");
   }
   rl.close();
-  process.stdout.write("", () => process.exit(0));
+  if (process.stdout.writableEnded) {
+    process.exit(0);
+  } else {
+    process.stdout.end(() => process.exit(0));
+  }
 }
 rl.on("line", (line) => {
   let req;

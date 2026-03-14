@@ -1437,7 +1437,11 @@ function handleShutdown(signal) {
   }
 
   rl.close();
-  process.stdout.write("", () => process.exit(0));
+  if (process.stdout.writableEnded) {
+    process.exit(0);
+  } else {
+    process.stdout.end(() => process.exit(0));
+  }
 }
 
 rl.on("line", (line) => {
