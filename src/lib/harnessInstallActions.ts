@@ -2,11 +2,11 @@ import type { HarnessInfo } from "../types";
 
 export const HARNESS_INSTALL_COMMANDS: Readonly<Record<string, string>> = {
   codex: "npm install -g @openai/codex",
-  "claude-code": "npm install -g @anthropic-ai/claude-code",
+  "claude-code": "curl -fsSL https://claude.ai/install.sh | bash",
   "gemini-cli": "npm install -g @google/gemini-cli",
   kiro: "curl -fsSL https://cli.kiro.dev/install | bash",
   opencode: "npm install -g opencode-ai",
-  "kilo-code": "npm install -g kilo-code",
+  "kilo-code": "npm install -g @kilocode/cli",
   "factory-droid": "curl -fsSL https://app.factory.ai/cli | sh",
 };
 

@@ -1384,9 +1384,7 @@ mod tests {
 
         match event {
             SidecarEvent::ActionProgressUpdated {
-                action_id,
-                message,
-                ..
+                action_id, message, ..
             } => {
                 assert_eq!(action_id, "action-1");
                 assert_eq!(message, "Claude finished preparing tool input.");

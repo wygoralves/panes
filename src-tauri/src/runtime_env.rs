@@ -228,6 +228,13 @@ fn augmented_path_entries_for(
         entries.push(PathBuf::from("/linuxbrew/.linuxbrew/sbin"));
         entries.push(PathBuf::from("/nix/var/nix/profiles/default/bin"));
         entries.push(PathBuf::from("/run/current-system/sw/bin"));
+        // /etc/environment is sourced by PAM/systemd on most distros.
+        // When Panes is launched from a .desktop file (e.g. .deb install),
+        // the process PATH is minimal — this fills the gap.
+        entries.extend(parse_path_from_env_file(
+            Path::new("/etc/environment"),
+            home,
+        ));
     }
 
     if let Some(home) = home {
@@ -242,6 +249,14 @@ fn augmented_path_entries_for(
             entries.push(home.join(".asdf/shims"));
             entries.push(home.join(".cargo/bin"));
             entries.push(home.join(".deno/bin"));
+            entries.push(home.join(".bun/bin"));
+            entries.push(home.join(".local/share/mise/shims"));
+            entries.push(home.join(".proto/shims"));
+            entries.push(home.join(".proto/bin"));
+            entries.push(home.join(".fnm/aliases/default/bin"));
+            if let Some(npm_bin) = npm_global_bin_from_npmrc(home) {
+                entries.push(npm_bin);
+            }
             entries.push(home.join("bin"));
             entries.extend(nvm_bin_dirs(home));
         }
@@ -257,6 +272,7 @@ fn augmented_path_entries_for(
         #[cfg(target_os = "linux")]
         {
             entries.push(home.join(".nix-profile/bin"));
+            entries.extend(linux_user_environment_path_entries(home));
         }
 
         #[cfg(target_os = "macos")]
@@ -638,6 +654,113 @@ fn copy_dir_contents_recursive(source: &Path, target: &Path) -> std::io::Result<
     Ok(())
 }
 
+/// Parse PATH entries from environment files like `/etc/environment`.
+/// Format: `PATH="..."` or `PATH=...` with colon-separated paths.
+#[cfg(target_os = "linux")]
+fn parse_path_from_env_file(path: &Path, home: Option<&Path>) -> Vec<PathBuf> {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+
+    let mut result = Vec::new();
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        if let Some(("PATH", value)) = parse_config_assignment(line) {
+            let value = value.trim_matches('"').trim_matches('\'');
+            for entry in value.split(':') {
+                if let Some(path) = parse_config_path_entry(entry, home) {
+                    result.push(path);
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Read PATH entries from `~/.config/environment.d/*.conf` (systemd user environment).
+#[cfg(target_os = "linux")]
+fn linux_user_environment_path_entries(home: &Path) -> Vec<PathBuf> {
+    let env_dir = home.join(".config/environment.d");
+    let Ok(dir_entries) = fs::read_dir(env_dir) else {
+        return Vec::new();
+    };
+
+    let mut result = Vec::new();
+    for entry in dir_entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("conf") {
+            result.extend(parse_path_from_env_file(&path, Some(home)));
+        }
+    }
+    result
+}
+
+fn parse_config_assignment(line: &str) -> Option<(&str, &str)> {
+    let (key, value) = line.split_once('=')?;
+    Some((key.trim(), value.trim()))
+}
+
+fn parse_config_path_entry(entry: &str, home: Option<&Path>) -> Option<PathBuf> {
+    let entry = entry.trim();
+    if entry.is_empty() || entry == "$PATH" || entry == "${PATH}" {
+        return None;
+    }
+
+    if let Some(home) = home {
+        if let Some(expanded) = expand_home_path(entry, home) {
+            return Some(expanded);
+        }
+    }
+
+    if entry.contains('$') {
+        return None;
+    }
+
+    Some(PathBuf::from(entry))
+}
+
+fn expand_home_path(value: &str, home: &Path) -> Option<PathBuf> {
+    if value == "~" || value == "$HOME" || value == "${HOME}" {
+        return Some(home.to_path_buf());
+    }
+    if let Some(rest) = value.strip_prefix("~/") {
+        return Some(home.join(rest));
+    }
+    if let Some(rest) = value.strip_prefix("$HOME/") {
+        return Some(home.join(rest));
+    }
+    if let Some(rest) = value.strip_prefix("${HOME}/") {
+        return Some(home.join(rest));
+    }
+    None
+}
+
+/// Read the npm global bin dir from the user's `~/.npmrc` file.
+/// Handles custom prefixes set via `npm config set prefix <path>`.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
+fn npm_global_bin_from_npmrc(home: &Path) -> Option<PathBuf> {
+    let npmrc = home.join(".npmrc");
+    let contents = fs::read_to_string(npmrc).ok()?;
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if let Some(("prefix", prefix)) = parse_config_assignment(line) {
+            let prefix = prefix.trim_matches('"').trim_matches('\'');
+            if prefix.is_empty() {
+                continue;
+            }
+            let expanded = parse_config_path_entry(prefix, Some(home))?;
+            return Some(expanded.join("bin"));
+        }
+    }
+    None
+}
+
 #[cfg_attr(target_os = "windows", allow(dead_code))]
 fn nvm_bin_dirs(home: &Path) -> Vec<PathBuf> {
     let versions_dir = home.join(".nvm/versions/node");
@@ -885,6 +1008,11 @@ mod tests {
         assert!(entries.contains(&home.join(".local/share/pnpm")));
         assert!(entries.contains(&home.join(".cargo/bin")));
         assert!(entries.contains(&home.join(".deno/bin")));
+        assert!(entries.contains(&home.join(".bun/bin")));
+        assert!(entries.contains(&home.join(".local/share/mise/shims")));
+        assert!(entries.contains(&home.join(".proto/shims")));
+        assert!(entries.contains(&home.join(".proto/bin")));
+        assert!(entries.contains(&home.join(".fnm/aliases/default/bin")));
         assert!(entries.contains(&home.join("bin")));
         assert!(entries.contains(&home.join(".nix-profile/bin")));
         assert!(entries.contains(&PathBuf::from("/snap/bin")));
@@ -944,6 +1072,143 @@ mod tests {
         let path = app_data_dir_for(true, None, None, None);
         assert_eq!(path, std::env::temp_dir().join("Panes"));
         assert!(path.is_absolute());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_path_from_env_file_extracts_paths() {
+        let dir = std::env::temp_dir().join(format!("panes-env-file-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let env_file = dir.join("environment");
+        let home = Path::new("/home/panes");
+
+        fs::write(
+            &env_file,
+            "# comment\nPATH=\"/usr/local/sbin:/usr/local/bin:/usr/bin:/snap/bin\"\nLANG=en_US.UTF-8\n",
+        )
+        .expect("write env file");
+
+        let paths = parse_path_from_env_file(&env_file, Some(home));
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from("/usr/local/sbin"),
+                PathBuf::from("/usr/local/bin"),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/snap/bin"),
+            ]
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_path_from_env_file_skips_variable_references() {
+        let dir = std::env::temp_dir().join(format!("panes-env-var-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let env_file = dir.join("environment");
+        let home = Path::new("/home/panes");
+
+        fs::write(&env_file, "PATH=${PATH}:/custom/bin:/other/bin\n").expect("write env file");
+
+        let paths = parse_path_from_env_file(&env_file, Some(home));
+        // ${PATH} entry should be skipped, literal paths kept
+        assert!(paths.contains(&PathBuf::from("/custom/bin")));
+        assert!(paths.contains(&PathBuf::from("/other/bin")));
+        assert!(!paths.iter().any(|p| p.to_string_lossy().contains('$')));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_path_from_env_file_expands_home_and_supports_spaced_assignment() {
+        let dir = std::env::temp_dir().join(format!("panes-env-home-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let env_file = dir.join("environment");
+        let home = Path::new("/home/panes");
+
+        fs::write(
+            &env_file,
+            "PATH = \"$HOME/.local/bin:${HOME}/.cargo/bin:${PATH}:~/bin\"\n",
+        )
+        .expect("write env file");
+
+        let paths = parse_path_from_env_file(&env_file, Some(home));
+        assert!(paths.contains(&home.join(".local/bin")));
+        assert!(paths.contains(&home.join(".cargo/bin")));
+        assert!(paths.contains(&home.join("bin")));
+        assert!(!paths.iter().any(|p| p.to_string_lossy().contains('$')));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_user_environment_path_entries_reads_conf_files() {
+        let dir = std::env::temp_dir().join(format!("panes-envd-{}", Uuid::new_v4()));
+        let env_d = dir.join(".config/environment.d");
+        fs::create_dir_all(&env_d).expect("create environment.d dir");
+
+        fs::write(env_d.join("custom.conf"), "PATH=/custom/tools/bin\n").expect("write conf file");
+        // non-.conf files should be ignored
+        fs::write(env_d.join("readme.txt"), "PATH=/should/be/ignored\n").expect("write txt file");
+
+        let paths = linux_user_environment_path_entries(&dir);
+        assert!(paths.contains(&PathBuf::from("/custom/tools/bin")));
+        assert!(!paths.contains(&PathBuf::from("/should/be/ignored")));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn npm_global_bin_from_npmrc_reads_prefix() {
+        let dir = std::env::temp_dir().join(format!("panes-npmrc-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create temp dir");
+
+        // Absolute prefix
+        fs::write(dir.join(".npmrc"), "prefix=/opt/npm-global\n").expect("write npmrc");
+        assert_eq!(
+            npm_global_bin_from_npmrc(&dir),
+            Some(PathBuf::from("/opt/npm-global/bin"))
+        );
+
+        // Tilde prefix
+        fs::write(
+            dir.join(".npmrc"),
+            "# comment\n; another comment\nprefix=~/npm-packages\n",
+        )
+        .expect("write npmrc");
+        assert_eq!(
+            npm_global_bin_from_npmrc(&dir),
+            Some(dir.join("npm-packages/bin"))
+        );
+
+        // INI-style spacing and ${HOME} interpolation
+        fs::write(dir.join(".npmrc"), "prefix = ${HOME}/.npm-packages\n").expect("write npmrc");
+        assert_eq!(
+            npm_global_bin_from_npmrc(&dir),
+            Some(dir.join(".npm-packages/bin"))
+        );
+
+        // Quoted prefix
+        fs::write(dir.join(".npmrc"), "prefix=\"/quoted/path\"\n").expect("write npmrc");
+        assert_eq!(
+            npm_global_bin_from_npmrc(&dir),
+            Some(PathBuf::from("/quoted/path/bin"))
+        );
+
+        // No prefix
+        fs::write(dir.join(".npmrc"), "registry=https://registry.npmjs.org/\n")
+            .expect("write npmrc");
+        assert_eq!(npm_global_bin_from_npmrc(&dir), None);
+
+        // No file
+        let _ = fs::remove_file(dir.join(".npmrc"));
+        assert_eq!(npm_global_bin_from_npmrc(&dir), None);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
