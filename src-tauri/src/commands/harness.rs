@@ -83,7 +83,7 @@ const HARNESSES: &[HarnessDef] = &[
         command: "opencode",
         version_flag: "--version",
         install_command: Some("npm"),
-        install_args: &["install", "-g", "opencode"],
+        install_args: &["install", "-g", "opencode-ai"],
         install_script: None,
         website: "https://opencode.ai",
         native: false,
