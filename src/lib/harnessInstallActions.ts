@@ -5,7 +5,7 @@ export const HARNESS_INSTALL_COMMANDS: Readonly<Record<string, string>> = {
   "claude-code": "npm install -g @anthropic-ai/claude-code",
   "gemini-cli": "npm install -g @google/gemini-cli",
   kiro: "curl -fsSL https://cli.kiro.dev/install | bash",
-  opencode: "npm install -g opencode",
+  opencode: "npm install -g opencode-ai",
   "kilo-code": "npm install -g kilo-code",
   "factory-droid": "curl -fsSL https://app.factory.ai/cli | sh",
 };
