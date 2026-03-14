@@ -606,7 +606,7 @@ describe("claude-agent-sdk-server sidecar", () => {
     expect(outputDelta?.actionId).toBe(started?.actionId);
     expect(outputDelta?.stream).toBe("stdout");
     expect(completed?.actionId).toBe(started?.actionId);
-    expect(completed?.output).toBeUndefined();
+    expect(completed?.output).toBe("stdout: ok");
   });
 
   it("streams long tool output in chunks without truncation", async () => {
@@ -663,7 +663,7 @@ describe("claude-agent-sdk-server sidecar", () => {
 
     expect(chunks.length).toBeGreaterThan(1);
     expect(chunks.map((event) => String(event.content ?? "")).join("")).toBe(longOutput);
-    expect(completed?.output).toBeUndefined();
+    expect(completed?.output).toBe(longOutput);
   });
 
   it("returns updatedPermissions for accept_for_session approvals", async () => {

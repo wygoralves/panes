@@ -375,6 +375,14 @@ impl ClaudeSidecarEngine {
         self.ensure_transport().await.map(|_| ())
     }
 
+    /// Two-phase transport initialization to avoid holding the state mutex
+    /// during the blocking sidecar spawn + 15-second ready-wait window.
+    ///
+    /// Race resolution: if two callers both see `transport == None` and spawn
+    /// concurrently, the first to re-acquire the lock stores its transport.
+    /// The second sees an alive transport at the re-check (line below) and
+    /// kills its redundant sidecar. If both fail the ready-wait, each kills
+    /// its own transport and returns an error — no leak.
     async fn ensure_transport(&self) -> anyhow::Result<Arc<ClaudeTransport>> {
         let (existing_transport, resource_dir) = {
             let state = self.state.lock().await;

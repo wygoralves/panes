@@ -469,11 +469,17 @@ function cleanupPendingApprovalsForQuery(queryId, denialMessage) {
 
 function emitDeniedToolCompletion(context, toolUseId, errorMessage) {
   if (typeof toolUseId !== "string" || toolUseId.length === 0) {
+    // toolUseId not provided by the SDK — the PreToolUse action_started
+    // (if any) will remain dangling. This is a best-effort path.
     return;
   }
 
   const actionId = context.actionIdsByToolUseId.get(toolUseId);
   if (!actionId) {
+    // Tool was denied before PreToolUse fired (e.g., content_block_start
+    // no longer registers actionIds). No action_started was emitted, so
+    // no action_completed is needed either.
+    context.suppressedToolUseIds.add(toolUseId);
     return;
   }
 
@@ -1127,7 +1133,6 @@ async function handleQuery(req) {
                 hookInput?.tool_response ??
                 hookInput?.tool_result ??
                 hookInput?.result;
-              const outputStr = serializeToolOutput(output);
               emitToolOutputChunks(id, actionId, output);
 
               emit({
@@ -1135,6 +1140,7 @@ async function handleQuery(req) {
                 type: "action_completed",
                 actionId,
                 success: true,
+                output: serializeToolOutput(output) || undefined,
                 durationMs: 0,
               });
 
@@ -1273,44 +1279,28 @@ async function handleQuery(req) {
           const block = streamEvent.content_block;
           if (block?.type === "tool_use") {
             const toolUseId = block.id || block.tool_use_id;
-            const toolName = block.name || "unknown";
             if (
               typeof toolUseId === "string" &&
-              toolUseId.length > 0 &&
-              !context.actionIdsByToolUseId.has(toolUseId)
+              toolUseId.length > 0
             ) {
+              // Track index→toolUseId for content_block_stop, but do NOT emit
+              // action_started here — block.input is empty at this point.
+              // PreToolUse will emit action_started with the complete tool input.
               if (Number.isInteger(streamEvent.index)) {
                 context.streamToolUseIdsByIndex.set(streamEvent.index, toolUseId);
               }
-              const actionId = `claude-action-${++context.actionCounter}`;
-              context.actionIdsByToolUseId.set(toolUseId, actionId);
-              emit({
-                id,
-                type: "action_started",
-                actionId,
-                actionType: mapToolNameToActionType(toolName),
-                toolName,
-                summary: summarizeTool(toolName, block.input ?? {}),
-                details: block.input ?? {},
-              });
             }
           }
           continue;
         }
 
         if (streamEvent?.type === "content_block_stop") {
+          // Clean up the index tracking. action_progress_updated is only emitted
+          // if PreToolUse already registered the actionId; otherwise the tool
+          // hasn't started from Panes' perspective yet and the event is skipped.
           const toolUseId = context.streamToolUseIdsByIndex.get(streamEvent.index);
           if (typeof toolUseId === "string") {
             context.streamToolUseIdsByIndex.delete(streamEvent.index);
-            const actionId = context.actionIdsByToolUseId.get(toolUseId);
-            if (actionId) {
-              emit({
-                id,
-                type: "action_progress_updated",
-                actionId,
-                message: "Claude finished preparing tool input.",
-              });
-            }
           }
           continue;
         }
