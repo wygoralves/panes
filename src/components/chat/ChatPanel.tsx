@@ -43,7 +43,7 @@ import { ipc } from "../../lib/ipc";
 import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { isLinuxDesktop } from "../../lib/windowActions";
-import { MessageBlocks } from "./MessageBlocks";
+import { MessageBlocks, shouldShowClaudeUnsupportedApproval } from "./MessageBlocks";
 import { resolveEngineCapabilities } from "./engineCapabilities";
 import { buildCodexInputItems } from "./codexInputItems";
 import { resolveReasoningEffortForModel } from "./reasoningEffort";
@@ -53,6 +53,7 @@ import {
   buildPermissionsDeclineResponse,
   isPermissionsRequestApproval,
   isRequestUserInputApproval,
+  isSupportedClaudeToolInputApproval,
   parseApprovalCommand,
   parseApprovalReason,
   parseProposedExecpolicyAmendment,
@@ -112,29 +113,57 @@ interface MeasuredMessageRowProps {
 
 export function resolvePendingToolInputApproval(
   pendingApprovals: ApprovalBlock[],
+  engineId?: string,
+  preferredApprovalId?: string | null,
 ): ApprovalBlock | null {
-  for (let index = pendingApprovals.length - 1; index >= 0; index -= 1) {
-    const approval = pendingApprovals[index];
+  const eligibleApprovals = pendingApprovals.filter((approval) => {
+    const details = approval.details ?? {};
     if (
-      isRequestUserInputApproval(approval.details ?? {}) &&
-      parseToolInputQuestions(approval.details ?? {}).length > 0
+      !isRequestUserInputApproval(details) ||
+      parseToolInputQuestions(details).length === 0
     ) {
-      return approval;
+      return false;
+    }
+
+    return engineId !== "claude" || isSupportedClaudeToolInputApproval(details);
+  });
+
+  if (eligibleApprovals.length === 0) {
+    return null;
+  }
+
+  if (preferredApprovalId) {
+    const preferredApproval = eligibleApprovals.find(
+      (approval) => approval.approvalId === preferredApprovalId,
+    );
+    if (preferredApproval) {
+      return preferredApproval;
     }
   }
 
-  return null;
+  return eligibleApprovals[eligibleApprovals.length - 1] ?? null;
 }
 
 export function filterPendingApprovalBannerRows(
   pendingApprovals: ApprovalBlock[],
+  engineId?: string,
+  activeToolInputApprovalId?: string | null,
 ): ApprovalBlock[] {
   return pendingApprovals.filter((approval) => {
-    if (!isRequestUserInputApproval(approval.details ?? {})) {
+    const details = approval.details ?? {};
+    if (!isRequestUserInputApproval(details)) {
       return true;
     }
 
-    return parseToolInputQuestions(approval.details ?? {}).length === 0;
+    if (parseToolInputQuestions(details).length === 0) {
+      return true;
+    }
+
+    if (approval.approvalId === activeToolInputApprovalId) {
+      return false;
+    }
+
+    return engineId === "claude";
   });
 }
 
@@ -1835,15 +1864,40 @@ export function ChatPanel() {
 
     return approvals;
   }, [messages]);
+  const [selectedPendingToolInputApprovalId, setSelectedPendingToolInputApprovalId] =
+    useState<string | null>(null);
 
   const pendingToolInputApproval = useMemo(
-    () => resolvePendingToolInputApproval(pendingApprovals),
-    [pendingApprovals],
+    () =>
+      resolvePendingToolInputApproval(
+        pendingApprovals,
+        activeThread?.engineId,
+        selectedPendingToolInputApprovalId,
+      ),
+    [activeThread?.engineId, pendingApprovals, selectedPendingToolInputApprovalId],
   );
 
+  useEffect(() => {
+    if (!selectedPendingToolInputApprovalId) {
+      return;
+    }
+
+    const selectedApprovalStillPending = pendingApprovals.some(
+      (approval) => approval.approvalId === selectedPendingToolInputApprovalId,
+    );
+    if (!selectedApprovalStillPending) {
+      setSelectedPendingToolInputApprovalId(null);
+    }
+  }, [pendingApprovals, selectedPendingToolInputApprovalId]);
+
   const pendingApprovalBannerRows = useMemo(
-    () => filterPendingApprovalBannerRows(pendingApprovals),
-    [pendingApprovals],
+    () =>
+      filterPendingApprovalBannerRows(
+        pendingApprovals,
+        activeThread?.engineId,
+        pendingToolInputApproval?.approvalId,
+      ),
+    [activeThread?.engineId, pendingApprovals, pendingToolInputApproval?.approvalId],
   );
 
   const pendingToolInputQuestions = useMemo(
@@ -4178,16 +4232,20 @@ export function ChatPanel() {
                     parseProposedExecpolicyAmendment(details);
                   const proposedNetworkPolicyAmendments =
                     parseProposedNetworkPolicyAmendments(details);
-                  const hasUnsupportedClaudePayload =
-                    isClaudeApproval &&
-                    (isToolInputRequest ||
-                      requiresCustomPayload ||
-                      proposedExecpolicyAmendment.length > 0 ||
-                      proposedNetworkPolicyAmendments.length > 0);
-                  const showToolInputComposerHint =
+                  const hasUnsupportedClaudePayload = shouldShowClaudeUnsupportedApproval(
+                    details,
+                    true,
+                    isClaudeApproval,
+                  );
+                  const canUseToolInputComposer =
                     isToolInputRequest &&
-                    !isClaudeApproval &&
-                    toolInputQuestionCount > 0;
+                    toolInputQuestionCount > 0 &&
+                    (!isClaudeApproval || isSupportedClaudeToolInputApproval(details));
+                  const showToolInputComposerHint = canUseToolInputComposer;
+                  const canSelectToolInputComposer =
+                    isClaudeApproval &&
+                    canUseToolInputComposer &&
+                    approval.approvalId !== pendingToolInputApproval?.approvalId;
                   const hidePositiveApprovalActions =
                     isToolInputRequest && toolInputQuestionCount === 0;
                   const command = parseApprovalCommand(details);
@@ -4236,11 +4294,26 @@ export function ChatPanel() {
                             )}
                           </>
                         ) : showToolInputComposerHint || requiresCustomPayload ? (
-                          <span className="approval-row-hint">
-                            {showToolInputComposerHint
-                              ? t("panel.respondInCard")
-                              : t("panel.respondInCustomCard")}
-                          </span>
+                          <>
+                            <span className="approval-row-hint">
+                              {showToolInputComposerHint
+                                ? t("panel.respondInCard")
+                                : t("panel.respondInCustomCard")}
+                            </span>
+                            {canSelectToolInputComposer && (
+                              <button
+                                type="button"
+                                className="approval-btn approval-btn-allow"
+                                onClick={() =>
+                                  setSelectedPendingToolInputApprovalId(
+                                    approval.approvalId,
+                                  )
+                                }
+                              >
+                                {t("panel.approvalActions.answerBelow")}
+                              </button>
+                            )}
+                          </>
                         ) : (
                           <>
                             {supportsCancel && !isPermissionsRequest && (

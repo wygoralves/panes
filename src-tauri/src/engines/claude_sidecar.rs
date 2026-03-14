@@ -1120,6 +1120,22 @@ impl Engine for ClaudeSidecarEngine {
                                         "interrupted" => TurnCompletionStatus::Interrupted,
                                         _ => TurnCompletionStatus::Failed,
                                     };
+                                    // Emit non-trivial stop reason BEFORE TurnCompleted so it
+                                    // lands in the current assistant message, not a new shell.
+                                    // Skip "end_turn" — that is the normal completion case.
+                                    if let Some(ref stop_reason) = stop_reason {
+                                        if stop_reason != "end_turn" {
+                                            event_tx
+                                                .send(EngineEvent::Notice {
+                                                    kind: "claude_stop_reason".to_string(),
+                                                    level: "info".to_string(),
+                                                    title: "Claude stop reason".to_string(),
+                                                    message: stop_reason.clone(),
+                                                })
+                                                .await
+                                                .ok();
+                                        }
+                                    }
                                     event_tx
                                         .send(EngineEvent::TurnCompleted {
                                             token_usage: token_usage.map(|usage| super::TokenUsage {
@@ -1130,17 +1146,6 @@ impl Engine for ClaudeSidecarEngine {
                                         })
                                         .await
                                         .ok();
-                                    if let Some(stop_reason) = stop_reason {
-                                        event_tx
-                                            .send(EngineEvent::Notice {
-                                                kind: "claude_stop_reason".to_string(),
-                                                level: "info".to_string(),
-                                                title: "Claude stop reason".to_string(),
-                                                message: stop_reason,
-                                            })
-                                            .await
-                                            .ok();
-                                    }
                                     let mut state = self.state.lock().await;
                                     if let Some(config) = state.threads.get_mut(engine_thread_id) {
                                         config.active_request_id = None;

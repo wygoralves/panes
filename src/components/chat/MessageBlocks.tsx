@@ -37,6 +37,7 @@ import {
   isMcpElicitationApproval,
   isPermissionsRequestApproval,
   isRequestUserInputApproval,
+  isSupportedClaudeToolInputApproval,
   parseApprovalCommand,
   parseApprovalReason,
   parseDynamicToolCallArguments,
@@ -701,15 +702,15 @@ export function shouldShowClaudeUnsupportedApproval(
   }
 
   const isToolInputRequest = isRequestUserInputApproval(details);
-  const toolInputQuestions = isToolInputRequest ? parseToolInputQuestions(details) : [];
   const proposedExecpolicyAmendment = parseProposedExecpolicyAmendment(details);
   const proposedNetworkPolicyAmendments = parseProposedNetworkPolicyAmendments(details);
 
   return (
-    (isToolInputRequest && toolInputQuestions.length === 0) ||
-    isDynamicToolCallApproval(details) ||
-    isMcpElicitationApproval(details) ||
-    requiresCustomApprovalPayload(details) ||
+    (isToolInputRequest && !isSupportedClaudeToolInputApproval(details)) ||
+    (!isToolInputRequest &&
+      (isDynamicToolCallApproval(details) ||
+        isMcpElicitationApproval(details) ||
+        requiresCustomApprovalPayload(details))) ||
     proposedExecpolicyAmendment.length > 0 ||
     proposedNetworkPolicyAmendments.length > 0
   );
