@@ -110,6 +110,34 @@ interface MeasuredMessageRowProps {
   children: ReactNode;
 }
 
+export function resolvePendingToolInputApproval(
+  pendingApprovals: ApprovalBlock[],
+): ApprovalBlock | null {
+  for (let index = pendingApprovals.length - 1; index >= 0; index -= 1) {
+    const approval = pendingApprovals[index];
+    if (
+      isRequestUserInputApproval(approval.details ?? {}) &&
+      parseToolInputQuestions(approval.details ?? {}).length > 0
+    ) {
+      return approval;
+    }
+  }
+
+  return null;
+}
+
+export function filterPendingApprovalBannerRows(
+  pendingApprovals: ApprovalBlock[],
+): ApprovalBlock[] {
+  return pendingApprovals.filter((approval) => {
+    if (!isRequestUserInputApproval(approval.details ?? {})) {
+      return true;
+    }
+
+    return parseToolInputQuestions(approval.details ?? {}).length === 0;
+  });
+}
+
 function MeasuredMessageRow({ messageId, onHeightChange, children }: MeasuredMessageRowProps) {
   const rowRef = useRef<HTMLDivElement>(null);
 
@@ -1809,39 +1837,13 @@ export function ChatPanel() {
   }, [messages]);
 
   const pendingToolInputApproval = useMemo(
-    () => {
-      if (activeThread?.engineId === "claude") {
-        return null;
-      }
-
-      for (let index = pendingApprovals.length - 1; index >= 0; index -= 1) {
-        const approval = pendingApprovals[index];
-        if (
-          isRequestUserInputApproval(approval.details ?? {}) &&
-          parseToolInputQuestions(approval.details ?? {}).length > 0
-        ) {
-          return approval;
-        }
-      }
-
-      return null;
-    },
-    [activeThread?.engineId, pendingApprovals],
+    () => resolvePendingToolInputApproval(pendingApprovals),
+    [pendingApprovals],
   );
 
   const pendingApprovalBannerRows = useMemo(
-    () =>
-      pendingApprovals.filter((approval) => {
-        if (!isRequestUserInputApproval(approval.details ?? {})) {
-          return true;
-        }
-
-        return (
-          activeThread?.engineId === "claude" ||
-          parseToolInputQuestions(approval.details ?? {}).length === 0
-        );
-      }),
-    [activeThread?.engineId, pendingApprovals],
+    () => filterPendingApprovalBannerRows(pendingApprovals),
+    [pendingApprovals],
   );
 
   const pendingToolInputQuestions = useMemo(
@@ -1853,9 +1855,7 @@ export function ChatPanel() {
   );
 
   const showPendingToolInputComposer = Boolean(
-    pendingToolInputApproval &&
-      pendingToolInputQuestions.length > 0 &&
-      activeThread?.engineId !== "claude",
+    pendingToolInputApproval && pendingToolInputQuestions.length > 0,
   );
   const pendingToolInputSupportsDecline =
     activeThreadApprovalDecisionCapabilities.includes("decline");

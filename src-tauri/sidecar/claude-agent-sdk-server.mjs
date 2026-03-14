@@ -27,9 +27,11 @@ try {
 const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
 const activeQueries = new Map();
 const pendingApprovals = new Map();
+let shuttingDown = false;
 const MAX_ATTACHMENTS_PER_TURN = 10;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_ATTACHMENT_CHARS = 40_000;
+const TOOL_OUTPUT_CHUNK_SIZE = 8_192;
 const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   "txt",
   "md",
@@ -63,6 +65,18 @@ const SUPPORTED_IMAGE_MIME_TYPES = new Set(IMAGE_ATTACHMENT_MEDIA_TYPES.values()
 
 function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
+}
+
+function chunkText(value, chunkSize) {
+  if (typeof value !== "string" || value.length === 0) {
+    return [];
+  }
+
+  const chunks = [];
+  for (let index = 0; index < value.length; index += chunkSize) {
+    chunks.push(value.slice(index, index + chunkSize));
+  }
+  return chunks;
 }
 
 function truncateTextToMaxChars(value, maxChars) {
@@ -342,9 +356,59 @@ function createQueryContext(id) {
     query: null,
     actionCounter: 0,
     actionIdsByToolUseId: new Map(),
+    streamToolUseIdsByIndex: new Map(),
+    suppressedToolUseIds: new Set(),
     pendingApprovalIds: new Set(),
     cancelled: false,
+    turnCompleted: false,
+    sessionId: null,
+    tokenUsage: null,
+    stopReason: null,
   };
+}
+
+function setContextSessionId(context, sessionId) {
+  if (typeof sessionId === "string" && sessionId.length > 0) {
+    context.sessionId = sessionId;
+  }
+}
+
+function updateContextTokenUsage(context, tokenUsage) {
+  if (!tokenUsage || typeof tokenUsage !== "object" || Array.isArray(tokenUsage)) {
+    return;
+  }
+
+  const input = Number(tokenUsage.input);
+  const output = Number(tokenUsage.output);
+  if (!Number.isFinite(input) && !Number.isFinite(output)) {
+    return;
+  }
+
+  context.tokenUsage = {
+    input: Number.isFinite(input) ? Math.max(0, Math.round(input)) : 0,
+    output: Number.isFinite(output) ? Math.max(0, Math.round(output)) : 0,
+  };
+}
+
+function emitTurnCompleted(context, status) {
+  if (context.turnCompleted) {
+    return;
+  }
+
+  context.turnCompleted = true;
+  const payload = {
+    id: context.id,
+    type: "turn_completed",
+    status,
+    sessionId: context.sessionId,
+  };
+  if (context.tokenUsage) {
+    payload.tokenUsage = context.tokenUsage;
+  }
+  if (typeof context.stopReason === "string" && context.stopReason.length > 0) {
+    payload.stopReason = context.stopReason;
+  }
+  emit(payload);
 }
 
 function serializeToolOutput(output) {
@@ -403,21 +467,54 @@ function cleanupPendingApprovalsForQuery(queryId, denialMessage) {
   context.pendingApprovalIds.clear();
 }
 
-async function requestApproval(context, toolName, toolInput, suggestions = []) {
+function emitDeniedToolCompletion(context, toolUseId, errorMessage) {
+  if (typeof toolUseId !== "string" || toolUseId.length === 0) {
+    return;
+  }
+
+  const actionId = context.actionIdsByToolUseId.get(toolUseId);
+  if (!actionId) {
+    return;
+  }
+
+  context.actionIdsByToolUseId.delete(toolUseId);
+  context.suppressedToolUseIds.add(toolUseId);
+  emit({
+    id: context.id,
+    type: "action_completed",
+    actionId,
+    success: false,
+    error: errorMessage,
+    durationMs: 0,
+  });
+}
+
+function emitApprovalRequest(context, actionType, summary, details) {
   const approvalId = `${context.id}:approval:${context.pendingApprovalIds.size + 1}:${Date.now()}`;
   emit({
     id: context.id,
     type: "approval_requested",
     approvalId,
-    actionType: mapToolNameToActionType(toolName),
-    summary: summarizeTool(toolName, toolInput),
-    details: toolInput ?? {},
+    actionType,
+    summary,
+    details,
   });
+  return approvalId;
+}
+
+async function requestPermissionApproval(context, toolName, toolInput, suggestions = []) {
+  const approvalId = emitApprovalRequest(
+    context,
+    mapToolNameToActionType(toolName),
+    summarizeTool(toolName, toolInput),
+    toolInput ?? {},
+  );
 
   const permission = await new Promise((resolve) => {
     pendingApprovals.set(approvalId, {
       queryId: context.id,
       suggestions,
+      kind: "permission",
       resolve,
     });
     context.pendingApprovalIds.add(approvalId);
@@ -426,6 +523,134 @@ async function requestApproval(context, toolName, toolInput, suggestions = []) {
   context.pendingApprovalIds.delete(approvalId);
   pendingApprovals.delete(approvalId);
   return permission;
+}
+
+function buildAskUserQuestionDetails(toolInput) {
+  return {
+    _serverMethod: "item/tool/requestuserinput",
+    questions: Array.isArray(toolInput?.questions) ? toolInput.questions : [],
+  };
+}
+
+function buildAskUserQuestionSummary(toolInput) {
+  const questions = Array.isArray(toolInput?.questions) ? toolInput.questions : [];
+  const firstQuestion = questions.find(
+    (question) =>
+      typeof question?.question === "string" && question.question.trim().length > 0,
+  );
+  if (firstQuestion) {
+    return `AskUserQuestion: ${firstQuestion.question.trim()}`;
+  }
+  return "AskUserQuestion";
+}
+
+async function requestAskUserQuestionApproval(context, toolInput) {
+  const approvalId = emitApprovalRequest(
+    context,
+    "other",
+    buildAskUserQuestionSummary(toolInput),
+    buildAskUserQuestionDetails(toolInput),
+  );
+
+  const permission = await new Promise((resolve) => {
+    pendingApprovals.set(approvalId, {
+      queryId: context.id,
+      kind: "ask_user_question",
+      toolInput,
+      resolve,
+    });
+    context.pendingApprovalIds.add(approvalId);
+  });
+
+  context.pendingApprovalIds.delete(approvalId);
+  pendingApprovals.delete(approvalId);
+  return permission;
+}
+
+function normalizeAskUserQuestionAnswers(rawAnswers, questions) {
+  if (
+    typeof rawAnswers !== "object" ||
+    rawAnswers === null ||
+    Array.isArray(rawAnswers)
+  ) {
+    throw new Error("Claude AskUserQuestion responses require an `answers` object.");
+  }
+
+  const answers = {};
+  for (let index = 0; index < questions.length; index += 1) {
+    const question = questions[index];
+    if (typeof question !== "object" || question === null || Array.isArray(question)) {
+      continue;
+    }
+
+    const questionId =
+      typeof question.id === "string" && question.id.trim()
+        ? question.id.trim()
+        : `question-${index + 1}`;
+    const questionText =
+      typeof question.question === "string" && question.question.trim()
+        ? question.question.trim()
+        : typeof question.header === "string" && question.header.trim()
+          ? question.header.trim()
+          : questionId;
+    const answerValue = rawAnswers[questionId];
+    const answerList = Array.isArray(answerValue?.answers)
+      ? answerValue.answers
+          .filter((value) => typeof value === "string")
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0)
+      : [];
+    answers[questionText] = answerList.join(", ");
+  }
+
+  return answers;
+}
+
+function resolveAskUserQuestionResponse(response, toolInput) {
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    throw new Error("Claude AskUserQuestion response must be a JSON object.");
+  }
+
+  if ("decision" in response) {
+    const decision = normalizeApprovalDecision(response.decision);
+    if (decision === "accept" || decision === "accept_for_session") {
+      throw new Error("Claude AskUserQuestion requires `answers`, not a simple accept.");
+    }
+    return {
+      behavior: "deny",
+      message: "Claude AskUserQuestion was declined by the user.",
+    };
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(response, "answers")) {
+    throw new Error("Claude AskUserQuestion response must include an `answers` object.");
+  }
+
+  const questions = Array.isArray(toolInput?.questions) ? toolInput.questions : [];
+  return {
+    behavior: "allow",
+    updatedInput: {
+      questions,
+      answers: normalizeAskUserQuestionAnswers(response.answers, questions),
+    },
+  };
+}
+
+function emitToolOutputChunks(id, actionId, output) {
+  const outputStr = serializeToolOutput(output);
+  if (!outputStr) {
+    return;
+  }
+
+  for (const content of chunkText(outputStr, TOOL_OUTPUT_CHUNK_SIZE)) {
+    emit({
+      id,
+      type: "action_output_delta",
+      actionId,
+      stream: "stdout",
+      content,
+    });
+  }
 }
 
 function buildPermissionHandler({
@@ -441,42 +666,61 @@ function buildPermissionHandler({
 
   return async (toolName, input, options) => {
     const toolInput = input ?? {};
+    const toolUseId = options?.toolUseID;
+
+    if (toolName === "AskUserQuestion") {
+      const permission = await requestAskUserQuestionApproval(context, toolInput);
+      if (permission.behavior === "deny") {
+        emitDeniedToolCompletion(context, toolUseId, permission.message);
+      }
+      return permission;
+    }
 
     if (!allowNetwork && toolName === "WebFetch") {
-      return {
+      const permission = {
         behavior: "deny",
         message: "Network access is disabled for this repository.",
       };
+      emitDeniedToolCompletion(context, toolUseId, permission.message);
+      return permission;
     }
 
     if (options?.blockedPath) {
-      return {
+      const permission = {
         behavior: "deny",
         message: `Path outside the allowed workspace scope: ${options.blockedPath}`,
       };
+      emitDeniedToolCompletion(context, toolUseId, permission.message);
+      return permission;
     }
 
     if (toolName === "Write" || toolName === "Edit") {
       if (sandboxMode === "read-only") {
-        return {
+        const permission = {
           behavior: "deny",
           message: "File writes are disabled for this Claude thread.",
         };
+        emitDeniedToolCompletion(context, toolUseId, permission.message);
+        return permission;
       }
 
       const candidatePaths = collectCandidatePaths(toolName, toolInput, cwd);
       if (candidatePaths.length === 0) {
-        return {
+        const permission = {
           behavior: "deny",
           message: "Unable to verify the target path for this write operation.",
         };
+        emitDeniedToolCompletion(context, toolUseId, permission.message);
+        return permission;
       }
 
       if (!candidatePaths.every((candidate) => isWithinAnyRoot(normalizedRoots, candidate))) {
-        return {
+        const permission = {
           behavior: "deny",
           message: "This file path is outside the approved writable roots for the thread.",
         };
+        emitDeniedToolCompletion(context, toolUseId, permission.message);
+        return permission;
       }
     }
 
@@ -484,7 +728,16 @@ function buildPermissionHandler({
       return { behavior: "allow" };
     }
 
-    return requestApproval(context, toolName, toolInput, options?.suggestions);
+    const permission = await requestPermissionApproval(
+      context,
+      toolName,
+      toolInput,
+      options?.suggestions,
+    );
+    if (permission.behavior === "deny") {
+      emitDeniedToolCompletion(context, toolUseId, permission.message);
+    }
+    return permission;
   };
 }
 
@@ -529,6 +782,144 @@ function resolveApprovalDecision(response, suggestions = []) {
     behavior: "deny",
     message: "Tool usage denied by the user.",
   };
+}
+
+function buildRateLimitUsageSnapshot(message) {
+  const rateLimitInfo =
+    typeof message?.rate_limit_info === "object" &&
+    message.rate_limit_info !== null &&
+    !Array.isArray(message.rate_limit_info)
+      ? message.rate_limit_info
+      : null;
+  if (!rateLimitInfo) {
+    return null;
+  }
+
+  const usage = {
+    currentTokens: null,
+    maxContextTokens: null,
+    contextWindowPercent: null,
+    fiveHourPercent:
+      rateLimitInfo.rateLimitType === "five_hour" && Number.isFinite(rateLimitInfo.utilization)
+        ? Math.max(0, Math.round(rateLimitInfo.utilization * 100))
+        : null,
+    weeklyPercent:
+      String(rateLimitInfo.rateLimitType || "").startsWith("seven_day") &&
+      Number.isFinite(rateLimitInfo.utilization)
+        ? Math.max(0, Math.round(rateLimitInfo.utilization * 100))
+        : null,
+    fiveHourResetsAt:
+      Number.isFinite(rateLimitInfo.resetsAt) && rateLimitInfo.rateLimitType === "five_hour"
+        ? Math.round(rateLimitInfo.resetsAt)
+        : null,
+    weeklyResetsAt:
+      Number.isFinite(rateLimitInfo.resetsAt) &&
+      String(rateLimitInfo.rateLimitType || "").startsWith("seven_day")
+        ? Math.round(rateLimitInfo.resetsAt)
+        : null,
+  };
+
+  return Object.values(usage).some((value) => value !== null) ? usage : null;
+}
+
+function buildStatusNotice(message) {
+  if (message?.type !== "system" || message?.subtype !== "status") {
+    return null;
+  }
+
+  if (message.status === "compacting") {
+    return {
+      kind: "claude_status",
+      level: "info",
+      title: "Claude status",
+      message: "Claude is compacting context.",
+    };
+  }
+
+  return null;
+}
+
+function formatAssistantMessageError(message) {
+  const errorType =
+    typeof message?.error === "string" && message.error.length > 0
+      ? message.error
+      : "unknown";
+
+  switch (errorType) {
+    case "authentication_failed":
+      return {
+        errorType,
+        isAuthError: true,
+        message: "Claude authentication failed. Sign in again or refresh your credentials.",
+        recoverable: false,
+      };
+    case "billing_error":
+      return {
+        errorType,
+        isAuthError: false,
+        message: "Claude rejected the request because billing or subscription access failed.",
+        recoverable: false,
+      };
+    case "rate_limit":
+      return {
+        errorType,
+        isAuthError: false,
+        message: "Claude rate limit reached. Wait for the limit window to reset and retry.",
+        recoverable: true,
+      };
+    case "invalid_request":
+      return {
+        errorType,
+        isAuthError: false,
+        message: "Claude rejected the request as invalid.",
+        recoverable: false,
+      };
+    case "server_error":
+      return {
+        errorType,
+        isAuthError: false,
+        message: "Claude returned a server error.",
+        recoverable: true,
+      };
+    case "max_output_tokens":
+      return {
+        errorType,
+        isAuthError: false,
+        message: "Claude stopped because it reached the maximum output token limit.",
+        recoverable: true,
+      };
+    default:
+      return {
+        errorType,
+        isAuthError: false,
+        message: "Claude returned an assistant error.",
+        recoverable: false,
+      };
+  }
+}
+
+function updateTokenUsageFromStreamEvent(context, streamEvent) {
+  if (!streamEvent || typeof streamEvent !== "object" || Array.isArray(streamEvent)) {
+    return;
+  }
+
+  if (streamEvent.type === "message_start") {
+    updateContextTokenUsage(context, {
+      input: streamEvent.message?.usage?.input_tokens,
+      output: streamEvent.message?.usage?.output_tokens,
+    });
+    return;
+  }
+
+  if (streamEvent.type === "message_delta") {
+    updateContextTokenUsage(context, {
+      input: context.tokenUsage?.input ?? 0,
+      output: streamEvent.usage?.output_tokens,
+    });
+    if (typeof streamEvent.delta?.stop_reason === "string") {
+      context.stopReason = streamEvent.delta.stop_reason;
+    }
+  }
 }
 
 function normalizeSandboxMode(value) {
@@ -635,7 +1026,7 @@ async function handleQuery(req) {
         normalizedSandboxMode,
         normalizedWritableRoots,
       ),
-      permissionMode: planMode ? "plan" : "dontAsk",
+      permissionMode: planMode ? "plan" : "default",
       allowedTools: toolList,
       canUseTool: buildPermissionHandler({
         context,
@@ -668,7 +1059,7 @@ async function handleQuery(req) {
       },
       settings: {
         permissions: {
-          defaultMode: planMode ? "plan" : "dontAsk",
+          defaultMode: planMode ? "plan" : "default",
           disableBypassPermissionsMode: "disable",
         },
       },
@@ -679,11 +1070,21 @@ async function handleQuery(req) {
           matcher: ".*",
           hooks: [
             async (hookInput) => {
-              const actionId = `claude-action-${++context.actionCounter}`;
               const toolName = hookInput?.tool_name || hookInput?.name || "unknown";
+              if (toolName === "AskUserQuestion") {
+                return {};
+              }
               const toolInput = hookInput?.tool_input || hookInput?.input || {};
               const toolUseId =
                 hookInput?.tool_use_id || hookInput?.toolUseID || hookInput?.toolUseId;
+              if (
+                typeof toolUseId === "string" &&
+                toolUseId.length > 0 &&
+                context.actionIdsByToolUseId.has(toolUseId)
+              ) {
+                return {};
+              }
+              const actionId = `claude-action-${++context.actionCounter}`;
               if (typeof toolUseId === "string" && toolUseId.length > 0) {
                 context.actionIdsByToolUseId.set(toolUseId, actionId);
               }
@@ -708,31 +1109,32 @@ async function handleQuery(req) {
           matcher: ".*",
           hooks: [
             async (hookInput) => {
+              const toolName = hookInput?.tool_name || hookInput?.name || "unknown";
+              if (toolName === "AskUserQuestion") {
+                return {};
+              }
               const toolUseId =
                 hookInput?.tool_use_id || hookInput?.toolUseID || hookInput?.toolUseId;
+              if (
+                typeof toolUseId === "string" &&
+                context.suppressedToolUseIds.has(toolUseId)
+              ) {
+                context.suppressedToolUseIds.delete(toolUseId);
+                return {};
+              }
               const actionId = getActionIdForToolUse(context, toolUseId);
               const output =
                 hookInput?.tool_response ??
                 hookInput?.tool_result ??
                 hookInput?.result;
-              const outputStr = serializeToolOutput(output)?.slice(0, 4000);
-
-              if (outputStr) {
-                emit({
-                  id,
-                  type: "action_output_delta",
-                  actionId,
-                  stream: "stdout",
-                  content: outputStr,
-                });
-              }
+              const outputStr = serializeToolOutput(output);
+              emitToolOutputChunks(id, actionId, output);
 
               emit({
                 id,
                 type: "action_completed",
                 actionId,
                 success: true,
-                output: outputStr,
                 durationMs: 0,
               });
 
@@ -746,8 +1148,19 @@ async function handleQuery(req) {
           matcher: ".*",
           hooks: [
             async (hookInput) => {
+              const toolName = hookInput?.tool_name || hookInput?.name || "unknown";
+              if (toolName === "AskUserQuestion") {
+                return {};
+              }
               const toolUseId =
                 hookInput?.tool_use_id || hookInput?.toolUseID || hookInput?.toolUseId;
+              if (
+                typeof toolUseId === "string" &&
+                context.suppressedToolUseIds.has(toolUseId)
+              ) {
+                context.suppressedToolUseIds.delete(toolUseId);
+                return {};
+              }
               const actionId = getActionIdForToolUse(context, toolUseId);
 
               emit({
@@ -797,9 +1210,44 @@ async function handleQuery(req) {
 
       if (message.type === "system" && message.subtype === "init") {
         actualSessionId = message.session_id;
+        setContextSessionId(context, actualSessionId);
         emit({ id, type: "session_init", sessionId: actualSessionId });
+      } else if (message.type === "assistant" && typeof message.error === "string") {
+        const assistantError = formatAssistantMessageError(message);
+        terminalStatus = "failed";
+        emit({
+          id,
+          type: "error",
+          message: assistantError.message,
+          recoverable: assistantError.recoverable,
+          errorType: assistantError.errorType,
+          isAuthError: assistantError.isAuthError,
+        });
+      } else if (message.type === "rate_limit_event") {
+        const usage = buildRateLimitUsageSnapshot(message);
+        if (usage) {
+          emit({
+            id,
+            type: "usage_limits_updated",
+            usage,
+          });
+        }
+      } else if (message.type === "system" && message.subtype === "status") {
+        const notice = buildStatusNotice(message);
+        if (notice) {
+          emit({
+            id,
+            type: "notice",
+            ...notice,
+          });
+        }
       } else if (message.type === "result") {
         actualSessionId = message.session_id || actualSessionId;
+        setContextSessionId(context, actualSessionId);
+        updateContextTokenUsage(context, {
+          input: message.usage?.input_tokens,
+          output: message.usage?.output_tokens,
+        });
         if (message.subtype === "success") {
           if (
             typeof message.result === "string" &&
@@ -819,6 +1267,62 @@ async function handleQuery(req) {
         }
       } else if (message.type === "stream_event") {
         const streamEvent = message.event;
+        updateTokenUsageFromStreamEvent(context, streamEvent);
+
+        if (streamEvent?.type === "content_block_start") {
+          const block = streamEvent.content_block;
+          if (block?.type === "tool_use") {
+            const toolUseId = block.id || block.tool_use_id;
+            const toolName = block.name || "unknown";
+            if (
+              typeof toolUseId === "string" &&
+              toolUseId.length > 0 &&
+              !context.actionIdsByToolUseId.has(toolUseId)
+            ) {
+              if (Number.isInteger(streamEvent.index)) {
+                context.streamToolUseIdsByIndex.set(streamEvent.index, toolUseId);
+              }
+              const actionId = `claude-action-${++context.actionCounter}`;
+              context.actionIdsByToolUseId.set(toolUseId, actionId);
+              emit({
+                id,
+                type: "action_started",
+                actionId,
+                actionType: mapToolNameToActionType(toolName),
+                toolName,
+                summary: summarizeTool(toolName, block.input ?? {}),
+                details: block.input ?? {},
+              });
+            }
+          }
+          continue;
+        }
+
+        if (streamEvent?.type === "content_block_stop") {
+          const toolUseId = context.streamToolUseIdsByIndex.get(streamEvent.index);
+          if (typeof toolUseId === "string") {
+            context.streamToolUseIdsByIndex.delete(streamEvent.index);
+            const actionId = context.actionIdsByToolUseId.get(toolUseId);
+            if (actionId) {
+              emit({
+                id,
+                type: "action_progress_updated",
+                actionId,
+                message: "Claude finished preparing tool input.",
+              });
+            }
+          }
+          continue;
+        }
+
+        if (
+          streamEvent?.type === "message_start" ||
+          streamEvent?.type === "message_delta" ||
+          streamEvent?.type === "message_stop"
+        ) {
+          continue;
+        }
+
         if (streamEvent?.type !== "content_block_delta") {
           continue;
         }
@@ -837,12 +1341,8 @@ async function handleQuery(req) {
       }
     }
 
-    emit({
-      id,
-      type: "turn_completed",
-      status: context.cancelled ? "interrupted" : terminalStatus,
-      sessionId: actualSessionId,
-    });
+    setContextSessionId(context, actualSessionId);
+    emitTurnCompleted(context, context.cancelled ? "interrupted" : terminalStatus);
   } catch (err) {
     emit({
       id,
@@ -850,7 +1350,8 @@ async function handleQuery(req) {
       message: err.message || String(err),
       recoverable: false,
     });
-    emit({ id, type: "turn_completed", status: "failed", sessionId: actualSessionId });
+    setContextSessionId(context, actualSessionId);
+    emitTurnCompleted(context, "failed");
   } finally {
     cleanupPendingApprovalsForQuery(id, "Claude query was canceled.");
     activeQueries.delete(id);
@@ -905,13 +1406,25 @@ function handleApprovalResponse(params = {}) {
 
   try {
     const response = params.response || {};
-    assertClaudeApprovalResponseShape(response);
-    const permission = resolveApprovalDecision(response, pending.suggestions);
+    const permission =
+      pending.kind === "ask_user_question"
+        ? resolveAskUserQuestionResponse(response, pending.toolInput)
+        : (() => {
+            assertClaudeApprovalResponseShape(response);
+            return resolveApprovalDecision(response, pending.suggestions);
+          })();
     pendingApprovals.delete(approvalId);
     const context = activeQueries.get(pending.queryId);
     context?.pendingApprovalIds.delete(approvalId);
     pending.resolve(permission);
   } catch (error) {
+    pendingApprovals.delete(approvalId);
+    const context = activeQueries.get(pending.queryId);
+    context?.pendingApprovalIds.delete(approvalId);
+    pending.resolve({
+      behavior: "deny",
+      message: "Claude approval response was invalid and was denied.",
+    });
     emit({
       id: pending.queryId,
       type: "error",
@@ -919,6 +1432,22 @@ function handleApprovalResponse(params = {}) {
       recoverable: true,
     });
   }
+}
+
+function handleShutdown(signal) {
+  shuttingDown = true;
+  for (const context of activeQueries.values()) {
+    context.cancelled = true;
+    cleanupPendingApprovalsForQuery(
+      context.id,
+      `Claude query was interrupted by ${signal}.`,
+    );
+    context.query?.close?.();
+    emitTurnCompleted(context, "interrupted");
+  }
+
+  rl.close();
+  process.stdout.write("", () => process.exit(0));
 }
 
 rl.on("line", (line) => {
@@ -950,5 +1479,11 @@ rl.on("line", (line) => {
   }
 });
 
-rl.on("close", () => process.exit(0));
+rl.on("close", () => {
+  if (!shuttingDown) {
+    process.exit(0);
+  }
+});
+process.on("SIGTERM", () => handleShutdown("SIGTERM"));
+process.on("SIGINT", () => handleShutdown("SIGINT"));
 emit({ type: "ready" });

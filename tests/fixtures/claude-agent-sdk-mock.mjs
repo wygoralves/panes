@@ -47,6 +47,16 @@ export function query({ options }) {
   const iterator = (async function* () {
     const observations = [];
 
+    if (scenario.emitQueryOptions) {
+      observations.push({
+        type: "query_options",
+        result: clone({
+          permissionMode: options?.permissionMode,
+          settings: options?.settings,
+        }),
+      });
+    }
+
     for (const step of scenario.steps ?? []) {
       if (closed) {
         break;

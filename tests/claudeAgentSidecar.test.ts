@@ -307,6 +307,40 @@ describe("claude-agent-sdk-server sidecar", () => {
     expect(observations[0]?.result.behavior).toBe("allow");
   });
 
+  it("uses interactive default permission mode for non-plan queries", async () => {
+    const harness = await spawnHarness({
+      steps: [],
+      emitObservationResult: true,
+      emitQueryOptions: true,
+      sessionId: "session-permission-mode",
+    });
+
+    harness.send({
+      id: "query-permission-mode",
+      method: "query",
+      params: {
+        prompt: "inspect options",
+        cwd: repoRoot,
+      },
+    });
+
+    await harness.waitFor(
+      (event) =>
+        event.id === "query-permission-mode" && event.type === "turn_completed",
+    );
+
+    const observations = parseObservationResults(harness, "query-permission-mode");
+    expect(observations).toHaveLength(1);
+    expect(observations[0]?.type).toBe("query_options");
+    expect(observations[0]?.result.permissionMode).toBe("default");
+    expect(observations[0]?.result.settings).toEqual({
+      permissions: {
+        defaultMode: "default",
+        disableBypassPermissionsMode: "disable",
+      },
+    });
+  });
+
   it("rejects danger-full-access explicitly for Claude", async () => {
     const harness = await spawnHarness({ steps: [] });
 
@@ -373,6 +407,141 @@ describe("claude-agent-sdk-server sidecar", () => {
     expect(completed.sessionId).toBe("session-error");
   });
 
+  it("surfaces assistant errors, status notices, rate limits, and token usage", async () => {
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "yield",
+          message: {
+            type: "system",
+            subtype: "init",
+            session_id: "session-events",
+          },
+        },
+        {
+          type: "yield",
+          message: {
+            type: "assistant",
+            error: "authentication_failed",
+            session_id: "session-events",
+          },
+        },
+        {
+          type: "yield",
+          message: {
+            type: "system",
+            subtype: "status",
+            status: "compacting",
+            session_id: "session-events",
+          },
+        },
+        {
+          type: "yield",
+          message: {
+            type: "rate_limit_event",
+            session_id: "session-events",
+            rate_limit_info: {
+              rateLimitType: "five_hour",
+              utilization: 0.87,
+              resetsAt: 1_740_000_000,
+            },
+          },
+        },
+        {
+          type: "yield",
+          message: {
+            type: "stream_event",
+            session_id: "session-events",
+            event: {
+              type: "message_start",
+              message: {
+                usage: {
+                  input_tokens: 11,
+                  output_tokens: 2,
+                },
+              },
+            },
+          },
+        },
+        {
+          type: "yield",
+          message: {
+            type: "stream_event",
+            session_id: "session-events",
+            event: {
+              type: "message_delta",
+              delta: {
+                stop_reason: "end_turn",
+              },
+              usage: {
+                output_tokens: 7,
+              },
+            },
+          },
+        },
+        {
+          type: "yield",
+          message: makeSuccessResult({
+            session_id: "session-events",
+            usage: {
+              input_tokens: 11,
+              output_tokens: 7,
+            },
+          }),
+        },
+      ],
+    });
+
+    harness.send({
+      id: "query-events",
+      method: "query",
+      params: {
+        prompt: "surface events",
+        cwd: repoRoot,
+      },
+    });
+
+    const completed = await harness.waitFor(
+      (event) => event.id === "query-events" && event.type === "turn_completed",
+    );
+    const errorEvent = harness.events.find(
+      (event) => event.id === "query-events" && event.type === "error",
+    );
+    const noticeEvent = harness.events.find(
+      (event) => event.id === "query-events" && event.type === "notice",
+    );
+    const usageEvent = harness.events.find(
+      (event) => event.id === "query-events" && event.type === "usage_limits_updated",
+    );
+
+    expect(errorEvent).toMatchObject({
+      message: "Claude authentication failed. Sign in again or refresh your credentials.",
+      errorType: "authentication_failed",
+      isAuthError: true,
+      recoverable: false,
+    });
+    expect(noticeEvent).toMatchObject({
+      kind: "claude_status",
+      title: "Claude status",
+      message: "Claude is compacting context.",
+    });
+    expect(usageEvent).toMatchObject({
+      usage: {
+        fiveHourPercent: 87,
+        fiveHourResetsAt: 1_740_000_000,
+      },
+    });
+    expect(completed).toMatchObject({
+      status: "failed",
+      sessionId: "session-events",
+      tokenUsage: {
+        input: 11,
+        output: 7,
+      },
+      stopReason: "end_turn",
+    });
+  });
+
   it("uses tool_response and emits action output deltas", async () => {
     const harness = await spawnHarness({
       steps: [
@@ -430,14 +599,71 @@ describe("claude-agent-sdk-server sidecar", () => {
     const completed = harness.events.find(
       (event) =>
         event.id === "query-tool-output" &&
-        event.type === "action_completed" &&
-        event.output === "stdout: ok",
+        event.type === "action_completed",
     );
 
     expect(started?.actionId).toBeDefined();
     expect(outputDelta?.actionId).toBe(started?.actionId);
     expect(outputDelta?.stream).toBe("stdout");
     expect(completed?.actionId).toBe(started?.actionId);
+    expect(completed?.output).toBeUndefined();
+  });
+
+  it("streams long tool output in chunks without truncation", async () => {
+    const longOutput = "x".repeat(10_500);
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "hook",
+          hook: "PreToolUse",
+          input: {
+            tool_name: "Bash",
+            tool_input: { command: "python - <<'PY'" },
+            tool_use_id: "tool-long-output",
+          },
+        },
+        {
+          type: "hook",
+          hook: "PostToolUse",
+          input: {
+            tool_name: "Bash",
+            tool_input: { command: "python - <<'PY'" },
+            tool_use_id: "tool-long-output",
+            tool_response: longOutput,
+          },
+        },
+        {
+          type: "yield",
+          message: makeSuccessResult({ session_id: "session-long-output" }),
+        },
+      ],
+    });
+
+    harness.send({
+      id: "query-long-output",
+      method: "query",
+      params: {
+        prompt: "stream long output",
+        cwd: repoRoot,
+      },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-long-output" && event.type === "turn_completed",
+    );
+
+    const chunks = harness.events.filter(
+      (event) =>
+        event.id === "query-long-output" && event.type === "action_output_delta",
+    );
+    const completed = harness.events.find(
+      (event) =>
+        event.id === "query-long-output" && event.type === "action_completed",
+    );
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.map((event) => String(event.content ?? "")).join("")).toBe(longOutput);
+    expect(completed?.output).toBeUndefined();
   });
 
   it("returns updatedPermissions for accept_for_session approvals", async () => {
@@ -502,7 +728,107 @@ describe("claude-agent-sdk-server sidecar", () => {
     expect(observations[0]?.result.updatedPermissions).toEqual(suggestions);
   });
 
-  it("keeps approvals pending when Claude receives an invalid approval payload", async () => {
+  it("routes AskUserQuestion approvals through updatedInput answers", async () => {
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "permission",
+          toolName: "AskUserQuestion",
+          input: {
+            questions: [
+              {
+                id: "stack",
+                header: "Stack",
+                question: "Which package manager should we use?",
+                options: [
+                  { label: "pnpm", description: "Recommended" },
+                  { label: "npm", description: "Fallback" },
+                ],
+                multiSelect: false,
+              },
+            ],
+          },
+          toolUseID: "ask-user-question-1",
+        },
+      ],
+      emitObservationResult: true,
+      sessionId: "session-ask-user-question",
+    });
+
+    harness.send({
+      id: "query-ask-user-question",
+      method: "query",
+      params: {
+        prompt: "ask the user a question",
+        cwd: repoRoot,
+      },
+    });
+
+    const approvalEvent = await harness.waitFor(
+      (event) =>
+        event.id === "query-ask-user-question" &&
+        event.type === "approval_requested",
+    );
+    expect(approvalEvent.details).toEqual({
+      _serverMethod: "item/tool/requestuserinput",
+      questions: [
+        {
+          id: "stack",
+          header: "Stack",
+          question: "Which package manager should we use?",
+          options: [
+            { label: "pnpm", description: "Recommended" },
+            { label: "npm", description: "Fallback" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    harness.send({
+      method: "approval_response",
+      params: {
+        approvalId: approvalEvent.approvalId,
+        response: {
+          answers: {
+            stack: {
+              answers: ["pnpm"],
+            },
+          },
+        },
+      },
+    });
+
+    await harness.waitFor(
+      (event) =>
+        event.id === "query-ask-user-question" && event.type === "turn_completed",
+    );
+
+    const observations = parseObservationResults(harness, "query-ask-user-question");
+    expect(observations).toHaveLength(1);
+    expect(observations[0]?.result).toEqual({
+      behavior: "allow",
+      updatedInput: {
+        questions: [
+          {
+            id: "stack",
+            header: "Stack",
+            question: "Which package manager should we use?",
+            options: [
+              { label: "pnpm", description: "Recommended" },
+              { label: "npm", description: "Fallback" },
+            ],
+            multiSelect: false,
+          },
+        ],
+        answers: {
+          "Which package manager should we use?": "pnpm",
+        },
+      },
+    });
+  });
+
+  it("denies malformed approval payloads instead of hanging the query", async () => {
     const harness = await spawnHarness({
       steps: [
         {
@@ -540,14 +866,116 @@ describe("claude-agent-sdk-server sidecar", () => {
     const errorEvent = await harness.waitFor(
       (event) => event.id === "query-invalid-approval" && event.type === "error",
     );
+    const completed = await harness.waitFor(
+      (event) => event.id === "query-invalid-approval" && event.type === "turn_completed",
+    );
 
     expect(errorEvent.message).toContain("explicit decision field");
-    await expect(
-      harness.waitFor(
-        (event) => event.id === "query-invalid-approval" && event.type === "turn_completed",
-        250,
-      ),
-    ).rejects.toThrow("Timed out waiting for sidecar event");
+    expect(completed.status).toBe("completed");
+
+    const observations = parseObservationResults(harness, "query-invalid-approval");
+    expect(observations).toHaveLength(1);
+    expect(observations[0]?.result).toEqual({
+      behavior: "deny",
+      message: "Claude approval response was invalid and was denied.",
+    });
+  });
+
+  it("emits synthetic action completion when a prestarted tool is denied", async () => {
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "hook",
+          hook: "PreToolUse",
+          input: {
+            tool_name: "Bash",
+            tool_input: { command: "npm publish" },
+            tool_use_id: "tool-denied",
+          },
+        },
+        {
+          type: "permission",
+          toolName: "Bash",
+          input: { command: "npm publish" },
+          toolUseID: "tool-denied",
+        },
+      ],
+      sessionId: "session-denied-tool",
+    });
+
+    harness.send({
+      id: "query-denied-tool",
+      method: "query",
+      params: {
+        prompt: "deny the tool",
+        cwd: repoRoot,
+        approvalPolicy: "restricted",
+      },
+    });
+
+    const approvalEvent = await harness.waitFor(
+      (event) =>
+        event.id === "query-denied-tool" && event.type === "approval_requested",
+    );
+    const started = await harness.waitFor(
+      (event) =>
+        event.id === "query-denied-tool" && event.type === "action_started",
+    );
+
+    harness.send({
+      method: "approval_response",
+      params: {
+        approvalId: approvalEvent.approvalId,
+        response: { decision: "decline" },
+      },
+    });
+
+    const completed = await harness.waitFor(
+      (event) =>
+        event.id === "query-denied-tool" && event.type === "action_completed",
+    );
+
+    expect(completed).toMatchObject({
+      actionId: started.actionId,
+      success: false,
+      error: "Tool usage denied by the user.",
+    });
+  });
+
+  it("emits interrupted turn completion before exiting on SIGTERM", async () => {
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "permission",
+          toolName: "Bash",
+          input: { command: "npm test" },
+          toolUseID: "tool-sigterm",
+        },
+      ],
+      sessionId: "session-sigterm",
+    });
+
+    harness.send({
+      id: "query-sigterm",
+      method: "query",
+      params: {
+        prompt: "wait for approval",
+        cwd: repoRoot,
+        approvalPolicy: "restricted",
+      },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-sigterm" && event.type === "approval_requested",
+    );
+
+    harness.child.kill("SIGTERM");
+
+    const completed = await harness.waitFor(
+      (event) => event.id === "query-sigterm" && event.type === "turn_completed",
+    );
+
+    expect(completed.status).toBe("interrupted");
   });
 
   it("matches tool completions by tool_use_id when hooks interleave", async () => {
@@ -623,18 +1051,12 @@ describe("claude-agent-sdk-server sidecar", () => {
         event.type === "action_started" &&
         (event.details as Record<string, unknown> | undefined)?.command === "echo second",
     );
-    const firstCompletion = harness.events.find(
+    const completions = harness.events.filter(
       (event) =>
-        event.id === "query-interleaving" &&
-        event.type === "action_completed" &&
-        event.output === "first output",
+        event.id === "query-interleaving" && event.type === "action_completed",
     );
-    const secondCompletion = harness.events.find(
-      (event) =>
-        event.id === "query-interleaving" &&
-        event.type === "action_completed" &&
-        event.output === "second output",
-    );
+    const firstCompletion = completions[0];
+    const secondCompletion = completions[1];
 
     expect(firstCompletion?.actionId).toBe(firstStart?.actionId);
     expect(secondCompletion?.actionId).toBe(secondStart?.actionId);

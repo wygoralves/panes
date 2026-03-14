@@ -64,6 +64,12 @@ enum SidecarEvent {
         stream: String,
         content: String,
     },
+    ActionProgressUpdated {
+        id: Option<String>,
+        #[serde(rename = "actionId")]
+        action_id: String,
+        message: String,
+    },
     ActionCompleted {
         id: Option<String>,
         #[serde(rename = "actionId")]
@@ -88,11 +94,30 @@ enum SidecarEvent {
         status: String,
         #[serde(rename = "sessionId")]
         session_id: Option<String>,
+        #[serde(rename = "tokenUsage")]
+        token_usage: Option<SidecarTokenUsage>,
+        #[serde(rename = "stopReason")]
+        stop_reason: Option<String>,
+    },
+    Notice {
+        id: Option<String>,
+        kind: String,
+        level: String,
+        title: String,
+        message: String,
+    },
+    UsageLimitsUpdated {
+        id: Option<String>,
+        usage: SidecarUsageLimits,
     },
     Error {
         id: Option<String>,
         message: String,
         recoverable: Option<bool>,
+        #[serde(rename = "errorType")]
+        error_type: Option<String>,
+        #[serde(rename = "isAuthError")]
+        is_auth_error: Option<bool>,
     },
     Version {
         id: Option<String>,
@@ -111,13 +136,35 @@ impl SidecarEvent {
             | SidecarEvent::ThinkingDelta { id, .. }
             | SidecarEvent::ActionStarted { id, .. }
             | SidecarEvent::ActionOutputDelta { id, .. }
+            | SidecarEvent::ActionProgressUpdated { id, .. }
             | SidecarEvent::ActionCompleted { id, .. }
             | SidecarEvent::ApprovalRequested { id, .. }
             | SidecarEvent::TurnCompleted { id, .. }
+            | SidecarEvent::Notice { id, .. }
+            | SidecarEvent::UsageLimitsUpdated { id, .. }
             | SidecarEvent::Error { id, .. }
             | SidecarEvent::Version { id, .. } => id.as_deref(),
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SidecarTokenUsage {
+    input: u64,
+    output: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SidecarUsageLimits {
+    current_tokens: Option<u64>,
+    max_context_tokens: Option<u64>,
+    context_window_percent: Option<u8>,
+    five_hour_percent: Option<u8>,
+    weekly_percent: Option<u8>,
+    five_hour_resets_at: Option<i64>,
+    weekly_resets_at: Option<i64>,
 }
 
 // ── Transport ─────────────────────────────────────────────────────────
@@ -173,7 +220,7 @@ impl ClaudeTransport {
             .take()
             .context("claude sidecar stderr not available")?;
 
-        let (event_tx, _) = broadcast::channel(256);
+        let (event_tx, _) = broadcast::channel(1024);
 
         // Stdout reader: parse JSON lines → broadcast SidecarEvents
         {
@@ -281,6 +328,7 @@ impl ClaudeTransport {
     async fn kill(&self) {
         let mut child = self.child.lock().await;
         let _ = child.kill().await;
+        let _ = child.wait().await;
     }
 }
 
@@ -328,17 +376,29 @@ impl ClaudeSidecarEngine {
     }
 
     async fn ensure_transport(&self) -> anyhow::Result<Arc<ClaudeTransport>> {
-        let mut state = self.state.lock().await;
+        let (existing_transport, resource_dir) = {
+            let state = self.state.lock().await;
+            (state.transport.clone(), state.resource_dir.clone())
+        };
 
-        if let Some(ref transport) = state.transport {
+        if let Some(transport) = existing_transport {
             if transport.is_alive().await {
-                return Ok(Arc::clone(transport));
+                return Ok(transport);
             }
+
             log::warn!("claude sidecar process died, restarting…");
-            state.transport = None;
+            let mut state = self.state.lock().await;
+            if state
+                .transport
+                .as_ref()
+                .map(|current| Arc::ptr_eq(current, &transport))
+                .unwrap_or(false)
+            {
+                state.transport = None;
+            }
         }
 
-        let sidecar_path = ClaudeTransport::resolve_sidecar_path(state.resource_dir.as_ref())?;
+        let sidecar_path = ClaudeTransport::resolve_sidecar_path(resource_dir.as_ref())?;
         let transport = Arc::new(ClaudeTransport::spawn(sidecar_path).await?);
 
         // Wait for the "ready" event from the sidecar
@@ -372,6 +432,14 @@ impl ClaudeSidecarEngine {
             }
         }
 
+        let mut state = self.state.lock().await;
+        if let Some(existing) = state.transport.clone() {
+            if existing.is_alive().await {
+                transport.kill().await;
+                return Ok(existing);
+            }
+        }
+
         state.transport = Some(Arc::clone(&transport));
         Ok(transport)
     }
@@ -394,6 +462,21 @@ impl ClaudeSidecarEngine {
             "stderr" => OutputStream::Stderr,
             _ => OutputStream::Stdout,
         }
+    }
+
+    fn is_claude_auth_error(message: &str, error_type: Option<&str>, is_auth_error: bool) -> bool {
+        if is_auth_error {
+            return true;
+        }
+
+        if error_type == Some("authentication_failed") {
+            return true;
+        }
+
+        let normalized = message.to_lowercase();
+        normalized.contains("authentication failed")
+            || normalized.contains("sign in again")
+            || normalized.contains("refresh your credentials")
     }
 
     pub async fn health_report(&self) -> ClaudeHealthReport {
@@ -880,6 +963,7 @@ impl Engine for ClaudeSidecarEngine {
 
         let engine_thread_id_owned = engine_thread_id.to_string();
         let state_ref = Arc::clone(&self.state);
+        let mut auth_invalidated_transport = false;
 
         loop {
             tokio::select! {
@@ -965,6 +1049,19 @@ impl Engine for ClaudeSidecarEngine {
                                         .await
                                         .ok();
                                 }
+                                SidecarEvent::ActionProgressUpdated {
+                                    action_id,
+                                    message,
+                                    ..
+                                } => {
+                                    event_tx
+                                        .send(EngineEvent::ActionProgressUpdated {
+                                            action_id,
+                                            message,
+                                        })
+                                        .await
+                                        .ok();
+                                }
                                 SidecarEvent::ActionCompleted {
                                     action_id,
                                     success,
@@ -1007,6 +1104,8 @@ impl Engine for ClaudeSidecarEngine {
                                 SidecarEvent::TurnCompleted {
                                     status,
                                     session_id,
+                                    token_usage,
+                                    stop_reason,
                                     ..
                                 } => {
                                     if let Some(sid) = session_id {
@@ -1023,22 +1122,89 @@ impl Engine for ClaudeSidecarEngine {
                                     };
                                     event_tx
                                         .send(EngineEvent::TurnCompleted {
-                                            token_usage: None,
+                                            token_usage: token_usage.map(|usage| super::TokenUsage {
+                                                input: usage.input,
+                                                output: usage.output,
+                                            }),
                                             status: completion_status,
                                         })
                                         .await
                                         .ok();
+                                    if let Some(stop_reason) = stop_reason {
+                                        event_tx
+                                            .send(EngineEvent::Notice {
+                                                kind: "claude_stop_reason".to_string(),
+                                                level: "info".to_string(),
+                                                title: "Claude stop reason".to_string(),
+                                                message: stop_reason,
+                                            })
+                                            .await
+                                            .ok();
+                                    }
                                     let mut state = self.state.lock().await;
                                     if let Some(config) = state.threads.get_mut(engine_thread_id) {
                                         config.active_request_id = None;
                                     }
                                     break;
                                 }
+                                SidecarEvent::Notice {
+                                    kind,
+                                    level,
+                                    title,
+                                    message,
+                                    ..
+                                } => {
+                                    event_tx
+                                        .send(EngineEvent::Notice {
+                                            kind,
+                                            level,
+                                            title,
+                                            message,
+                                        })
+                                        .await
+                                        .ok();
+                                }
+                                SidecarEvent::UsageLimitsUpdated { usage, .. } => {
+                                    event_tx
+                                        .send(EngineEvent::UsageLimitsUpdated {
+                                            usage: super::UsageLimitsSnapshot {
+                                                current_tokens: usage.current_tokens,
+                                                max_context_tokens: usage.max_context_tokens,
+                                                context_window_percent: usage.context_window_percent,
+                                                five_hour_percent: usage.five_hour_percent,
+                                                weekly_percent: usage.weekly_percent,
+                                                five_hour_resets_at: usage.five_hour_resets_at,
+                                                weekly_resets_at: usage.weekly_resets_at,
+                                            },
+                                        })
+                                        .await
+                                        .ok();
+                                }
                                 SidecarEvent::Error {
                                     message,
                                     recoverable,
+                                    error_type,
+                                    is_auth_error,
                                     ..
                                 } => {
+                                    if Self::is_claude_auth_error(
+                                        &message,
+                                        error_type.as_deref(),
+                                        is_auth_error.unwrap_or(false),
+                                    ) {
+                                        auth_invalidated_transport = true;
+                                        let mut state = self.state.lock().await;
+                                        if state
+                                            .transport
+                                            .as_ref()
+                                            .map(|current| Arc::ptr_eq(current, &transport))
+                                            .unwrap_or(false)
+                                        {
+                                            state.transport = None;
+                                        }
+                                        drop(state);
+                                        transport.kill().await;
+                                    }
                                     event_tx
                                         .send(EngineEvent::Error {
                                             message,
@@ -1052,16 +1218,29 @@ impl Engine for ClaudeSidecarEngine {
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             log::warn!("claude sidecar: event receiver lagged by {n} messages");
-                        }
-                        Err(broadcast::error::RecvError::Closed) => {
                             event_tx
-                                .send(EngineEvent::Error {
-                                    message: "Claude sidecar process terminated unexpectedly"
-                                        .to_string(),
-                                    recoverable: false,
+                                .send(EngineEvent::Notice {
+                                    kind: "claude_event_lag".to_string(),
+                                    level: "warning".to_string(),
+                                    title: "Claude event lag".to_string(),
+                                    message: format!(
+                                        "Claude sidecar event stream skipped {n} messages under load."
+                                    ),
                                 })
                                 .await
                                 .ok();
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            if !auth_invalidated_transport {
+                                event_tx
+                                    .send(EngineEvent::Error {
+                                        message: "Claude sidecar process terminated unexpectedly"
+                                            .to_string(),
+                                        recoverable: false,
+                                    })
+                                    .await
+                                    .ok();
+                            }
                             event_tx
                                 .send(EngineEvent::TurnCompleted {
                                     token_usage: None,
@@ -1138,7 +1317,9 @@ impl Engine for ClaudeSidecarEngine {
         Ok(())
     }
 
-    async fn archive_thread(&self, _engine_thread_id: &str) -> Result<(), anyhow::Error> {
+    async fn archive_thread(&self, engine_thread_id: &str) -> Result<(), anyhow::Error> {
+        let mut state = self.state.lock().await;
+        state.threads.remove(engine_thread_id);
         Ok(())
     }
 
@@ -1179,6 +1360,29 @@ mod tests {
     }
 
     #[test]
+    fn deserializes_action_progress_events() {
+        let event: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "action_progress_updated",
+            "id": "request-1",
+            "actionId": "action-1",
+            "message": "Claude finished preparing tool input.",
+        }))
+        .expect("action_progress_updated should deserialize");
+
+        match event {
+            SidecarEvent::ActionProgressUpdated {
+                action_id,
+                message,
+                ..
+            } => {
+                assert_eq!(action_id, "action-1");
+                assert_eq!(message, "Claude finished preparing tool input.");
+            }
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_output_stream_names() {
         assert!(matches!(
             ClaudeSidecarEngine::parse_output_stream("stderr"),
@@ -1191,6 +1395,80 @@ mod tests {
         assert!(matches!(
             ClaudeSidecarEngine::parse_output_stream("unknown"),
             OutputStream::Stdout
+        ));
+    }
+
+    #[test]
+    fn deserializes_turn_completed_token_usage() {
+        let event: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "turn_completed",
+            "id": "request-1",
+            "status": "completed",
+            "sessionId": "session-1",
+            "tokenUsage": {
+                "input": 42,
+                "output": 24,
+            },
+            "stopReason": "end_turn",
+        }))
+        .expect("turn_completed should deserialize");
+
+        match event {
+            SidecarEvent::TurnCompleted {
+                status,
+                session_id,
+                token_usage,
+                stop_reason,
+                ..
+            } => {
+                assert_eq!(status, "completed");
+                assert_eq!(session_id.as_deref(), Some("session-1"));
+                let usage = token_usage.expect("token usage");
+                assert_eq!(usage.input, 42);
+                assert_eq!(usage.output, 24);
+                assert_eq!(stop_reason.as_deref(), Some("end_turn"));
+            }
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deserializes_usage_limits_events() {
+        let event: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "usage_limits_updated",
+            "id": "request-1",
+            "usage": {
+                "fiveHourPercent": 87,
+                "fiveHourResetsAt": 1740000000,
+            },
+        }))
+        .expect("usage_limits_updated should deserialize");
+
+        match event {
+            SidecarEvent::UsageLimitsUpdated { usage, .. } => {
+                assert_eq!(usage.five_hour_percent, Some(87));
+                assert_eq!(usage.five_hour_resets_at, Some(1_740_000_000));
+            }
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn claude_auth_error_detection_uses_structured_fields() {
+        assert!(ClaudeSidecarEngine::is_claude_auth_error(
+            "anything",
+            Some("authentication_failed"),
+            false,
+        ));
+        assert!(ClaudeSidecarEngine::is_claude_auth_error(
+            "Claude authentication failed. Sign in again.",
+            None,
+            false,
+        ));
+        assert!(!ClaudeSidecarEngine::is_claude_auth_error(
+            "Claude rate limit reached",
+            Some("rate_limit"),
+            false,
         ));
     }
 
