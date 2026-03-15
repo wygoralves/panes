@@ -280,6 +280,17 @@ export function getStaticCommands(
     },
   },
   {
+    id: "power-settings",
+    label: t("commandPalette.commands.powerSettings"),
+    icon: Power,
+    group: "layout",
+    keywords: ["power", "settings", "display", "battery", "session", "energia", "configurações"],
+    action: ({ close }) => {
+      close();
+      useKeepAwakeStore.getState().openPowerSettings();
+    },
+  },
+  {
     id: "open-search",
     label: t("commandPalette.commands.searchWorkspace"),
     icon: Search,

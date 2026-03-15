@@ -110,6 +110,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const keepAwakeState = useKeepAwakeStore((s) => s.state);
   const keepAwakeLoading = useKeepAwakeStore((s) => s.loading);
   const toggleKeepAwake = useKeepAwakeStore((s) => s.toggle);
+  const openPowerSettings = useKeepAwakeStore((s) => s.openPowerSettings);
   const hasUpdate = updateStatus === "available" && !updateSnoozed;
   const keepAwakeAvailable = canToggleKeepAwake(keepAwakeState);
   const preferredOnboardingChatSelection = useMemo(
@@ -739,6 +740,26 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                   }}
                 />
               </span>
+              <button
+                type="button"
+                title={t("app:sidebar.keepAwakePowerSettings")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openPowerSettings();
+                }}
+                style={{
+                  padding: 2,
+                  marginLeft: 4,
+                  opacity: 0.5,
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--text-primary)",
+                  flexShrink: 0,
+                }}
+              >
+                <Settings size={11} />
+              </button>
             </button>
             <div className="git-action-menu-item" style={{ justifyContent: "space-between", cursor: "default" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 8 }}>

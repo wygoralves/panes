@@ -35,6 +35,8 @@ import type {
   InstallProgressEvent,
   InstallResult,
   KeepAwakeState,
+  PowerSettings,
+  PowerSettingsInput,
   Message,
   MessageWindow,
   MessageWindowCursor,
@@ -62,6 +64,9 @@ export const ipc = {
   getKeepAwakeState: () => invoke<KeepAwakeState>("get_keep_awake_state"),
   setKeepAwakeEnabled: (enabled: boolean) =>
     invoke<KeepAwakeState>("set_keep_awake_enabled", { enabled }),
+  getPowerSettings: () => invoke<PowerSettings>("get_power_settings"),
+  setPowerSettings: (settings: PowerSettingsInput) =>
+    invoke<KeepAwakeState>("set_power_settings", { settings }),
   getTerminalAcceleratedRendering: () =>
     invoke<boolean>("get_terminal_accelerated_rendering"),
   setTerminalAcceleratedRendering: (enabled: boolean) =>

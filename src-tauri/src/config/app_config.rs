@@ -49,6 +49,13 @@ pub struct DebugConfig {
 #[serde(default)]
 pub struct PowerConfig {
     pub keep_awake_enabled: bool,
+    pub prevent_display_sleep: bool,
+    pub prevent_screen_saver: bool,
+    pub ac_only_mode: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub battery_threshold: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_duration_secs: Option<u64>,
 }
 
 impl Default for GeneralConfig {
@@ -86,6 +93,11 @@ impl Default for PowerConfig {
     fn default() -> Self {
         Self {
             keep_awake_enabled: false,
+            prevent_display_sleep: false,
+            prevent_screen_saver: false,
+            ac_only_mode: false,
+            battery_threshold: None,
+            session_duration_secs: None,
         }
     }
 }
@@ -268,7 +280,11 @@ max_action_output_chars = 20000
         assert_eq!(config.general.locale, None);
         assert!(!config.power.keep_awake_enabled);
         assert_eq!(config.general.terminal_accelerated_rendering, None);
-        assert!(!config.power.keep_awake_enabled);
+        assert!(!config.power.prevent_display_sleep);
+        assert!(!config.power.prevent_screen_saver);
+        assert!(!config.power.ac_only_mode);
+        assert_eq!(config.power.battery_threshold, None);
+        assert_eq!(config.power.session_duration_secs, None);
     }
 
     #[test]
@@ -329,5 +345,55 @@ max_action_output_chars = 20000
         let config = AppConfig::default();
 
         assert!(config.terminal_accelerated_rendering_enabled());
+    }
+
+    #[test]
+    fn new_power_fields_serialize_roundtrip() {
+        let mut config = AppConfig::default();
+        config.power.prevent_display_sleep = true;
+        config.power.prevent_screen_saver = true;
+        config.power.ac_only_mode = true;
+        config.power.battery_threshold = Some(20);
+        config.power.session_duration_secs = Some(3600);
+
+        let raw = toml::to_string_pretty(&config).expect("config should serialize");
+        let loaded = toml::from_str::<AppConfig>(&raw).expect("config should deserialize");
+
+        assert!(loaded.power.prevent_display_sleep);
+        assert!(loaded.power.prevent_screen_saver);
+        assert!(loaded.power.ac_only_mode);
+        assert_eq!(loaded.power.battery_threshold, Some(20));
+        assert_eq!(loaded.power.session_duration_secs, Some(3600));
+    }
+
+    #[test]
+    fn old_config_without_new_power_fields_loads() {
+        let raw = r#"
+[general]
+theme = "dark"
+default_engine = "codex"
+default_model = "gpt-5.3-codex"
+
+[ui]
+sidebar_width = 260
+git_panel_width = 380
+font_size = 13
+
+[debug]
+persist_engine_event_logs = false
+max_action_output_chars = 20000
+
+[power]
+keep_awake_enabled = true
+"#;
+
+        let config = toml::from_str::<AppConfig>(raw).expect("old config should deserialize");
+
+        assert!(config.power.keep_awake_enabled);
+        assert!(!config.power.prevent_display_sleep);
+        assert!(!config.power.prevent_screen_saver);
+        assert!(!config.power.ac_only_mode);
+        assert_eq!(config.power.battery_threshold, None);
+        assert_eq!(config.power.session_duration_secs, None);
     }
 }
