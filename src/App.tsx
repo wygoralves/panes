@@ -19,11 +19,11 @@ import { useKeepAwakeStore } from "./stores/keepAwakeStore";
 import { toast } from "./stores/toastStore";
 import type { RuntimeToast, Thread } from "./types";
 import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMirrorEditor";
-import { LinuxWindowFrame } from "./components/shared/LinuxWindowFrame";
-import { useLinuxWindowFrameState } from "./lib/linuxWindowFrame";
+import { CustomWindowFrame } from "./components/shared/CustomWindowFrame";
+import { useCustomWindowFrameState } from "./lib/customWindowFrame";
 import { runEditMenuAction } from "./lib/nativeEditActions";
 import {
-  isLinuxDesktop,
+  usesCustomWindowFrame,
   isTerminalInputFocused,
   requestWindowClose,
   shouldHandleAppShortcutWhileTerminalFocused, toggleWindowFullscreen,
@@ -86,8 +86,8 @@ export function App() {
   const commandPaletteOpen = useUiStore((s) => s.commandPaletteOpen);
   const closeCommandPalette = useUiStore((s) => s.closeCommandPalette);
   const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
-  const linuxDesktop = isLinuxDesktop();
-  const linuxWindowFrameState = useLinuxWindowFrameState();
+  const customWindowFrame = usesCustomWindowFrame();
+  const customWindowFrameState = useCustomWindowFrameState();
 
   useEffect(() => {
     void loadWorkspaces();
@@ -450,11 +450,11 @@ export function App() {
 
   return (
     <div
-      className={`app-shell${linuxDesktop ? " app-shell-linux" : ""}${
-        linuxWindowFrameState.isMaximized ? " app-shell-linux-maximized" : ""
-      }${linuxWindowFrameState.isFullscreen ? " app-shell-linux-fullscreen" : ""}`}
+      className={`app-shell${customWindowFrame ? " app-shell-custom-frame" : ""}${
+        customWindowFrameState.isMaximized ? " app-shell-custom-frame-maximized" : ""
+      }${customWindowFrameState.isFullscreen ? " app-shell-custom-frame-fullscreen" : ""}`}
     >
-      {linuxDesktop && <LinuxWindowFrame frameState={linuxWindowFrameState} />}
+      {customWindowFrame && <CustomWindowFrame frameState={customWindowFrameState} />}
       <div className="app-shell-body">
         <ThreeColumnLayout />
       </div>

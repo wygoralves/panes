@@ -5,7 +5,7 @@ import { ChatPanel } from "../chat/ChatPanel";
 import { HarnessPanel } from "../onboarding/HarnessPanel";
 import { WorkspaceSettingsPage } from "../workspace/WorkspaceSettingsPage";
 import { GitPanel } from "../git/GitPanel";
-import { isLinuxDesktop } from "../../lib/windowActions";
+import { usesCustomWindowFrame } from "../../lib/windowActions";
 import { useUiStore } from "../../stores/uiStore";
 import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
 
@@ -31,12 +31,12 @@ export function ThreeColumnLayout() {
   const showGitPanel = useUiStore((state) => state.showGitPanel);
   const focusMode = useUiStore((state) => state.focusMode);
   const activeView = useUiStore((state) => state.activeView);
-  const linuxDesktop = isLinuxDesktop();
+  const customWindowFrame = usesCustomWindowFrame();
 
   const sidebarVisible = showSidebar && sidebarPinned;
   const centerDefaultSize = showGitPanel ? 74 : 100;
   const fullBleedContent = focusMode || !showSidebar;
-  const showFocusDragStrip = focusMode && !showSidebar && !showGitPanel && !linuxDesktop;
+  const showFocusDragStrip = focusMode && !showSidebar && !showGitPanel && !customWindowFrame;
 
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const draggingRef = useRef(false);

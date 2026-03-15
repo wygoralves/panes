@@ -1,34 +1,32 @@
 import { useEffect, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { isLinuxDesktop } from "./windowActions";
+import { usesCustomWindowFrame } from "./windowActions";
 
-export const LINUX_WINDOW_FOREHEAD_HEIGHT = 36;
-
-export interface LinuxWindowFrameState {
+export interface CustomWindowFrameState {
   isFullscreen: boolean;
   isMaximized: boolean;
 }
 
-const DEFAULT_LINUX_WINDOW_FRAME_STATE: LinuxWindowFrameState = {
+const DEFAULT_CUSTOM_WINDOW_FRAME_STATE: CustomWindowFrameState = {
   isFullscreen: false,
   isMaximized: false,
 };
 
-export function canLinuxWindowResize(frameState: LinuxWindowFrameState): boolean {
+export function canCustomWindowResize(frameState: CustomWindowFrameState): boolean {
   return !(frameState.isFullscreen || frameState.isMaximized);
 }
 
-export function shouldShowLinuxWindowChrome(frameState: LinuxWindowFrameState): boolean {
+export function shouldShowCustomWindowChrome(frameState: CustomWindowFrameState): boolean {
   return !frameState.isFullscreen;
 }
 
-export function useLinuxWindowFrameState(): LinuxWindowFrameState {
-  const [frameState, setFrameState] = useState<LinuxWindowFrameState>(DEFAULT_LINUX_WINDOW_FRAME_STATE);
+export function useCustomWindowFrameState(): CustomWindowFrameState {
+  const [frameState, setFrameState] = useState<CustomWindowFrameState>(DEFAULT_CUSTOM_WINDOW_FRAME_STATE);
 
   useEffect(() => {
-    if (!isLinuxDesktop()) {
-      setFrameState(DEFAULT_LINUX_WINDOW_FRAME_STATE);
+    if (!usesCustomWindowFrame()) {
+      setFrameState(DEFAULT_CUSTOM_WINDOW_FRAME_STATE);
       return;
     }
 
@@ -47,7 +45,7 @@ export function useLinuxWindowFrameState(): LinuxWindowFrameState {
         }
       } catch {
         if (!disposed) {
-          setFrameState(DEFAULT_LINUX_WINDOW_FRAME_STATE);
+          setFrameState(DEFAULT_CUSTOM_WINDOW_FRAME_STATE);
         }
       }
     };

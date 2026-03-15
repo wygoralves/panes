@@ -20,7 +20,6 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore, type GitPanelView } from "../../stores/gitStore";
 import { ipc, listenGitRepoChanged } from "../../lib/ipc";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
-import { isLinuxDesktop } from "../../lib/windowActions";
 import { toast } from "../../stores/toastStore";
 import { Dropdown } from "../shared/Dropdown";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
@@ -82,7 +81,6 @@ export function GitPanel() {
   const watcherRefreshTimerRef = useRef<number | null>(null);
   const watcherRefreshInFlightRef = useRef(false);
   const watcherRefreshQueuedRef = useRef(false);
-  const linuxDesktop = isLinuxDesktop();
   const moreMenuWidth = 220;
   const viewOptions = useMemo(
     () => [
