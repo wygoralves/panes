@@ -448,6 +448,96 @@ export function PowerSettingsModal() {
             </SettingsRow>
           </SettingsCard>
 
+          {/* ── Advanced (macOS lid-close) ── */}
+          {isMacOS && (
+            <>
+              <SectionLabel icon={<MonitorDown size={12} />} label={t("powerModal.closedDisplaySection")} />
+
+              <SettingsCard disabled={disabled}>
+                <SettingsRow
+                  label={t("powerModal.preventClosedDisplaySleep")}
+                  description={t("powerModal.preventClosedDisplaySleepDescription")}
+                >
+                  <ToggleSwitch
+                    checked={preventClosedDisplaySleep}
+                    onChange={(value) => {
+                      setPreventClosedDisplaySleep(value);
+                      if (value && !helperStatus) {
+                        void loadHelperStatus();
+                      }
+                    }}
+                    disabled={disabled}
+                  />
+                </SettingsRow>
+              </SettingsCard>
+
+              {preventClosedDisplaySleep && keepAwakeEnabled && !formLocked && (
+                <div style={{
+                  marginTop: 6,
+                  padding: "10px 14px",
+                  borderRadius: "var(--radius-md)",
+                  background: "rgba(255, 255, 255, 0.02)",
+                  border: "1px solid rgba(255, 255, 255, 0.06)",
+                  animation: "fade-in var(--duration-fast) var(--ease-out)",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {helperStatus?.status === "registered" && (
+                      <>
+                        <CheckIcon size={13} style={{ color: "var(--success)", flexShrink: 0 }} />
+                        <span style={{ fontSize: 11.5, color: "var(--text-2)" }}>
+                          {t("powerModal.helperInstalled")}
+                        </span>
+                      </>
+                    )}
+                    {helperStatus?.status === "requiresApproval" && (
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <AlertTriangle size={13} style={{ color: "var(--warning)", flexShrink: 0 }} />
+                          <span style={{ fontSize: 11.5, color: "var(--warning)" }}>
+                            {t("powerModal.helperPendingApproval")}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 6, paddingLeft: 21 }}>
+                          {t("powerModal.helperApprovalNote")}
+                        </div>
+                      </div>
+                    )}
+                    {helperStatus?.status === "notRegistered" && (
+                      <>
+                        <Download size={13} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+                        <span style={{ fontSize: 11.5, color: "var(--text-3)", flex: 1 }}>
+                          {t("powerModal.helperNotInstalled")}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          style={{ fontSize: 11, padding: "4px 12px" }}
+                          disabled={helperLoading}
+                          onClick={() => void registerHelper()}
+                        >
+                          {helperLoading
+                            ? t("powerModal.helperInstallingButton")
+                            : t("powerModal.helperInstallButton")}
+                        </button>
+                      </>
+                    )}
+                    {helperStatus?.status === "notFound" && (
+                      <>
+                        <AlertTriangle size={13} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+                        <span style={{ fontSize: 11, color: "var(--text-3)" }}>
+                          {t("powerModal.helperPasswordFallback")}
+                        </span>
+                      </>
+                    )}
+                    {!helperStatus && helperLoading && (
+                      <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>...</span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
           {/* ── Session Section ── */}
           <SectionLabel icon={<Timer size={12} />} label={t("powerModal.sessionSection")} />
 
@@ -575,96 +665,6 @@ export function PowerSettingsModal() {
               )}
             </div>
           </SettingsCard>
-
-          {/* ── Advanced (macOS lid-close) ── */}
-          {isMacOS && (
-            <>
-              <SectionLabel icon={<MonitorDown size={12} />} label={t("powerModal.closedDisplaySection")} />
-
-              <SettingsCard disabled={disabled}>
-                <SettingsRow
-                  label={t("powerModal.preventClosedDisplaySleep")}
-                  description={t("powerModal.preventClosedDisplaySleepDescription")}
-                >
-                  <ToggleSwitch
-                    checked={preventClosedDisplaySleep}
-                    onChange={(value) => {
-                      setPreventClosedDisplaySleep(value);
-                      if (value && !helperStatus) {
-                        void loadHelperStatus();
-                      }
-                    }}
-                    disabled={disabled}
-                  />
-                </SettingsRow>
-              </SettingsCard>
-
-              {preventClosedDisplaySleep && keepAwakeEnabled && !formLocked && (
-                <div style={{
-                  marginTop: 6,
-                  padding: "10px 14px",
-                  borderRadius: "var(--radius-md)",
-                  background: "rgba(255, 255, 255, 0.02)",
-                  border: "1px solid rgba(255, 255, 255, 0.06)",
-                  animation: "fade-in var(--duration-fast) var(--ease-out)",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    {helperStatus?.status === "registered" && (
-                      <>
-                        <CheckIcon size={13} style={{ color: "var(--success)", flexShrink: 0 }} />
-                        <span style={{ fontSize: 11.5, color: "var(--text-2)" }}>
-                          {t("powerModal.helperInstalled")}
-                        </span>
-                      </>
-                    )}
-                    {helperStatus?.status === "requiresApproval" && (
-                      <div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <AlertTriangle size={13} style={{ color: "var(--warning)", flexShrink: 0 }} />
-                          <span style={{ fontSize: 11.5, color: "var(--warning)" }}>
-                            {t("powerModal.helperPendingApproval")}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 6, paddingLeft: 21 }}>
-                          {t("powerModal.helperApprovalNote")}
-                        </div>
-                      </div>
-                    )}
-                    {helperStatus?.status === "notRegistered" && (
-                      <>
-                        <Download size={13} style={{ color: "var(--text-3)", flexShrink: 0 }} />
-                        <span style={{ fontSize: 11.5, color: "var(--text-3)", flex: 1 }}>
-                          {t("powerModal.helperNotInstalled")}
-                        </span>
-                        <button
-                          type="button"
-                          className="btn btn-primary"
-                          style={{ fontSize: 11, padding: "4px 12px" }}
-                          disabled={helperLoading}
-                          onClick={() => void registerHelper()}
-                        >
-                          {helperLoading
-                            ? t("powerModal.helperInstallingButton")
-                            : t("powerModal.helperInstallButton")}
-                        </button>
-                      </>
-                    )}
-                    {helperStatus?.status === "notFound" && (
-                      <>
-                        <AlertTriangle size={13} style={{ color: "var(--text-3)", flexShrink: 0 }} />
-                        <span style={{ fontSize: 11, color: "var(--text-3)" }}>
-                          {t("powerModal.helperPasswordFallback")}
-                        </span>
-                      </>
-                    )}
-                    {!helperStatus && helperLoading && (
-                      <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>...</span>
-                    )}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
 
           {/* ── Live Status ── */}
           {keepAwakeState?.enabled && (

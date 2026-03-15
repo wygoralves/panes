@@ -244,30 +244,13 @@ pub async fn register_keep_awake_helper() -> Result<HelperStatusDto, String> {
             crate::power::macos_helper::register_helper()
         })
         .await
+        .map_err(err_to_string)?
         .map_err(err_to_string)?;
 
-        match result {
-            Ok(status) => Ok(HelperStatusDto {
-                status: status.as_str().to_string(),
-                message: None,
-            }),
-            Err(error) => {
-                // When running outside a signed .app bundle (dev mode), SMAppService
-                // fails with a codesigning error.  Return a descriptive message so
-                // the UI can guide the user toward the pmset fallback.
-                if error.contains("Codesigning failure") || error.contains("notFound") {
-                    return Ok(HelperStatusDto {
-                        status: "notFound".to_string(),
-                        message: Some(
-                            "Helper registration requires a signed app bundle. \
-                             The lid-close feature will use a password prompt instead."
-                                .to_string(),
-                        ),
-                    });
-                }
-                Err(error)
-            }
-        }
+        Ok(HelperStatusDto {
+            status: result.status.as_str().to_string(),
+            message: result.error,
+        })
     }
 
     #[cfg(not(target_os = "macos"))]

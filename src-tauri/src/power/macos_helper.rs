@@ -279,13 +279,15 @@ pub(super) fn helper_socket_exists() -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// pmset fallback (for dev builds without a signed .app bundle)
+// pmset fallback (when the privileged helper is not available)
 // ---------------------------------------------------------------------------
 
 /// Attempt to toggle `SleepDisabled` via `pmset -a disablesleep`.  This is
 /// the same mechanism `IOPMSetSystemPowerSetting` uses under the hood, but
-/// invoked through the CLI so it works without a privileged helper at the cost
-/// of requiring the user to enter their password via an `osascript` dialog.
+/// invoked through the CLI so it works without the privileged helper — at the
+/// cost of requiring the user to enter their password via a macOS admin dialog.
+/// Used as a fallback when the helper daemon is not registered or its socket
+/// is not reachable.
 ///
 /// Returns `true` if the command succeeded.
 pub(super) async fn pmset_set_disablesleep(disabled: bool) -> bool {

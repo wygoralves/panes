@@ -809,7 +809,7 @@ fn linux_display_inhibit_active(_runtime: &KeepAwakeRuntime) -> bool {
 
 /// Best-effort: ask the privileged helper to set `SleepDisabled = true`.
 /// Falls back to `pmset -a disablesleep 1` via an admin-password dialog when
-/// the helper socket is not available (dev builds, unsigned apps).
+/// the helper socket is not available.
 /// Logs on failure but does not return an error — the rest of keep-awake still
 /// works even if the helper is not installed.
 #[cfg(target_os = "macos")]
