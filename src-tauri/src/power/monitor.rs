@@ -23,8 +23,16 @@ pub struct PowerSourceStatus {
     pub battery_percent: Option<u8>,
 }
 
+/// Returned by `start_monitor`. The caller should pass `event_rx` to the
+/// event-processing task and store `cleanup` in the runtime for abort/timer.
 pub struct PowerMonitorHandle {
     pub event_rx: mpsc::Receiver<MonitorEvent>,
+    pub cleanup: PowerMonitorCleanup,
+}
+
+/// Stored in the runtime — holds only what `disable()` needs to abort the
+/// monitor task and what `status()` needs for the session countdown.
+pub struct PowerMonitorCleanup {
     pub task: tokio::task::JoinHandle<()>,
     pub session_end_at: Option<Instant>,
 }
@@ -101,8 +109,10 @@ pub fn start_monitor(config: MonitorConfig) -> PowerMonitorHandle {
 
     PowerMonitorHandle {
         event_rx,
-        task,
-        session_end_at,
+        cleanup: PowerMonitorCleanup {
+            task,
+            session_end_at,
+        },
     }
 }
 
@@ -283,7 +293,7 @@ mod tests {
             .expect("should receive event before timeout");
 
         assert_eq!(event, Some(MonitorEvent::SessionExpired));
-        assert!(handle.session_end_at.is_some());
+        assert!(handle.cleanup.session_end_at.is_some());
     }
 
     #[tokio::test]
@@ -306,7 +316,7 @@ mod tests {
             }
         }
 
-        handle.task.abort();
+        handle.cleanup.task.abort();
     }
 
     #[tokio::test]
@@ -318,8 +328,8 @@ mod tests {
         };
         let handle = start_monitor(config);
 
-        handle.task.abort();
-        let result = handle.task.await;
+        handle.cleanup.task.abort();
+        let result = handle.cleanup.task.await;
         assert!(result.is_err() || result.is_ok());
     }
 }

@@ -16,7 +16,7 @@ pub mod monitor;
 use crate::config::app_config::{AppConfig, PowerConfig};
 use crate::process_utils;
 
-use monitor::{MonitorConfig, MonitorEvent, PowerMonitorHandle};
+use monitor::{MonitorConfig, MonitorEvent, PowerMonitorCleanup};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeepAwakeStatus {
@@ -54,7 +54,7 @@ struct KeepAwakeRuntime {
     last_error: Option<String>,
     secondary_child: Option<Box<dyn KeepAwakeChild>>,
     secondary_helper: Option<KeepAwakeHelperState>,
-    monitor_handle: Option<PowerMonitorHandle>,
+    monitor_cleanup: Option<PowerMonitorCleanup>,
     session_end_at: Option<std::time::Instant>,
     paused_due_to_battery: bool,
     active_profile: Option<PowerProfile>,
@@ -203,7 +203,7 @@ impl KeepAwakeManager {
                 last_error: None,
                 secondary_child: None,
                 secondary_helper: None,
-                monitor_handle: None,
+                monitor_cleanup: None,
                 session_end_at: None,
                 paused_due_to_battery: false,
                 active_profile: None,
@@ -353,13 +353,14 @@ impl KeepAwakeManager {
                         session_duration_secs: config.session_duration_secs,
                     };
                     let monitor = monitor::start_monitor(monitor_config);
-                    runtime.session_end_at = monitor.session_end_at;
-                    runtime.monitor_handle = Some(monitor);
+                    runtime.session_end_at = monitor.cleanup.session_end_at;
+                    runtime.monitor_cleanup = Some(monitor.cleanup);
                     drop(runtime);
 
                     let manager = self.clone();
+                    let event_rx = monitor.event_rx;
                     tokio::spawn(async move {
-                        manager.process_monitor_events().await;
+                        manager.process_monitor_events(event_rx).await;
                     });
 
                     Ok(())
@@ -386,8 +387,8 @@ impl KeepAwakeManager {
         runtime.last_error = None;
 
         // Stop monitor task
-        if let Some(handle) = runtime.monitor_handle.take() {
-            handle.task.abort();
+        if let Some(cleanup) = runtime.monitor_cleanup.take() {
+            cleanup.task.abort();
         }
         runtime.session_end_at = None;
         runtime.active_profile = None;
@@ -442,15 +443,12 @@ impl KeepAwakeManager {
         }
     }
 
-    async fn process_monitor_events(&self) {
+    async fn process_monitor_events(
+        &self,
+        mut event_rx: tokio::sync::mpsc::Receiver<MonitorEvent>,
+    ) {
         loop {
-            let event = {
-                let mut runtime = self.runtime.lock().await;
-                match runtime.monitor_handle.as_mut() {
-                    Some(handle) => handle.event_rx.recv().await,
-                    None => break,
-                }
-            };
+            let event = event_rx.recv().await;
 
             match event {
                 Some(MonitorEvent::SessionExpired) => {
