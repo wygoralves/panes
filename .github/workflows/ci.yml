@@ -589,6 +589,161 @@ jobs:
           git commit -m "Update panes cask for ${{ needs.release.outputs.released_tag }}"
           git push origin HEAD:main
 
+  linux_release_smoke:
+    name: Linux Release Smoke
+    if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
+    needs: [release, update_manifest]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ needs.release.outputs.released_tag }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download Linux release assets
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir artifacts --pattern "*.AppImage" --pattern "*.AppImage.sig" --pattern "*.deb" --pattern "*.deb.sig"
+          ls -al artifacts
+
+      - name: Validate published updater manifest
+        run: |
+          APPIMAGE_PATH="$(find artifacts -maxdepth 1 -name '*.AppImage' -print -quit)"
+          APPIMAGE_SIG_PATH="$(find artifacts -maxdepth 1 -name '*.AppImage.sig' -print -quit)"
+          DEB_PATH="$(find artifacts -maxdepth 1 -name '*.deb' -print -quit)"
+          DEB_SIG_PATH="$(find artifacts -maxdepth 1 -name '*.deb.sig' -print -quit)"
+
+          if [ -z "$APPIMAGE_PATH" ] || [ -z "$APPIMAGE_SIG_PATH" ]; then
+            echo "Linux AppImage updater assets were not downloaded."
+            exit 1
+          fi
+
+          if [ -z "$DEB_PATH" ] || [ -z "$DEB_SIG_PATH" ]; then
+            echo "Linux Debian updater assets were not downloaded."
+            exit 1
+          fi
+
+          export APPIMAGE_NAME="$(basename "$APPIMAGE_PATH")"
+          export APPIMAGE_SIG="$(tr -d '\r\n' < "$APPIMAGE_SIG_PATH")"
+          export DEB_NAME="$(basename "$DEB_PATH")"
+          export DEB_SIG="$(tr -d '\r\n' < "$DEB_SIG_PATH")"
+
+          for attempt in 1 2 3 4 5; do
+            curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/gh-pages/latest.json" -o latest.json && break
+            if [ "$attempt" -eq 5 ]; then
+              echo "Unable to fetch latest.json from gh-pages."
+              exit 1
+            fi
+            sleep 5
+          done
+
+          node - <<'NODE'
+          const fs = require("node:fs");
+
+          const manifest = JSON.parse(fs.readFileSync("latest.json", "utf8"));
+          const appImage = manifest.platforms?.["linux-x86_64-appimage"];
+          const compat = manifest.platforms?.["linux-x86_64"];
+          const deb = manifest.platforms?.["linux-x86_64-deb"];
+
+          if (!appImage || !compat || !deb) {
+            throw new Error(
+              "latest.json must include linux-x86_64-appimage, linux-x86_64, and linux-x86_64-deb.",
+            );
+          }
+
+          if (appImage.url !== compat.url || appImage.signature !== compat.signature) {
+            throw new Error("linux-x86_64 must remain an AppImage compatibility alias.");
+          }
+
+          if (appImage.signature.trim() !== process.env.APPIMAGE_SIG) {
+            throw new Error("latest.json AppImage signature does not match the published .sig contents.");
+          }
+
+          if (deb.signature.trim() !== process.env.DEB_SIG) {
+            throw new Error("latest.json Debian signature does not match the published .sig contents.");
+          }
+
+          if (!appImage.url.endsWith(process.env.APPIMAGE_NAME)) {
+            throw new Error(`latest.json AppImage URL does not reference ${process.env.APPIMAGE_NAME}.`);
+          }
+
+          if (!deb.url.endsWith(process.env.DEB_NAME)) {
+            throw new Error(`latest.json Debian URL does not reference ${process.env.DEB_NAME}.`);
+          }
+          NODE
+
+      - name: Validate Debian package install and bundled sidecar
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb \
+            libglib2.0-0 \
+            libgtk-3-0 \
+            libwebkit2gtk-4.1-0 \
+            libayatana-appindicator3-1 \
+            librsvg2-2
+
+          DEB_PATH="$(find artifacts -maxdepth 1 -name '*.deb' -print -quit)"
+          if [ -z "$DEB_PATH" ]; then
+            echo "Linux Debian package was not downloaded."
+            exit 1
+          fi
+
+          PACKAGE_NAME="$(dpkg-deb -f "$DEB_PATH" Package)"
+          if ! sudo dpkg -i "$DEB_PATH"; then
+            echo "dpkg -i failed for the published Debian package."
+            dpkg-deb -I "$DEB_PATH" || true
+            exit 1
+          fi
+
+          dpkg -s "$PACKAGE_NAME"
+
+          DESKTOP_FILE="$(dpkg -L "$PACKAGE_NAME" | grep '/applications/.*\.desktop$' | head -n 1)"
+          SIDECAR_PATH="$(dpkg -L "$PACKAGE_NAME" | grep 'claude-agent-sdk-server\.mjs$' | head -n 1)"
+          APP_BINARY="$(dpkg -L "$PACKAGE_NAME" | while IFS= read -r candidate; do
+            if [ -f "$candidate" ] && [ -x "$candidate" ] && file "$candidate" | grep -q 'ELF'; then
+              echo "$candidate"
+              break
+            fi
+          done)"
+
+          if [ -z "$DESKTOP_FILE" ]; then
+            echo "Unable to locate installed desktop entry."
+            dpkg -L "$PACKAGE_NAME"
+            exit 1
+          fi
+
+          if [ -z "$SIDECAR_PATH" ]; then
+            echo "Unable to locate bundled Claude sidecar in installed package."
+            dpkg -L "$PACKAGE_NAME"
+            exit 1
+          fi
+
+          if [ -z "$APP_BINARY" ]; then
+            echo "Unable to locate installed Panes ELF binary."
+            dpkg -L "$PACKAGE_NAME"
+            exit 1
+          fi
+
+          test -f "$DESKTOP_FILE"
+          test -f "$SIDECAR_PATH"
+          command -v git
+          command -v node
+
+          timeout 20s xvfb-run -a "$APP_BINARY" >/tmp/panes-linux.out 2>/tmp/panes-linux.err || STATUS=$?
+          if [ "${STATUS:-0}" -ne 0 ] && [ "${STATUS:-0}" -ne 124 ]; then
+            cat /tmp/panes-linux.out || true
+            cat /tmp/panes-linux.err || true
+            echo "Installed Panes binary failed to start on the Linux smoke runner."
+            exit 1
+          fi
+
   macos_intel_release_smoke:
     name: macOS Intel Release Smoke
     if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'

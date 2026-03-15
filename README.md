@@ -115,6 +115,27 @@ Download the latest `*-setup.exe` installer from [GitHub Releases](https://githu
 
 For this Windows release, the validated scope is installer, updater, startup, and bundled-runtime compatibility. It does not guarantee that Codex and Claude are fully validated end to end through the in-app chat flow yet, so expect some rough edges there.
 
+### Install on Linux
+
+Download the latest `.AppImage` or `.deb` from [GitHub Releases](https://github.com/wygoralves/panes/releases/latest).
+
+For AppImage:
+
+```bash
+chmod +x Panes*.AppImage
+./Panes*.AppImage
+```
+
+For Debian-family systems:
+
+```bash
+sudo apt install ./Panes*_amd64.deb
+```
+
+Both direct-download Linux install paths receive later versions through the in-app updater. AppImage updates replace the app bundle directly. `.deb` updates reinstall the signed Debian package and may request administrator privileges during install.
+
+Panes does not currently publish an APT repository, so the supported Debian-family install path is the direct `.deb` download above.
+
 ### Install and Run from Source
 
 ```bash

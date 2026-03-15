@@ -336,25 +336,6 @@ button:focus-visible {
 }
 .btn-primary:active { transform: translateY(0); }
 
-.btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 28px;
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--text-1);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--border-hover);
-  border-radius: var(--radius-md);
-  transition: all 0.2s;
-}
-.btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.25);
-  transform: translateY(-1px);
-}
-
 
 /* ══════════════════════════════════════════════════
    App Mockup
@@ -551,7 +532,8 @@ button:focus-visible {
   border-right: 1px solid var(--border);
 }
 
-.lm-active {
+.lm-active,
+.lm-btn.lm-active:hover {
   background: var(--accent-dim);
   color: var(--accent);
 }
@@ -849,21 +831,6 @@ button:focus-visible {
   border-top: 1px solid var(--border);
 }
 
-/* Rich Chat Input */
-.input-card {
-  background: var(--bg-1);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 14px;
-  overflow: hidden;
-}
-
-.input-text-row {
-  padding: 10px 14px 6px;
-  min-height: 34px;
-  display: flex;
-  align-items: flex-start;
-}
-
 .input-placeholder {
   color: var(--text-2);
   font-size: 12px;
@@ -877,72 +844,6 @@ button:focus-visible {
   margin-left: 1px;
   vertical-align: text-bottom;
   animation: blink-cursor 1s step-end infinite;
-}
-
-.input-toolbar-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-}
-
-.input-tool-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
-  color: var(--text-2);
-  cursor: default;
-}
-
-.input-tool-btn .icon { width: 11px; height: 11px; }
-
-.input-pill-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  border-radius: 99px;
-  background: transparent;
-  border: 1px solid transparent;
-  font-size: 10px;
-  color: var(--text-3);
-  cursor: default;
-  white-space: nowrap;
-}
-
-.input-pill-btn .icon { width: 10px; height: 10px; }
-
-.input-pill-effort {
-  color: var(--accent);
-}
-
-.input-pill-neutral {
-  color: var(--text-2);
-}
-
-.input-toolbar-dot {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--border);
-  flex-shrink: 0;
-  margin: 0 2px;
-}
-
-.input-send-btn {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: var(--bg-4);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-3);
-  flex-shrink: 0;
-  cursor: default;
 }
 
 /* Status Bar */
@@ -1244,14 +1145,6 @@ button:focus-visible {
   background: rgba(255, 255, 255, 0.04);
 }
 
-.strip-item-native {
-  color: var(--text-2);
-}
-
-.strip-item-native:hover {
-  color: var(--text-1);
-}
-
 .strip-item-icon {
   display: flex;
   align-items: center;
@@ -1263,24 +1156,6 @@ button:focus-visible {
 
 .strip-item:hover .strip-item-icon {
   opacity: 0.85;
-}
-
-.strip-item-native .strip-item-icon {
-  opacity: 0.85;
-}
-
-.strip-item-native:hover .strip-item-icon {
-  opacity: 1;
-}
-
-.strip-native-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 6px var(--accent-glow);
-  flex-shrink: 0;
-  margin-left: 2px;
 }
 
 .strip-divider {
@@ -1406,7 +1281,8 @@ button:focus-visible {
 }
 
 .v-layout-btn:hover { background: rgba(255, 255, 255, 0.06); color: var(--text-2); }
-.v-layout-btn-active { background: var(--accent-dim); color: var(--accent); }
+.v-layout-btn-active,
+.v-layout-btn.v-layout-btn-active:hover { background: var(--accent-dim); color: var(--accent); }
 
 /* Messages area */
 .v-chat {
@@ -2581,20 +2457,13 @@ button:focus-visible {
 .app-frame.booted .git-commit-area,
 .app-frame.booted .git-dir-group,
 .app-frame.booted .git-panel .git-header,
-.app-frame.booted .input-card,
 .app-frame.booted .v-input-box {
   opacity: 1 !important;
   transform: none !important;
   animation: none !important;
 }
 
-/* Input card boot */
-.input-card {
-  opacity: 0;
-  animation: msg-in 0.5s var(--ease-out-expo) 0.75s forwards;
-}
-
-/* v-input-box inside mockup boots alongside input-card */
+/* v-input-box inside mockup boots alongside input card */
 .app-frame .v-input-box {
   opacity: 0;
   animation: msg-in 0.5s var(--ease-out-expo) 0.75s forwards;
@@ -2717,7 +2586,6 @@ button:focus-visible {
     opacity: 1;
   }
 
-  .input-card,
   .app-frame .v-input-box {
     opacity: 1;
   }

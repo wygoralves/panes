@@ -8,8 +8,16 @@ export const UPDATER_PLATFORM_DEFINITIONS = [
   {
     bundleMatch: /\.AppImage$/,
     signatureMatch: /\.AppImage\.sig$/,
-    label: "Linux updater bundle",
-    platforms: ["linux-x86_64"],
+    label: "Linux AppImage updater bundle",
+    // Keep the legacy linux-x86_64 target pointing to AppImage for compatibility
+    // with older clients and with Tauri's still-simplified public docs.
+    platforms: ["linux-x86_64-appimage", "linux-x86_64"],
+  },
+  {
+    bundleMatch: /\.deb$/,
+    signatureMatch: /\.deb\.sig$/,
+    label: "Linux Debian updater bundle",
+    platforms: ["linux-x86_64-deb"],
   },
   {
     bundleMatch: /-setup\.exe$/,
