@@ -114,7 +114,7 @@ export function PowerSettingsModal() {
       <div
         className="ws-modal"
         onMouseDown={(e) => e.stopPropagation()}
-        style={{ width: "min(520px, calc(100vw - 48px))", maxHeight: "calc(100vh - 60px)" }}
+        style={{ width: "min(580px, calc(100vw - 48px))", maxHeight: "calc(100vh - 60px)" }}
       >
         {/* ── Header ── */}
         <div className="ws-header" style={{ padding: "20px 24px 0" }}>
