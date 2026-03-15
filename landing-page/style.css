@@ -298,7 +298,7 @@ button:focus-visible {
 }
 
 .hero-title-dim {
-  color: var(--text-2);
+  color: var(--text-1);
 }
 
 .hero-subtitle {
