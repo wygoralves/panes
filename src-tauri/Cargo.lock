@@ -4,11 +4,12 @@ version = 4
 
 [[package]]
 name = "Panes"
-version = "0.41.0"
+version = "0.42.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "core-foundation 0.10.1",
  "env_logger",
  "futures",
  "git2",

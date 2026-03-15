@@ -16,6 +16,38 @@ export interface KeepAwakeState {
   supportsClosedDisplay?: boolean | null;
   closedDisplayActive?: boolean | null;
   message?: string | null;
+  displaySleepPrevented?: boolean;
+  screenSaverPrevented?: boolean;
+  onAcPower?: boolean | null;
+  batteryPercent?: number | null;
+  sessionRemainingSecs?: number | null;
+  pausedDueToBattery?: boolean;
+  closedDisplaySleepDisabled?: boolean;
+}
+
+export interface PowerSettings {
+  keepAwakeEnabled: boolean;
+  preventDisplaySleep: boolean;
+  preventScreenSaver: boolean;
+  acOnlyMode: boolean;
+  batteryThreshold: number | null;
+  sessionDurationSecs: number | null;
+  preventClosedDisplaySleep: boolean;
+}
+
+export interface PowerSettingsInput {
+  keepAwakeEnabled: boolean;
+  preventDisplaySleep: boolean;
+  preventScreenSaver: boolean;
+  acOnlyMode: boolean;
+  batteryThreshold: number | null;
+  sessionDurationSecs: number | null;
+  preventClosedDisplaySleep: boolean;
+}
+
+export interface HelperStatus {
+  status: "registered" | "requiresApproval" | "notRegistered" | "notFound" | "notSupported" | "unknown";
+  message?: string | null;
 }
 
 export interface Repo {

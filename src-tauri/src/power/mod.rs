@@ -2,17 +2,30 @@ use std::{
     ffi::OsString,
     fs, io,
     path::{Path, PathBuf},
-    process::{Command, ExitStatus, Stdio},
+    process::{Command, ExitStatus},
     sync::Arc,
     time::Duration,
 };
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tokio::{process::Child, sync::Mutex};
+#[cfg(not(target_os = "macos"))]
+use tokio::process::Child;
+use tokio::sync::Mutex;
 
-use crate::config::app_config::AppConfig;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub(crate) mod macos_helper;
+pub mod monitor;
+
+use crate::config::app_config::{AppConfig, PowerConfig};
+#[cfg(not(target_os = "macos"))]
 use crate::process_utils;
+#[cfg(not(target_os = "macos"))]
+use std::process::Stdio;
+
+use monitor::{MonitorConfig, MonitorEvent, PowerMonitorCleanup};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeepAwakeStatus {
@@ -21,6 +34,13 @@ pub struct KeepAwakeStatus {
     pub supports_closed_display: Option<bool>,
     pub closed_display_active: Option<bool>,
     pub message: Option<String>,
+    pub display_sleep_prevented: bool,
+    pub screen_saver_prevented: bool,
+    pub on_ac_power: Option<bool>,
+    pub battery_percent: Option<u8>,
+    pub session_remaining_secs: Option<u64>,
+    pub paused_due_to_battery: bool,
+    pub closed_display_sleep_disabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -42,6 +62,17 @@ struct KeepAwakeRuntime {
     child: Option<Box<dyn KeepAwakeChild>>,
     helper: Option<KeepAwakeHelperState>,
     last_error: Option<String>,
+    secondary_child: Option<Box<dyn KeepAwakeChild>>,
+    secondary_helper: Option<KeepAwakeHelperState>,
+    monitor_cleanup: Option<PowerMonitorCleanup>,
+    session_end_at: Option<std::time::Instant>,
+    paused_due_to_battery: bool,
+    active_profile: Option<PowerProfile>,
+    on_ac_power: Option<bool>,
+    battery_percent: Option<u8>,
+    /// True when the privileged helper has been told to set SleepDisabled=true.
+    /// Cleared on disable or when the helper sends allowSleep.
+    closed_display_sleep_disabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,10 +81,42 @@ struct SupportStatus {
     message: Option<String>,
 }
 
+#[cfg(not(target_os = "macos"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BackendSpec {
     program: PathBuf,
     args: Vec<OsString>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PowerProfile {
+    prevent_system_sleep: bool,
+    prevent_display_sleep: bool,
+    prevent_screen_saver: bool,
+    ac_only: bool,
+    prevent_closed_display_sleep: bool,
+}
+
+impl PowerProfile {
+    fn from_config(config: &PowerConfig) -> Self {
+        Self {
+            prevent_system_sleep: true,
+            prevent_display_sleep: config.prevent_display_sleep,
+            prevent_screen_saver: config.prevent_screen_saver,
+            ac_only: config.ac_only_mode,
+            prevent_closed_display_sleep: config.prevent_closed_display_sleep,
+        }
+    }
+
+    fn default_profile() -> Self {
+        Self {
+            prevent_system_sleep: true,
+            prevent_display_sleep: false,
+            prevent_screen_saver: false,
+            ac_only: false,
+            prevent_closed_display_sleep: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,7 +153,7 @@ trait KeepAwakeChild: Send {
 
 trait KeepAwakeSpawner: Send + Sync {
     fn support_status(&self) -> SupportStatus;
-    fn spawn(&self) -> anyhow::Result<SpawnedKeepAwakeChild>;
+    fn spawn(&self, profile: &PowerProfile) -> anyhow::Result<SpawnedKeepAwakeChild>;
 }
 
 trait KeepAwakeProcessOps: Send + Sync {
@@ -105,6 +168,7 @@ struct ProcessKeepAwakeSpawner;
 #[derive(Debug)]
 struct SystemKeepAwakeProcessOps;
 
+#[cfg(not(target_os = "macos"))]
 struct TokioKeepAwakeChild {
     child: Child,
 }
@@ -155,6 +219,15 @@ impl KeepAwakeManager {
                 child: None,
                 helper: None,
                 last_error: None,
+                secondary_child: None,
+                secondary_helper: None,
+                monitor_cleanup: None,
+                session_end_at: None,
+                paused_due_to_battery: false,
+                active_profile: None,
+                on_ac_power: None,
+                battery_percent: None,
+                closed_display_sleep_disabled: false,
             })),
         }
     }
@@ -187,16 +260,42 @@ impl KeepAwakeManager {
 
     pub async fn status(&self) -> KeepAwakeStatus {
         let support = self.spawner.support_status();
-        let (active, helper_pid, last_error) = {
+        let (
+            active,
+            helper_pid,
+            last_error,
+            profile,
+            session_end_at,
+            on_ac_power,
+            battery_percent,
+            paused_due_to_battery,
+            display_inhibit_active,
+            closed_display_sleep_disabled,
+        ) = {
             let mut runtime = self.runtime.lock().await;
             self.sync_child_state(&mut runtime);
             (
                 runtime.child.is_some(),
                 runtime.helper.as_ref().map(|helper| helper.pid),
                 runtime.last_error.clone(),
+                runtime.active_profile.clone(),
+                runtime.session_end_at,
+                runtime.on_ac_power,
+                runtime.battery_percent,
+                runtime.paused_due_to_battery,
+                linux_display_inhibit_active(&runtime),
+                runtime.closed_display_sleep_disabled,
             )
         };
         let closed_display = closed_display_diagnostics(active, helper_pid).await;
+
+        let session_remaining_secs = session_end_at.map(|end| {
+            end.saturating_duration_since(std::time::Instant::now())
+                .as_secs()
+        });
+
+        let (display_sleep_prevented, screen_saver_prevented) =
+            display_prevention_status(active, profile.as_ref(), display_inhibit_active);
 
         KeepAwakeStatus {
             supported: support.supported,
@@ -210,10 +309,22 @@ impl KeepAwakeManager {
             } else {
                 last_error
             },
+            display_sleep_prevented,
+            screen_saver_prevented,
+            on_ac_power,
+            battery_percent,
+            session_remaining_secs,
+            paused_due_to_battery,
+            closed_display_sleep_disabled,
         }
     }
 
     pub async fn enable(&self) -> Result<(), String> {
+        self.enable_with_config(&PowerConfig::default()).await
+    }
+
+    pub async fn enable_with_config(&self, config: &PowerConfig) -> Result<(), String> {
+        let profile = PowerProfile::from_config(config);
         let support = self.spawner.support_status();
         if !support.supported {
             let message = support
@@ -225,12 +336,15 @@ impl KeepAwakeManager {
 
         let mut runtime = self.runtime.lock().await;
         self.sync_child_state(&mut runtime);
+        // Idempotent: if a child is already running, return success without
+        // updating the profile or monitor. Callers that need to change the
+        // active profile must call disable() first (set_power_settings does).
         if runtime.child.is_some() {
             runtime.last_error = None;
             return Ok(());
         }
 
-        match self.spawner.spawn() {
+        match self.spawner.spawn(&profile) {
             Ok(spawned) => {
                 if let Some(helper) = spawned.helper.as_ref() {
                     let helper = PersistedKeepAwakeHelper {
@@ -250,13 +364,47 @@ impl KeepAwakeManager {
                 runtime.child = Some(spawned.child);
                 runtime.helper = spawned.helper;
                 runtime.last_error = None;
+                runtime.active_profile = Some(profile.clone());
+                runtime.paused_due_to_battery = false;
                 drop(runtime);
+
+                // Spawn secondary child for Linux display inhibit if needed
+                #[cfg(target_os = "linux")]
+                if profile.prevent_display_sleep || profile.prevent_screen_saver {
+                    self.spawn_linux_display_inhibit().await;
+                }
+
+                // Ask privileged helper to disable closed-display sleep
+                #[cfg(target_os = "macos")]
+                if profile.prevent_closed_display_sleep {
+                    let success = try_prevent_closed_display_sleep().await;
+                    self.runtime.lock().await.closed_display_sleep_disabled = success;
+                }
 
                 tokio::time::sleep(KEEP_AWAKE_SPAWN_GRACE_PERIOD).await;
 
                 let mut runtime = self.runtime.lock().await;
                 self.sync_child_state(&mut runtime);
                 if runtime.child.is_some() {
+                    // Always start the monitor so the UI can show power source
+                    // status. AC-only, battery threshold, and session timer
+                    // features are gated inside the monitor/event-processor.
+                    let monitor_config = MonitorConfig {
+                        ac_only_mode: config.ac_only_mode,
+                        battery_threshold: config.battery_threshold,
+                        session_duration_secs: config.session_duration_secs,
+                    };
+                    let monitor = monitor::start_monitor(monitor_config);
+                    runtime.session_end_at = monitor.cleanup.session_end_at;
+                    runtime.monitor_cleanup = Some(monitor.cleanup);
+                    drop(runtime);
+
+                    let manager = self.clone();
+                    let event_rx = monitor.event_rx;
+                    tokio::spawn(async move {
+                        manager.process_monitor_events(event_rx).await;
+                    });
+
                     Ok(())
                 } else {
                     let message = runtime
@@ -279,6 +427,30 @@ impl KeepAwakeManager {
         let mut runtime = self.runtime.lock().await;
         self.sync_child_state(&mut runtime);
         runtime.last_error = None;
+        runtime.paused_due_to_battery = false;
+
+        // Restore closed-display sleep via privileged helper
+        #[cfg(target_os = "macos")]
+        if runtime.closed_display_sleep_disabled {
+            runtime.closed_display_sleep_disabled = false;
+            drop(runtime);
+            try_allow_closed_display_sleep().await;
+            runtime = self.runtime.lock().await;
+        }
+
+        // Stop monitor task
+        if let Some(cleanup) = runtime.monitor_cleanup.take() {
+            cleanup.shutdown().await;
+        }
+        runtime.session_end_at = None;
+        runtime.active_profile = None;
+
+        // Kill secondary child (Linux D-Bus inhibit)
+        if let Some(mut secondary) = runtime.secondary_child.take() {
+            let _ = secondary.kill().await;
+            let _ = secondary.wait().await;
+        }
+        runtime.secondary_helper = None;
 
         let Some(mut child) = runtime.child.take() else {
             runtime.helper = None;
@@ -323,6 +495,190 @@ impl KeepAwakeManager {
         }
     }
 
+    async fn process_monitor_events(
+        &self,
+        mut event_rx: tokio::sync::mpsc::Receiver<MonitorEvent>,
+    ) {
+        loop {
+            let event = event_rx.recv().await;
+
+            match event {
+                Some(MonitorEvent::SessionExpired) => {
+                    log::info!("keep awake session timer expired");
+                    let _ = self.disable().await;
+                    break;
+                }
+                Some(MonitorEvent::PowerSourcePolled {
+                    on_ac,
+                    battery_percent,
+                }) => {
+                    let mut runtime = self.runtime.lock().await;
+                    runtime.on_ac_power = Some(on_ac);
+                    runtime.battery_percent = battery_percent;
+                }
+                Some(MonitorEvent::AcStatusChanged { on_ac }) => {
+                    let mut runtime = self.runtime.lock().await;
+                    runtime.on_ac_power = Some(on_ac);
+
+                    if !on_ac {
+                        log::info!("keep awake pausing: switched to battery");
+                        runtime.paused_due_to_battery = true;
+                        // Kill primary child but keep monitor running
+                        if let Some(mut child) = runtime.child.take() {
+                            let _ = child.kill().await;
+                            let _ = child.wait().await;
+                        }
+                        runtime.helper = None;
+                        // Kill secondary child (Linux D-Bus inhibit)
+                        if let Some(mut secondary) = runtime.secondary_child.take() {
+                            let _ = secondary.kill().await;
+                            let _ = secondary.wait().await;
+                        }
+                        runtime.secondary_helper = None;
+                        // Restore closed-display sleep via helper
+                        #[cfg(target_os = "macos")]
+                        if runtime.closed_display_sleep_disabled {
+                            runtime.closed_display_sleep_disabled = false;
+                            drop(runtime);
+                            try_allow_closed_display_sleep().await;
+                            runtime = self.runtime.lock().await;
+                        }
+                        let _ = clear_helper_state(&self.state_path());
+                    } else if runtime.paused_due_to_battery {
+                        log::info!("keep awake resuming: AC power restored");
+                        let profile = runtime
+                            .active_profile
+                            .clone()
+                            .unwrap_or_else(PowerProfile::default_profile);
+                        drop(runtime);
+                        // Re-spawn children with the active profile
+                        match self.spawner.spawn(&profile) {
+                            Ok(spawned) => {
+                                let mut runtime = self.runtime.lock().await;
+
+                                // If disable() ran while the lock was released,
+                                // active_profile will be None and we must not
+                                // install the freshly spawned child — kill it
+                                // instead so keep-awake stays off.
+                                if runtime.active_profile.is_none() {
+                                    log::info!(
+                                        "AC-resume aborted: keep-awake was disabled during re-spawn"
+                                    );
+                                    let mut child = spawned.child;
+                                    let _ = child.kill().await;
+                                    let _ = child.wait().await;
+                                } else {
+                                    if let Some(helper) = spawned.helper.as_ref() {
+                                        let persisted = PersistedKeepAwakeHelper {
+                                            owner: self.current_process.clone(),
+                                            helper: helper.clone(),
+                                        };
+                                        let _ = save_helper_state(&self.state_path(), &persisted);
+                                    }
+                                    runtime.child = Some(spawned.child);
+                                    runtime.helper = spawned.helper;
+                                    runtime.last_error = None;
+                                    runtime.paused_due_to_battery = false;
+                                    drop(runtime);
+
+                                    // Re-spawn Linux display inhibit if needed
+                                    #[cfg(target_os = "linux")]
+                                    if profile.prevent_display_sleep || profile.prevent_screen_saver
+                                    {
+                                        self.spawn_linux_display_inhibit().await;
+                                    }
+
+                                    // Re-activate closed-display sleep prevention
+                                    #[cfg(target_os = "macos")]
+                                    if profile.prevent_closed_display_sleep {
+                                        let success = try_prevent_closed_display_sleep().await;
+                                        self.runtime.lock().await.closed_display_sleep_disabled =
+                                            success;
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                let mut runtime = self.runtime.lock().await;
+                                runtime.paused_due_to_battery = false;
+                                runtime.last_error = Some(format!(
+                                    "failed to resume keep awake on AC power: {error}"
+                                ));
+                            }
+                        }
+                    }
+                }
+                Some(MonitorEvent::BatteryLevel { percent }) => {
+                    log::info!("keep awake disabling: battery at {percent}%");
+                    {
+                        let mut runtime = self.runtime.lock().await;
+                        runtime.battery_percent = Some(percent);
+                    }
+                    if let Err(error) = self.disable().await {
+                        let mut runtime = self.runtime.lock().await;
+                        runtime.last_error = Some(format!(
+                            "failed to disable keep awake at battery threshold {percent}%: {error}"
+                        ));
+                        break;
+                    }
+                    if let Err(error) = save_keep_awake_enabled_preference(false).await {
+                        let mut runtime = self.runtime.lock().await;
+                        runtime.last_error = Some(format!(
+                            "keep awake disabled at battery threshold {percent}%, but failed to persist the preference: {error}"
+                        ));
+                    }
+                    break;
+                }
+                None => break,
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn spawn_linux_display_inhibit(&self) {
+        let spec = match resolve_display_inhibit_spec() {
+            Ok(Some(spec)) => spec,
+            Ok(None) => {
+                log::info!("linux display inhibit: gdbus/bash not available, skipping");
+                return;
+            }
+            Err(error) => {
+                log::warn!("linux display inhibit: {error}");
+                return;
+            }
+        };
+
+        let mut command = tokio::process::Command::new(&spec.program);
+        process_utils::configure_tokio_command(&mut command);
+        command
+            .args(&spec.args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+
+        match command.spawn() {
+            Ok(child) => {
+                let helper = child.id().map(|pid| KeepAwakeHelperState {
+                    pid,
+                    program: spec.program.display().to_string(),
+                    args: spec
+                        .args
+                        .iter()
+                        .map(|a| a.to_string_lossy().into_owned())
+                        .collect(),
+                    start_marker: read_process_start_marker(pid).ok().flatten(),
+                });
+                let mut runtime = self.runtime.lock().await;
+                runtime.secondary_child = Some(Box::new(TokioKeepAwakeChild { child }));
+                runtime.secondary_helper = helper;
+                log::info!("linux display inhibit child started");
+            }
+            Err(error) => {
+                log::warn!("failed to spawn linux display inhibit child: {error}");
+            }
+        }
+    }
+
     pub async fn shutdown(&self) -> Result<(), String> {
         self.disable().await
     }
@@ -356,6 +712,27 @@ impl KeepAwakeManager {
                 }
             }
             None => {}
+        }
+
+        // Also track the secondary child (Linux D-Bus display inhibit).
+        // If it exited unexpectedly, clear it so linux_display_inhibit_active()
+        // stops reporting the inhibit as active.
+        let secondary_outcome = runtime
+            .secondary_child
+            .as_mut()
+            .map(|child| child.try_wait());
+        match secondary_outcome {
+            Some(Ok(Some(_))) => {
+                runtime.secondary_child = None;
+                runtime.secondary_helper = None;
+                log::warn!("linux display inhibit child exited unexpectedly");
+            }
+            Some(Err(error)) => {
+                runtime.secondary_child = None;
+                runtime.secondary_helper = None;
+                log::warn!("failed to inspect linux display inhibit child: {error}");
+            }
+            Some(Ok(None)) | None => {}
         }
     }
 
@@ -456,12 +833,96 @@ impl KeepAwakeManager {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn linux_display_inhibit_active(runtime: &KeepAwakeRuntime) -> bool {
+    runtime.secondary_child.is_some()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn linux_display_inhibit_active(_runtime: &KeepAwakeRuntime) -> bool {
+    true
+}
+
+/// Best-effort: ask the privileged helper to set `SleepDisabled = true`.
+/// Falls back to `pmset -a disablesleep 1` via an admin-password dialog when
+/// the helper socket is not available.
+/// Logs on failure but does not return an error — the rest of keep-awake still
+/// works even if the helper is not installed.
+#[cfg(target_os = "macos")]
+async fn try_prevent_closed_display_sleep() -> bool {
+    if macos_helper::helper_socket_exists() {
+        match macos_helper::HelperConnection::connect().await {
+            Ok(mut conn) => match conn.prevent_sleep().await {
+                Ok(()) => {
+                    log::info!("closed-display sleep prevention activated via helper");
+                    return true;
+                }
+                Err(error) => {
+                    log::warn!("helper preventSleep failed: {error}");
+                }
+            },
+            Err(error) => {
+                log::warn!("failed to connect to keep-awake helper: {error}");
+            }
+        }
+    }
+
+    // Fallback: use pmset via osascript admin-password prompt
+    log::info!("helper socket not available, falling back to pmset via osascript");
+    macos_helper::pmset_set_disablesleep(true).await
+}
+
+/// Best-effort: restore `SleepDisabled = false` via the helper or pmset.
+#[cfg(target_os = "macos")]
+async fn try_allow_closed_display_sleep() {
+    if macos_helper::helper_socket_exists() {
+        match macos_helper::HelperConnection::connect().await {
+            Ok(mut conn) => {
+                if let Err(error) = conn.allow_sleep().await {
+                    log::warn!("helper allowSleep failed: {error}");
+                } else {
+                    log::info!("closed-display sleep prevention deactivated via helper");
+                    return;
+                }
+            }
+            Err(error) => {
+                log::warn!("failed to connect to keep-awake helper for allowSleep: {error}");
+            }
+        }
+    }
+
+    // Fallback: only restore via pmset if SleepDisabled is actually set,
+    // to avoid a spurious admin-password dialog on automatic disable events
+    // (AC-unplug, session expiry, battery threshold).
+    let is_set = tokio::task::spawn_blocking(macos::read_sleep_disabled)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false);
+    if is_set {
+        let _ = macos_helper::pmset_set_disablesleep(false).await;
+    }
+}
+
+fn display_prevention_status(
+    active: bool,
+    profile: Option<&PowerProfile>,
+    display_inhibit_active: bool,
+) -> (bool, bool) {
+    let display_sleep_prevented =
+        active && display_inhibit_active && profile.is_some_and(|p| p.prevent_display_sleep);
+    let screen_saver_prevented =
+        active && display_inhibit_active && profile.is_some_and(|p| p.prevent_screen_saver);
+    (display_sleep_prevented, screen_saver_prevented)
+}
+
 impl Default for KeepAwakeManager {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 #[async_trait]
 impl KeepAwakeChild for TokioKeepAwakeChild {
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
@@ -479,56 +940,70 @@ impl KeepAwakeChild for TokioKeepAwakeChild {
 
 impl KeepAwakeSpawner for ProcessKeepAwakeSpawner {
     fn support_status(&self) -> SupportStatus {
-        match resolve_backend_spec() {
-            Ok(_) => SupportStatus {
-                supported: true,
-                message: None,
-            },
-            Err(error) => SupportStatus {
-                supported: false,
-                message: Some(error),
-            },
+        #[cfg(target_os = "macos")]
+        {
+            macos::support_status()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            match resolve_backend_spec(&PowerProfile::default_profile()) {
+                Ok(_) => SupportStatus {
+                    supported: true,
+                    message: None,
+                },
+                Err(error) => SupportStatus {
+                    supported: false,
+                    message: Some(error),
+                },
+            }
         }
     }
 
-    fn spawn(&self) -> anyhow::Result<SpawnedKeepAwakeChild> {
-        let spec = resolve_backend_spec().map_err(anyhow::Error::msg)?;
-        let mut command = tokio::process::Command::new(&spec.program);
-        process_utils::configure_tokio_command(&mut command);
-        command
-            .args(&spec.args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
+    fn spawn(&self, profile: &PowerProfile) -> anyhow::Result<SpawnedKeepAwakeChild> {
+        #[cfg(target_os = "macos")]
+        {
+            macos::spawn(profile)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let spec = resolve_backend_spec(profile).map_err(anyhow::Error::msg)?;
+            let mut command = tokio::process::Command::new(&spec.program);
+            process_utils::configure_tokio_command(&mut command);
+            command
+                .args(&spec.args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .kill_on_drop(true);
 
-        let child = command.spawn().map_err(|error| {
-            anyhow::anyhow!(
-                "failed to start keep awake helper `{}`: {error}",
-                spec.program.display()
-            )
-        })?;
-        let helper = child.id().map(|pid| KeepAwakeHelperState {
-            pid,
-            program: spec.program.display().to_string(),
-            args: helper_command_args_fingerprint(&spec.program, &spec.args),
-            start_marker: read_process_start_marker(pid)
-                .map_err(|error| {
-                    log::warn!(
-                        "failed to read keep awake helper start marker for pid {}: {}",
-                        pid,
+            let child = command.spawn().map_err(|error| {
+                anyhow::anyhow!(
+                    "failed to start keep awake helper `{}`: {error}",
+                    spec.program.display()
+                )
+            })?;
+            let helper = child.id().map(|pid| KeepAwakeHelperState {
+                pid,
+                program: spec.program.display().to_string(),
+                args: helper_command_args_fingerprint(&spec.program, &spec.args),
+                start_marker: read_process_start_marker(pid)
+                    .map_err(|error| {
+                        log::warn!(
+                            "failed to read keep awake helper start marker for pid {}: {}",
+                            pid,
+                            error
+                        );
                         error
-                    );
-                    error
-                })
-                .ok()
-                .flatten(),
-        });
+                    })
+                    .ok()
+                    .flatten(),
+            });
 
-        Ok(SpawnedKeepAwakeChild {
-            child: Box::new(TokioKeepAwakeChild { child }),
-            helper,
-        })
+            Ok(SpawnedKeepAwakeChild {
+                child: Box::new(TokioKeepAwakeChild { child }),
+                helper,
+            })
+        }
     }
 }
 
@@ -552,6 +1027,18 @@ fn default_state_dir() -> PathBuf {
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."))
         .join("keep-awake-helpers")
+}
+
+async fn save_keep_awake_enabled_preference(enabled: bool) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        AppConfig::mutate(|config| {
+            config.power.keep_awake_enabled = enabled;
+            Ok(())
+        })
+        .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn current_process_identity() -> ProcessIdentity {
@@ -869,15 +1356,28 @@ fn exit_status_message(status: ExitStatus) -> String {
     }
 }
 
+fn exit_status_from_code(code: i32) -> ExitStatus {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+
+        ExitStatus::from_raw(code << 8)
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::ExitStatusExt;
+
+        ExitStatus::from_raw(code as u32)
+    }
+}
+
 #[cfg(target_os = "macos")]
 async fn closed_display_diagnostics(
-    _keep_awake_active: bool,
+    keep_awake_active: bool,
     _helper_pid: Option<u32>,
 ) -> ClosedDisplayDiagnostics {
-    // This backend uses public caffeinate assertions only. Real-world validation on macOS
-    // shows that these assertions do not reliably prove clamshell behavior, so the UI
-    // must keep closed-display status as unknown unless a stronger backend is added.
-    ClosedDisplayDiagnostics::default()
+    macos::closed_display_diagnostics(keep_awake_active).await
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -888,22 +1388,8 @@ async fn closed_display_diagnostics(
     ClosedDisplayDiagnostics::default()
 }
 
-fn resolve_backend_spec() -> Result<BackendSpec, String> {
-    #[cfg(target_os = "macos")]
-    {
-        let owner_pid = std::process::id();
-        let caffeinate = crate::runtime_env::resolve_executable("caffeinate")
-            .ok_or_else(|| "macOS keep awake requires the `caffeinate` utility".to_string())?;
-        return Ok(BackendSpec {
-            program: caffeinate,
-            args: vec![
-                OsString::from("-i"),
-                OsString::from("-w"),
-                OsString::from(owner_pid.to_string()),
-            ],
-        });
-    }
-
+#[cfg(not(target_os = "macos"))]
+fn resolve_backend_spec(profile: &PowerProfile) -> Result<BackendSpec, String> {
     #[cfg(target_os = "linux")]
     {
         let owner_pid = std::process::id();
@@ -914,10 +1400,14 @@ fn resolve_backend_spec() -> Result<BackendSpec, String> {
             let tail = tail
                 .clone()
                 .ok_or_else(|| "Linux keep awake requires the `tail` utility".to_string())?;
+
+            // Build --what= argument — always inhibit handle-lid-switch when active
+            let what_arg = "--what=idle:sleep:handle-lid-switch";
+
             return Ok(BackendSpec {
                 program: systemd_inhibit,
                 args: vec![
-                    OsString::from("--what=idle:sleep"),
+                    OsString::from(what_arg),
                     OsString::from("--mode=block"),
                     OsString::from("--who=Panes"),
                     OsString::from("--why=Keep system awake while Panes is open"),
@@ -952,14 +1442,54 @@ fn resolve_backend_spec() -> Result<BackendSpec, String> {
             .ok_or_else(|| "Windows keep awake requires PowerShell".to_string())?;
         return Ok(BackendSpec {
             program: powershell,
-            args: build_windows_keep_awake_args(owner_pid),
+            args: build_windows_keep_awake_args(owner_pid, profile),
         });
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
+        let _ = profile;
         Err("keep awake is not supported on this platform".to_string())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn resolve_display_inhibit_spec() -> Result<Option<BackendSpec>, String> {
+    let gdbus = crate::runtime_env::resolve_executable("gdbus");
+    let bash = crate::runtime_env::resolve_executable("bash");
+    let tail = crate::runtime_env::resolve_executable("tail");
+
+    if gdbus.is_none() || bash.is_none() || tail.is_none() {
+        return Ok(None); // graceful degradation
+    }
+
+    let gdbus_path = gdbus.unwrap();
+    let bash = bash.unwrap();
+    let tail_path = tail.unwrap();
+    let owner_pid = std::process::id();
+
+    // Self-contained shell script that:
+    // 1. Calls org.freedesktop.ScreenSaver.Inhibit and captures the cookie
+    // 2. Sets a trap to call UnInhibit on exit
+    // 3. Waits for the owner PID to exit via tail --pid
+    let script = format!(
+        "COOKIE=$({gdbus} call --session --dest org.freedesktop.ScreenSaver \
+         --object-path /org/freedesktop/ScreenSaver \
+         --method org.freedesktop.ScreenSaver.Inhibit \"Panes\" \"Keep display awake\" 2>/dev/null \
+         | tr -dc '0-9') && \
+         [ -n \"$COOKIE\" ] && \
+         trap \"{gdbus} call --session --dest org.freedesktop.ScreenSaver \
+         --object-path /org/freedesktop/ScreenSaver \
+         --method org.freedesktop.ScreenSaver.UnInhibit $COOKIE 2>/dev/null\" EXIT && \
+         {tail} --pid={owner_pid} -f /dev/null",
+        gdbus = gdbus_path.display(),
+        tail = tail_path.display(),
+    );
+
+    Ok(Some(BackendSpec {
+        program: bash,
+        args: vec![OsString::from("-c"), OsString::from(script)],
+    }))
 }
 
 #[cfg(target_os = "windows")]
@@ -970,7 +1500,7 @@ fn resolve_windows_powershell() -> Option<PathBuf> {
 }
 
 #[cfg(any(target_os = "windows", test))]
-fn build_windows_keep_awake_args(owner_pid: u32) -> Vec<OsString> {
+fn build_windows_keep_awake_args(owner_pid: u32, profile: &PowerProfile) -> Vec<OsString> {
     vec![
         OsString::from("-NoLogo"),
         OsString::from("-NoProfile"),
@@ -980,12 +1510,44 @@ fn build_windows_keep_awake_args(owner_pid: u32) -> Vec<OsString> {
         OsString::from("-WindowStyle"),
         OsString::from("Hidden"),
         OsString::from("-Command"),
-        OsString::from(build_windows_keep_awake_script(owner_pid)),
+        OsString::from(build_windows_keep_awake_script(owner_pid, profile)),
     ]
 }
 
 #[cfg(any(target_os = "windows", test))]
-fn build_windows_keep_awake_script(owner_pid: u32) -> String {
+fn build_windows_keep_awake_script(owner_pid: u32, profile: &PowerProfile) -> String {
+    let mut flags = vec!["$continuous"];
+    if profile.prevent_system_sleep {
+        flags.push("$systemRequired");
+    }
+    if profile.prevent_display_sleep {
+        flags.push("$displayRequired");
+    }
+    let flags_expr = flags.join(" -bor ");
+
+    let screen_saver_type = if profile.prevent_screen_saver {
+        "public static class PanesScreenSaver { \
+         [DllImport(\"user32.dll\", SetLastError=true)] \
+         public static extern bool SystemParametersInfo(uint action, uint param, IntPtr vparam, uint init); \
+         } "
+    } else {
+        ""
+    };
+
+    let screen_saver_disable = if profile.prevent_screen_saver {
+        "$screenSaverWasActive = (Get-ItemProperty -Path 'HKCU:\\Control Panel\\Desktop' -Name ScreenSaveActive -ErrorAction SilentlyContinue).ScreenSaveActive -eq '1'; \
+         [PanesScreenSaver]::SystemParametersInfo(0x11, 0, [IntPtr]::Zero, 0) | Out-Null; "
+    } else {
+        ""
+    };
+
+    let screen_saver_restore = if profile.prevent_screen_saver {
+        "$screenSaverRestoreValue = if ($screenSaverWasActive) { 1 } else { 0 }; \
+         [PanesScreenSaver]::SystemParametersInfo(0x11, $screenSaverRestoreValue, [IntPtr]::Zero, 0) | Out-Null; "
+    } else {
+        ""
+    };
+
     format!(
         "$marker = '{WINDOWS_KEEP_AWAKE_MARKER}'; \
 $ownerPid = {owner_pid}; \
@@ -994,18 +1556,22 @@ using System.Runtime.InteropServices; \
 public static class PanesKeepAwakeNative {{ \
   [DllImport(\"kernel32.dll\", SetLastError=true)] \
   public static extern uint SetThreadExecutionState(uint esFlags); \
-}}\
+}} \
+{screen_saver_type}\
 '@; \
 Add-Type -TypeDefinition $signature; \
 $continuous = 0x80000000; \
 $systemRequired = 0x00000001; \
+$displayRequired = 0x00000002; \
+{screen_saver_disable}\
 try {{ \
   while (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue) {{ \
-    [PanesKeepAwakeNative]::SetThreadExecutionState($continuous -bor $systemRequired) | Out-Null; \
+    [PanesKeepAwakeNative]::SetThreadExecutionState({flags_expr}) | Out-Null; \
     Start-Sleep -Seconds 30; \
   }} \
 }} finally {{ \
   [PanesKeepAwakeNative]::SetThreadExecutionState($continuous) | Out-Null; \
+  {screen_saver_restore}\
 }}"
     )
 }
@@ -1013,8 +1579,38 @@ try {{ \
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{collections::HashMap, sync::Mutex as StdMutex};
+    use std::{collections::HashMap, fs, sync::Mutex as StdMutex};
     use uuid::Uuid;
+
+    const APP_DATA_ENV_VARS: [&str; 4] = ["HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA"];
+
+    fn with_temp_app_data_env<T>(f: impl FnOnce() -> T) -> T {
+        let _guard = crate::config::app_config::app_data_env_lock()
+            .lock()
+            .expect("env lock poisoned");
+        let previous: Vec<(&str, Option<std::ffi::OsString>)> = APP_DATA_ENV_VARS
+            .into_iter()
+            .map(|key| (key, std::env::var_os(key)))
+            .collect();
+        let root = std::env::temp_dir().join(format!("panes-power-home-{}", Uuid::new_v4()));
+        let local_app_data = root.join("AppData").join("Local");
+        let roaming_app_data = root.join("AppData").join("Roaming");
+        fs::create_dir_all(&local_app_data).expect("temp local app data should exist");
+        fs::create_dir_all(&roaming_app_data).expect("temp roaming app data should exist");
+        std::env::set_var("HOME", &root);
+        std::env::set_var("USERPROFILE", &root);
+        std::env::set_var("LOCALAPPDATA", &local_app_data);
+        std::env::set_var("APPDATA", &roaming_app_data);
+        let result = f();
+        for (key, value) in previous {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        let _ = fs::remove_dir_all(&root);
+        result
+    }
 
     struct FakeSpawner {
         support: SupportStatus,
@@ -1094,7 +1690,7 @@ mod tests {
             self.support.clone()
         }
 
-        fn spawn(&self) -> anyhow::Result<SpawnedKeepAwakeChild> {
+        fn spawn(&self, _profile: &PowerProfile) -> anyhow::Result<SpawnedKeepAwakeChild> {
             match self
                 .next_spawn
                 .lock()
@@ -1326,6 +1922,104 @@ mod tests {
         assert!(error.contains("failed to stop keep awake helper"));
         assert!(manager.status().await.active);
         assert!(state_path.exists());
+    }
+
+    #[tokio::test]
+    async fn ac_resume_failure_preserves_paused_state_and_reports_error() {
+        let manager = KeepAwakeManager::with_dependencies(
+            Arc::new(FakeSpawner {
+                support: SupportStatus {
+                    supported: true,
+                    message: None,
+                },
+                next_spawn: StdMutex::new(vec![Err(anyhow::anyhow!("resume failed"))]),
+            }),
+            Arc::new(FakeProcessOps::default()),
+            temp_state_dir(),
+            test_process(40),
+        );
+
+        {
+            let mut runtime = manager.runtime.lock().await;
+            runtime.active_profile = Some(PowerProfile {
+                ac_only: true,
+                ..PowerProfile::default_profile()
+            });
+            runtime.paused_due_to_battery = true;
+            runtime.on_ac_power = Some(false);
+        }
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel(2);
+        event_tx
+            .send(MonitorEvent::AcStatusChanged { on_ac: true })
+            .await
+            .expect("event should send");
+        drop(event_tx);
+
+        manager.process_monitor_events(event_rx).await;
+
+        let status = manager.status().await;
+        assert!(!status.active);
+        assert_eq!(status.on_ac_power, Some(true));
+        assert!(!status.paused_due_to_battery);
+        assert_eq!(
+            status.message.as_deref(),
+            Some("failed to resume keep awake on AC power: resume failed")
+        );
+    }
+
+    #[test]
+    fn battery_threshold_disables_preference_instead_of_leaving_paused_state() {
+        with_temp_app_data_env(|| {
+            AppConfig::mutate(|config| {
+                config.power.keep_awake_enabled = true;
+                Ok(())
+            })
+            .expect("config should save");
+
+            let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
+            runtime.block_on(async {
+                let (child, _state) = FakeChildHandle::new(0);
+                let spawned = make_spawn(child, 501);
+                let manager = KeepAwakeManager::with_dependencies(
+                    Arc::new(FakeSpawner {
+                        support: SupportStatus {
+                            supported: true,
+                            message: None,
+                        },
+                        next_spawn: StdMutex::new(Vec::new()),
+                    }),
+                    Arc::new(FakeProcessOps::default()),
+                    temp_state_dir(),
+                    test_process(41),
+                );
+
+                {
+                    let mut runtime = manager.runtime.lock().await;
+                    runtime.child = Some(spawned.child);
+                    runtime.helper = spawned.helper;
+                    runtime.active_profile = Some(PowerProfile::default_profile());
+                }
+
+                let (event_tx, event_rx) = tokio::sync::mpsc::channel(2);
+                event_tx
+                    .send(MonitorEvent::BatteryLevel { percent: 19 })
+                    .await
+                    .expect("event should send");
+                drop(event_tx);
+
+                manager.process_monitor_events(event_rx).await;
+
+                let status = manager.status().await;
+                assert!(!status.active);
+                assert!(!status.paused_due_to_battery);
+                assert_eq!(status.battery_percent, Some(19));
+                assert_eq!(status.message, None);
+
+                let config = AppConfig::load_or_create().expect("config should load");
+                assert!(!config.power.keep_awake_enabled);
+            });
+        });
     }
 
     #[test]
@@ -1571,36 +2265,11 @@ mod tests {
         assert!(!valid_state_path.exists());
     }
 
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn macos_backend_waits_on_the_owner_process() {
-        let spec = resolve_backend_spec().expect("macOS backend should resolve");
-        let args = spec
-            .args
-            .iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-
-        assert!(args.iter().any(|arg| arg == "-i"));
-        assert!(args.iter().any(|arg| arg == "-w"));
-        assert!(args
-            .iter()
-            .any(|arg| arg == &std::process::id().to_string()));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[tokio::test]
-    async fn macos_closed_display_diagnostics_remain_unknown() {
-        let diagnostics = closed_display_diagnostics(true, Some(101)).await;
-
-        assert_eq!(diagnostics.supports_closed_display, None);
-        assert_eq!(diagnostics.closed_display_active, None);
-    }
-
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_backend_blocks_sleep_and_idle_for_current_process() {
-        let spec = resolve_backend_spec().expect("linux backend should resolve");
+        let profile = PowerProfile::default_profile();
+        let spec = resolve_backend_spec(&profile).expect("linux backend should resolve");
         let program = spec.program.to_string_lossy().into_owned();
         let args = spec
             .args
@@ -1609,7 +2278,9 @@ mod tests {
             .collect::<Vec<_>>();
 
         if program.contains("systemd-inhibit") {
-            assert!(args.iter().any(|arg| arg == "--what=idle:sleep"));
+            assert!(args
+                .iter()
+                .any(|arg| arg == "--what=idle:sleep:handle-lid-switch"));
         } else {
             assert!(program.contains("gnome-session-inhibit"));
             assert!(args.windows(2).any(|pair| pair == ["--inhibit", "suspend"]));
@@ -1650,7 +2321,8 @@ mod tests {
 
     #[test]
     fn windows_backend_script_tracks_owner_process_and_prevents_sleep() {
-        let args = build_windows_keep_awake_args(77)
+        let profile = PowerProfile::default_profile();
+        let args = build_windows_keep_awake_args(77, &profile)
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
@@ -1668,10 +2340,91 @@ mod tests {
     }
 
     #[test]
+    fn windows_display_required_flag_in_script() {
+        let profile = PowerProfile {
+            prevent_display_sleep: true,
+            ..PowerProfile::default_profile()
+        };
+        let args = build_windows_keep_awake_args(77, &profile);
+        let script = args.last().unwrap().to_string_lossy().into_owned();
+        assert!(script.contains("$displayRequired"));
+        assert!(script.contains("$continuous -bor $systemRequired -bor $displayRequired"));
+    }
+
+    #[test]
+    fn windows_screen_saver_disable_in_script() {
+        let profile = PowerProfile {
+            prevent_screen_saver: true,
+            ..PowerProfile::default_profile()
+        };
+        let args = build_windows_keep_awake_args(77, &profile);
+        let script = args.last().unwrap().to_string_lossy().into_owned();
+        assert!(script.contains("PanesScreenSaver"));
+        assert!(script.contains("SystemParametersInfo"));
+        assert!(script.contains("ScreenSaveActive"));
+        assert!(script
+            .contains("$screenSaverRestoreValue = if ($screenSaverWasActive) { 1 } else { 0 }"));
+        assert!(script.contains("SystemParametersInfo(0x11, $screenSaverRestoreValue"));
+    }
+
+    #[test]
+    fn display_prevention_status_requires_active_display_inhibit() {
+        let profile = PowerProfile {
+            prevent_display_sleep: true,
+            prevent_screen_saver: true,
+            ..PowerProfile::default_profile()
+        };
+
+        assert_eq!(
+            display_prevention_status(true, Some(&profile), false),
+            (false, false)
+        );
+        assert_eq!(
+            display_prevention_status(true, Some(&profile), true),
+            (true, true)
+        );
+        assert_eq!(
+            display_prevention_status(false, Some(&profile), true),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn profile_from_default_config() {
+        let config = PowerConfig::default();
+        let profile = PowerProfile::from_config(&config);
+        assert!(profile.prevent_system_sleep);
+        assert!(!profile.prevent_display_sleep);
+        assert!(!profile.prevent_screen_saver);
+        assert!(!profile.ac_only);
+        assert!(!profile.prevent_closed_display_sleep);
+    }
+
+    #[test]
+    fn profile_from_full_config() {
+        let config = PowerConfig {
+            keep_awake_enabled: true,
+            prevent_display_sleep: true,
+            prevent_screen_saver: true,
+            ac_only_mode: true,
+            battery_threshold: Some(20),
+            session_duration_secs: Some(3600),
+            prevent_closed_display_sleep: true,
+        };
+        let profile = PowerProfile::from_config(&config);
+        assert!(profile.prevent_system_sleep);
+        assert!(profile.prevent_display_sleep);
+        assert!(profile.prevent_screen_saver);
+        assert!(profile.ac_only);
+        assert!(profile.prevent_closed_display_sleep);
+    }
+
+    #[test]
     fn powershell_helper_fingerprint_uses_marker_instead_of_full_script() {
         let program =
             PathBuf::from("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-        let args = build_windows_keep_awake_args(88);
+        let profile = PowerProfile::default_profile();
+        let args = build_windows_keep_awake_args(88, &profile);
         let fingerprint = helper_command_args_fingerprint(&program, &args);
 
         assert!(fingerprint.iter().any(|arg| arg == "-NoProfile"));

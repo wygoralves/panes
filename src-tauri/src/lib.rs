@@ -65,7 +65,9 @@ pub fn run() {
         log::warn!("failed to reclaim stale keep awake helper: {error}");
     }
     if app_config.power.keep_awake_enabled {
-        if let Err(error) = tauri::async_runtime::block_on(keep_awake.enable()) {
+        if let Err(error) =
+            tauri::async_runtime::block_on(keep_awake.enable_with_config(&app_config.power))
+        {
             log::warn!("failed to reapply keep awake on startup: {error}");
         }
     }
@@ -168,6 +170,10 @@ pub fn run() {
             commands::app::set_app_locale,
             commands::power::get_keep_awake_state,
             commands::power::set_keep_awake_enabled,
+            commands::power::get_power_settings,
+            commands::power::set_power_settings,
+            commands::power::get_helper_status,
+            commands::power::register_keep_awake_helper,
             commands::chat::send_message,
             commands::chat::start_codex_review,
             commands::chat::steer_message,
