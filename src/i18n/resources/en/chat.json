@@ -326,6 +326,7 @@
     },
     "approvalActions": {
       "allow": "Allow",
+      "answerBelow": "Answer below",
       "cancel": "Cancel",
       "deny": "Deny",
       "allowSession": "Allow session",

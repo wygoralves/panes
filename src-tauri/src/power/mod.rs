@@ -112,6 +112,24 @@ struct TokioKeepAwakeChild {
 const KEEP_AWAKE_SPAWN_GRACE_PERIOD: Duration = Duration::from_millis(150);
 const WINDOWS_KEEP_AWAKE_MARKER: &str = "PANES_KEEP_AWAKE_WINDOWS";
 
+#[cfg(any(target_os = "linux", test))]
+fn build_linux_gnome_inhibit_args(owner_pid: u32, tail: &Path) -> Vec<OsString> {
+    vec![
+        OsString::from("--app-id"),
+        OsString::from("Panes"),
+        OsString::from("--inhibit"),
+        OsString::from("suspend"),
+        OsString::from("--inhibit"),
+        OsString::from("idle"),
+        OsString::from("--reason"),
+        OsString::from("Keep system awake while Panes is open"),
+        tail.as_os_str().to_os_string(),
+        OsString::from(format!("--pid={owner_pid}")),
+        OsString::from("-f"),
+        OsString::from("/dev/null"),
+    ]
+}
+
 impl KeepAwakeManager {
     pub fn new() -> Self {
         Self::with_dependencies(
@@ -889,23 +907,42 @@ fn resolve_backend_spec() -> Result<BackendSpec, String> {
     #[cfg(target_os = "linux")]
     {
         let owner_pid = std::process::id();
-        let systemd_inhibit = crate::runtime_env::resolve_executable("systemd-inhibit")
-            .ok_or_else(|| "Linux keep awake requires `systemd-inhibit`".to_string())?;
-        let tail = crate::runtime_env::resolve_executable("tail")
-            .ok_or_else(|| "Linux keep awake requires the `tail` utility".to_string())?;
-        return Ok(BackendSpec {
-            program: systemd_inhibit,
-            args: vec![
-                OsString::from("--what=idle:sleep"),
-                OsString::from("--mode=block"),
-                OsString::from("--who=Panes"),
-                OsString::from("--why=Keep system awake while Panes is open"),
-                tail.into_os_string(),
-                OsString::from(format!("--pid={owner_pid}")),
-                OsString::from("-f"),
-                OsString::from("/dev/null"),
-            ],
-        });
+        let tail = crate::runtime_env::resolve_executable("tail");
+
+        // Try systemd-inhibit first (covers most Linux distributions).
+        if let Some(systemd_inhibit) = crate::runtime_env::resolve_executable("systemd-inhibit") {
+            let tail = tail
+                .clone()
+                .ok_or_else(|| "Linux keep awake requires the `tail` utility".to_string())?;
+            return Ok(BackendSpec {
+                program: systemd_inhibit,
+                args: vec![
+                    OsString::from("--what=idle:sleep"),
+                    OsString::from("--mode=block"),
+                    OsString::from("--who=Panes"),
+                    OsString::from("--why=Keep system awake while Panes is open"),
+                    tail.into_os_string(),
+                    OsString::from(format!("--pid={owner_pid}")),
+                    OsString::from("-f"),
+                    OsString::from("/dev/null"),
+                ],
+            });
+        }
+
+        // Fallback for non-systemd distros: try gnome-session-inhibit.
+        if let Some(gnome_inhibit) = crate::runtime_env::resolve_executable("gnome-session-inhibit")
+        {
+            let tail =
+                tail.ok_or_else(|| "Linux keep awake requires the `tail` utility".to_string())?;
+            return Ok(BackendSpec {
+                program: gnome_inhibit,
+                args: build_linux_gnome_inhibit_args(owner_pid, &tail),
+            });
+        }
+
+        return Err(
+            "Linux keep awake requires `systemd-inhibit` or `gnome-session-inhibit`".to_string(),
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -1564,17 +1601,51 @@ mod tests {
     #[test]
     fn linux_backend_blocks_sleep_and_idle_for_current_process() {
         let spec = resolve_backend_spec().expect("linux backend should resolve");
+        let program = spec.program.to_string_lossy().into_owned();
         let args = spec
             .args
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        assert!(args.iter().any(|arg| arg == "--what=idle:sleep"));
+
+        if program.contains("systemd-inhibit") {
+            assert!(args.iter().any(|arg| arg == "--what=idle:sleep"));
+        } else {
+            assert!(program.contains("gnome-session-inhibit"));
+            assert!(args.windows(2).any(|pair| pair == ["--inhibit", "suspend"]));
+            assert!(args.windows(2).any(|pair| pair == ["--inhibit", "idle"]));
+        }
         assert!(args.iter().any(|arg| arg == "-f"));
         assert!(args.iter().any(|arg| arg == "/dev/null"));
         assert!(args
             .iter()
             .any(|arg| arg == format!("--pid={}", std::process::id())));
+    }
+
+    #[test]
+    fn linux_gnome_backend_args_identify_app_and_repeat_inhibits() {
+        let args = build_linux_gnome_inhibit_args(77, Path::new("/usr/bin/tail"))
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            vec![
+                "--app-id".to_string(),
+                "Panes".to_string(),
+                "--inhibit".to_string(),
+                "suspend".to_string(),
+                "--inhibit".to_string(),
+                "idle".to_string(),
+                "--reason".to_string(),
+                "Keep system awake while Panes is open".to_string(),
+                "/usr/bin/tail".to_string(),
+                "--pid=77".to_string(),
+                "-f".to_string(),
+                "/dev/null".to_string(),
+            ]
+        );
     }
 
     #[test]

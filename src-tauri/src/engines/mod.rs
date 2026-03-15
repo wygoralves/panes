@@ -157,25 +157,43 @@ pub fn normalize_approval_response_for_engine(
         .as_object()
         .ok_or_else(|| "Claude approval response must be a JSON object".to_string())?;
 
-    if object.len() != 1 || !object.contains_key("decision") {
+    if object.contains_key("answers") && object.len() == 1 {
+        return Ok(response);
+    }
+
+    if object.len() != 1 {
         return Err(
-            "Claude approval response must include only an explicit `decision` field".to_string(),
+            "Claude approval response must include either only an explicit `decision` field or only an `answers` object".to_string(),
         );
     }
 
     let raw_decision = object
         .get("decision")
+        .or_else(|| object.get("action"))
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "Claude approval response requires a non-empty `decision`".to_string())?;
-    let normalized_decision =
-        normalize_claude_approval_decision(raw_decision).ok_or_else(|| {
-            "unsupported Claude approval decision. expected one of: accept, decline, deny, accept_for_session"
-                .to_string()
-        })?;
+        .filter(|value| !value.is_empty());
 
-    Ok(json!({ "decision": normalized_decision }))
+    if let Some(raw_decision) = raw_decision {
+        let normalized_decision =
+            normalize_claude_approval_decision(raw_decision).or_else(|| {
+                if raw_decision.eq_ignore_ascii_case("cancel") {
+                    Some("decline")
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                "unsupported Claude approval decision. expected one of: accept, decline, deny, accept_for_session"
+                    .to_string()
+            })?;
+
+        return Ok(json!({ "decision": normalized_decision }));
+    }
+
+    Err(
+        "Claude approval response must include either an explicit `decision` field or an `answers` object".to_string(),
+    )
 }
 
 pub fn normalize_claude_approval_decision(value: &str) -> Option<&'static str> {
@@ -715,6 +733,11 @@ mod tests {
             json!({ "decision": "accept", "extra": true })
         )
         .is_err());
+        assert!(normalize_approval_response_for_engine(
+            "claude",
+            json!({ "answers": {}, "decision": "accept" })
+        )
+        .is_err());
     }
 
     #[test]
@@ -731,6 +754,36 @@ mod tests {
             )
             .unwrap(),
             json!({ "decision": "accept_for_session" })
+        );
+        assert_eq!(
+            normalize_approval_response_for_engine("claude", json!({ "action": "decline" }))
+                .unwrap(),
+            json!({ "decision": "decline" })
+        );
+        assert_eq!(
+            normalize_approval_response_for_engine("claude", json!({ "action": "cancel" }))
+                .unwrap(),
+            json!({ "decision": "decline" })
+        );
+    }
+
+    #[test]
+    fn normalize_claude_approval_response_accepts_questionnaire_answers() {
+        assert_eq!(
+            normalize_approval_response_for_engine(
+                "claude",
+                json!({
+                    "answers": {
+                        "question-1": { "answers": ["Use pnpm"] }
+                    }
+                })
+            )
+            .unwrap(),
+            json!({
+                "answers": {
+                    "question-1": { "answers": ["Use pnpm"] }
+                }
+            })
         );
     }
 }

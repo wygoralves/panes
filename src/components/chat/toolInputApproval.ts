@@ -59,6 +59,24 @@ export function requiresCustomApprovalPayload(details?: Record<string, unknown>)
   return isDynamicToolCallApproval(details) || isMcpElicitationApproval(details);
 }
 
+export function isSupportedClaudeToolInputApproval(
+  details?: Record<string, unknown>
+): boolean {
+  if (!isRequestUserInputApproval(details)) {
+    return false;
+  }
+
+  const normalizedDetails = details ?? {};
+  if (parseToolInputQuestions(normalizedDetails).length === 0) {
+    return false;
+  }
+
+  return (
+    parseProposedExecpolicyAmendment(normalizedDetails).length === 0 &&
+    parseProposedNetworkPolicyAmendments(normalizedDetails).length === 0
+  );
+}
+
 export function defaultAdvancedApprovalPayload(
   details?: Record<string, unknown>
 ): ApprovalResponse {
