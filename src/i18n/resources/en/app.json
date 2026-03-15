@@ -413,6 +413,8 @@
     "duration1h": "1 hour",
     "duration2h": "2 hours",
     "durationCustom": "Custom",
+    "customHours": "h",
+    "customMinutesShort": "m",
     "customMinutes": "minutes",
     "statusSection": "Status",
     "statusPower": "Power",

@@ -33,6 +33,7 @@ type SessionMode = "indefinite" | "fixed";
 interface SessionState {
   sessionMode: SessionMode;
   sessionDuration: number;
+  customHours: string;
   customMinutes: string;
 }
 
@@ -40,11 +41,36 @@ function isPresetDuration(durationSecs: number) {
   return DURATION_PRESETS.some((preset) => preset.value === durationSecs);
 }
 
+/** True when either custom field has a non-empty value. */
+function hasCustomTime(customHours: string, customMinutes: string) {
+  return customHours.trim() !== "" || customMinutes.trim() !== "";
+}
+
+/** Convert separate h/m strings to total seconds. Returns null if both are empty. */
+export function customTimeToSecs(customHours: string, customMinutes: string): number | null {
+  const h = Number(customHours.trim() || "0");
+  const m = Number(customMinutes.trim() || "0");
+  if ((!Number.isFinite(h) || h < 0) && (!Number.isFinite(m) || m < 0)) return null;
+  const totalSecs = Math.round((Math.max(0, h) * 3600) + (Math.max(0, m) * 60));
+  return totalSecs > 0 ? totalSecs : null;
+}
+
+/** Decompose seconds into hours + minutes strings for the custom inputs. */
+export function secsToCustomTime(secs: number): { customHours: string; customMinutes: string } {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  return {
+    customHours: h > 0 ? String(h) : "",
+    customMinutes: m > 0 ? String(m) : "",
+  };
+}
+
 export function deriveSessionState(sessionDurationSecs: number | null | undefined): SessionState {
   if (sessionDurationSecs == null) {
     return {
       sessionMode: "indefinite",
       sessionDuration: DEFAULT_SESSION_DURATION_SECS,
+      customHours: "",
       customMinutes: "",
     };
   }
@@ -53,25 +79,30 @@ export function deriveSessionState(sessionDurationSecs: number | null | undefine
     return {
       sessionMode: "fixed",
       sessionDuration: sessionDurationSecs,
+      customHours: "",
       customMinutes: "",
     };
   }
 
+  const { customHours, customMinutes } = secsToCustomTime(sessionDurationSecs);
   return {
     sessionMode: "fixed",
     sessionDuration: sessionDurationSecs,
-    customMinutes: String(Math.round(sessionDurationSecs / 60)),
+    customHours,
+    customMinutes,
   };
 }
 
 export function normalizeFixedSessionState(
   sessionDuration: number,
+  customHours: string,
   customMinutes: string,
 ): SessionState {
-  if (customMinutes.trim()) {
+  if (hasCustomTime(customHours, customMinutes)) {
     return {
       sessionMode: "fixed",
       sessionDuration,
+      customHours,
       customMinutes,
     };
   }
@@ -80,6 +111,7 @@ export function normalizeFixedSessionState(
     return {
       sessionMode: "fixed",
       sessionDuration,
+      customHours: "",
       customMinutes: "",
     };
   }
@@ -87,35 +119,30 @@ export function normalizeFixedSessionState(
   return {
     sessionMode: "fixed",
     sessionDuration: DEFAULT_SESSION_DURATION_SECS,
+    customHours: "",
     customMinutes: "",
   };
 }
 
-export function applyCustomMinutesInput(
-  rawValue: string,
+export function applyCustomTimeInput(
+  hours: string,
+  minutes: string,
   currentSessionDuration: number,
-): Pick<SessionState, "sessionDuration" | "customMinutes"> {
-  const trimmedValue = rawValue.trim();
-  if (!trimmedValue) {
-    const fallback = normalizeFixedSessionState(currentSessionDuration, "");
+): Pick<SessionState, "sessionDuration" | "customHours" | "customMinutes"> {
+  const totalSecs = customTimeToSecs(hours, minutes);
+  if (totalSecs != null) {
     return {
-      sessionDuration: fallback.sessionDuration,
-      customMinutes: "",
+      sessionDuration: totalSecs,
+      customHours: hours,
+      customMinutes: minutes,
     };
   }
 
-  const minutes = Number(trimmedValue);
-  if (!Number.isFinite(minutes) || minutes <= 0) {
-    const fallback = normalizeFixedSessionState(currentSessionDuration, "");
-    return {
-      sessionDuration: fallback.sessionDuration,
-      customMinutes: "",
-    };
-  }
-
+  const fallback = normalizeFixedSessionState(currentSessionDuration, "", "");
   return {
-    sessionDuration: Math.round(minutes * 60),
-    customMinutes: rawValue,
+    sessionDuration: fallback.sessionDuration,
+    customHours: "",
+    customMinutes: "",
   };
 }
 
@@ -157,6 +184,7 @@ function resetPowerSettingsForm(
   setBatteryThreshold: (value: number) => void,
   setSessionMode: (value: SessionMode) => void,
   setSessionDuration: (value: number) => void,
+  setCustomHours: (value: string) => void,
   setCustomMinutes: (value: string) => void,
   setPreventClosedDisplaySleep: (value: boolean) => void,
 ) {
@@ -168,6 +196,7 @@ function resetPowerSettingsForm(
   setBatteryThreshold(DEFAULT_BATTERY_THRESHOLD);
   setSessionMode("indefinite");
   setSessionDuration(DEFAULT_SESSION_DURATION_SECS);
+  setCustomHours("");
   setCustomMinutes("");
   setPreventClosedDisplaySleep(false);
 }
@@ -195,6 +224,7 @@ export function PowerSettingsModal() {
   const [batteryThreshold, setBatteryThreshold] = useState(20);
   const [sessionMode, setSessionMode] = useState<SessionMode>("indefinite");
   const [sessionDuration, setSessionDuration] = useState(DEFAULT_SESSION_DURATION_SECS);
+  const [customHours, setCustomHours] = useState("");
   const [customMinutes, setCustomMinutes] = useState("");
   const [preventClosedDisplaySleep, setPreventClosedDisplaySleep] = useState(false);
   const isMacOS = navigator.platform.startsWith("Mac");
@@ -210,6 +240,7 @@ export function PowerSettingsModal() {
       setBatteryThreshold,
       setSessionMode,
       setSessionDuration,
+      setCustomHours,
       setCustomMinutes,
       setPreventClosedDisplaySleep,
     );
@@ -225,6 +256,7 @@ export function PowerSettingsModal() {
       const nextSessionState = deriveSessionState(settings.sessionDurationSecs);
       setSessionMode(nextSessionState.sessionMode);
       setSessionDuration(nextSessionState.sessionDuration);
+      setCustomHours(nextSessionState.customHours);
       setCustomMinutes(nextSessionState.customMinutes);
       setPreventClosedDisplaySleep(settings.preventClosedDisplaySleep);
       if (isMacOS && settings.preventClosedDisplaySleep) {
@@ -550,6 +582,7 @@ export function PowerSettingsModal() {
                   checked={sessionMode === "indefinite"}
                   onChange={() => {
                     setSessionMode("indefinite");
+                    setCustomHours("");
                     setCustomMinutes("");
                   }}
                   disabled={disabled}
@@ -559,9 +592,10 @@ export function PowerSettingsModal() {
                   label={t("powerModal.fixedDuration")}
                   checked={sessionMode === "fixed"}
                   onChange={() => {
-                    const nextSessionState = normalizeFixedSessionState(sessionDuration, customMinutes);
+                    const nextSessionState = normalizeFixedSessionState(sessionDuration, customHours, customMinutes);
                     setSessionMode(nextSessionState.sessionMode);
                     setSessionDuration(nextSessionState.sessionDuration);
+                    setCustomHours(nextSessionState.customHours);
                     setCustomMinutes(nextSessionState.customMinutes);
                   }}
                   disabled={disabled}
@@ -578,12 +612,13 @@ export function PowerSettingsModal() {
                   animation: "fade-in var(--duration-fast) var(--ease-out)",
                 }}>
                   {DURATION_PRESETS.map((preset) => {
-                    const isActive = sessionDuration === preset.value && !customMinutes;
+                    const isCustom = hasCustomTime(customHours, customMinutes);
+                    const isActive = sessionDuration === preset.value && !isCustom;
                     return (
                       <button
                         key={preset.value}
                         type="button"
-                        onClick={() => { setSessionDuration(preset.value); setCustomMinutes(""); }}
+                        onClick={() => { setSessionDuration(preset.value); setCustomHours(""); setCustomMinutes(""); }}
                         disabled={disabled}
                         style={{
                           display: "inline-flex",
@@ -610,57 +645,76 @@ export function PowerSettingsModal() {
                     );
                   })}
 
-                  {/* Custom input */}
-                  <span style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 5,
-                    padding: "0 8px 0 0",
-                    borderRadius: "var(--radius-sm)",
-                    border: customMinutes
+                  {/* Custom hours + minutes input */}
+                  {(() => {
+                    const isCustomActive = hasCustomTime(customHours, customMinutes);
+                    const customBorder = isCustomActive
                       ? "1px solid rgba(255, 107, 107, 0.25)"
-                      : "1px solid rgba(255, 255, 255, 0.08)",
-                    background: customMinutes
+                      : "1px solid rgba(255, 255, 255, 0.08)";
+                    const customBg = isCustomActive
                       ? "rgba(255, 107, 107, 0.10)"
-                      : "rgba(255, 255, 255, 0.03)",
-                    transition: "all var(--duration-fast) var(--ease-out)",
-                  }}>
-                    <input
-                      type="number"
-                      min={1}
-                      placeholder={t("powerModal.durationCustom")}
-                      value={customMinutes}
-                      onChange={(e) => {
-                        const nextSessionState = applyCustomMinutesInput(
-                          e.target.value,
-                          sessionDuration,
-                        );
-                        setCustomMinutes(nextSessionState.customMinutes);
-                        setSessionDuration(nextSessionState.sessionDuration);
-                      }}
-                      disabled={disabled}
-                      style={{
-                        width: 48,
-                        padding: "5px 6px",
-                        fontSize: 11,
-                        fontWeight: 500,
-                        background: "transparent",
-                        border: "none",
-                        outline: "none",
-                        color: customMinutes ? "var(--accent)" : "var(--text-2)",
-                        textAlign: "center",
-                        fontFamily: "inherit",
-                      }}
-                    />
-                    <span style={{
+                      : "rgba(255, 255, 255, 0.03)";
+                    const inputColor = isCustomActive ? "var(--accent)" : "var(--text-2)";
+                    const inputStyle = {
+                      width: 32,
+                      padding: "5px 2px",
+                      fontSize: 11,
+                      fontWeight: 500 as const,
+                      background: "transparent",
+                      border: "none",
+                      outline: "none",
+                      color: inputColor,
+                      textAlign: "center" as const,
+                      fontFamily: "inherit",
+                    };
+                    const labelStyle = {
                       fontSize: 10,
                       color: "var(--text-3)",
                       fontWeight: 500,
-                      whiteSpace: "nowrap",
-                    }}>
-                      {t("powerModal.customMinutes")}
-                    </span>
-                  </span>
+                      whiteSpace: "nowrap" as const,
+                    };
+                    const applyCustom = (h: string, m: string) => {
+                      const next = applyCustomTimeInput(h, m, sessionDuration);
+                      setCustomHours(next.customHours);
+                      setCustomMinutes(next.customMinutes);
+                      setSessionDuration(next.sessionDuration);
+                    };
+                    return (
+                      <span style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 3,
+                        padding: "0 8px 0 0",
+                        borderRadius: "var(--radius-sm)",
+                        border: customBorder,
+                        background: customBg,
+                        transition: "all var(--duration-fast) var(--ease-out)",
+                      }}>
+                        <input
+                          type="number"
+                          min={0}
+                          max={99}
+                          placeholder="0"
+                          value={customHours}
+                          onChange={(e) => applyCustom(e.target.value, customMinutes)}
+                          disabled={disabled}
+                          style={inputStyle}
+                        />
+                        <span style={labelStyle}>{t("powerModal.customHours")}</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={59}
+                          placeholder="0"
+                          value={customMinutes}
+                          onChange={(e) => applyCustom(customHours, e.target.value)}
+                          disabled={disabled}
+                          style={inputStyle}
+                        />
+                        <span style={labelStyle}>{t("powerModal.customMinutesShort")}</span>
+                      </span>
+                    );
+                  })()}
                 </div>
               )}
             </div>
