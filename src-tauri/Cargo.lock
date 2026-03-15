@@ -9,6 +9,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "core-foundation 0.10.1",
  "env_logger",
  "futures",
  "git2",

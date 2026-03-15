@@ -47,6 +47,9 @@ notify = "6"
 portable-pty = "0.8"
 sys-locale = "0.3"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

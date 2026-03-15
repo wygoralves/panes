@@ -230,7 +230,9 @@ mod tests {
     const APP_DATA_ENV_VARS: [&str; 4] = ["HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA"];
 
     fn with_temp_app_data_env<T>(f: impl FnOnce() -> T) -> T {
-        let _guard = super::app_data_env_lock().lock().expect("env lock poisoned");
+        let _guard = super::app_data_env_lock()
+            .lock()
+            .expect("env lock poisoned");
         let previous: Vec<(&str, Option<std::ffi::OsString>)> = APP_DATA_ENV_VARS
             .into_iter()
             .map(|key| (key, std::env::var_os(key)))
