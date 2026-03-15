@@ -42,7 +42,7 @@ import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
-import { isLinuxDesktop } from "../../lib/windowActions";
+import { isLinuxDesktop, isMacDesktop } from "../../lib/windowActions";
 import { MessageBlocks, shouldShowClaudeUnsupportedApproval } from "./MessageBlocks";
 import { resolveEngineCapabilities } from "./engineCapabilities";
 import { buildCodexInputItems } from "./codexInputItems";
@@ -1341,7 +1341,7 @@ export function ChatPanel() {
   const clearMessageFocusTarget = useUiStore((s) => s.clearMessageFocusTarget);
   const focusMode = useUiStore((s) => s.focusMode);
   const showSidebar = useUiStore((s) => s.showSidebar);
-  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+  const isMac = isMacDesktop();
   const isLinux = isLinuxDesktop();
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar;
   const engines = useEngineStore((s) => s.engines);

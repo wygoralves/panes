@@ -12,6 +12,8 @@ use anyhow::Context;
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::Deserialize;
+#[cfg(target_os = "windows")]
+use tokio::time::{timeout, Duration as TokioDuration};
 use tokio::{
     fs as tokio_fs,
     process::Command,
@@ -2898,6 +2900,32 @@ fn codex_command(executable: &Path) -> Command {
 async fn detect_codex_via_login_shell() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
+        for powershell in runtime_env::windows_login_probe_shells() {
+            let mut cmd = Command::new(&powershell);
+            cmd.args([
+                "-NoLogo",
+                "-Command",
+                "(Get-Command codex -ErrorAction SilentlyContinue | Select-Object -First 1).Source",
+            ]);
+            process_utils::configure_tokio_command(&mut cmd);
+
+            let Ok(Ok(output)) = timeout(TokioDuration::from_secs(10), cmd.output()).await else {
+                continue;
+            };
+            if !output.status.success() {
+                continue;
+            }
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let Some(path) = runtime_env::parse_windows_single_path_output(&stdout) else {
+                continue;
+            };
+
+            let path = PathBuf::from(path);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
         None
     }
 

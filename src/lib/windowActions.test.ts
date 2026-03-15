@@ -55,6 +55,7 @@ vi.mock("../stores/fileStore", () => ({
 
 import {
   closeCurrentWindow,
+  isMacDesktop,
   isLinuxDesktop,
   minimizeCurrentWindow,
   shouldHandleAppShortcutWhileTerminalFocused,
@@ -92,6 +93,28 @@ describe("windowActions", () => {
 
       mockIsTauri.mockReturnValue(false);
       expect(isLinuxDesktop()).toBe(false);
+    } finally {
+      if (originalNavigator) {
+        Object.defineProperty(globalThis, "navigator", originalNavigator);
+      } else {
+        Reflect.deleteProperty(globalThis, "navigator");
+      }
+    }
+  });
+
+  it("treats macOS custom chrome as Tauri-only", () => {
+    const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { platform: "MacIntel" },
+    });
+
+    try {
+      expect(isMacDesktop()).toBe(true);
+
+      mockIsTauri.mockReturnValue(false);
+      expect(isMacDesktop()).toBe(false);
     } finally {
       if (originalNavigator) {
         Object.defineProperty(globalThis, "navigator", originalNavigator);

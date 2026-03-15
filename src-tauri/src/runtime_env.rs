@@ -86,6 +86,19 @@ pub fn resolve_executable(binary: &str) -> Option<PathBuf> {
     which::which_in(binary, Some(augmented_path), cwd).ok()
 }
 
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+pub fn windows_login_probe_shells() -> Vec<PathBuf> {
+    ["pwsh", "pwsh.exe", "powershell", "powershell.exe"]
+        .into_iter()
+        .filter_map(resolve_executable)
+        .fold(Vec::new(), |mut shells, shell| {
+            if !shells.contains(&shell) {
+                shells.push(shell);
+            }
+            shells
+        })
+}
+
 pub fn is_executable_file(path: &Path) -> bool {
     if !path.exists() {
         return false;
@@ -189,6 +202,41 @@ pub fn parse_login_probe_output(stdout: &str) -> Option<(String, String)> {
     Some((path, version))
 }
 
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+pub fn parse_windows_login_probe_output(stdout: &str) -> Option<(String, String)> {
+    let mut lines = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+
+    while let Some(line) = lines.next() {
+        if looks_like_windows_absolute_path(line) {
+            return Some((line.to_string(), lines.next().unwrap_or("").to_string()));
+        }
+    }
+
+    None
+}
+
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+pub fn parse_windows_single_path_output(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| looks_like_windows_absolute_path(line))
+        .map(str::to_string)
+}
+
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+fn looks_like_windows_absolute_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    value.starts_with(r"\\")
+        || (bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'\\' | b'/'))
+}
+
 fn augmented_path_entries_for(
     home: Option<&Path>,
     current_path: Option<&OsStr>,
@@ -286,13 +334,21 @@ fn augmented_path_entries_for(
         if let Some(local_app_data) = local_app_data {
             entries.push(local_app_data.join("Microsoft/WindowsApps"));
             entries.push(local_app_data.join("Programs/Microsoft VS Code/bin"));
+            entries.push(local_app_data.join("Programs/nodejs"));
             entries.push(local_app_data.join("Volta/bin"));
             entries.push(local_app_data.join("pnpm"));
             entries.push(local_app_data.join("fnm"));
+            entries.push(local_app_data.join("fnm/aliases/default"));
+            entries.push(local_app_data.join("nvm"));
         }
         if let Some(roaming_app_data) = roaming_app_data {
             entries.push(roaming_app_data.join("npm"));
             entries.push(roaming_app_data.join("pnpm"));
+            entries.push(roaming_app_data.join("nvm"));
+        }
+        // nvm-windows default symlink directory
+        if let Some(program_files) = env::var_os("ProgramFiles") {
+            entries.push(PathBuf::from(&program_files).join("nodejs"));
         }
     }
 
@@ -777,12 +833,35 @@ fn nvm_bin_dirs(home: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(unix)]
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{
+        ffi::OsString,
+        sync::{Mutex, OnceLock},
+        time::{SystemTime, UNIX_EPOCH},
+    };
     use uuid::Uuid;
 
     fn normalize_path(path: &Path) -> String {
         path.to_string_lossy().replace('\\', "/")
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct PathEnvGuard {
+        original_path: Option<OsString>,
+        temp_dir: PathBuf,
+    }
+
+    impl Drop for PathEnvGuard {
+        fn drop(&mut self) {
+            match self.original_path.as_ref() {
+                Some(path) => std::env::set_var("PATH", path),
+                None => std::env::remove_var("PATH"),
+            }
+            let _ = std::fs::remove_dir_all(&self.temp_dir);
+        }
     }
 
     #[test]
@@ -882,6 +961,63 @@ mod tests {
             parse_login_probe_output("Welcome to fish\n/usr/local/bin/node\nv22.0.0\n"),
             Some(("/usr/local/bin/node".to_string(), "v22.0.0".to_string()))
         );
+    }
+
+    #[test]
+    fn parse_windows_login_probe_output_skips_profile_noise() {
+        assert_eq!(
+            parse_windows_login_probe_output(
+                "Loading profile...\nC:\\Users\\panes\\AppData\\Roaming\\npm\\codex.cmd\n0.42.0\n",
+            ),
+            Some((
+                "C:\\Users\\panes\\AppData\\Roaming\\npm\\codex.cmd".to_string(),
+                "0.42.0".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn parse_windows_single_path_output_skips_profile_noise() {
+        assert_eq!(
+            parse_windows_single_path_output("Welcome back\nC:\\Program Files\\nodejs\\node.exe\n",),
+            Some("C:\\Program Files\\nodejs\\node.exe".to_string())
+        );
+    }
+
+    #[test]
+    fn windows_login_probe_shells_prefer_pwsh_before_powershell() {
+        let _env_guard = env_lock().lock().expect("env lock poisoned");
+        let temp_dir = std::env::temp_dir().join(format!(
+            "panes-runtime-env-pwsh-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time after epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+        let _path_guard = PathEnvGuard {
+            original_path: std::env::var_os("PATH"),
+            temp_dir: temp_dir.clone(),
+        };
+
+        for shell in ["pwsh", "powershell"] {
+            let path = temp_dir.join(shell);
+            std::fs::write(&path, "").expect("write shell stub");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+
+                let mut permissions = std::fs::metadata(&path).expect("metadata").permissions();
+                permissions.set_mode(0o755);
+                std::fs::set_permissions(&path, permissions).expect("set permissions");
+            }
+        }
+
+        std::env::set_var("PATH", &temp_dir);
+        let shells = windows_login_probe_shells();
+
+        assert_eq!(shells[0], temp_dir.join("pwsh"));
+        assert!(shells.contains(&temp_dir.join("powershell")));
     }
 
     #[cfg(unix)]

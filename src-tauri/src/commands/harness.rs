@@ -3,6 +3,8 @@ use std::path::Path;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+#[cfg(target_os = "windows")]
+use tokio::time::{timeout, Duration};
 
 use crate::models::{HarnessInfo, HarnessReport, InstallProgressEvent, InstallResult};
 use crate::process_utils;
@@ -46,8 +48,8 @@ const HARNESSES: &[HarnessDef] = &[
         description: "Anthropic's agentic coding tool",
         command: "claude",
         version_flag: "--version",
-        install_command: None,
-        install_args: &[],
+        install_command: Some("npm"),
+        install_args: &["install", "-g", "@anthropic-ai/claude-code"],
         install_script: Some("curl -fsSL https://claude.ai/install.sh | bash"),
         website: "https://docs.anthropic.com/en/docs/claude-code",
         native: false,
@@ -147,19 +149,25 @@ pub async fn install_harness(app: AppHandle, harness_id: String) -> Result<Insta
         .find(|h| h.id == harness_id)
         .ok_or_else(|| format!("unknown harness: {harness_id}"))?;
 
-    // Prefer install_script (curl-pipe installers) over install_command (npm)
+    // Prefer install_script (curl-pipe installers) over install_command (npm).
+    // On Windows, curl-pipe installers are not supported — fall through to
+    // install_command when available instead of hard-erroring.
     if let Some(script) = def.install_script {
-        #[cfg(target_os = "windows")]
-        {
-            let _ = script;
-            return Err(format!(
-                "{} must be installed manually from {} on Windows",
-                def.name, def.website
-            ));
-        }
         #[cfg(not(target_os = "windows"))]
         {
             return run_harness_install_script(&app, &harness_id, script).await;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let _ = script;
+            if def.install_command.is_none() {
+                return Err(format!(
+                    "{} must be installed manually from {} on Windows \
+                     (the automated installer requires a Unix shell)",
+                    def.name, def.website
+                ));
+            }
+            // Fall through to install_command below
         }
     }
 
@@ -519,7 +527,36 @@ async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(St
 }
 
 #[cfg(target_os = "windows")]
-async fn detect_via_login_shell(_command: &str, _version_flag: &str) -> Option<(String, String)> {
+async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(String, String)> {
+    let probe_script = format!(
+        "$p = (Get-Command {cmd} -ErrorAction SilentlyContinue | Select-Object -First 1).Source; \
+         if ($p) {{ Write-Output $p; & $p {flag} }}",
+        cmd = command,
+        flag = version_flag,
+    );
+
+    for powershell in runtime_env::windows_login_probe_shells() {
+        let mut cmd = Command::new(&powershell);
+        cmd.args(["-NoLogo", "-Command", &probe_script]);
+        process_utils::configure_tokio_command(&mut cmd);
+
+        let Ok(Ok(output)) = timeout(Duration::from_secs(10), cmd.output()).await else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let Some((path, version)) = runtime_env::parse_windows_login_probe_output(&stdout) else {
+            continue;
+        };
+
+        if !path.is_empty() && Path::new(&path).is_file() {
+            return Some((path, version));
+        }
+    }
+
     None
 }
 

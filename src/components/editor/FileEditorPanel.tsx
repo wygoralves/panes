@@ -5,6 +5,7 @@ import { useFileStore } from "../../stores/fileStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { isMacDesktop } from "../../lib/windowActions";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { GitDiffEditorPanel } from "./GitDiffEditorPanel";
@@ -24,7 +25,7 @@ export function FileEditorPanel() {
   const showSidebar = useUiStore((s) => s.showSidebar);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
-  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+  const isMac = isMacDesktop();
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar;
 
   // Cmd+S to save — Cmd+W is handled via native menu "close-window" action.

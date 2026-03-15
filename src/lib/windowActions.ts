@@ -12,6 +12,12 @@ export function isLinuxDesktop(): boolean {
     && isTauri();
 }
 
+export function isMacDesktop(): boolean {
+  return typeof navigator !== "undefined"
+    && navigator.platform.startsWith("Mac")
+    && isTauri();
+}
+
 export function isTerminalInputFocused(doc: Document | undefined = globalThis.document): boolean {
   const activeElement = doc?.activeElement;
   return typeof activeElement === "object"
