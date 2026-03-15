@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.43.0...vnull) (2026-03-15)
+
+### Features
+
+* **linux:** add Debian updater target and Linux CI smoke test ([90db0ae](https://github.com/wygoralves/panes/commit/90db0ae274fcfeb6e291f4d011e24051f8457bd3))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.42.0...vnull) (2026-03-15)
 
 ### Features
