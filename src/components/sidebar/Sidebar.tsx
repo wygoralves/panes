@@ -698,69 +698,49 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             >
               {t("app:sidebar.preferences")}
             </div>
-            <button
-              type="button"
+            <div
               className="git-action-menu-item"
-              disabled={keepAwakeLoading || !keepAwakeAvailable}
-              title={keepAwakeDescription}
               style={{
                 justifyContent: "space-between",
                 opacity: keepAwakeLoading || !keepAwakeAvailable ? 0.5 : 1,
               }}
-              onClick={() => {
-                void toggleKeepAwake();
-              }}
             >
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <PillBottle size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
-                {t("app:sidebar.keepAwake")}
-              </span>
-              <span
-                style={{
-                  width: 28,
-                  height: 16,
-                  borderRadius: 8,
-                  background: keepAwakeState?.enabled ? "var(--accent)" : "rgba(255,255,255,0.12)",
-                  display: "flex",
-                  alignItems: "center",
-                  padding: "0 2px",
-                  flexShrink: 0,
-                  transition: "background 0.2s",
-                }}
-              >
-                <span
-                  style={{
-                    width: 12,
-                    height: 12,
-                    borderRadius: "50%",
-                    background: "white",
-                    transform: keepAwakeState?.enabled ? "translateX(12px)" : "translateX(0)",
-                    transition: "transform 0.2s",
-                    opacity: keepAwakeState?.enabled ? 1 : 0.6,
-                  }}
-                />
-              </span>
               <button
                 type="button"
-                title={t("app:sidebar.keepAwakePowerSettings")}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openPowerSettings();
-                }}
+                title={keepAwakeDescription}
+                onClick={() => openPowerSettings()}
                 style={{
-                  padding: 2,
-                  marginLeft: 4,
-                  opacity: 0.5,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
                   background: "none",
                   border: "none",
                   cursor: "pointer",
-                  color: "var(--text-primary)",
-                  flexShrink: 0,
+                  color: "inherit",
+                  padding: 0,
+                  flex: 1,
+                  minWidth: 0,
                 }}
               >
-                <Settings size={11} />
+                <PillBottle size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+                {t("app:sidebar.keepAwake")}
               </button>
-            </button>
+              <label
+                className="ws-toggle"
+                title={keepAwakeDescription}
+                onClick={(e) => e.stopPropagation()}
+                style={{ cursor: keepAwakeLoading || !keepAwakeAvailable ? "not-allowed" : undefined }}
+              >
+                <input
+                  type="checkbox"
+                  checked={keepAwakeState?.enabled ?? false}
+                  disabled={keepAwakeLoading || !keepAwakeAvailable}
+                  onChange={() => void toggleKeepAwake()}
+                />
+                <span className="ws-toggle-track" />
+                <span className="ws-toggle-thumb" />
+              </label>
+            </div>
             <div className="git-action-menu-item" style={{ justifyContent: "space-between", cursor: "default" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <Globe size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
