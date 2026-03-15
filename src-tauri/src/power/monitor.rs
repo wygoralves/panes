@@ -61,37 +61,15 @@ pub fn start_monitor(config: MonitorConfig) -> PowerMonitorHandle {
             // Always poll power source for UI display; act on AC/battery events
             // only when the corresponding feature is enabled.
             if let Ok(status) = poll_power_source().await {
-                // Propagate status for UI display
-                let _ = event_tx
-                    .send(MonitorEvent::PowerSourcePolled {
-                        on_ac: status.on_ac,
-                        battery_percent: status.battery_percent,
-                    })
-                    .await;
-
-                // AC status change detection
-                if config.ac_only_mode {
-                    let currently_on_ac = status.on_ac;
-                    if was_on_ac.is_some() && was_on_ac != Some(currently_on_ac) {
-                        let _ = event_tx
-                            .send(MonitorEvent::AcStatusChanged {
-                                on_ac: currently_on_ac,
-                            })
-                            .await;
-                    }
-                    was_on_ac = Some(currently_on_ac);
-                }
-
-                // Battery threshold check
-                if let (Some(threshold), Some(percent)) =
-                    (config.battery_threshold, status.battery_percent)
-                {
-                    if percent < threshold {
-                        let _ = event_tx
-                            .send(MonitorEvent::BatteryLevel { percent })
-                            .await;
-                        break;
-                    }
+                let should_stop = emit_power_source_events(
+                    &event_tx,
+                    &config,
+                    &mut was_on_ac,
+                    status,
+                )
+                .await;
+                if should_stop {
+                    break;
                 }
             }
 
@@ -114,6 +92,45 @@ pub fn start_monitor(config: MonitorConfig) -> PowerMonitorHandle {
             session_end_at,
         },
     }
+}
+
+async fn emit_power_source_events(
+    event_tx: &mpsc::Sender<MonitorEvent>,
+    config: &MonitorConfig,
+    was_on_ac: &mut Option<bool>,
+    status: PowerSourceStatus,
+) -> bool {
+    let _ = event_tx
+        .send(MonitorEvent::PowerSourcePolled {
+            on_ac: status.on_ac,
+            battery_percent: status.battery_percent,
+        })
+        .await;
+
+    if config.ac_only_mode {
+        let currently_on_ac = status.on_ac;
+        let should_emit_change = match *was_on_ac {
+            Some(previous_on_ac) => previous_on_ac != currently_on_ac,
+            None => !currently_on_ac,
+        };
+        if should_emit_change {
+            let _ = event_tx
+                .send(MonitorEvent::AcStatusChanged {
+                    on_ac: currently_on_ac,
+                })
+                .await;
+        }
+        *was_on_ac = Some(currently_on_ac);
+    }
+
+    if let (Some(threshold), Some(percent)) = (config.battery_threshold, status.battery_percent) {
+        if percent < threshold {
+            let _ = event_tx.send(MonitorEvent::BatteryLevel { percent }).await;
+            return true;
+        }
+    }
+
+    false
 }
 
 async fn poll_power_source() -> Result<PowerSourceStatus, String> {
@@ -331,5 +348,41 @@ mod tests {
         handle.cleanup.task.abort();
         let result = handle.cleanup.task.await;
         assert!(result.is_err() || result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn ac_only_mode_pauses_immediately_when_started_on_battery() {
+        let (event_tx, mut event_rx) = mpsc::channel(4);
+        let mut was_on_ac = None;
+        let config = MonitorConfig {
+            ac_only_mode: true,
+            battery_threshold: None,
+            session_duration_secs: None,
+        };
+
+        let should_stop = emit_power_source_events(
+            &event_tx,
+            &config,
+            &mut was_on_ac,
+            PowerSourceStatus {
+                on_ac: false,
+                battery_percent: Some(42),
+            },
+        )
+        .await;
+
+        assert!(!should_stop);
+        assert_eq!(
+            event_rx.recv().await,
+            Some(MonitorEvent::PowerSourcePolled {
+                on_ac: false,
+                battery_percent: Some(42),
+            })
+        );
+        assert_eq!(
+            event_rx.recv().await,
+            Some(MonitorEvent::AcStatusChanged { on_ac: false })
+        );
+        assert_eq!(was_on_ac, Some(false));
     }
 }

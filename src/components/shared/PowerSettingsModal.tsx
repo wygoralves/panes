@@ -21,6 +21,99 @@ const DURATION_PRESETS = [
   { label: "duration2h", value: 7200, icon: <Clock size={11} /> },
 ] as const;
 
+const DEFAULT_SESSION_DURATION_SECS = 3600;
+
+type SessionMode = "indefinite" | "fixed";
+
+interface SessionState {
+  sessionMode: SessionMode;
+  sessionDuration: number;
+  customMinutes: string;
+}
+
+function isPresetDuration(durationSecs: number) {
+  return DURATION_PRESETS.some((preset) => preset.value === durationSecs);
+}
+
+export function deriveSessionState(sessionDurationSecs: number | null | undefined): SessionState {
+  if (sessionDurationSecs == null) {
+    return {
+      sessionMode: "indefinite",
+      sessionDuration: DEFAULT_SESSION_DURATION_SECS,
+      customMinutes: "",
+    };
+  }
+
+  if (isPresetDuration(sessionDurationSecs)) {
+    return {
+      sessionMode: "fixed",
+      sessionDuration: sessionDurationSecs,
+      customMinutes: "",
+    };
+  }
+
+  return {
+    sessionMode: "fixed",
+    sessionDuration: sessionDurationSecs,
+    customMinutes: String(Math.round(sessionDurationSecs / 60)),
+  };
+}
+
+export function normalizeFixedSessionState(
+  sessionDuration: number,
+  customMinutes: string,
+): SessionState {
+  if (customMinutes.trim()) {
+    return {
+      sessionMode: "fixed",
+      sessionDuration,
+      customMinutes,
+    };
+  }
+
+  if (isPresetDuration(sessionDuration)) {
+    return {
+      sessionMode: "fixed",
+      sessionDuration,
+      customMinutes: "",
+    };
+  }
+
+  return {
+    sessionMode: "fixed",
+    sessionDuration: DEFAULT_SESSION_DURATION_SECS,
+    customMinutes: "",
+  };
+}
+
+export function applyCustomMinutesInput(
+  rawValue: string,
+  currentSessionDuration: number,
+): Pick<SessionState, "sessionDuration" | "customMinutes"> {
+  const trimmedValue = rawValue.trim();
+  if (!trimmedValue) {
+    const fallback = normalizeFixedSessionState(currentSessionDuration, "");
+    return {
+      sessionDuration: fallback.sessionDuration,
+      customMinutes: "",
+    };
+  }
+
+  const minutes = Number(trimmedValue);
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    const fallback = normalizeFixedSessionState(currentSessionDuration, "");
+    return {
+      sessionDuration: fallback.sessionDuration,
+      customMinutes: "",
+    };
+  }
+
+  return {
+    sessionDuration: Math.round(minutes * 60),
+    customMinutes: rawValue,
+  };
+}
+
 function formatRemaining(secs: number): string {
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
@@ -43,8 +136,8 @@ export function PowerSettingsModal() {
   const [acOnlyMode, setAcOnlyMode] = useState(false);
   const [batteryThresholdEnabled, setBatteryThresholdEnabled] = useState(false);
   const [batteryThreshold, setBatteryThreshold] = useState(20);
-  const [sessionMode, setSessionMode] = useState<"indefinite" | "fixed">("indefinite");
-  const [sessionDuration, setSessionDuration] = useState(3600);
+  const [sessionMode, setSessionMode] = useState<SessionMode>("indefinite");
+  const [sessionDuration, setSessionDuration] = useState(DEFAULT_SESSION_DURATION_SECS);
   const [customMinutes, setCustomMinutes] = useState("");
 
   useEffect(() => {
@@ -57,15 +150,10 @@ export function PowerSettingsModal() {
       setAcOnlyMode(settings.acOnlyMode);
       setBatteryThresholdEnabled(settings.batteryThreshold != null);
       setBatteryThreshold(settings.batteryThreshold ?? 20);
-      if (settings.sessionDurationSecs != null) {
-        setSessionMode("fixed");
-        setSessionDuration(settings.sessionDurationSecs);
-        if (!DURATION_PRESETS.some((p) => p.value === settings.sessionDurationSecs)) {
-          setCustomMinutes(String(Math.round(settings.sessionDurationSecs / 60)));
-        }
-      } else {
-        setSessionMode("indefinite");
-      }
+      const nextSessionState = deriveSessionState(settings.sessionDurationSecs);
+      setSessionMode(nextSessionState.sessionMode);
+      setSessionDuration(nextSessionState.sessionDuration);
+      setCustomMinutes(nextSessionState.customMinutes);
     });
   }, [open, loadPowerSettings]);
 
@@ -278,14 +366,22 @@ export function PowerSettingsModal() {
                 <RadioPill
                   label={t("powerModal.indefinite")}
                   checked={sessionMode === "indefinite"}
-                  onChange={() => setSessionMode("indefinite")}
+                  onChange={() => {
+                    setSessionMode("indefinite");
+                    setCustomMinutes("");
+                  }}
                   disabled={disabled}
                   icon={<InfinityIcon size={12} />}
                 />
                 <RadioPill
                   label={t("powerModal.fixedDuration")}
                   checked={sessionMode === "fixed"}
-                  onChange={() => setSessionMode("fixed")}
+                  onChange={() => {
+                    const nextSessionState = normalizeFixedSessionState(sessionDuration, customMinutes);
+                    setSessionMode(nextSessionState.sessionMode);
+                    setSessionDuration(nextSessionState.sessionDuration);
+                    setCustomMinutes(nextSessionState.customMinutes);
+                  }}
                   disabled={disabled}
                   icon={<Timer size={12} />}
                 />
@@ -353,9 +449,12 @@ export function PowerSettingsModal() {
                       placeholder={t("powerModal.durationCustom")}
                       value={customMinutes}
                       onChange={(e) => {
-                        setCustomMinutes(e.target.value);
-                        const mins = Number(e.target.value);
-                        if (mins > 0) setSessionDuration(mins * 60);
+                        const nextSessionState = applyCustomMinutesInput(
+                          e.target.value,
+                          sessionDuration,
+                        );
+                        setCustomMinutes(nextSessionState.customMinutes);
+                        setSessionDuration(nextSessionState.sessionDuration);
                       }}
                       disabled={disabled}
                       style={{

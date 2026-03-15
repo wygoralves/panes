@@ -54,12 +54,7 @@ pub struct PowerSettingsInput {
 
 #[tauri::command]
 pub async fn get_keep_awake_state(state: State<'_, AppState>) -> Result<KeepAwakeStateDto, String> {
-    let enabled = tokio::task::spawn_blocking(|| {
-        AppConfig::load_or_create().map(|config| config.power.keep_awake_enabled)
-    })
-    .await
-    .map_err(err_to_string)?
-    .map_err(err_to_string)?;
+    let enabled = load_power_config().await?.keep_awake_enabled;
     let runtime = state.keep_awake.status().await;
 
     Ok(dto_from_runtime(runtime, enabled))
@@ -77,14 +72,7 @@ pub async fn set_keep_awake_enabled(
         }
 
         // Load full config to respect all power settings
-        let power_config = tokio::task::spawn_blocking(|| {
-            AppConfig::load_or_create().map(|c| c.power)
-        })
-        .await
-        .map_err(err_to_string)?
-        .map_err(err_to_string)?;
-
-        let mut config = power_config;
+        let mut config = load_power_config().await?;
         config.keep_awake_enabled = true;
         state.keep_awake.enable_with_config(&config).await?;
 
@@ -106,12 +94,7 @@ pub async fn set_keep_awake_enabled(
         state.keep_awake.disable().await?;
         if let Err(error) = save_enabled_preference(false).await {
             // Rollback: reload full config to preserve the user's profile
-            let rollback_config = tokio::task::spawn_blocking(|| {
-                AppConfig::load_or_create().map(|c| c.power)
-            })
-            .await
-            .ok()
-            .and_then(|r| r.ok());
+            let rollback_config = load_power_config().await.ok();
 
             let rollback_result = if let Some(mut config) = rollback_config {
                 config.keep_awake_enabled = true;
@@ -143,12 +126,7 @@ pub async fn set_keep_awake_enabled(
 pub async fn get_power_settings(
     _state: State<'_, AppState>,
 ) -> Result<PowerSettingsDto, String> {
-    let config = tokio::task::spawn_blocking(|| {
-        AppConfig::load_or_create().map(|c| c.power)
-    })
-    .await
-    .map_err(err_to_string)?
-    .map_err(err_to_string)?;
+    let config = load_power_config().await?;
 
     Ok(PowerSettingsDto {
         keep_awake_enabled: config.keep_awake_enabled,
@@ -172,43 +150,57 @@ pub async fn set_power_settings(
         }
     }
 
-    // Always disable first (clean state)
-    let _ = state.keep_awake.disable().await;
+    let previous_config = load_power_config().await?;
+    let next_config = PowerConfig {
+        keep_awake_enabled: settings.keep_awake_enabled,
+        prevent_display_sleep: settings.prevent_display_sleep,
+        prevent_screen_saver: settings.prevent_screen_saver,
+        ac_only_mode: settings.ac_only_mode,
+        battery_threshold: settings.battery_threshold,
+        session_duration_secs: settings.session_duration_secs,
+    };
 
-    // Save settings to config
-    tokio::task::spawn_blocking({
-        let settings = settings.clone();
-        move || {
-            AppConfig::mutate(|config| {
-                config.power.keep_awake_enabled = settings.keep_awake_enabled;
-                config.power.prevent_display_sleep = settings.prevent_display_sleep;
-                config.power.prevent_screen_saver = settings.prevent_screen_saver;
-                config.power.ac_only_mode = settings.ac_only_mode;
-                config.power.battery_threshold = settings.battery_threshold;
-                config.power.session_duration_secs = settings.session_duration_secs;
-                Ok(())
-            })
+    // Apply runtime changes first so persistence cannot leave disk and runtime
+    // diverged on partial failure.
+    state.keep_awake.disable().await?;
+
+    if next_config.keep_awake_enabled {
+        if let Err(error) = state.keep_awake.enable_with_config(&next_config).await {
+            rollback_power_runtime(&state, &previous_config)
+                .await
+                .map_err(|rollback_error| {
+                    format!(
+                        "failed to apply power settings at runtime: {error}; failed to restore previous runtime state: {rollback_error}"
+                    )
+                })?;
+            return Err(format!(
+                "failed to apply power settings at runtime: {error}; previous runtime state restored"
+            ));
         }
-    })
-    .await
-    .map_err(err_to_string)?
-    .map_err(err_to_string)?;
+    }
 
-    // Re-enable with new settings if requested
-    if settings.keep_awake_enabled {
-        let power_config = PowerConfig {
-            keep_awake_enabled: true,
-            prevent_display_sleep: settings.prevent_display_sleep,
-            prevent_screen_saver: settings.prevent_screen_saver,
-            ac_only_mode: settings.ac_only_mode,
-            battery_threshold: settings.battery_threshold,
-            session_duration_secs: settings.session_duration_secs,
-        };
-        state.keep_awake.enable_with_config(&power_config).await?;
+    if let Err(error) = save_power_config(next_config).await {
+        rollback_power_runtime(&state, &previous_config)
+            .await
+            .map_err(|rollback_error| {
+                format!(
+                    "failed to persist power settings: {error}; failed to restore previous runtime state: {rollback_error}"
+                )
+            })?;
+        return Err(format!(
+            "failed to persist power settings: {error}; previous runtime state restored"
+        ));
     }
 
     let runtime = state.keep_awake.status().await;
     Ok(dto_from_runtime(runtime, settings.keep_awake_enabled))
+}
+
+async fn load_power_config() -> Result<PowerConfig, String> {
+    tokio::task::spawn_blocking(|| AppConfig::load_or_create().map(|config| config.power))
+        .await
+        .map_err(err_to_string)?
+        .map_err(err_to_string)
 }
 
 async fn save_enabled_preference(enabled: bool) -> Result<(), String> {
@@ -221,6 +213,29 @@ async fn save_enabled_preference(enabled: bool) -> Result<(), String> {
     })
     .await
     .map_err(err_to_string)?
+}
+
+async fn save_power_config(power_config: PowerConfig) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        AppConfig::mutate(|config| {
+            config.power = power_config;
+            Ok(())
+        })
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+async fn rollback_power_runtime(
+    state: &State<'_, AppState>,
+    previous_config: &PowerConfig,
+) -> Result<(), String> {
+    if previous_config.keep_awake_enabled {
+        state.keep_awake.enable_with_config(previous_config).await
+    } else {
+        state.keep_awake.disable().await
+    }
 }
 
 fn dto_from_runtime(status: KeepAwakeStatus, enabled: bool) -> KeepAwakeStateDto {

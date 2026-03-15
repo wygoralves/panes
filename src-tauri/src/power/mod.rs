@@ -483,27 +483,38 @@ impl KeepAwakeManager {
                         let _ = clear_helper_state(&self.state_path());
                     } else if runtime.paused_due_to_battery {
                         log::info!("keep awake resuming: AC power restored");
-                        runtime.paused_due_to_battery = false;
                         let profile = runtime.active_profile.clone()
                             .unwrap_or_else(PowerProfile::default_profile);
                         drop(runtime);
                         // Re-spawn children with the active profile
-                        if let Ok(spawned) = self.spawner.spawn(&profile) {
-                            let mut runtime = self.runtime.lock().await;
-                            if let Some(helper) = spawned.helper.as_ref() {
-                                let persisted = PersistedKeepAwakeHelper {
-                                    owner: self.current_process.clone(),
-                                    helper: helper.clone(),
-                                };
-                                let _ = save_helper_state(&self.state_path(), &persisted);
+                        match self.spawner.spawn(&profile) {
+                            Ok(spawned) => {
+                                let mut runtime = self.runtime.lock().await;
+                                if let Some(helper) = spawned.helper.as_ref() {
+                                    let persisted = PersistedKeepAwakeHelper {
+                                        owner: self.current_process.clone(),
+                                        helper: helper.clone(),
+                                    };
+                                    let _ = save_helper_state(&self.state_path(), &persisted);
+                                }
+                                runtime.child = Some(spawned.child);
+                                runtime.helper = spawned.helper;
+                                runtime.last_error = None;
+                                runtime.paused_due_to_battery = false;
+                                drop(runtime);
+
+                                // Re-spawn Linux display inhibit if needed
+                                #[cfg(target_os = "linux")]
+                                if profile.prevent_display_sleep || profile.prevent_screen_saver {
+                                    self.spawn_linux_display_inhibit().await;
+                                }
                             }
-                            runtime.child = Some(spawned.child);
-                            runtime.helper = spawned.helper;
-                        }
-                        // Re-spawn Linux display inhibit if needed
-                        #[cfg(target_os = "linux")]
-                        if profile.prevent_display_sleep || profile.prevent_screen_saver {
-                            self.spawn_linux_display_inhibit().await;
+                            Err(error) => {
+                                let mut runtime = self.runtime.lock().await;
+                                runtime.last_error = Some(format!(
+                                    "failed to resume keep awake on AC power: {error}"
+                                ));
+                            }
                         }
                     }
                 }
@@ -1141,12 +1152,13 @@ fn resolve_backend_spec(profile: &PowerProfile) -> Result<BackendSpec, String> {
         // System sleep prevention
         if profile.prevent_system_sleep {
             if profile.ac_only {
-                // AC-only: -s alone — only active on AC power
+                // AC-only: -s alone keeps the assertion limited to AC power.
+                // Closed-display/clamshell behavior still remains unknown.
                 args.push(OsString::from("-s"));
             } else {
-                // Default: -i (idle sleep on any power) + -s (system sleep
-                // including lid close, effective on AC). Together they cover
-                // idle-on-battery and lid-close-on-AC.
+                // Default: -i prevents idle sleep on any power source, while
+                // -s adds the public AC-only system sleep assertion. The
+                // backend still does not guarantee closed-display behavior.
                 args.push(OsString::from("-i"));
                 args.push(OsString::from("-s"));
             }
@@ -1669,6 +1681,50 @@ mod tests {
         assert!(state_path.exists());
     }
 
+    #[tokio::test]
+    async fn ac_resume_failure_preserves_paused_state_and_reports_error() {
+        let manager = KeepAwakeManager::with_dependencies(
+            Arc::new(FakeSpawner {
+                support: SupportStatus {
+                    supported: true,
+                    message: None,
+                },
+                next_spawn: StdMutex::new(vec![Err(anyhow::anyhow!("resume failed"))]),
+            }),
+            Arc::new(FakeProcessOps::default()),
+            temp_state_dir(),
+            test_process(40),
+        );
+
+        {
+            let mut runtime = manager.runtime.lock().await;
+            runtime.active_profile = Some(PowerProfile {
+                ac_only: true,
+                ..PowerProfile::default_profile()
+            });
+            runtime.paused_due_to_battery = true;
+            runtime.on_ac_power = Some(false);
+        }
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel(2);
+        event_tx
+            .send(MonitorEvent::AcStatusChanged { on_ac: true })
+            .await
+            .expect("event should send");
+        drop(event_tx);
+
+        manager.process_monitor_events(event_rx).await;
+
+        let status = manager.status().await;
+        assert!(!status.active);
+        assert_eq!(status.on_ac_power, Some(true));
+        assert!(status.paused_due_to_battery);
+        assert_eq!(
+            status.message.as_deref(),
+            Some("failed to resume keep awake on AC power: resume failed")
+        );
+    }
+
     #[test]
     fn reclaim_stale_helpers_skip_live_owner_processes() {
         let state_dir = temp_state_dir();
@@ -1924,7 +1980,10 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(args.iter().any(|arg| arg == "-i"), "should include -i for idle sleep");
-        assert!(args.iter().any(|arg| arg == "-s"), "should include -s for system/lid-close sleep");
+        assert!(
+            args.iter().any(|arg| arg == "-s"),
+            "should include -s for the AC-only system sleep assertion"
+        );
         assert!(args.iter().any(|arg| arg == "-w"));
         assert!(args
             .iter()
@@ -1942,7 +2001,10 @@ mod tests {
         let args: Vec<String> = spec.args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(args.iter().any(|a| a == "-d"));
         assert!(args.iter().any(|a| a == "-i"));
-        assert!(args.iter().any(|a| a == "-s"));
+        assert!(
+            args.iter().any(|a| a == "-s"),
+            "should include -s for the AC-only system sleep assertion"
+        );
     }
 
     #[cfg(target_os = "macos")]
