@@ -61,6 +61,8 @@ describe("keepAwakeStore", () => {
       state: null,
       loading: false,
       loadedOnce: false,
+      powerSettingsLoading: false,
+      powerSettingsLoaded: false,
       powerSettings: null,
       powerSettingsOpen: false,
     });
@@ -397,6 +399,8 @@ describe("keepAwakeStore", () => {
     expect(mockIpc.getPowerSettings).toHaveBeenCalled();
     expect(result).toEqual(settings);
     expect(useKeepAwakeStore.getState().powerSettings).toEqual(settings);
+    expect(useKeepAwakeStore.getState().powerSettingsLoaded).toBe(true);
+    expect(useKeepAwakeStore.getState().powerSettingsLoading).toBe(false);
   });
 
   it("loadPowerSettings returns null on failure", async () => {
@@ -406,6 +410,8 @@ describe("keepAwakeStore", () => {
 
     expect(result).toBeNull();
     expect(useKeepAwakeStore.getState().powerSettings).toBeNull();
+    expect(useKeepAwakeStore.getState().powerSettingsLoaded).toBe(false);
+    expect(useKeepAwakeStore.getState().powerSettingsLoading).toBe(false);
   });
 
   it("savePowerSettings calls IPC and updates both state and settings", async () => {
@@ -430,6 +436,78 @@ describe("keepAwakeStore", () => {
     expect(result).toMatchObject({ enabled: true, active: true });
     expect(useKeepAwakeStore.getState().powerSettings).toEqual(input);
     expect(mockToast.success).toHaveBeenCalledWith("app:commandPalette.toasts.powerSettingsSaved");
+  });
+
+  it("does not let an in-flight refresh overwrite a saved power settings result", async () => {
+    useKeepAwakeStore.setState({
+      state: {
+        supported: true,
+        enabled: true,
+        active: true,
+        message: null,
+      },
+      loading: false,
+      loadedOnce: true,
+      powerSettingsLoading: false,
+      powerSettingsLoaded: true,
+      powerSettings: {
+        keepAwakeEnabled: true,
+        preventDisplaySleep: false,
+        preventScreenSaver: false,
+        acOnlyMode: false,
+        batteryThreshold: null,
+        sessionDurationSecs: null,
+      },
+      powerSettingsOpen: false,
+    });
+    const saveDeferred = createDeferred<{
+      supported: boolean;
+      enabled: boolean;
+      active: boolean;
+      message: string | null;
+    }>();
+    const refreshDeferred = createDeferred<{
+      supported: boolean;
+      enabled: boolean;
+      active: boolean;
+      message: string | null;
+    }>();
+    mockIpc.setPowerSettings.mockReturnValue(saveDeferred.promise);
+    mockIpc.getKeepAwakeState.mockReturnValue(refreshDeferred.promise);
+
+    const input = {
+      keepAwakeEnabled: false,
+      preventDisplaySleep: true,
+      preventScreenSaver: false,
+      acOnlyMode: false,
+      batteryThreshold: null,
+      sessionDurationSecs: 1800,
+    };
+
+    const savePromise = useKeepAwakeStore.getState().savePowerSettings(input);
+    const refreshPromise = useKeepAwakeStore.getState().refresh();
+
+    refreshDeferred.resolve({
+      supported: true,
+      enabled: true,
+      active: true,
+      message: null,
+    });
+    await refreshPromise;
+
+    saveDeferred.resolve({
+      supported: true,
+      enabled: false,
+      active: false,
+      message: null,
+    });
+    await savePromise;
+
+    expect(useKeepAwakeStore.getState().state).toMatchObject({
+      enabled: false,
+      active: false,
+    });
+    expect(useKeepAwakeStore.getState().powerSettings).toEqual(input);
   });
 
   it("savePowerSettings shows error toast on failure", async () => {

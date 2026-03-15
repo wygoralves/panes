@@ -181,10 +181,13 @@ async fn emit_power_source_events(
         *was_on_ac = Some(currently_on_ac);
     }
 
-    if let (Some(threshold), Some(percent)) = (config.battery_threshold, status.battery_percent) {
-        if percent < threshold {
-            let _ = event_tx.send(MonitorEvent::BatteryLevel { percent }).await;
-            return true;
+    if !status.on_ac {
+        if let (Some(threshold), Some(percent)) = (config.battery_threshold, status.battery_percent)
+        {
+            if percent < threshold {
+                let _ = event_tx.send(MonitorEvent::BatteryLevel { percent }).await;
+                return true;
+            }
         }
     }
 
@@ -465,6 +468,43 @@ mod tests {
             Some(MonitorEvent::AcStatusChanged { on_ac: false })
         );
         assert_eq!(was_on_ac, Some(false));
+    }
+
+    #[tokio::test]
+    async fn battery_threshold_ignores_low_battery_while_on_ac_power() {
+        let (event_tx, mut event_rx) = mpsc::channel(4);
+        let mut was_on_ac = None;
+        let config = MonitorConfig {
+            ac_only_mode: false,
+            battery_threshold: Some(20),
+            session_duration_secs: None,
+        };
+
+        let should_stop = emit_power_source_events(
+            &event_tx,
+            &config,
+            &mut was_on_ac,
+            PowerSourceStatus {
+                on_ac: true,
+                battery_percent: Some(10),
+            },
+        )
+        .await;
+
+        assert!(!should_stop);
+        assert_eq!(
+            event_rx.recv().await,
+            Some(MonitorEvent::PowerSourcePolled {
+                on_ac: true,
+                battery_percent: Some(10),
+            })
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), event_rx.recv())
+                .await
+                .is_err()
+        );
+        assert_eq!(was_on_ac, None);
     }
 }
 

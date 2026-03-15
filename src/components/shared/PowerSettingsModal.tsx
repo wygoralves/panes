@@ -22,6 +22,7 @@ const DURATION_PRESETS = [
 ] as const;
 
 const DEFAULT_SESSION_DURATION_SECS = 3600;
+const DEFAULT_BATTERY_THRESHOLD = 20;
 
 type SessionMode = "indefinite" | "fixed";
 
@@ -143,6 +144,28 @@ function formatRemaining(secs: number): string {
   return `${m}m`;
 }
 
+function resetPowerSettingsForm(
+  setKeepAwakeEnabled: (value: boolean) => void,
+  setPreventDisplaySleep: (value: boolean) => void,
+  setPreventScreenSaver: (value: boolean) => void,
+  setAcOnlyMode: (value: boolean) => void,
+  setBatteryThresholdEnabled: (value: boolean) => void,
+  setBatteryThreshold: (value: number) => void,
+  setSessionMode: (value: SessionMode) => void,
+  setSessionDuration: (value: number) => void,
+  setCustomMinutes: (value: string) => void,
+) {
+  setKeepAwakeEnabled(false);
+  setPreventDisplaySleep(false);
+  setPreventScreenSaver(false);
+  setAcOnlyMode(false);
+  setBatteryThresholdEnabled(false);
+  setBatteryThreshold(DEFAULT_BATTERY_THRESHOLD);
+  setSessionMode("indefinite");
+  setSessionDuration(DEFAULT_SESSION_DURATION_SECS);
+  setCustomMinutes("");
+}
+
 export function PowerSettingsModal() {
   const { t } = useTranslation("app");
   const open = useKeepAwakeStore((s) => s.powerSettingsOpen);
@@ -151,6 +174,8 @@ export function PowerSettingsModal() {
   const savePowerSettings = useKeepAwakeStore((s) => s.savePowerSettings);
   const keepAwakeState = useKeepAwakeStore((s) => s.state);
   const loading = useKeepAwakeStore((s) => s.loading);
+  const powerSettingsLoading = useKeepAwakeStore((s) => s.powerSettingsLoading);
+  const powerSettingsLoaded = useKeepAwakeStore((s) => s.powerSettingsLoaded);
 
   const [keepAwakeEnabled, setKeepAwakeEnabled] = useState(false);
   const [preventDisplaySleep, setPreventDisplaySleep] = useState(false);
@@ -164,19 +189,34 @@ export function PowerSettingsModal() {
 
   useEffect(() => {
     if (!open) return;
+    resetPowerSettingsForm(
+      setKeepAwakeEnabled,
+      setPreventDisplaySleep,
+      setPreventScreenSaver,
+      setAcOnlyMode,
+      setBatteryThresholdEnabled,
+      setBatteryThreshold,
+      setSessionMode,
+      setSessionDuration,
+      setCustomMinutes,
+    );
+    let cancelled = false;
     void loadPowerSettings().then((settings) => {
-      if (!settings) return;
+      if (cancelled || !settings) return;
       setKeepAwakeEnabled(settings.keepAwakeEnabled);
       setPreventDisplaySleep(settings.preventDisplaySleep);
       setPreventScreenSaver(settings.preventScreenSaver);
       setAcOnlyMode(settings.acOnlyMode);
       setBatteryThresholdEnabled(settings.batteryThreshold != null);
-      setBatteryThreshold(settings.batteryThreshold ?? 20);
+      setBatteryThreshold(settings.batteryThreshold ?? DEFAULT_BATTERY_THRESHOLD);
       const nextSessionState = deriveSessionState(settings.sessionDurationSecs);
       setSessionMode(nextSessionState.sessionMode);
       setSessionDuration(nextSessionState.sessionDuration);
       setCustomMinutes(nextSessionState.customMinutes);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [open, loadPowerSettings]);
 
   const handleClose = useCallback(() => close(), [close]);
@@ -196,6 +236,9 @@ export function PowerSettingsModal() {
   if (!open) return null;
 
   const handleSave = async () => {
+    if (powerSettingsLoading || !powerSettingsLoaded) {
+      return;
+    }
     const input: PowerSettingsInput = {
       keepAwakeEnabled,
       preventDisplaySleep,
@@ -208,7 +251,8 @@ export function PowerSettingsModal() {
     if (result) handleClose();
   };
 
-  const disabled = !keepAwakeEnabled;
+  const formLocked = powerSettingsLoading || !powerSettingsLoaded;
+  const disabled = formLocked || !keepAwakeEnabled;
   const isMacOrLinux = navigator.platform.startsWith("Mac") || navigator.platform.startsWith("Linux");
 
   const statusActive = keepAwakeState?.enabled && keepAwakeState?.active;
@@ -286,7 +330,11 @@ export function PowerSettingsModal() {
                 </div>
               </div>
             </div>
-            <ToggleSwitch checked={keepAwakeEnabled} onChange={setKeepAwakeEnabled} />
+            <ToggleSwitch
+              checked={keepAwakeEnabled}
+              onChange={setKeepAwakeEnabled}
+              disabled={formLocked}
+            />
           </div>
 
           {/* ── Display Section ── */}
@@ -577,7 +625,7 @@ export function PowerSettingsModal() {
               type="button"
               className="btn btn-primary"
               onClick={() => void handleSave()}
-              disabled={loading}
+              disabled={loading || formLocked}
             >
               {t("powerModal.save")}
             </button>
