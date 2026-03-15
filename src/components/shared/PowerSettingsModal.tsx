@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useKeepAwakeStore } from "../../stores/keepAwakeStore";
-import type { PowerSettingsInput } from "../../types";
+import type { KeepAwakeState, PowerSettingsInput } from "../../types";
 
 const DURATION_PRESETS = [
   { label: "duration30m", value: 1800, icon: <Clock size={11} /> },
@@ -114,6 +114,28 @@ export function applyCustomMinutesInput(
   };
 }
 
+export function getPrimaryStatusKey(
+  state: Pick<KeepAwakeState, "active" | "pausedDueToBattery" | "onAcPower">,
+) {
+  if (state.active) {
+    return "powerModal.statusActive";
+  }
+  if (state.pausedDueToBattery && state.onAcPower !== true) {
+    return "powerModal.statusPausedBattery";
+  }
+  return "powerModal.statusPaused";
+}
+
+export function getStatusMessage(
+  state: Pick<KeepAwakeState, "active" | "message">,
+) {
+  if (state.active) {
+    return null;
+  }
+  const message = state.message?.trim();
+  return message ? message : null;
+}
+
 function formatRemaining(secs: number): string {
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
@@ -191,6 +213,10 @@ export function PowerSettingsModal() {
 
   const statusActive = keepAwakeState?.enabled && keepAwakeState?.active;
   const statusPaused = keepAwakeState?.enabled && keepAwakeState?.pausedDueToBattery;
+  const primaryStatusKey = keepAwakeState
+    ? getPrimaryStatusKey(keepAwakeState)
+    : "powerModal.statusPaused";
+  const statusMessage = keepAwakeState ? getStatusMessage(keepAwakeState) : null;
 
   return createPortal(
     <div
@@ -497,13 +523,7 @@ export function PowerSettingsModal() {
               }}>
                 <StatusPill
                   color={statusPaused ? "var(--warning)" : statusActive ? "var(--success)" : "var(--text-3)"}
-                  label={
-                    statusPaused
-                      ? t("powerModal.statusPausedBattery")
-                      : statusActive
-                        ? t("powerModal.statusActive")
-                        : t("powerModal.statusPaused")
-                  }
+                  label={t(primaryStatusKey)}
                   pulse={statusActive}
                 />
 
@@ -527,6 +547,17 @@ export function PowerSettingsModal() {
                   }
                 />
               </div>
+
+              {statusMessage && (
+                <div style={{
+                  marginTop: 10,
+                  fontSize: 11,
+                  lineHeight: 1.45,
+                  color: "var(--warning)",
+                }}>
+                  {statusMessage}
+                </div>
+              )}
             </>
           )}
         </div>

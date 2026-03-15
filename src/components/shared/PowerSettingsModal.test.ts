@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   applyCustomMinutesInput,
   deriveSessionState,
+  getPrimaryStatusKey,
+  getStatusMessage,
   normalizeFixedSessionState,
 } from "./PowerSettingsModal";
 
@@ -65,5 +67,40 @@ describe("PowerSettingsModal session state helpers", () => {
       sessionDuration: 1500,
       customMinutes: "25",
     });
+  });
+
+  it("uses the generic paused label after AC power is restored", () => {
+    expect(
+      getPrimaryStatusKey({
+        active: false,
+        pausedDueToBattery: true,
+        onAcPower: true,
+      }),
+    ).toBe("powerModal.statusPaused");
+  });
+
+  it("keeps the battery pause label only while still on battery power", () => {
+    expect(
+      getPrimaryStatusKey({
+        active: false,
+        pausedDueToBattery: true,
+        onAcPower: false,
+      }),
+    ).toBe("powerModal.statusPausedBattery");
+  });
+
+  it("surfaces backend status messages only while inactive", () => {
+    expect(
+      getStatusMessage({
+        active: false,
+        message: "failed to resume keep awake on AC power: boom",
+      }),
+    ).toBe("failed to resume keep awake on AC power: boom");
+    expect(
+      getStatusMessage({
+        active: true,
+        message: "ignored while active",
+      }),
+    ).toBeNull();
   });
 });

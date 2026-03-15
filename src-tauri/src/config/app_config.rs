@@ -182,6 +182,12 @@ fn lock_config() -> anyhow::Result<MutexGuard<'static, ()>> {
         .map_err(|_| anyhow::anyhow!("config lock poisoned"))
 }
 
+#[cfg(test)]
+pub(crate) fn app_data_env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 fn replace_file(temp_path: &std::path::Path, path: &std::path::Path) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     {
@@ -216,23 +222,15 @@ fn replace_file(temp_path: &std::path::Path, path: &std::path::Path) -> std::io:
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        sync::{Mutex, OnceLock},
-    };
+    use std::fs;
 
     use super::AppConfig;
     use uuid::Uuid;
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
     const APP_DATA_ENV_VARS: [&str; 4] = ["HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA"];
 
     fn with_temp_app_data_env<T>(f: impl FnOnce() -> T) -> T {
-        let _guard = env_lock().lock().expect("env lock poisoned");
+        let _guard = super::app_data_env_lock().lock().expect("env lock poisoned");
         let previous: Vec<(&str, Option<std::ffi::OsString>)> = APP_DATA_ENV_VARS
             .into_iter()
             .map(|key| (key, std::env::var_os(key)))
