@@ -301,6 +301,9 @@ impl KeepAwakeManager {
 
         let mut runtime = self.runtime.lock().await;
         self.sync_child_state(&mut runtime);
+        // Idempotent: if a child is already running, return success without
+        // updating the profile or monitor. Callers that need to change the
+        // active profile must call disable() first (set_power_settings does).
         if runtime.child.is_some() {
             runtime.last_error = None;
             return Ok(());
@@ -341,27 +344,23 @@ impl KeepAwakeManager {
                 let mut runtime = self.runtime.lock().await;
                 self.sync_child_state(&mut runtime);
                 if runtime.child.is_some() {
-                    // Start monitor task if needed
-                    let needs_monitor = config.ac_only_mode
-                        || config.battery_threshold.is_some()
-                        || config.session_duration_secs.is_some();
+                    // Always start the monitor so the UI can show power source
+                    // status. AC-only, battery threshold, and session timer
+                    // features are gated inside the monitor/event-processor.
+                    let monitor_config = MonitorConfig {
+                        ac_only_mode: config.ac_only_mode,
+                        battery_threshold: config.battery_threshold,
+                        session_duration_secs: config.session_duration_secs,
+                    };
+                    let monitor = monitor::start_monitor(monitor_config);
+                    runtime.session_end_at = monitor.session_end_at;
+                    runtime.monitor_handle = Some(monitor);
+                    drop(runtime);
 
-                    if needs_monitor {
-                        let monitor_config = MonitorConfig {
-                            ac_only_mode: config.ac_only_mode,
-                            battery_threshold: config.battery_threshold,
-                            session_duration_secs: config.session_duration_secs,
-                        };
-                        let monitor = monitor::start_monitor(monitor_config);
-                        runtime.session_end_at = monitor.session_end_at;
-                        runtime.monitor_handle = Some(monitor);
-                        drop(runtime);
-
-                        let manager = self.clone();
-                        tokio::spawn(async move {
-                            manager.process_monitor_events().await;
-                        });
-                    }
+                    let manager = self.clone();
+                    tokio::spawn(async move {
+                        manager.process_monitor_events().await;
+                    });
 
                     Ok(())
                 } else {
@@ -459,6 +458,11 @@ impl KeepAwakeManager {
                     let _ = self.disable().await;
                     break;
                 }
+                Some(MonitorEvent::PowerSourcePolled { on_ac, battery_percent }) => {
+                    let mut runtime = self.runtime.lock().await;
+                    runtime.on_ac_power = Some(on_ac);
+                    runtime.battery_percent = battery_percent;
+                }
                 Some(MonitorEvent::AcStatusChanged { on_ac }) => {
                     let mut runtime = self.runtime.lock().await;
                     runtime.on_ac_power = Some(on_ac);
@@ -472,6 +476,12 @@ impl KeepAwakeManager {
                             let _ = child.wait().await;
                         }
                         runtime.helper = None;
+                        // Kill secondary child (Linux D-Bus inhibit)
+                        if let Some(mut secondary) = runtime.secondary_child.take() {
+                            let _ = secondary.kill().await;
+                            let _ = secondary.wait().await;
+                        }
+                        runtime.secondary_helper = None;
                         let _ = clear_helper_state(&self.state_path());
                     } else if runtime.paused_due_to_battery {
                         log::info!("keep awake resuming: AC power restored");

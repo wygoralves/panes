@@ -83,8 +83,8 @@ export function PowerSettingsModal() {
       batteryThreshold: batteryThresholdEnabled ? batteryThreshold : null,
       sessionDurationSecs: sessionMode === "fixed" ? sessionDuration : null,
     };
-    await savePowerSettings(input);
-    handleClose();
+    const result = await savePowerSettings(input);
+    if (result) handleClose();
   };
 
   const disabled = !keepAwakeEnabled;

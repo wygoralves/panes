@@ -192,7 +192,7 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
     } catch (error) {
       console.warn("[keepAwakeStore] Failed to save power settings", error);
       toast.error(t(KEEP_AWAKE_TOAST_KEYS.settingsSaveFailed));
-      return get().state;
+      return null;
     } finally {
       finishKeepAwakeRequest(set);
     }

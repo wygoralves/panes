@@ -5,6 +5,8 @@ use tokio::sync::mpsc;
 pub enum MonitorEvent {
     AcStatusChanged { on_ac: bool },
     BatteryLevel { percent: u8 },
+    /// Periodic power source status for UI display — does not trigger any action.
+    PowerSourcePolled { on_ac: bool, battery_percent: Option<u8> },
     SessionExpired,
 }
 
@@ -48,32 +50,39 @@ pub fn start_monitor(config: MonitorConfig) -> PowerMonitorHandle {
                 }
             }
 
-            // Poll power source if needed
-            if config.ac_only_mode || config.battery_threshold.is_some() {
-                if let Ok(status) = poll_power_source().await {
-                    // AC status change detection
-                    if config.ac_only_mode {
-                        let currently_on_ac = status.on_ac;
-                        if was_on_ac.is_some() && was_on_ac != Some(currently_on_ac) {
-                            let _ = event_tx
-                                .send(MonitorEvent::AcStatusChanged {
-                                    on_ac: currently_on_ac,
-                                })
-                                .await;
-                        }
-                        was_on_ac = Some(currently_on_ac);
-                    }
+            // Always poll power source for UI display; act on AC/battery events
+            // only when the corresponding feature is enabled.
+            if let Ok(status) = poll_power_source().await {
+                // Propagate status for UI display
+                let _ = event_tx
+                    .send(MonitorEvent::PowerSourcePolled {
+                        on_ac: status.on_ac,
+                        battery_percent: status.battery_percent,
+                    })
+                    .await;
 
-                    // Battery threshold check
-                    if let (Some(threshold), Some(percent)) =
-                        (config.battery_threshold, status.battery_percent)
-                    {
-                        if percent < threshold {
-                            let _ = event_tx
-                                .send(MonitorEvent::BatteryLevel { percent })
-                                .await;
-                            break;
-                        }
+                // AC status change detection
+                if config.ac_only_mode {
+                    let currently_on_ac = status.on_ac;
+                    if was_on_ac.is_some() && was_on_ac != Some(currently_on_ac) {
+                        let _ = event_tx
+                            .send(MonitorEvent::AcStatusChanged {
+                                on_ac: currently_on_ac,
+                            })
+                            .await;
+                    }
+                    was_on_ac = Some(currently_on_ac);
+                }
+
+                // Battery threshold check
+                if let (Some(threshold), Some(percent)) =
+                    (config.battery_threshold, status.battery_percent)
+                {
+                    if percent < threshold {
+                        let _ = event_tx
+                            .send(MonitorEvent::BatteryLevel { percent })
+                            .await;
+                        break;
                     }
                 }
             }
@@ -278,7 +287,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn monitor_with_no_features_runs_indefinitely() {
+    async fn monitor_with_no_features_does_not_fire_action_events() {
         let config = MonitorConfig {
             ac_only_mode: false,
             battery_threshold: None,
@@ -286,9 +295,16 @@ mod tests {
         };
         let mut handle = start_monitor(config);
 
-        // Should not receive any event within a short window
-        let result = tokio::time::timeout(Duration::from_millis(100), handle.event_rx.recv()).await;
-        assert!(result.is_err(), "should timeout — no events expected");
+        // Drain events for a short window — only PowerSourcePolled is acceptable
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(200);
+        loop {
+            match tokio::time::timeout_at(deadline, handle.event_rx.recv()).await {
+                Ok(Some(MonitorEvent::PowerSourcePolled { .. })) => continue,
+                Ok(Some(other)) => panic!("unexpected action event: {other:?}"),
+                Ok(None) => break,        // channel closed
+                Err(_) => break,          // timeout — expected
+            }
+        }
 
         handle.task.abort();
     }

@@ -105,7 +105,22 @@ pub async fn set_keep_awake_enabled(
     } else {
         state.keep_awake.disable().await?;
         if let Err(error) = save_enabled_preference(false).await {
-            match state.keep_awake.enable().await {
+            // Rollback: reload full config to preserve the user's profile
+            let rollback_config = tokio::task::spawn_blocking(|| {
+                AppConfig::load_or_create().map(|c| c.power)
+            })
+            .await
+            .ok()
+            .and_then(|r| r.ok());
+
+            let rollback_result = if let Some(mut config) = rollback_config {
+                config.keep_awake_enabled = true;
+                state.keep_awake.enable_with_config(&config).await
+            } else {
+                state.keep_awake.enable().await
+            };
+
+            match rollback_result {
                 Ok(()) => {
                     return Err(format!(
                         "failed to persist keep awake preference after disabling: {error}; runtime state reverted"
