@@ -1141,9 +1141,14 @@ fn resolve_backend_spec(profile: &PowerProfile) -> Result<BackendSpec, String> {
         // System sleep prevention
         if profile.prevent_system_sleep {
             if profile.ac_only {
-                args.push(OsString::from("-s")); // AC-only system sleep prevention
+                // AC-only: -s alone — only active on AC power
+                args.push(OsString::from("-s"));
             } else {
-                args.push(OsString::from("-i")); // Idle sleep prevention
+                // Default: -i (idle sleep on any power) + -s (system sleep
+                // including lid close, effective on AC). Together they cover
+                // idle-on-battery and lid-close-on-AC.
+                args.push(OsString::from("-i"));
+                args.push(OsString::from("-s"));
             }
         }
 
@@ -1918,7 +1923,8 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
 
-        assert!(args.iter().any(|arg| arg == "-i"));
+        assert!(args.iter().any(|arg| arg == "-i"), "should include -i for idle sleep");
+        assert!(args.iter().any(|arg| arg == "-s"), "should include -s for system/lid-close sleep");
         assert!(args.iter().any(|arg| arg == "-w"));
         assert!(args
             .iter()
@@ -1936,6 +1942,7 @@ mod tests {
         let args: Vec<String> = spec.args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(args.iter().any(|a| a == "-d"));
         assert!(args.iter().any(|a| a == "-i"));
+        assert!(args.iter().any(|a| a == "-s"));
     }
 
     #[cfg(target_os = "macos")]
