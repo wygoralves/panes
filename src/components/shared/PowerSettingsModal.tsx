@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
-import { X } from "lucide-react";
+import { createPortal } from "react-dom";
+import { X, Zap, Monitor, BatteryCharging, Timer } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useKeepAwakeStore } from "../../stores/keepAwakeStore";
 import type { PowerSettingsInput } from "../../types";
@@ -90,307 +91,382 @@ export function PowerSettingsModal() {
   const disabled = !keepAwakeEnabled;
   const isMacOrLinux = navigator.platform.startsWith("Mac") || navigator.platform.startsWith("Linux");
 
-  return (
-    <div className="confirm-dialog-backdrop" onMouseDown={handleClose}>
+  const statusActive = keepAwakeState?.enabled && keepAwakeState?.active;
+  const statusPaused = keepAwakeState?.enabled && keepAwakeState?.pausedDueToBattery;
+
+  return createPortal(
+    <div
+      className="confirm-dialog-backdrop"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) handleClose();
+      }}
+    >
       <div
-        className="confirm-dialog-card"
+        className="ws-modal"
         onMouseDown={(e) => e.stopPropagation()}
-        style={{ width: 420, maxHeight: "80vh", overflow: "auto" }}
+        style={{ width: "min(460px, calc(100vw - 48px))", maxHeight: "calc(100vh - 60px)" }}
       >
-        {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>{t("powerModal.title")}</span>
+        {/* ── Header ── */}
+        <div className="ws-header">
+          <div className="ws-header-icon">
+            <Zap size={18} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 className="ws-header-title">{t("powerModal.title")}</h2>
+            <div className="ws-header-path">{t("powerModal.keepAwakeDescription")}</div>
+          </div>
           <button
             type="button"
+            className="ws-close"
             onClick={handleClose}
-            style={{ background: "none", border: "none", cursor: "pointer", padding: 2, color: "var(--text-secondary)" }}
+            style={{ background: "none", border: "none" }}
           >
-            <X size={16} />
+            <X size={15} />
           </button>
         </div>
 
-        {/* Keep Awake main toggle */}
-        <ToggleRow
-          label={t("powerModal.keepAwake")}
-          description={t("powerModal.keepAwakeDescription")}
-          checked={keepAwakeEnabled}
-          onChange={setKeepAwakeEnabled}
-        />
+        <div className="ws-divider" />
 
-        {/* Display Section */}
-        <SectionDivider label={t("powerModal.displaySection")} />
+        {/* ── Scrollable Body ── */}
+        <div className="ws-body">
 
-        <ToggleRow
-          label={t("powerModal.preventDisplaySleep")}
-          description={t("powerModal.preventDisplaySleepDescription")}
-          checked={preventDisplaySleep}
-          onChange={setPreventDisplaySleep}
-          disabled={disabled}
-        />
-        <ToggleRow
-          label={t("powerModal.preventScreenSaver")}
-          description={t("powerModal.preventScreenSaverDescription")}
-          checked={preventScreenSaver}
-          onChange={setPreventScreenSaver}
-          disabled={disabled}
-        />
-        {isMacOrLinux && (
-          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2, marginBottom: 8, paddingLeft: 4 }}>
-            {t("powerModal.displayLinkedNote")}
-          </div>
-        )}
-
-        {/* Power Source Section */}
-        <SectionDivider label={t("powerModal.powerSourceSection")} />
-
-        <ToggleRow
-          label={t("powerModal.acOnlyMode")}
-          description={t("powerModal.acOnlyModeDescription")}
-          checked={acOnlyMode}
-          onChange={setAcOnlyMode}
-          disabled={disabled}
-        />
-
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 4px", opacity: disabled ? 0.5 : 1 }}>
-          <input
-            type="checkbox"
-            checked={batteryThresholdEnabled}
-            onChange={(e) => setBatteryThresholdEnabled(e.target.checked)}
-            disabled={disabled}
-            style={{ margin: 0 }}
-          />
-          <span style={{ fontSize: 13 }}>{t("powerModal.batteryThreshold")}</span>
-          {batteryThresholdEnabled && (
-            <span style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: "auto" }}>
-              <input
-                type="number"
-                min={1}
-                max={99}
-                value={batteryThreshold}
-                onChange={(e) => setBatteryThreshold(Math.max(1, Math.min(99, Number(e.target.value))))}
-                disabled={disabled}
-                style={{
-                  width: 48,
-                  padding: "2px 4px",
-                  fontSize: 13,
-                  background: "var(--bg-secondary)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: 4,
-                  color: "var(--text-primary)",
-                  textAlign: "center",
-                }}
-              />
-              <span style={{ fontSize: 13 }}>%</span>
-            </span>
-          )}
-        </div>
-
-        {/* Session Section */}
-        <SectionDivider label={t("powerModal.sessionSection")} />
-
-        <div style={{ padding: "4px 4px", opacity: disabled ? 0.5 : 1 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "4px 0", cursor: disabled ? "default" : "pointer" }}>
-            <input
-              type="radio"
-              name="session-mode"
-              checked={sessionMode === "indefinite"}
-              onChange={() => setSessionMode("indefinite")}
-              disabled={disabled}
-              style={{ margin: 0 }}
-            />
-            {t("powerModal.indefinite")}
-          </label>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "4px 0", cursor: disabled ? "default" : "pointer" }}>
-            <input
-              type="radio"
-              name="session-mode"
-              checked={sessionMode === "fixed"}
-              onChange={() => setSessionMode("fixed")}
-              disabled={disabled}
-              style={{ margin: 0 }}
-            />
-            {t("powerModal.fixedDuration")}
-          </label>
-
-          {sessionMode === "fixed" && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6, paddingLeft: 22 }}>
-              {DURATION_PRESETS.map((preset) => (
-                <button
-                  key={preset.value}
-                  type="button"
-                  onClick={() => { setSessionDuration(preset.value); setCustomMinutes(""); }}
-                  disabled={disabled}
-                  style={{
-                    padding: "3px 10px",
-                    fontSize: 12,
-                    borderRadius: 4,
-                    border: "1px solid var(--border-subtle)",
-                    background: sessionDuration === preset.value && !customMinutes ? "var(--accent)" : "var(--bg-secondary)",
-                    color: sessionDuration === preset.value && !customMinutes ? "white" : "var(--text-primary)",
-                    cursor: disabled ? "default" : "pointer",
-                  }}
-                >
-                  {t(`powerModal.${preset.label}`)}
-                </button>
-              ))}
-              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <input
-                  type="number"
-                  min={1}
-                  placeholder={t("powerModal.durationCustom")}
-                  value={customMinutes}
-                  onChange={(e) => {
-                    setCustomMinutes(e.target.value);
-                    const mins = Number(e.target.value);
-                    if (mins > 0) setSessionDuration(mins * 60);
-                  }}
-                  disabled={disabled}
-                  style={{
-                    width: 60,
-                    padding: "2px 4px",
-                    fontSize: 12,
-                    background: "var(--bg-secondary)",
-                    border: "1px solid var(--border-subtle)",
-                    borderRadius: 4,
-                    color: "var(--text-primary)",
-                    textAlign: "center",
-                  }}
-                />
-                <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{t("powerModal.customMinutes")}</span>
+          {/* Main Toggle */}
+          <div className="ws-prop" style={{ borderTop: "none", paddingBottom: 2 }}>
+            <div className="ws-prop-label" style={{ width: "auto", flex: 1 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text-1)" }}>
+                {t("powerModal.keepAwake")}
               </span>
             </div>
+            <ToggleSwitch checked={keepAwakeEnabled} onChange={setKeepAwakeEnabled} />
+          </div>
+
+          {/* ── Display Section ── */}
+          <SectionLabel icon={<Monitor size={12} />} label={t("powerModal.displaySection")} />
+
+          <SettingsRow
+            label={t("powerModal.preventDisplaySleep")}
+            description={t("powerModal.preventDisplaySleepDescription")}
+            disabled={disabled}
+          >
+            <ToggleSwitch
+              checked={preventDisplaySleep}
+              onChange={setPreventDisplaySleep}
+              disabled={disabled}
+            />
+          </SettingsRow>
+
+          <SettingsRow
+            label={t("powerModal.preventScreenSaver")}
+            description={t("powerModal.preventScreenSaverDescription")}
+            disabled={disabled}
+          >
+            <ToggleSwitch
+              checked={preventScreenSaver}
+              onChange={setPreventScreenSaver}
+              disabled={disabled}
+            />
+          </SettingsRow>
+
+          {isMacOrLinux && (
+            <div style={{
+              fontSize: 10.5,
+              color: "var(--text-3)",
+              padding: "2px 0 6px",
+              fontStyle: "italic",
+            }}>
+              {t("powerModal.displayLinkedNote")}
+            </div>
+          )}
+
+          {/* ── Power Source Section ── */}
+          <SectionLabel icon={<BatteryCharging size={12} />} label={t("powerModal.powerSourceSection")} />
+
+          <SettingsRow
+            label={t("powerModal.acOnlyMode")}
+            description={t("powerModal.acOnlyModeDescription")}
+            disabled={disabled}
+          >
+            <ToggleSwitch
+              checked={acOnlyMode}
+              onChange={setAcOnlyMode}
+              disabled={disabled}
+            />
+          </SettingsRow>
+
+          <SettingsRow
+            label={t("powerModal.batteryThreshold")}
+            description={t("powerModal.batteryThresholdDescription")}
+            disabled={disabled}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <ToggleSwitch
+                checked={batteryThresholdEnabled}
+                onChange={setBatteryThresholdEnabled}
+                disabled={disabled}
+              />
+              {batteryThresholdEnabled && (
+                <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                  <input
+                    type="number"
+                    min={1}
+                    max={99}
+                    value={batteryThreshold}
+                    onChange={(e) => setBatteryThreshold(Math.max(1, Math.min(99, Number(e.target.value))))}
+                    disabled={disabled}
+                    className="ws-depth-input"
+                  />
+                  <span style={{ fontSize: 11, color: "var(--text-3)" }}>%</span>
+                </span>
+              )}
+            </div>
+          </SettingsRow>
+
+          {/* ── Session Section ── */}
+          <SectionLabel icon={<Timer size={12} />} label={t("powerModal.sessionSection")} />
+
+          <div style={{ opacity: disabled ? 0.35 : 1, transition: "opacity var(--duration-fast) var(--ease-out)" }}>
+            <div style={{ display: "flex", gap: 6, padding: "6px 0" }}>
+              <RadioPill
+                label={t("powerModal.indefinite")}
+                checked={sessionMode === "indefinite"}
+                onChange={() => setSessionMode("indefinite")}
+                disabled={disabled}
+              />
+              <RadioPill
+                label={t("powerModal.fixedDuration")}
+                checked={sessionMode === "fixed"}
+                onChange={() => setSessionMode("fixed")}
+                disabled={disabled}
+              />
+            </div>
+
+            {sessionMode === "fixed" && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5, paddingTop: 4, paddingBottom: 4 }}>
+                {DURATION_PRESETS.map((preset) => {
+                  const isActive = sessionDuration === preset.value && !customMinutes;
+                  return (
+                    <button
+                      key={preset.value}
+                      type="button"
+                      onClick={() => { setSessionDuration(preset.value); setCustomMinutes(""); }}
+                      disabled={disabled}
+                      className={isActive ? "ws-prop-btn ws-prop-btn-accent" : "ws-prop-btn"}
+                    >
+                      {t(`powerModal.${preset.label}`)}
+                    </button>
+                  );
+                })}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <input
+                    type="number"
+                    min={1}
+                    placeholder={t("powerModal.durationCustom")}
+                    value={customMinutes}
+                    onChange={(e) => {
+                      setCustomMinutes(e.target.value);
+                      const mins = Number(e.target.value);
+                      if (mins > 0) setSessionDuration(mins * 60);
+                    }}
+                    disabled={disabled}
+                    className="ws-depth-input"
+                    style={{ width: 52 }}
+                  />
+                  <span style={{ fontSize: 10.5, color: "var(--text-3)" }}>{t("powerModal.customMinutes")}</span>
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* ── Live Status ── */}
+          {keepAwakeState?.enabled && (
+            <>
+              <SectionLabel icon={<Zap size={12} />} label={t("powerModal.statusSection")} />
+
+              <div style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 6,
+                padding: "4px 0 2px",
+              }}>
+                {/* Status pill */}
+                <StatusPill
+                  color={statusPaused ? "var(--warning)" : statusActive ? "var(--success)" : "var(--text-3)"}
+                  label={
+                    statusPaused
+                      ? t("powerModal.statusPausedBattery")
+                      : statusActive
+                        ? t("powerModal.statusActive")
+                        : t("powerModal.statusPaused")
+                  }
+                />
+
+                {/* Power source pill */}
+                {keepAwakeState.onAcPower != null && (
+                  <StatusPill
+                    color={keepAwakeState.onAcPower ? "var(--info)" : "var(--warning)"}
+                    label={
+                      keepAwakeState.onAcPower
+                        ? t("powerModal.statusAc")
+                        : `${t("powerModal.statusBattery")} ${keepAwakeState.batteryPercent ?? "?"}%`
+                    }
+                  />
+                )}
+
+                {/* Session timer pill */}
+                <StatusPill
+                  color="var(--text-3)"
+                  label={
+                    keepAwakeState.sessionRemainingSecs != null
+                      ? t("powerModal.statusRemaining", { time: formatRemaining(keepAwakeState.sessionRemainingSecs) })
+                      : t("powerModal.statusIndefinite")
+                  }
+                />
+              </div>
+            </>
           )}
         </div>
 
-        {/* Status Section (only shown when enabled and active) */}
-        {keepAwakeState?.enabled && (
-          <>
-            <SectionDivider label={t("powerModal.statusSection")} />
-            <div style={{ padding: "4px 4px", fontSize: 12, color: "var(--text-secondary)" }}>
-              {keepAwakeState.onAcPower != null && (
-                <div style={{ padding: "2px 0" }}>
-                  {t("powerModal.statusPower")}: {keepAwakeState.onAcPower ? t("powerModal.statusAc") : `${t("powerModal.statusBattery")} ${keepAwakeState.batteryPercent ?? "?"}%`}
-                </div>
-              )}
-              <div style={{ padding: "2px 0" }}>
-                {t("powerModal.statusSession")}: {keepAwakeState.sessionRemainingSecs != null
-                  ? t("powerModal.statusRemaining", { time: formatRemaining(keepAwakeState.sessionRemainingSecs) })
-                  : t("powerModal.statusIndefinite")}
-              </div>
-              <div style={{ padding: "2px 0" }}>
-                {keepAwakeState.pausedDueToBattery
-                  ? t("powerModal.statusPausedBattery")
-                  : keepAwakeState.active
-                    ? t("powerModal.statusActive")
-                    : t("powerModal.statusPaused")}
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* Actions */}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={handleClose}
-            style={{ padding: "5px 16px", fontSize: 13 }}
-          >
-            {t("powerModal.cancel")}
-          </button>
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={() => void handleSave()}
-            disabled={loading}
-            style={{ padding: "5px 16px", fontSize: 13 }}
-          >
-            {t("powerModal.save")}
-          </button>
+        {/* ── Footer ── */}
+        <div className="ws-footer">
+          <div />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              className="btn btn-cancel-ghost"
+              onClick={handleClose}
+            >
+              {t("powerModal.cancel")}
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void handleSave()}
+              disabled={loading}
+            >
+              {t("powerModal.save")}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
-function SectionDivider({ label }: { label: string }) {
+/* ── Sub-components ── */
+
+function SectionLabel({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
     <div style={{
-      fontSize: 11,
-      fontWeight: 600,
-      color: "var(--text-tertiary)",
-      textTransform: "uppercase",
-      letterSpacing: "0.08em",
-      padding: "12px 0 4px",
-      borderTop: "1px solid var(--border-subtle)",
-      marginTop: 8,
+      display: "flex",
+      alignItems: "center",
+      gap: 6,
+      paddingTop: 14,
+      paddingBottom: 4,
     }}>
-      {label}
+      <span style={{ color: "var(--text-3)", display: "flex" }}>{icon}</span>
+      <span className="ws-section-label" style={{ paddingBottom: 0 }}>{label}</span>
     </div>
   );
 }
 
-function ToggleRow({
+function SettingsRow({
   label,
   description,
+  disabled = false,
+  children,
+}: {
+  label: string;
+  description: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="ws-prop"
+      style={{
+        opacity: disabled ? 0.35 : 1,
+        transition: "opacity var(--duration-fast) var(--ease-out)",
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 500, color: "var(--text-1)" }}>{label}</div>
+        <div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 1 }}>{description}</div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ToggleSwitch({
   checked,
   onChange,
   disabled = false,
 }: {
-  label: string;
-  description: string;
   checked: boolean;
   onChange: (value: boolean) => void;
   disabled?: boolean;
 }) {
   return (
+    <label className="ws-toggle" style={{ cursor: disabled ? "not-allowed" : undefined }}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => !disabled && onChange(e.target.checked)}
+        disabled={disabled}
+      />
+      <span className="ws-toggle-track" />
+      <span className="ws-toggle-thumb" />
+    </label>
+  );
+}
+
+function RadioPill({
+  label,
+  checked,
+  onChange,
+  disabled = false,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+}) {
+  return (
     <button
       type="button"
-      onClick={() => !disabled && onChange(!checked)}
+      onClick={() => !disabled && onChange()}
       disabled={disabled}
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        width: "100%",
-        padding: "6px 4px",
-        background: "none",
-        border: "none",
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-        textAlign: "left",
-        color: "var(--text-primary)",
-      }}
+      className={checked ? "ws-prop-btn ws-prop-btn-accent" : "ws-prop-btn"}
+      style={{ cursor: disabled ? "not-allowed" : "pointer" }}
     >
-      <div>
-        <div style={{ fontSize: 13 }}>{label}</div>
-        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 1 }}>{description}</div>
-      </div>
-      <span
-        style={{
-          width: 28,
-          height: 16,
-          borderRadius: 8,
-          background: checked ? "var(--accent)" : "rgba(255,255,255,0.12)",
-          display: "flex",
-          alignItems: "center",
-          padding: "0 2px",
-          flexShrink: 0,
-          transition: "background 0.2s",
-        }}
-      >
-        <span
-          style={{
-            width: 12,
-            height: 12,
-            borderRadius: "50%",
-            background: "white",
-            transform: checked ? "translateX(12px)" : "translateX(0)",
-            transition: "transform 0.2s",
-            opacity: checked ? 1 : 0.6,
-          }}
-        />
-      </span>
+      {label}
     </button>
+  );
+}
+
+function StatusPill({ color, label }: { color: string; label: string }) {
+  return (
+    <span style={{
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 5,
+      padding: "3px 8px",
+      borderRadius: "var(--radius-sm)",
+      background: "rgba(255,255,255,0.04)",
+      border: "1px solid rgba(255,255,255,0.06)",
+      fontSize: 10.5,
+      fontWeight: 500,
+      color: "var(--text-2)",
+    }}>
+      <span style={{
+        width: 6,
+        height: 6,
+        borderRadius: "50%",
+        background: color,
+        flexShrink: 0,
+      }} />
+      {label}
+    </span>
   );
 }
