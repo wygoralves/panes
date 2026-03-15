@@ -152,9 +152,8 @@ pub(super) fn read_clamshell_state() -> ClamshellState {
     }
 
     let mut props_ref: core_foundation::dictionary::CFMutableDictionaryRef = ptr::null_mut();
-    let result = unsafe {
-        IORegistryEntryCreateCFProperties(service, &mut props_ref, ptr::null_mut(), 0)
-    };
+    let result =
+        unsafe { IORegistryEntryCreateCFProperties(service, &mut props_ref, ptr::null_mut(), 0) };
     unsafe {
         IOObjectRelease(service);
     }
@@ -170,8 +169,7 @@ pub(super) fn read_clamshell_state() -> ClamshellState {
     };
 
     let lid_is_closed = ioregistry_find_bool(&props, K_APPLE_CLAMSHELL_STATE_KEY);
-    let clamshell_causes_sleep =
-        ioregistry_find_bool(&props, K_APPLE_CLAMSHELL_CAUSES_SLEEP_KEY);
+    let clamshell_causes_sleep = ioregistry_find_bool(&props, K_APPLE_CLAMSHELL_CAUSES_SLEEP_KEY);
 
     ClamshellState {
         lid_is_closed,
@@ -189,9 +187,7 @@ pub(super) fn read_sleep_disabled() -> Option<bool> {
         return None;
     }
 
-    let dict = unsafe {
-        CFDictionary::<CFString, CFType>::wrap_under_create_rule(dict_ref)
-    };
+    let dict = unsafe { CFDictionary::<CFString, CFType>::wrap_under_create_rule(dict_ref) };
 
     ioregistry_find_bool(&dict, K_IOPM_SLEEP_DISABLED_KEY)
 }
@@ -251,17 +247,16 @@ pub(super) fn spawn(profile: &PowerProfile) -> anyhow::Result<SpawnedKeepAwakeCh
 pub(super) async fn closed_display_diagnostics(
     _keep_awake_active: bool,
 ) -> ClosedDisplayDiagnostics {
-    let (clamshell, sleep_disabled) = tokio::task::spawn_blocking(|| {
-        (read_clamshell_state(), read_sleep_disabled())
-    })
-    .await
-    .unwrap_or_else(|_| (ClamshellState::default(), None));
+    let (clamshell, sleep_disabled) =
+        tokio::task::spawn_blocking(|| (read_clamshell_state(), read_sleep_disabled()))
+            .await
+            .unwrap_or_else(|_| (ClamshellState::default(), None));
 
     // The system supports closed-display operation when SleepDisabled is active
     // (set by a privileged helper) OR when the kernel reports that clamshell
     // closure does not cause sleep (e.g. external display on AC).
-    let clamshell_sleep_bypassed = sleep_disabled == Some(true)
-        || clamshell.clamshell_causes_sleep == Some(false);
+    let clamshell_sleep_bypassed =
+        sleep_disabled == Some(true) || clamshell.clamshell_causes_sleep == Some(false);
 
     ClosedDisplayDiagnostics {
         supports_closed_display: Some(clamshell_sleep_bypassed),

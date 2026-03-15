@@ -211,11 +211,9 @@ pub struct HelperStatusDto {
 pub async fn get_helper_status() -> Result<HelperStatusDto, String> {
     #[cfg(target_os = "macos")]
     {
-        let status = tokio::task::spawn_blocking(|| {
-            crate::power::macos_helper::helper_status()
-        })
-        .await
-        .map_err(err_to_string)?;
+        let status = tokio::task::spawn_blocking(|| crate::power::macos_helper::helper_status())
+            .await
+            .map_err(err_to_string)?;
 
         Ok(HelperStatusDto {
             status: status.as_str().to_string(),
@@ -240,12 +238,10 @@ pub async fn get_helper_status() -> Result<HelperStatusDto, String> {
 pub async fn register_keep_awake_helper() -> Result<HelperStatusDto, String> {
     #[cfg(target_os = "macos")]
     {
-        let result = tokio::task::spawn_blocking(|| {
-            crate::power::macos_helper::register_helper()
-        })
-        .await
-        .map_err(err_to_string)?
-        .map_err(err_to_string)?;
+        let result = tokio::task::spawn_blocking(|| crate::power::macos_helper::register_helper())
+            .await
+            .map_err(err_to_string)?
+            .map_err(err_to_string)?;
 
         Ok(HelperStatusDto {
             status: result.status.as_str().to_string(),

@@ -178,8 +178,7 @@ impl HelperConnection {
     pub async fn connect() -> io::Result<Self> {
         let stream = timeout(IPC_TIMEOUT, UnixStream::connect(HELPER_SOCKET_PATH))
             .await
-            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "helper connect timeout"))?
-            ?;
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "helper connect timeout"))??;
         Ok(Self {
             stream: BufReader::new(stream),
         })
@@ -330,10 +329,7 @@ mod tests {
         assert_eq!(HelperStatus::RequiresApproval.as_str(), "requiresApproval");
         assert_eq!(HelperStatus::NotRegistered.as_str(), "notRegistered");
         assert_eq!(HelperStatus::NotFound.as_str(), "notFound");
-        assert_eq!(
-            HelperStatus::Unknown("foo".into()).as_str(),
-            "unknown"
-        );
+        assert_eq!(HelperStatus::Unknown("foo".into()).as_str(), "unknown");
     }
 
     #[test]

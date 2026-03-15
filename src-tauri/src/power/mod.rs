@@ -873,12 +873,10 @@ fn display_prevention_status(
     profile: Option<&PowerProfile>,
     display_inhibit_active: bool,
 ) -> (bool, bool) {
-    let display_sleep_prevented = active
-        && display_inhibit_active
-        && profile.is_some_and(|p| p.prevent_display_sleep);
-    let screen_saver_prevented = active
-        && display_inhibit_active
-        && profile.is_some_and(|p| p.prevent_screen_saver);
+    let display_sleep_prevented =
+        active && display_inhibit_active && profile.is_some_and(|p| p.prevent_display_sleep);
+    let screen_saver_prevented =
+        active && display_inhibit_active && profile.is_some_and(|p| p.prevent_screen_saver);
     (display_sleep_prevented, screen_saver_prevented)
 }
 
@@ -2328,7 +2326,8 @@ mod tests {
         assert!(script.contains("PanesScreenSaver"));
         assert!(script.contains("SystemParametersInfo"));
         assert!(script.contains("ScreenSaveActive"));
-        assert!(script.contains("$screenSaverRestoreValue = if ($screenSaverWasActive) { 1 } else { 0 }"));
+        assert!(script
+            .contains("$screenSaverRestoreValue = if ($screenSaverWasActive) { 1 } else { 0 }"));
         assert!(script.contains("SystemParametersInfo(0x11, $screenSaverRestoreValue"));
     }
 
