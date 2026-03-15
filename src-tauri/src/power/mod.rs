@@ -411,7 +411,7 @@ impl KeepAwakeManager {
 
         // Stop monitor task
         if let Some(cleanup) = runtime.monitor_cleanup.take() {
-            cleanup.task.abort();
+            cleanup.shutdown().await;
         }
         runtime.session_end_at = None;
         runtime.active_profile = None;

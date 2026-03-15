@@ -1,4 +1,23 @@
 use std::time::{Duration, Instant};
+
+#[cfg(target_os = "macos")]
+use std::{
+    os::raw::c_void,
+    sync::{mpsc as std_mpsc, Arc, Mutex as StdMutex},
+    thread,
+};
+
+#[cfg(target_os = "macos")]
+use core_foundation::{
+    array::CFArray,
+    base::{CFType, TCFType},
+    boolean::CFBoolean,
+    dictionary::CFDictionary,
+    number::CFNumber,
+    runloop::{kCFRunLoopDefaultMode, CFRunLoop, CFRunLoopSource},
+    string::{CFString, CFStringRef},
+};
+
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,12 +61,22 @@ pub struct PowerMonitorHandle {
 pub struct PowerMonitorCleanup {
     pub task: tokio::task::JoinHandle<()>,
     pub session_end_at: Option<Instant>,
+    #[cfg(target_os = "macos")]
+    power_source_watcher: Option<MacOsPowerSourceWatcherCleanup>,
 }
 
 const POLL_INTERVAL: Duration = Duration::from_secs(10);
 
 pub fn start_monitor(config: MonitorConfig) -> PowerMonitorHandle {
     let (event_tx, event_rx) = mpsc::channel(16);
+    #[cfg(target_os = "macos")]
+    let (mut power_source_rx, power_source_watcher) = match start_power_source_watcher() {
+        Ok((rx, cleanup)) => (Some(rx), Some(cleanup)),
+        Err(error) => {
+            log::warn!("failed to start macOS power-source watcher: {error}");
+            (None, None)
+        }
+    };
 
     let session_end_at = config
         .session_duration_secs
@@ -83,6 +112,20 @@ pub fn start_monitor(config: MonitorConfig) -> PowerMonitorHandle {
                 POLL_INTERVAL
             };
 
+            #[cfg(target_os = "macos")]
+            if let Some(power_source_events) = power_source_rx.as_mut() {
+                tokio::select! {
+                    _ = tokio::time::sleep(sleep_duration) => {}
+                    changed = power_source_events.recv() => {
+                        if changed.is_none() {
+                            power_source_rx = None;
+                            tokio::time::sleep(sleep_duration).await;
+                        }
+                    }
+                }
+                continue;
+            }
+
             tokio::time::sleep(sleep_duration).await;
         }
     });
@@ -92,7 +135,20 @@ pub fn start_monitor(config: MonitorConfig) -> PowerMonitorHandle {
         cleanup: PowerMonitorCleanup {
             task,
             session_end_at,
+            #[cfg(target_os = "macos")]
+            power_source_watcher,
         },
+    }
+}
+
+impl PowerMonitorCleanup {
+    pub async fn shutdown(self) {
+        self.task.abort();
+
+        #[cfg(target_os = "macos")]
+        if let Some(watcher) = self.power_source_watcher {
+            watcher.shutdown().await;
+        }
     }
 }
 
@@ -163,31 +219,59 @@ fn poll_power_source_blocking() -> Result<PowerSourceStatus, String> {
 
 #[cfg(target_os = "macos")]
 fn poll_power_source_macos() -> Result<PowerSourceStatus, String> {
-    let output = std::process::Command::new("pmset")
-        .args(["-g", "batt"])
-        .output()
-        .map_err(|e| format!("failed to run pmset: {e}"))?;
-
-    if !output.status.success() {
-        return Err("pmset returned non-zero".to_string());
+    let snapshot_ref = unsafe { IOPSCopyPowerSourcesInfo() };
+    if snapshot_ref.is_null() {
+        return Err("IOPSCopyPowerSourcesInfo returned null".to_string());
     }
+    let snapshot = unsafe { CFType::wrap_under_create_rule(snapshot_ref) };
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let providing_power_ref = unsafe { IOPSGetProvidingPowerSourceType(snapshot.as_CFTypeRef()) };
+    if providing_power_ref.is_null() {
+        return Err("IOPSGetProvidingPowerSourceType returned null".to_string());
+    }
+    let providing_power = unsafe { CFString::wrap_under_get_rule(providing_power_ref) };
+    let on_ac = providing_power == CFString::from_static_string(K_IOPS_AC_POWER_VALUE);
 
-    let on_ac = stdout.contains("AC Power");
-
-    let battery_percent = stdout
-        .lines()
-        .find(|line| line.contains("InternalBattery"))
-        .and_then(|line| {
-            line.split_whitespace()
-                .find(|word| word.ends_with("%;") || word.ends_with('%'))
-                .and_then(|pct| {
-                    pct.trim_end_matches(|c: char| !c.is_ascii_digit())
-                        .parse::<u8>()
-                        .ok()
-                })
+    let list_ref = unsafe { IOPSCopyPowerSourcesList(snapshot.as_CFTypeRef()) };
+    if list_ref.is_null() {
+        return Ok(PowerSourceStatus {
+            on_ac,
+            battery_percent: None,
         });
+    }
+    let list = unsafe { CFArray::<CFType>::wrap_under_create_rule(list_ref) };
+
+    let mut battery_percent = None;
+    for power_source in &list {
+        let description_ref = unsafe {
+            IOPSGetPowerSourceDescription(snapshot.as_CFTypeRef(), power_source.as_CFTypeRef())
+        };
+        if description_ref.is_null() {
+            continue;
+        }
+        let description =
+            unsafe { CFDictionary::<CFString, CFType>::wrap_under_get_rule(description_ref) };
+
+        if dictionary_find_bool(&description, K_IOPS_IS_PRESENT_KEY) == Some(false) {
+            continue;
+        }
+
+        let power_state = dictionary_find_string(&description, K_IOPS_POWER_SOURCE_STATE_KEY);
+        if power_state.as_deref() != Some(K_IOPS_BATTERY_POWER_VALUE) {
+            continue;
+        }
+
+        let current_capacity = dictionary_find_i32(&description, K_IOPS_CURRENT_CAPACITY_KEY);
+        let max_capacity = dictionary_find_i32(&description, K_IOPS_MAX_CAPACITY_KEY);
+        if let (Some(current_capacity), Some(max_capacity)) = (current_capacity, max_capacity) {
+            if max_capacity > 0 {
+                let percent =
+                    ((current_capacity as f64 / max_capacity as f64) * 100.0).round() as i32;
+                battery_percent = Some(percent.clamp(0, 100) as u8);
+                break;
+            }
+        }
+    }
 
     Ok(PowerSourceStatus {
         on_ac,
@@ -332,7 +416,7 @@ mod tests {
             }
         }
 
-        handle.cleanup.task.abort();
+        handle.cleanup.shutdown().await;
     }
 
     #[tokio::test]
@@ -344,9 +428,7 @@ mod tests {
         };
         let handle = start_monitor(config);
 
-        handle.cleanup.task.abort();
-        let result = handle.cleanup.task.await;
-        assert!(result.is_err() || result.is_ok());
+        handle.cleanup.shutdown().await;
     }
 
     #[tokio::test]
@@ -384,4 +466,191 @@ mod tests {
         );
         assert_eq!(was_on_ac, Some(false));
     }
+}
+
+#[cfg(target_os = "macos")]
+const K_IOPS_AC_POWER_VALUE: &str = "AC Power";
+#[cfg(target_os = "macos")]
+const K_IOPS_BATTERY_POWER_VALUE: &str = "Battery Power";
+#[cfg(target_os = "macos")]
+const K_IOPS_POWER_SOURCE_STATE_KEY: &str = "Power Source State";
+#[cfg(target_os = "macos")]
+const K_IOPS_CURRENT_CAPACITY_KEY: &str = "Current Capacity";
+#[cfg(target_os = "macos")]
+const K_IOPS_MAX_CAPACITY_KEY: &str = "Max Capacity";
+#[cfg(target_os = "macos")]
+const K_IOPS_IS_PRESENT_KEY: &str = "Is Present";
+
+#[cfg(target_os = "macos")]
+type IOPowerSourceCallbackType = Option<unsafe extern "C" fn(*mut c_void)>;
+
+#[cfg(target_os = "macos")]
+#[link(name = "IOKit", kind = "framework")]
+unsafe extern "C" {
+    fn IOPSCopyPowerSourcesInfo() -> core_foundation::base::CFTypeRef;
+    fn IOPSCopyPowerSourcesList(
+        blob: core_foundation::base::CFTypeRef,
+    ) -> core_foundation::array::CFArrayRef;
+    fn IOPSGetPowerSourceDescription(
+        blob: core_foundation::base::CFTypeRef,
+        ps: core_foundation::base::CFTypeRef,
+    ) -> core_foundation::dictionary::CFDictionaryRef;
+    fn IOPSGetProvidingPowerSourceType(snapshot: core_foundation::base::CFTypeRef) -> CFStringRef;
+    fn IOPSNotificationCreateRunLoopSource(
+        callback: IOPowerSourceCallbackType,
+        context: *mut c_void,
+    ) -> core_foundation::runloop::CFRunLoopSourceRef;
+}
+
+#[cfg(target_os = "macos")]
+struct MacOsPowerSourceWatcherCleanup {
+    thread: Option<thread::JoinHandle<()>>,
+    run_loop: Arc<StdMutex<Option<CFRunLoop>>>,
+}
+
+#[cfg(target_os = "macos")]
+impl MacOsPowerSourceWatcherCleanup {
+    async fn shutdown(mut self) {
+        if let Some(run_loop) = self
+            .run_loop
+            .lock()
+            .expect("macOS power-source run loop lock poisoned")
+            .clone()
+        {
+            run_loop.stop();
+        }
+
+        if let Some(thread) = self.thread.take() {
+            let _ = tokio::task::spawn_blocking(move || thread.join()).await;
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct MacOsPowerSourceWatcherContext {
+    event_tx: mpsc::UnboundedSender<()>,
+}
+
+#[cfg(target_os = "macos")]
+fn start_power_source_watcher(
+) -> Result<(mpsc::UnboundedReceiver<()>, MacOsPowerSourceWatcherCleanup), String> {
+    let (event_tx, event_rx) = mpsc::unbounded_channel();
+    let (ready_tx, ready_rx) = std_mpsc::sync_channel(1);
+    let run_loop = Arc::new(StdMutex::new(None));
+    let thread_run_loop = run_loop.clone();
+
+    let thread = thread::Builder::new()
+        .name("panes-macos-power-source".to_string())
+        .spawn(move || {
+            if let Err(error) = macos_power_source_watcher_main(thread_run_loop, event_tx, ready_tx)
+            {
+                log::warn!("macOS power-source watcher failed: {error}");
+            }
+        })
+        .map_err(|error| format!("failed to spawn macOS power-source watcher: {error}"))?;
+
+    match ready_rx.recv() {
+        Ok(Ok(())) => Ok((
+            event_rx,
+            MacOsPowerSourceWatcherCleanup {
+                thread: Some(thread),
+                run_loop,
+            },
+        )),
+        Ok(Err(error)) => {
+            let _ = thread.join();
+            Err(error)
+        }
+        Err(error) => {
+            let _ = thread.join();
+            Err(format!(
+                "failed to initialize macOS power-source watcher: {error}"
+            ))
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_power_source_watcher_main(
+    run_loop_slot: Arc<StdMutex<Option<CFRunLoop>>>,
+    event_tx: mpsc::UnboundedSender<()>,
+    ready_tx: std_mpsc::SyncSender<Result<(), String>>,
+) -> Result<(), String> {
+    let context = Box::new(MacOsPowerSourceWatcherContext { event_tx });
+    let context_ptr = Box::into_raw(context);
+
+    let source_ref = unsafe {
+        IOPSNotificationCreateRunLoopSource(Some(power_source_changed_callback), context_ptr.cast())
+    };
+    if source_ref.is_null() {
+        unsafe {
+            drop(Box::from_raw(context_ptr));
+        }
+        let _ = ready_tx.send(Err(
+            "IOPSNotificationCreateRunLoopSource returned null".to_string()
+        ));
+        return Err("IOPSNotificationCreateRunLoopSource returned null".to_string());
+    }
+
+    let run_loop = CFRunLoop::get_current();
+    let source = unsafe { CFRunLoopSource::wrap_under_create_rule(source_ref) };
+    unsafe {
+        run_loop.add_source(&source, kCFRunLoopDefaultMode);
+    }
+
+    *run_loop_slot
+        .lock()
+        .expect("macOS power-source run loop lock poisoned") = Some(run_loop.clone());
+    let _ = ready_tx.send(Ok(()));
+    CFRunLoop::run_current();
+    *run_loop_slot
+        .lock()
+        .expect("macOS power-source run loop lock poisoned") = None;
+
+    unsafe {
+        drop(Box::from_raw(context_ptr));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn power_source_changed_callback(context: *mut c_void) {
+    let context = unsafe { &*(context.cast::<MacOsPowerSourceWatcherContext>()) };
+    let _ = context.event_tx.send(());
+}
+
+#[cfg(target_os = "macos")]
+fn dictionary_find_string(
+    dictionary: &CFDictionary<CFString, CFType>,
+    key: &'static str,
+) -> Option<String> {
+    let key = CFString::from_static_string(key);
+    dictionary
+        .find(&key)
+        .and_then(|value| value.downcast::<CFString>())
+        .map(|value| value.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn dictionary_find_i32(
+    dictionary: &CFDictionary<CFString, CFType>,
+    key: &'static str,
+) -> Option<i32> {
+    let key = CFString::from_static_string(key);
+    dictionary
+        .find(&key)
+        .and_then(|value| value.downcast::<CFNumber>())
+        .and_then(|value| value.to_i32())
+}
+
+#[cfg(target_os = "macos")]
+fn dictionary_find_bool(
+    dictionary: &CFDictionary<CFString, CFType>,
+    key: &'static str,
+) -> Option<bool> {
+    let key = CFString::from_static_string(key);
+    dictionary
+        .find(&key)
+        .and_then(|value| value.downcast::<CFBoolean>())
+        .map(bool::from)
 }

@@ -109,7 +109,14 @@ pub(super) fn spawn(profile: &PowerProfile) -> anyhow::Result<SpawnedKeepAwakeCh
     let mut display_sleep_assertion = None;
 
     for spec in assertion_specs(profile) {
-        let assertion = create_assertion(&spec)?;
+        let assertion = match create_assertion(&spec) {
+            Ok(assertion) => assertion,
+            Err(error) => {
+                release_assertion(&mut system_sleep_assertion);
+                release_assertion(&mut display_sleep_assertion);
+                return Err(error);
+            }
+        };
         match spec.assertion_type {
             K_IO_PM_ASSERT_PREVENT_USER_IDLE_SYSTEM_SLEEP => {
                 system_sleep_assertion = Some(assertion);
