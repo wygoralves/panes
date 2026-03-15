@@ -173,10 +173,27 @@ fn lock_config() -> anyhow::Result<MutexGuard<'static, ()>> {
 fn replace_file(temp_path: &std::path::Path, path: &std::path::Path) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     {
+        // Windows does not support atomic rename-over-existing. Use a backup
+        // strategy: rename the existing file to .bak, rename the new file into
+        // place, then remove .bak.  A crash between steps 1 and 2 leaves the
+        // .bak file as a recoverable copy.
         if path.exists() {
-            match fs::remove_file(path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            let backup = path.with_extension("toml.bak");
+            // Clean up any stale backup from a prior interrupted save.
+            let _ = fs::remove_file(&backup);
+            match fs::rename(path, &backup) {
+                Ok(()) => {
+                    if let Err(error) = fs::rename(temp_path, path) {
+                        // Restore the backup so the original config is preserved.
+                        let _ = fs::rename(&backup, path);
+                        return Err(error);
+                    }
+                    let _ = fs::remove_file(&backup);
+                    return Ok(());
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    // File vanished between exists() and rename — proceed.
+                }
                 Err(error) => return Err(error),
             }
         }

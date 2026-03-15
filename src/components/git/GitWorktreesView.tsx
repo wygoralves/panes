@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -12,6 +12,7 @@ import {
   ExternalLink,
   Scissors,
 } from "lucide-react";
+import { getActionMenuPosition } from "./actionMenuPosition";
 import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import type { Repo, GitWorktree } from "../../types";
@@ -36,6 +37,11 @@ function shortSha(sha: string | null): string {
 
 interface ActionMenuState {
   worktree: GitWorktree;
+  triggerRect: {
+    top: number;
+    bottom: number;
+    right: number;
+  };
   top: number;
   left: number;
 }
@@ -116,6 +122,23 @@ export function GitWorktreesView({ repo, onError }: Props) {
     };
   }, [actionMenu, closeMenu]);
 
+  useLayoutEffect(() => {
+    if (!actionMenu || !actionMenuRef.current) return;
+    const next = getActionMenuPosition({
+      triggerRect: actionMenu.triggerRect,
+      menuWidth: actionMenuRef.current.offsetWidth,
+      menuHeight: actionMenuRef.current.offsetHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    });
+    if (next.top === actionMenu.top && next.left === actionMenu.left) return;
+    setActionMenu((current) =>
+      current && current.worktree.path === actionMenu.worktree.path
+        ? { ...current, ...next }
+        : current,
+    );
+  }, [actionMenu]);
+
   const filteredWorktrees = useMemo(() => {
     const q = filterQuery.toLowerCase().trim();
     if (!q) return worktrees;
@@ -140,11 +163,23 @@ export function GitWorktreesView({ repo, onError }: Props) {
       return;
     }
     const rect = e.currentTarget.getBoundingClientRect();
+    const actionCount = 2 + (worktree.branch ? 1 : 0);
     actionTriggerRef.current = e.currentTarget;
+    const triggerRect = {
+      top: rect.top,
+      bottom: rect.bottom,
+      right: rect.right,
+    };
     setActionMenu({
       worktree,
-      top: rect.bottom + 4,
-      left: rect.right - 160,
+      triggerRect,
+      ...getActionMenuPosition({
+        triggerRect,
+        menuWidth: 160,
+        menuHeight: actionCount * 32 + 8,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      }),
     });
   }
 

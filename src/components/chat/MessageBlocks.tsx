@@ -37,6 +37,7 @@ import {
   isMcpElicitationApproval,
   isPermissionsRequestApproval,
   isRequestUserInputApproval,
+  isSupportedClaudeToolInputApproval,
   parseApprovalCommand,
   parseApprovalReason,
   parseDynamicToolCallArguments,
@@ -643,7 +644,6 @@ function ToolInputApprovalCard({
   block,
   questionCount,
   isPending,
-  isClaudeThread,
   decisionLabel,
   decisionBackground,
   decisionColor,
@@ -651,7 +651,6 @@ function ToolInputApprovalCard({
   block: ApprovalBlock;
   questionCount: number;
   isPending: boolean;
-  isClaudeThread: boolean;
   decisionLabel: string;
   decisionBackground: string;
   decisionColor: string;
@@ -681,7 +680,7 @@ function ToolInputApprovalCard({
           ) : null}
         </div>
 
-        {isPending && !isClaudeThread ? (
+        {isPending ? (
           <div className="tool-input-preview-footer">
             <span className="tool-input-preview-note">
               {t("messageBlocks.toolInput.answerInComposer")}
@@ -690,6 +689,30 @@ function ToolInputApprovalCard({
         ) : null}
       </div>
     </div>
+  );
+}
+
+export function shouldShowClaudeUnsupportedApproval(
+  details: Record<string, unknown>,
+  isPending: boolean,
+  isClaudeThread: boolean,
+): boolean {
+  if (!isPending || !isClaudeThread) {
+    return false;
+  }
+
+  const isToolInputRequest = isRequestUserInputApproval(details);
+  const proposedExecpolicyAmendment = parseProposedExecpolicyAmendment(details);
+  const proposedNetworkPolicyAmendments = parseProposedNetworkPolicyAmendments(details);
+
+  return (
+    (isToolInputRequest && !isSupportedClaudeToolInputApproval(details)) ||
+    (!isToolInputRequest &&
+      (isDynamicToolCallApproval(details) ||
+        isMcpElicitationApproval(details) ||
+        requiresCustomApprovalPayload(details))) ||
+    proposedExecpolicyAmendment.length > 0 ||
+    proposedNetworkPolicyAmendments.length > 0
   );
 }
 
@@ -717,15 +740,11 @@ function ApprovalCard({
   const proposedExecpolicyAmendment = parseProposedExecpolicyAmendment(details);
   const proposedNetworkPolicyAmendments = parseProposedNetworkPolicyAmendments(details);
   const requestedPermissions = isPermissionsRequest ? parseRequestedPermissions(details) : null;
-  const showClaudeUnsupportedApproval =
-    isPending &&
-    isClaudeThread &&
-    (isToolInputRequest ||
-      isDynamicToolCall ||
-      isMcpElicitation ||
-      requiresCustomPayload ||
-      proposedExecpolicyAmendment.length > 0 ||
-      proposedNetworkPolicyAmendments.length > 0);
+  const showClaudeUnsupportedApproval = shouldShowClaudeUnsupportedApproval(
+    details,
+    isPending,
+    isClaudeThread,
+  );
   const dynamicToolName = parseDynamicToolCallName(details);
   const dynamicToolArguments = parseDynamicToolCallArguments(details);
   const mcpServerName = parseMcpElicitationServerName(details);
@@ -784,7 +803,6 @@ function ApprovalCard({
         block={block}
         questionCount={toolInputQuestions.length}
         isPending={isPending}
-        isClaudeThread={isClaudeThread}
         decisionLabel={decisionLabel}
         decisionBackground={decisionBackground}
         decisionColor={decisionColor}

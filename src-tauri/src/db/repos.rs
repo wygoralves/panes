@@ -5,6 +5,7 @@ use rusqlite::{params, OptionalExtension};
 use uuid::Uuid;
 
 use crate::models::{RepoDto, TrustLevelDto};
+use crate::path_utils;
 
 use super::Database;
 
@@ -17,23 +18,27 @@ pub fn upsert_repo(
     default_is_active: bool,
 ) -> anyhow::Result<RepoDto> {
     let conn = db.connect()?;
+    let normalized_path = path_utils::normalize_windows_path_string(path);
+    let legacy_path = path_utils::legacy_windows_verbatim_path_string(&normalized_path)
+        .filter(|legacy| legacy != &normalized_path);
 
-    let existing = conn
-        .query_row(
-            "SELECT id FROM repos WHERE workspace_id = ?1 AND path = ?2",
-            params![workspace_id, path],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .context("failed to query repo")?;
+    let existing = if let Some(id) =
+        find_repo_id_by_workspace_and_path(&conn, workspace_id, &normalized_path)?
+    {
+        Some(id)
+    } else if let Some(legacy_path) = legacy_path.as_deref() {
+        find_repo_id_by_workspace_and_path(&conn, workspace_id, legacy_path)?
+    } else {
+        None
+    };
 
     match existing {
         Some(id) => {
             conn.execute(
                 "UPDATE repos
-         SET name = ?1, default_branch = ?2, is_discovered = 1
-         WHERE id = ?3",
-                params![name, default_branch, id],
+         SET name = ?1, path = ?2, default_branch = ?3, is_discovered = 1
+         WHERE id = ?4",
+                params![name, normalized_path, default_branch, id],
             )
             .context("failed to update repo")?;
         }
@@ -53,7 +58,7 @@ pub fn upsert_repo(
                     Uuid::new_v4().to_string(),
                     workspace_id,
                     name,
-                    path,
+                    normalized_path,
                     default_branch,
                     if default_is_active { 1 } else { 0 }
                 ],
@@ -67,7 +72,7 @@ pub fn upsert_repo(
         "SELECT id, workspace_id, name, path, default_branch, is_active, trust_level
      FROM repos
      WHERE workspace_id = ?1 AND path = ?2",
-        params![workspace_id, path],
+        params![workspace_id, normalized_path],
         map_repo_row,
     )
     .context("failed to fetch upserted repo")
@@ -98,7 +103,10 @@ pub fn reconcile_workspace_repos(
     workspace_id: &str,
     discovered_paths: &[String],
 ) -> anyhow::Result<()> {
-    let discovered_paths = discovered_paths.iter().cloned().collect::<HashSet<_>>();
+    let discovered_paths = discovered_paths
+        .iter()
+        .map(|path| path_utils::normalize_windows_path_string(path))
+        .collect::<HashSet<_>>();
     let mut conn = db.connect()?;
     let tx = conn.transaction().context("failed to start transaction")?;
 
@@ -112,9 +120,10 @@ pub fn reconcile_workspace_repos(
 
         let mut stale_repo_paths = Vec::new();
         for row in rows {
-            let repo_path = row.context("failed to decode workspace repo row")?;
-            if !discovered_paths.contains(&repo_path) {
-                stale_repo_paths.push(repo_path);
+            let raw_repo_path = row.context("failed to decode workspace repo row")?;
+            let normalized_repo_path = path_utils::normalize_windows_path_string(&raw_repo_path);
+            if !discovered_paths.contains(&normalized_repo_path) {
+                stale_repo_paths.push(raw_repo_path);
             }
         }
         stale_repo_paths
@@ -210,14 +219,36 @@ pub fn set_workspace_active_repos(
 
 pub fn find_repo_by_path(db: &Database, path: &str) -> anyhow::Result<Option<RepoDto>> {
     let conn = db.connect()?;
+    let normalized_path = path_utils::normalize_windows_path_string(path);
+    let legacy_path = path_utils::legacy_windows_verbatim_path_string(&normalized_path)
+        .filter(|legacy| legacy != &normalized_path);
+
+    let exact = conn
+        .query_row(
+            "SELECT id, workspace_id, name, path, default_branch, is_active, trust_level
+     FROM repos WHERE path = ?1 LIMIT 1",
+            params![normalized_path],
+            map_repo_row,
+        )
+        .optional()
+        .context("failed to load repo by path")?;
+
+    if exact.is_some() {
+        return Ok(exact);
+    }
+
+    let Some(legacy_path) = legacy_path else {
+        return Ok(None);
+    };
+
     conn.query_row(
         "SELECT id, workspace_id, name, path, default_branch, is_active, trust_level
      FROM repos WHERE path = ?1 LIMIT 1",
-        params![path],
+        params![legacy_path],
         map_repo_row,
     )
     .optional()
-    .context("failed to load repo by path")
+    .context("failed to load repo by legacy path")
 }
 
 pub fn find_repo_by_id(db: &Database, repo_id: &str) -> anyhow::Result<Option<RepoDto>> {
@@ -233,15 +264,30 @@ pub fn find_repo_by_id(db: &Database, repo_id: &str) -> anyhow::Result<Option<Re
 }
 
 fn map_repo_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RepoDto> {
+    let path = path_utils::normalize_windows_path_string(&row.get::<_, String>(3)?);
     Ok(RepoDto {
         id: row.get(0)?,
         workspace_id: row.get(1)?,
         name: row.get(2)?,
-        path: row.get(3)?,
+        path,
         default_branch: row.get(4)?,
         is_active: row.get::<_, i64>(5)? > 0,
         trust_level: TrustLevelDto::from_str(&row.get::<_, String>(6)?),
     })
+}
+
+fn find_repo_id_by_workspace_and_path(
+    conn: &rusqlite::Connection,
+    workspace_id: &str,
+    path: &str,
+) -> anyhow::Result<Option<String>> {
+    conn.query_row(
+        "SELECT id FROM repos WHERE workspace_id = ?1 AND path = ?2",
+        params![workspace_id, path],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .context("failed to query repo")
 }
 
 #[cfg(test)]

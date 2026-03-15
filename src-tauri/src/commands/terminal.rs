@@ -4,6 +4,7 @@ use tauri::State;
 use crate::{
     db,
     models::{TerminalRendererDiagnosticsDto, TerminalResumeSessionDto, TerminalSessionDto},
+    path_utils,
     state::AppState,
 };
 
@@ -56,7 +57,8 @@ fn canonicalize_existing_dir(path: &str, label: &str) -> Result<PathBuf, String>
         return Err(format!("{label} does not exist: {path}"));
     }
 
-    std::fs::canonicalize(dir).map_err(|error| format!("failed to resolve {label}: {error}"))
+    path_utils::canonicalize_path(dir)
+        .map_err(|error| format!("failed to resolve {label}: {error}"))
 }
 
 #[tauri::command]

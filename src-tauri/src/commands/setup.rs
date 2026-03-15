@@ -3,6 +3,8 @@ use std::{ffi::OsString, path::Path};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+#[cfg(target_os = "windows")]
+use tokio::time::{timeout, Duration};
 
 use crate::engines::codex::resolve_codex_executable;
 use crate::models::{DepStatus, DependencyReport, InstallProgressEvent, InstallResult};
@@ -356,7 +358,36 @@ async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(St
 }
 
 #[cfg(target_os = "windows")]
-async fn detect_via_login_shell(_command: &str, _version_flag: &str) -> Option<(String, String)> {
+async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(String, String)> {
+    let probe_script = format!(
+        "$p = (Get-Command {cmd} -ErrorAction SilentlyContinue | Select-Object -First 1).Source; \
+         if ($p) {{ Write-Output $p; & $p {flag} }}",
+        cmd = command,
+        flag = version_flag,
+    );
+
+    for powershell in runtime_env::windows_login_probe_shells() {
+        let mut cmd = Command::new(&powershell);
+        cmd.args(["-NoLogo", "-Command", &probe_script]);
+        process_utils::configure_tokio_command(&mut cmd);
+
+        let Ok(Ok(output)) = timeout(Duration::from_secs(10), cmd.output()).await else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let Some((path, version)) = runtime_env::parse_windows_login_probe_output(&stdout) else {
+            continue;
+        };
+
+        if !path.is_empty() && std::path::Path::new(&path).is_file() {
+            return Some((path, version));
+        }
+    }
+
     None
 }
 

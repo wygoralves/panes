@@ -6,7 +6,7 @@ import { useHarnessStore } from "../../stores/harnessStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { toast } from "../../stores/toastStore";
 import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
-import { isLinuxDesktop } from "../../lib/windowActions";
+import { isLinuxDesktop, isMacDesktop } from "../../lib/windowActions";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import { copyTextToClipboard, readTextFromClipboard } from "../../lib/clipboard";
@@ -1995,7 +1995,7 @@ function createCachedTerminal(
     if (event.metaKey && (k === "d" || k === "t")) return false;
     if (event.ctrlKey && k === "t") return false;
     // Cmd+Arrow (macOS) / Home/End (Linux/Windows) → line navigation
-    const isMac = navigator.platform.startsWith("Mac");
+    const isMac = isMacDesktop();
     if (isMac && event.metaKey) {
       switch (event.key) {
         case "ArrowLeft":
@@ -2654,7 +2654,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const activeGroupId = workspaceState?.activeGroupId ?? null;
   const focusedSessionId = workspaceState?.focusedSessionId ?? null;
   const pendingStartupPreset = workspaceState?.pendingStartupPreset ?? null;
-  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+  const isMac = isMacDesktop();
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar && layoutMode === "terminal";
   const useFocusModeHeaderHeight = focusMode && showGitPanel;
   const linuxDesktop = isLinuxDesktop();

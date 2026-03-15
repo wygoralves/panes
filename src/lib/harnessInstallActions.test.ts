@@ -50,4 +50,10 @@ describe("harness install actions", () => {
       canAutoInstall: true,
     })).toBe("manual");
   });
+
+  it("uses the published npm package name for OpenCode", () => {
+    expect(getHarnessInstallCommand("opencode")).toBe(
+      "npm install -g opencode-ai",
+    );
+  });
 });
