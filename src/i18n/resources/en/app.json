@@ -434,6 +434,7 @@
     "helperNotInstalled": "Helper not installed",
     "helperInstallButton": "Install Helper",
     "helperInstallingButton": "Installing...",
-    "helperApprovalNote": "Open System Settings → General → Login Items to approve."
+    "helperApprovalNote": "Open System Settings → General → Login Items to approve.",
+    "helperPasswordFallback": "A password prompt will appear when activating lid-close prevention."
   }
 }

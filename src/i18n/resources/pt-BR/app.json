@@ -434,6 +434,7 @@
     "helperNotInstalled": "Auxiliar não instalado",
     "helperInstallButton": "Instalar auxiliar",
     "helperInstallingButton": "Instalando...",
-    "helperApprovalNote": "Abra Configurações do Sistema → Geral → Itens de Login para aprovar."
+    "helperApprovalNote": "Abra Configurações do Sistema → Geral → Itens de Login para aprovar.",
+    "helperPasswordFallback": "Uma solicitação de senha aparecerá ao ativar a prevenção de suspensão ao fechar a tampa."
   }
 }

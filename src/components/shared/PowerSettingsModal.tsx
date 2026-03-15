@@ -630,7 +630,7 @@ export function PowerSettingsModal() {
                         </div>
                       </div>
                     )}
-                    {(helperStatus?.status === "notRegistered" || helperStatus?.status === "notFound") && (
+                    {helperStatus?.status === "notRegistered" && (
                       <>
                         <Download size={13} style={{ color: "var(--text-3)", flexShrink: 0 }} />
                         <span style={{ fontSize: 11.5, color: "var(--text-3)", flex: 1 }}>
@@ -647,6 +647,14 @@ export function PowerSettingsModal() {
                             ? t("powerModal.helperInstallingButton")
                             : t("powerModal.helperInstallButton")}
                         </button>
+                      </>
+                    )}
+                    {helperStatus?.status === "notFound" && (
+                      <>
+                        <AlertTriangle size={13} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+                        <span style={{ fontSize: 11, color: "var(--text-3)" }}>
+                          {t("powerModal.helperPasswordFallback")}
+                        </span>
                       </>
                     )}
                     {!helperStatus && helperLoading && (

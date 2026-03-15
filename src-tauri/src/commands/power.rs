@@ -251,7 +251,22 @@ pub async fn register_keep_awake_helper() -> Result<HelperStatusDto, String> {
                 status: status.as_str().to_string(),
                 message: None,
             }),
-            Err(error) => Err(error),
+            Err(error) => {
+                // When running outside a signed .app bundle (dev mode), SMAppService
+                // fails with a codesigning error.  Return a descriptive message so
+                // the UI can guide the user toward the pmset fallback.
+                if error.contains("Codesigning failure") || error.contains("notFound") {
+                    return Ok(HelperStatusDto {
+                        status: "notFound".to_string(),
+                        message: Some(
+                            "Helper registration requires a signed app bundle. \
+                             The lid-close feature will use a password prompt instead."
+                                .to_string(),
+                        ),
+                    });
+                }
+                Err(error)
+            }
         }
     }
 

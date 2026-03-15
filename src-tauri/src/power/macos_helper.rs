@@ -137,14 +137,21 @@ pub fn helper_status() -> HelperStatus {
     }
 }
 
+/// Result of a helper registration attempt, including the structured status
+/// even when the registration itself fails (e.g. codesigning / notFound).
+pub struct RegisterHelperResult {
+    pub status: HelperStatus,
+    pub error: Option<String>,
+}
+
 /// Register the helper daemon via SMAppService.  On first call, macOS shows a
 /// user consent prompt in System Settings → General → Login Items & Extensions.
-pub fn register_helper() -> Result<HelperStatus, String> {
+pub fn register_helper() -> Result<RegisterHelperResult, String> {
     let output = run_registrar(&["--register"])?;
-    if let Some(error) = output.error {
-        return Err(error);
-    }
-    Ok(parse_status(&output.status))
+    Ok(RegisterHelperResult {
+        status: parse_status(&output.status),
+        error: output.error,
+    })
 }
 
 /// Unregister the helper daemon.
@@ -269,6 +276,46 @@ pub(super) async fn connect_with_retry(attempts: u32) -> Result<HelperConnection
 /// attempting a connection).
 pub(super) fn helper_socket_exists() -> bool {
     Path::new(HELPER_SOCKET_PATH).exists()
+}
+
+// ---------------------------------------------------------------------------
+// pmset fallback (for dev builds without a signed .app bundle)
+// ---------------------------------------------------------------------------
+
+/// Attempt to toggle `SleepDisabled` via `pmset -a disablesleep`.  This is
+/// the same mechanism `IOPMSetSystemPowerSetting` uses under the hood, but
+/// invoked through the CLI so it works without a privileged helper at the cost
+/// of requiring the user to enter their password via an `osascript` dialog.
+///
+/// Returns `true` if the command succeeded.
+pub(super) async fn pmset_set_disablesleep(disabled: bool) -> bool {
+    let value = if disabled { "1" } else { "0" };
+    let script = format!(
+        "do shell script \"/usr/bin/pmset -a disablesleep {}\" with administrator privileges",
+        value
+    );
+
+    let result = tokio::process::Command::new("/usr/bin/osascript")
+        .args(["-e", &script])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .status()
+        .await;
+
+    match result {
+        Ok(status) if status.success() => {
+            log::info!("pmset disablesleep {value} succeeded (osascript fallback)");
+            true
+        }
+        Ok(status) => {
+            log::warn!("pmset disablesleep {value} failed with exit code {status}");
+            false
+        }
+        Err(error) => {
+            log::warn!("failed to run osascript for pmset fallback: {error}");
+            false
+        }
+    }
 }
 
 #[cfg(test)]

@@ -808,51 +808,63 @@ fn linux_display_inhibit_active(_runtime: &KeepAwakeRuntime) -> bool {
 }
 
 /// Best-effort: ask the privileged helper to set `SleepDisabled = true`.
+/// Falls back to `pmset -a disablesleep 1` via an admin-password dialog when
+/// the helper socket is not available (dev builds, unsigned apps).
 /// Logs on failure but does not return an error — the rest of keep-awake still
 /// works even if the helper is not installed.
 #[cfg(target_os = "macos")]
 async fn try_prevent_closed_display_sleep() -> bool {
-    if !macos_helper::helper_socket_exists() {
-        log::info!("closed-display helper socket not found, skipping preventSleep");
-        return false;
-    }
-
-    match macos_helper::HelperConnection::connect().await {
-        Ok(mut conn) => match conn.prevent_sleep().await {
-            Ok(()) => {
-                log::info!("closed-display sleep prevention activated via helper");
-                true
-            }
+    if macos_helper::helper_socket_exists() {
+        match macos_helper::HelperConnection::connect().await {
+            Ok(mut conn) => match conn.prevent_sleep().await {
+                Ok(()) => {
+                    log::info!("closed-display sleep prevention activated via helper");
+                    return true;
+                }
+                Err(error) => {
+                    log::warn!("helper preventSleep failed: {error}");
+                }
+            },
             Err(error) => {
-                log::warn!("helper preventSleep failed: {error}");
-                false
+                log::warn!("failed to connect to keep-awake helper: {error}");
             }
-        },
-        Err(error) => {
-            log::warn!("failed to connect to keep-awake helper: {error}");
-            false
         }
     }
+
+    // Fallback: use pmset via osascript admin-password prompt
+    log::info!("helper socket not available, falling back to pmset via osascript");
+    macos_helper::pmset_set_disablesleep(true).await
 }
 
-/// Best-effort: ask the privileged helper to set `SleepDisabled = false`.
+/// Best-effort: restore `SleepDisabled = false` via the helper or pmset.
 #[cfg(target_os = "macos")]
 async fn try_allow_closed_display_sleep() {
-    if !macos_helper::helper_socket_exists() {
-        return;
-    }
-
-    match macos_helper::HelperConnection::connect().await {
-        Ok(mut conn) => {
-            if let Err(error) = conn.allow_sleep().await {
-                log::warn!("helper allowSleep failed: {error}");
-            } else {
-                log::info!("closed-display sleep prevention deactivated via helper");
+    if macos_helper::helper_socket_exists() {
+        match macos_helper::HelperConnection::connect().await {
+            Ok(mut conn) => {
+                if let Err(error) = conn.allow_sleep().await {
+                    log::warn!("helper allowSleep failed: {error}");
+                } else {
+                    log::info!("closed-display sleep prevention deactivated via helper");
+                    return;
+                }
+            }
+            Err(error) => {
+                log::warn!("failed to connect to keep-awake helper for allowSleep: {error}");
             }
         }
-        Err(error) => {
-            log::warn!("failed to connect to keep-awake helper for allowSleep: {error}");
-        }
+    }
+
+    // Fallback: only restore via pmset if SleepDisabled is actually set,
+    // to avoid a spurious admin-password dialog on automatic disable events
+    // (AC-unplug, session expiry, battery threshold).
+    let is_set = tokio::task::spawn_blocking(macos::read_sleep_disabled)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false);
+    if is_set {
+        let _ = macos_helper::pmset_set_disablesleep(false).await;
     }
 }
 
