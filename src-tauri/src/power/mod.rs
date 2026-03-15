@@ -555,31 +555,46 @@ impl KeepAwakeManager {
                         match self.spawner.spawn(&profile) {
                             Ok(spawned) => {
                                 let mut runtime = self.runtime.lock().await;
-                                if let Some(helper) = spawned.helper.as_ref() {
-                                    let persisted = PersistedKeepAwakeHelper {
-                                        owner: self.current_process.clone(),
-                                        helper: helper.clone(),
-                                    };
-                                    let _ = save_helper_state(&self.state_path(), &persisted);
-                                }
-                                runtime.child = Some(spawned.child);
-                                runtime.helper = spawned.helper;
-                                runtime.last_error = None;
-                                runtime.paused_due_to_battery = false;
-                                drop(runtime);
 
-                                // Re-spawn Linux display inhibit if needed
-                                #[cfg(target_os = "linux")]
-                                if profile.prevent_display_sleep || profile.prevent_screen_saver {
-                                    self.spawn_linux_display_inhibit().await;
-                                }
+                                // If disable() ran while the lock was released,
+                                // active_profile will be None and we must not
+                                // install the freshly spawned child — kill it
+                                // instead so keep-awake stays off.
+                                if runtime.active_profile.is_none() {
+                                    log::info!(
+                                        "AC-resume aborted: keep-awake was disabled during re-spawn"
+                                    );
+                                    let mut child = spawned.child;
+                                    let _ = child.kill().await;
+                                    let _ = child.wait().await;
+                                } else {
+                                    if let Some(helper) = spawned.helper.as_ref() {
+                                        let persisted = PersistedKeepAwakeHelper {
+                                            owner: self.current_process.clone(),
+                                            helper: helper.clone(),
+                                        };
+                                        let _ = save_helper_state(&self.state_path(), &persisted);
+                                    }
+                                    runtime.child = Some(spawned.child);
+                                    runtime.helper = spawned.helper;
+                                    runtime.last_error = None;
+                                    runtime.paused_due_to_battery = false;
+                                    drop(runtime);
 
-                                // Re-activate closed-display sleep prevention
-                                #[cfg(target_os = "macos")]
-                                if profile.prevent_closed_display_sleep {
-                                    let success = try_prevent_closed_display_sleep().await;
-                                    self.runtime.lock().await.closed_display_sleep_disabled =
-                                        success;
+                                    // Re-spawn Linux display inhibit if needed
+                                    #[cfg(target_os = "linux")]
+                                    if profile.prevent_display_sleep || profile.prevent_screen_saver
+                                    {
+                                        self.spawn_linux_display_inhibit().await;
+                                    }
+
+                                    // Re-activate closed-display sleep prevention
+                                    #[cfg(target_os = "macos")]
+                                    if profile.prevent_closed_display_sleep {
+                                        let success = try_prevent_closed_display_sleep().await;
+                                        self.runtime.lock().await.closed_display_sleep_disabled =
+                                            success;
+                                    }
                                 }
                             }
                             Err(error) => {
@@ -697,6 +712,27 @@ impl KeepAwakeManager {
                 }
             }
             None => {}
+        }
+
+        // Also track the secondary child (Linux D-Bus display inhibit).
+        // If it exited unexpectedly, clear it so linux_display_inhibit_active()
+        // stops reporting the inhibit as active.
+        let secondary_outcome = runtime
+            .secondary_child
+            .as_mut()
+            .map(|child| child.try_wait());
+        match secondary_outcome {
+            Some(Ok(Some(_))) => {
+                runtime.secondary_child = None;
+                runtime.secondary_helper = None;
+                log::warn!("linux display inhibit child exited unexpectedly");
+            }
+            Some(Err(error)) => {
+                runtime.secondary_child = None;
+                runtime.secondary_helper = None;
+                log::warn!("failed to inspect linux display inhibit child: {error}");
+            }
+            Some(Ok(None)) | None => {}
         }
     }
 

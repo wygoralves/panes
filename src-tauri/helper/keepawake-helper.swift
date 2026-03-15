@@ -88,17 +88,19 @@ func createListenSocket() -> Int32 {
         return -1
     }
 
-    // Restrict socket to the console user instead of world-writable.
-    // SCDynamicStoreCopyConsoleUser returns the logged-in GUI user's UID.
+    // Restrict socket to the console user. Fail closed: if we cannot
+    // determine the console user, refuse to create the socket rather than
+    // making it world-writable.
     var consoleUid: uid_t = 0
     var consoleGid: gid_t = 0
-    if let _ = SCDynamicStoreCopyConsoleUser(nil, &consoleUid, &consoleGid) {
-        chown(socketPath, consoleUid, consoleGid)
-        chmod(socketPath, 0o600)
-    } else {
-        // Fallback: allow any local user (single-user system).
-        chmod(socketPath, 0o666)
+    guard let _ = SCDynamicStoreCopyConsoleUser(nil, &consoleUid, &consoleGid) else {
+        NSLog("PanesKeepAwakeHelper: no console user found, refusing to create socket")
+        close(fd)
+        unlink(socketPath)
+        return -1
     }
+    chown(socketPath, consoleUid, consoleGid)
+    chmod(socketPath, 0o600)
 
     guard listen(fd, 2) == 0 else {
         NSLog("PanesKeepAwakeHelper: failed to listen on socket: \(errno)")
