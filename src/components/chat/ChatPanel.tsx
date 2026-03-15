@@ -42,7 +42,7 @@ import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
-import { isLinuxDesktop, isMacDesktop } from "../../lib/windowActions";
+import { isMacDesktop, usesCustomWindowFrame } from "../../lib/windowActions";
 import { MessageBlocks, shouldShowClaudeUnsupportedApproval } from "./MessageBlocks";
 import { resolveEngineCapabilities } from "./engineCapabilities";
 import { buildCodexInputItems } from "./codexInputItems";
@@ -1342,7 +1342,7 @@ export function ChatPanel() {
   const focusMode = useUiStore((s) => s.focusMode);
   const showSidebar = useUiStore((s) => s.showSidebar);
   const isMac = isMacDesktop();
-  const isLinux = isLinuxDesktop();
+  const customWindowFrame = usesCustomWindowFrame();
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar;
   const engines = useEngineStore((s) => s.engines);
   const health = useEngineStore((s) => s.health);
@@ -3670,7 +3670,7 @@ export function ChatPanel() {
           style={{
             height: "var(--panel-header-height)",
             padding: "0 16px",
-            paddingLeft: showSidebar ? 16 : (isLinux ? 16 : 80),
+            paddingLeft: showSidebar ? 16 : (customWindowFrame ? 16 : 80),
             display: "flex",
             alignItems: "center",
             gap: 8,

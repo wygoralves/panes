@@ -27,16 +27,16 @@ function handleResizeMouseDown(direction: ResizeDirection, event: MouseEvent<HTM
   event.preventDefault();
   getCurrentWindow().startResizeDragging(direction).catch((error) => {
     if (import.meta.env.DEV) {
-      console.warn(`[LinuxWindowResizeHandles] Failed to start resize dragging (${direction})`, error);
+      console.warn(`[CustomWindowResizeHandles] Failed to start resize dragging (${direction})`, error);
     }
   });
 }
 
-interface LinuxWindowResizeHandlesProps {
+interface CustomWindowResizeHandlesProps {
   canResize: boolean;
 }
 
-export function LinuxWindowResizeHandles({ canResize }: LinuxWindowResizeHandlesProps) {
+export function CustomWindowResizeHandles({ canResize }: CustomWindowResizeHandlesProps) {
   if (!canResize) {
     return null;
   }

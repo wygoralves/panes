@@ -110,8 +110,8 @@ button, input, textarea, select {
   min-height: 0;
 }
 
-.app-shell-linux-maximized,
-.app-shell-linux-fullscreen {
+.app-shell-custom-frame-maximized,
+.app-shell-custom-frame-fullscreen {
   --content-top-margin: 0px;
   --content-radius: 0px;
   --content-border: transparent;
