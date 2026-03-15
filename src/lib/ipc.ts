@@ -34,6 +34,7 @@ import type {
   HarnessReport,
   InstallProgressEvent,
   InstallResult,
+  HelperStatus,
   KeepAwakeState,
   PowerSettings,
   PowerSettingsInput,
@@ -67,6 +68,8 @@ export const ipc = {
   getPowerSettings: () => invoke<PowerSettings>("get_power_settings"),
   setPowerSettings: (settings: PowerSettingsInput) =>
     invoke<KeepAwakeState>("set_power_settings", { settings }),
+  getHelperStatus: () => invoke<HelperStatus>("get_helper_status"),
+  registerKeepAwakeHelper: () => invoke<HelperStatus>("register_keep_awake_helper"),
   getTerminalAcceleratedRendering: () =>
     invoke<boolean>("get_terminal_accelerated_rendering"),
   setTerminalAcceleratedRendering: (enabled: boolean) =>

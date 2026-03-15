@@ -10,6 +10,10 @@ import {
   ShieldOff,
   Clock,
   Infinity as InfinityIcon,
+  MonitorDown,
+  Download,
+  Check as CheckIcon,
+  AlertTriangle,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useKeepAwakeStore } from "../../stores/keepAwakeStore";
@@ -154,6 +158,7 @@ function resetPowerSettingsForm(
   setSessionMode: (value: SessionMode) => void,
   setSessionDuration: (value: number) => void,
   setCustomMinutes: (value: string) => void,
+  setPreventClosedDisplaySleep: (value: boolean) => void,
 ) {
   setKeepAwakeEnabled(false);
   setPreventDisplaySleep(false);
@@ -164,6 +169,7 @@ function resetPowerSettingsForm(
   setSessionMode("indefinite");
   setSessionDuration(DEFAULT_SESSION_DURATION_SECS);
   setCustomMinutes("");
+  setPreventClosedDisplaySleep(false);
 }
 
 export function PowerSettingsModal() {
@@ -176,6 +182,10 @@ export function PowerSettingsModal() {
   const loading = useKeepAwakeStore((s) => s.loading);
   const powerSettingsLoading = useKeepAwakeStore((s) => s.powerSettingsLoading);
   const powerSettingsLoaded = useKeepAwakeStore((s) => s.powerSettingsLoaded);
+  const helperStatus = useKeepAwakeStore((s) => s.helperStatus);
+  const helperLoading = useKeepAwakeStore((s) => s.helperLoading);
+  const loadHelperStatus = useKeepAwakeStore((s) => s.loadHelperStatus);
+  const registerHelper = useKeepAwakeStore((s) => s.registerHelper);
 
   const [keepAwakeEnabled, setKeepAwakeEnabled] = useState(false);
   const [preventDisplaySleep, setPreventDisplaySleep] = useState(false);
@@ -186,6 +196,8 @@ export function PowerSettingsModal() {
   const [sessionMode, setSessionMode] = useState<SessionMode>("indefinite");
   const [sessionDuration, setSessionDuration] = useState(DEFAULT_SESSION_DURATION_SECS);
   const [customMinutes, setCustomMinutes] = useState("");
+  const [preventClosedDisplaySleep, setPreventClosedDisplaySleep] = useState(false);
+  const isMacOS = navigator.platform.startsWith("Mac");
 
   useEffect(() => {
     if (!open) return;
@@ -199,6 +211,7 @@ export function PowerSettingsModal() {
       setSessionMode,
       setSessionDuration,
       setCustomMinutes,
+      setPreventClosedDisplaySleep,
     );
     let cancelled = false;
     void loadPowerSettings().then((settings) => {
@@ -213,11 +226,15 @@ export function PowerSettingsModal() {
       setSessionMode(nextSessionState.sessionMode);
       setSessionDuration(nextSessionState.sessionDuration);
       setCustomMinutes(nextSessionState.customMinutes);
+      setPreventClosedDisplaySleep(settings.preventClosedDisplaySleep);
+      if (isMacOS && settings.preventClosedDisplaySleep) {
+        void loadHelperStatus();
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [open, loadPowerSettings]);
+  }, [open, loadPowerSettings, loadHelperStatus]);
 
   const handleClose = useCallback(() => close(), [close]);
 
@@ -246,6 +263,7 @@ export function PowerSettingsModal() {
       acOnlyMode,
       batteryThreshold: batteryThresholdEnabled ? batteryThreshold : null,
       sessionDurationSecs: sessionMode === "fixed" ? sessionDuration : null,
+      preventClosedDisplaySleep,
     };
     const result = await savePowerSettings(input);
     if (result) handleClose();
@@ -557,6 +575,88 @@ export function PowerSettingsModal() {
               )}
             </div>
           </SettingsCard>
+
+          {/* ── Advanced (macOS lid-close) ── */}
+          {isMacOS && (
+            <>
+              <SectionLabel icon={<MonitorDown size={12} />} label={t("powerModal.closedDisplaySection")} />
+
+              <SettingsCard disabled={disabled}>
+                <SettingsRow
+                  label={t("powerModal.preventClosedDisplaySleep")}
+                  description={t("powerModal.preventClosedDisplaySleepDescription")}
+                >
+                  <ToggleSwitch
+                    checked={preventClosedDisplaySleep}
+                    onChange={(value) => {
+                      setPreventClosedDisplaySleep(value);
+                      if (value && !helperStatus) {
+                        void loadHelperStatus();
+                      }
+                    }}
+                    disabled={disabled}
+                  />
+                </SettingsRow>
+              </SettingsCard>
+
+              {preventClosedDisplaySleep && keepAwakeEnabled && !formLocked && (
+                <div style={{
+                  marginTop: 6,
+                  padding: "10px 14px",
+                  borderRadius: "var(--radius-md)",
+                  background: "rgba(255, 255, 255, 0.02)",
+                  border: "1px solid rgba(255, 255, 255, 0.06)",
+                  animation: "fade-in var(--duration-fast) var(--ease-out)",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {helperStatus?.status === "registered" && (
+                      <>
+                        <CheckIcon size={13} style={{ color: "var(--success)", flexShrink: 0 }} />
+                        <span style={{ fontSize: 11.5, color: "var(--text-2)" }}>
+                          {t("powerModal.helperInstalled")}
+                        </span>
+                      </>
+                    )}
+                    {helperStatus?.status === "requiresApproval" && (
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <AlertTriangle size={13} style={{ color: "var(--warning)", flexShrink: 0 }} />
+                          <span style={{ fontSize: 11.5, color: "var(--warning)" }}>
+                            {t("powerModal.helperPendingApproval")}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 6, paddingLeft: 21 }}>
+                          {t("powerModal.helperApprovalNote")}
+                        </div>
+                      </div>
+                    )}
+                    {(helperStatus?.status === "notRegistered" || helperStatus?.status === "notFound") && (
+                      <>
+                        <Download size={13} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+                        <span style={{ fontSize: 11.5, color: "var(--text-3)", flex: 1 }}>
+                          {t("powerModal.helperNotInstalled")}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          style={{ fontSize: 11, padding: "4px 12px" }}
+                          disabled={helperLoading}
+                          onClick={() => void registerHelper()}
+                        >
+                          {helperLoading
+                            ? t("powerModal.helperInstallingButton")
+                            : t("powerModal.helperInstallButton")}
+                        </button>
+                      </>
+                    )}
+                    {!helperStatus && helperLoading && (
+                      <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>...</span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
 
           {/* ── Live Status ── */}
           {keepAwakeState?.enabled && (

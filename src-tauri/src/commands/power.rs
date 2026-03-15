@@ -28,6 +28,7 @@ pub struct KeepAwakeStateDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_remaining_secs: Option<u64>,
     pub paused_due_to_battery: bool,
+    pub closed_display_sleep_disabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -39,6 +40,7 @@ pub struct PowerSettingsDto {
     pub ac_only_mode: bool,
     pub battery_threshold: Option<u8>,
     pub session_duration_secs: Option<u64>,
+    pub prevent_closed_display_sleep: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -50,6 +52,7 @@ pub struct PowerSettingsInput {
     pub ac_only_mode: bool,
     pub battery_threshold: Option<u8>,
     pub session_duration_secs: Option<u64>,
+    pub prevent_closed_display_sleep: bool,
 }
 
 #[tauri::command]
@@ -133,6 +136,7 @@ pub async fn get_power_settings(_state: State<'_, AppState>) -> Result<PowerSett
         ac_only_mode: config.ac_only_mode,
         battery_threshold: config.battery_threshold,
         session_duration_secs: config.session_duration_secs,
+        prevent_closed_display_sleep: config.prevent_closed_display_sleep,
     })
 }
 
@@ -156,6 +160,7 @@ pub async fn set_power_settings(
         ac_only_mode: settings.ac_only_mode,
         battery_threshold: settings.battery_threshold,
         session_duration_secs: settings.session_duration_secs,
+        prevent_closed_display_sleep: settings.prevent_closed_display_sleep,
     };
 
     // Apply runtime changes first so persistence cannot leave disk and runtime
@@ -192,6 +197,68 @@ pub async fn set_power_settings(
 
     let runtime = state.keep_awake.status().await;
     Ok(dto_from_runtime(runtime, settings.keep_awake_enabled))
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HelperStatusDto {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_helper_status() -> Result<HelperStatusDto, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = tokio::task::spawn_blocking(|| {
+            crate::power::macos_helper::helper_status()
+        })
+        .await
+        .map_err(err_to_string)?;
+
+        Ok(HelperStatusDto {
+            status: status.as_str().to_string(),
+            message: if let crate::power::macos_helper::HelperStatus::Unknown(msg) = &status {
+                Some(msg.clone())
+            } else {
+                None
+            },
+        })
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(HelperStatusDto {
+            status: "notSupported".to_string(),
+            message: None,
+        })
+    }
+}
+
+#[tauri::command]
+pub async fn register_keep_awake_helper() -> Result<HelperStatusDto, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let result = tokio::task::spawn_blocking(|| {
+            crate::power::macos_helper::register_helper()
+        })
+        .await
+        .map_err(err_to_string)?;
+
+        match result {
+            Ok(status) => Ok(HelperStatusDto {
+                status: status.as_str().to_string(),
+                message: None,
+            }),
+            Err(error) => Err(error),
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("helper registration is only supported on macOS".to_string())
+    }
 }
 
 async fn load_power_config() -> Result<PowerConfig, String> {
@@ -250,6 +317,7 @@ fn dto_from_runtime(status: KeepAwakeStatus, enabled: bool) -> KeepAwakeStateDto
         battery_percent: status.battery_percent,
         session_remaining_secs: status.session_remaining_secs,
         paused_due_to_battery: status.paused_due_to_battery,
+        closed_display_sleep_disabled: status.closed_display_sleep_disabled,
     }
 }
 
@@ -324,6 +392,7 @@ mod tests {
                 battery_percent: Some(87),
                 session_remaining_secs: Some(1800),
                 paused_due_to_battery: false,
+                closed_display_sleep_disabled: false,
             },
             true,
         );
@@ -355,6 +424,7 @@ mod tests {
                         config.power.ac_only_mode = true;
                         config.power.battery_threshold = Some(20);
                         config.power.session_duration_secs = Some(3600);
+                        config.power.prevent_closed_display_sleep = true;
                         Ok(())
                     })
                 })
@@ -369,6 +439,7 @@ mod tests {
                 assert!(config.power.ac_only_mode);
                 assert_eq!(config.power.battery_threshold, Some(20));
                 assert_eq!(config.power.session_duration_secs, Some(3600));
+                assert!(config.power.prevent_closed_display_sleep);
             });
         });
     }

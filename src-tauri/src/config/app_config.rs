@@ -56,6 +56,7 @@ pub struct PowerConfig {
     pub battery_threshold: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_duration_secs: Option<u64>,
+    pub prevent_closed_display_sleep: bool,
 }
 
 impl Default for GeneralConfig {
@@ -98,6 +99,7 @@ impl Default for PowerConfig {
             ac_only_mode: false,
             battery_threshold: None,
             session_duration_secs: None,
+            prevent_closed_display_sleep: false,
         }
     }
 }
@@ -285,6 +287,7 @@ max_action_output_chars = 20000
         assert!(!config.power.ac_only_mode);
         assert_eq!(config.power.battery_threshold, None);
         assert_eq!(config.power.session_duration_secs, None);
+        assert!(!config.power.prevent_closed_display_sleep);
     }
 
     #[test]
@@ -355,6 +358,7 @@ max_action_output_chars = 20000
         config.power.ac_only_mode = true;
         config.power.battery_threshold = Some(20);
         config.power.session_duration_secs = Some(3600);
+        config.power.prevent_closed_display_sleep = true;
 
         let raw = toml::to_string_pretty(&config).expect("config should serialize");
         let loaded = toml::from_str::<AppConfig>(&raw).expect("config should deserialize");
@@ -364,6 +368,7 @@ max_action_output_chars = 20000
         assert!(loaded.power.ac_only_mode);
         assert_eq!(loaded.power.battery_threshold, Some(20));
         assert_eq!(loaded.power.session_duration_secs, Some(3600));
+        assert!(loaded.power.prevent_closed_display_sleep);
     }
 
     #[test]
@@ -395,5 +400,6 @@ keep_awake_enabled = true
         assert!(!config.power.ac_only_mode);
         assert_eq!(config.power.battery_threshold, None);
         assert_eq!(config.power.session_duration_secs, None);
+        assert!(!config.power.prevent_closed_display_sleep);
     }
 }

@@ -22,6 +22,7 @@ export interface KeepAwakeState {
   batteryPercent?: number | null;
   sessionRemainingSecs?: number | null;
   pausedDueToBattery?: boolean;
+  closedDisplaySleepDisabled?: boolean;
 }
 
 export interface PowerSettings {
@@ -31,6 +32,7 @@ export interface PowerSettings {
   acOnlyMode: boolean;
   batteryThreshold: number | null;
   sessionDurationSecs: number | null;
+  preventClosedDisplaySleep: boolean;
 }
 
 export interface PowerSettingsInput {
@@ -40,6 +42,12 @@ export interface PowerSettingsInput {
   acOnlyMode: boolean;
   batteryThreshold: number | null;
   sessionDurationSecs: number | null;
+  preventClosedDisplaySleep: boolean;
+}
+
+export interface HelperStatus {
+  status: "registered" | "requiresApproval" | "notRegistered" | "notFound" | "notSupported" | "unknown";
+  message?: string | null;
 }
 
 export interface Repo {

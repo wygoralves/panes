@@ -241,6 +241,9 @@
       "keepAwakeDisableFailed": "Falha ao desativar manter acordado.",
       "powerSettingsSaved": "Configurações de energia salvas.",
       "powerSettingsSaveFailed": "Falha ao salvar configurações de energia.",
+      "helperInstallSuccess": "Auxiliar em segundo plano instalado com sucesso.",
+      "helperInstallFailed": "Falha ao instalar o auxiliar em segundo plano.",
+      "helperApprovalRequired": "Auxiliar instalado. Aprovação necessária nas Configurações do Sistema.",
       "pullComplete": "Pull concluído",
       "pullFailed": "Falha no pull",
       "pushComplete": "Push concluído",
@@ -422,6 +425,15 @@
     "statusPaused": "Pausado",
     "statusPausedBattery": "Pausado — usando bateria",
     "save": "Salvar",
-    "cancel": "Cancelar"
+    "cancel": "Cancelar",
+    "closedDisplaySection": "Avançado",
+    "preventClosedDisplaySleep": "Evitar suspensão ao fechar a tampa",
+    "preventClosedDisplaySleepDescription": "Manter o sistema ativo ao fechar a tampa. Requer um auxiliar em segundo plano.",
+    "helperInstalled": "Auxiliar instalado",
+    "helperPendingApproval": "Aguardando aprovação nas Configurações do Sistema",
+    "helperNotInstalled": "Auxiliar não instalado",
+    "helperInstallButton": "Instalar auxiliar",
+    "helperInstallingButton": "Instalando...",
+    "helperApprovalNote": "Abra Configurações do Sistema → Geral → Itens de Login para aprovar."
   }
 }

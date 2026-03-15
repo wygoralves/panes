@@ -15,6 +15,8 @@ use tokio::sync::Mutex;
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+pub(crate) mod macos_helper;
 pub mod monitor;
 
 use crate::config::app_config::{AppConfig, PowerConfig};
@@ -38,6 +40,7 @@ pub struct KeepAwakeStatus {
     pub battery_percent: Option<u8>,
     pub session_remaining_secs: Option<u64>,
     pub paused_due_to_battery: bool,
+    pub closed_display_sleep_disabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -67,6 +70,9 @@ struct KeepAwakeRuntime {
     active_profile: Option<PowerProfile>,
     on_ac_power: Option<bool>,
     battery_percent: Option<u8>,
+    /// True when the privileged helper has been told to set SleepDisabled=true.
+    /// Cleared on disable or when the helper sends allowSleep.
+    closed_display_sleep_disabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +94,7 @@ struct PowerProfile {
     prevent_display_sleep: bool,
     prevent_screen_saver: bool,
     ac_only: bool,
+    prevent_closed_display_sleep: bool,
 }
 
 impl PowerProfile {
@@ -97,6 +104,7 @@ impl PowerProfile {
             prevent_display_sleep: config.prevent_display_sleep,
             prevent_screen_saver: config.prevent_screen_saver,
             ac_only: config.ac_only_mode,
+            prevent_closed_display_sleep: config.prevent_closed_display_sleep,
         }
     }
 
@@ -106,6 +114,7 @@ impl PowerProfile {
             prevent_display_sleep: false,
             prevent_screen_saver: false,
             ac_only: false,
+            prevent_closed_display_sleep: false,
         }
     }
 }
@@ -218,6 +227,7 @@ impl KeepAwakeManager {
                 active_profile: None,
                 on_ac_power: None,
                 battery_percent: None,
+                closed_display_sleep_disabled: false,
             })),
         }
     }
@@ -260,6 +270,7 @@ impl KeepAwakeManager {
             battery_percent,
             paused_due_to_battery,
             display_inhibit_active,
+            closed_display_sleep_disabled,
         ) = {
             let mut runtime = self.runtime.lock().await;
             self.sync_child_state(&mut runtime);
@@ -273,6 +284,7 @@ impl KeepAwakeManager {
                 runtime.battery_percent,
                 runtime.paused_due_to_battery,
                 linux_display_inhibit_active(&runtime),
+                runtime.closed_display_sleep_disabled,
             )
         };
         let closed_display = closed_display_diagnostics(active, helper_pid).await;
@@ -303,6 +315,7 @@ impl KeepAwakeManager {
             battery_percent,
             session_remaining_secs,
             paused_due_to_battery,
+            closed_display_sleep_disabled,
         }
     }
 
@@ -361,6 +374,13 @@ impl KeepAwakeManager {
                     self.spawn_linux_display_inhibit().await;
                 }
 
+                // Ask privileged helper to disable closed-display sleep
+                #[cfg(target_os = "macos")]
+                if profile.prevent_closed_display_sleep {
+                    let success = try_prevent_closed_display_sleep().await;
+                    self.runtime.lock().await.closed_display_sleep_disabled = success;
+                }
+
                 tokio::time::sleep(KEEP_AWAKE_SPAWN_GRACE_PERIOD).await;
 
                 let mut runtime = self.runtime.lock().await;
@@ -408,6 +428,15 @@ impl KeepAwakeManager {
         self.sync_child_state(&mut runtime);
         runtime.last_error = None;
         runtime.paused_due_to_battery = false;
+
+        // Restore closed-display sleep via privileged helper
+        #[cfg(target_os = "macos")]
+        if runtime.closed_display_sleep_disabled {
+            runtime.closed_display_sleep_disabled = false;
+            drop(runtime);
+            try_allow_closed_display_sleep().await;
+            runtime = self.runtime.lock().await;
+        }
 
         // Stop monitor task
         if let Some(cleanup) = runtime.monitor_cleanup.take() {
@@ -506,6 +535,14 @@ impl KeepAwakeManager {
                             let _ = secondary.wait().await;
                         }
                         runtime.secondary_helper = None;
+                        // Restore closed-display sleep via helper
+                        #[cfg(target_os = "macos")]
+                        if runtime.closed_display_sleep_disabled {
+                            runtime.closed_display_sleep_disabled = false;
+                            drop(runtime);
+                            try_allow_closed_display_sleep().await;
+                            runtime = self.runtime.lock().await;
+                        }
                         let _ = clear_helper_state(&self.state_path());
                     } else if runtime.paused_due_to_battery {
                         log::info!("keep awake resuming: AC power restored");
@@ -535,6 +572,14 @@ impl KeepAwakeManager {
                                 #[cfg(target_os = "linux")]
                                 if profile.prevent_display_sleep || profile.prevent_screen_saver {
                                     self.spawn_linux_display_inhibit().await;
+                                }
+
+                                // Re-activate closed-display sleep prevention
+                                #[cfg(target_os = "macos")]
+                                if profile.prevent_closed_display_sleep {
+                                    let success = try_prevent_closed_display_sleep().await;
+                                    self.runtime.lock().await.closed_display_sleep_disabled =
+                                        success;
                                 }
                             }
                             Err(error) => {
@@ -760,6 +805,55 @@ fn linux_display_inhibit_active(runtime: &KeepAwakeRuntime) -> bool {
 #[cfg(not(target_os = "linux"))]
 fn linux_display_inhibit_active(_runtime: &KeepAwakeRuntime) -> bool {
     true
+}
+
+/// Best-effort: ask the privileged helper to set `SleepDisabled = true`.
+/// Logs on failure but does not return an error — the rest of keep-awake still
+/// works even if the helper is not installed.
+#[cfg(target_os = "macos")]
+async fn try_prevent_closed_display_sleep() -> bool {
+    if !macos_helper::helper_socket_exists() {
+        log::info!("closed-display helper socket not found, skipping preventSleep");
+        return false;
+    }
+
+    match macos_helper::HelperConnection::connect().await {
+        Ok(mut conn) => match conn.prevent_sleep().await {
+            Ok(()) => {
+                log::info!("closed-display sleep prevention activated via helper");
+                true
+            }
+            Err(error) => {
+                log::warn!("helper preventSleep failed: {error}");
+                false
+            }
+        },
+        Err(error) => {
+            log::warn!("failed to connect to keep-awake helper: {error}");
+            false
+        }
+    }
+}
+
+/// Best-effort: ask the privileged helper to set `SleepDisabled = false`.
+#[cfg(target_os = "macos")]
+async fn try_allow_closed_display_sleep() {
+    if !macos_helper::helper_socket_exists() {
+        return;
+    }
+
+    match macos_helper::HelperConnection::connect().await {
+        Ok(mut conn) => {
+            if let Err(error) = conn.allow_sleep().await {
+                log::warn!("helper allowSleep failed: {error}");
+            } else {
+                log::info!("closed-display sleep prevention deactivated via helper");
+            }
+        }
+        Err(error) => {
+            log::warn!("failed to connect to keep-awake helper for allowSleep: {error}");
+        }
+    }
 }
 
 fn display_prevention_status(
@@ -2256,6 +2350,7 @@ mod tests {
         assert!(!profile.prevent_display_sleep);
         assert!(!profile.prevent_screen_saver);
         assert!(!profile.ac_only);
+        assert!(!profile.prevent_closed_display_sleep);
     }
 
     #[test]
@@ -2267,12 +2362,14 @@ mod tests {
             ac_only_mode: true,
             battery_threshold: Some(20),
             session_duration_secs: Some(3600),
+            prevent_closed_display_sleep: true,
         };
         let profile = PowerProfile::from_config(&config);
         assert!(profile.prevent_system_sleep);
         assert!(profile.prevent_display_sleep);
         assert!(profile.prevent_screen_saver);
         assert!(profile.ac_only);
+        assert!(profile.prevent_closed_display_sleep);
     }
 
     #[test]

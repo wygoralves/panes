@@ -14,7 +14,9 @@ use std::{
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use core_foundation::{
-    base::TCFType,
+    base::{CFType, TCFType},
+    boolean::CFBoolean,
+    dictionary::CFDictionary,
     runloop::{kCFRunLoopDefaultMode, CFRunLoop, CFRunLoopSource},
     string::{CFString, CFStringRef},
 };
@@ -34,6 +36,10 @@ const K_IO_MESSAGE_SYSTEM_HAS_POWERED_ON: u32 = 0xE000_0300;
 const K_IO_MESSAGE_SYSTEM_WILL_POWER_ON: u32 = 0xE000_0320;
 const K_IO_PM_ASSERT_PREVENT_USER_IDLE_SYSTEM_SLEEP: &str = "PreventUserIdleSystemSleep";
 const K_IO_PM_ASSERT_PREVENT_USER_IDLE_DISPLAY_SLEEP: &str = "PreventUserIdleDisplaySleep";
+const K_IOPM_ROOT_DOMAIN_CLASS: &[u8] = b"IOPMrootDomain\0";
+const K_APPLE_CLAMSHELL_STATE_KEY: &str = "AppleClamshellState";
+const K_APPLE_CLAMSHELL_CAUSES_SLEEP_KEY: &str = "AppleClamshellCausesSleep";
+const K_IOPM_SLEEP_DISABLED_KEY: &str = "SleepDisabled";
 
 type IoObject = libc::mach_port_t;
 type IoService = libc::mach_port_t;
@@ -64,6 +70,21 @@ unsafe extern "C" {
     ) -> core_foundation::runloop::CFRunLoopSourceRef;
     fn IONotificationPortDestroy(notify: IoNotificationPortRef);
     fn IOServiceClose(connect: IoConnect) -> i32;
+    fn IOServiceGetMatchingService(
+        master_port: libc::mach_port_t,
+        matching: core_foundation::dictionary::CFMutableDictionaryRef,
+    ) -> IoService;
+    fn IORegistryEntryCreateCFProperties(
+        entry: IoService,
+        properties: *mut core_foundation::dictionary::CFMutableDictionaryRef,
+        allocator: core_foundation::base::CFAllocatorRef,
+        options: u32,
+    ) -> i32;
+    fn IOObjectRelease(object: IoObject) -> i32;
+    fn IOServiceMatching(
+        name: *const std::os::raw::c_char,
+    ) -> core_foundation::dictionary::CFMutableDictionaryRef;
+    fn IOPMCopySystemPowerSettings() -> core_foundation::dictionary::CFDictionaryRef;
 }
 
 #[derive(Debug)]
@@ -102,6 +123,84 @@ pub(super) fn support_status() -> SupportStatus {
         supported: true,
         message: None,
     }
+}
+
+/// Physical lid state and kernel clamshell sleep policy, read from IORegistry.
+#[derive(Debug, Clone, Default)]
+pub(super) struct ClamshellState {
+    /// True if the lid is physically closed right now. `None` on desktops or if
+    /// the IORegistry key is missing.
+    pub lid_is_closed: Option<bool>,
+    /// True if lid closure will trigger sleep (the macOS default). False when
+    /// clamshell sleep has been disabled (e.g. via `IOPMSetSystemPowerSetting`).
+    /// `None` if the IORegistry key is missing.
+    pub clamshell_causes_sleep: Option<bool>,
+}
+
+/// Read `AppleClamshellState` and `AppleClamshellCausesSleep` from the
+/// `IOPMrootDomain` IORegistry entry.  No root privileges required.
+pub(super) fn read_clamshell_state() -> ClamshellState {
+    let matching = unsafe { IOServiceMatching(K_IOPM_ROOT_DOMAIN_CLASS.as_ptr().cast()) };
+    if matching.is_null() {
+        return ClamshellState::default();
+    }
+
+    // IOServiceGetMatchingService consumes the matching dictionary reference.
+    let service = unsafe { IOServiceGetMatchingService(0, matching) };
+    if service == 0 {
+        return ClamshellState::default();
+    }
+
+    let mut props_ref: core_foundation::dictionary::CFMutableDictionaryRef = ptr::null_mut();
+    let result = unsafe {
+        IORegistryEntryCreateCFProperties(service, &mut props_ref, ptr::null_mut(), 0)
+    };
+    unsafe {
+        IOObjectRelease(service);
+    }
+
+    if result != 0 || props_ref.is_null() {
+        return ClamshellState::default();
+    }
+
+    let props = unsafe {
+        CFDictionary::<CFString, CFType>::wrap_under_create_rule(
+            props_ref as core_foundation::dictionary::CFDictionaryRef,
+        )
+    };
+
+    let lid_is_closed = ioregistry_find_bool(&props, K_APPLE_CLAMSHELL_STATE_KEY);
+    let clamshell_causes_sleep =
+        ioregistry_find_bool(&props, K_APPLE_CLAMSHELL_CAUSES_SLEEP_KEY);
+
+    ClamshellState {
+        lid_is_closed,
+        clamshell_causes_sleep,
+    }
+}
+
+/// Read the `SleepDisabled` flag from `IOPMCopySystemPowerSettings`.
+/// Returns `Some(true)` when all-sleep prevention is active (i.e. a privileged
+/// helper has called `IOPMSetSystemPowerSetting("SleepDisabled", true)`).
+/// No root privileges required to read.
+pub(super) fn read_sleep_disabled() -> Option<bool> {
+    let dict_ref = unsafe { IOPMCopySystemPowerSettings() };
+    if dict_ref.is_null() {
+        return None;
+    }
+
+    let dict = unsafe {
+        CFDictionary::<CFString, CFType>::wrap_under_create_rule(dict_ref)
+    };
+
+    ioregistry_find_bool(&dict, K_IOPM_SLEEP_DISABLED_KEY)
+}
+
+fn ioregistry_find_bool(dict: &CFDictionary<CFString, CFType>, key: &str) -> Option<bool> {
+    let cf_key = CFString::new(key);
+    dict.find(&cf_key)
+        .and_then(|value| value.downcast::<CFBoolean>())
+        .map(bool::from)
 }
 
 pub(super) fn spawn(profile: &PowerProfile) -> anyhow::Result<SpawnedKeepAwakeChild> {
@@ -152,12 +251,23 @@ pub(super) fn spawn(profile: &PowerProfile) -> anyhow::Result<SpawnedKeepAwakeCh
 pub(super) async fn closed_display_diagnostics(
     _keep_awake_active: bool,
 ) -> ClosedDisplayDiagnostics {
-    // Apple documents that the public idle/display assertions do not prevent
-    // lid-close sleep, so this backend should report closed-display support as
-    // unavailable instead of guessing.
+    let (clamshell, sleep_disabled) = tokio::task::spawn_blocking(|| {
+        (read_clamshell_state(), read_sleep_disabled())
+    })
+    .await
+    .unwrap_or_else(|_| (ClamshellState::default(), None));
+
+    // The system supports closed-display operation when SleepDisabled is active
+    // (set by a privileged helper) OR when the kernel reports that clamshell
+    // closure does not cause sleep (e.g. external display on AC).
+    let clamshell_sleep_bypassed = sleep_disabled == Some(true)
+        || clamshell.clamshell_causes_sleep == Some(false);
+
     ClosedDisplayDiagnostics {
-        supports_closed_display: Some(false),
-        closed_display_active: Some(false),
+        supports_closed_display: Some(clamshell_sleep_bypassed),
+        closed_display_active: Some(
+            clamshell_sleep_bypassed && clamshell.lid_is_closed == Some(true),
+        ),
     }
 }
 
@@ -513,10 +623,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn closed_display_is_reported_as_unsupported() {
+    async fn closed_display_diagnostics_reads_real_ioregistry_values() {
         let diagnostics = closed_display_diagnostics(true).await;
 
-        assert_eq!(diagnostics.supports_closed_display, Some(false));
-        assert_eq!(diagnostics.closed_display_active, Some(false));
+        // On CI VMs without a lid, supports_closed_display will be
+        // Some(true) only if SleepDisabled is active or clamshell causes
+        // sleep is false.  On machines with a lid and no helper, it will
+        // typically be Some(false).  Either way, the values must be Some.
+        assert!(diagnostics.supports_closed_display.is_some());
+        assert!(diagnostics.closed_display_active.is_some());
+    }
+
+    #[test]
+    fn read_clamshell_state_does_not_panic() {
+        let state = read_clamshell_state();
+        // On desktops/VMs, both may be None.  On laptops, both should be Some.
+        // We only assert the function does not crash.
+        let _ = state.lid_is_closed;
+        let _ = state.clamshell_causes_sleep;
+    }
+
+    #[test]
+    fn read_sleep_disabled_does_not_panic() {
+        let result = read_sleep_disabled();
+        // Typically Some(false) unless a helper has set it.
+        let _ = result;
     }
 }

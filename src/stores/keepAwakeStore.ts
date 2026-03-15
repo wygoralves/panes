@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { ipc } from "../lib/ipc";
-import type { KeepAwakeState, PowerSettings, PowerSettingsInput } from "../types";
+import type { HelperStatus, KeepAwakeState, PowerSettings, PowerSettingsInput } from "../types";
 import { t } from "../i18n";
 import { toast } from "./toastStore";
 
@@ -13,6 +13,9 @@ const KEEP_AWAKE_TOAST_KEYS = {
   disableFailed: "app:commandPalette.toasts.keepAwakeDisableFailed",
   settingsSaved: "app:commandPalette.toasts.powerSettingsSaved",
   settingsSaveFailed: "app:commandPalette.toasts.powerSettingsSaveFailed",
+  helperInstallSuccess: "app:commandPalette.toasts.helperInstallSuccess",
+  helperInstallFailed: "app:commandPalette.toasts.helperInstallFailed",
+  helperApprovalRequired: "app:commandPalette.toasts.helperApprovalRequired",
 } as const;
 
 interface KeepAwakeStoreState {
@@ -30,6 +33,10 @@ interface KeepAwakeStoreState {
   savePowerSettings: (input: PowerSettingsInput) => Promise<KeepAwakeState | null>;
   openPowerSettings: () => void;
   closePowerSettings: () => void;
+  helperStatus: HelperStatus | null;
+  helperLoading: boolean;
+  loadHelperStatus: () => Promise<HelperStatus | null>;
+  registerHelper: () => Promise<HelperStatus | null>;
 }
 
 export function canToggleKeepAwake(state: KeepAwakeState | null | undefined) {
@@ -271,4 +278,39 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
 
   openPowerSettings: () => set({ powerSettingsOpen: true }),
   closePowerSettings: () => set({ powerSettingsOpen: false }),
+
+  helperStatus: null,
+  helperLoading: false,
+
+  loadHelperStatus: async () => {
+    set({ helperLoading: true });
+    try {
+      const status = await ipc.getHelperStatus();
+      set({ helperStatus: status, helperLoading: false });
+      return status;
+    } catch (error) {
+      console.warn("[keepAwakeStore] Failed to load helper status", error);
+      set({ helperLoading: false });
+      return null;
+    }
+  },
+
+  registerHelper: async () => {
+    set({ helperLoading: true });
+    try {
+      const status = await ipc.registerKeepAwakeHelper();
+      set({ helperStatus: status, helperLoading: false });
+      if (status.status === "registered") {
+        toast.success(t(KEEP_AWAKE_TOAST_KEYS.helperInstallSuccess));
+      } else if (status.status === "requiresApproval") {
+        toast.warning(t(KEEP_AWAKE_TOAST_KEYS.helperApprovalRequired));
+      }
+      return status;
+    } catch (error) {
+      console.warn("[keepAwakeStore] Failed to register helper", error);
+      toast.error(t(KEEP_AWAKE_TOAST_KEYS.helperInstallFailed));
+      set({ helperLoading: false });
+      return null;
+    }
+  },
 }));

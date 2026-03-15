@@ -241,6 +241,9 @@
       "keepAwakeDisableFailed": "Failed to disable Keep Awake.",
       "powerSettingsSaved": "Power settings saved.",
       "powerSettingsSaveFailed": "Failed to save power settings.",
+      "helperInstallSuccess": "Background helper installed successfully.",
+      "helperInstallFailed": "Failed to install background helper.",
+      "helperApprovalRequired": "Helper installed. Approval required in System Settings.",
       "pullComplete": "Pull complete",
       "pullFailed": "Pull failed",
       "pushComplete": "Push complete",
@@ -422,6 +425,15 @@
     "statusPaused": "Paused",
     "statusPausedBattery": "Paused — on battery power",
     "save": "Save",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "closedDisplaySection": "Advanced",
+    "preventClosedDisplaySleep": "Prevent lid-close sleep",
+    "preventClosedDisplaySleepDescription": "Keep the system awake when the lid is closed. Requires a background helper.",
+    "helperInstalled": "Helper installed",
+    "helperPendingApproval": "Pending approval in System Settings",
+    "helperNotInstalled": "Helper not installed",
+    "helperInstallButton": "Install Helper",
+    "helperInstallingButton": "Installing...",
+    "helperApprovalNote": "Open System Settings → General → Login Items to approve."
   }
 }
