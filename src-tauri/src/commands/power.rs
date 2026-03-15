@@ -123,9 +123,7 @@ pub async fn set_keep_awake_enabled(
 }
 
 #[tauri::command]
-pub async fn get_power_settings(
-    _state: State<'_, AppState>,
-) -> Result<PowerSettingsDto, String> {
+pub async fn get_power_settings(_state: State<'_, AppState>) -> Result<PowerSettingsDto, String> {
     let config = load_power_config().await?;
 
     Ok(PowerSettingsDto {

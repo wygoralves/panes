@@ -3,10 +3,17 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MonitorEvent {
-    AcStatusChanged { on_ac: bool },
-    BatteryLevel { percent: u8 },
+    AcStatusChanged {
+        on_ac: bool,
+    },
+    BatteryLevel {
+        percent: u8,
+    },
     /// Periodic power source status for UI display — does not trigger any action.
-    PowerSourcePolled { on_ac: bool, battery_percent: Option<u8> },
+    PowerSourcePolled {
+        on_ac: bool,
+        battery_percent: Option<u8>,
+    },
     SessionExpired,
 }
 
@@ -61,13 +68,8 @@ pub fn start_monitor(config: MonitorConfig) -> PowerMonitorHandle {
             // Always poll power source for UI display; act on AC/battery events
             // only when the corresponding feature is enabled.
             if let Ok(status) = poll_power_source().await {
-                let should_stop = emit_power_source_events(
-                    &event_tx,
-                    &config,
-                    &mut was_on_ac,
-                    status,
-                )
-                .await;
+                let should_stop =
+                    emit_power_source_events(&event_tx, &config, &mut was_on_ac, status).await;
                 if should_stop {
                     break;
                 }
@@ -281,10 +283,7 @@ fn poll_power_source_windows() -> Result<PowerSourceStatus, String> {
     }
 
     let on_ac = parts[0] == "1";
-    let battery_percent = parts[1]
-        .parse::<u8>()
-        .ok()
-        .filter(|&p| p <= 100); // 255 means unknown
+    let battery_percent = parts[1].parse::<u8>().ok().filter(|&p| p <= 100); // 255 means unknown
 
     Ok(PowerSourceStatus {
         on_ac,
@@ -328,8 +327,8 @@ mod tests {
             match tokio::time::timeout_at(deadline, handle.event_rx.recv()).await {
                 Ok(Some(MonitorEvent::PowerSourcePolled { .. })) => continue,
                 Ok(Some(other)) => panic!("unexpected action event: {other:?}"),
-                Ok(None) => break,        // channel closed
-                Err(_) => break,          // timeout — expected
+                Ok(None) => break, // channel closed
+                Err(_) => break,   // timeout — expected
             }
         }
 
