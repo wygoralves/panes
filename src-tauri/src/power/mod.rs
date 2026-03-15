@@ -136,7 +136,7 @@ trait KeepAwakeChild: Send {
 
 trait KeepAwakeSpawner: Send + Sync {
     fn support_status(&self) -> SupportStatus;
-    fn spawn(&self) -> anyhow::Result<SpawnedKeepAwakeChild>;
+    fn spawn(&self, profile: &PowerProfile) -> anyhow::Result<SpawnedKeepAwakeChild>;
 }
 
 trait KeepAwakeProcessOps: Send + Sync {
@@ -306,7 +306,7 @@ impl KeepAwakeManager {
             return Ok(());
         }
 
-        match self.spawner.spawn() {
+        match self.spawner.spawn(&profile) {
             Ok(spawned) => {
                 if let Some(helper) = spawned.helper.as_ref() {
                     let helper = PersistedKeepAwakeHelper {
@@ -329,6 +329,12 @@ impl KeepAwakeManager {
                 runtime.active_profile = Some(profile.clone());
                 runtime.paused_due_to_battery = false;
                 drop(runtime);
+
+                // Spawn secondary child for Linux display inhibit if needed
+                #[cfg(target_os = "linux")]
+                if profile.prevent_display_sleep || profile.prevent_screen_saver {
+                    self.spawn_linux_display_inhibit().await;
+                }
 
                 tokio::time::sleep(KEEP_AWAKE_SPAWN_GRACE_PERIOD).await;
 
@@ -470,9 +476,11 @@ impl KeepAwakeManager {
                     } else if runtime.paused_due_to_battery {
                         log::info!("keep awake resuming: AC power restored");
                         runtime.paused_due_to_battery = false;
+                        let profile = runtime.active_profile.clone()
+                            .unwrap_or_else(PowerProfile::default_profile);
                         drop(runtime);
-                        // Re-spawn children — use default profile for the spawner
-                        if let Ok(spawned) = self.spawner.spawn() {
+                        // Re-spawn children with the active profile
+                        if let Ok(spawned) = self.spawner.spawn(&profile) {
                             let mut runtime = self.runtime.lock().await;
                             if let Some(helper) = spawned.helper.as_ref() {
                                 let persisted = PersistedKeepAwakeHelper {
@@ -483,6 +491,11 @@ impl KeepAwakeManager {
                             }
                             runtime.child = Some(spawned.child);
                             runtime.helper = spawned.helper;
+                        }
+                        // Re-spawn Linux display inhibit if needed
+                        #[cfg(target_os = "linux")]
+                        if profile.prevent_display_sleep || profile.prevent_screen_saver {
+                            self.spawn_linux_display_inhibit().await;
                         }
                     }
                 }
@@ -497,6 +510,48 @@ impl KeepAwakeManager {
                     break;
                 }
                 None => break,
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn spawn_linux_display_inhibit(&self) {
+        let spec = match resolve_display_inhibit_spec() {
+            Ok(Some(spec)) => spec,
+            Ok(None) => {
+                log::info!("linux display inhibit: gdbus/bash not available, skipping");
+                return;
+            }
+            Err(error) => {
+                log::warn!("linux display inhibit: {error}");
+                return;
+            }
+        };
+
+        let mut command = tokio::process::Command::new(&spec.program);
+        process_utils::configure_tokio_command(&mut command);
+        command
+            .args(&spec.args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+
+        match command.spawn() {
+            Ok(child) => {
+                let helper = child.id().map(|pid| KeepAwakeHelperState {
+                    pid,
+                    program: spec.program.display().to_string(),
+                    args: spec.args.iter().map(|a| a.to_string_lossy().into_owned()).collect(),
+                    start_marker: read_process_start_marker(pid).ok().flatten(),
+                });
+                let mut runtime = self.runtime.lock().await;
+                runtime.secondary_child = Some(Box::new(TokioKeepAwakeChild { child }));
+                runtime.secondary_helper = helper;
+                log::info!("linux display inhibit child started");
+            }
+            Err(error) => {
+                log::warn!("failed to spawn linux display inhibit child: {error}");
             }
         }
     }
@@ -669,8 +724,8 @@ impl KeepAwakeSpawner for ProcessKeepAwakeSpawner {
         }
     }
 
-    fn spawn(&self) -> anyhow::Result<SpawnedKeepAwakeChild> {
-        let spec = resolve_backend_spec(&PowerProfile::default_profile()).map_err(anyhow::Error::msg)?;
+    fn spawn(&self, profile: &PowerProfile) -> anyhow::Result<SpawnedKeepAwakeChild> {
+        let spec = resolve_backend_spec(profile).map_err(anyhow::Error::msg)?;
         let mut command = tokio::process::Command::new(&spec.program);
         process_utils::configure_tokio_command(&mut command);
         command
@@ -1162,6 +1217,45 @@ fn resolve_backend_spec(profile: &PowerProfile) -> Result<BackendSpec, String> {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn resolve_display_inhibit_spec() -> Result<Option<BackendSpec>, String> {
+    let gdbus = crate::runtime_env::resolve_executable("gdbus");
+    let bash = crate::runtime_env::resolve_executable("bash");
+    let tail = crate::runtime_env::resolve_executable("tail");
+
+    if gdbus.is_none() || bash.is_none() || tail.is_none() {
+        return Ok(None); // graceful degradation
+    }
+
+    let gdbus_path = gdbus.unwrap();
+    let bash = bash.unwrap();
+    let tail_path = tail.unwrap();
+    let owner_pid = std::process::id();
+
+    // Self-contained shell script that:
+    // 1. Calls org.freedesktop.ScreenSaver.Inhibit and captures the cookie
+    // 2. Sets a trap to call UnInhibit on exit
+    // 3. Waits for the owner PID to exit via tail --pid
+    let script = format!(
+        "COOKIE=$({gdbus} call --session --dest org.freedesktop.ScreenSaver \
+         --object-path /org/freedesktop/ScreenSaver \
+         --method org.freedesktop.ScreenSaver.Inhibit \"Panes\" \"Keep display awake\" 2>/dev/null \
+         | tr -dc '0-9') && \
+         [ -n \"$COOKIE\" ] && \
+         trap \"{gdbus} call --session --dest org.freedesktop.ScreenSaver \
+         --object-path /org/freedesktop/ScreenSaver \
+         --method org.freedesktop.ScreenSaver.UnInhibit $COOKIE 2>/dev/null\" EXIT && \
+         {tail} --pid={owner_pid} -f /dev/null",
+        gdbus = gdbus_path.display(),
+        tail = tail_path.display(),
+    );
+
+    Ok(Some(BackendSpec {
+        program: bash,
+        args: vec![OsString::from("-c"), OsString::from(script)],
+    }))
+}
+
 #[cfg(target_os = "windows")]
 fn resolve_windows_powershell() -> Option<PathBuf> {
     ["powershell.exe", "powershell", "pwsh", "pwsh.exe"]
@@ -1328,7 +1422,7 @@ mod tests {
             self.support.clone()
         }
 
-        fn spawn(&self) -> anyhow::Result<SpawnedKeepAwakeChild> {
+        fn spawn(&self, _profile: &PowerProfile) -> anyhow::Result<SpawnedKeepAwakeChild> {
             match self
                 .next_spawn
                 .lock()
