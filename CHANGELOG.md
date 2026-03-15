@@ -1,5 +1,21 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.41.0...vnull) (2026-03-15)
+
+### Features
+
+* **claude:** expand more feature coverage and parity on plan mode and tool use ([1cd5731](https://github.com/wygoralves/panes/commit/1cd57313dadd0f3f0559cfdd3668c1a87e9a2e8e))
+* **gitpanel:** improve logic of dropdown opening of the gitpanel ([55312cc](https://github.com/wygoralves/panes/commit/55312ccee9edb488ee6b682adbcf21fb40a4a01a))
+
+### Bug Fixes
+
+* **claude:** emit stop-reason notice before turn completion ([0bd3ff5](https://github.com/wygoralves/panes/commit/0bd3ff5bfb81c1eb65eaaa6f9333ebb65719f852))
+* close Claude parity gaps ([598ce4a](https://github.com/wygoralves/panes/commit/598ce4a01be88c891a20358558c548d491c955f5))
+* **compatibility:** harden cross-platform tool and power detection ([b15996f](https://github.com/wygoralves/panes/commit/b15996fc008b03607c9dd15242692b400a7c4ae6))
+* **compatibility:** normalize persisted Windows workspace roots ([f8195f2](https://github.com/wygoralves/panes/commit/f8195f24c9c35ef3fb32a793c4a98f7392fdfa0f))
+* **harnesses:** fix install command for opencode ([fc7624a](https://github.com/wygoralves/panes/commit/fc7624a0cdc8ca19361d9a613e77187a2d8914e7))
+* **harnesses:** harden PATH fallback config parsing ([5d84d5e](https://github.com/wygoralves/panes/commit/5d84d5eeb009762c9788771887cb33553c0f7ee5))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.40.0...vnull) (2026-03-13)
 
 ### Features
