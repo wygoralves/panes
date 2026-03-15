@@ -74,6 +74,7 @@ let keepAwakeLastAppliedRequestId = 0;
 let keepAwakePendingRequests = 0;
 let keepAwakeMutationId = 0;
 let keepAwakePendingMutations = 0;
+let powerSettingsLoadRequestId = 0;
 
 function beginKeepAwakeRequest(set: (partial: Partial<KeepAwakeStoreState>) => void) {
   keepAwakePendingRequests += 1;
@@ -216,6 +217,8 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
   },
 
   loadPowerSettings: async () => {
+    powerSettingsLoadRequestId += 1;
+    const requestId = powerSettingsLoadRequestId;
     set({
       powerSettingsLoading: true,
       powerSettingsLoaded: false,
@@ -223,6 +226,9 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
     });
     try {
       const settings = await ipc.getPowerSettings();
+      if (requestId !== powerSettingsLoadRequestId) {
+        return settings;
+      }
       set({
         powerSettings: settings,
         powerSettingsLoading: false,
@@ -231,6 +237,9 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
       return settings;
     } catch (error) {
       console.warn("[keepAwakeStore] Failed to load power settings", error);
+      if (requestId !== powerSettingsLoadRequestId) {
+        return null;
+      }
       set({
         powerSettings: null,
         powerSettingsLoading: false,

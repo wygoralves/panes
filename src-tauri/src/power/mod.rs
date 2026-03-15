@@ -259,6 +259,7 @@ impl KeepAwakeManager {
             on_ac_power,
             battery_percent,
             paused_due_to_battery,
+            display_inhibit_active,
         ) = {
             let mut runtime = self.runtime.lock().await;
             self.sync_child_state(&mut runtime);
@@ -271,6 +272,7 @@ impl KeepAwakeManager {
                 runtime.on_ac_power,
                 runtime.battery_percent,
                 runtime.paused_due_to_battery,
+                linux_display_inhibit_active(&runtime),
             )
         };
         let closed_display = closed_display_diagnostics(active, helper_pid).await;
@@ -280,10 +282,8 @@ impl KeepAwakeManager {
                 .as_secs()
         });
 
-        let display_sleep_prevented =
-            active && profile.as_ref().is_some_and(|p| p.prevent_display_sleep);
-        let screen_saver_prevented =
-            active && profile.as_ref().is_some_and(|p| p.prevent_screen_saver);
+        let (display_sleep_prevented, screen_saver_prevented) =
+            display_prevention_status(active, profile.as_ref(), display_inhibit_active);
 
         KeepAwakeStatus {
             supported: support.supported,
@@ -750,6 +750,30 @@ impl KeepAwakeManager {
             }
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_display_inhibit_active(runtime: &KeepAwakeRuntime) -> bool {
+    runtime.secondary_child.is_some()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn linux_display_inhibit_active(_runtime: &KeepAwakeRuntime) -> bool {
+    true
+}
+
+fn display_prevention_status(
+    active: bool,
+    profile: Option<&PowerProfile>,
+    display_inhibit_active: bool,
+) -> (bool, bool) {
+    let display_sleep_prevented = active
+        && display_inhibit_active
+        && profile.is_some_and(|p| p.prevent_display_sleep);
+    let screen_saver_prevented = active
+        && display_inhibit_active
+        && profile.is_some_and(|p| p.prevent_screen_saver);
+    (display_sleep_prevented, screen_saver_prevented)
 }
 
 impl Default for KeepAwakeManager {
@@ -1371,13 +1395,15 @@ fn build_windows_keep_awake_script(owner_pid: u32, profile: &PowerProfile) -> St
     };
 
     let screen_saver_disable = if profile.prevent_screen_saver {
-        "[PanesScreenSaver]::SystemParametersInfo(0x11, 0, [IntPtr]::Zero, 0) | Out-Null; "
+        "$screenSaverWasActive = (Get-ItemProperty -Path 'HKCU:\\Control Panel\\Desktop' -Name ScreenSaveActive -ErrorAction SilentlyContinue).ScreenSaveActive -eq '1'; \
+         [PanesScreenSaver]::SystemParametersInfo(0x11, 0, [IntPtr]::Zero, 0) | Out-Null; "
     } else {
         ""
     };
 
     let screen_saver_restore = if profile.prevent_screen_saver {
-        "[PanesScreenSaver]::SystemParametersInfo(0x11, 1, [IntPtr]::Zero, 0) | Out-Null; "
+        "$screenSaverRestoreValue = if ($screenSaverWasActive) { 1 } else { 0 }; \
+         [PanesScreenSaver]::SystemParametersInfo(0x11, $screenSaverRestoreValue, [IntPtr]::Zero, 0) | Out-Null; "
     } else {
         ""
     };
@@ -2195,6 +2221,31 @@ mod tests {
         let script = args.last().unwrap().to_string_lossy().into_owned();
         assert!(script.contains("PanesScreenSaver"));
         assert!(script.contains("SystemParametersInfo"));
+        assert!(script.contains("ScreenSaveActive"));
+        assert!(script.contains("$screenSaverRestoreValue = if ($screenSaverWasActive) { 1 } else { 0 }"));
+        assert!(script.contains("SystemParametersInfo(0x11, $screenSaverRestoreValue"));
+    }
+
+    #[test]
+    fn display_prevention_status_requires_active_display_inhibit() {
+        let profile = PowerProfile {
+            prevent_display_sleep: true,
+            prevent_screen_saver: true,
+            ..PowerProfile::default_profile()
+        };
+
+        assert_eq!(
+            display_prevention_status(true, Some(&profile), false),
+            (false, false)
+        );
+        assert_eq!(
+            display_prevention_status(true, Some(&profile), true),
+            (true, true)
+        );
+        assert_eq!(
+            display_prevention_status(false, Some(&profile), true),
+            (false, false)
+        );
     }
 
     #[test]
