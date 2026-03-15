@@ -1,5 +1,30 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.42.0...vnull) (2026-03-15)
+
+### Features
+
+* **power:** add clamshell lid-close sleep prevention via privileged helper ([cddbe8a](https://github.com/wygoralves/panes/commit/cddbe8afe2ad6be31d62df7016e29debb45cec9f))
+* **power:** adjust time picker for session duration ([63203f3](https://github.com/wygoralves/panes/commit/63203f3c91841f579d31a05addcc074bff1a2874))
+* **power:** harden macOS keep-awake backend ([e1cac2e](https://github.com/wygoralves/panes/commit/e1cac2e940c5818fd06ffeec580cbb32405fecf1))
+* **power:** implement advanced power management settings ([269ba74](https://github.com/wygoralves/panes/commit/269ba74198a7e0ec7a7ef12693878b1913880e5e))
+* **power:** replace caffeinate with direct IOKit assertions on macOS ([e53216c](https://github.com/wygoralves/panes/commit/e53216c0d54f46cd9828359d50bdbd23d2aa66fb))
+
+### Bug Fixes
+
+* **linux:** address ui freeze on appimage build ([763bd2e](https://github.com/wygoralves/panes/commit/763bd2ee4d9787db924440117e389ebb9a903bcf))
+* **power:** add pmset fallback for lid-close prevention in dev builds ([0b33195](https://github.com/wygoralves/panes/commit/0b331958c6adebdeeb50de917663674078dbe720))
+* **power:** address code review findings ([8bb308b](https://github.com/wygoralves/panes/commit/8bb308b7299c8003b03a5908edb68bfc5add0327))
+* **power:** address review findings for power management ([422e547](https://github.com/wygoralves/panes/commit/422e5470626bfa70fdcdb7b7f39d767415f05093))
+* **power:** harden keep-awake power settings flow ([8cf85e6](https://github.com/wygoralves/panes/commit/8cf85e61cb00e8e95475e33d93767dac8a7092f6))
+* **power:** include -s flag in default macOS caffeinate args ([a4ddf13](https://github.com/wygoralves/panes/commit/a4ddf13360020a9e6ff6ea93cf7afd50d8f9dcee))
+* **powermgmt:** align power status with runtime transitions ([cf9d8b1](https://github.com/wygoralves/panes/commit/cf9d8b18ac87ccd1ab8c9a2263144bcb82487f9c))
+* **powermgmt:** harden power management state transitions ([db4d941](https://github.com/wygoralves/panes/commit/db4d941c96dddd2a776f2255467d3a80f68f58d9))
+* **power:** preserve platform-specific power settings semantics ([d1c910d](https://github.com/wygoralves/panes/commit/d1c910dfff43e5b8deec1b6ae28a5fb68ca59337))
+* **power:** receive monitor events without holding the runtime mutex ([0b244fd](https://github.com/wygoralves/panes/commit/0b244fd0136ad61e7cfa08c77edca670d632d0a7))
+* **power:** reorder power mgmt menu sections ([11977af](https://github.com/wygoralves/panes/commit/11977afceb8a2890c14d1395be7990230b788d4b))
+* **power:** wire PowerProfile through spawner and add Linux display inhibit ([a12c83c](https://github.com/wygoralves/panes/commit/a12c83cb55ef5473cbc8e4c9cb34847592486f4e))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.41.0...vnull) (2026-03-15)
 
 ### Features
