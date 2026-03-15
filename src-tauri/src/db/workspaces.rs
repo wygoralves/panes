@@ -5,6 +5,7 @@ use rusqlite::{params, OptionalExtension};
 use uuid::Uuid;
 
 use crate::models::WorkspaceDto;
+use crate::path_utils;
 use crate::runtime_env;
 
 use super::Database;
@@ -17,28 +18,29 @@ pub fn upsert_workspace(
     scan_depth: Option<i64>,
 ) -> anyhow::Result<WorkspaceDto> {
     let conn = db.connect()?;
-    let canonical = Path::new(root_path)
-        .canonicalize()
-        .unwrap_or_else(|_| Path::new(root_path).to_path_buf());
-    let canonical = canonical.to_string_lossy().to_string();
+    let canonical_path = path_utils::canonicalize_path(Path::new(root_path))
+        .unwrap_or_else(|_| path_utils::normalize_windows_path(Path::new(root_path).to_path_buf()));
+    let canonical = canonical_path.to_string_lossy().to_string();
+    let legacy_canonical = path_utils::legacy_windows_verbatim_path(&canonical_path)
+        .filter(|legacy| legacy != &canonical);
 
-    let existing = conn
-        .query_row(
-            "SELECT id FROM workspaces WHERE root_path = ?1",
-            params![canonical],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .context("failed to query workspace")?;
+    let existing = if let Some(id) = find_workspace_id_by_root(&conn, &canonical)? {
+        Some(id)
+    } else if let Some(legacy_canonical) = legacy_canonical.as_deref() {
+        find_workspace_id_by_root(&conn, legacy_canonical)?
+    } else {
+        None
+    };
 
     if let Some(id) = existing {
         conn.execute(
             "UPDATE workspaces
-       SET last_opened_at = datetime('now'),
-           scan_depth = COALESCE(?2, scan_depth),
+       SET root_path = ?2,
+           last_opened_at = datetime('now'),
+           scan_depth = COALESCE(?3, scan_depth),
            archived_at = NULL
        WHERE id = ?1",
-            params![id, scan_depth],
+            params![id, canonical, scan_depth],
         )
         .context("failed to update workspace last_opened_at")?;
     } else {
@@ -355,6 +357,19 @@ fn get_workspace_by_root(
     .context("failed to load workspace by root")
 }
 
+fn find_workspace_id_by_root(
+    conn: &rusqlite::Connection,
+    root_path: &str,
+) -> anyhow::Result<Option<String>> {
+    conn.query_row(
+        "SELECT id FROM workspaces WHERE root_path = ?1",
+        params![root_path],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .context("failed to query workspace")
+}
+
 fn get_workspace_by_id(
     conn: &rusqlite::Connection,
     workspace_id: &str,
@@ -387,10 +402,11 @@ fn workspace_name_from_path(path: &str) -> String {
 }
 
 fn map_workspace_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkspaceDto> {
+    let root_path = path_utils::normalize_windows_path_string(&row.get::<_, String>(2)?);
     Ok(WorkspaceDto {
         id: row.get(0)?,
         name: row.get(1)?,
-        root_path: row.get(2)?,
+        root_path,
         scan_depth: row.get(3)?,
         created_at: row.get(4)?,
         last_opened_at: row.get(5)?,

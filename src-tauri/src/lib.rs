@@ -9,6 +9,7 @@ mod linux_appimage;
 mod linux_webkit;
 mod locale;
 mod models;
+mod path_utils;
 mod power;
 mod process_utils;
 mod runtime_env;

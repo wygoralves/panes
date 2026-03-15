@@ -6,6 +6,8 @@ use std::{
 use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 
+use crate::path_utils;
+
 const MIN_SPLIT_PANEL_SIZE: u8 = 15;
 const MAX_SPLIT_PANEL_SIZE: u8 = 72;
 const MIN_SPLIT_RATIO: f32 = 0.1;
@@ -735,8 +737,7 @@ pub fn parse_persisted_workspace_startup_preset_json(
 }
 
 pub fn resolve_workspace_path(root_path: &str) -> anyhow::Result<PathBuf> {
-    PathBuf::from(root_path)
-        .canonicalize()
+    path_utils::canonicalize_path(Path::new(root_path))
         .with_context(|| format!("failed to resolve workspace root '{root_path}'"))
 }
 
