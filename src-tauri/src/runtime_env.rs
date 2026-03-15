@@ -1000,7 +1000,12 @@ mod tests {
             temp_dir: temp_dir.clone(),
         };
 
-        for shell in ["pwsh", "powershell"] {
+        #[cfg(target_os = "windows")]
+        let shell_names = ["pwsh.exe", "powershell.exe"];
+        #[cfg(not(target_os = "windows"))]
+        let shell_names = ["pwsh", "powershell"];
+
+        for shell in shell_names {
             let path = temp_dir.join(shell);
             std::fs::write(&path, "").expect("write shell stub");
             #[cfg(unix)]
@@ -1016,8 +1021,17 @@ mod tests {
         std::env::set_var("PATH", &temp_dir);
         let shells = windows_login_probe_shells();
 
-        assert_eq!(shells[0], temp_dir.join("pwsh"));
-        assert!(shells.contains(&temp_dir.join("powershell")));
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(shells[0], temp_dir.join("pwsh.exe"));
+            assert!(shells.contains(&temp_dir.join("powershell.exe")));
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert_eq!(shells[0], temp_dir.join("pwsh"));
+            assert!(shells.contains(&temp_dir.join("powershell")));
+        }
     }
 
     #[cfg(unix)]
