@@ -1,7 +1,11 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::{config::app_config::AppConfig, power::KeepAwakeStatus, state::AppState};
+use crate::{
+    config::app_config::{AppConfig, PowerConfig},
+    power::KeepAwakeStatus,
+    state::AppState,
+};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,6 +19,37 @@ pub struct KeepAwakeStateDto {
     pub closed_display_active: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    pub display_sleep_prevented: bool,
+    pub screen_saver_prevented: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_ac_power: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub battery_percent: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_remaining_secs: Option<u64>,
+    pub paused_due_to_battery: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PowerSettingsDto {
+    pub keep_awake_enabled: bool,
+    pub prevent_display_sleep: bool,
+    pub prevent_screen_saver: bool,
+    pub ac_only_mode: bool,
+    pub battery_threshold: Option<u8>,
+    pub session_duration_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PowerSettingsInput {
+    pub keep_awake_enabled: bool,
+    pub prevent_display_sleep: bool,
+    pub prevent_screen_saver: bool,
+    pub ac_only_mode: bool,
+    pub battery_threshold: Option<u8>,
+    pub session_duration_secs: Option<u64>,
 }
 
 #[tauri::command]
@@ -40,10 +75,19 @@ pub async fn set_keep_awake_enabled(
         if !current.supported {
             return Ok(dto_from_runtime(current, false));
         }
-    }
 
-    if enabled {
-        state.keep_awake.enable().await?;
+        // Load full config to respect all power settings
+        let power_config = tokio::task::spawn_blocking(|| {
+            AppConfig::load_or_create().map(|c| c.power)
+        })
+        .await
+        .map_err(err_to_string)?
+        .map_err(err_to_string)?;
+
+        let mut config = power_config;
+        config.keep_awake_enabled = true;
+        state.keep_awake.enable_with_config(&config).await?;
+
         if let Err(error) = save_enabled_preference(true).await {
             match state.keep_awake.disable().await {
                 Ok(()) => {
@@ -80,6 +124,78 @@ pub async fn set_keep_awake_enabled(
     Ok(dto_from_runtime(runtime, enabled))
 }
 
+#[tauri::command]
+pub async fn get_power_settings(
+    _state: State<'_, AppState>,
+) -> Result<PowerSettingsDto, String> {
+    let config = tokio::task::spawn_blocking(|| {
+        AppConfig::load_or_create().map(|c| c.power)
+    })
+    .await
+    .map_err(err_to_string)?
+    .map_err(err_to_string)?;
+
+    Ok(PowerSettingsDto {
+        keep_awake_enabled: config.keep_awake_enabled,
+        prevent_display_sleep: config.prevent_display_sleep,
+        prevent_screen_saver: config.prevent_screen_saver,
+        ac_only_mode: config.ac_only_mode,
+        battery_threshold: config.battery_threshold,
+        session_duration_secs: config.session_duration_secs,
+    })
+}
+
+#[tauri::command]
+pub async fn set_power_settings(
+    state: State<'_, AppState>,
+    settings: PowerSettingsInput,
+) -> Result<KeepAwakeStateDto, String> {
+    // Validate battery threshold
+    if let Some(threshold) = settings.battery_threshold {
+        if threshold == 0 || threshold >= 100 {
+            return Err("battery threshold must be between 1 and 99".to_string());
+        }
+    }
+
+    // Always disable first (clean state)
+    let _ = state.keep_awake.disable().await;
+
+    // Save settings to config
+    tokio::task::spawn_blocking({
+        let settings = settings.clone();
+        move || {
+            AppConfig::mutate(|config| {
+                config.power.keep_awake_enabled = settings.keep_awake_enabled;
+                config.power.prevent_display_sleep = settings.prevent_display_sleep;
+                config.power.prevent_screen_saver = settings.prevent_screen_saver;
+                config.power.ac_only_mode = settings.ac_only_mode;
+                config.power.battery_threshold = settings.battery_threshold;
+                config.power.session_duration_secs = settings.session_duration_secs;
+                Ok(())
+            })
+        }
+    })
+    .await
+    .map_err(err_to_string)?
+    .map_err(err_to_string)?;
+
+    // Re-enable with new settings if requested
+    if settings.keep_awake_enabled {
+        let power_config = PowerConfig {
+            keep_awake_enabled: true,
+            prevent_display_sleep: settings.prevent_display_sleep,
+            prevent_screen_saver: settings.prevent_screen_saver,
+            ac_only_mode: settings.ac_only_mode,
+            battery_threshold: settings.battery_threshold,
+            session_duration_secs: settings.session_duration_secs,
+        };
+        state.keep_awake.enable_with_config(&power_config).await?;
+    }
+
+    let runtime = state.keep_awake.status().await;
+    Ok(dto_from_runtime(runtime, settings.keep_awake_enabled))
+}
+
 async fn save_enabled_preference(enabled: bool) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         AppConfig::mutate(|config| {
@@ -100,6 +216,12 @@ fn dto_from_runtime(status: KeepAwakeStatus, enabled: bool) -> KeepAwakeStateDto
         supports_closed_display: status.supports_closed_display,
         closed_display_active: status.closed_display_active,
         message: status.message,
+        display_sleep_prevented: status.display_sleep_prevented,
+        screen_saver_prevented: status.screen_saver_prevented,
+        on_ac_power: status.on_ac_power,
+        battery_percent: status.battery_percent,
+        session_remaining_secs: status.session_remaining_secs,
+        paused_due_to_battery: status.paused_due_to_battery,
     }
 }
 
@@ -174,6 +296,12 @@ mod tests {
                 supports_closed_display: Some(false),
                 closed_display_active: Some(false),
                 message: Some("limited".to_string()),
+                display_sleep_prevented: true,
+                screen_saver_prevented: false,
+                on_ac_power: Some(true),
+                battery_percent: Some(87),
+                session_remaining_secs: Some(1800),
+                paused_due_to_battery: false,
             },
             true,
         );
@@ -184,5 +312,42 @@ mod tests {
         assert_eq!(dto.supports_closed_display, Some(false));
         assert_eq!(dto.closed_display_active, Some(false));
         assert_eq!(dto.message.as_deref(), Some("limited"));
+        assert!(dto.display_sleep_prevented);
+        assert!(!dto.screen_saver_prevented);
+        assert_eq!(dto.on_ac_power, Some(true));
+        assert_eq!(dto.battery_percent, Some(87));
+        assert_eq!(dto.session_remaining_secs, Some(1800));
+        assert!(!dto.paused_due_to_battery);
+    }
+
+    #[test]
+    fn set_power_settings_saves_all_fields() {
+        with_temp_app_data_env(|| {
+            let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
+            runtime.block_on(async {
+                tokio::task::spawn_blocking(|| {
+                    AppConfig::mutate(|config| {
+                        config.power.keep_awake_enabled = true;
+                        config.power.prevent_display_sleep = true;
+                        config.power.prevent_screen_saver = true;
+                        config.power.ac_only_mode = true;
+                        config.power.battery_threshold = Some(20);
+                        config.power.session_duration_secs = Some(3600);
+                        Ok(())
+                    })
+                })
+                .await
+                .expect("task should complete")
+                .expect("mutate should succeed");
+
+                let config = AppConfig::load_or_create().expect("config should load");
+                assert!(config.power.keep_awake_enabled);
+                assert!(config.power.prevent_display_sleep);
+                assert!(config.power.prevent_screen_saver);
+                assert!(config.power.ac_only_mode);
+                assert_eq!(config.power.battery_threshold, Some(20));
+                assert_eq!(config.power.session_duration_secs, Some(3600));
+            });
+        });
     }
 }

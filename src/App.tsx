@@ -3,6 +3,7 @@ import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
 import { CommandPalette } from "./components/shared/CommandPalette";
 import { OnboardingWizard } from "./components/onboarding/OnboardingWizard";
 import { ToastContainer } from "./components/shared/ToastContainer";
+import { PowerSettingsModal } from "./components/shared/PowerSettingsModal";
 import { t } from "./i18n";
 import { useUpdateStore } from "./stores/updateStore";
 import { useHarnessStore } from "./stores/harnessStore";
@@ -77,6 +78,7 @@ export function App() {
   const loadKeepAwake = useKeepAwakeStore((s) => s.load);
   const refreshKeepAwake = useKeepAwakeStore((s) => s.refresh);
   const keepAwakeEnabled = useKeepAwakeStore((s) => s.state?.enabled ?? false);
+  const keepAwakeSessionTimer = useKeepAwakeStore((s) => s.state?.sessionRemainingSecs);
   const refreshAllThreads = useThreadStore((s) => s.refreshAllThreads);
   const refreshThreads = useThreadStore((s) => s.refreshThreads);
   const refreshArchivedThreads = useThreadStore((s) => s.refreshArchivedThreads);
@@ -99,16 +101,18 @@ export function App() {
   }, [workspaces, refreshAllThreads]);
 
   useEffect(() => {
-    if (!keepAwakeEnabled) {
+    const hasSessionTimer = keepAwakeSessionTimer != null;
+    if (!keepAwakeEnabled && !hasSessionTimer) {
       return;
     }
 
+    const pollInterval = hasSessionTimer ? 30_000 : KEEP_AWAKE_REFRESH_MS;
     const intervalId = window.setInterval(() => {
       void refreshKeepAwake();
-    }, KEEP_AWAKE_REFRESH_MS);
+    }, pollInterval);
 
     return () => window.clearInterval(intervalId);
-  }, [keepAwakeEnabled, refreshKeepAwake]);
+  }, [keepAwakeEnabled, keepAwakeSessionTimer, refreshKeepAwake]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -455,6 +459,7 @@ export function App() {
         <ThreeColumnLayout />
       </div>
       <CommandPalette open={commandPaletteOpen} onClose={closeCommandPalette} />
+      <PowerSettingsModal />
       <OnboardingWizard />
       <ToastContainer />
     </div>

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { ipc } from "../lib/ipc";
-import type { KeepAwakeState } from "../types";
+import type { KeepAwakeState, PowerSettings, PowerSettingsInput } from "../types";
 import { t } from "../i18n";
 import { toast } from "./toastStore";
 
@@ -11,6 +11,8 @@ const KEEP_AWAKE_TOAST_KEYS = {
   unsupported: "app:commandPalette.toasts.keepAwakeUnsupported",
   enableFailed: "app:commandPalette.toasts.keepAwakeEnableFailed",
   disableFailed: "app:commandPalette.toasts.keepAwakeDisableFailed",
+  settingsSaved: "app:commandPalette.toasts.powerSettingsSaved",
+  settingsSaveFailed: "app:commandPalette.toasts.powerSettingsSaveFailed",
 } as const;
 
 interface KeepAwakeStoreState {
@@ -20,6 +22,12 @@ interface KeepAwakeStoreState {
   load: () => Promise<KeepAwakeState | null>;
   refresh: () => Promise<KeepAwakeState | null>;
   toggle: () => Promise<KeepAwakeState | null>;
+  powerSettings: PowerSettings | null;
+  powerSettingsOpen: boolean;
+  loadPowerSettings: () => Promise<PowerSettings | null>;
+  savePowerSettings: (input: PowerSettingsInput) => Promise<KeepAwakeState | null>;
+  openPowerSettings: () => void;
+  closePowerSettings: () => void;
 }
 
 export function canToggleKeepAwake(state: KeepAwakeState | null | undefined) {
@@ -128,6 +136,8 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
   state: null,
   loading: false,
   loadedOnce: false,
+  powerSettings: null,
+  powerSettingsOpen: false,
 
   load: async () => requestKeepAwakeState(set, get),
 
@@ -159,4 +169,35 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
       finishKeepAwakeRequest(set);
     }
   },
+
+  loadPowerSettings: async () => {
+    try {
+      const settings = await ipc.getPowerSettings();
+      set({ powerSettings: settings });
+      return settings;
+    } catch (error) {
+      console.warn("[keepAwakeStore] Failed to load power settings", error);
+      return null;
+    }
+  },
+
+  savePowerSettings: async (input: PowerSettingsInput) => {
+    const requestId = beginKeepAwakeRequest(set);
+    try {
+      const nextState = await ipc.setPowerSettings(input);
+      applyKeepAwakeState(requestId, set, nextState);
+      set({ powerSettings: { ...input } });
+      toast.success(t(KEEP_AWAKE_TOAST_KEYS.settingsSaved));
+      return nextState;
+    } catch (error) {
+      console.warn("[keepAwakeStore] Failed to save power settings", error);
+      toast.error(t(KEEP_AWAKE_TOAST_KEYS.settingsSaveFailed));
+      return get().state;
+    } finally {
+      finishKeepAwakeRequest(set);
+    }
+  },
+
+  openPowerSettings: () => set({ powerSettingsOpen: true }),
+  closePowerSettings: () => set({ powerSettingsOpen: false }),
 }));
