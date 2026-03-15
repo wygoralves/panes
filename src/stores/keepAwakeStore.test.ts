@@ -414,6 +414,61 @@ describe("keepAwakeStore", () => {
     expect(useKeepAwakeStore.getState().powerSettingsLoading).toBe(false);
   });
 
+  it("ignores stale power settings loads while a newer request is pending", async () => {
+    const firstLoad = createDeferred<{
+      keepAwakeEnabled: boolean;
+      preventDisplaySleep: boolean;
+      preventScreenSaver: boolean;
+      acOnlyMode: boolean;
+      batteryThreshold: number | null;
+      sessionDurationSecs: number | null;
+    }>();
+    const secondLoad = createDeferred<{
+      keepAwakeEnabled: boolean;
+      preventDisplaySleep: boolean;
+      preventScreenSaver: boolean;
+      acOnlyMode: boolean;
+      batteryThreshold: number | null;
+      sessionDurationSecs: number | null;
+    }>();
+    mockIpc.getPowerSettings
+      .mockReturnValueOnce(firstLoad.promise)
+      .mockReturnValueOnce(secondLoad.promise);
+
+    const firstPromise = useKeepAwakeStore.getState().loadPowerSettings();
+    const secondPromise = useKeepAwakeStore.getState().loadPowerSettings();
+
+    firstLoad.resolve({
+      keepAwakeEnabled: false,
+      preventDisplaySleep: false,
+      preventScreenSaver: false,
+      acOnlyMode: false,
+      batteryThreshold: null,
+      sessionDurationSecs: null,
+    });
+    await firstPromise;
+
+    expect(useKeepAwakeStore.getState().powerSettingsLoading).toBe(true);
+    expect(useKeepAwakeStore.getState().powerSettingsLoaded).toBe(false);
+    expect(useKeepAwakeStore.getState().powerSettings).toBeNull();
+
+    const latestSettings = {
+      keepAwakeEnabled: true,
+      preventDisplaySleep: true,
+      preventScreenSaver: false,
+      acOnlyMode: true,
+      batteryThreshold: 25,
+      sessionDurationSecs: 3600,
+    };
+    secondLoad.resolve(latestSettings);
+    const secondResult = await secondPromise;
+
+    expect(secondResult).toEqual(latestSettings);
+    expect(useKeepAwakeStore.getState().powerSettings).toEqual(latestSettings);
+    expect(useKeepAwakeStore.getState().powerSettingsLoaded).toBe(true);
+    expect(useKeepAwakeStore.getState().powerSettingsLoading).toBe(false);
+  });
+
   it("savePowerSettings calls IPC and updates both state and settings", async () => {
     const input = {
       keepAwakeEnabled: true,
