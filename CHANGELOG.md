@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.44.0...vnull) (2026-03-15)
+
+### Features
+
+* **windows:** unify custom window chrome on Windows ([b51da26](https://github.com/wygoralves/panes/commit/b51da268ccedcc108d16e51d4dda5adfcb9eee4f))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.43.0...vnull) (2026-03-15)
 
 ### Features
