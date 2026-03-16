@@ -68,7 +68,6 @@ const ACCOUNT_RATE_LIMITS_READ_METHODS: &[&str] = &["account/rateLimits/read"];
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const TURN_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
-const TURN_COMPLETION_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(90);
 const HEALTH_APP_SERVER_TIMEOUT: Duration = Duration::from_secs(12);
 const TRANSPORT_RESTART_MAX_ATTEMPTS: usize = 3;
 const TRANSPORT_RESTART_BASE_BACKOFF: Duration = Duration::from_millis(250);
@@ -539,6 +538,7 @@ impl Engine for CodexEngine {
         let mut completion_seen = false;
         let mut expected_turn_id: Option<String> = None;
         let mut completion_last_progress_at: Option<Instant> = None;
+        let completion_inactivity_timeout = completion_inactivity_timeout();
 
         while !completion_seen || !turn_request_done {
             tokio::select! {
@@ -586,9 +586,12 @@ impl Engine for CodexEngine {
                 };
 
                 if let Some(turn_id) = extract_turn_id(&result) {
-                  if expected_turn_id.is_none() {
-                    expected_turn_id = Some(turn_id.clone());
-                  }
+                  rebind_expected_turn_id(
+                    &mut expected_turn_id,
+                    &turn_id,
+                    &thread_id,
+                    "turn/start result",
+                  );
                   self.set_active_turn(&thread_id, &turn_id).await;
                 }
 
@@ -617,22 +620,33 @@ impl Engine for CodexEngine {
               incoming = subscription.recv() => {
                 match incoming {
                   Ok(IncomingMessage::Notification { method, params }) => {
+                    let normalized_method = normalize_method(&method);
+                    if let Some(error_message) =
+                      transport_failure_message(normalized_method.as_str(), &params)
+                    {
+                      self.clear_active_turn(&thread_id).await;
+                      self.invalidate_transport(&error_message).await;
+                      return Err(anyhow::anyhow!(error_message));
+                    }
+
                     if !belongs_to_thread(&params, &thread_id) {
                       continue;
                     }
-                    if !belongs_to_turn(&params, expected_turn_id.as_deref()) {
+                    if normalized_method == "turn/started" {
+                      if let Some(turn_id) = extract_turn_id(&params) {
+                        rebind_expected_turn_id(
+                          &mut expected_turn_id,
+                          &turn_id,
+                          &thread_id,
+                          "turn/started notification",
+                        );
+                        self.set_active_turn(&thread_id, &turn_id).await;
+                      }
+                    } else if !belongs_to_turn(&params, expected_turn_id.as_deref()) {
                       continue;
                     }
 
-                    let normalized_method = normalize_method(&method);
-                    if normalized_method == "turn/started" {
-                      if let Some(turn_id) = extract_turn_id(&params) {
-                        if expected_turn_id.is_none() {
-                          expected_turn_id = Some(turn_id.clone());
-                        }
-                        self.set_active_turn(&thread_id, &turn_id).await;
-                      }
-                    } else if normalized_method == "turn/completed" {
+                    if normalized_method == "turn/completed" {
                       self.clear_active_turn(&thread_id).await;
                     }
                     if turn_request_done && !completion_seen {
@@ -771,16 +785,29 @@ impl Engine for CodexEngine {
                     // Responses are routed by request ID in the transport pending map.
                   }
                   Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    log::warn!("codex notification consumer lagged, skipped {skipped} messages");
+                    let error_message = format!(
+                        "codex transport lagged while waiting for turn events; skipped {skipped} messages"
+                    );
+                    self.clear_active_turn(&thread_id).await;
+                    self.invalidate_transport(&error_message).await;
+                    return Err(anyhow::anyhow!(error_message));
                   }
                   Err(broadcast::error::RecvError::Closed) => {
-                    break;
+                    self.clear_active_turn(&thread_id).await;
+                    self
+                      .invalidate_transport("codex transport subscription closed while waiting for turn events")
+                      .await;
+                    return Err(anyhow::anyhow!(
+                      "codex transport closed while waiting for turn events"
+                    ));
                   }
                 }
               }
-              _ = tokio::time::sleep(Duration::from_millis(200)), if turn_request_done && !completion_seen => {
+              _ = tokio::time::sleep(Duration::from_millis(200)), if turn_request_done && !completion_seen && completion_inactivity_timeout.is_some() => {
                 if let Some(last_progress_at) = completion_last_progress_at {
-                  if Instant::now().duration_since(last_progress_at) >= TURN_COMPLETION_INACTIVITY_TIMEOUT {
+                  if Instant::now().duration_since(last_progress_at)
+                    >= completion_inactivity_timeout.expect("guarded by is_some")
+                  {
                     log::warn!(
                       "codex turn completion inactivity timeout reached for thread {thread_id}; synthesizing completion"
                     );
@@ -1155,6 +1182,7 @@ impl CodexEngine {
         let mut expected_turn_id: Option<String> = None;
         let mut completion_last_progress_at: Option<Instant> = None;
         let mut started_tx = Some(started_tx);
+        let completion_inactivity_timeout = completion_inactivity_timeout();
 
         while !completion_seen || !turn_request_done {
             tokio::select! {
@@ -1219,9 +1247,12 @@ impl CodexEngine {
                 }
 
                 if let Some(turn_id) = extract_turn_id(&result) {
-                  if expected_turn_id.is_none() {
-                    expected_turn_id = Some(turn_id.clone());
-                  }
+                  rebind_expected_turn_id(
+                    &mut expected_turn_id,
+                    &turn_id,
+                    &active_thread_id,
+                    "review/start result",
+                  );
                   self.set_active_turn(&active_thread_id, &turn_id).await;
                 }
 
@@ -1250,22 +1281,34 @@ impl CodexEngine {
               incoming = subscription.recv() => {
                 match incoming {
                   Ok(IncomingMessage::Notification { method, params }) => {
+                    let normalized_method = normalize_method(&method);
+                    if let Some(error_message) =
+                      transport_failure_message(normalized_method.as_str(), &params)
+                    {
+                      self.clear_active_turn(&active_thread_id).await;
+                      self.invalidate_transport(&error_message).await;
+                      drop(started_tx.take());
+                      return Err(anyhow::anyhow!(error_message));
+                    }
+
                     if !belongs_to_thread(&params, &active_thread_id) {
                       continue;
                     }
-                    if !belongs_to_turn(&params, expected_turn_id.as_deref()) {
+                    if normalized_method == "turn/started" {
+                      if let Some(turn_id) = extract_turn_id(&params) {
+                        rebind_expected_turn_id(
+                          &mut expected_turn_id,
+                          &turn_id,
+                          &active_thread_id,
+                          "turn/started review notification",
+                        );
+                        self.set_active_turn(&active_thread_id, &turn_id).await;
+                      }
+                    } else if !belongs_to_turn(&params, expected_turn_id.as_deref()) {
                       continue;
                     }
 
-                    let normalized_method = normalize_method(&method);
-                    if normalized_method == "turn/started" {
-                      if let Some(turn_id) = extract_turn_id(&params) {
-                        if expected_turn_id.is_none() {
-                          expected_turn_id = Some(turn_id.clone());
-                        }
-                        self.set_active_turn(&active_thread_id, &turn_id).await;
-                      }
-                    } else if normalized_method == "turn/completed" {
+                    if normalized_method == "turn/completed" {
                       self.clear_active_turn(&active_thread_id).await;
                     }
                     if turn_request_done && !completion_seen {
@@ -1402,16 +1445,31 @@ impl CodexEngine {
                   }
                   Ok(IncomingMessage::Response(_)) => {}
                   Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    log::warn!("codex review consumer lagged, skipped {skipped} messages");
+                    let error_message = format!(
+                        "codex transport lagged while waiting for review events; skipped {skipped} messages"
+                    );
+                    self.clear_active_turn(&active_thread_id).await;
+                    self.invalidate_transport(&error_message).await;
+                    drop(started_tx.take());
+                    return Err(anyhow::anyhow!(error_message));
                   }
                   Err(broadcast::error::RecvError::Closed) => {
-                    break;
+                    self.clear_active_turn(&active_thread_id).await;
+                    self
+                      .invalidate_transport("codex transport subscription closed while waiting for review events")
+                      .await;
+                    drop(started_tx.take());
+                    return Err(anyhow::anyhow!(
+                      "codex transport closed while waiting for review events"
+                    ));
                   }
                 }
               }
-              _ = tokio::time::sleep(Duration::from_millis(200)), if turn_request_done && !completion_seen => {
+              _ = tokio::time::sleep(Duration::from_millis(200)), if turn_request_done && !completion_seen && completion_inactivity_timeout.is_some() => {
                 if let Some(last_progress_at) = completion_last_progress_at {
-                  if Instant::now().duration_since(last_progress_at) >= TURN_COMPLETION_INACTIVITY_TIMEOUT {
+                  if Instant::now().duration_since(last_progress_at)
+                    >= completion_inactivity_timeout.expect("guarded by is_some")
+                  {
                     log::warn!(
                       "codex review completion inactivity timeout reached for thread {active_thread_id}; synthesizing completion"
                     );
@@ -5238,6 +5296,30 @@ fn belongs_to_thread(params: &serde_json::Value, thread_id: &str) -> bool {
     true
 }
 
+fn transport_failure_message(
+    normalized_method: &str,
+    params: &serde_json::Value,
+) -> Option<String> {
+    match normalized_method {
+        "transport/eof" => Some("codex app-server closed the connection unexpectedly".to_string()),
+        "transport/readerror" | "transport/read_error" => Some(
+            extract_any_string(params, &["error"])
+                .map(|error| format!("codex app-server connection failed: {error}"))
+                .unwrap_or_else(|| "codex app-server connection failed".to_string()),
+        ),
+        "transport/parseerror" | "transport/parse_error" => Some(
+            extract_any_string(params, &["error"])
+                .map(|error| {
+                    format!("codex app-server sent an unreadable protocol message: {error}")
+                })
+                .unwrap_or_else(|| {
+                    "codex app-server sent an unreadable protocol message".to_string()
+                }),
+        ),
+        _ => None,
+    }
+}
+
 fn belongs_to_turn(params: &serde_json::Value, expected_turn_id: Option<&str>) -> bool {
     let Some(expected_turn_id) = expected_turn_id else {
         return true;
@@ -5257,6 +5339,35 @@ fn belongs_to_turn(params: &serde_json::Value, expected_turn_id: Option<&str>) -
     }
 
     true
+}
+
+fn rebind_expected_turn_id(
+    expected_turn_id: &mut Option<String>,
+    next_turn_id: &str,
+    thread_id: &str,
+    source: &str,
+) {
+    let trimmed_turn_id = next_turn_id.trim();
+    if trimmed_turn_id.is_empty() {
+        return;
+    }
+
+    let changed = expected_turn_id.as_deref() != Some(trimmed_turn_id);
+    if changed {
+        match expected_turn_id.as_deref() {
+            Some(previous) => {
+                log::info!(
+                    "codex turn id rebound for thread {thread_id}: {previous} -> {trimmed_turn_id} ({source})"
+                );
+            }
+            None => {
+                log::debug!(
+                    "codex turn id established for thread {thread_id}: {trimmed_turn_id} ({source})"
+                );
+            }
+        }
+        *expected_turn_id = Some(trimmed_turn_id.to_string());
+    }
 }
 
 fn normalize_approval_response(
@@ -5364,6 +5475,28 @@ fn normalize_modern_approval_decision(value: &str) -> String {
         "abort" => "cancel".to_string(),
         other => other.to_string(),
     }
+}
+
+fn parse_optional_timeout_seconds(raw: Option<&str>) -> Option<Duration> {
+    let raw = raw?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let seconds = raw.parse::<u64>().ok()?;
+    if seconds == 0 {
+        None
+    } else {
+        Some(Duration::from_secs(seconds))
+    }
+}
+
+fn completion_inactivity_timeout() -> Option<Duration> {
+    parse_optional_timeout_seconds(
+        env::var("PANES_CODEX_COMPLETION_INACTIVITY_TIMEOUT_SECS")
+            .ok()
+            .as_deref(),
+    )
 }
 
 fn normalize_legacy_approval_decision(value: &str) -> String {
@@ -5806,6 +5939,60 @@ mod tests {
             normalize_approval_response(Some("item/command_execution/request_approval"), response);
 
         assert_eq!(normalized, json!({ "decision": "acceptForSession" }));
+    }
+
+    #[test]
+    fn transport_failure_message_detects_terminal_transport_events() {
+        assert_eq!(
+            transport_failure_message("transport/eof", &json!({})).as_deref(),
+            Some("codex app-server closed the connection unexpectedly")
+        );
+        assert_eq!(
+            transport_failure_message(
+                "transport/readerror",
+                &json!({
+                    "error": "broken pipe"
+                })
+            )
+            .as_deref(),
+            Some("codex app-server connection failed: broken pipe")
+        );
+        assert_eq!(
+            transport_failure_message(
+                "transport/parse_error",
+                &json!({
+                    "error": "expected value at line 1 column 1"
+                })
+            )
+            .as_deref(),
+            Some("codex app-server sent an unreadable protocol message: expected value at line 1 column 1")
+        );
+    }
+
+    #[test]
+    fn rebind_expected_turn_id_replaces_prior_turn() {
+        let mut expected_turn_id = Some("turn-plan".to_string());
+
+        rebind_expected_turn_id(
+            &mut expected_turn_id,
+            "turn-execute",
+            "thread-123",
+            "turn/started notification",
+        );
+
+        assert_eq!(expected_turn_id.as_deref(), Some("turn-execute"));
+    }
+
+    #[test]
+    fn parse_optional_timeout_seconds_treats_zero_and_invalid_as_disabled() {
+        assert_eq!(parse_optional_timeout_seconds(None), None);
+        assert_eq!(parse_optional_timeout_seconds(Some("")), None);
+        assert_eq!(parse_optional_timeout_seconds(Some("0")), None);
+        assert_eq!(parse_optional_timeout_seconds(Some("abc")), None);
+        assert_eq!(
+            parse_optional_timeout_seconds(Some("120")),
+            Some(Duration::from_secs(120))
+        );
     }
 
     #[test]
