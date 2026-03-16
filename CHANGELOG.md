@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.45.0...vnull) (2026-03-16)
+
+### Bug Fixes
+
+* **codex:** harden Codex turn completion handling ([f1df9fa](https://github.com/wygoralves/panes/commit/f1df9fafbbd7ded7d040c9b8425972f365084fa1))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.44.0...vnull) (2026-03-15)
 
 ### Features
