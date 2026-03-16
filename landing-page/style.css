@@ -282,6 +282,19 @@ button:focus-visible {
   overflow: hidden;
 }
 
+.hero::before {
+  content: "";
+  position: absolute;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 600px;
+  height: 400px;
+  background: radial-gradient(ellipse, rgba(180, 180, 200, 0.025) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
 
 .hero-container {
   position: relative;
@@ -294,20 +307,51 @@ button:focus-visible {
   line-height: 1.08;
   letter-spacing: -0.045em;
   margin-bottom: 24px;
-  color: var(--text-1);
+  background: linear-gradient(
+    100deg,
+    #c8c8cd 0%,
+    #c8c8cd 42%,
+    #ffffff 50%,
+    #c8c8cd 58%,
+    #c8c8cd 100%
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: metal-shimmer 10s linear infinite;
 }
 
 .hero-title-dim {
-  color: var(--text-1);
+  background: linear-gradient(
+    100deg,
+    #b0b0b8 0%,
+    #b0b0b8 42%,
+    #e0e0e4 50%,
+    #b0b0b8 58%,
+    #b0b0b8 100%
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: metal-shimmer 10s linear infinite;
+  animation-delay: 1s;
+}
+
+@keyframes metal-shimmer {
+  from { background-position: 200% 50%; }
+  to   { background-position: -200% 50%; }
 }
 
 .hero-subtitle {
   font-size: clamp(16px, 1.4vw, 19px);
-  color: var(--text-2);
+  color: #b4b4bc;
   max-width: 680px;
   margin: 0 0 48px;
   line-height: 1.7;
   font-weight: 400;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .hero-actions {
@@ -356,7 +400,7 @@ button:focus-visible {
   transform: translate(-50%, -50%);
   width: 70%;
   height: 60%;
-  background: radial-gradient(ellipse, rgba(255, 107, 107, 0.06) 0%, transparent 70%);
+  background: radial-gradient(ellipse, rgba(180, 180, 210, 0.07) 0%, transparent 70%);
   pointer-events: none;
   z-index: -1;
 }
