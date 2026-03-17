@@ -14,6 +14,7 @@ use crate::{path_utils, runtime_env};
 
 pub mod actions;
 pub mod messages;
+pub mod remote;
 pub mod repos;
 pub mod threads;
 pub mod workspaces;

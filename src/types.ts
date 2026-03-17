@@ -64,6 +64,21 @@ export interface WorkspaceGitSelectionStatus {
   configured: boolean;
 }
 
+export interface RemoteDeviceGrant {
+  id: string;
+  label: string;
+  scopes: string[];
+  createdAt: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  lastUsedAt: string | null;
+}
+
+export interface CreatedRemoteDeviceGrant {
+  grant: RemoteDeviceGrant;
+  token: string;
+}
+
 export type WorkspaceStartupPresetFormat = "json" | "toml";
 export type WorkspaceDefaultView = "chat" | "split" | "terminal" | "editor";
 export type WorkspacePathBase = "workspace" | "worktree" | "absolute";

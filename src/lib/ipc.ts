@@ -41,6 +41,8 @@ import type {
   MessageWindow,
   MessageWindowCursor,
   ReadFileResult,
+  RemoteDeviceGrant,
+  CreatedRemoteDeviceGrant,
   Repo,
   SearchResult,
   StreamEvent,
@@ -82,6 +84,20 @@ export const ipc = {
     invoke<KeepAwakeState>("set_power_settings", { settings }),
   getHelperStatus: () => invoke<HelperStatus>("get_helper_status"),
   registerKeepAwakeHelper: () => invoke<HelperStatus>("register_keep_awake_helper"),
+  listRemoteDeviceGrants: () =>
+    invoke<RemoteDeviceGrant[]>("list_remote_device_grants"),
+  createRemoteDeviceGrant: (
+    label: string,
+    scopes: string[],
+    expiresAt?: string | null,
+  ) =>
+    invoke<CreatedRemoteDeviceGrant>("create_remote_device_grant", {
+      label,
+      scopes,
+      expiresAt: expiresAt ?? null,
+    }),
+  revokeRemoteDeviceGrant: (grantId: string) =>
+    invoke<void>("revoke_remote_device_grant", { grantId }),
   getTerminalAcceleratedRendering: () =>
     invoke<boolean>("get_terminal_accelerated_rendering"),
   setTerminalAcceleratedRendering: (enabled: boolean) =>
