@@ -14,6 +14,14 @@ import { useThreadStore } from "../stores/threadStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import type { ContentBlock, Message, RemoteControllerLease, RemoteDeviceGrant } from "../types";
 import { RemoteGitPanel } from "./RemoteGitPanel";
+import { buildRemoteAttachCleanUrl, parseRemoteBootstrapState } from "./remoteBootstrap";
+import {
+  createDisabledRemoteControlDesiredState,
+  createInitialRemoteControlDesiredState,
+  requestRemoteControlLeases,
+  resolveRemoteControlLevel,
+  setRemoteControlScopeDesired,
+} from "./remoteControlState";
 import {
   parseRemoteThreadScopeValue,
   resolveRemoteChatRepoId,
@@ -24,34 +32,6 @@ import {
 const REMOTE_URL_STORAGE_KEY = "panes:remote.attach.url";
 const CONTROL_TTL_SECS = 45;
 const CONTROL_RENEW_MS = 20_000;
-
-interface RemoteBootstrapState {
-  mode: "desktop" | "remote";
-  url: string;
-  token: string;
-  autoConnect: boolean;
-}
-
-function parseRemoteBootstrapState(): RemoteBootstrapState {
-  const search = new URLSearchParams(window.location.search);
-  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-  const persistedUrl = localStorage.getItem(REMOTE_URL_STORAGE_KEY) ?? "";
-  const url = search.get("remoteUrl") ?? hash.get("remoteUrl") ?? persistedUrl;
-  const token = hash.get("token") ?? search.get("token") ?? "";
-  const mode =
-    window.location.pathname === "/remote" ||
-    search.get("remote") === "1" ||
-    search.has("remoteUrl")
-      ? "remote"
-      : "desktop";
-
-  return {
-    mode,
-    url,
-    token,
-    autoConnect: Boolean(url && token),
-  };
-}
 
 function normalizeRemoteUrl(value: string): string {
   const trimmed = value.trim();
@@ -90,7 +70,7 @@ function useRemoteController(
 ) {
   const [workspaceLease, setWorkspaceLease] = useState<RemoteControllerLease | null>(null);
   const [threadLease, setThreadLease] = useState<RemoteControllerLease | null>(null);
-  const [controlDesired, setControlDesired] = useState(true);
+  const [controlDesired, setControlDesired] = useState(createInitialRemoteControlDesiredState);
   const [controlError, setControlError] = useState<string | null>(null);
 
   const releaseLease = useCallback(async (lease: RemoteControllerLease | null) => {
@@ -155,7 +135,7 @@ function useRemoteController(
   }, [activeThreadId, releaseLease, threadLease]);
 
   useEffect(() => {
-    if (!grant || !activeWorkspaceId || !controlDesired) {
+    if (!grant || !activeWorkspaceId || !controlDesired.workspace) {
       return;
     }
 
@@ -171,7 +151,7 @@ function useRemoteController(
           return;
         }
         setWorkspaceLease(null);
-        setControlDesired(false);
+        setControlDesired((state) => setRemoteControlScopeDesired(state, "workspace", false));
         setControlError(String(error));
       }
     };
@@ -185,10 +165,10 @@ function useRemoteController(
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [activeWorkspaceId, controlDesired, ensureWorkspaceControl, grant]);
+  }, [activeWorkspaceId, controlDesired.workspace, ensureWorkspaceControl, grant]);
 
   useEffect(() => {
-    if (!grant || !activeThreadId || !controlDesired) {
+    if (!grant || !activeThreadId || !controlDesired.thread) {
       return;
     }
 
@@ -204,7 +184,7 @@ function useRemoteController(
           return;
         }
         setThreadLease(null);
-        setControlDesired(false);
+        setControlDesired((state) => setRemoteControlScopeDesired(state, "thread", false));
         setControlError(String(error));
       }
     };
@@ -218,41 +198,55 @@ function useRemoteController(
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [activeThreadId, controlDesired, ensureThreadControl, grant]);
+  }, [activeThreadId, controlDesired.thread, ensureThreadControl, grant]);
 
   const requestControl = useCallback(async (): Promise<boolean> => {
     setControlError(null);
-    setControlDesired(true);
+    setControlDesired({
+      workspace: Boolean(activeWorkspaceId),
+      thread: Boolean(activeThreadId),
+    });
 
-    try {
-      if (activeWorkspaceId) {
-        await ensureWorkspaceControl(activeWorkspaceId);
-      }
-      if (activeThreadId) {
-        await ensureThreadControl(activeThreadId);
-      }
-      return true;
-    } catch (error) {
-      setControlDesired(false);
-      setControlError(String(error));
-      return false;
+    const result = await requestRemoteControlLeases({
+      activeWorkspaceId,
+      activeThreadId,
+      ensureWorkspaceControl,
+      ensureThreadControl,
+    });
+
+    if (!result.workspaceAcquired && activeWorkspaceId) {
+      setWorkspaceLease(null);
+      setControlDesired((state) => setRemoteControlScopeDesired(state, "workspace", false));
     }
+
+    if (!result.threadAcquired && activeThreadId) {
+      setThreadLease(null);
+      setControlDesired((state) => setRemoteControlScopeDesired(state, "thread", false));
+    }
+
+    setControlError(result.errors[0] ?? null);
+    return result.workspaceAcquired || result.threadAcquired;
   }, [activeThreadId, activeWorkspaceId, ensureThreadControl, ensureWorkspaceControl]);
 
   const releaseControl = useCallback(async () => {
-    setControlDesired(false);
+    setControlDesired(createDisabledRemoteControlDesiredState());
     setControlError(null);
     await Promise.allSettled([releaseLease(workspaceLease), releaseLease(threadLease)]);
     setWorkspaceLease(null);
     setThreadLease(null);
   }, [releaseLease, threadLease, workspaceLease]);
 
+  const hasWorkspaceControl =
+    workspaceLease?.scopeType === "workspace" && workspaceLease.scopeId === activeWorkspaceId;
+  const hasThreadControl =
+    threadLease?.scopeType === "thread" && threadLease.scopeId === activeThreadId;
+  const controlLevel = resolveRemoteControlLevel(hasWorkspaceControl, hasThreadControl);
+
   return {
-    hasWorkspaceControl:
-      workspaceLease?.scopeType === "workspace" && workspaceLease.scopeId === activeWorkspaceId,
-    hasThreadControl:
-      threadLease?.scopeType === "thread" && threadLease.scopeId === activeThreadId,
-    controlDesired,
+    hasWorkspaceControl,
+    hasThreadControl,
+    hasAnyControl: hasWorkspaceControl || hasThreadControl,
+    controlLevel,
     controlError,
     ensureWorkspaceControl,
     ensureThreadControl,
@@ -574,7 +568,11 @@ function RemoteChatPane({
 
 export function RemoteAttachApp() {
   const { t } = useTranslation("app");
-  const bootstrapState = useMemo(() => parseRemoteBootstrapState(), []);
+  const bootstrapState = useMemo(
+    () =>
+      parseRemoteBootstrapState(window.location, localStorage.getItem(REMOTE_URL_STORAGE_KEY) ?? ""),
+    [],
+  );
   const autoConnectTriedRef = useRef(false);
   const transportRef = useRef<RemotePanesTransport | null>(null);
   const threadScopeWorkspaceIdRef = useRef<string | null>(null);
@@ -651,6 +649,7 @@ export function RemoteAttachApp() {
         const nextGrant = await ipc.getAuthenticatedRemoteDeviceGrant();
         await bootstrapRemoteStores();
         localStorage.setItem(REMOTE_URL_STORAGE_KEY, normalizedUrl);
+        window.history.replaceState(null, "", buildRemoteAttachCleanUrl(window.location));
         setGrant(nextGrant);
       } catch (error) {
         transport.close(4000, "connect_failed");
@@ -952,31 +951,44 @@ export function RemoteAttachApp() {
               borderRadius: 999,
               fontSize: 11,
               fontWeight: 600,
-              background: controller.hasWorkspaceControl
+              background: controller.controlLevel === "workspace"
                 ? "rgba(34, 197, 94, 0.12)"
+                : controller.controlLevel === "thread"
+                  ? "rgba(59, 130, 246, 0.12)"
                 : "rgba(245, 158, 11, 0.12)",
-              color: controller.hasWorkspaceControl ? "var(--success)" : "var(--warning)",
+              color:
+                controller.controlLevel === "workspace"
+                  ? "var(--success)"
+                  : controller.controlLevel === "thread"
+                    ? "var(--accent)"
+                    : "var(--warning)",
             }}
           >
-            {controller.hasWorkspaceControl ? <Shield size={12} /> : <ShieldOff size={12} />}
-            {controller.hasWorkspaceControl
+            {controller.controlLevel === "viewer" ? <ShieldOff size={12} /> : <Shield size={12} />}
+            {controller.controlLevel === "workspace"
               ? t("remoteAttach.control.active")
-              : t("remoteAttach.control.viewer")}
+              : controller.controlLevel === "thread"
+                ? t("remoteAttach.control.threadActive")
+                : t("remoteAttach.control.viewer")}
           </span>
 
           {controller.controlError ? (
             <span style={{ fontSize: 11, color: "var(--danger)" }}>{controller.controlError}</span>
           ) : null}
 
-          {controller.hasWorkspaceControl ? (
+          {!controller.hasWorkspaceControl ? (
+            <button type="button" className="btn btn-primary" onClick={() => void controller.requestControl()}>
+              {controller.hasThreadControl
+                ? t("remoteAttach.control.takeWorkspace")
+                : t("remoteAttach.control.take")}
+            </button>
+          ) : null}
+
+          {controller.hasAnyControl ? (
             <button type="button" className="btn btn-outline" onClick={() => void controller.releaseControl()}>
               {t("remoteAttach.control.release")}
             </button>
-          ) : (
-            <button type="button" className="btn btn-primary" onClick={() => void controller.requestControl()}>
-              {t("remoteAttach.control.take")}
-            </button>
-          )}
+          ) : null}
 
           <button type="button" className="btn btn-ghost" onClick={() => void bootstrapRemoteStores()}>
             <RefreshCw size={13} />

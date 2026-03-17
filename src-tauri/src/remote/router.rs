@@ -821,12 +821,11 @@ fn require_scope(grant: &RemoteDeviceGrantDto, required_scope: &str) -> Result<(
 }
 
 pub(crate) fn grant_allows_scope(grant: &RemoteDeviceGrantDto, required_scope: &str) -> bool {
-    grant.scopes.is_empty()
-        || grant.scopes.iter().any(|scope| {
-            scope == "*"
-                || scope == required_scope
-                || scope.ends_with(".*") && required_scope.starts_with(scope.trim_end_matches('*'))
-        })
+    grant.scopes.iter().any(|scope| {
+        scope == "*"
+            || scope == required_scope
+            || scope.ends_with(".*") && required_scope.starts_with(scope.trim_end_matches('*'))
+    })
 }
 
 fn to_json<T>(value: T) -> Result<Value, String>
@@ -904,6 +903,26 @@ mod tests {
             None,
         )
         .expect("failed to create device grant")
+    }
+
+    #[test]
+    fn grant_scope_checks_require_explicit_scopes() {
+        let empty = RemoteDeviceGrantDto {
+            id: "grant-empty".to_string(),
+            label: "Empty".to_string(),
+            scopes: Vec::new(),
+            created_at: "2026-01-01 00:00:00".to_string(),
+            expires_at: None,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        assert!(!grant_allows_scope(&empty, "workspace.read"));
+
+        let wildcard = RemoteDeviceGrantDto {
+            scopes: vec!["*".to_string()],
+            ..empty
+        };
+        assert!(grant_allows_scope(&wildcard, "workspace.read"));
     }
 
     fn create_workspace_repo_and_thread(
@@ -1147,7 +1166,12 @@ mod tests {
         let controller = create_grant(
             &state,
             "Controller",
-            &["workspace.read", "repo.read", "thread.read", "controller.write"],
+            &[
+                "workspace.read",
+                "repo.read",
+                "thread.read",
+                "controller.write",
+            ],
         );
         acquire_lease(&state, &controller.grant.id, "workspace", &workspace.id);
 

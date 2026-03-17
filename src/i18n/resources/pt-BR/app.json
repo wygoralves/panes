@@ -412,8 +412,10 @@
     },
     "control": {
       "active": "Controle ativo",
+      "threadActive": "Controle do chat ativo",
       "viewer": "Modo somente leitura",
       "take": "Assumir controle",
+      "takeWorkspace": "Assumir controle do workspace",
       "release": "Liberar controle",
       "takeControlFailed": "Não foi possível adquirir o lease de controle."
     },

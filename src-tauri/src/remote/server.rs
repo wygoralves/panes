@@ -8,6 +8,7 @@ use std::{
 use anyhow::Context;
 use futures::{Sink, SinkExt, StreamExt};
 use serde::Deserialize;
+use tauri::Manager;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -22,7 +23,6 @@ use tokio_tungstenite::{
     },
 };
 use tokio_util::sync::CancellationToken;
-use tauri::Manager;
 
 use crate::{
     db::Database,
@@ -425,35 +425,33 @@ async fn handle_http_connection(mut stream: TcpStream, web_root: PathBuf) -> any
             )
             .await?;
         }
-        path if path.starts_with("/assets/") => {
-            match resolve_remote_asset_path(&web_root, path) {
-                Some(asset_path) if asset_path.is_file() => {
-                    let bytes = tokio::fs::read(&asset_path)
-                        .await
-                        .with_context(|| format!("failed to read {}", asset_path.display()))?;
-                    send_http_response(
-                        &mut stream,
-                        "200 OK",
-                        remote_content_type(&asset_path),
-                        &bytes,
-                        request.method == "HEAD",
-                        &[("Cache-Control", "public, max-age=31536000, immutable")],
-                    )
-                    .await?;
-                }
-                _ => {
-                    send_http_response(
-                        &mut stream,
-                        "404 Not Found",
-                        "text/plain; charset=utf-8",
-                        b"not found",
-                        request.method == "HEAD",
-                        &[],
-                    )
-                    .await?;
-                }
+        path if path.starts_with("/assets/") => match resolve_remote_asset_path(&web_root, path) {
+            Some(asset_path) if asset_path.is_file() => {
+                let bytes = tokio::fs::read(&asset_path)
+                    .await
+                    .with_context(|| format!("failed to read {}", asset_path.display()))?;
+                send_http_response(
+                    &mut stream,
+                    "200 OK",
+                    remote_content_type(&asset_path),
+                    &bytes,
+                    request.method == "HEAD",
+                    &[("Cache-Control", "public, max-age=31536000, immutable")],
+                )
+                .await?;
             }
-        }
+            _ => {
+                send_http_response(
+                    &mut stream,
+                    "404 Not Found",
+                    "text/plain; charset=utf-8",
+                    b"not found",
+                    request.method == "HEAD",
+                    &[],
+                )
+                .await?;
+            }
+        },
         _ => {
             send_http_response(
                 &mut stream,
@@ -900,8 +898,11 @@ mod tests {
         let web_root = base_dir.join("web");
         let assets_dir = web_root.join("assets");
         fs::create_dir_all(&assets_dir).expect("failed to create remote web asset dir");
-        fs::write(web_root.join("index.html"), "<html><body>remote shell</body></html>")
-            .expect("failed to write remote web index");
+        fs::write(
+            web_root.join("index.html"),
+            "<html><body>remote shell</body></html>",
+        )
+        .expect("failed to write remote web index");
         fs::write(assets_dir.join("app.js"), "console.log('remote');")
             .expect("failed to write remote web asset");
 
@@ -910,9 +911,7 @@ mod tests {
             .start(Some("127.0.0.1:0"), Arc::new(TerminalManager::default()))
             .await
             .expect("failed to start remote host");
-        let web_bind_addr = status
-            .web_bind_addr
-            .expect("missing remote web bind addr");
+        let web_bind_addr = status.web_bind_addr.expect("missing remote web bind addr");
 
         let shell_response = reqwest::get(format!("http://{web_bind_addr}/remote"))
             .await

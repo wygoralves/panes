@@ -68,7 +68,7 @@ pub fn create_device_grant(
     let token = generate_device_grant_token();
     let token_hash = hash_token(&token);
     let normalized_label = normalize_label(label)?;
-    let normalized_scopes = normalize_scopes(scopes);
+    let normalized_scopes = normalize_scopes(scopes)?;
     let scopes_json = serde_json::to_string(&normalized_scopes)
         .context("failed to encode device grant scopes")?;
     let normalized_expires_at = normalize_expires_at(expires_at)?;
@@ -656,7 +656,7 @@ fn normalize_remote_audit_limit(limit: Option<usize>) -> usize {
         .clamp(1, MAX_REMOTE_AUDIT_LIMIT)
 }
 
-fn normalize_scopes(scopes: &[String]) -> Vec<String> {
+fn normalize_scopes(scopes: &[String]) -> anyhow::Result<Vec<String>> {
     let mut normalized = scopes
         .iter()
         .map(|scope| scope.trim())
@@ -665,7 +665,10 @@ fn normalize_scopes(scopes: &[String]) -> Vec<String> {
         .collect::<Vec<_>>();
     normalized.sort();
     normalized.dedup();
-    normalized
+    if normalized.is_empty() {
+        anyhow::bail!("remote device grant must include at least one scope");
+    }
+    Ok(normalized)
 }
 
 fn normalize_expires_at(expires_at: Option<&str>) -> anyhow::Result<Option<String>> {
@@ -771,12 +774,28 @@ mod tests {
     }
 
     #[test]
+    fn create_device_grant_rejects_empty_scope_sets() {
+        let db = test_db();
+        let error = create_device_grant(&db, "Invalid", &[], None)
+            .expect_err("empty scopes should be rejected");
+        assert!(error
+            .to_string()
+            .contains("remote device grant must include at least one scope"));
+
+        let whitespace_error = create_device_grant(&db, "Whitespace", &["   ".to_string()], None)
+            .expect_err("blank scopes should be rejected");
+        assert!(whitespace_error
+            .to_string()
+            .contains("remote device grant must include at least one scope"));
+    }
+
+    #[test]
     fn revoked_and_expired_grants_are_not_active() {
         let db = test_db();
         let created = create_device_grant(
             &db,
             "Remote Laptop",
-            &[],
+            &["*".to_string()],
             Some(&(Utc::now() - Duration::minutes(5)).to_rfc3339()),
         )
         .expect("failed to create expiring grant");
@@ -785,8 +804,8 @@ mod tests {
             .expect("failed to look up expired grant")
             .is_none());
 
-        let active =
-            create_device_grant(&db, "Desk", &[], None).expect("failed to create active grant");
+        let active = create_device_grant(&db, "Desk", &["*".to_string()], None)
+            .expect("failed to create active grant");
         revoke_device_grant(&db, &active.grant.id).expect("failed to revoke grant");
         assert!(find_active_device_grant_by_token(&db, &active.token)
             .expect("failed to look up revoked grant")
@@ -796,9 +815,9 @@ mod tests {
     #[test]
     fn controller_leases_reuse_same_holder_and_block_others() {
         let db = test_db();
-        let primary =
-            create_device_grant(&db, "Primary", &[], None).expect("failed to create primary grant");
-        let secondary = create_device_grant(&db, "Secondary", &[], None)
+        let primary = create_device_grant(&db, "Primary", &["*".to_string()], None)
+            .expect("failed to create primary grant");
+        let secondary = create_device_grant(&db, "Secondary", &["*".to_string()], None)
             .expect("failed to create secondary grant");
 
         let first = acquire_controller_lease(&db, &primary.grant.id, "workspace", "ws-1", 60)
@@ -822,9 +841,9 @@ mod tests {
     #[test]
     fn expired_controller_leases_are_released_before_reacquire() {
         let db = test_db();
-        let primary =
-            create_device_grant(&db, "Primary", &[], None).expect("failed to create primary grant");
-        let secondary = create_device_grant(&db, "Secondary", &[], None)
+        let primary = create_device_grant(&db, "Primary", &["*".to_string()], None)
+            .expect("failed to create primary grant");
+        let secondary = create_device_grant(&db, "Secondary", &["*".to_string()], None)
             .expect("failed to create secondary grant");
 
         let first = acquire_controller_lease(&db, &primary.grant.id, "thread", "thread-1", 60)
@@ -849,9 +868,9 @@ mod tests {
     #[test]
     fn revoked_or_expired_grants_do_not_keep_controller_leases_active() {
         let db = test_db();
-        let revoked =
-            create_device_grant(&db, "Revoked", &[], None).expect("failed to create revoked grant");
-        let replacement = create_device_grant(&db, "Replacement", &[], None)
+        let revoked = create_device_grant(&db, "Revoked", &["*".to_string()], None)
+            .expect("failed to create revoked grant");
+        let replacement = create_device_grant(&db, "Replacement", &["*".to_string()], None)
             .expect("failed to create replacement grant");
 
         let held = acquire_controller_lease(&db, &revoked.grant.id, "workspace", "ws-2", 60)
@@ -869,12 +888,12 @@ mod tests {
         let expiring = create_device_grant(
             &db,
             "Expiring",
-            &[],
+            &["*".to_string()],
             Some(&(Utc::now() + Duration::seconds(20)).to_rfc3339()),
         )
         .expect("failed to create expiring grant");
-        let future =
-            create_device_grant(&db, "Future", &[], None).expect("failed to create future grant");
+        let future = create_device_grant(&db, "Future", &["*".to_string()], None)
+            .expect("failed to create future grant");
 
         acquire_controller_lease(&db, &expiring.grant.id, "thread", "thread-2", 15)
             .expect("failed to acquire expiring grant lease");
@@ -969,7 +988,7 @@ mod tests {
         let expired = create_device_grant(
             &db,
             "Expired Device",
-            &[],
+            &["*".to_string()],
             Some(&(Utc::now() - Duration::minutes(1)).to_rfc3339()),
         )
         .expect("failed to create expired device grant");

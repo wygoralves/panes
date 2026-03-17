@@ -412,8 +412,10 @@
     },
     "control": {
       "active": "Control active",
+      "threadActive": "Chat control active",
       "viewer": "Read-only viewer",
       "take": "Take control",
+      "takeWorkspace": "Take workspace control",
       "release": "Release control",
       "takeControlFailed": "Unable to acquire controller lease."
     },
