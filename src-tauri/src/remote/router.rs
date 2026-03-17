@@ -204,7 +204,7 @@ fn require_scope(grant: &RemoteDeviceGrantDto, required_scope: &str) -> Result<(
     ))
 }
 
-fn grant_allows_scope(grant: &RemoteDeviceGrantDto, required_scope: &str) -> bool {
+pub(crate) fn grant_allows_scope(grant: &RemoteDeviceGrantDto, required_scope: &str) -> bool {
     grant.scopes.is_empty()
         || grant.scopes.iter().any(|scope| {
             scope == "*"

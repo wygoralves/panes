@@ -28,6 +28,7 @@ use host_runtime::{create_app_state, shutdown_app_state};
 use locale::native_strings;
 use locale::resolve_app_locale;
 use models::{EngineRuntimeUpdatedDto, ThreadDto, ThreadStatusDto};
+use remote::emit_app_event;
 use state::AppState;
 #[cfg(target_os = "macos")]
 use tauri::menu::{AboutMetadata, MenuItem, PredefinedMenuItem, SubmenuBuilder};
@@ -318,9 +319,10 @@ async fn handle_codex_runtime_event(
             )
             .await
             {
-                let _ = app.emit(
+                emit_app_event(
+                    app,
                     "thread-updated",
-                    ThreadUpdatedEvent {
+                    &ThreadUpdatedEvent {
                         thread_id: updated_thread.id.clone(),
                         workspace_id: updated_thread.workspace_id.clone(),
                         thread: Some(updated_thread),
@@ -362,9 +364,10 @@ async fn handle_codex_runtime_event(
             )
             .await
             {
-                let _ = app.emit(
+                emit_app_event(
+                    app,
                     "thread-updated",
-                    ThreadUpdatedEvent {
+                    &ThreadUpdatedEvent {
                         thread_id: updated_thread.id.clone(),
                         workspace_id: updated_thread.workspace_id.clone(),
                         thread: Some(updated_thread),
@@ -391,9 +394,10 @@ async fn handle_codex_runtime_event(
             )
             .await
             {
-                let _ = app.emit(
+                emit_app_event(
+                    app,
                     "thread-updated",
-                    ThreadUpdatedEvent {
+                    &ThreadUpdatedEvent {
                         thread_id: updated_thread.id.clone(),
                         workspace_id: updated_thread.workspace_id.clone(),
                         thread: Some(updated_thread),
@@ -405,9 +409,10 @@ async fn handle_codex_runtime_event(
             if let Some((thread_id, workspace_id)) =
                 archive_codex_runtime_thread(state, &engine_thread_id).await
             {
-                let _ = app.emit(
+                emit_app_event(
+                    app,
                     "thread-updated",
-                    ThreadUpdatedEvent {
+                    &ThreadUpdatedEvent {
                         thread_id,
                         workspace_id,
                         thread: None,
@@ -419,9 +424,10 @@ async fn handle_codex_runtime_event(
             if let Some(updated_thread) =
                 restore_codex_runtime_thread(state, &engine_thread_id).await
             {
-                let _ = app.emit(
+                emit_app_event(
+                    app,
                     "thread-updated",
-                    ThreadUpdatedEvent {
+                    &ThreadUpdatedEvent {
                         thread_id: updated_thread.id.clone(),
                         workspace_id: updated_thread.workspace_id.clone(),
                         thread: Some(updated_thread),
@@ -566,18 +572,20 @@ async fn resolve_codex_runtime_approval(
     };
 
     let stream_event_topic = format!("stream-event-{thread_id}");
-    let _ = app.emit(
+    emit_app_event(
+        app,
         &stream_event_topic,
-        serde_json::json!({
+        &serde_json::json!({
             "type": "ApprovalResolved",
             "approval_id": approval_id,
         }),
     );
 
     if let Some(thread) = updated_thread {
-        let _ = app.emit(
+        emit_app_event(
+            app,
             "thread-updated",
-            ThreadUpdatedEvent {
+            &ThreadUpdatedEvent {
                 thread_id: thread.id.clone(),
                 workspace_id: thread.workspace_id.clone(),
                 thread: Some(thread),

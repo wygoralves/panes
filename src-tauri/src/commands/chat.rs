@@ -6,7 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{Emitter, State};
+use tauri::State;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -22,6 +22,7 @@ use crate::{
         MessageWindowCursorDto, MessageWindowDto, RepoDto, SearchResultDto, ThreadDto,
         ThreadStatusDto, TrustLevelDto,
     },
+    remote::emit_app_event,
     state::AppState,
 };
 
@@ -1612,13 +1613,11 @@ async fn run_turn(
                 thread_status = ThreadStatusDto::Error;
                 thread_status_dirty = true;
             }
-            let _ = app.emit(
-                &stream_event_topic,
-                EngineEvent::Error {
-                    message: format!("{error}"),
-                    recoverable: false,
-                },
-            );
+            let error_event = EngineEvent::Error {
+                message: format!("{error}"),
+                recoverable: false,
+            };
+            emit_app_event(&app, &stream_event_topic, &error_event);
         }
         Err(error) => {
             blocks.push(ContentBlock::Error {
@@ -1696,9 +1695,10 @@ async fn run_turn(
     if let Some(updated_thread) =
         maybe_update_thread_title(&state, &thread, &engine_thread_id, &turn_input.message).await
     {
-        let _ = app.emit(
+        emit_app_event(
+            &app,
             "thread-updated",
-            ThreadUpdatedEvent {
+            &ThreadUpdatedEvent {
                 thread_id: thread.id.clone(),
                 workspace_id: thread.workspace_id.clone(),
                 thread: Some(updated_thread),
@@ -1798,9 +1798,10 @@ async fn run_codex_review_turn(
             }
         };
 
-        let _ = app_for_started.emit(
+        emit_app_event(
+            &app_for_started,
             "thread-updated",
-            ThreadUpdatedEvent {
+            &ThreadUpdatedEvent {
                 thread_id: updated_thread.id.clone(),
                 workspace_id: updated_thread.workspace_id.clone(),
                 thread: Some(updated_thread),
@@ -2157,13 +2158,11 @@ async fn run_codex_review_turn(
                 thread_status = ThreadStatusDto::Error;
                 thread_status_dirty = true;
             }
-            let _ = app.emit(
-                &stream_event_topic,
-                EngineEvent::Error {
-                    message: format!("{error}"),
-                    recoverable: false,
-                },
-            );
+            let error_event = EngineEvent::Error {
+                message: format!("{error}"),
+                recoverable: false,
+            };
+            emit_app_event(&app, &stream_event_topic, &error_event);
         }
         Err(error) => {
             blocks.push(ContentBlock::Error {
@@ -2248,9 +2247,10 @@ async fn run_codex_review_turn(
     })
     .await
     .ok();
-    let _ = app.emit(
+    emit_app_event(
+        &app,
         "thread-updated",
-        ThreadUpdatedEvent {
+        &ThreadUpdatedEvent {
             thread_id: review_thread.id.clone(),
             workspace_id: review_thread.workspace_id.clone(),
             thread: latest_review_thread,
@@ -2384,9 +2384,9 @@ async fn process_stream_event(
         truncate_action_result_output(result, max_output_chars);
     }
 
-    let _ = app.emit(stream_event_topic, &normalized_event);
+    emit_app_event(app, stream_event_topic, &normalized_event);
     if matches!(&normalized_event, EngineEvent::ApprovalRequested { .. }) {
-        let _ = app.emit(approval_event_topic, &normalized_event);
+        emit_app_event(app, approval_event_topic, &normalized_event);
     }
 
     if state.config.debug.persist_engine_event_logs {

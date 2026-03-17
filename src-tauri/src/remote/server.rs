@@ -5,7 +5,7 @@ use futures::{Sink, SinkExt, StreamExt};
 use serde::Deserialize;
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::Mutex,
+    sync::{broadcast, Mutex},
     task::JoinHandle,
 };
 use tokio_tungstenite::{
@@ -20,10 +20,14 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     db::Database,
     models::{RemoteDeviceGrantDto, RemoteHostStatusDto},
-    remote::{protocol::RemoteCommandRequest, router::RemoteCommandRouter},
+    remote::{
+        protocol::{RemoteCommandRequest, RemoteEventEnvelope},
+        router::{grant_allows_scope, RemoteCommandRouter},
+    },
 };
 
 const DEFAULT_REMOTE_HOST_BIND_ADDR: &str = "127.0.0.1:0";
+const REMOTE_EVENT_CHANNEL_CAPACITY: usize = 512;
 
 struct RunningRemoteHost {
     bind_addr: SocketAddr,
@@ -33,15 +37,35 @@ struct RunningRemoteHost {
 
 pub struct RemoteHostManager {
     db: Database,
+    event_tx: broadcast::Sender<RemoteEventEnvelope>,
     running: Mutex<Option<RunningRemoteHost>>,
 }
 
 impl RemoteHostManager {
     pub fn new(db: Database) -> Self {
+        let (event_tx, _) = broadcast::channel(REMOTE_EVENT_CHANNEL_CAPACITY);
         Self {
             db,
+            event_tx,
             running: Mutex::new(None),
         }
+    }
+
+    pub fn publish_event<T>(&self, channel: &str, payload: &T)
+    where
+        T: serde::Serialize,
+    {
+        let payload = match serde_json::to_value(payload) {
+            Ok(payload) => payload,
+            Err(error) => {
+                log::warn!("failed to encode remote host event payload for {channel}: {error}");
+                return;
+            }
+        };
+        let _ = self.event_tx.send(RemoteEventEnvelope {
+            channel: channel.to_string(),
+            payload,
+        });
     }
 
     pub async fn status(&self) -> RemoteHostStatusDto {
@@ -72,8 +96,12 @@ impl RemoteHostManager {
             .map_err(|error| error.to_string())?;
         let local_addr = listener.local_addr().map_err(|error| error.to_string())?;
         let shutdown = CancellationToken::new();
-        let join_handle =
-            tokio::spawn(run_remote_host(listener, self.db.clone(), shutdown.clone()));
+        let join_handle = tokio::spawn(run_remote_host(
+            listener,
+            self.db.clone(),
+            self.event_tx.clone(),
+            shutdown.clone(),
+        ));
         *running = Some(RunningRemoteHost {
             bind_addr: local_addr,
             shutdown,
@@ -102,7 +130,12 @@ impl RemoteHostManager {
     }
 }
 
-async fn run_remote_host(listener: TcpListener, db: Database, shutdown: CancellationToken) {
+async fn run_remote_host(
+    listener: TcpListener,
+    db: Database,
+    event_tx: broadcast::Sender<RemoteEventEnvelope>,
+    shutdown: CancellationToken,
+) {
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => break,
@@ -110,9 +143,10 @@ async fn run_remote_host(listener: TcpListener, db: Database, shutdown: Cancella
                 match accept_result {
                     Ok((stream, peer_addr)) => {
                         let db = db.clone();
+                        let event_tx = event_tx.clone();
                         let shutdown = shutdown.clone();
                         tokio::spawn(async move {
-                            if let Err(error) = handle_connection(stream, db, shutdown).await {
+                            if let Err(error) = handle_connection(stream, db, event_tx, shutdown).await {
                                 log::warn!("remote host connection failed for {peer_addr}: {error}");
                             }
                         });
@@ -131,6 +165,7 @@ async fn run_remote_host(listener: TcpListener, db: Database, shutdown: Cancella
 async fn handle_connection(
     stream: TcpStream,
     db: Database,
+    event_tx: broadcast::Sender<RemoteEventEnvelope>,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
     let websocket = accept_hdr_async(stream, |_request: &Request, response: Response| {
@@ -145,12 +180,34 @@ async fn handle_connection(
         Some(grant) => grant,
         None => return Ok(()),
     };
+    let mut event_rx = event_tx.subscribe();
 
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {
                 send_close(&mut write, CloseCode::Restart, "server_shutdown").await?;
                 break;
+            }
+            next_event = event_rx.recv() => {
+                match next_event {
+                    Ok(event) => {
+                        if !grant_can_receive_event(&grant, &event.channel) {
+                            continue;
+                        }
+                        let encoded = serde_json::to_string(&event)
+                            .context("failed to encode remote event envelope")?;
+                        write.send(Message::Text(encoded.into())).await?;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        log::warn!(
+                            "remote host event bridge lagged for device grant {} and skipped {skipped} events",
+                            grant.id
+                        );
+                        send_close(&mut write, CloseCode::Again, "event_overflow").await?;
+                        break;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
             }
             next_message = read.next() => {
                 match next_message {
@@ -259,6 +316,31 @@ where
     Ok(Some(grant))
 }
 
+fn grant_can_receive_event(grant: &RemoteDeviceGrantDto, channel: &str) -> bool {
+    match required_scope_for_event_channel(channel) {
+        Some(required_scope) => grant_allows_scope(grant, required_scope),
+        None => false,
+    }
+}
+
+fn required_scope_for_event_channel(channel: &str) -> Option<&'static str> {
+    if channel == "thread-updated"
+        || channel.starts_with("stream-event-")
+        || channel.starts_with("approval-request-")
+    {
+        return Some("thread.read");
+    }
+
+    if channel.starts_with("terminal-output-")
+        || channel.starts_with("terminal-exit-")
+        || channel.starts_with("terminal-fg-changed-")
+    {
+        return Some("terminal.read");
+    }
+
+    None
+}
+
 async fn send_close<S>(sink: &mut S, code: CloseCode, reason: &str) -> anyhow::Result<()>
 where
     S: Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
@@ -274,19 +356,21 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, time::Duration};
 
     use futures::{SinkExt, StreamExt};
+    use serde_json::json;
+    use tokio::time::timeout;
     use tokio_tungstenite::{connect_async, tungstenite::Message};
     use uuid::Uuid;
 
     use crate::{
         db::{self, Database},
-        models::WorkspaceDto,
-        remote::protocol::{RemoteCommandRequest, RemoteCommandResponse},
+        models::{RemoteDeviceGrantDto, WorkspaceDto},
+        remote::protocol::{RemoteCommandRequest, RemoteCommandResponse, RemoteEventEnvelope},
     };
 
-    use super::RemoteHostManager;
+    use super::{grant_can_receive_event, RemoteHostManager};
 
     fn test_db() -> (Database, std::path::PathBuf) {
         let base_dir = std::env::temp_dir().join(format!("panes-remote-server-{}", Uuid::new_v4()));
@@ -410,5 +494,128 @@ mod tests {
             .is_some_and(|error| error.contains("inactive")));
 
         manager.stop().await.expect("failed to stop remote host");
+    }
+
+    #[tokio::test]
+    async fn remote_host_forwards_scoped_live_events() {
+        let (db, _base_dir) = test_db();
+        let grant = db::remote::create_device_grant(
+            &db,
+            "Thread Reader",
+            &["thread.read".to_string()],
+            None,
+        )
+        .expect("failed to create device grant");
+        let manager = RemoteHostManager::new(db.clone());
+
+        let status = manager
+            .start(Some("127.0.0.1:0"))
+            .await
+            .expect("failed to start remote host");
+        let bind_addr = status.bind_addr.expect("missing remote host bind addr");
+        let url = format!("ws://{bind_addr}");
+        let (mut socket, _) = connect_async(&url)
+            .await
+            .expect("failed to connect to remote host");
+
+        socket
+            .send(Message::Text(
+                serde_json::to_string(&RemoteCommandRequest {
+                    id: "auth-3".to_string(),
+                    command: "authenticate_session".to_string(),
+                    args: Some(serde_json::json!({ "token": grant.token })),
+                })
+                .expect("failed to encode auth request")
+                .into(),
+            ))
+            .await
+            .expect("failed to send auth request");
+
+        let Some(Ok(Message::Text(auth_response))) = socket.next().await else {
+            panic!("expected remote host auth response frame");
+        };
+        let auth_response = serde_json::from_str::<RemoteCommandResponse>(&auth_response)
+            .expect("failed to decode auth response");
+        assert!(auth_response.ok);
+
+        manager.publish_event(
+            "stream-event-thread-1",
+            &json!({
+                "type": "TextDelta",
+                "content": "hello from host"
+            }),
+        );
+
+        let Some(Ok(Message::Text(event_frame))) = timeout(Duration::from_secs(1), socket.next())
+            .await
+            .expect("timed out waiting for forwarded event")
+        else {
+            panic!("expected forwarded remote event frame");
+        };
+        let event = serde_json::from_str::<RemoteEventEnvelope>(&event_frame)
+            .expect("failed to decode forwarded event");
+        assert_eq!(event.channel, "stream-event-thread-1");
+        assert_eq!(
+            event.payload,
+            json!({
+                "type": "TextDelta",
+                "content": "hello from host"
+            })
+        );
+
+        manager.stop().await.expect("failed to stop remote host");
+    }
+
+    #[test]
+    fn remote_event_scope_filter_matches_supported_channels() {
+        let thread_reader = RemoteDeviceGrantDto {
+            id: "grant-thread".to_string(),
+            label: "Thread Reader".to_string(),
+            scopes: vec!["thread.read".to_string()],
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            expires_at: None,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        let terminal_reader = RemoteDeviceGrantDto {
+            id: "grant-terminal".to_string(),
+            label: "Terminal Reader".to_string(),
+            scopes: vec!["terminal.read".to_string()],
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            expires_at: None,
+            revoked_at: None,
+            last_used_at: None,
+        };
+
+        assert!(grant_can_receive_event(
+            &thread_reader,
+            "stream-event-thread-1"
+        ));
+        assert!(grant_can_receive_event(
+            &thread_reader,
+            "approval-request-thread-1"
+        ));
+        assert!(grant_can_receive_event(&thread_reader, "thread-updated"));
+        assert!(!grant_can_receive_event(
+            &thread_reader,
+            "terminal-output-ws-1"
+        ));
+
+        assert!(grant_can_receive_event(
+            &terminal_reader,
+            "terminal-output-ws-1"
+        ));
+        assert!(grant_can_receive_event(
+            &terminal_reader,
+            "terminal-exit-ws-1"
+        ));
+        assert!(grant_can_receive_event(
+            &terminal_reader,
+            "terminal-fg-changed-ws-1"
+        ));
+        assert!(!grant_can_receive_event(
+            &terminal_reader,
+            "engine-runtime-updated"
+        ));
     }
 }

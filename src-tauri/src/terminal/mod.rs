@@ -14,7 +14,7 @@ use anyhow::Context;
 use chrono::Utc;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -25,6 +25,7 @@ use crate::models::{
 };
 #[cfg(target_os = "windows")]
 use crate::process_utils;
+use crate::remote::emit_app_event;
 use crate::runtime_env;
 
 const TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS: u64 = 16;
@@ -1571,7 +1572,7 @@ fn emit_output(
         ts: chunk.ts,
         data: chunk.data,
     };
-    let _ = app.emit(&event_name, payload);
+    emit_app_event(app, &event_name, &payload);
 }
 
 fn emit_exit(app: &AppHandle, workspace_id: &str, session_id: &str, exit: ExitPayload) {
@@ -1581,7 +1582,7 @@ fn emit_exit(app: &AppHandle, workspace_id: &str, session_id: &str, exit: ExitPa
         code: exit.code,
         signal: exit.signal,
     };
-    let _ = app.emit(&event_name, payload);
+    emit_app_event(app, &event_name, &payload);
 }
 
 fn emit_foreground_changed(
@@ -1596,7 +1597,7 @@ fn emit_foreground_changed(
         pid: fg.as_ref().map(|(pid, _)| *pid),
         name: fg.map(|(_, name)| name),
     };
-    let _ = app.emit(&event_name, payload);
+    emit_app_event(app, &event_name, &payload);
 }
 
 /// Detect the foreground child process of the given shell PID.
