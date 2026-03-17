@@ -1,21 +1,28 @@
+use std::sync::Arc;
+
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
     db::{self, Database},
-    models::RemoteDeviceGrantDto,
+    models::{MessageWindowCursorDto, RemoteDeviceGrantDto},
     remote::protocol::{RemoteCommandRequest, RemoteCommandResponse},
+    terminal::TerminalManager,
 };
+
+const REMOTE_MESSAGE_WINDOW_DEFAULT_LIMIT: usize = 120;
+const REMOTE_MESSAGE_WINDOW_MAX_LIMIT: usize = 400;
 
 #[derive(Clone)]
 pub struct RemoteCommandRouter {
     db: Database,
+    terminals: Arc<TerminalManager>,
 }
 
 impl RemoteCommandRouter {
-    pub fn new(db: Database) -> Self {
-        Self { db }
+    pub fn new(db: Database, terminals: Arc<TerminalManager>) -> Self {
+        Self { db, terminals }
     }
 
     pub async fn authenticate_device_grant(
@@ -80,6 +87,41 @@ impl RemoteCommandRouter {
                 })
                 .await
             }
+            "get_thread_messages" => {
+                require_scope(grant, "thread.read")?;
+                let args: ThreadArgs = parse_args(args)?;
+                self.run_json(move |db| db::messages::get_thread_messages(db, &args.thread_id))
+                    .await
+            }
+            "get_thread_messages_window" => {
+                require_scope(grant, "thread.read")?;
+                let args: ThreadMessagesWindowArgs = parse_args(args)?;
+                let requested_limit = args.limit.unwrap_or(REMOTE_MESSAGE_WINDOW_DEFAULT_LIMIT);
+                let clamped_limit = requested_limit.clamp(1, REMOTE_MESSAGE_WINDOW_MAX_LIMIT);
+                self.run_json(move |db| {
+                    db::messages::get_thread_messages_window(
+                        db,
+                        &args.thread_id,
+                        args.cursor.as_ref(),
+                        clamped_limit,
+                    )
+                })
+                .await
+            }
+            "get_message_blocks" => {
+                require_scope(grant, "thread.read")?;
+                let args: MessageArgs = parse_args(args)?;
+                self.run_json(move |db| db::messages::get_message_blocks(db, &args.message_id))
+                    .await
+            }
+            "get_action_output" => {
+                require_scope(grant, "thread.read")?;
+                let args: ActionOutputArgs = parse_args(args)?;
+                self.run_json(move |db| {
+                    db::messages::get_action_output(db, &args.message_id, &args.action_id)
+                })
+                .await
+            }
             "list_remote_device_grants" => {
                 require_scope(grant, "remote.admin")?;
                 self.run_json(db::remote::list_device_grants).await
@@ -138,6 +180,27 @@ impl RemoteCommandRouter {
                 self.run_json(move |db| db::remote::release_controller_lease(db, &lease.id))
                     .await
             }
+            "terminal_list_sessions" => {
+                require_scope(grant, "terminal.read")?;
+                let args: WorkspaceArgs = parse_args(args)?;
+                let terminals = self.terminals.clone();
+                self.run_terminal_json(async move {
+                    Ok(terminals.list_sessions(&args.workspace_id).await)
+                })
+                .await
+            }
+            "terminal_resume_session" => {
+                require_scope(grant, "terminal.read")?;
+                let args: TerminalResumeSessionArgs = parse_args(args)?;
+                let terminals = self.terminals.clone();
+                self.run_terminal_json(async move {
+                    terminals
+                        .resume_session(&args.workspace_id, &args.session_id, args.from_seq)
+                        .await
+                        .map_err(|error| error.to_string())
+                })
+                .await
+            }
             _ => Err(format!("unknown remote command: {command}")),
         }
     }
@@ -148,7 +211,16 @@ impl RemoteCommandRouter {
         F: FnOnce(&Database) -> anyhow::Result<T> + Send + 'static,
     {
         let value = run_db(self.db.clone(), operation).await?;
-        serde_json::to_value(value).map_err(|error| error.to_string())
+        to_json(value)
+    }
+
+    async fn run_terminal_json<T, Fut>(&self, future: Fut) -> Result<Value, String>
+    where
+        T: serde::Serialize,
+        Fut: std::future::Future<Output = Result<T, String>>,
+    {
+        let value = future.await?;
+        to_json(value)
     }
 }
 
@@ -156,6 +228,35 @@ impl RemoteCommandRouter {
 #[serde(rename_all = "camelCase")]
 struct WorkspaceArgs {
     workspace_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadArgs {
+    thread_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadMessagesWindowArgs {
+    thread_id: String,
+    #[serde(default)]
+    cursor: Option<MessageWindowCursorDto>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MessageArgs {
+    message_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionOutputArgs {
+    message_id: String,
+    action_id: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -186,6 +287,15 @@ struct ReleaseControllerLeaseArgs {
     lease_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalResumeSessionArgs {
+    workspace_id: String,
+    session_id: String,
+    #[serde(default)]
+    from_seq: Option<u64>,
+}
+
 fn parse_args<T>(args: Option<Value>) -> Result<T, String>
 where
     T: DeserializeOwned,
@@ -213,6 +323,13 @@ pub(crate) fn grant_allows_scope(grant: &RemoteDeviceGrantDto, required_scope: &
         })
 }
 
+fn to_json<T>(value: T) -> Result<Value, String>
+where
+    T: serde::Serialize,
+{
+    serde_json::to_value(value).map_err(|error| error.to_string())
+}
+
 async fn run_db<T, F>(db: Database, operation: F) -> Result<T, String>
 where
     T: Send + 'static,
@@ -236,7 +353,9 @@ mod tests {
         engines::EngineManager,
         git::{repo::FileTreeCache, watcher::GitWatcherManager},
         models::{
-            CreatedRemoteDeviceGrantDto, RemoteDeviceGrantDto, RepoDto, ThreadDto, WorkspaceDto,
+            ActionOutputDto, CreatedRemoteDeviceGrantDto, MessageDto, MessageStatusDto,
+            MessageWindowDto, RemoteDeviceGrantDto, RepoDto, TerminalSessionDto, ThreadDto,
+            WorkspaceDto,
         },
         power::KeepAwakeManager,
         remote::server::RemoteHostManager,
@@ -318,11 +437,76 @@ mod tests {
         (workspace, repo, thread)
     }
 
+    fn seed_thread_messages(state: &AppState, thread: &ThreadDto) -> (MessageDto, MessageDto) {
+        let user_message = db::messages::insert_user_message(
+            &state.db,
+            &thread.id,
+            "User prompt",
+            Some(serde_json::json!([
+                {
+                    "type": "text",
+                    "content": "User prompt"
+                }
+            ])),
+            Some("codex"),
+            Some("gpt-5.3-codex"),
+            None,
+        )
+        .expect("failed to insert user message");
+        let assistant_message = db::messages::insert_assistant_placeholder(
+            &state.db,
+            &thread.id,
+            Some("codex"),
+            Some("gpt-5.3-codex"),
+            None,
+        )
+        .expect("failed to insert assistant message");
+        db::messages::update_assistant_blocks_json(
+            &state.db,
+            &assistant_message.id,
+            &serde_json::json!([
+                {
+                    "type": "action",
+                    "actionId": "action-1",
+                    "actionType": "shell",
+                    "summary": "Run shell",
+                    "details": {
+                        "outputTruncated": true
+                    },
+                    "outputChunks": [
+                        {
+                            "stream": "stdout",
+                            "content": "hello"
+                        }
+                    ],
+                    "status": "completed",
+                    "result": {
+                        "success": true,
+                        "output": "hello",
+                        "error": null,
+                        "diff": null,
+                        "durationMs": 12
+                    }
+                }
+            ])
+            .to_string(),
+            MessageStatusDto::Completed,
+            Some("gpt-5.3-codex"),
+        )
+        .expect("failed to update assistant blocks");
+        let assistant_message = db::messages::get_thread_messages(&state.db, &thread.id)
+            .expect("failed to reload thread messages")
+            .into_iter()
+            .find(|message| message.id == assistant_message.id)
+            .expect("missing assistant message");
+        (user_message, assistant_message)
+    }
+
     #[tokio::test]
     async fn authenticates_active_device_grants_and_updates_last_used_at() {
         let (state, _base_dir) = test_app_state();
         let created = create_grant(&state, "Tablet", &["workspace.read"]);
-        let router = RemoteCommandRouter::new(state.db.clone());
+        let router = RemoteCommandRouter::new(state.db.clone(), state.terminals.clone());
 
         let grant = router
             .authenticate_device_grant(&created.token)
@@ -342,7 +526,7 @@ mod tests {
     async fn routes_read_commands_and_enforces_scopes() {
         let (state, base_dir) = test_app_state();
         let (workspace, repo, thread) = create_workspace_repo_and_thread(&state, &base_dir);
-        let router = RemoteCommandRouter::new(state.db.clone());
+        let router = RemoteCommandRouter::new(state.db.clone(), state.terminals.clone());
         let created = create_grant(
             &state,
             "Reader",
@@ -420,9 +604,138 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn routes_thread_history_and_terminal_read_commands() {
+        let (state, base_dir) = test_app_state();
+        let (workspace, _repo, thread) = create_workspace_repo_and_thread(&state, &base_dir);
+        let (_user_message, assistant_message) = seed_thread_messages(&state, &thread);
+        let router = RemoteCommandRouter::new(state.db.clone(), state.terminals.clone());
+        let reader = create_grant(&state, "Attach Reader", &["thread.read", "terminal.read"]);
+
+        let messages = router
+            .handle_request(
+                &reader.grant,
+                RemoteCommandRequest {
+                    id: "req-4".to_string(),
+                    command: "get_thread_messages_window".to_string(),
+                    args: Some(serde_json::json!({
+                        "threadId": thread.id,
+                        "limit": 10
+                    })),
+                },
+            )
+            .await;
+        assert!(messages.ok);
+        let messages = serde_json::from_value::<MessageWindowDto>(
+            messages.result.expect("missing message window result"),
+        )
+        .expect("failed to decode message window");
+        assert_eq!(messages.messages.len(), 2);
+
+        let blocks = router
+            .handle_request(
+                &reader.grant,
+                RemoteCommandRequest {
+                    id: "req-5".to_string(),
+                    command: "get_message_blocks".to_string(),
+                    args: Some(serde_json::json!({
+                        "messageId": assistant_message.id
+                    })),
+                },
+            )
+            .await;
+        assert!(blocks.ok);
+        let blocks = blocks.result.expect("missing blocks result");
+        assert_eq!(blocks[0]["type"], "action");
+
+        let action_output = router
+            .handle_request(
+                &reader.grant,
+                RemoteCommandRequest {
+                    id: "req-6".to_string(),
+                    command: "get_action_output".to_string(),
+                    args: Some(serde_json::json!({
+                        "messageId": assistant_message.id,
+                        "actionId": "action-1"
+                    })),
+                },
+            )
+            .await;
+        assert!(action_output.ok);
+        let action_output = serde_json::from_value::<ActionOutputDto>(
+            action_output.result.expect("missing action output result"),
+        )
+        .expect("failed to decode action output");
+        assert!(action_output.found);
+        assert_eq!(action_output.output_chunks.len(), 1);
+        assert!(action_output.truncated);
+
+        let terminal_sessions = router
+            .handle_request(
+                &reader.grant,
+                RemoteCommandRequest {
+                    id: "req-7".to_string(),
+                    command: "terminal_list_sessions".to_string(),
+                    args: Some(serde_json::json!({
+                        "workspaceId": workspace.id
+                    })),
+                },
+            )
+            .await;
+        assert!(terminal_sessions.ok);
+        let terminal_sessions = serde_json::from_value::<Vec<TerminalSessionDto>>(
+            terminal_sessions
+                .result
+                .expect("missing terminal list result"),
+        )
+        .expect("failed to decode terminal list");
+        assert!(terminal_sessions.is_empty());
+
+        let missing_resume = router
+            .handle_request(
+                &reader.grant,
+                RemoteCommandRequest {
+                    id: "req-8".to_string(),
+                    command: "terminal_resume_session".to_string(),
+                    args: Some(serde_json::json!({
+                        "workspaceId": workspace.id,
+                        "sessionId": "missing-session",
+                        "fromSeq": 0
+                    })),
+                },
+            )
+            .await;
+        assert!(!missing_resume.ok);
+        assert!(missing_resume
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("session not found")));
+
+        let denied_terminal = router
+            .handle_request(
+                &RemoteDeviceGrantDto {
+                    scopes: vec!["thread.read".to_string()],
+                    ..reader.grant.clone()
+                },
+                RemoteCommandRequest {
+                    id: "req-9".to_string(),
+                    command: "terminal_list_sessions".to_string(),
+                    args: Some(serde_json::json!({
+                        "workspaceId": workspace.id
+                    })),
+                },
+            )
+            .await;
+        assert!(!denied_terminal.ok);
+        assert!(denied_terminal
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("terminal.read")));
+    }
+
+    #[tokio::test]
     async fn routes_remote_admin_and_controller_commands() {
         let (state, _base_dir) = test_app_state();
-        let router = RemoteCommandRouter::new(state.db.clone());
+        let router = RemoteCommandRouter::new(state.db.clone(), state.terminals.clone());
         let admin = create_grant(
             &state,
             "Admin",

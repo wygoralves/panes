@@ -74,7 +74,10 @@ pub async fn start_remote_host(
     state: State<'_, AppState>,
     bind_addr: Option<String>,
 ) -> Result<RemoteHostStatusDto, String> {
-    state.remote_host.start(bind_addr.as_deref()).await
+    state
+        .remote_host
+        .start(bind_addr.as_deref(), state.terminals.clone())
+        .await
 }
 
 #[tauri::command]

@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
 use futures::{Sink, SinkExt, StreamExt};
@@ -24,6 +24,7 @@ use crate::{
         protocol::{RemoteCommandRequest, RemoteEventEnvelope},
         router::{grant_allows_scope, RemoteCommandRouter},
     },
+    terminal::TerminalManager,
 };
 
 const DEFAULT_REMOTE_HOST_BIND_ADDR: &str = "127.0.0.1:0";
@@ -82,7 +83,11 @@ impl RemoteHostManager {
         }
     }
 
-    pub async fn start(&self, bind_addr: Option<&str>) -> Result<RemoteHostStatusDto, String> {
+    pub async fn start(
+        &self,
+        bind_addr: Option<&str>,
+        terminals: Arc<TerminalManager>,
+    ) -> Result<RemoteHostStatusDto, String> {
         let mut running = self.running.lock().await;
         if let Some(host) = running.as_ref() {
             return Ok(RemoteHostStatusDto {
@@ -99,6 +104,7 @@ impl RemoteHostManager {
         let join_handle = tokio::spawn(run_remote_host(
             listener,
             self.db.clone(),
+            terminals,
             self.event_tx.clone(),
             shutdown.clone(),
         ));
@@ -133,6 +139,7 @@ impl RemoteHostManager {
 async fn run_remote_host(
     listener: TcpListener,
     db: Database,
+    terminals: Arc<TerminalManager>,
     event_tx: broadcast::Sender<RemoteEventEnvelope>,
     shutdown: CancellationToken,
 ) {
@@ -143,10 +150,13 @@ async fn run_remote_host(
                 match accept_result {
                     Ok((stream, peer_addr)) => {
                         let db = db.clone();
+                        let terminals = terminals.clone();
                         let event_tx = event_tx.clone();
                         let shutdown = shutdown.clone();
                         tokio::spawn(async move {
-                            if let Err(error) = handle_connection(stream, db, event_tx, shutdown).await {
+                            if let Err(error) =
+                                handle_connection(stream, db, terminals, event_tx, shutdown).await
+                            {
                                 log::warn!("remote host connection failed for {peer_addr}: {error}");
                             }
                         });
@@ -165,6 +175,7 @@ async fn run_remote_host(
 async fn handle_connection(
     stream: TcpStream,
     db: Database,
+    terminals: Arc<TerminalManager>,
     event_tx: broadcast::Sender<RemoteEventEnvelope>,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
@@ -174,7 +185,7 @@ async fn handle_connection(
     .await
     .context("failed to accept remote websocket handshake")?;
 
-    let router = RemoteCommandRouter::new(db.clone());
+    let router = RemoteCommandRouter::new(db.clone(), terminals);
     let (mut write, mut read) = websocket.split();
     let grant = match authenticate_connection(&mut write, &mut read, &router).await? {
         Some(grant) => grant,
@@ -356,7 +367,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, time::Duration};
+    use std::{fs, sync::Arc, time::Duration};
 
     use futures::{SinkExt, StreamExt};
     use serde_json::json;
@@ -368,6 +379,7 @@ mod tests {
         db::{self, Database},
         models::{RemoteDeviceGrantDto, WorkspaceDto},
         remote::protocol::{RemoteCommandRequest, RemoteCommandResponse, RemoteEventEnvelope},
+        terminal::TerminalManager,
     };
 
     use super::{grant_can_receive_event, RemoteHostManager};
@@ -397,7 +409,7 @@ mod tests {
         let manager = RemoteHostManager::new(db.clone());
 
         let status = manager
-            .start(Some("127.0.0.1:0"))
+            .start(Some("127.0.0.1:0"), Arc::new(TerminalManager::default()))
             .await
             .expect("failed to start remote host");
         let bind_addr = status.bind_addr.expect("missing remote host bind addr");
@@ -460,7 +472,7 @@ mod tests {
         let manager = RemoteHostManager::new(db);
 
         let status = manager
-            .start(Some("127.0.0.1:0"))
+            .start(Some("127.0.0.1:0"), Arc::new(TerminalManager::default()))
             .await
             .expect("failed to start remote host");
         let bind_addr = status.bind_addr.expect("missing remote host bind addr");
@@ -509,7 +521,7 @@ mod tests {
         let manager = RemoteHostManager::new(db.clone());
 
         let status = manager
-            .start(Some("127.0.0.1:0"))
+            .start(Some("127.0.0.1:0"), Arc::new(TerminalManager::default()))
             .await
             .expect("failed to start remote host");
         let bind_addr = status.bind_addr.expect("missing remote host bind addr");
