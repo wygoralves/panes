@@ -570,24 +570,18 @@ impl RemoteCommandRouter {
             let canonical_candidate = path_utils::canonicalize_path(Path::new(&candidate))
                 .map_err(|error| anyhow::anyhow!("failed to resolve repo path: {error}"))?;
             let workspaces = db::workspaces::list_workspaces(db)?;
-            let mut allowed_paths = workspaces
-                .iter()
-                .map(|workspace| workspace.root_path.clone())
-                .collect::<Vec<_>>();
-            for workspace in &workspaces {
+            let mut allowed_paths = Vec::new();
+            for workspace in workspaces {
                 let repos = db::repos::get_repos(db, &workspace.id)?;
                 allowed_paths.extend(repos.into_iter().map(|repo| repo.path));
             }
             let allowed = allowed_paths.iter().any(|allowed_path| {
                 path_utils::canonicalize_path(Path::new(allowed_path))
-                    .map(|canonical_allowed| {
-                        canonical_candidate == canonical_allowed
-                            || canonical_candidate.starts_with(&canonical_allowed)
-                    })
+                    .map(|canonical_allowed| canonical_candidate == canonical_allowed)
                     .unwrap_or(false)
             });
             if !allowed {
-                anyhow::bail!("repo path is outside the registered workspace roots");
+                anyhow::bail!("repo path is outside the registered repositories");
             }
             Ok(canonical_candidate.to_string_lossy().to_string())
         })
@@ -857,6 +851,7 @@ where
 mod tests {
     use std::{fs, path::PathBuf, sync::Arc};
 
+    use git2::Repository;
     use uuid::Uuid;
 
     use crate::{
@@ -1335,6 +1330,39 @@ mod tests {
             .error
             .as_deref()
             .is_some_and(|error| error.contains("terminal.read")));
+    }
+
+    #[tokio::test]
+    async fn rejects_git_reads_for_unregistered_nested_repositories() {
+        let (state, base_dir) = test_app_state();
+        let (workspace, repo, _thread) = create_workspace_repo_and_thread(&state, &base_dir);
+        Repository::init(&repo.path).expect("failed to initialize registered repo");
+
+        let nested_repo_dir = PathBuf::from(&workspace.root_path).join("private-repo");
+        fs::create_dir_all(&nested_repo_dir).expect("failed to create nested repo dir");
+        Repository::init(&nested_repo_dir).expect("failed to initialize nested repo");
+
+        let router = RemoteCommandRouter::new(state.db.clone(), state.terminals.clone());
+        let reader = create_grant(&state, "Attach Reader", &["repo.read"]);
+
+        let denied = router
+            .handle_request(
+                &reader.grant,
+                RemoteCommandRequest {
+                    id: "req-nested-repo".to_string(),
+                    command: "get_git_status".to_string(),
+                    args: Some(serde_json::json!({
+                        "repoPath": nested_repo_dir.to_string_lossy(),
+                    })),
+                },
+            )
+            .await;
+
+        assert!(!denied.ok);
+        assert!(denied
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("registered repositories")));
     }
 
     #[tokio::test]

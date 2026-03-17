@@ -425,7 +425,8 @@
       "new": "New",
       "emptyTitle": "No threads yet",
       "emptyHint": "Create a thread to start chatting with the attached workspace.",
-      "repoScope": "Active repo"
+      "repoScope": "Thread scope",
+      "workspaceScope": "Entire workspace"
     },
     "threadTitle": {
       "workspace": "Remote Workspace",

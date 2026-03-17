@@ -14,7 +14,12 @@ import { useThreadStore } from "../stores/threadStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import type { ContentBlock, Message, RemoteControllerLease, RemoteDeviceGrant } from "../types";
 import { RemoteGitPanel } from "./RemoteGitPanel";
-import { selectWorkspaceThreads } from "./remoteAttachState";
+import {
+  parseRemoteThreadScopeValue,
+  resolveRemoteChatRepoId,
+  resolveRemoteThreadScopeValue,
+  selectWorkspaceThreads,
+} from "./remoteAttachState";
 
 const REMOTE_URL_STORAGE_KEY = "panes:remote.attach.url";
 const CONTROL_TTL_SECS = 45;
@@ -572,11 +577,13 @@ export function RemoteAttachApp() {
   const bootstrapState = useMemo(() => parseRemoteBootstrapState(), []);
   const autoConnectTriedRef = useRef(false);
   const transportRef = useRef<RemotePanesTransport | null>(null);
+  const threadScopeWorkspaceIdRef = useRef<string | null>(null);
   const [remoteUrl, setRemoteUrl] = useState(bootstrapState.url);
   const [token, setToken] = useState(bootstrapState.token);
   const [connecting, setConnecting] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [grant, setGrant] = useState<RemoteDeviceGrant | null>(null);
+  const [threadScopeRepoId, setThreadScopeRepoId] = useState<string | null>(null);
 
   const {
     workspaces,
@@ -584,7 +591,6 @@ export function RemoteAttachApp() {
     setActiveWorkspace,
     repos,
     activeRepoId,
-    setActiveRepo,
   } = useWorkspaceStore();
   const workspaceThreads = useThreadStore((state) =>
     selectWorkspaceThreads(state.threadsByWorkspace, activeWorkspaceId),
@@ -597,10 +603,16 @@ export function RemoteAttachApp() {
   const bindChatThread = useChatStore((state) => state.setActiveThread);
   const setRemoteAttachMode = useTerminalStore((state) => state.setRemoteAttachMode);
 
-  const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
   const activeRepo = repos.find((repo) => repo.id === activeRepoId) ?? null;
   const activeThread =
     workspaceThreads.find((thread) => thread.id === activeThreadId) ?? workspaceThreads[0] ?? null;
+  const threadScopeRepo = repos.find((repo) => repo.id === threadScopeRepoId) ?? null;
+  const chatRepoId = resolveRemoteChatRepoId(
+    activeThread?.repoId ?? null,
+    threadScopeRepoId,
+    Boolean(activeThread),
+  );
+  const chatScopeRepoName = repos.find((repo) => repo.id === chatRepoId)?.name ?? null;
 
   const controller = useRemoteController(grant, activeWorkspaceId, activeThread?.id ?? null);
 
@@ -706,6 +718,24 @@ export function RemoteAttachApp() {
   }, [activeWorkspaceId, grant, setActiveWorkspace, workspaces]);
 
   useEffect(() => {
+    if (activeWorkspaceId !== threadScopeWorkspaceIdRef.current) {
+      threadScopeWorkspaceIdRef.current = activeWorkspaceId;
+      setThreadScopeRepoId(activeRepoId ?? null);
+      return;
+    }
+
+    setThreadScopeRepoId((current) => {
+      if (current === null) {
+        return current;
+      }
+      if (current && repos.some((repo) => repo.id === current)) {
+        return current;
+      }
+      return activeRepoId ?? null;
+    });
+  }, [activeRepoId, activeWorkspaceId, repos]);
+
+  useEffect(() => {
     if (!grant || !activeWorkspaceId) {
       return;
     }
@@ -728,9 +758,9 @@ export function RemoteAttachApp() {
     }
     const threadId = await createThread({
       workspaceId: activeWorkspaceId,
-      repoId: activeRepo?.id ?? null,
-      title: activeRepo
-        ? t("remoteAttach.threadTitle.repo", { name: activeRepo.name })
+      repoId: threadScopeRepoId,
+      title: threadScopeRepo
+        ? t("remoteAttach.threadTitle.repo", { name: threadScopeRepo.name })
         : t("remoteAttach.threadTitle.workspace"),
     });
     if (!threadId) {
@@ -740,7 +770,16 @@ export function RemoteAttachApp() {
     await bindChatThread(threadId);
     await controller.ensureThreadControl(threadId);
     return threadId;
-  }, [activeRepo, activeWorkspaceId, bindChatThread, controller, createThread, setActiveThread, t]);
+  }, [
+    activeWorkspaceId,
+    bindChatThread,
+    controller,
+    createThread,
+    setActiveThread,
+    t,
+    threadScopeRepo,
+    threadScopeRepoId,
+  ]);
 
   if (bootstrapState.mode !== "remote" && !grant) {
     return null;
@@ -1030,8 +1069,10 @@ export function RemoteAttachApp() {
                       {t("remoteAttach.threads.repoScope")}
                     </span>
                     <select
-                      value={activeRepoId ?? ""}
-                      onChange={(event) => setActiveRepo(event.target.value || null)}
+                      value={resolveRemoteThreadScopeValue(threadScopeRepoId)}
+                      onChange={(event) =>
+                        setThreadScopeRepoId(parseRemoteThreadScopeValue(event.target.value))
+                      }
                       style={{
                         borderRadius: "var(--radius-md)",
                         border: "1px solid var(--border)",
@@ -1041,6 +1082,9 @@ export function RemoteAttachApp() {
                         font: "inherit",
                       }}
                     >
+                      <option value={resolveRemoteThreadScopeValue(null)}>
+                        {t("remoteAttach.threads.workspaceScope")}
+                      </option>
                       {repos.map((repo) => (
                         <option key={repo.id} value={repo.id}>
                           {repo.name}
@@ -1117,7 +1161,7 @@ export function RemoteAttachApp() {
                 <RemoteChatPane
                   activeWorkspaceId={activeWorkspaceId}
                   activeThreadId={activeThread?.id ?? null}
-                  activeRepoName={activeRepo?.name ?? null}
+                  activeRepoName={chatScopeRepoName}
                   canCreateThread={controller.hasWorkspaceControl}
                   canSendToThread={controller.hasThreadControl}
                   ensureWorkspaceControl={controller.ensureWorkspaceControl}
@@ -1152,7 +1196,10 @@ export function RemoteAttachApp() {
                           opacity: controller.hasWorkspaceControl ? 1 : 0.85,
                         }}
                       >
-                        <TerminalPanel workspaceId={activeWorkspaceId} />
+                        <TerminalPanel
+                          workspaceId={activeWorkspaceId}
+                          interactive={controller.hasWorkspaceControl}
+                        />
                       </div>
                       {!controller.hasWorkspaceControl ? (
                         <div

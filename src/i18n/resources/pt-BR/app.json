@@ -425,7 +425,8 @@
       "new": "Nova",
       "emptyTitle": "Ainda não há threads",
       "emptyHint": "Crie uma thread para começar a conversar com o workspace conectado.",
-      "repoScope": "Repo ativo"
+      "repoScope": "Escopo da thread",
+      "workspaceScope": "Workspace inteiro"
     },
     "threadTitle": {
       "workspace": "Workspace Remoto",

@@ -46,6 +46,7 @@ import type {
 
 interface TerminalPanelProps {
   workspaceId: string;
+  interactive?: boolean;
 }
 
 interface TerminalSize {
@@ -153,6 +154,7 @@ type TerminalInputChunk =
 interface SessionTerminal {
   terminal: Terminal;
   fitAddon: FitAddon;
+  interactionEnabled: boolean;
   stdinQueue: TerminalInputChunk[];
   stdinQueueChars: number;
   stdinFlushInFlight: boolean;
@@ -907,6 +909,9 @@ function sendResizeIfNeeded(
   cols: number,
   rows: number
 ) {
+  if (!session.interactionEnabled) {
+    return;
+  }
   const next = normalizeSize(cols, rows);
   if (sameSize(session.lastResizeSent, next)) {
     return;
@@ -1016,6 +1021,13 @@ function flushTerminalInputQueue(
 ) {
   const session = cachedTerminals.get(cacheKey);
   if (!session || session.stdinFlushInFlight) {
+    return;
+  }
+
+  if (!session.interactionEnabled) {
+    session.stdinQueue = [];
+    session.stdinQueueChars = 0;
+    session.stdinFlushInFlight = false;
     return;
   }
 
@@ -1568,7 +1580,12 @@ async function resumeSessionOutput(
         const container = latest.terminal.element?.parentElement;
         if (container instanceof HTMLElement) {
           destroyCachedTerminal(workspaceId, sessionId);
-          createCachedTerminal(workspaceId, sessionId, container);
+          createCachedTerminal(
+            workspaceId,
+            sessionId,
+            container,
+            latest.interactionEnabled,
+          );
           return;
         }
       }
@@ -1872,6 +1889,7 @@ function createCachedTerminal(
   workspaceId: string,
   sessionId: string,
   container: HTMLElement,
+  interactionEnabled: boolean,
 ): SessionTerminal {
   const cacheKey = terminalCacheKey(workspaceId, sessionId);
   const terminal = new Terminal({
@@ -1949,6 +1967,8 @@ function createCachedTerminal(
   }
 
   terminal.attachCustomKeyEventHandler((event) => {
+    const current = cachedTerminals.get(cacheKey);
+    const canInteract = current?.interactionEnabled ?? interactionEnabled;
     if (event.type !== "keydown") return true;
     if (isTerminalCopyShortcut(event)) {
       event.preventDefault();
@@ -1967,6 +1987,9 @@ function createCachedTerminal(
     if (isTerminalPasteShortcut(event)) {
       event.preventDefault();
       event.stopPropagation();
+      if (!canInteract) {
+        return false;
+      }
       void readTextFromClipboard()
         .then((text) => {
           if (text) {
@@ -1980,6 +2003,9 @@ function createCachedTerminal(
           });
         });
       return false;
+    }
+    if (!canInteract) {
+      return true;
     }
     // Block broadcast shortcut from reaching the shell
     if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i") return false;
@@ -2020,6 +2046,10 @@ function createCachedTerminal(
     return true;
   });
   const writeDisposable = terminal.onData((data) => {
+    const current = cachedTerminals.get(cacheKey);
+    if (!current?.interactionEnabled) {
+      return;
+    }
     if (isTerminalResponse(data)) {
       // Terminal protocol responses go only to the originating session
       enqueueTerminalProtocolInput(cacheKey, workspaceId, sessionId, data);
@@ -2029,6 +2059,10 @@ function createCachedTerminal(
   });
 
   const binaryDisposable = terminal.onBinary((data) => {
+    const current = cachedTerminals.get(cacheKey);
+    if (!current?.interactionEnabled) {
+      return;
+    }
     const bytes = Array.from(data, (c) => c.charCodeAt(0));
     broadcastWriteBytes(bytes);
   });
@@ -2045,6 +2079,7 @@ function createCachedTerminal(
   const entry: SessionTerminal = {
     terminal,
     fitAddon,
+    interactionEnabled,
     stdinQueue: [],
     stdinQueueChars: 0,
     stdinFlushInFlight: false,
@@ -2115,6 +2150,7 @@ interface SplitPaneViewProps {
   node: SplitNode;
   workspaceId: string;
   groupId: string;
+  interactive: boolean;
   activeIndicatorSessionId: string | null;
   isBroadcasting: boolean;
   containerRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
@@ -2136,6 +2172,7 @@ function SplitPaneView({
   node,
   workspaceId,
   groupId,
+  interactive,
   activeIndicatorSessionId,
   isBroadcasting,
   containerRefs,
@@ -2157,6 +2194,15 @@ function SplitPaneView({
         onMouseDown={() => onFocus(node.sessionId)}
         onFocusCapture={(event) => {
           if (!isXtermFocusTarget(event.target)) {
+            return;
+          }
+          if (!interactive) {
+            const cached = cachedTerminals.get(terminalCacheKey(workspaceId, node.sessionId));
+            cached?.terminal.blur();
+            if (cached) {
+              setTerminalFocusState(cached, false);
+              refreshTerminalCursor(cached);
+            }
             return;
           }
           onTerminalFocus(node.sessionId);
@@ -2184,9 +2230,13 @@ function SplitPaneView({
           }}
           className="terminal-viewport"
           style={{ position: "absolute", inset: 0 }}
-          onContextMenu={(event) => onPaneContextMenu?.(node.sessionId, event)}
+          onContextMenu={
+            interactive
+              ? (event) => onPaneContextMenu?.(node.sessionId, event)
+              : undefined
+          }
         />
-        {showCloseButton && (
+        {interactive && showCloseButton && (
           <button
             type="button"
             className="terminal-pane-close-btn"
@@ -2208,6 +2258,7 @@ function SplitPaneView({
       container={node}
       workspaceId={workspaceId}
       groupId={groupId}
+      interactive={interactive}
       activeIndicatorSessionId={activeIndicatorSessionId}
       isBroadcasting={isBroadcasting}
       containerRefs={containerRefs}
@@ -2226,6 +2277,7 @@ interface SplitContainerViewProps {
   container: SplitContainerType;
   workspaceId: string;
   groupId: string;
+  interactive: boolean;
   activeIndicatorSessionId: string | null;
   isBroadcasting: boolean;
   containerRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
@@ -2271,6 +2323,7 @@ function SplitContainerView({
   container,
   workspaceId,
   groupId,
+  interactive,
   activeIndicatorSessionId,
   isBroadcasting,
   containerRefs,
@@ -2297,6 +2350,9 @@ function SplitContainerView({
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      if (!interactive) {
+        return;
+      }
       e.preventDefault();
       const el = containerRef.current;
       if (!el) return;
@@ -2325,7 +2381,7 @@ function SplitContainerView({
       document.addEventListener("mouseup", cleanup);
       dragCleanupRef.current = cleanup;
     },
-    [container.id, isVertical, onRatioChange, workspaceId],
+    [container.id, interactive, isVertical, onRatioChange, workspaceId],
   );
 
   const firstPct = `${container.ratio * 100}%`;
@@ -2342,6 +2398,7 @@ function SplitContainerView({
           node={container.children[0]}
           workspaceId={workspaceId}
           groupId={groupId}
+          interactive={interactive}
           activeIndicatorSessionId={activeIndicatorSessionId}
           isBroadcasting={isBroadcasting}
           containerRefs={containerRefs}
@@ -2361,6 +2418,7 @@ function SplitContainerView({
           node={container.children[1]}
           workspaceId={workspaceId}
           groupId={groupId}
+          interactive={interactive}
           activeIndicatorSessionId={activeIndicatorSessionId}
           isBroadcasting={isBroadcasting}
           containerRefs={containerRefs}
@@ -2639,7 +2697,7 @@ function NewTabDropdown({
 
 // ── Main component ──────────────────────────────────────────────────
 
-export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
+export function TerminalPanel({ workspaceId, interactive = true }: TerminalPanelProps) {
   const { t } = useTranslation("app");
   const workspaceState = useTerminalStore((state) => state.workspaces[workspaceId]);
   const focusMode = useUiStore((state) => state.focusMode);
@@ -2798,6 +2856,30 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   }, [workspaceId]);
 
   useEffect(() => {
+    clearFocusRetryTimer();
+    forEachWorkspaceCachedTerminal(workspaceId, (sessionId, session) => {
+      session.interactionEnabled = interactive;
+      if (interactive) {
+        if (session.isAttached) {
+          scheduleTerminalFit(workspaceId, sessionId, 0);
+        }
+        return;
+      }
+      session.terminal.blur();
+      setTerminalFocusState(session, false);
+      refreshTerminalCursor(session);
+    });
+    if (!interactive) {
+      setCtxMenu(null);
+      setTerminalCtxMenu(null);
+      setNewTabMenuOpen(false);
+      setRenamingGroupId(null);
+      setWorktreeCloseGroupId(null);
+      setDomFocusedSessionId(null);
+    }
+  }, [clearFocusRetryTimer, interactive, workspaceId]);
+
+  useEffect(() => {
     syncCursorIndicator();
   }, [sessions.length, syncCursorIndicator]);
 
@@ -2884,6 +2966,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   }, [groups]);
 
   const closeGroupFromMenu = useCallback((groupId: string) => {
+    if (!interactive) return;
     setCtxMenu(null);
     const group = groups.find((g) => g.id === groupId);
     if (!group) return;
@@ -2895,11 +2978,11 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     for (const id of collectSessionIds(group.root)) {
       void closeSession(workspaceId, id);
     }
-  }, [groups, closeSession, workspaceId]);
+  }, [closeSession, getGroupWorktrees, groups, interactive, workspaceId]);
 
   const openTerminalContextMenu = useCallback(
     (sessionId: string, event: React.MouseEvent<HTMLDivElement>) => {
-      if (!linuxDesktop) {
+      if (!linuxDesktop || !interactive) {
         return;
       }
 
@@ -2915,7 +2998,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         selectionText: cached?.terminal.getSelection() ?? "",
       });
     },
-    [linuxDesktop, setFocusedSession, workspaceId],
+    [interactive, linuxDesktop, setFocusedSession, workspaceId],
   );
 
   const copyTerminalSelection = useCallback(
@@ -2940,6 +3023,9 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
   const pasteIntoTerminal = useCallback(
     async (sessionId: string) => {
+      if (!interactive) {
+        return;
+      }
       setTerminalCtxMenu(null);
       const cached = cachedTerminals.get(terminalCacheKey(workspaceId, sessionId));
       if (!cached) {
@@ -2959,7 +3045,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         );
       }
     },
-    [t, workspaceId],
+    [interactive, t, workspaceId],
   );
 
   const selectAllInTerminal = useCallback((sessionId: string) => {
@@ -2983,6 +3069,9 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
           return;
         }
         case "paste":
+          if (!interactive) {
+            return;
+          }
           void pasteIntoTerminal(sessionId);
           return;
         case "select-all":
@@ -2997,12 +3086,14 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     copyTerminalSelection,
     domFocusedSessionId,
     focusedSessionId,
+    interactive,
     pasteIntoTerminal,
     selectAllInTerminal,
     workspaceId,
   ]);
 
   const handleWorktreeCloseConfirm = useCallback(async () => {
+    if (!interactive) return;
     if (!worktreeCloseGroupId) return;
     const group = groups.find((g) => g.id === worktreeCloseGroupId);
     if (group) {
@@ -3029,9 +3120,19 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       }
     }
     setWorktreeCloseGroupId(null);
-  }, [worktreeCloseGroupId, groups, getGroupWorktrees, removeGroupWorktrees, closeSession, t, workspaceId]);
+  }, [
+    closeSession,
+    getGroupWorktrees,
+    groups,
+    interactive,
+    removeGroupWorktrees,
+    t,
+    workspaceId,
+    worktreeCloseGroupId,
+  ]);
 
   const handleWorktreeCloseCancel = useCallback(async () => {
+    if (!interactive) return;
     if (!worktreeCloseGroupId) return;
     const group = groups.find((g) => g.id === worktreeCloseGroupId);
     if (group) {
@@ -3045,13 +3146,14 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       }
     }
     setWorktreeCloseGroupId(null);
-  }, [worktreeCloseGroupId, groups, closeSession, t, workspaceId]);
+  }, [closeSession, groups, interactive, t, workspaceId, worktreeCloseGroupId]);
 
   const dismissWorktreeCloseDialog = useCallback(() => {
     setWorktreeCloseGroupId(null);
   }, []);
 
   const handleTabPointerDown = useCallback((e: React.PointerEvent, groupId: string) => {
+    if (!interactive) return;
     if (renamingGroupId || groups.length <= 1 || e.button !== 0) return;
     const tabEl = e.currentTarget as HTMLElement;
     dragStateRef.current = { groupId, startX: e.clientX, started: false, el: tabEl };
@@ -3114,13 +3216,16 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp);
-  }, [renamingGroupId, groups.length, workspaceId, reorderGroups]);
+  }, [groups.length, interactive, renamingGroupId, reorderGroups, workspaceId]);
 
   // Component-level refs — only track DOM containers (reset on mount/unmount).
   // Terminal instances live in the module-level cachedTerminals map.
   const containerRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const focusTerminalSession = useCallback((sessionId: string | null) => {
+    if (!interactive) {
+      return;
+    }
     clearFocusRetryTimer();
     if (!sessionId) {
       return;
@@ -3154,12 +3259,15 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     };
 
     tryFocus();
-  }, [clearFocusRetryTimer, workspaceId]);
+  }, [clearFocusRetryTimer, interactive, workspaceId]);
 
   const setTerminalSessionFocus = useCallback((sessionId: string) => {
     setFocusedSession(workspaceId, sessionId);
+    if (!interactive) {
+      return;
+    }
     focusTerminalSession(sessionId);
-  }, [focusTerminalSession, setFocusedSession, workspaceId]);
+  }, [focusTerminalSession, interactive, setFocusedSession, workspaceId]);
 
   // When broadcast mode toggles, lock/unlock the isFocused getter on peer
   // terminals so xterm.js renders an active blinking cursor on all of them.
@@ -3187,6 +3295,15 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   }, [broadcastGroupId, broadcastSessionIdsKey, groups, workspaceId]);
 
   const handleTerminalDomFocus = useCallback((sessionId: string) => {
+    if (!interactive) {
+      const cached = cachedTerminals.get(terminalCacheKey(workspaceId, sessionId));
+      cached?.terminal.blur();
+      if (cached) {
+        setTerminalFocusState(cached, false);
+        refreshTerminalCursor(cached);
+      }
+      return;
+    }
     setDomFocusedSessionId(sessionId);
     const ws = useTerminalStore.getState().workspaces[workspaceId];
     const currentFocusedSessionId = ws?.focusedSessionId ?? null;
@@ -3204,7 +3321,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       setTerminalFocusState(cached, true);
       refreshTerminalCursor(cached);
     }
-  }, [setFocusedSession, workspaceId]);
+  }, [interactive, setFocusedSession, workspaceId]);
 
   const handleTerminalDomBlur = useCallback((sessionId: string) => {
     setDomFocusedSessionId((current) => (current === sessionId ? null : current));
@@ -3242,6 +3359,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         container.appendChild(el);
       }
       cached.isAttached = true;
+      cached.interactionEnabled = interactive;
       cached.detachedAt = undefined;
       touchCachedTerminal(cached);
       scheduleTerminalFit(workspaceId, sessionId, 0);
@@ -3256,8 +3374,8 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       return;
     }
 
-    createCachedTerminal(workspaceId, sessionId, container);
-  }, [workspaceId]);
+    createCachedTerminal(workspaceId, sessionId, container, interactive);
+  }, [interactive, workspaceId]);
 
   // Fit all sessions in the active group — reads store at call time to stay
   // stable across group tree mutations (e.g. ratio drag) and avoid
@@ -3388,11 +3506,22 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     if (!isOpen) {
       return;
     }
+    if (!interactive) {
+      return;
+    }
     if (layoutMode !== "split" && layoutMode !== "terminal") {
       return;
     }
     focusTerminalSession(focusedSessionId);
-  }, [activeGroupId, focusTerminalSession, focusedSessionId, isOpen, layoutMode, sessions.length]);
+  }, [
+    activeGroupId,
+    focusTerminalSession,
+    focusedSessionId,
+    interactive,
+    isOpen,
+    layoutMode,
+    sessions.length,
+  ]);
 
   // Fit when active group changes
   useEffect(() => {
@@ -3480,15 +3609,21 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   }, [newTabMenuOpen]);
 
   const spawnNewSession = useCallback(() => {
+    if (!interactive) {
+      return;
+    }
     const active = focusedSessionId
       ? cachedTerminals.get(terminalCacheKey(workspaceId, focusedSessionId))
       : undefined;
     const cols = active?.terminal.cols ?? DEFAULT_COLS;
     const rows = active?.terminal.rows ?? DEFAULT_ROWS;
     void createSession(workspaceId, cols, rows);
-  }, [focusedSessionId, createSession, workspaceId]);
+  }, [createSession, focusedSessionId, interactive, workspaceId]);
 
   const spawnHarnessSession = useCallback(async (harnessId: string) => {
+    if (!interactive) {
+      return;
+    }
     setNewTabMenuOpen(false);
     const command = await harnessLaunch(harnessId);
     if (!command) return;
@@ -3502,9 +3637,17 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     if (sessionId) {
       void writeCommandToNewSession(workspaceId, sessionId, command);
     }
-  }, [focusedSessionId, createSession, workspaceId, harnessLaunch, installedHarnesses]);
+  }, [
+    createSession,
+    focusedSessionId,
+    harnessLaunch,
+    installedHarnesses,
+    interactive,
+    workspaceId,
+  ]);
 
   const spawnMultiHarnessGroup = useCallback(async (harnessIds: string[], withBroadcast: boolean, worktreeRepoPath?: string | null) => {
+    if (!interactive) return;
     if (harnessIds.length === 0) return;
 
     const active = focusedSessionId
@@ -3577,11 +3720,13 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     repos,
     harnessLaunch,
     installedHarnesses,
+    interactive,
     setTerminalSessionFocus,
   ]);
 
   const handleSplit = useCallback(
     (direction: "horizontal" | "vertical") => {
+      if (!interactive) return;
       if (!domFocusedSessionId) return;
       const active = cachedTerminals.get(
         terminalCacheKey(workspaceId, domFocusedSessionId),
@@ -3590,7 +3735,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       const rows = active?.terminal.rows ?? DEFAULT_ROWS;
       void splitSession(workspaceId, domFocusedSessionId, direction, cols, rows);
     },
-    [domFocusedSessionId, splitSession, workspaceId],
+    [domFocusedSessionId, interactive, splitSession, workspaceId],
   );
 
   const resolveSessionIdForDiagnostics = useCallback((groupId?: string): string | null => {
@@ -3685,6 +3830,9 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                 }}
                 onPointerDown={(e) => handleTabPointerDown(e, group.id)}
                 onContextMenu={(e) => {
+                  if (!interactive) {
+                    return;
+                  }
                   e.preventDefault();
                   setTerminalCtxMenu(null);
                   setCtxMenu({ groupId: group.id, x: e.clientX, y: e.clientY });
@@ -3710,11 +3858,15 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                 ) : (
                   <span
                     className="terminal-tab-label"
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      setRenamingGroupId(group.id);
-                      setRenameValue(group.name);
-                    }}
+                    onDoubleClick={
+                      interactive
+                        ? (e) => {
+                            e.stopPropagation();
+                            setRenamingGroupId(group.id);
+                            setRenameValue(group.name);
+                          }
+                        : undefined
+                    }
                   >
                     {group.name}
                   </span>
@@ -3727,23 +3879,26 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                 {groupSessionIds.length > 1 && (
                   <span className="terminal-tab-badge">{groupSessionIds.length}</span>
                 )}
-                <button
-                  type="button"
-                  className="terminal-tab-close"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    closeGroupFromMenu(group.id);
-                  }}
-                >
-                  <X size={10} />
-                </button>
+                {interactive ? (
+                  <button
+                    type="button"
+                    className="terminal-tab-close"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      closeGroupFromMenu(group.id);
+                    }}
+                  >
+                    <X size={10} />
+                  </button>
+                ) : null}
               </button>
             );
           })}
         </div>
 
-        <div className="terminal-tabs-actions">
+        {interactive ? (
+          <div className="terminal-tabs-actions">
           <button
             ref={newTabBtnRef}
             type="button"
@@ -3817,7 +3972,8 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
               )}
             </>
           )}
-        </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="terminal-body">
@@ -3825,17 +3981,19 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
           <div className="terminal-broadcast-banner">
             <Radio size={10} />
             {t("terminal.broadcastBanner")}
-            <button
-              type="button"
-              className="terminal-broadcast-banner-close"
-              onClick={() => {
-                if (activeGroupId) {
-                  useTerminalStore.getState().toggleBroadcast(workspaceId, activeGroupId);
-                }
-              }}
-            >
-              <X size={10} />
-            </button>
+            {interactive ? (
+              <button
+                type="button"
+                className="terminal-broadcast-banner-close"
+                onClick={() => {
+                  if (activeGroupId) {
+                    useTerminalStore.getState().toggleBroadcast(workspaceId, activeGroupId);
+                  }
+                }}
+              >
+                <X size={10} />
+              </button>
+            ) : null}
           </div>
         )}
         {sessions.length === 0 ? (
@@ -3853,7 +4011,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                 </p>
               )}
             </div>
-            {!loading && (
+            {!loading && interactive && (
               <button type="button" className="terminal-new-btn" onClick={spawnNewSession}>
                 <Plus size={12} />
                 {t("terminal.newTerminal")}
@@ -3875,6 +4033,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                   node={group.root}
                   workspaceId={workspaceId}
                   groupId={group.id}
+                  interactive={interactive}
                   activeIndicatorSessionId={domFocusedSessionId}
                   isBroadcasting={workspaceState?.broadcastGroupId === group.id}
                   containerRefs={containerRefs}
@@ -3887,7 +4046,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                     updateGroupRatio(workspaceId, group.id, containerId, ratio)
                   }
                   ensureTerminal={ensureTerminal}
-                  showCloseButton={group.root.type === "split"}
+                  showCloseButton={interactive && group.root.type === "split"}
                 />
               </div>
             ))}
@@ -3907,7 +4066,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         )}
       </div>
 
-      {ctxMenu && createPortal(
+      {ctxMenu && interactive && createPortal(
         <div
           ref={menuRef}
           className="dropdown-menu"
@@ -3968,6 +4127,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
           <button
             type="button"
             className="dropdown-item"
+            disabled={!interactive}
             onClick={() => void pasteIntoTerminal(terminalCtxMenu.sessionId)}
           >
             <ClipboardPaste size={12} />
