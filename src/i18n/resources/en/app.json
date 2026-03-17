@@ -391,6 +391,74 @@
       "saveFailed": "Failed to save: {{error}}"
     }
   },
+  "remoteAttach": {
+    "connection": {
+      "title": "Attach to Panes Host",
+      "subtitle": "Connect a browser client to a running Panes host on your network.",
+      "urlLabel": "Host WebSocket URL",
+      "tokenLabel": "Device token",
+      "tokenPlaceholder": "Paste a remote device grant token",
+      "connect": "Connect",
+      "connecting": "Connecting...",
+      "missingFields": "Remote host URL and device token are required."
+    },
+    "shell": {
+      "title": "Panes Remote",
+      "connectedAs": "Connected as {{label}}",
+      "refresh": "Refresh",
+      "disconnect": "Disconnect"
+    },
+    "control": {
+      "active": "Control active",
+      "viewer": "Read-only viewer",
+      "take": "Take control",
+      "release": "Release control",
+      "takeControlFailed": "Unable to acquire controller lease."
+    },
+    "workspaces": {
+      "title": "Workspaces"
+    },
+    "threads": {
+      "title": "Threads",
+      "new": "New",
+      "emptyTitle": "No threads yet",
+      "emptyHint": "Create a thread to start chatting with the attached workspace.",
+      "repoScope": "Active repo"
+    },
+    "threadTitle": {
+      "workspace": "Remote Workspace",
+      "repo": "{{name}} Chat"
+    },
+    "chat": {
+      "workspaceTitle": "Workspace Chat",
+      "repoTitle": "{{name}} Chat",
+      "threadReady": "Live thread attached",
+      "threadMissing": "Create a thread to start streaming",
+      "emptyTitle": "No messages yet",
+      "emptyHint": "Start a new turn from this browser client.",
+      "loadOlder": "Load older messages",
+      "takeControlPlaceholder": "Take control to send messages or answer approvals.",
+      "sendingToThread": "Messages stream into the selected thread.",
+      "creatingThread": "The first send creates a new thread for this scope.",
+      "assistant": "Assistant",
+      "user": "User"
+    },
+    "terminal": {
+      "title": "Terminal",
+      "readOnly": "Take control to send input or resize this terminal.",
+      "emptyTitle": "No workspace selected",
+      "emptyHint": "Select a workspace to attach its terminal sessions."
+    },
+    "git": {
+      "emptyTitle": "No repository selected",
+      "emptyHint": "Pick a workspace with a repository to inspect git state.",
+      "readOnlyHint": "This remote panel is read-first in V1.",
+      "selectChangeTitle": "Select a change",
+      "selectChangeHint": "Choose a file on the left to inspect its diff.",
+      "staged": "Staged",
+      "workingTree": "Working tree"
+    }
+  },
   "powerModal": {
     "title": "Power Management",
     "keepAwake": "Keep Awake",

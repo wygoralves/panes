@@ -71,12 +71,13 @@ pub async fn get_remote_host_status(
 
 #[tauri::command]
 pub async fn start_remote_host(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     bind_addr: Option<String>,
 ) -> Result<RemoteHostStatusDto, String> {
     state
         .remote_host
-        .start_with_state(bind_addr.as_deref(), state.inner().clone())
+        .start_with_runtime(bind_addr.as_deref(), state.inner().clone(), app)
         .await
 }
 

@@ -89,16 +89,22 @@ impl RemoteHostManager {
         bind_addr: Option<&str>,
         terminals: Arc<TerminalManager>,
     ) -> Result<RemoteHostStatusDto, String> {
-        self.start_inner(bind_addr, terminals, None).await
+        self.start_inner(bind_addr, terminals, None, None).await
     }
 
-    pub async fn start_with_state(
+    pub async fn start_with_runtime(
         &self,
         bind_addr: Option<&str>,
         state: AppState,
+        app_handle: tauri::AppHandle,
     ) -> Result<RemoteHostStatusDto, String> {
-        self.start_inner(bind_addr, state.terminals.clone(), Some(state))
-            .await
+        self.start_inner(
+            bind_addr,
+            state.terminals.clone(),
+            Some(state),
+            Some(app_handle),
+        )
+        .await
     }
 
     async fn start_inner(
@@ -106,6 +112,7 @@ impl RemoteHostManager {
         bind_addr: Option<&str>,
         terminals: Arc<TerminalManager>,
         state: Option<AppState>,
+        app_handle: Option<tauri::AppHandle>,
     ) -> Result<RemoteHostStatusDto, String> {
         let mut running = self.running.lock().await;
         if let Some(host) = running.as_ref() {
@@ -125,6 +132,7 @@ impl RemoteHostManager {
             self.db.clone(),
             terminals,
             state,
+            app_handle,
             self.event_tx.clone(),
             shutdown.clone(),
         ));
@@ -161,6 +169,7 @@ async fn run_remote_host(
     db: Database,
     terminals: Arc<TerminalManager>,
     state: Option<AppState>,
+    app_handle: Option<tauri::AppHandle>,
     event_tx: broadcast::Sender<RemoteEventEnvelope>,
     shutdown: CancellationToken,
 ) {
@@ -173,11 +182,21 @@ async fn run_remote_host(
                         let db = db.clone();
                         let terminals = terminals.clone();
                         let state = state.clone();
+                        let app_handle = app_handle.clone();
                         let event_tx = event_tx.clone();
                         let shutdown = shutdown.clone();
                         tokio::spawn(async move {
                             if let Err(error) =
-                                handle_connection(stream, db, terminals, state, event_tx, shutdown).await
+                                handle_connection(
+                                    stream,
+                                    db,
+                                    terminals,
+                                    state,
+                                    app_handle,
+                                    event_tx,
+                                    shutdown,
+                                )
+                                .await
                             {
                                 log::warn!("remote host connection failed for {peer_addr}: {error}");
                             }
@@ -199,6 +218,7 @@ async fn handle_connection(
     db: Database,
     terminals: Arc<TerminalManager>,
     state: Option<AppState>,
+    app_handle: Option<tauri::AppHandle>,
     event_tx: broadcast::Sender<RemoteEventEnvelope>,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
@@ -208,9 +228,13 @@ async fn handle_connection(
     .await
     .context("failed to accept remote websocket handshake")?;
 
-    let router = match state {
-        Some(state) => RemoteCommandRouter::new(db.clone(), terminals).with_state(state),
-        None => RemoteCommandRouter::new(db.clone(), terminals),
+    let router = match (state, app_handle) {
+        (Some(state), Some(app_handle)) => {
+            RemoteCommandRouter::new(db.clone(), terminals).with_runtime(state, app_handle)
+        }
+        (Some(state), None) => RemoteCommandRouter::new(db.clone(), terminals).with_state(state),
+        (None, Some(_)) => RemoteCommandRouter::new(db.clone(), terminals),
+        (None, None) => RemoteCommandRouter::new(db.clone(), terminals),
     };
     let (mut write, mut read) = websocket.split();
     let grant = match authenticate_connection(&mut write, &mut read, &router).await? {

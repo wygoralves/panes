@@ -216,6 +216,33 @@ pub async fn send_message(
     plan_mode: Option<bool>,
     client_turn_id: Option<String>,
 ) -> Result<String, String> {
+    send_message_inner(
+        app,
+        state.inner(),
+        thread_id,
+        message,
+        model_id,
+        reasoning_effort,
+        attachments,
+        input_items,
+        plan_mode,
+        client_turn_id,
+    )
+    .await
+}
+
+pub(crate) async fn send_message_inner(
+    app: tauri::AppHandle,
+    state: &AppState,
+    thread_id: String,
+    message: String,
+    model_id: Option<String>,
+    reasoning_effort: Option<String>,
+    attachments: Option<Vec<ChatAttachmentPayload>>,
+    input_items: Option<Vec<ChatInputItemPayload>>,
+    plan_mode: Option<bool>,
+    client_turn_id: Option<String>,
+) -> Result<String, String> {
     if state.turns.get(&thread_id).await.is_some() {
         return Err(
             "A turn is already running for this thread. Cancel it before sending another message."
@@ -453,7 +480,7 @@ pub async fn send_message(
                 .unwrap_or_else(|| allow_network_for_trust_level(&trust_level))
         };
     let personality = if thread.engine_id == "codex"
-        && model_supports_personality(state.inner(), &thread.engine_id, &effective_model_id).await
+        && model_supports_personality(state, &thread.engine_id, &effective_model_id).await
     {
         thread_personality(thread.engine_metadata.as_ref())
     } else {
@@ -509,7 +536,7 @@ pub async fn send_message(
         );
     }
 
-    let state_cloned = state.inner().clone();
+    let state_cloned = state.clone();
     let app_handle = app.clone();
     let assistant_message_id = assistant_message.id.clone();
     let turn_input_for_task = turn_input.clone();

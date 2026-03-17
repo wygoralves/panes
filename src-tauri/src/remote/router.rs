@@ -1,16 +1,23 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
-    commands::{chat, terminal},
+    commands::{
+        chat::{self, ChatAttachmentPayload, ChatInputItemPayload},
+        terminal,
+    },
+    config::app_config::AppConfig,
     db::{self, Database},
+    git::{repo, worktree},
     models::{MessageWindowCursorDto, RemoteDeviceGrantDto},
+    path_utils,
     remote::protocol::{RemoteCommandRequest, RemoteCommandResponse},
     state::AppState,
     terminal::TerminalManager,
+    workspace_startup::parse_persisted_workspace_startup_preset_json,
 };
 
 const REMOTE_MESSAGE_WINDOW_DEFAULT_LIMIT: usize = 120;
@@ -21,6 +28,7 @@ pub struct RemoteCommandRouter {
     db: Database,
     terminals: Arc<TerminalManager>,
     runtime_state: Option<AppState>,
+    app_handle: Option<tauri::AppHandle>,
 }
 
 impl RemoteCommandRouter {
@@ -29,11 +37,18 @@ impl RemoteCommandRouter {
             db,
             terminals,
             runtime_state: None,
+            app_handle: None,
         }
     }
 
     pub fn with_state(mut self, state: AppState) -> Self {
         self.runtime_state = Some(state);
+        self
+    }
+
+    pub fn with_runtime(mut self, state: AppState, app_handle: tauri::AppHandle) -> Self {
+        self.runtime_state = Some(state);
+        self.app_handle = Some(app_handle);
         self
     }
 
@@ -72,9 +87,15 @@ impl RemoteCommandRouter {
         args: Option<Value>,
     ) -> Result<Value, String> {
         match command {
+            "get_authenticated_remote_device_grant" => to_json(grant),
             "list_workspaces" => {
                 require_scope(grant, "workspace.read")?;
                 self.run_json(|db| db::workspaces::list_workspaces(db))
+                    .await
+            }
+            "list_archived_workspaces" => {
+                require_scope(grant, "workspace.read")?;
+                self.run_json(|db| db::workspaces::list_archived_workspaces(db))
                     .await
             }
             "get_repos" => {
@@ -96,6 +117,44 @@ impl RemoteCommandRouter {
                 let args: WorkspaceArgs = parse_args(args)?;
                 self.run_json(move |db| {
                     db::threads::list_archived_threads_for_workspace(db, &args.workspace_id)
+                })
+                .await
+            }
+            "create_thread" => {
+                require_scope(grant, "workspace.read")?;
+                require_scope(grant, "thread.read")?;
+                require_scope(grant, "controller.write")?;
+                let args: CreateThreadArgs = parse_args(args)?;
+                if args.repo_id.is_some() {
+                    require_scope(grant, "repo.read")?;
+                }
+                self.require_controller_lease(grant, "workspace", &args.workspace_id)
+                    .await?;
+                self.run_json(move |db| {
+                    let workspace = db::workspaces::list_workspaces(db)?
+                        .into_iter()
+                        .find(|workspace| workspace.id == args.workspace_id)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("workspace not found: {}", args.workspace_id)
+                        })?;
+                    if let Some(repo_id) = args.repo_id.as_deref() {
+                        let repo = db::repos::find_repo_by_id(db, repo_id)?
+                            .ok_or_else(|| anyhow::anyhow!("repo not found: {repo_id}"))?;
+                        if repo.workspace_id != workspace.id {
+                            anyhow::bail!(
+                                "repo {repo_id} does not belong to workspace {}",
+                                workspace.id
+                            );
+                        }
+                    }
+                    db::threads::create_thread(
+                        db,
+                        &workspace.id,
+                        args.repo_id.as_deref(),
+                        &args.engine_id,
+                        &args.model_id,
+                        &args.title,
+                    )
                 })
                 .await
             }
@@ -133,6 +192,29 @@ impl RemoteCommandRouter {
                     db::messages::get_action_output(db, &args.message_id, &args.action_id)
                 })
                 .await
+            }
+            "send_message" => {
+                require_scope(grant, "thread.read")?;
+                require_scope(grant, "controller.write")?;
+                let args: SendMessageArgs = parse_args(args)?;
+                self.require_controller_lease(grant, "thread", &args.thread_id)
+                    .await?;
+                let state = self.runtime_state()?;
+                let app_handle = self.app_handle()?;
+                let assistant_message_id = chat::send_message_inner(
+                    app_handle,
+                    state,
+                    args.thread_id,
+                    args.message,
+                    args.model_id,
+                    args.reasoning_effort,
+                    args.attachments,
+                    args.input_items,
+                    args.plan_mode,
+                    args.client_turn_id,
+                )
+                .await?;
+                to_json(assistant_message_id)
             }
             "cancel_turn" => {
                 require_scope(grant, "thread.read")?;
@@ -227,6 +309,33 @@ impl RemoteCommandRouter {
                 })
                 .await
             }
+            "get_terminal_accelerated_rendering" => {
+                require_scope(grant, "terminal.read")?;
+                self.run_repo_json(move || {
+                    let config = AppConfig::load_or_create().map_err(|error| error.to_string())?;
+                    Ok(config.terminal_accelerated_rendering_enabled())
+                })
+                .await
+            }
+            "terminal_create_session" => {
+                require_scope(grant, "terminal.read")?;
+                require_scope(grant, "controller.write")?;
+                let args: TerminalCreateSessionArgs = parse_args(args)?;
+                self.require_controller_lease(grant, "workspace", &args.workspace_id)
+                    .await?;
+                let state = self.runtime_state()?;
+                let app_handle = self.app_handle()?;
+                let session = terminal::terminal_create_session_inner(
+                    app_handle,
+                    state,
+                    args.workspace_id,
+                    args.cols,
+                    args.rows,
+                    args.cwd,
+                )
+                .await?;
+                to_json(session)
+            }
             "terminal_resume_session" => {
                 require_scope(grant, "terminal.read")?;
                 let args: TerminalResumeSessionArgs = parse_args(args)?;
@@ -238,6 +347,23 @@ impl RemoteCommandRouter {
                         .map_err(|error| error.to_string())
                 })
                 .await
+            }
+            "terminal_close_session" => {
+                require_scope(grant, "terminal.read")?;
+                require_scope(grant, "controller.write")?;
+                let args: TerminalSessionArgs = parse_args(args)?;
+                self.require_controller_lease(grant, "workspace", &args.workspace_id)
+                    .await?;
+                let state = self.runtime_state()?;
+                let app_handle = self.app_handle()?;
+                terminal::terminal_close_session_inner(
+                    app_handle,
+                    state,
+                    args.workspace_id,
+                    args.session_id,
+                )
+                .await?;
+                Ok(Value::Null)
             }
             "terminal_write" => {
                 require_scope(grant, "terminal.read")?;
@@ -290,6 +416,93 @@ impl RemoteCommandRouter {
                 .await?;
                 Ok(Value::Null)
             }
+            "get_git_status" => {
+                require_scope(grant, "repo.read")?;
+                let args: RepoPathArgs = parse_args(args)?;
+                let repo_path = self.require_accessible_repo_path(args.repo_path).await?;
+                self.run_repo_json(move || {
+                    repo::get_git_status(&repo_path).map_err(|error| error.to_string())
+                })
+                .await
+            }
+            "get_file_diff" => {
+                require_scope(grant, "repo.read")?;
+                let args: GitFileDiffArgs = parse_args(args)?;
+                let repo_path = self.require_accessible_repo_path(args.repo_path).await?;
+                self.run_repo_json(move || {
+                    repo::get_file_diff(&repo_path, &args.file_path, args.staged)
+                        .map_err(|error| error.to_string())
+                })
+                .await
+            }
+            "list_git_branches" => {
+                require_scope(grant, "repo.read")?;
+                let args: GitBranchesArgs = parse_args(args)?;
+                let repo_path = self.require_accessible_repo_path(args.repo_path).await?;
+                self.run_repo_json(move || {
+                    repo::list_git_branches(
+                        &repo_path,
+                        crate::models::GitBranchScopeDto::from_str(&args.scope),
+                        args.offset.unwrap_or(0),
+                        args.limit.unwrap_or(200),
+                        args.search.as_deref(),
+                    )
+                    .map_err(|error| error.to_string())
+                })
+                .await
+            }
+            "list_git_commits" => {
+                require_scope(grant, "repo.read")?;
+                let args: GitCommitsArgs = parse_args(args)?;
+                let repo_path = self.require_accessible_repo_path(args.repo_path).await?;
+                self.run_repo_json(move || {
+                    repo::list_git_commits(
+                        &repo_path,
+                        args.offset.unwrap_or(0),
+                        args.limit.unwrap_or(100),
+                    )
+                    .map_err(|error| error.to_string())
+                })
+                .await
+            }
+            "get_commit_diff" => {
+                require_scope(grant, "repo.read")?;
+                let args: CommitDiffArgs = parse_args(args)?;
+                let repo_path = self.require_accessible_repo_path(args.repo_path).await?;
+                self.run_repo_json(move || {
+                    repo::get_commit_diff(&repo_path, &args.commit_hash)
+                        .map_err(|error| error.to_string())
+                })
+                .await
+            }
+            "list_git_worktrees" => {
+                require_scope(grant, "repo.read")?;
+                let args: RepoPathArgs = parse_args(args)?;
+                let repo_path = self.require_accessible_repo_path(args.repo_path).await?;
+                self.run_repo_json(move || {
+                    worktree::list_worktrees(&repo_path).map_err(|error| error.to_string())
+                })
+                .await
+            }
+            "list_git_stashes" => {
+                require_scope(grant, "repo.read")?;
+                let args: RepoPathArgs = parse_args(args)?;
+                let repo_path = self.require_accessible_repo_path(args.repo_path).await?;
+                self.run_repo_json(move || {
+                    repo::list_git_stashes(&repo_path).map_err(|error| error.to_string())
+                })
+                .await
+            }
+            "get_workspace_startup_preset" => {
+                require_scope(grant, "workspace.read")?;
+                let args: WorkspaceArgs = parse_args(args)?;
+                self.run_json(move |db| {
+                    db::workspaces::get_workspace_startup_preset_json(db, &args.workspace_id)?
+                        .map(|raw| parse_persisted_workspace_startup_preset_json(&raw))
+                        .transpose()
+                })
+                .await
+            }
             _ => Err(format!("unknown remote command: {command}")),
         }
     }
@@ -309,6 +522,17 @@ impl RemoteCommandRouter {
         Fut: std::future::Future<Output = Result<T, String>>,
     {
         let value = future.await?;
+        to_json(value)
+    }
+
+    async fn run_repo_json<T, F>(&self, operation: F) -> Result<Value, String>
+    where
+        T: serde::Serialize + Send + 'static,
+        F: FnOnce() -> Result<T, String> + Send + 'static,
+    {
+        let value = tokio::task::spawn_blocking(operation)
+            .await
+            .map_err(|error| error.to_string())??;
         to_json(value)
     }
 
@@ -340,6 +564,43 @@ impl RemoteCommandRouter {
         }
     }
 
+    async fn require_accessible_repo_path(&self, repo_path: String) -> Result<String, String> {
+        let candidate = repo_path.clone();
+        let normalized = run_db(self.db.clone(), move |db| {
+            let canonical_candidate = path_utils::canonicalize_path(Path::new(&candidate))
+                .map_err(|error| anyhow::anyhow!("failed to resolve repo path: {error}"))?;
+            let workspaces = db::workspaces::list_workspaces(db)?;
+            let mut allowed_paths = workspaces
+                .iter()
+                .map(|workspace| workspace.root_path.clone())
+                .collect::<Vec<_>>();
+            for workspace in &workspaces {
+                let repos = db::repos::get_repos(db, &workspace.id)?;
+                allowed_paths.extend(repos.into_iter().map(|repo| repo.path));
+            }
+            let allowed = allowed_paths.iter().any(|allowed_path| {
+                path_utils::canonicalize_path(Path::new(allowed_path))
+                    .map(|canonical_allowed| {
+                        canonical_candidate == canonical_allowed
+                            || canonical_candidate.starts_with(&canonical_allowed)
+                    })
+                    .unwrap_or(false)
+            });
+            if !allowed {
+                anyhow::bail!("repo path is outside the registered workspace roots");
+            }
+            Ok(canonical_candidate.to_string_lossy().to_string())
+        })
+        .await?;
+        Ok(normalized)
+    }
+
+    fn app_handle(&self) -> Result<tauri::AppHandle, String> {
+        self.app_handle
+            .clone()
+            .ok_or_else(|| "remote host app handle is unavailable".to_string())
+    }
+
     fn runtime_state(&self) -> Result<&AppState, String> {
         self.runtime_state
             .as_ref()
@@ -351,6 +612,17 @@ impl RemoteCommandRouter {
 #[serde(rename_all = "camelCase")]
 struct WorkspaceArgs {
     workspace_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateThreadArgs {
+    workspace_id: String,
+    #[serde(default)]
+    repo_id: Option<String>,
+    engine_id: String,
+    model_id: String,
+    title: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -380,6 +652,25 @@ struct MessageArgs {
 struct ActionOutputArgs {
     message_id: String,
     action_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SendMessageArgs {
+    thread_id: String,
+    message: String,
+    #[serde(default)]
+    model_id: Option<String>,
+    #[serde(default)]
+    reasoning_effort: Option<String>,
+    #[serde(default)]
+    attachments: Option<Vec<ChatAttachmentPayload>>,
+    #[serde(default)]
+    input_items: Option<Vec<ChatInputItemPayload>>,
+    #[serde(default)]
+    plan_mode: Option<bool>,
+    #[serde(default)]
+    client_turn_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -420,11 +711,28 @@ struct ReleaseControllerLeaseArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct TerminalCreateSessionArgs {
+    workspace_id: String,
+    cols: u16,
+    rows: u16,
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct TerminalResumeSessionArgs {
     workspace_id: String,
     session_id: String,
     #[serde(default)]
     from_seq: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalSessionArgs {
+    workspace_id: String,
+    session_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -454,6 +762,50 @@ struct TerminalResizeArgs {
     pixel_width: u16,
     #[serde(default)]
     pixel_height: u16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RepoPathArgs {
+    repo_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GitFileDiffArgs {
+    repo_path: String,
+    file_path: String,
+    staged: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GitBranchesArgs {
+    repo_path: String,
+    scope: String,
+    #[serde(default)]
+    offset: Option<usize>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    search: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GitCommitsArgs {
+    repo_path: String,
+    #[serde(default)]
+    offset: Option<usize>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommitDiffArgs {
+    repo_path: String,
+    commit_hash: String,
 }
 
 fn parse_args<T>(args: Option<Value>) -> Result<T, String>
@@ -768,6 +1120,89 @@ mod tests {
             .await;
         assert!(!denied.ok);
         assert!(denied
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("repo.read")));
+    }
+
+    #[tokio::test]
+    async fn validates_repo_scope_when_creating_remote_threads() {
+        let (state, base_dir) = test_app_state();
+        let (workspace, repo, _thread) = create_workspace_repo_and_thread(&state, &base_dir);
+        let other_workspace_dir = base_dir.join("workspace-other");
+        let other_repo_dir = other_workspace_dir.join("repo-other");
+        fs::create_dir_all(&other_repo_dir).expect("failed to create second repo dir");
+        let other_workspace = db::workspaces::upsert_workspace(
+            &state.db,
+            other_workspace_dir.to_string_lossy().as_ref(),
+            None,
+        )
+        .expect("failed to create second workspace");
+        let other_repo = db::repos::upsert_repo(
+            &state.db,
+            &other_workspace.id,
+            "repo-other",
+            other_repo_dir.to_string_lossy().as_ref(),
+            "main",
+            true,
+        )
+        .expect("failed to create second repo");
+
+        let router = RemoteCommandRouter::new(state.db.clone(), state.terminals.clone());
+        let controller = create_grant(
+            &state,
+            "Controller",
+            &["workspace.read", "repo.read", "thread.read", "controller.write"],
+        );
+        acquire_lease(&state, &controller.grant.id, "workspace", &workspace.id);
+
+        let mismatched_repo = router
+            .handle_request(
+                &controller.grant,
+                RemoteCommandRequest {
+                    id: "req-create-1".to_string(),
+                    command: "create_thread".to_string(),
+                    args: Some(serde_json::json!({
+                        "workspaceId": workspace.id,
+                        "repoId": other_repo.id,
+                        "engineId": "codex",
+                        "modelId": "gpt-5.3-codex",
+                        "title": "Mismatched"
+                    })),
+                },
+            )
+            .await;
+        assert!(!mismatched_repo.ok);
+        assert!(mismatched_repo
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("does not belong to workspace")));
+
+        let no_repo_scope = router
+            .handle_request(
+                &RemoteDeviceGrantDto {
+                    scopes: vec![
+                        "workspace.read".to_string(),
+                        "thread.read".to_string(),
+                        "controller.write".to_string(),
+                    ],
+                    ..controller.grant.clone()
+                },
+                RemoteCommandRequest {
+                    id: "req-create-2".to_string(),
+                    command: "create_thread".to_string(),
+                    args: Some(serde_json::json!({
+                        "workspaceId": workspace.id,
+                        "repoId": repo.id,
+                        "engineId": "codex",
+                        "modelId": "gpt-5.3-codex",
+                        "title": "Repo scoped"
+                    })),
+                },
+            )
+            .await;
+        assert!(!no_repo_scope.ok);
+        assert!(no_repo_scope
             .error
             .as_deref()
             .is_some_and(|error| error.contains("repo.read")));

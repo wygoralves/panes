@@ -75,7 +75,7 @@ describe("terminalStore.createMultiSessionGroup", () => {
     mockLocalStorage.removeItem.mockImplementation(() => undefined);
     mockLocalStorage.clear.mockImplementation(() => undefined);
     vi.stubGlobal("localStorage", mockLocalStorage);
-    useTerminalStore.setState({ workspaces: {} });
+    useTerminalStore.setState({ remoteAttachMode: false, workspaces: {} });
     useHarnessStore.setState({
       phase: "idle",
       harnesses: [],
@@ -504,6 +504,37 @@ describe("terminalStore.createMultiSessionGroup", () => {
     expect(workspace?.layoutMode).toBe("split");
     expect(workspace?.panelSize).toBe(33);
     expect(workspace?.isOpen).toBe(true);
+    expect(workspace?.pendingStartupPreset).toBeNull();
+  });
+
+  it("keeps remote attach activation from auto-opening or queuing startup presets", async () => {
+    const preset = {
+      version: 1 as const,
+      defaultView: "split" as const,
+      splitPanelSize: 48,
+      terminal: {
+        applyWhen: "no_live_sessions" as const,
+        groups: [
+          {
+            id: "g1",
+            name: "Startup",
+            sessions: [{ id: "pane-1", cwd: ".", cwdBase: "workspace" as const }],
+            root: { type: "leaf" as const, sessionId: "pane-1" },
+          },
+        ],
+        activeGroupId: "g1",
+        focusedSessionId: "pane-1",
+      },
+    };
+    mockIpc.getWorkspaceStartupPreset.mockResolvedValue(preset);
+
+    useTerminalStore.getState().setRemoteAttachMode(true);
+    await useTerminalStore.getState().prepareWorkspaceActivation("ws-1");
+
+    const workspace = useTerminalStore.getState().workspaces["ws-1"];
+    expect(workspace?.startupPreset).toEqual(preset);
+    expect(workspace?.layoutMode).toBe("terminal");
+    expect(workspace?.isOpen).toBe(false);
     expect(workspace?.pendingStartupPreset).toBeNull();
   });
 

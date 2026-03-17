@@ -295,7 +295,9 @@ interface WorkspaceTerminalState {
 }
 
 interface TerminalState {
+  remoteAttachMode: boolean;
   workspaces: Record<string, WorkspaceTerminalState>;
+  setRemoteAttachMode: (enabled: boolean) => void;
   prepareWorkspaceActivation: (workspaceId: string) => Promise<void>;
   setWorkspaceStartupPresetState: (
     workspaceId: string,
@@ -595,14 +597,19 @@ function buildStartupWorktreePath(
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
+  remoteAttachMode: false,
   workspaces: {},
+  setRemoteAttachMode: (enabled) => {
+    set({ remoteAttachMode: enabled });
+  },
 
   prepareWorkspaceActivation: async (workspaceId) => {
     const fallbackMode = readStoredLayoutMode(workspaceId);
+    const remoteAttachMode = get().remoteAttachMode;
     try {
       const preset = await ipc.getWorkspaceStartupPreset(workspaceId);
-      const targetMode = preset?.defaultView ?? fallbackMode;
-      const nextPendingPreset = pendingStartupPresetFor(preset);
+      const targetMode = remoteAttachMode ? "terminal" : (preset?.defaultView ?? fallbackMode);
+      const nextPendingPreset = remoteAttachMode ? null : pendingStartupPresetFor(preset);
       set((state) => {
         const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
         const hasLiveSessions = current.sessions.length > 0;
@@ -613,8 +620,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
               ? current.pendingStartupPreset
               : nextPendingPreset,
             layoutMode: hasLiveSessions ? current.layoutMode : targetMode,
-            isOpen:
-              hasLiveSessions || targetMode === "split" || targetMode === "terminal" || nextPendingPreset
+            isOpen: remoteAttachMode
+              ? hasLiveSessions
+              : hasLiveSessions || targetMode === "split" || targetMode === "terminal" || nextPendingPreset
                 ? true
                 : current.isOpen,
             panelSize: hasLiveSessions
@@ -632,8 +640,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
           startupPreset: null,
           pendingStartupPreset: null,
-          layoutMode: fallbackMode,
-          isOpen: fallbackMode === "split" || fallbackMode === "terminal",
+          layoutMode: remoteAttachMode ? "terminal" : fallbackMode,
+          isOpen: remoteAttachMode ? false : fallbackMode === "split" || fallbackMode === "terminal",
           loading: false,
           error: undefined,
         }),

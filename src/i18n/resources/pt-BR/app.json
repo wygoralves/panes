@@ -391,6 +391,74 @@
       "saveFailed": "Falha ao salvar: {{error}}"
     }
   },
+  "remoteAttach": {
+    "connection": {
+      "title": "Conectar ao Panes Host",
+      "subtitle": "Conecte um cliente no navegador a um host Panes ativo na sua rede.",
+      "urlLabel": "URL WebSocket do host",
+      "tokenLabel": "Token do dispositivo",
+      "tokenPlaceholder": "Cole um token de grant remoto",
+      "connect": "Conectar",
+      "connecting": "Conectando...",
+      "missingFields": "A URL do host remoto e o token do dispositivo são obrigatórios."
+    },
+    "shell": {
+      "title": "Panes Remote",
+      "connectedAs": "Conectado como {{label}}",
+      "refresh": "Atualizar",
+      "disconnect": "Desconectar"
+    },
+    "control": {
+      "active": "Controle ativo",
+      "viewer": "Modo somente leitura",
+      "take": "Assumir controle",
+      "release": "Liberar controle",
+      "takeControlFailed": "Não foi possível adquirir o lease de controle."
+    },
+    "workspaces": {
+      "title": "Workspaces"
+    },
+    "threads": {
+      "title": "Threads",
+      "new": "Nova",
+      "emptyTitle": "Ainda não há threads",
+      "emptyHint": "Crie uma thread para começar a conversar com o workspace conectado.",
+      "repoScope": "Repo ativo"
+    },
+    "threadTitle": {
+      "workspace": "Workspace Remoto",
+      "repo": "Chat de {{name}}"
+    },
+    "chat": {
+      "workspaceTitle": "Chat do workspace",
+      "repoTitle": "Chat de {{name}}",
+      "threadReady": "Thread ativa conectada",
+      "threadMissing": "Crie uma thread para começar o streaming",
+      "emptyTitle": "Ainda não há mensagens",
+      "emptyHint": "Inicie uma nova rodada a partir deste cliente web.",
+      "loadOlder": "Carregar mensagens anteriores",
+      "takeControlPlaceholder": "Assuma o controle para enviar mensagens ou responder aprovações.",
+      "sendingToThread": "As mensagens serão enviadas para a thread selecionada.",
+      "creatingThread": "O primeiro envio cria uma nova thread para este escopo.",
+      "assistant": "Assistente",
+      "user": "Usuário"
+    },
+    "terminal": {
+      "title": "Terminal",
+      "readOnly": "Assuma o controle para enviar entrada ou redimensionar este terminal.",
+      "emptyTitle": "Nenhum workspace selecionado",
+      "emptyHint": "Selecione um workspace para conectar suas sessões de terminal."
+    },
+    "git": {
+      "emptyTitle": "Nenhum repositório selecionado",
+      "emptyHint": "Escolha um workspace com repositório para inspecionar o estado do git.",
+      "readOnlyHint": "Este painel remoto é prioritariamente de leitura na V1.",
+      "selectChangeTitle": "Selecione uma alteração",
+      "selectChangeHint": "Escolha um arquivo à esquerda para inspecionar o diff.",
+      "staged": "Stage",
+      "workingTree": "Working tree"
+    }
+  },
   "powerModal": {
     "title": "Gerenciamento de energia",
     "keepAwake": "Manter acordado",

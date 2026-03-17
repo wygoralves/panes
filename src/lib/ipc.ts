@@ -87,6 +87,8 @@ export const ipc = {
     invoke<KeepAwakeState>("set_power_settings", { settings }),
   getHelperStatus: () => invoke<HelperStatus>("get_helper_status"),
   registerKeepAwakeHelper: () => invoke<HelperStatus>("register_keep_awake_helper"),
+  getAuthenticatedRemoteDeviceGrant: () =>
+    invoke<RemoteDeviceGrant>("get_authenticated_remote_device_grant"),
   listRemoteDeviceGrants: () =>
     invoke<RemoteDeviceGrant[]>("list_remote_device_grants"),
   createRemoteDeviceGrant: (

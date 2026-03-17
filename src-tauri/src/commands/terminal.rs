@@ -28,7 +28,18 @@ pub async fn terminal_create_session(
     rows: u16,
     cwd: Option<String>,
 ) -> Result<TerminalSessionDto, String> {
-    let workspace_root = workspace_root_path(state.inner(), &workspace_id).await?;
+    terminal_create_session_inner(app, state.inner(), workspace_id, cols, rows, cwd).await
+}
+
+pub(crate) async fn terminal_create_session_inner(
+    app: tauri::AppHandle,
+    state: &AppState,
+    workspace_id: String,
+    cols: u16,
+    rows: u16,
+    cwd: Option<String>,
+) -> Result<TerminalSessionDto, String> {
+    let workspace_root = workspace_root_path(state, &workspace_id).await?;
     let workspace_root_canonical =
         canonicalize_existing_dir(&workspace_root, "workspace root directory")?;
     let resolved_cwd = match cwd {
@@ -156,6 +167,15 @@ pub(crate) async fn terminal_resize_inner(
 pub async fn terminal_close_session(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+    workspace_id: String,
+    session_id: String,
+) -> Result<(), String> {
+    terminal_close_session_inner(app, state.inner(), workspace_id, session_id).await
+}
+
+pub(crate) async fn terminal_close_session_inner(
+    app: tauri::AppHandle,
+    state: &AppState,
     workspace_id: String,
     session_id: String,
 ) -> Result<(), String> {
