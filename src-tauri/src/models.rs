@@ -73,6 +73,13 @@ pub struct RemoteAuditEventDto {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteHostStatusDto {
+    pub running: bool,
+    pub bind_addr: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TrustLevelDto {

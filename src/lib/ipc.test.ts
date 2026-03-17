@@ -45,6 +45,20 @@ describe("ipc transport", () => {
     });
   });
 
+  it("forwards remote host control commands through the configured transport", async () => {
+    const { invoke, transport } = createMockTransport();
+    invoke.mockResolvedValue({ running: true, bindAddr: "127.0.0.1:4050" });
+    setPanesTransport(transport);
+
+    await expect(ipc.startRemoteHost("0.0.0.0:4050")).resolves.toEqual({
+      running: true,
+      bindAddr: "127.0.0.1:4050",
+    });
+    expect(invoke).toHaveBeenCalledWith("start_remote_host", {
+      bindAddr: "0.0.0.0:4050",
+    });
+  });
+
   it("forwards event subscriptions through the configured transport", async () => {
     const { listeners, listen, transport } = createMockTransport();
     setPanesTransport(transport);

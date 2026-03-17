@@ -45,6 +45,7 @@ import type {
   RemoteDeviceGrant,
   CreatedRemoteDeviceGrant,
   RemoteControllerLease,
+  RemoteHostStatus,
   Repo,
   SearchResult,
   StreamEvent,
@@ -104,6 +105,14 @@ export const ipc = {
     invoke<RemoteAuditEvent[]>("list_remote_audit_events", {
       limit: limit ?? null,
     }),
+  getRemoteHostStatus: () =>
+    invoke<RemoteHostStatus>("get_remote_host_status"),
+  startRemoteHost: (bindAddr?: string | null) =>
+    invoke<RemoteHostStatus>("start_remote_host", {
+      bindAddr: bindAddr ?? null,
+    }),
+  stopRemoteHost: () =>
+    invoke<RemoteHostStatus>("stop_remote_host"),
   getActiveRemoteControllerLease: (scopeType: string, scopeId: string) =>
     invoke<RemoteControllerLease | null>("get_active_remote_controller_lease", {
       scopeType,

@@ -55,6 +55,7 @@ interface PendingRequest {
 
 export interface RemotePanesTransportOptions {
   socketFactory?: (url: string) => RemoteTransportSocket;
+  authToken?: string;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -90,10 +91,12 @@ function buildCloseError(reason: string): Error {
 }
 
 export class RemotePanesTransport implements PanesTransport {
+  private static readonly AUTH_REQUEST_ID = "remote-auth-0";
   private readonly socket: RemoteTransportSocket;
   private readonly channelListeners = new Map<string, Set<(payload: unknown) => void>>();
   private readonly pendingRequests = new Map<string, PendingRequest>();
   private readonly readyPromise: Promise<void>;
+  private readonly authToken: string | null;
   private readyResolved = false;
   private readyRejected = false;
   private nextRequestId = 1;
@@ -104,6 +107,7 @@ export class RemotePanesTransport implements PanesTransport {
     private readonly url: string,
     options: RemotePanesTransportOptions = {},
   ) {
+    this.authToken = options.authToken?.trim() || null;
     this.socket = (options.socketFactory ?? ((socketUrl) => new WebSocket(socketUrl)))(url);
     this.readyPromise = new Promise<void>((resolve, reject) => {
       this.resolveReady = resolve;
@@ -116,7 +120,11 @@ export class RemotePanesTransport implements PanesTransport {
     this.socket.addEventListener("close", this.handleClose);
 
     if (this.socket.readyState === SOCKET_OPEN) {
-      this.handleReady();
+      if (this.authToken) {
+        this.sendAuthHandshake();
+      } else {
+        this.handleReady();
+      }
     }
   }
 
@@ -164,6 +172,10 @@ export class RemotePanesTransport implements PanesTransport {
   }
 
   private readonly handleOpen = () => {
+    if (this.authToken) {
+      this.sendAuthHandshake();
+      return;
+    }
     this.handleReady();
   };
 
@@ -188,6 +200,15 @@ export class RemotePanesTransport implements PanesTransport {
 
     const pending = this.pendingRequests.get(message.id);
     if (!pending) {
+      if (message.id === RemotePanesTransport.AUTH_REQUEST_ID) {
+        if (message.ok) {
+          this.handleReady();
+          return;
+        }
+        const error = new Error(message.error);
+        this.rejectReadyOnce(error);
+        this.socket.close(4001, message.error);
+      }
       return;
     }
     this.pendingRequests.delete(message.id);
@@ -232,6 +253,19 @@ export class RemotePanesTransport implements PanesTransport {
       pending.reject(error);
     }
     this.pendingRequests.clear();
+  }
+
+  private sendAuthHandshake(): void {
+    const request: RemoteCommandRequest = {
+      id: RemotePanesTransport.AUTH_REQUEST_ID,
+      command: "authenticate_session",
+      args: { token: this.authToken },
+    };
+    try {
+      this.socket.send(JSON.stringify(request));
+    } catch (error) {
+      this.rejectReadyOnce(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 }
 

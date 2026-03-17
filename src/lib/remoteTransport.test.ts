@@ -98,6 +98,52 @@ describe("remoteTransport", () => {
     await expect(pending).resolves.toEqual(["ws-1"]);
   });
 
+  it("authenticates before resolving readiness when an auth token is configured", async () => {
+    const socket = new FakeSocket();
+    const transport = createRemoteTransport("ws://panes.test", {
+      socketFactory: () => socket,
+      authToken: "panes_token",
+    });
+
+    const pending = transport.invoke<string[]>("list_workspaces");
+    await Promise.resolve();
+
+    socket.open();
+    await Promise.resolve();
+    expect(JSON.parse(socket.sent[0])).toEqual({
+      id: "remote-auth-0",
+      command: "authenticate_session",
+      args: { token: "panes_token" },
+    });
+
+    socket.emitMessage({ id: "remote-auth-0", ok: true, result: null });
+    await Promise.resolve();
+    expect(JSON.parse(socket.sent[1]).command).toBe("list_workspaces");
+
+    socket.emitMessage({ id: "remote-1", ok: true, result: ["ws-1"] });
+    await expect(pending).resolves.toEqual(["ws-1"]);
+  });
+
+  it("still performs the auth handshake when the socket starts open", async () => {
+    const socket = new FakeSocket();
+    socket.open();
+    const transport = createRemoteTransport("ws://panes.test", {
+      socketFactory: () => socket,
+      authToken: "panes_token",
+    });
+
+    const pending = transport.invoke<string[]>("list_workspaces");
+    await Promise.resolve();
+    expect(JSON.parse(socket.sent[0]).command).toBe("authenticate_session");
+
+    socket.emitMessage({ id: "remote-auth-0", ok: true, result: null });
+    await Promise.resolve();
+    expect(JSON.parse(socket.sent[1]).command).toBe("list_workspaces");
+
+    socket.emitMessage({ id: "remote-1", ok: true, result: [] });
+    await expect(pending).resolves.toEqual([]);
+  });
+
   it("dispatches host events by channel and stops after unlisten", async () => {
     const socket = new FakeSocket();
     const transport = createRemoteTransport("ws://panes.test", {

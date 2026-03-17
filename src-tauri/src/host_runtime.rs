@@ -8,6 +8,7 @@ use crate::{
     engines::EngineManager,
     git::{repo::FileTreeCache, watcher::GitWatcherManager},
     power::KeepAwakeManager,
+    remote::server::RemoteHostManager,
     state::{AppState, TurnManager},
     terminal::TerminalManager,
 };
@@ -44,6 +45,7 @@ pub fn create_app_state() -> anyhow::Result<AppState> {
 
     let _ = db::workspaces::ensure_default_workspace(&db)
         .context("failed to ensure default workspace")?;
+    let remote_host = Arc::new(RemoteHostManager::new(db.clone()));
 
     Ok(AppState {
         db,
@@ -52,6 +54,7 @@ pub fn create_app_state() -> anyhow::Result<AppState> {
         engines: Arc::new(EngineManager::new()),
         git_watchers: Arc::new(GitWatcherManager::default()),
         terminals: Arc::new(TerminalManager::default()),
+        remote_host,
         keep_awake,
         turns: Arc::new(TurnManager::default()),
         file_tree_cache: Arc::new(FileTreeCache::new()),
@@ -61,6 +64,9 @@ pub fn create_app_state() -> anyhow::Result<AppState> {
 pub async fn shutdown_app_state(state: &AppState) {
     if let Err(error) = state.keep_awake.shutdown().await {
         log::warn!("failed to release keep awake on shutdown: {error}");
+    }
+    if let Err(error) = state.remote_host.stop().await {
+        log::warn!("failed to stop remote host on shutdown: {error}");
     }
     state.terminals.shutdown().await;
 }

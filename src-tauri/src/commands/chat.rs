@@ -3601,6 +3601,7 @@ mod tests {
         git::{repo::FileTreeCache, watcher::GitWatcherManager},
         models::{EngineCapabilitiesDto, ReasoningEffortOptionDto},
         power::KeepAwakeManager,
+        remote::server::RemoteHostManager,
         state::{AppState, TurnManager},
         terminal::TerminalManager,
     };
@@ -3612,6 +3613,7 @@ mod tests {
         fs::create_dir_all(&root).expect("failed to create temp root");
         let db = crate::db::Database::open(root.join("workspaces.db"))
             .expect("failed to create test database");
+        let remote_host = Arc::new(RemoteHostManager::new(db.clone()));
         AppState {
             db,
             config: Arc::new(AppConfig::default()),
@@ -3619,6 +3621,7 @@ mod tests {
             engines: Arc::new(EngineManager::new()),
             git_watchers: Arc::new(GitWatcherManager::default()),
             terminals: Arc::new(TerminalManager::default()),
+            remote_host,
             keep_awake: Arc::new(KeepAwakeManager::new()),
             turns: Arc::new(TurnManager::default()),
             file_tree_cache: Arc::new(FileTreeCache::new()),

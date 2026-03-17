@@ -4,7 +4,7 @@ use crate::{
     db,
     models::{
         CreatedRemoteDeviceGrantDto, RemoteAuditEventDto, RemoteControllerLeaseDto,
-        RemoteDeviceGrantDto,
+        RemoteDeviceGrantDto, RemoteHostStatusDto,
     },
     state::AppState,
 };
@@ -60,6 +60,26 @@ pub async fn list_remote_audit_events(
         db::remote::list_remote_audit_events(db, limit)
     })
     .await
+}
+
+#[tauri::command]
+pub async fn get_remote_host_status(
+    state: State<'_, AppState>,
+) -> Result<RemoteHostStatusDto, String> {
+    Ok(state.remote_host.status().await)
+}
+
+#[tauri::command]
+pub async fn start_remote_host(
+    state: State<'_, AppState>,
+    bind_addr: Option<String>,
+) -> Result<RemoteHostStatusDto, String> {
+    state.remote_host.start(bind_addr.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn stop_remote_host(state: State<'_, AppState>) -> Result<RemoteHostStatusDto, String> {
+    state.remote_host.stop().await
 }
 
 #[tauri::command]

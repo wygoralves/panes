@@ -99,6 +99,11 @@ export interface RemoteAuditEvent {
   createdAt: string;
 }
 
+export interface RemoteHostStatus {
+  running: boolean;
+  bindAddr: string | null;
+}
+
 export type WorkspaceStartupPresetFormat = "json" | "toml";
 export type WorkspaceDefaultView = "chat" | "split" | "terminal" | "editor";
 export type WorkspacePathBase = "workspace" | "worktree" | "absolute";

@@ -6,17 +6,16 @@ use crate::{
     db::{self, Database},
     models::RemoteDeviceGrantDto,
     remote::protocol::{RemoteCommandRequest, RemoteCommandResponse},
-    state::AppState,
 };
 
 #[derive(Clone)]
 pub struct RemoteCommandRouter {
-    state: AppState,
+    db: Database,
 }
 
 impl RemoteCommandRouter {
-    pub fn new(state: AppState) -> Self {
-        Self { state }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     pub async fn authenticate_device_grant(
@@ -24,7 +23,7 @@ impl RemoteCommandRouter {
         token: &str,
     ) -> Result<RemoteDeviceGrantDto, String> {
         let token = token.to_string();
-        run_db(self.state.db.clone(), move |db| {
+        run_db(self.db.clone(), move |db| {
             let grant = db::remote::find_active_device_grant_by_token(db, &token)?
                 .ok_or_else(|| anyhow::anyhow!("remote device grant not found or inactive"))?;
             db::remote::touch_device_grant_last_used(db, &grant.id)?;
@@ -124,7 +123,7 @@ impl RemoteCommandRouter {
                 let args: ReleaseControllerLeaseArgs = parse_args(args)?;
                 let lease_id = args.lease_id;
                 let lookup_lease_id = lease_id.clone();
-                let lease = run_db(self.state.db.clone(), move |db| {
+                let lease = run_db(self.db.clone(), move |db| {
                     db::remote::get_controller_lease_by_id(db, &lookup_lease_id)
                 })
                 .await?;
@@ -148,7 +147,7 @@ impl RemoteCommandRouter {
         T: serde::Serialize + Send + 'static,
         F: FnOnce(&Database) -> anyhow::Result<T> + Send + 'static,
     {
-        let value = run_db(self.state.db.clone(), operation).await?;
+        let value = run_db(self.db.clone(), operation).await?;
         serde_json::to_value(value).map_err(|error| error.to_string())
     }
 }
@@ -240,7 +239,8 @@ mod tests {
             CreatedRemoteDeviceGrantDto, RemoteDeviceGrantDto, RepoDto, ThreadDto, WorkspaceDto,
         },
         power::KeepAwakeManager,
-        state::TurnManager,
+        remote::server::RemoteHostManager,
+        state::{AppState, TurnManager},
         terminal::TerminalManager,
     };
 
@@ -251,6 +251,7 @@ mod tests {
         fs::create_dir_all(&base_dir).expect("failed to create base dir");
         let db_path = base_dir.join("router.db");
         let db = Database::open(db_path).expect("failed to initialize test db");
+        let remote_host = Arc::new(RemoteHostManager::new(db.clone()));
         let state = AppState {
             db,
             config: Arc::new(AppConfig::default()),
@@ -258,6 +259,7 @@ mod tests {
             engines: Arc::new(EngineManager::new()),
             git_watchers: Arc::new(GitWatcherManager::default()),
             terminals: Arc::new(TerminalManager::default()),
+            remote_host,
             keep_awake: Arc::new(KeepAwakeManager::new()),
             turns: Arc::new(TurnManager::default()),
             file_tree_cache: Arc::new(FileTreeCache::new()),
@@ -320,7 +322,7 @@ mod tests {
     async fn authenticates_active_device_grants_and_updates_last_used_at() {
         let (state, _base_dir) = test_app_state();
         let created = create_grant(&state, "Tablet", &["workspace.read"]);
-        let router = RemoteCommandRouter::new(state.clone());
+        let router = RemoteCommandRouter::new(state.db.clone());
 
         let grant = router
             .authenticate_device_grant(&created.token)
@@ -340,9 +342,9 @@ mod tests {
     async fn routes_read_commands_and_enforces_scopes() {
         let (state, base_dir) = test_app_state();
         let (workspace, repo, thread) = create_workspace_repo_and_thread(&state, &base_dir);
-        let router = RemoteCommandRouter::new(state);
+        let router = RemoteCommandRouter::new(state.db.clone());
         let created = create_grant(
-            &router.state,
+            &state,
             "Reader",
             &["workspace.read", "repo.read", "thread.read"],
         );
@@ -420,7 +422,7 @@ mod tests {
     #[tokio::test]
     async fn routes_remote_admin_and_controller_commands() {
         let (state, _base_dir) = test_app_state();
-        let router = RemoteCommandRouter::new(state.clone());
+        let router = RemoteCommandRouter::new(state.db.clone());
         let admin = create_grant(
             &state,
             "Admin",
