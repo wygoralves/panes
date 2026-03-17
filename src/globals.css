@@ -7603,3 +7603,204 @@ button, input, textarea, select {
   gap: 8px;
   flex-shrink: 0;
 }
+
+/* Remote access */
+
+.remote-access-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.remote-access-spinner {
+  animation: spin 1s linear infinite;
+}
+
+.remote-access-stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.remote-access-field-block {
+  align-items: flex-start;
+}
+
+.remote-access-field-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.remote-access-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  padding: 14px;
+}
+
+.remote-access-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.remote-access-form-field .wsp-field-label {
+  min-width: 0;
+}
+
+.remote-access-help {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.remote-access-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.remote-access-note {
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--warning);
+}
+
+.remote-access-created-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border-top: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.remote-access-created-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.remote-access-created-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.remote-access-secret {
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  color: var(--text-1);
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.remote-access-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.remote-access-list-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+}
+
+.remote-access-list-row + .remote-access-list-row {
+  border-top: 1px solid var(--border);
+}
+
+.remote-access-list-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.remote-access-list-topline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.remote-access-list-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.remote-access-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.remote-access-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+.remote-access-pill-active {
+  color: var(--accent);
+  background: var(--accent-dim);
+  border-color: var(--border-accent);
+}
+
+.remote-access-pill-idle,
+.remote-access-pill-muted {
+  color: var(--text-3);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.remote-access-pill-expired {
+  color: var(--warning);
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.22);
+}
+
+.remote-access-pill-revoked {
+  color: var(--danger);
+  background: rgba(248, 113, 113, 0.08);
+  border-color: rgba(248, 113, 113, 0.22);
+}
+
+@media (max-width: 900px) {
+  .remote-access-list-row {
+    flex-direction: column;
+  }
+
+  .remote-access-list-row .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}

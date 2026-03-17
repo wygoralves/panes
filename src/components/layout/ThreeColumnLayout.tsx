@@ -3,6 +3,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { Sidebar } from "../sidebar/Sidebar";
 import { ChatPanel } from "../chat/ChatPanel";
 import { HarnessPanel } from "../onboarding/HarnessPanel";
+import { RemoteAccessPage } from "../remote/RemoteAccessPage";
 import { WorkspaceSettingsPage } from "../workspace/WorkspaceSettingsPage";
 import { GitPanel } from "../git/GitPanel";
 import { usesCustomWindowFrame } from "../../lib/windowActions";
@@ -107,6 +108,8 @@ export function ThreeColumnLayout() {
             <div className="content-panel" style={{ height: "100%" }}>
               {activeView === "harnesses" ? (
                 <HarnessPanel />
+              ) : activeView === "remote-access" ? (
+                <RemoteAccessPage />
               ) : activeView === "workspace-settings" ? (
                 <WorkspaceSettingsPage />
               ) : (

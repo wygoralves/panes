@@ -139,4 +139,12 @@ describe("uiStore focus mode", () => {
       commandPaletteLaunch: COMMAND_PALETTE_DEFAULT_LAUNCH,
     });
   });
+
+  it("opens the app-level remote access view", () => {
+    useUiStore.getState().openRemoteAccess();
+
+    expect(useUiStore.getState()).toMatchObject({
+      activeView: "remote-access",
+    });
+  });
 });

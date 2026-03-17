@@ -8,7 +8,7 @@ use crate::{
     engines::EngineManager,
     git::{repo::FileTreeCache, watcher::GitWatcherManager},
     power::KeepAwakeManager,
-    remote::server::RemoteHostManager,
+    remote::server::{resolve_default_remote_web_root, RemoteHostManager},
     state::{AppState, TurnManager},
     terminal::TerminalManager,
 };
@@ -45,7 +45,10 @@ pub fn create_app_state() -> anyhow::Result<AppState> {
 
     let _ = db::workspaces::ensure_default_workspace(&db)
         .context("failed to ensure default workspace")?;
-    let remote_host = Arc::new(RemoteHostManager::new(db.clone()));
+    let remote_host = Arc::new(RemoteHostManager::new_with_web_root(
+        db.clone(),
+        resolve_default_remote_web_root(),
+    ));
 
     Ok(AppState {
         db,

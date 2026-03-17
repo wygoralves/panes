@@ -78,6 +78,7 @@ pub struct RemoteAuditEventDto {
 pub struct RemoteHostStatusDto {
     pub running: bool,
     pub bind_addr: Option<String>,
+    pub web_bind_addr: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

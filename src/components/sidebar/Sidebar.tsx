@@ -19,6 +19,7 @@ import {
   RefreshCw,
   PillBottle,
   Globe,
+  Shield,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useEngineStore } from "../../stores/engineStore";
@@ -103,6 +104,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const activeView = useUiStore((state) => state.activeView);
   const setActiveView = useUiStore((state) => state.setActiveView);
   const openWorkspaceSettings = useUiStore((state) => state.openWorkspaceSettings);
+  const openRemoteAccess = useUiStore((state) => state.openRemoteAccess);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
   const engines = useEngineStore((s) => s.engines);
   const updateStatus = useUpdateStore((s) => s.status);
@@ -698,6 +700,17 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             >
               {t("app:sidebar.preferences")}
             </div>
+            <button
+              type="button"
+              className="git-action-menu-item"
+              onClick={() => {
+                closeSettingsMenu();
+                openRemoteAccess();
+              }}
+            >
+              <Shield size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+              {t("app:sidebar.remoteAccess")}
+            </button>
             <div
               className="git-action-menu-item"
               style={{

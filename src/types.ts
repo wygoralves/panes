@@ -102,6 +102,7 @@ export interface RemoteAuditEvent {
 export interface RemoteHostStatus {
   running: boolean;
   bindAddr: string | null;
+  webBindAddr: string | null;
 }
 
 export type WorkspaceStartupPresetFormat = "json" | "toml";

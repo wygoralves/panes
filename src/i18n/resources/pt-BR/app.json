@@ -49,6 +49,7 @@
     "engineSetup": "Começar",
     "checkUpdates": "Verificar atualizações",
     "preferences": "Preferências",
+    "remoteAccess": "Acesso remoto",
     "keepAwake": "Manter acordado",
     "keepAwakeDescription": "Ajuda a manter o computador acordado enquanto o Panes estiver aberto",
     "keepAwakeUnsupported": "Indisponível neste dispositivo",
@@ -83,6 +84,7 @@
       "toggleFocusMode": "Alternar modo foco",
       "toggleKeepAwake": "Alternar manter acordado",
       "powerSettings": "Configurações de energia",
+      "viewRemoteAccess": "Abrir acesso remoto",
       "searchWorkspace": "Buscar no workspace",
       "gitFetch": "Git Fetch",
       "gitPull": "Git Pull",
@@ -457,6 +459,121 @@
       "selectChangeHint": "Escolha um arquivo à esquerda para inspecionar o diff.",
       "staged": "Stage",
       "workingTree": "Working tree"
+    }
+  },
+  "remoteAccess": {
+    "title": "Acesso remoto",
+    "subtitle": "Suba um host do Panes, emita grants de dispositivo e compartilhe os detalhes de attach sem prender isso a um workspace.",
+    "loading": "Carregando o estado do host remoto...",
+    "sections": {
+      "host": "Host",
+      "grants": "Grants de dispositivo",
+      "audit": "Auditoria recente"
+    },
+    "actions": {
+      "refresh": "Atualizar",
+      "updating": "Atualizando...",
+      "startHost": "Iniciar host",
+      "stopHost": "Parar host",
+      "createGrant": "Criar grant",
+      "creatingGrant": "Criando...",
+      "copyToken": "Copiar token",
+      "copyLink": "Copiar link do navegador",
+      "copyDetails": "Copiar detalhes",
+      "revokeGrant": "Revogar"
+    },
+    "host": {
+      "statusLabel": "Host",
+      "running": "Ativo",
+      "stopped": "Parado",
+      "notRunning": "O host não está em execução",
+      "bindLabel": "Endereço de bind",
+      "bindHint": "Use 127.0.0.1 para esta máquina apenas, ou 0.0.0.0 com um hostname/IP da LAN para outros dispositivos.",
+      "connectHostLabel": "Host / IP do cliente",
+      "connectHostHint": "Substitua a parte do host na URL copiada quando o listener estiver preso a um endereço curinga.",
+      "connectHostRequired": "Este host está ouvindo em todas as interfaces. Informe o hostname ou IP da LAN que os outros dispositivos devem usar antes de copiar links.",
+      "urlLabel": "URL WebSocket",
+      "urlUnavailable": "Informe um endereço de bind válido para gerar a URL WebSocket.",
+      "webLabel": "URL do navegador",
+      "webUnavailable": "Este host não está servindo o shell remoto do navegador.",
+      "loopbackWarning": "Este host está local-only agora. Use 0.0.0.0 no bind e o IP da LAN do seu computador para abrir em outro dispositivo."
+    },
+    "grants": {
+      "labelLabel": "Rótulo do dispositivo",
+      "labelPlaceholder": "MacBook Air, iPad, Browser QA…",
+      "accessLabel": "Acesso",
+      "expiryLabel": "Expiração",
+      "empty": "Ainda não existem grants remotos.",
+      "createdTitle": "{{label}} está pronto",
+      "createdOnlyOnce": "Exibido uma vez",
+      "createdAt": "Criado em {{value}}",
+      "lastUsedAt": "Usado {{value}}",
+      "neverUsed": "Nunca usado",
+      "expiresAt": "Expira em {{value}}",
+      "noExpiry": "Sem expiração",
+      "revokeTitle": "Revogar \"{{label}}\"",
+      "revokeMessage": "Este dispositivo perderá acesso imediatamente e qualquer controller lease ativo pertencente a ele será liberado.",
+      "states": {
+        "active": "Ativo",
+        "expired": "Expirado",
+        "revoked": "Revogado"
+      },
+      "presets": {
+        "viewer": {
+          "title": "Viewer",
+          "description": "Pode navegar por workspaces, threads, saída de terminal e estado de git sem dirigir o runtime."
+        },
+        "controller": {
+          "title": "Controller",
+          "description": "Pode assumir controller leases, enviar mensagens, responder aprovações e dirigir terminais."
+        },
+        "custom": "Customizado"
+      },
+      "expiry": {
+        "never": "Nunca",
+        "day": "24 horas",
+        "week": "7 dias",
+        "month": "30 dias"
+      }
+    },
+    "audit": {
+      "empty": "Ainda não existem eventos de auditoria remota.",
+      "occurredAt": "{{value}}",
+      "deviceGrant": "grant {{id}}",
+      "actions": {
+        "remote_device_grant": {
+          "created": "Grant de dispositivo criado",
+          "revoked": "Grant de dispositivo revogado"
+        },
+        "remote_controller_lease": {
+          "acquired": "Controller lease adquirido",
+          "renewed": "Controller lease renovado",
+          "released": "Controller lease liberado"
+        }
+      }
+    },
+    "toasts": {
+      "loadFailed": "Falha ao carregar o estado do host remoto.",
+      "invalidBindAddr": "Use um endereço de bind válido como 127.0.0.1:4050 ou 0.0.0.0:4050.",
+      "hostStarted": "Host remoto iniciado.",
+      "hostStartFailed": "Falha ao iniciar o host remoto.",
+      "hostStopped": "Host remoto parado.",
+      "hostStopFailed": "Falha ao parar o host remoto.",
+      "labelRequired": "Informe um rótulo para o novo grant de dispositivo.",
+      "grantCreated": "Grant remoto criado.",
+      "grantCreateFailed": "Falha ao criar o grant remoto.",
+      "grantRevoked": "Grant remoto revogado.",
+      "grantRevokeFailed": "Falha ao revogar o grant remoto.",
+      "tokenCopied": "Token do dispositivo copiado.",
+      "tokenCopyFailed": "Falha ao copiar o token do dispositivo.",
+      "urlCopied": "URL de attach copiada.",
+      "urlCopyFailed": "Falha ao copiar a URL de attach.",
+      "webCopied": "URL do navegador copiada.",
+      "webCopyFailed": "Falha ao copiar a URL do navegador.",
+      "linkCopied": "Link do navegador copiado.",
+      "linkCopyFailed": "Falha ao copiar o link do navegador.",
+      "detailsCopied": "Detalhes de conexão copiados.",
+      "detailsCopyFailed": "Falha ao copiar os detalhes de conexão."
     }
   },
   "powerModal": {

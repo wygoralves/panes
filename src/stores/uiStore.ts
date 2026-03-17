@@ -17,7 +17,7 @@ interface FocusModeSnapshot {
   showGitPanel: boolean;
 }
 
-type ActiveView = "chat" | "harnesses" | "workspace-settings";
+type ActiveView = "chat" | "harnesses" | "workspace-settings" | "remote-access";
 
 interface UiState {
   showSidebar: boolean;
@@ -39,6 +39,7 @@ interface UiState {
   setFocusMode: (enabled: boolean) => void;
   toggleFocusMode: () => void;
   setActiveView: (view: ActiveView) => void;
+  openRemoteAccess: () => void;
   openWorkspaceSettings: (workspaceId: string) => void;
   setMessageFocusTarget: (target: { threadId: string; messageId: string }) => void;
   clearMessageFocusTarget: () => void;
@@ -154,6 +155,7 @@ export const useUiStore = create<UiState>((set) => ({
       });
     }
   },
+  openRemoteAccess: () => set({ activeView: "remote-access" }),
   openWorkspaceSettings: (workspaceId) => {
     set({ activeView: "workspace-settings", settingsWorkspaceId: workspaceId });
   },

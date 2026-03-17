@@ -49,6 +49,7 @@
     "engineSetup": "Get started",
     "checkUpdates": "Check for updates",
     "preferences": "Preferences",
+    "remoteAccess": "Remote Access",
     "keepAwake": "Keep Awake",
     "keepAwakeDescription": "Help keep the computer awake while Panes is open",
     "keepAwakeUnsupported": "Not supported on this device",
@@ -83,6 +84,7 @@
       "toggleFocusMode": "Toggle Focus Mode",
       "toggleKeepAwake": "Toggle Keep Awake",
       "powerSettings": "Power Settings",
+      "viewRemoteAccess": "Open Remote Access",
       "searchWorkspace": "Search Workspace",
       "gitFetch": "Git Fetch",
       "gitPull": "Git Pull",
@@ -457,6 +459,121 @@
       "selectChangeHint": "Choose a file on the left to inspect its diff.",
       "staged": "Staged",
       "workingTree": "Working tree"
+    }
+  },
+  "remoteAccess": {
+    "title": "Remote Access",
+    "subtitle": "Run a Panes host, mint device grants, and share attach details without tying it to one workspace.",
+    "loading": "Loading remote host state...",
+    "sections": {
+      "host": "Host",
+      "grants": "Device Grants",
+      "audit": "Recent Audit"
+    },
+    "actions": {
+      "refresh": "Refresh",
+      "updating": "Updating...",
+      "startHost": "Start Host",
+      "stopHost": "Stop Host",
+      "createGrant": "Create Grant",
+      "creatingGrant": "Creating...",
+      "copyToken": "Copy Token",
+      "copyLink": "Copy Browser Link",
+      "copyDetails": "Copy Details",
+      "revokeGrant": "Revoke"
+    },
+    "host": {
+      "statusLabel": "Host",
+      "running": "Running",
+      "stopped": "Stopped",
+      "notRunning": "Host is not running",
+      "bindLabel": "Bind address",
+      "bindHint": "Use 127.0.0.1 for this machine only, or 0.0.0.0 plus a LAN hostname/IP for other devices.",
+      "connectHostLabel": "Client host / IP",
+      "connectHostHint": "Override the host portion of the copied URL when the listener is bound to a wildcard address.",
+      "connectHostRequired": "This host is listening on every interface. Enter the LAN hostname or IP you want other devices to use before copying links.",
+      "urlLabel": "WebSocket URL",
+      "urlUnavailable": "Enter a valid bind address to generate a WebSocket URL.",
+      "webLabel": "Browser URL",
+      "webUnavailable": "The remote browser shell is not being served by this host.",
+      "loopbackWarning": "This host is local-only right now. Use 0.0.0.0 for the bind address and your computer's LAN IP to open it from another device."
+    },
+    "grants": {
+      "labelLabel": "Device label",
+      "labelPlaceholder": "MacBook Air, iPad, Browser QA…",
+      "accessLabel": "Access",
+      "expiryLabel": "Expiry",
+      "empty": "No remote device grants yet.",
+      "createdTitle": "{{label}} is ready",
+      "createdOnlyOnce": "Shown once",
+      "createdAt": "Created {{value}}",
+      "lastUsedAt": "Used {{value}}",
+      "neverUsed": "Never used",
+      "expiresAt": "Expires {{value}}",
+      "noExpiry": "No expiry",
+      "revokeTitle": "Revoke \"{{label}}\"",
+      "revokeMessage": "This device will lose access immediately and any active controller leases owned by it will be released.",
+      "states": {
+        "active": "Active",
+        "expired": "Expired",
+        "revoked": "Revoked"
+      },
+      "presets": {
+        "viewer": {
+          "title": "Viewer",
+          "description": "Can browse workspaces, threads, terminal output, and git state without driving the runtime."
+        },
+        "controller": {
+          "title": "Controller",
+          "description": "Can take controller leases, send chat input, answer approvals, and drive terminals."
+        },
+        "custom": "Custom"
+      },
+      "expiry": {
+        "never": "Never",
+        "day": "24 hours",
+        "week": "7 days",
+        "month": "30 days"
+      }
+    },
+    "audit": {
+      "empty": "No remote audit events yet.",
+      "occurredAt": "{{value}}",
+      "deviceGrant": "grant {{id}}",
+      "actions": {
+        "remote_device_grant": {
+          "created": "Device grant created",
+          "revoked": "Device grant revoked"
+        },
+        "remote_controller_lease": {
+          "acquired": "Controller lease acquired",
+          "renewed": "Controller lease renewed",
+          "released": "Controller lease released"
+        }
+      }
+    },
+    "toasts": {
+      "loadFailed": "Failed to load remote host state.",
+      "invalidBindAddr": "Use a valid bind address like 127.0.0.1:4050 or 0.0.0.0:4050.",
+      "hostStarted": "Remote host started.",
+      "hostStartFailed": "Failed to start the remote host.",
+      "hostStopped": "Remote host stopped.",
+      "hostStopFailed": "Failed to stop the remote host.",
+      "labelRequired": "Enter a label for the new device grant.",
+      "grantCreated": "Remote device grant created.",
+      "grantCreateFailed": "Failed to create the remote device grant.",
+      "grantRevoked": "Remote device grant revoked.",
+      "grantRevokeFailed": "Failed to revoke the remote device grant.",
+      "tokenCopied": "Device token copied.",
+      "tokenCopyFailed": "Failed to copy the device token.",
+      "urlCopied": "Attach URL copied.",
+      "urlCopyFailed": "Failed to copy the attach URL.",
+      "webCopied": "Browser URL copied.",
+      "webCopyFailed": "Failed to copy the browser URL.",
+      "linkCopied": "Browser link copied.",
+      "linkCopyFailed": "Failed to copy the browser link.",
+      "detailsCopied": "Connection details copied.",
+      "detailsCopyFailed": "Failed to copy the connection details."
     }
   },
   "powerModal": {

@@ -36,6 +36,7 @@ import {
   Power,
   RotateCcw,
   Minimize2,
+  Shield,
 } from "lucide-react";
 import { ipc, writeCommandToNewSession } from "../../lib/ipc";
 import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
@@ -288,6 +289,17 @@ export function getStaticCommands(
     action: ({ close }) => {
       close();
       useKeepAwakeStore.getState().openPowerSettings();
+    },
+  },
+  {
+    id: "view-remote-access",
+    label: t("commandPalette.commands.viewRemoteAccess"),
+    icon: Shield,
+    group: "view",
+    keywords: ["remote", "access", "host", "attach", "lan", "remoto", "acesso"],
+    action: ({ close }) => {
+      useUiStore.getState().openRemoteAccess();
+      close();
     },
   },
   {

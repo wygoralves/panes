@@ -14,6 +14,7 @@ import { useThreadStore } from "../stores/threadStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import type { ContentBlock, Message, RemoteControllerLease, RemoteDeviceGrant } from "../types";
 import { RemoteGitPanel } from "./RemoteGitPanel";
+import { selectWorkspaceThreads } from "./remoteAttachState";
 
 const REMOTE_URL_STORAGE_KEY = "panes:remote.attach.url";
 const CONTROL_TTL_SECS = 45;
@@ -586,7 +587,7 @@ export function RemoteAttachApp() {
     setActiveRepo,
   } = useWorkspaceStore();
   const workspaceThreads = useThreadStore((state) =>
-    activeWorkspaceId ? state.threadsByWorkspace[activeWorkspaceId] ?? [] : [],
+    selectWorkspaceThreads(state.threadsByWorkspace, activeWorkspaceId),
   );
   const activeThreadId = useThreadStore((state) => state.activeThreadId);
   const setActiveThread = useThreadStore((state) => state.setActiveThread);
