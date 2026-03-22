@@ -23,9 +23,9 @@ use uuid::Uuid;
 use crate::{process_utils, runtime_env};
 
 use super::{
-    normalize_approval_response_for_engine, ActionResult, ActionType, Engine, EngineEvent,
-    EngineThread, ModelInfo, OutputStream, ReasoningEffortOption, SandboxPolicy, ThreadScope,
-    TurnCompletionStatus, TurnInput,
+    normalize_approval_response_for_engine, ActionResult, ActionType, ApprovalRequestRoute, Engine,
+    EngineEvent, EngineThread, ModelInfo, OutputStream, ReasoningEffortOption, SandboxPolicy,
+    ThreadScope, TurnCompletionStatus, TurnInput,
 };
 
 // ── Sidecar event protocol ────────────────────────────────────────────
@@ -1322,6 +1322,7 @@ impl Engine for ClaudeSidecarEngine {
         &self,
         approval_id: &str,
         response: serde_json::Value,
+        _route: Option<ApprovalRequestRoute>,
     ) -> Result<(), anyhow::Error> {
         let normalized_response = normalize_approval_response_for_engine("claude", response)
             .map_err(anyhow::Error::msg)?;

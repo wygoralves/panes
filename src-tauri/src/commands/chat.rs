@@ -13,9 +13,9 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     db,
     engines::{
-        normalize_approval_response_for_engine, validate_engine_sandbox_mode, EngineEvent,
-        OutputStream, SandboxPolicy, ThreadScope, TurnAttachment, TurnCompletionStatus, TurnInput,
-        TurnInputItem,
+        approval_response_route_for_engine, normalize_approval_response_for_engine,
+        validate_engine_sandbox_mode, ApprovalRequestRoute, EngineEvent, OutputStream,
+        SandboxPolicy, ThreadScope, TurnAttachment, TurnCompletionStatus, TurnInput, TurnInputItem,
     },
     models::{
         ActionOutputDto, EngineInfoDto, EngineModelDto, MessageDto, MessageStatusDto,
@@ -994,10 +994,17 @@ async fn respond_to_approval_inner(
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
     let normalized_response =
         normalize_approval_response_for_engine(thread.engine_id.as_str(), response)?;
+    let approval_route =
+        load_approval_response_route(db.clone(), thread.engine_id.as_str(), &approval_id).await?;
 
     state
         .engines
-        .respond_to_approval(&thread, &approval_id, normalized_response.clone())
+        .respond_to_approval(
+            &thread,
+            &approval_id,
+            normalized_response.clone(),
+            approval_route,
+        )
         .await
         .map_err(err_to_string)?;
 
@@ -1023,6 +1030,24 @@ async fn respond_to_approval_inner(
     .await?;
 
     Ok(())
+}
+
+async fn load_approval_response_route(
+    db: crate::db::Database,
+    engine_id: &str,
+    approval_id: &str,
+) -> Result<Option<ApprovalRequestRoute>, String> {
+    if engine_id != "codex" {
+        return Ok(None);
+    }
+
+    let engine_id = engine_id.to_string();
+    let approval_id = approval_id.to_string();
+    run_db(db, move |db| {
+        let details = db::actions::find_approval_details(db, &approval_id)?;
+        Ok(details.and_then(|details| approval_response_route_for_engine(&engine_id, &details)))
+    })
+    .await
 }
 
 fn approval_response_decision_for_persistence(response: &Value) -> &'static str {
@@ -3646,7 +3671,12 @@ mod tests {
         .expect("failed to create thread")
     }
 
-    fn insert_pending_approval(state: &AppState, thread: &ThreadDto, approval_id: &str) -> String {
+    fn insert_pending_approval_with_details(
+        state: &AppState,
+        thread: &ThreadDto,
+        approval_id: &str,
+        details: Value,
+    ) -> String {
         let assistant_message = db::messages::insert_assistant_placeholder(
             &state.db,
             &thread.id,
@@ -3662,7 +3692,7 @@ mod tests {
             &assistant_message.id,
             &crate::engines::events::ActionType::Command,
             "Run command",
-            &serde_json::json!({ "command": "touch file.txt" }),
+            &details,
         )
         .expect("failed to insert approval");
         db::threads::update_thread_status(&state.db, &thread.id, ThreadStatusDto::AwaitingApproval)
@@ -3674,7 +3704,7 @@ mod tests {
                 "approvalId": approval_id,
                 "actionType": "command",
                 "summary": "Run command",
-                "details": { "command": "touch file.txt" },
+                "details": details,
                 "status": "pending"
             }
         ]);
@@ -3685,6 +3715,15 @@ mod tests {
         )
         .expect("failed to persist approval block");
         assistant_message.id
+    }
+
+    fn insert_pending_approval(state: &AppState, thread: &ThreadDto, approval_id: &str) -> String {
+        insert_pending_approval_with_details(
+            state,
+            thread,
+            approval_id,
+            serde_json::json!({ "command": "touch file.txt" }),
+        )
     }
 
     #[test]
@@ -4206,6 +4245,105 @@ mod tests {
             .and_then(|items| items.first())
             .and_then(|item| item.get("decision"))
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn missing_live_codex_approval_request_keeps_approval_pending() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "codex", "gpt-5.5-codex");
+        let approval_id = "approval-reset";
+        let message_id = insert_pending_approval_with_details(
+            &state,
+            &thread,
+            approval_id,
+            serde_json::json!({
+                "command": "touch file.txt",
+                "_serverMethod": "item/fileChange/requestApproval",
+                "_rawRequestId": 42
+            }),
+        );
+
+        let error = respond_to_approval_inner(
+            &state,
+            thread.id.clone(),
+            approval_id.to_string(),
+            serde_json::json!({ "decision": "accept" }),
+        )
+        .await
+        .expect_err("expected codex approval without live request to fail");
+
+        assert!(error.contains("runtime connection was reset"));
+
+        let conn = state.db.connect().expect("failed to open db connection");
+        let approval_row = conn
+            .query_row(
+                "SELECT status, decision FROM approvals WHERE id = ?1",
+                params![approval_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .expect("failed to load approval row");
+        assert_eq!(approval_row.0, "pending");
+        assert_eq!(approval_row.1, None);
+
+        let thread_status = conn
+            .query_row(
+                "SELECT status FROM threads WHERE id = ?1",
+                params![thread.id],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("failed to load thread status");
+        assert_eq!(thread_status, "awaiting_approval");
+
+        let raw_blocks = conn
+            .query_row(
+                "SELECT blocks_json FROM messages WHERE id = ?1",
+                params![message_id],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("failed to load message blocks");
+        let blocks: Value =
+            serde_json::from_str(&raw_blocks).expect("message blocks should deserialize");
+        assert_eq!(
+            blocks
+                .as_array()
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("status"))
+                .and_then(Value::as_str),
+            Some("pending")
+        );
+        assert!(blocks
+            .as_array()
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("decision"))
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn load_codex_approval_response_route_reads_persisted_transport_metadata() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "codex", "gpt-5.5-codex");
+        insert_pending_approval_with_details(
+            &state,
+            &thread,
+            "approval-route",
+            serde_json::json!({
+                "command": "touch file.txt",
+                "_serverMethod": "item/fileChange/requestApproval",
+                "_rawRequestId": 42
+            }),
+        );
+
+        let route = load_approval_response_route(state.db.clone(), "codex", "approval-route")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            route,
+            Some(ApprovalRequestRoute {
+                server_method: "item/fileChange/requestApproval".to_string(),
+                raw_request_id: serde_json::json!(42),
+            })
+        );
     }
 
     #[test]

@@ -594,6 +594,8 @@ function ActionBlockView({
 
 const APPROVAL_INTERNAL_KEYS = new Set([
   "_serverMethod",
+  "_rawRequestId",
+  "_raw_request_id",
   "threadId",
   "thread_id",
   "turnId",

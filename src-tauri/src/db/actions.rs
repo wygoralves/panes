@@ -126,6 +126,30 @@ pub fn find_approval_message_id(
     Ok(message_id)
 }
 
+pub fn find_approval_details(db: &Database, approval_id: &str) -> anyhow::Result<Option<Value>> {
+    let conn = db.connect()?;
+    let raw_details = conn
+        .query_row(
+            "SELECT details_json FROM approvals WHERE id = ?1",
+            params![approval_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .context("failed to load approval details")?;
+
+    let Some(raw_details) = raw_details else {
+        return Ok(None);
+    };
+
+    match serde_json::from_str::<Value>(&raw_details) {
+        Ok(details) => Ok(Some(details)),
+        Err(error) => {
+            log::warn!("failed to parse approval details for {approval_id}: {error}");
+            Ok(None)
+        }
+    }
+}
+
 pub fn find_approval_context(
     db: &Database,
     approval_id: &str,
