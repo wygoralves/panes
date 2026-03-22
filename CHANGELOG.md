@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.45.1...vnull) (2026-03-22)
+
+### Bug Fixes
+
+* **codex:** harden Codex reconnect recovery ([36476fd](https://github.com/wygoralves/panes/commit/36476fd18752898b4009512313b62a22db106875))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.45.0...vnull) (2026-03-16)
 
 ### Bug Fixes
