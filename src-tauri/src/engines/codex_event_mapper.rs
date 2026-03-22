@@ -4,9 +4,12 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::{
-    ActionResult, ActionType, DiffScope, EngineEvent, OutputStream, TokenUsage,
-    TurnCompletionStatus, UsageLimitsSnapshot,
+    ActionResult, ActionType, ApprovalRequestRoute, DiffScope, EngineEvent, OutputStream,
+    TokenUsage, TurnCompletionStatus, UsageLimitsSnapshot,
 };
+
+pub const APPROVAL_DETAIL_SERVER_METHOD_KEY: &str = "_serverMethod";
+pub const APPROVAL_DETAIL_RAW_REQUEST_ID_KEY: &str = "_rawRequestId";
 
 #[derive(Default)]
 pub struct TurnEventMapper {
@@ -251,6 +254,7 @@ impl TurnEventMapper {
     pub fn map_server_request(
         &mut self,
         request_id: &str,
+        raw_request_id: &Value,
         method: &str,
         params: &Value,
     ) -> Option<ApprovalRequest> {
@@ -304,8 +308,12 @@ impl TurnEventMapper {
         let mut details = params.clone();
         if let Some(object) = details.as_object_mut() {
             object.insert(
-                "_serverMethod".to_string(),
+                APPROVAL_DETAIL_SERVER_METHOD_KEY.to_string(),
                 Value::String(method.to_string()),
+            );
+            object.insert(
+                APPROVAL_DETAIL_RAW_REQUEST_ID_KEY.to_string(),
+                raw_request_id.clone(),
             );
         }
 
@@ -660,6 +668,21 @@ impl TurnEventMapper {
             Some(self.pending_actions_without_engine_id.remove(0))
         }
     }
+}
+
+pub fn extract_persisted_approval_route(details: &Value) -> Option<ApprovalRequestRoute> {
+    let object = details.as_object()?;
+    let server_method = object
+        .get(APPROVAL_DETAIL_SERVER_METHOD_KEY)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let raw_request_id = object.get(APPROVAL_DETAIL_RAW_REQUEST_ID_KEY)?.clone();
+
+    Some(ApprovalRequestRoute {
+        server_method: server_method.to_string(),
+        raw_request_id,
+    })
 }
 
 fn extract_item_error(item: &Value) -> Option<String> {
@@ -1327,7 +1350,7 @@ mod tests {
         });
 
         let approval = mapper
-            .map_server_request("request-1", "item/tool/call", &params)
+            .map_server_request("request-1", &json!(42), "item/tool/call", &params)
             .expect("expected approval request");
 
         assert_eq!(approval.approval_id, "call_abc");
@@ -1344,8 +1367,14 @@ mod tests {
                 assert!(matches!(action_type, ActionType::Other));
                 assert_eq!(summary, "Codex requested dynamic tool call: my_tool");
                 assert_eq!(
-                    details.get("_serverMethod").and_then(Value::as_str),
+                    details
+                        .get(APPROVAL_DETAIL_SERVER_METHOD_KEY)
+                        .and_then(Value::as_str),
                     Some("item/tool/call")
+                );
+                assert_eq!(
+                    details.get(APPROVAL_DETAIL_RAW_REQUEST_ID_KEY),
+                    Some(&json!(42))
                 );
             }
             _ => panic!("expected approval request event"),
@@ -1369,7 +1398,12 @@ mod tests {
         });
 
         let approval = mapper
-            .map_server_request("request-2", "tool/requestUserInput", &params)
+            .map_server_request(
+                "request-2",
+                &json!("req-2"),
+                "tool/requestUserInput",
+                &params,
+            )
             .expect("expected approval request");
 
         assert_eq!(approval.approval_id, "item_42");
@@ -1405,7 +1439,12 @@ mod tests {
         });
 
         let approval = mapper
-            .map_server_request("request-3", "item/tool/request_user_input", &params)
+            .map_server_request(
+                "request-3",
+                &json!("req-3"),
+                "item/tool/request_user_input",
+                &params,
+            )
             .expect("expected approval request");
 
         assert_eq!(approval.approval_id, "item_84");
@@ -1428,7 +1467,12 @@ mod tests {
         });
 
         let approval = mapper
-            .map_server_request("request-4", "item/permissions/requestApproval", &params)
+            .map_server_request(
+                "request-4",
+                &json!("req-4"),
+                "item/permissions/requestApproval",
+                &params,
+            )
             .expect("expected approval request");
 
         assert_eq!(approval.approval_id, "perm_42");
@@ -1444,8 +1488,14 @@ mod tests {
                 assert!(matches!(action_type, ActionType::Other));
                 assert_eq!(summary, "Need write access to apply the requested patch");
                 assert_eq!(
-                    details.get("_serverMethod").and_then(Value::as_str),
+                    details
+                        .get(APPROVAL_DETAIL_SERVER_METHOD_KEY)
+                        .and_then(Value::as_str),
                     Some("item/permissions/requestApproval")
+                );
+                assert_eq!(
+                    details.get(APPROVAL_DETAIL_RAW_REQUEST_ID_KEY),
+                    Some(&json!("req-4"))
                 );
             }
             _ => panic!("expected approval request event"),
@@ -1472,7 +1522,12 @@ mod tests {
         });
 
         let approval = mapper
-            .map_server_request("request-5", "mcpServer/elicitation/request", &params)
+            .map_server_request(
+                "request-5",
+                &json!("req-5"),
+                "mcpServer/elicitation/request",
+                &params,
+            )
             .expect("expected approval request");
 
         assert_eq!(approval.approval_id, "request-5");
@@ -1489,6 +1544,30 @@ mod tests {
             }
             _ => panic!("expected approval request event"),
         }
+    }
+
+    #[test]
+    fn extract_persisted_approval_route_reads_hidden_transport_fields() {
+        assert_eq!(
+            extract_persisted_approval_route(&json!({
+                "_serverMethod": "item/fileChange/requestApproval",
+                "_rawRequestId": 42
+            })),
+            Some(ApprovalRequestRoute {
+                server_method: "item/fileChange/requestApproval".to_string(),
+                raw_request_id: json!(42),
+            })
+        );
+    }
+
+    #[test]
+    fn extract_persisted_approval_route_rejects_legacy_rows_without_raw_request_id() {
+        assert_eq!(
+            extract_persisted_approval_route(&json!({
+                "_serverMethod": "item/fileChange/requestApproval"
+            })),
+            None
+        );
     }
 
     #[test]

@@ -33,10 +33,10 @@ use crate::{process_utils, runtime_env};
 
 use super::{
     codex_event_mapper::TurnEventMapper, codex_protocol::IncomingMessage,
-    codex_transport::CodexTransport, ActionResult, CodexRemoteThreadSummary, Engine, EngineEvent,
-    EngineThread, ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo, ReasoningEffortOption,
-    SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment, TurnCompletionStatus,
-    TurnInput, TurnInputItem,
+    codex_transport::CodexTransport, ActionResult, ApprovalRequestRoute, CodexRemoteThreadSummary,
+    Engine, EngineEvent, EngineThread, ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo,
+    ReasoningEffortOption, SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment,
+    TurnCompletionStatus, TurnInput, TurnInputItem,
 };
 
 const INITIALIZE_METHODS: &[&str] = &["initialize"];
@@ -198,6 +198,18 @@ pub struct CodexForkedThread {
 #[derive(Debug)]
 pub struct CodexReviewStarted {
     pub review_thread_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReconciledTurnCompletion {
+    status: TurnCompletionStatus,
+    error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TurnCompletionRecoveryMode {
+    CompletionTimeout,
+    StreamLost,
 }
 
 #[async_trait]
@@ -626,6 +638,20 @@ impl Engine for CodexEngine {
                     {
                       self.clear_active_turn(&thread_id).await;
                       self.invalidate_transport(&error_message).await;
+                      if turn_request_done
+                        && self
+                          .try_emit_reconciled_turn_completion(
+                            &thread_id,
+                            expected_turn_id.as_deref(),
+                            &event_tx,
+                            "stream failure while waiting for turn events",
+                            TurnCompletionRecoveryMode::StreamLost,
+                          )
+                          .await
+                      {
+                        completion_seen = true;
+                        break;
+                      }
                       return Err(anyhow::anyhow!(error_message));
                     }
 
@@ -734,7 +760,9 @@ impl Engine for CodexEngine {
                       continue;
                     }
 
-                    if let Some(approval) = mapper.map_server_request(&id, &method, &params) {
+                    if let Some(approval) =
+                        mapper.map_server_request(&id, &raw_id, &method, &params)
+                    {
                       log::info!(
                         "codex approval request mapped: approval_id={}, method={method}",
                         approval.approval_id
@@ -790,6 +818,20 @@ impl Engine for CodexEngine {
                     );
                     self.clear_active_turn(&thread_id).await;
                     self.invalidate_transport(&error_message).await;
+                    if turn_request_done
+                        && self
+                            .try_emit_reconciled_turn_completion(
+                                &thread_id,
+                                expected_turn_id.as_deref(),
+                                &event_tx,
+                                "lagged turn-event subscription",
+                                TurnCompletionRecoveryMode::StreamLost,
+                            )
+                            .await
+                    {
+                        completion_seen = true;
+                        break;
+                    }
                     return Err(anyhow::anyhow!(error_message));
                   }
                   Err(broadcast::error::RecvError::Closed) => {
@@ -797,6 +839,20 @@ impl Engine for CodexEngine {
                     self
                       .invalidate_transport("codex transport subscription closed while waiting for turn events")
                       .await;
+                    if turn_request_done
+                        && self
+                            .try_emit_reconciled_turn_completion(
+                                &thread_id,
+                                expected_turn_id.as_deref(),
+                                &event_tx,
+                                "closed turn-event subscription",
+                                TurnCompletionRecoveryMode::StreamLost,
+                            )
+                            .await
+                    {
+                        completion_seen = true;
+                        break;
+                    }
                     return Err(anyhow::anyhow!(
                       "codex transport closed while waiting for turn events"
                     ));
@@ -823,21 +879,32 @@ impl Engine for CodexEngine {
         }
 
         if !completion_seen {
-            event_tx
-                .send(EngineEvent::Error {
-                    message: "Timed out waiting for `turn/completed` from codex app-server"
-                        .to_string(),
-                    recoverable: false,
-                })
+            if !self
+                .try_emit_reconciled_turn_completion(
+                    &thread_id,
+                    expected_turn_id.as_deref(),
+                    &event_tx,
+                    "completion inactivity timeout",
+                    TurnCompletionRecoveryMode::CompletionTimeout,
+                )
                 .await
-                .ok();
-            event_tx
-                .send(EngineEvent::TurnCompleted {
-                    token_usage: None,
-                    status: TurnCompletionStatus::Failed,
-                })
-                .await
-                .ok();
+            {
+                event_tx
+                    .send(EngineEvent::Error {
+                        message: "Timed out waiting for `turn/completed` from codex app-server"
+                            .to_string(),
+                        recoverable: false,
+                    })
+                    .await
+                    .ok();
+                event_tx
+                    .send(EngineEvent::TurnCompleted {
+                        token_usage: None,
+                        status: TurnCompletionStatus::Failed,
+                    })
+                    .await
+                    .ok();
+            }
         }
 
         self.clear_active_turn(&thread_id).await;
@@ -874,26 +941,28 @@ impl Engine for CodexEngine {
         &self,
         approval_id: &str,
         response: serde_json::Value,
+        route: Option<ApprovalRequestRoute>,
     ) -> Result<(), anyhow::Error> {
+        let pending = self.approval_request(approval_id).await;
+        let (raw_request_id, method) =
+            resolve_approval_response_target(pending.as_ref(), route.as_ref()).map_err(
+                |reason| {
+                    anyhow::anyhow!(approval_response_target_error_message(reason, approval_id))
+                },
+            )?;
+        let normalized_response = normalize_approval_response(Some(method), response);
         let transport = self.ensure_ready_transport().await?;
-
-        let pending = self.take_approval_request(approval_id).await;
-        let raw_request_id = pending
-            .as_ref()
-            .map(|value| value.raw_request_id.clone())
-            .unwrap_or_else(|| serde_json::Value::String(approval_id.to_string()));
-        let method = pending.as_ref().map(|value| value.method.as_str());
-        let normalized_response = normalize_approval_response(method, response);
 
         log::info!(
             "sending approval response to codex: approval_id={approval_id}, raw_request_id={raw_request_id}"
         );
 
         transport
-            .respond_success(&raw_request_id, normalized_response)
+            .respond_success(raw_request_id, normalized_response)
             .await
             .context("failed to send approval response to codex")?;
 
+        self.take_approval_request(approval_id).await;
         Ok(())
     }
 
@@ -1287,6 +1356,20 @@ impl CodexEngine {
                     {
                       self.clear_active_turn(&active_thread_id).await;
                       self.invalidate_transport(&error_message).await;
+                      if turn_request_done
+                        && self
+                          .try_emit_reconciled_turn_completion(
+                            &active_thread_id,
+                            expected_turn_id.as_deref(),
+                            &event_tx,
+                            "stream failure while waiting for review events",
+                            TurnCompletionRecoveryMode::StreamLost,
+                          )
+                          .await
+                      {
+                        completion_seen = true;
+                        break;
+                      }
                       drop(started_tx.take());
                       return Err(anyhow::anyhow!(error_message));
                     }
@@ -1396,7 +1479,9 @@ impl CodexEngine {
                       continue;
                     }
 
-                    if let Some(approval) = mapper.map_server_request(&id, &method, &params) {
+                    if let Some(approval) =
+                        mapper.map_server_request(&id, &raw_id, &method, &params)
+                    {
                       log::info!(
                         "codex review approval request mapped: approval_id={}, method={method}",
                         approval.approval_id
@@ -1450,6 +1535,20 @@ impl CodexEngine {
                     );
                     self.clear_active_turn(&active_thread_id).await;
                     self.invalidate_transport(&error_message).await;
+                    if turn_request_done
+                        && self
+                            .try_emit_reconciled_turn_completion(
+                                &active_thread_id,
+                                expected_turn_id.as_deref(),
+                                &event_tx,
+                                "lagged review-event subscription",
+                                TurnCompletionRecoveryMode::StreamLost,
+                            )
+                            .await
+                    {
+                        completion_seen = true;
+                        break;
+                    }
                     drop(started_tx.take());
                     return Err(anyhow::anyhow!(error_message));
                   }
@@ -1458,6 +1557,20 @@ impl CodexEngine {
                     self
                       .invalidate_transport("codex transport subscription closed while waiting for review events")
                       .await;
+                    if turn_request_done
+                        && self
+                            .try_emit_reconciled_turn_completion(
+                                &active_thread_id,
+                                expected_turn_id.as_deref(),
+                                &event_tx,
+                                "closed review-event subscription",
+                                TurnCompletionRecoveryMode::StreamLost,
+                            )
+                            .await
+                    {
+                        completion_seen = true;
+                        break;
+                    }
                     drop(started_tx.take());
                     return Err(anyhow::anyhow!(
                       "codex transport closed while waiting for review events"
@@ -1485,20 +1598,32 @@ impl CodexEngine {
         }
 
         if !completion_seen {
-            event_tx
-                .send(EngineEvent::Error {
-                    message: "Timed out waiting for `turn/completed` from codex review".to_string(),
-                    recoverable: false,
-                })
+            if !self
+                .try_emit_reconciled_turn_completion(
+                    &active_thread_id,
+                    expected_turn_id.as_deref(),
+                    &event_tx,
+                    "review completion inactivity timeout",
+                    TurnCompletionRecoveryMode::CompletionTimeout,
+                )
                 .await
-                .ok();
-            event_tx
-                .send(EngineEvent::TurnCompleted {
-                    token_usage: None,
-                    status: TurnCompletionStatus::Failed,
-                })
-                .await
-                .ok();
+            {
+                event_tx
+                    .send(EngineEvent::Error {
+                        message: "Timed out waiting for `turn/completed` from codex review"
+                            .to_string(),
+                        recoverable: false,
+                    })
+                    .await
+                    .ok();
+                event_tx
+                    .send(EngineEvent::TurnCompleted {
+                        token_usage: None,
+                        status: TurnCompletionStatus::Failed,
+                    })
+                    .await
+                    .ok();
+            }
         }
 
         self.clear_active_turn(&active_thread_id).await;
@@ -1741,6 +1866,75 @@ impl CodexEngine {
             raw_status: extract_thread_runtime_status_type(&result),
             active_flags: extract_thread_runtime_active_flags(&result),
         })
+    }
+
+    async fn reconcile_turn_completion_via_thread_read(
+        &self,
+        engine_thread_id: &str,
+        expected_turn_id: Option<&str>,
+    ) -> anyhow::Result<Option<ReconciledTurnCompletion>> {
+        let transport = self.ensure_ready_transport().await?;
+        let params = serde_json::json!({
+          "threadId": engine_thread_id,
+          "includeTurns": true,
+        });
+
+        let result = request_with_fallback(
+            transport.as_ref(),
+            THREAD_READ_METHODS,
+            params,
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to read codex thread turns for reconciliation")?;
+
+        Ok(extract_reconciled_turn_completion(
+            &result,
+            expected_turn_id,
+        ))
+    }
+
+    async fn try_emit_reconciled_turn_completion(
+        &self,
+        engine_thread_id: &str,
+        expected_turn_id: Option<&str>,
+        event_tx: &mpsc::Sender<EngineEvent>,
+        reason: &str,
+        mode: TurnCompletionRecoveryMode,
+    ) -> bool {
+        let Some(expected_turn_id) = expected_turn_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            log::warn!(
+                "skipping codex turn reconciliation for thread {engine_thread_id} after {reason}: missing expected turn id"
+            );
+            return false;
+        };
+
+        match self
+            .reconcile_turn_completion_via_thread_read(engine_thread_id, Some(expected_turn_id))
+            .await
+        {
+            Ok(Some(reconciled)) => {
+                log::warn!(
+                    "reconciled codex turn completion for thread {engine_thread_id} after {reason}: status={:?}",
+                    reconciled.status
+                );
+                for event in build_reconciled_turn_completion_events(reconciled, mode) {
+                    event_tx.send(event).await.ok();
+                }
+                self.clear_active_turn(engine_thread_id).await;
+                true
+            }
+            Ok(None) => false,
+            Err(error) => {
+                log::warn!(
+                    "failed to reconcile codex turn completion for thread {engine_thread_id} after {reason}: {error}"
+                );
+                false
+            }
+        }
     }
 
     pub async fn set_thread_name(
@@ -2532,6 +2726,11 @@ impl CodexEngine {
                 method: method.to_string(),
             },
         );
+    }
+
+    async fn approval_request(&self, approval_id: &str) -> Option<PendingApproval> {
+        let state = self.state.lock().await;
+        state.approval_requests.get(approval_id).cloned()
     }
 
     async fn take_approval_request(&self, approval_id: &str) -> Option<PendingApproval> {
@@ -3860,6 +4059,88 @@ fn extract_turn_id(value: &serde_json::Value) -> Option<String> {
     }
 
     None
+}
+
+fn extract_reconciled_turn_completion(
+    value: &serde_json::Value,
+    expected_turn_id: Option<&str>,
+) -> Option<ReconciledTurnCompletion> {
+    let turns = extract_thread_turns(value)?;
+    let expected_turn_id = expected_turn_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let selected = turns.iter().find(|turn| {
+        extract_any_string(turn, &["id", "turnId", "turn_id"]).as_deref() == Some(expected_turn_id)
+    })?;
+    let status = extract_terminal_turn_completion_status(selected)?;
+
+    Some(ReconciledTurnCompletion {
+        status,
+        error_message: extract_nested_string(selected, &["error", "message"]),
+    })
+}
+
+fn build_reconciled_turn_completion_events(
+    reconciled: ReconciledTurnCompletion,
+    mode: TurnCompletionRecoveryMode,
+) -> Vec<EngineEvent> {
+    let mut events = Vec::new();
+
+    if let Some(message) = reconciled.error_message {
+        events.push(EngineEvent::Error {
+            message,
+            recoverable: true,
+        });
+    }
+
+    let status = if matches!(mode, TurnCompletionRecoveryMode::StreamLost)
+        && reconciled.status == TurnCompletionStatus::Completed
+    {
+        events.push(EngineEvent::Error {
+            message:
+                "Codex finished after Panes lost the live event stream, so the transcript may be incomplete."
+                    .to_string(),
+            recoverable: true,
+        });
+        TurnCompletionStatus::Failed
+    } else {
+        reconciled.status
+    };
+
+    events.push(EngineEvent::TurnCompleted {
+        token_usage: None,
+        status,
+    });
+
+    events
+}
+
+fn extract_thread_turns<'a>(value: &'a serde_json::Value) -> Option<&'a Vec<serde_json::Value>> {
+    if let Some(turns) = value.get("turns").and_then(serde_json::Value::as_array) {
+        return Some(turns);
+    }
+
+    for key in ["thread", "data", "result"] {
+        if let Some(nested) = value.get(key) {
+            if let Some(turns) = extract_thread_turns(nested) {
+                return Some(turns);
+            }
+        }
+    }
+
+    None
+}
+
+fn extract_terminal_turn_completion_status(
+    value: &serde_json::Value,
+) -> Option<TurnCompletionStatus> {
+    let status = extract_any_string(value, &["status"])?;
+    match normalize_method(&status).as_str() {
+        "completed" => Some(TurnCompletionStatus::Completed),
+        "interrupted" => Some(TurnCompletionStatus::Interrupted),
+        "failed" => Some(TurnCompletionStatus::Failed),
+        _ => None,
+    }
 }
 
 fn extract_thread_preview(value: &serde_json::Value) -> Option<String> {
@@ -5261,6 +5542,41 @@ async fn resolve_pending_approval_request(
     Some(approval_id)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApprovalResponseTargetError {
+    RuntimeReset,
+    MissingRequestMetadata,
+}
+
+fn resolve_approval_response_target<'a>(
+    pending: Option<&'a PendingApproval>,
+    route: Option<&'a ApprovalRequestRoute>,
+) -> Result<(&'a serde_json::Value, &'a str), ApprovalResponseTargetError> {
+    if let Some(pending) = pending {
+        return Ok((&pending.raw_request_id, pending.method.as_str()));
+    }
+
+    if route.is_some() {
+        return Err(ApprovalResponseTargetError::RuntimeReset);
+    }
+
+    Err(ApprovalResponseTargetError::MissingRequestMetadata)
+}
+
+fn approval_response_target_error_message(
+    reason: ApprovalResponseTargetError,
+    approval_id: &str,
+) -> String {
+    match reason {
+        ApprovalResponseTargetError::RuntimeReset => format!(
+            "Codex approval `{approval_id}` can no longer be answered because the runtime connection was reset. Re-run the request to create a fresh approval."
+        ),
+        ApprovalResponseTargetError::MissingRequestMetadata => {
+            format!("Codex approval `{approval_id}` is no longer active.")
+        }
+    }
+}
+
 fn belongs_to_thread(params: &serde_json::Value, thread_id: &str) -> bool {
     let candidates = [
         "threadId",
@@ -5981,6 +6297,191 @@ mod tests {
         );
 
         assert_eq!(expected_turn_id.as_deref(), Some("turn-execute"));
+    }
+
+    #[test]
+    fn extract_reconciled_turn_completion_prefers_expected_turn() {
+        let reconciled = extract_reconciled_turn_completion(
+            &json!({
+                "thread": {
+                    "turns": [
+                        { "id": "turn-old", "status": "completed" },
+                        {
+                            "id": "turn-active",
+                            "status": "failed",
+                            "error": { "message": "permission denied" }
+                        }
+                    ]
+                }
+            }),
+            Some("turn-active"),
+        )
+        .expect("expected terminal turn");
+
+        assert_eq!(
+            reconciled,
+            ReconciledTurnCompletion {
+                status: TurnCompletionStatus::Failed,
+                error_message: Some("permission denied".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn extract_reconciled_turn_completion_requires_matching_turn_id() {
+        assert_eq!(
+            extract_reconciled_turn_completion(
+                &json!({
+                    "thread": {
+                        "turns": [
+                            { "id": "turn-old", "status": "completed" },
+                            { "id": "turn-latest", "status": "interrupted" }
+                        ]
+                    }
+                }),
+                Some("turn-missing"),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn extract_reconciled_turn_completion_requires_expected_turn_id() {
+        assert_eq!(
+            extract_reconciled_turn_completion(
+                &json!({
+                    "thread": {
+                        "turns": [
+                            { "id": "turn-latest", "status": "completed" }
+                        ]
+                    }
+                }),
+                None,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn build_reconciled_turn_completion_events_marks_lost_completed_turn_failed() {
+        let events = build_reconciled_turn_completion_events(
+            ReconciledTurnCompletion {
+                status: TurnCompletionStatus::Completed,
+                error_message: None,
+            },
+            TurnCompletionRecoveryMode::StreamLost,
+        );
+
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            EngineEvent::Error {
+                message,
+                recoverable,
+            } => {
+                assert!(message.contains("transcript may be incomplete"));
+                assert!(*recoverable);
+            }
+            other => panic!("expected warning error event, got {other:?}"),
+        }
+        match &events[1] {
+            EngineEvent::TurnCompleted {
+                status,
+                token_usage,
+            } => {
+                assert_eq!(*status, TurnCompletionStatus::Failed);
+                assert!(token_usage.is_none());
+            }
+            other => panic!("expected turn completed event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_reconciled_turn_completion_events_keeps_timeout_completion_status() {
+        let events = build_reconciled_turn_completion_events(
+            ReconciledTurnCompletion {
+                status: TurnCompletionStatus::Completed,
+                error_message: Some("remote failure".to_string()),
+            },
+            TurnCompletionRecoveryMode::CompletionTimeout,
+        );
+
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            EngineEvent::Error {
+                message,
+                recoverable,
+            } => {
+                assert_eq!(message, "remote failure");
+                assert!(*recoverable);
+            }
+            other => panic!("expected remote error event, got {other:?}"),
+        }
+        match &events[1] {
+            EngineEvent::TurnCompleted {
+                status,
+                token_usage,
+            } => {
+                assert_eq!(*status, TurnCompletionStatus::Completed);
+                assert!(token_usage.is_none());
+            }
+            other => panic!("expected turn completed event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extract_reconciled_turn_completion_ignores_in_progress_turns() {
+        assert_eq!(
+            extract_reconciled_turn_completion(
+                &json!({
+                    "thread": {
+                        "turns": [
+                            { "id": "turn-active", "status": "inProgress" }
+                        ]
+                    }
+                }),
+                Some("turn-active"),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_approval_response_target_prefers_pending_request_metadata() {
+        let pending = PendingApproval {
+            raw_request_id: json!(42),
+            method: "item/fileChange/requestApproval".to_string(),
+        };
+        let persisted = ApprovalRequestRoute {
+            server_method: "item/commandExecution/requestApproval".to_string(),
+            raw_request_id: json!("req-2"),
+        };
+
+        let resolved = resolve_approval_response_target(Some(&pending), Some(&persisted))
+            .expect("expected live pending approval target");
+
+        assert_eq!(resolved.0, &json!(42));
+        assert_eq!(resolved.1, "item/fileChange/requestApproval");
+    }
+
+    #[test]
+    fn resolve_approval_response_target_rejects_persisted_route_after_transport_reset() {
+        let persisted = ApprovalRequestRoute {
+            server_method: "item/commandExecution/requestApproval".to_string(),
+            raw_request_id: json!("req-2"),
+        };
+
+        assert_eq!(
+            resolve_approval_response_target(None, Some(&persisted)),
+            Err(ApprovalResponseTargetError::RuntimeReset)
+        );
+    }
+
+    #[test]
+    fn resolve_approval_response_target_rejects_missing_request_metadata() {
+        assert_eq!(
+            resolve_approval_response_target(None, None),
+            Err(ApprovalResponseTargetError::MissingRequestMetadata)
+        );
     }
 
     #[test]
