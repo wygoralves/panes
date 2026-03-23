@@ -28,6 +28,7 @@ const PANES_WORKSPACE_ID_ENV: &str = "PANES_WORKSPACE_ID";
 const NOTIFICATION_DEFAULT_TITLE: &str = "Panes";
 const NOTIFICATION_DEFAULT_BODY: &str = "Notification";
 const NOTIFICATION_EVENT_PREFIX: &str = "terminal-notification-";
+const NOTIFICATION_CLEARED_EVENT_PREFIX: &str = "terminal-notification-cleared-";
 const MAX_TITLE_CHARS: usize = 80;
 const MAX_BODY_CHARS: usize = 240;
 
@@ -35,6 +36,7 @@ const MAX_BODY_CHARS: usize = 240;
 pub struct TerminalNotificationManager {
     runtime: RwLock<Option<NotificationIngressRuntime>>,
     notifications: RwLock<HashMap<String, HashMap<String, TerminalNotificationDto>>>,
+    focus: RwLock<NotificationFocusState>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +44,13 @@ struct NotificationIngressRuntime {
     addr: String,
     token: String,
     cli_bin_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, Default)]
+struct NotificationFocusState {
+    window_focused: bool,
+    workspace_id: Option<String>,
+    session_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +82,12 @@ struct NotificationIngressResponse {
     ok: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalNotificationClearedEvent {
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -150,12 +165,42 @@ impl TerminalNotificationManager {
         items
     }
 
-    async fn run_listener(
-        self: Arc<Self>,
-        app: AppHandle,
-        listener: TcpListener,
-        token: String,
+    pub async fn clear_for_session(
+        &self,
+        app: &AppHandle,
+        workspace_id: &str,
+        session_id: &str,
+    ) -> bool {
+        self.clear(app, workspace_id, Some(session_id)).await
+    }
+
+    pub async fn clear_for_workspace(&self, app: &AppHandle, workspace_id: &str) -> bool {
+        self.clear(app, workspace_id, None).await
+    }
+
+    pub async fn set_focus(
+        &self,
+        window_focused: bool,
+        workspace_id: Option<String>,
+        session_id: Option<String>,
     ) {
+        let normalized_workspace_id = normalize_optional_value(workspace_id);
+        let normalized_session_id = normalize_optional_value(session_id);
+        let mut focus = self.focus.write().await;
+        focus.window_focused = window_focused;
+        focus.workspace_id = if window_focused {
+            normalized_workspace_id
+        } else {
+            None
+        };
+        focus.session_id = if window_focused && focus.workspace_id.is_some() {
+            normalized_session_id
+        } else {
+            None
+        };
+    }
+
+    async fn run_listener(self: Arc<Self>, app: AppHandle, listener: TcpListener, token: String) {
         loop {
             let (stream, _addr) = match listener.accept().await {
                 Ok(pair) => pair,
@@ -219,8 +264,8 @@ impl TerminalNotificationManager {
             },
         };
 
-        let rendered = serde_json::to_string(&response)
-            .context("failed to serialize ingress response")?;
+        let rendered =
+            serde_json::to_string(&response).context("failed to serialize ingress response")?;
         writer
             .write_all(rendered.as_bytes())
             .await
@@ -237,7 +282,7 @@ impl TerminalNotificationManager {
         &self,
         app: &AppHandle,
         request: NotificationIngressRequest,
-    ) -> anyhow::Result<TerminalNotificationDto> {
+    ) -> anyhow::Result<Option<TerminalNotificationDto>> {
         let workspace_id = normalize_required_value(request.workspace_id, "workspace_id")?;
         let session_id = normalize_required_value(request.session_id, "session_id")?;
         let title = normalize_notification_text(
@@ -257,6 +302,15 @@ impl TerminalNotificationManager {
             .filter(|value| !value.is_empty())
             .unwrap_or("external")
             .to_string();
+
+        if self
+            .notification_target_is_focused(&workspace_id, &session_id)
+            .await
+        {
+            self.clear_for_session(app, &workspace_id, &session_id)
+                .await;
+            return Ok(None);
+        }
 
         let notification = TerminalNotificationDto {
             id: Uuid::new_v4().to_string(),
@@ -289,7 +343,61 @@ impl TerminalNotificationManager {
             log::warn!("failed to show desktop notification: {error}");
         }
 
-        Ok(notification)
+        Ok(Some(notification))
+    }
+
+    async fn notification_target_is_focused(&self, workspace_id: &str, session_id: &str) -> bool {
+        let focus = self.focus.read().await;
+        focus_matches_target(&focus, workspace_id, session_id)
+    }
+
+    async fn clear(&self, app: &AppHandle, workspace_id: &str, session_id: Option<&str>) -> bool {
+        let normalized_workspace_id = workspace_id.trim();
+        if normalized_workspace_id.is_empty() {
+            return false;
+        }
+
+        let normalized_session_id = session_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+
+        let removed = {
+            let mut notifications = self.notifications.write().await;
+            let Some(by_session) = notifications.get_mut(normalized_workspace_id) else {
+                return false;
+            };
+
+            let removed = match normalized_session_id.as_deref() {
+                Some(session_id) => by_session.remove(session_id).is_some(),
+                None => {
+                    if by_session.is_empty() {
+                        false
+                    } else {
+                        by_session.clear();
+                        true
+                    }
+                }
+            };
+            let remove_workspace = by_session.is_empty();
+            if remove_workspace {
+                notifications.remove(normalized_workspace_id);
+            }
+            removed
+        };
+
+        if !removed {
+            return false;
+        }
+
+        let event_name = format!("{NOTIFICATION_CLEARED_EVENT_PREFIX}{normalized_workspace_id}");
+        let _ = app.emit(
+            &event_name,
+            TerminalNotificationClearedEvent {
+                session_id: normalized_session_id,
+            },
+        );
+        true
     }
 }
 
@@ -339,7 +447,11 @@ fn parse_notify_cli_args(args: Vec<String>) -> anyhow::Result<Option<NotifyCliAr
             other => anyhow::bail!("unknown panes notify argument: {other}"),
         }
 
-        index += if matches!(flag, "--help" | "-h") { 1 } else { 2 };
+        index += if matches!(flag, "--help" | "-h") {
+            1
+        } else {
+            2
+        };
     }
 
     Ok(Some(parsed))
@@ -420,10 +532,15 @@ fn send_notify_request(
 
 fn install_cli_shim() -> anyhow::Result<PathBuf> {
     let bin_dir = runtime_env::app_data_dir().join("bin");
-    std::fs::create_dir_all(&bin_dir)
-        .with_context(|| format!("failed to create panes shim directory at {}", bin_dir.display()))?;
+    std::fs::create_dir_all(&bin_dir).with_context(|| {
+        format!(
+            "failed to create panes shim directory at {}",
+            bin_dir.display()
+        )
+    })?;
 
-    let current_exe = std::env::current_exe().context("failed to resolve current Panes executable")?;
+    let current_exe =
+        std::env::current_exe().context("failed to resolve current Panes executable")?;
     let shim_path = bin_dir.join(cli_shim_name());
     let contents = cli_shim_contents(&current_exe);
 
@@ -487,6 +604,17 @@ fn normalize_required_value(value: String, label: &str) -> anyhow::Result<String
     Ok(trimmed.to_string())
 }
 
+fn normalize_optional_value(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
 fn normalize_notification_text(raw: Option<&str>, fallback: &str, max_chars: usize) -> String {
     let collapsed = raw
         .unwrap_or_default()
@@ -523,6 +651,16 @@ fn read_non_empty_env(key: &str) -> Option<String> {
 
 fn read_required_env(key: &str) -> anyhow::Result<String> {
     read_non_empty_env(key).ok_or_else(|| anyhow::anyhow!("missing {key}"))
+}
+
+fn focus_matches_target(
+    focus: &NotificationFocusState,
+    workspace_id: &str,
+    session_id: &str,
+) -> bool {
+    focus.window_focused
+        && focus.workspace_id.as_deref() == Some(workspace_id)
+        && focus.session_id.as_deref() == Some(session_id)
 }
 
 fn print_notify_help() {
@@ -573,12 +711,36 @@ mod tests {
 
     #[test]
     fn normalize_notification_text_trims_collapses_and_truncates() {
-        let normalized = normalize_notification_text(
-            Some("  hello\n\nworld  from   panes  "),
-            "fallback",
-            11,
-        );
+        let normalized =
+            normalize_notification_text(Some("  hello\n\nworld  from   panes  "), "fallback", 11);
         assert_eq!(normalized, "hello world…");
+    }
+
+    #[test]
+    fn normalize_optional_value_rejects_blank_values() {
+        assert_eq!(normalize_optional_value(Some("  ".to_string())), None);
+        assert_eq!(
+            normalize_optional_value(Some(" ws-1 ".to_string())),
+            Some("ws-1".to_string())
+        );
+    }
+
+    #[test]
+    fn focus_matches_target_requires_window_workspace_and_session_match() {
+        let focus = NotificationFocusState {
+            window_focused: true,
+            workspace_id: Some("ws-1".to_string()),
+            session_id: Some("term-1".to_string()),
+        };
+
+        assert!(focus_matches_target(&focus, "ws-1", "term-1"));
+        assert!(!focus_matches_target(&focus, "ws-1", "term-2"));
+        assert!(!focus_matches_target(&focus, "ws-2", "term-1"));
+        assert!(!focus_matches_target(
+            &NotificationFocusState::default(),
+            "ws-1",
+            "term-1"
+        ));
     }
 
     #[test]

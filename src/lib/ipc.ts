@@ -45,6 +45,7 @@ import type {
   Repo,
   SearchResult,
   StreamEvent,
+  TerminalNotificationClearedEvent,
   TerminalNotification,
   TerminalExitEvent,
   TerminalForegroundChangedEvent,
@@ -456,6 +457,18 @@ export const ipc = {
     }),
   terminalListNotifications: (workspaceId: string) =>
     invoke<TerminalNotification[]>("terminal_list_notifications", { workspaceId }),
+  terminalClearNotification: (workspaceId: string, sessionId?: string | null) =>
+    invoke<void>("terminal_clear_notification", { workspaceId, sessionId: sessionId ?? null }),
+  terminalSetNotificationFocus: (
+    workspaceId: string | null,
+    sessionId: string | null,
+    windowFocused: boolean,
+  ) =>
+    invoke<void>("terminal_set_notification_focus", {
+      workspaceId: workspaceId ?? null,
+      sessionId: sessionId ?? null,
+      windowFocused,
+    }),
   checkDependencies: async () =>
     normalizeDependencyReport(
       await invoke<Partial<DependencyReport> | null>("check_dependencies"),
@@ -555,6 +568,16 @@ export async function listenTerminalNotification(
 ): Promise<UnlistenFn> {
   return listen<TerminalNotification>(
     `terminal-notification-${workspaceId}`,
+    ({ payload }) => onEvent(payload)
+  );
+}
+
+export async function listenTerminalNotificationCleared(
+  workspaceId: string,
+  onEvent: (event: TerminalNotificationClearedEvent) => void
+): Promise<UnlistenFn> {
+  return listen<TerminalNotificationClearedEvent>(
+    `terminal-notification-cleared-${workspaceId}`,
     ({ payload }) => onEvent(payload)
   );
 }
