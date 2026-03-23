@@ -1,8 +1,9 @@
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
+    process::{Command, Stdio},
     sync::Arc,
     time::Duration,
 };
@@ -10,6 +11,7 @@ use std::{
 use anyhow::Context;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 use tokio::{
@@ -26,15 +28,42 @@ const PANES_NOTIFY_TOKEN_ENV: &str = "PANES_NOTIFY_TOKEN";
 const PANES_SESSION_ID_ENV: &str = "PANES_SESSION_ID";
 const PANES_WORKSPACE_ID_ENV: &str = "PANES_WORKSPACE_ID";
 const CODEX_NOTIFY_SUBCOMMAND: &str = "codex-notify";
+const CLAUDE_HOOK_SUBCOMMAND: &str = "claude-hook";
+const CLAUDE_WRAPPER_SUBCOMMAND: &str = "claude-wrapper";
+const CLEAR_NOTIFICATION_SUBCOMMAND: &str = "clear-notification";
 const TERMINAL_NOTIFY_SUBCOMMAND: &str = "notify";
 const CODEX_NOTIFICATION_TITLE: &str = "Codex";
 const CODEX_NOTIFICATION_KIND_TURN_COMPLETE: &str = "agent-turn-complete";
+const CLAUDE_NOTIFICATION_TITLE: &str = "Claude";
+const CLAUDE_NOTIFICATION_ERROR_TITLE: &str = "Claude Error";
+const CLAUDE_NOTIFICATION_KIND_DEFAULT: &str = "notification";
+const CLAUDE_TURN_COMPLETE_BODY: &str = "Turn complete";
+const CLAUDE_TURN_FAILED_BODY: &str = "Turn failed";
+const CLAUDE_STOP_HOOK_EVENT: &str = "Stop";
+const CLAUDE_STOP_FAILURE_HOOK_EVENT: &str = "StopFailure";
+const CLAUDE_NOTIFICATION_HOOK_EVENT: &str = "Notification";
+const CLAUDE_SESSION_END_HOOK_EVENT: &str = "SessionEnd";
+const CLAUDE_SESSION_START_HOOK_EVENT: &str = "SessionStart";
+const CLAUDE_HOOK_COMMAND: &str = "panes claude-hook";
 const NOTIFICATION_DEFAULT_TITLE: &str = "Panes";
 const NOTIFICATION_DEFAULT_BODY: &str = "Notification";
 const NOTIFICATION_EVENT_PREFIX: &str = "terminal-notification-";
 const NOTIFICATION_CLEARED_EVENT_PREFIX: &str = "terminal-notification-cleared-";
 const MAX_TITLE_CHARS: usize = 80;
 const MAX_BODY_CHARS: usize = 240;
+const CLAUDE_PASSTHROUGH_SUBCOMMANDS: &[&str] = &[
+    "agents",
+    "auth",
+    "auto-mode",
+    "doctor",
+    "install",
+    "mcp",
+    "plugin",
+    "plugins",
+    "setup-token",
+    "update",
+    "upgrade",
+];
 
 #[derive(Default)]
 pub struct TerminalNotificationManager {
@@ -73,6 +102,8 @@ struct NotificationIngressRequest {
     workspace_id: String,
     session_id: String,
     #[serde(default)]
+    kind: NotificationIngressRequestKind,
+    #[serde(default)]
     title: Option<String>,
     #[serde(default)]
     body: Option<String>,
@@ -94,6 +125,14 @@ pub struct TerminalNotificationClearedEvent {
     pub session_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+enum NotificationIngressRequestKind {
+    #[default]
+    Notify,
+    Clear,
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 struct NotifyCliArgs {
     title: Option<String>,
@@ -101,6 +140,12 @@ struct NotifyCliArgs {
     workspace_id: Option<String>,
     session_id: Option<String>,
     source: Option<String>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ClearNotificationCliArgs {
+    workspace_id: Option<String>,
+    session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,13 +159,43 @@ struct CodexNotifyPayload {
     input_messages: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ClaudeHookPayload {
+    hook_event_name: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    notification_type: Option<String>,
+    #[serde(default)]
+    last_assistant_message: Option<String>,
+    #[serde(default)]
+    stop_hook_active: bool,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    error_details: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ClaudeHookAction {
+    Notify {
+        title: String,
+        body: String,
+        source: String,
+    },
+    Clear,
+}
+
 impl TerminalNotificationManager {
     pub async fn start(self: &Arc<Self>, app: AppHandle) -> anyhow::Result<()> {
         if self.runtime.read().await.is_some() {
             return Ok(());
         }
 
-        let cli_bin_dir = install_cli_shim().context("failed to install panes CLI shim")?;
+        let cli_bin_dir =
+            install_cli_shims().context("failed to install notification CLI shims")?;
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
             .context("failed to bind terminal notification ingress")?;
@@ -300,6 +375,12 @@ impl TerminalNotificationManager {
     ) -> anyhow::Result<Option<TerminalNotificationDto>> {
         let workspace_id = normalize_required_value(request.workspace_id, "workspace_id")?;
         let session_id = normalize_required_value(request.session_id, "session_id")?;
+        if request.kind == NotificationIngressRequestKind::Clear {
+            self.clear_for_session(app, &workspace_id, &session_id)
+                .await;
+            return Ok(None);
+        }
+
         let title = normalize_notification_text(
             request.title.as_deref(),
             NOTIFICATION_DEFAULT_TITLE,
@@ -431,6 +512,14 @@ pub fn maybe_handle_cli_subcommand() -> anyhow::Result<bool> {
             send_notify_request(&addr, &request)?;
             Ok(true)
         }
+        CLEAR_NOTIFICATION_SUBCOMMAND => {
+            let Some(cli_args) = parse_clear_notification_cli_args(args.collect())? else {
+                return Ok(true);
+            };
+            let (addr, request) = build_clear_request_from_cli(cli_args)?;
+            send_notify_request(&addr, &request)?;
+            Ok(true)
+        }
         CODEX_NOTIFY_SUBCOMMAND => {
             let Some(payload_json) = parse_codex_notify_args(args.collect())? else {
                 return Ok(true);
@@ -440,6 +529,14 @@ pub fn maybe_handle_cli_subcommand() -> anyhow::Result<bool> {
                 return Ok(true);
             };
             send_notify_request(&addr, &request)?;
+            Ok(true)
+        }
+        CLAUDE_HOOK_SUBCOMMAND => {
+            handle_claude_hook(args.collect())?;
+            Ok(true)
+        }
+        CLAUDE_WRAPPER_SUBCOMMAND => {
+            run_claude_wrapper(args.collect())?;
             Ok(true)
         }
         _ => Ok(false),
@@ -484,6 +581,43 @@ fn parse_notify_cli_args(args: Vec<String>) -> anyhow::Result<Option<NotifyCliAr
     Ok(Some(parsed))
 }
 
+fn parse_clear_notification_cli_args(
+    args: Vec<String>,
+) -> anyhow::Result<Option<ClearNotificationCliArgs>> {
+    let mut parsed = ClearNotificationCliArgs::default();
+    let mut index = 0;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        let value = if flag == "--help" || flag == "-h" {
+            None
+        } else {
+            Some(
+                args.get(index + 1)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("missing value for {flag}"))?,
+            )
+        };
+
+        match flag {
+            "--help" | "-h" => {
+                print_clear_notification_help();
+                return Ok(None);
+            }
+            "--workspace-id" => parsed.workspace_id = value,
+            "--session-id" => parsed.session_id = value,
+            other => anyhow::bail!("unknown panes clear-notification argument: {other}"),
+        }
+
+        index += if matches!(flag, "--help" | "-h") {
+            1
+        } else {
+            2
+        };
+    }
+
+    Ok(Some(parsed))
+}
+
 fn build_notify_request_from_cli(
     args: NotifyCliArgs,
 ) -> anyhow::Result<(SocketAddr, NotificationIngressRequest)> {
@@ -511,6 +645,12 @@ fn build_notify_request_from_codex_payload(
     )?))
 }
 
+fn build_clear_request_from_cli(
+    args: ClearNotificationCliArgs,
+) -> anyhow::Result<(SocketAddr, NotificationIngressRequest)> {
+    build_clear_request(args.workspace_id, args.session_id)
+}
+
 fn build_notify_request(
     workspace_id: Option<String>,
     session_id: Option<String>,
@@ -518,6 +658,52 @@ fn build_notify_request(
     body: Option<String>,
     source: Option<String>,
 ) -> anyhow::Result<(SocketAddr, NotificationIngressRequest)> {
+    let ingress = build_ingress_target(workspace_id, session_id)?;
+    Ok((
+        ingress.addr,
+        NotificationIngressRequest {
+            token: ingress.token,
+            workspace_id: ingress.workspace_id,
+            session_id: ingress.session_id,
+            kind: NotificationIngressRequestKind::Notify,
+            title,
+            body,
+            source,
+        },
+    ))
+}
+
+fn build_clear_request(
+    workspace_id: Option<String>,
+    session_id: Option<String>,
+) -> anyhow::Result<(SocketAddr, NotificationIngressRequest)> {
+    let ingress = build_ingress_target(workspace_id, session_id)?;
+    Ok((
+        ingress.addr,
+        NotificationIngressRequest {
+            token: ingress.token,
+            workspace_id: ingress.workspace_id,
+            session_id: ingress.session_id,
+            kind: NotificationIngressRequestKind::Clear,
+            title: None,
+            body: None,
+            source: None,
+        },
+    ))
+}
+
+#[derive(Debug)]
+struct NotificationIngressTarget {
+    addr: SocketAddr,
+    token: String,
+    workspace_id: String,
+    session_id: String,
+}
+
+fn build_ingress_target(
+    workspace_id: Option<String>,
+    session_id: Option<String>,
+) -> anyhow::Result<NotificationIngressTarget> {
     let addr = read_required_env(PANES_NOTIFY_ADDR_ENV)
         .context("PANES terminal notification ingress is not available in this shell")?;
     let token = read_required_env(PANES_NOTIFY_TOKEN_ENV)
@@ -532,17 +718,12 @@ fn build_notify_request(
     let parsed_addr = addr
         .parse::<SocketAddr>()
         .with_context(|| format!("invalid PANES_NOTIFY_ADDR value: {addr}"))?;
-    Ok((
-        parsed_addr,
-        NotificationIngressRequest {
-            token,
-            workspace_id,
-            session_id,
-            title,
-            body,
-            source,
-        },
-    ))
+    Ok(NotificationIngressTarget {
+        addr: parsed_addr,
+        token,
+        workspace_id,
+        session_id,
+    })
 }
 
 fn parse_codex_notify_args(args: Vec<String>) -> anyhow::Result<Option<String>> {
@@ -576,6 +757,322 @@ fn codex_notify_cli_args_from_payload(raw_payload: &str) -> anyhow::Result<Optio
         session_id: None,
         source: Some("codex".to_string()),
     }))
+}
+
+fn handle_claude_hook(args: Vec<String>) -> anyhow::Result<()> {
+    if matches!(args.as_slice(), [flag] if matches!(flag.as_str(), "--help" | "-h")) {
+        print_claude_hook_help();
+        return Ok(());
+    }
+    if !args.is_empty() {
+        anyhow::bail!("panes claude-hook does not accept arguments");
+    }
+
+    let mut payload = String::new();
+    std::io::stdin()
+        .read_to_string(&mut payload)
+        .context("failed to read Claude hook payload from stdin")?;
+    if payload.trim().is_empty() {
+        return Ok(());
+    }
+
+    let Some(action) = claude_hook_action_from_payload(&payload)? else {
+        return Ok(());
+    };
+
+    let (addr, request) = match action {
+        ClaudeHookAction::Notify {
+            title,
+            body,
+            source,
+        } => build_notify_request(None, None, Some(title), Some(body), Some(source))?,
+        ClaudeHookAction::Clear => build_clear_request(None, None)?,
+    };
+    send_notify_request(&addr, &request)
+}
+
+fn run_claude_wrapper(args: Vec<String>) -> anyhow::Result<()> {
+    let shim_dir = runtime_env::app_data_dir().join("bin");
+    let claude_binary = resolve_wrapped_binary("claude", &shim_dir)?;
+    let forwarded_args = build_claude_forwarded_args(args)?;
+    let status = Command::new(&claude_binary)
+        .args(&forwarded_args)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .with_context(|| format!("failed to launch Claude at {}", claude_binary.display()))?;
+    std::process::exit(exit_code_from_status(status));
+}
+
+fn build_claude_forwarded_args(args: Vec<String>) -> anyhow::Result<Vec<String>> {
+    let Some(session_id) = current_panes_session_id_if_available() else {
+        return Ok(args);
+    };
+    build_claude_forwarded_args_with_session(args, &session_id)
+}
+
+fn build_claude_forwarded_args_with_session(
+    args: Vec<String>,
+    session_id: &str,
+) -> anyhow::Result<Vec<String>> {
+    if should_passthrough_claude_invocation(&args) {
+        return Ok(args);
+    }
+    let mut forwarded = args;
+    let has_bare = forwarded.iter().any(|arg| matches!(arg.as_str(), "--bare"));
+    let has_session_id = has_cli_option(&forwarded, "--session-id");
+    let explicit_settings = if has_bare {
+        None
+    } else {
+        take_cli_option_value(&mut forwarded, "--settings")?
+    };
+
+    let mut injected = Vec::new();
+    if !has_bare {
+        injected.push("--settings".to_string());
+        injected.push(merge_claude_settings(explicit_settings.as_deref())?);
+    }
+    if !has_session_id {
+        injected.push("--session-id".to_string());
+        injected.push(session_id.to_string());
+    }
+    if injected.is_empty() {
+        return Ok(forwarded);
+    }
+
+    injected.extend(forwarded);
+    Ok(injected)
+}
+
+fn current_panes_session_id_if_available() -> Option<String> {
+    (read_non_empty_env(PANES_NOTIFY_ADDR_ENV).is_some()
+        && read_non_empty_env(PANES_NOTIFY_TOKEN_ENV).is_some()
+        && read_non_empty_env(PANES_WORKSPACE_ID_ENV).is_some()
+        && read_non_empty_env(PANES_SESSION_ID_ENV).is_some())
+    .then(|| read_non_empty_env(PANES_SESSION_ID_ENV))
+    .flatten()
+}
+
+fn should_passthrough_claude_invocation(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| matches!(arg.as_str(), "-h" | "--help" | "-v" | "--version"))
+        || first_claude_positional(args)
+            .map(|value| CLAUDE_PASSTHROUGH_SUBCOMMANDS.contains(&value))
+            .unwrap_or(false)
+}
+
+fn first_claude_positional(args: &[String]) -> Option<&str> {
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        if arg == "--" {
+            return args.get(index + 1).map(String::as_str);
+        }
+        if !arg.starts_with('-') || arg == "-" {
+            return Some(arg);
+        }
+
+        let consumes_value = matches!(
+            arg.split('=').next().unwrap_or(arg),
+            "--agent"
+                | "--agents"
+                | "--append-system-prompt"
+                | "-d"
+                | "--debug"
+                | "--debug-file"
+                | "--effort"
+                | "--fallback-model"
+                | "--from-pr"
+                | "--input-format"
+                | "--json-schema"
+                | "--max-budget-usd"
+                | "--model"
+                | "-n"
+                | "--name"
+                | "--output-format"
+                | "--permission-mode"
+                | "-r"
+                | "--resume"
+                | "--session-id"
+                | "--setting-sources"
+                | "--settings"
+                | "--system-prompt"
+                | "-w"
+                | "--worktree"
+        ) && !arg.contains('=');
+        index += if consumes_value { 2 } else { 1 };
+    }
+    None
+}
+
+fn has_cli_option(args: &[String], option: &str) -> bool {
+    let inline = format!("{option}=");
+    args.iter()
+        .any(|arg| arg == option || arg.starts_with(&inline))
+}
+
+fn take_cli_option_value(args: &mut Vec<String>, option: &str) -> anyhow::Result<Option<String>> {
+    let inline_prefix = format!("{option}=");
+    let mut value = None;
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == option {
+            let next = args
+                .get(index + 1)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("missing value for {option}"))?;
+            args.drain(index..=index + 1);
+            value = Some(next);
+            continue;
+        }
+        if let Some(inline_value) = args[index].strip_prefix(&inline_prefix) {
+            value = Some(inline_value.to_string());
+            args.remove(index);
+            continue;
+        }
+        index += 1;
+    }
+
+    Ok(value)
+}
+
+fn merge_claude_settings(existing: Option<&str>) -> anyhow::Result<String> {
+    let mut merged = match existing {
+        Some(value) => parse_claude_settings_value(value)?,
+        None => json!({}),
+    };
+    merge_json_values(&mut merged, claude_hook_settings());
+    serde_json::to_string(&merged).context("failed to serialize merged Claude settings")
+}
+
+fn parse_claude_settings_value(raw: &str) -> anyhow::Result<Value> {
+    let trimmed = raw.trim();
+    let json_text = if trimmed.starts_with('{') {
+        trimmed.to_string()
+    } else {
+        std::fs::read_to_string(trimmed)
+            .with_context(|| format!("failed to read Claude settings file at {trimmed}"))?
+    };
+    let parsed: Value =
+        serde_json::from_str(&json_text).context("failed to parse Claude settings JSON")?;
+    if !parsed.is_object() {
+        anyhow::bail!("Claude settings must be a JSON object");
+    }
+    Ok(parsed)
+}
+
+fn merge_json_values(base: &mut Value, overlay: Value) {
+    match (base, overlay) {
+        (Value::Object(base_map), Value::Object(overlay_map)) => {
+            for (key, overlay_value) in overlay_map {
+                match base_map.get_mut(&key) {
+                    Some(base_value) => merge_json_values(base_value, overlay_value),
+                    None => {
+                        base_map.insert(key, overlay_value);
+                    }
+                }
+            }
+        }
+        (Value::Array(base_items), Value::Array(overlay_items)) => {
+            for item in overlay_items {
+                if !base_items.contains(&item) {
+                    base_items.push(item);
+                }
+            }
+        }
+        (base_slot, overlay_value) => *base_slot = overlay_value,
+    }
+}
+
+fn claude_hook_settings() -> Value {
+    let hook_group = json!({
+        "hooks": [
+            {
+                "type": "command",
+                "command": CLAUDE_HOOK_COMMAND
+            }
+        ]
+    });
+    json!({
+        "hooks": {
+            CLAUDE_NOTIFICATION_HOOK_EVENT: [hook_group.clone()],
+            CLAUDE_STOP_HOOK_EVENT: [hook_group.clone()],
+            CLAUDE_STOP_FAILURE_HOOK_EVENT: [hook_group.clone()],
+            CLAUDE_SESSION_START_HOOK_EVENT: [hook_group.clone()],
+            CLAUDE_SESSION_END_HOOK_EVENT: [hook_group],
+        }
+    })
+}
+
+fn claude_hook_action_from_payload(raw_payload: &str) -> anyhow::Result<Option<ClaudeHookAction>> {
+    let payload: ClaudeHookPayload =
+        serde_json::from_str(raw_payload).context("failed to parse Claude hook payload")?;
+
+    let action = match payload.hook_event_name.as_str() {
+        CLAUDE_NOTIFICATION_HOOK_EVENT => {
+            let title = payload
+                .title
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| CLAUDE_NOTIFICATION_TITLE.to_string());
+            let body = payload
+                .message
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| payload.notification_type.map(humanize_notification_kind))
+                .unwrap_or_else(|| NOTIFICATION_DEFAULT_BODY.to_string());
+            Some(ClaudeHookAction::Notify {
+                title,
+                body,
+                source: "claude".to_string(),
+            })
+        }
+        CLAUDE_STOP_HOOK_EVENT => {
+            if payload.stop_hook_active {
+                None
+            } else {
+                Some(ClaudeHookAction::Notify {
+                    title: CLAUDE_NOTIFICATION_TITLE.to_string(),
+                    body: payload
+                        .last_assistant_message
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or_else(|| CLAUDE_TURN_COMPLETE_BODY.to_string()),
+                    source: "claude".to_string(),
+                })
+            }
+        }
+        CLAUDE_STOP_FAILURE_HOOK_EVENT => Some(ClaudeHookAction::Notify {
+            title: CLAUDE_NOTIFICATION_ERROR_TITLE.to_string(),
+            body: payload
+                .last_assistant_message
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| {
+                    payload
+                        .error_details
+                        .filter(|value| !value.trim().is_empty())
+                })
+                .or_else(|| payload.error.filter(|value| !value.trim().is_empty()))
+                .unwrap_or_else(|| CLAUDE_TURN_FAILED_BODY.to_string()),
+            source: "claude".to_string(),
+        }),
+        CLAUDE_SESSION_START_HOOK_EVENT | CLAUDE_SESSION_END_HOOK_EVENT => {
+            Some(ClaudeHookAction::Clear)
+        }
+        _ => None,
+    };
+    Ok(action)
+}
+
+fn humanize_notification_kind(kind: String) -> String {
+    let cleaned = kind.trim();
+    if cleaned.is_empty() {
+        return NOTIFICATION_DEFAULT_BODY.to_string();
+    }
+    let out = cleaned.replace('_', " ");
+    if out.trim().is_empty() {
+        CLAUDE_NOTIFICATION_KIND_DEFAULT.to_string()
+    } else {
+        out
+    }
 }
 
 fn send_notify_request(
@@ -619,7 +1116,7 @@ fn send_notify_request(
     );
 }
 
-fn install_cli_shim() -> anyhow::Result<PathBuf> {
+fn install_cli_shims() -> anyhow::Result<PathBuf> {
     let bin_dir = runtime_env::app_data_dir().join("bin");
     std::fs::create_dir_all(&bin_dir).with_context(|| {
         format!(
@@ -630,15 +1127,27 @@ fn install_cli_shim() -> anyhow::Result<PathBuf> {
 
     let current_exe =
         std::env::current_exe().context("failed to resolve current Panes executable")?;
-    let shim_path = bin_dir.join(cli_shim_name());
-    let contents = cli_shim_contents(&current_exe);
+    write_cli_shim(
+        &bin_dir.join(panes_cli_shim_name()),
+        &panes_cli_shim_contents(&current_exe),
+        "panes",
+    )?;
+    write_cli_shim(
+        &bin_dir.join(claude_cli_shim_name()),
+        &claude_cli_shim_contents(&current_exe),
+        "claude",
+    )?;
 
-    let should_write = std::fs::read_to_string(&shim_path)
+    Ok(bin_dir)
+}
+
+fn write_cli_shim(shim_path: &Path, contents: &str, label: &str) -> anyhow::Result<()> {
+    let should_write = std::fs::read_to_string(shim_path)
         .map(|existing| existing != contents)
         .unwrap_or(true);
     if should_write {
         std::fs::write(&shim_path, contents.as_bytes())
-            .with_context(|| format!("failed to write panes shim at {}", shim_path.display()))?;
+            .with_context(|| format!("failed to write {label} shim at {}", shim_path.display()))?;
     }
 
     #[cfg(unix)]
@@ -648,35 +1157,63 @@ fn install_cli_shim() -> anyhow::Result<PathBuf> {
         let permissions = std::fs::Permissions::from_mode(0o755);
         std::fs::set_permissions(&shim_path, permissions).with_context(|| {
             format!(
-                "failed to mark panes shim executable at {}",
+                "failed to mark {label} shim executable at {}",
                 shim_path.display()
             )
         })?;
     }
 
-    Ok(bin_dir)
+    Ok(())
 }
 
 #[cfg(windows)]
-fn cli_shim_name() -> &'static str {
+fn panes_cli_shim_name() -> &'static str {
     "panes.cmd"
 }
 
 #[cfg(not(windows))]
-fn cli_shim_name() -> &'static str {
+fn panes_cli_shim_name() -> &'static str {
     "panes"
 }
 
 #[cfg(windows)]
-fn cli_shim_contents(current_exe: &Path) -> String {
+fn claude_cli_shim_name() -> &'static str {
+    "claude.cmd"
+}
+
+#[cfg(not(windows))]
+fn claude_cli_shim_name() -> &'static str {
+    "claude"
+}
+
+#[cfg(windows)]
+fn panes_cli_shim_contents(current_exe: &Path) -> String {
     format!("@echo off\r\n\"{}\" %*\r\n", current_exe.to_string_lossy())
 }
 
 #[cfg(not(windows))]
-fn cli_shim_contents(current_exe: &Path) -> String {
+fn panes_cli_shim_contents(current_exe: &Path) -> String {
     format!(
         "#!/bin/sh\nexec {} \"$@\"\n",
         shell_single_quote_escape(&current_exe.to_string_lossy())
+    )
+}
+
+#[cfg(windows)]
+fn claude_cli_shim_contents(current_exe: &Path) -> String {
+    format!(
+        "@echo off\r\n\"{}\" {} %*\r\n",
+        current_exe.to_string_lossy(),
+        CLAUDE_WRAPPER_SUBCOMMAND
+    )
+}
+
+#[cfg(not(windows))]
+fn claude_cli_shim_contents(current_exe: &Path) -> String {
+    format!(
+        "#!/bin/sh\nexec {} {} \"$@\"\n",
+        shell_single_quote_escape(&current_exe.to_string_lossy()),
+        CLAUDE_WRAPPER_SUBCOMMAND
     )
 }
 
@@ -742,6 +1279,43 @@ fn read_required_env(key: &str) -> anyhow::Result<String> {
     read_non_empty_env(key).ok_or_else(|| anyhow::anyhow!("missing {key}"))
 }
 
+fn resolve_wrapped_binary(binary: &str, shim_dir: &Path) -> anyhow::Result<PathBuf> {
+    let path_var = std::env::var_os("PATH").ok_or_else(|| anyhow::anyhow!("PATH is not set"))?;
+    let mut entries = std::env::split_paths(&path_var).collect::<Vec<_>>();
+    entries.retain(|entry| !paths_match(entry, shim_dir));
+    let filtered = std::env::join_paths(entries).context("failed to rebuild PATH without shims")?;
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    which::which_in(binary, Some(filtered), cwd)
+        .with_context(|| format!("failed to find the real {binary} binary outside Panes shims"))
+}
+
+fn paths_match(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left.canonicalize().ok(), right.canonicalize().ok()) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn exit_code_from_status(status: std::process::ExitStatus) -> i32 {
+    if let Some(code) = status.code() {
+        return code;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        return status.signal().map(|signal| 128 + signal).unwrap_or(1);
+    }
+
+    #[cfg(not(unix))]
+    {
+        1
+    }
+}
+
 fn focus_matches_target(
     focus: &NotificationFocusState,
     workspace_id: &str,
@@ -758,8 +1332,16 @@ fn print_notify_help() {
     );
 }
 
+fn print_clear_notification_help() {
+    println!("Usage: panes clear-notification [--workspace-id ID] [--session-id ID]");
+}
+
 fn print_codex_notify_help() {
     println!("Usage: panes codex-notify '<codex notify JSON payload>'");
+}
+
+fn print_claude_hook_help() {
+    println!("Usage: panes claude-hook");
 }
 
 #[cfg(test)]
@@ -798,6 +1380,33 @@ mod tests {
     fn parse_notify_cli_args_returns_none_for_help() {
         let parsed = parse_notify_cli_args(vec!["--help".to_string()])
             .expect("notify help args should parse");
+
+        assert_eq!(parsed, None);
+    }
+
+    #[test]
+    fn parse_clear_notification_cli_args_reads_supported_flags() {
+        let parsed = parse_clear_notification_cli_args(vec![
+            "--workspace-id".to_string(),
+            "ws-1".to_string(),
+            "--session-id".to_string(),
+            "term-1".to_string(),
+        ])
+        .expect("clear args should parse");
+
+        assert_eq!(
+            parsed,
+            Some(ClearNotificationCliArgs {
+                workspace_id: Some("ws-1".to_string()),
+                session_id: Some("term-1".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_clear_notification_cli_args_returns_none_for_help() {
+        let parsed = parse_clear_notification_cli_args(vec!["--help".to_string()])
+            .expect("clear help args should parse");
 
         assert_eq!(parsed, None);
     }
@@ -866,6 +1475,196 @@ mod tests {
     }
 
     #[test]
+    fn build_claude_forwarded_args_injects_settings_and_session_id() {
+        let forwarded = build_claude_forwarded_args_with_session(
+            vec!["review this diff".to_string()],
+            "session-1",
+        )
+        .unwrap();
+
+        assert_eq!(forwarded[0], "--settings");
+        let settings: Value =
+            serde_json::from_str(&forwarded[1]).expect("settings should be valid JSON");
+        assert_eq!(
+            settings["hooks"][CLAUDE_STOP_HOOK_EVENT]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(forwarded[2], "--session-id");
+        assert_eq!(forwarded[3], "session-1");
+        assert_eq!(forwarded[4], "review this diff");
+    }
+
+    #[test]
+    fn build_claude_forwarded_args_merges_existing_settings() {
+        let existing = json!({
+            "hooks": {
+                "Stop": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "echo custom"
+                            }
+                        ]
+                    }
+                ]
+            }
+        })
+        .to_string();
+        let forwarded = build_claude_forwarded_args_with_session(
+            vec![
+                "--settings".to_string(),
+                existing,
+                "review this diff".to_string(),
+            ],
+            "session-1",
+        )
+        .unwrap();
+        let settings: Value =
+            serde_json::from_str(&forwarded[1]).expect("settings should be valid JSON");
+        assert_eq!(
+            settings["hooks"][CLAUDE_STOP_HOOK_EVENT]
+                .as_array()
+                .map(Vec::len),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn build_claude_forwarded_args_respects_bare_mode() {
+        let forwarded =
+            build_claude_forwarded_args_with_session(vec!["--bare".to_string()], "session-1")
+                .unwrap();
+
+        assert_eq!(
+            forwarded,
+            vec![
+                "--session-id".to_string(),
+                "session-1".to_string(),
+                "--bare".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_claude_forwarded_args_preserves_settings_in_bare_mode() {
+        let forwarded = build_claude_forwarded_args_with_session(
+            vec![
+                "--bare".to_string(),
+                "--settings".to_string(),
+                r#"{"env":{"FOO":"bar"}}"#.to_string(),
+            ],
+            "session-1",
+        )
+        .unwrap();
+
+        assert_eq!(
+            forwarded,
+            vec![
+                "--session-id".to_string(),
+                "session-1".to_string(),
+                "--bare".to_string(),
+                "--settings".to_string(),
+                r#"{"env":{"FOO":"bar"}}"#.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_claude_forwarded_args_passthroughs_subcommands() {
+        let forwarded = build_claude_forwarded_args_with_session(
+            vec!["auth".to_string(), "status".to_string()],
+            "session-1",
+        )
+        .unwrap();
+
+        assert_eq!(forwarded, vec!["auth".to_string(), "status".to_string()]);
+    }
+
+    #[test]
+    fn build_claude_forwarded_args_passthroughs_help() {
+        let forwarded =
+            build_claude_forwarded_args_with_session(vec!["--help".to_string()], "session-1")
+                .unwrap();
+
+        assert_eq!(forwarded, vec!["--help".to_string()]);
+    }
+
+    #[test]
+    fn claude_hook_action_from_payload_maps_notification() {
+        let action = claude_hook_action_from_payload(
+            r#"{"hook_event_name":"Notification","title":"Claude needs you","message":"Approve this command","notification_type":"permission_prompt"}"#,
+        )
+        .expect("Claude notification payload should parse");
+
+        assert_eq!(
+            action,
+            Some(ClaudeHookAction::Notify {
+                title: "Claude needs you".to_string(),
+                body: "Approve this command".to_string(),
+                source: "claude".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn claude_hook_action_from_payload_maps_stop_completion() {
+        let action = claude_hook_action_from_payload(
+            r#"{"hook_event_name":"Stop","last_assistant_message":"All set","stop_hook_active":false}"#,
+        )
+        .expect("Claude stop payload should parse");
+
+        assert_eq!(
+            action,
+            Some(ClaudeHookAction::Notify {
+                title: "Claude".to_string(),
+                body: "All set".to_string(),
+                source: "claude".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn claude_hook_action_from_payload_ignores_active_stop_hook() {
+        let action = claude_hook_action_from_payload(
+            r#"{"hook_event_name":"Stop","last_assistant_message":"All set","stop_hook_active":true}"#,
+        )
+        .expect("Claude stop payload should parse");
+
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn claude_hook_action_from_payload_maps_stop_failure() {
+        let action = claude_hook_action_from_payload(
+            r#"{"hook_event_name":"StopFailure","error":"rate_limit","last_assistant_message":"API Error: Rate limit reached"}"#,
+        )
+        .expect("Claude stop failure payload should parse");
+
+        assert_eq!(
+            action,
+            Some(ClaudeHookAction::Notify {
+                title: "Claude Error".to_string(),
+                body: "API Error: Rate limit reached".to_string(),
+                source: "claude".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn claude_hook_action_from_payload_clears_on_session_lifecycle() {
+        let start = claude_hook_action_from_payload(r#"{"hook_event_name":"SessionStart"}"#)
+            .expect("Claude session-start payload should parse");
+        let end = claude_hook_action_from_payload(r#"{"hook_event_name":"SessionEnd"}"#)
+            .expect("Claude session-end payload should parse");
+
+        assert_eq!(start, Some(ClaudeHookAction::Clear));
+        assert_eq!(end, Some(ClaudeHookAction::Clear));
+    }
+
+    #[test]
     fn normalize_notification_text_trims_collapses_and_truncates() {
         let normalized =
             normalize_notification_text(Some("  hello\n\nworld  from   panes  "), "fallback", 11);
@@ -902,7 +1701,14 @@ mod tests {
     #[test]
     #[cfg(not(windows))]
     fn unix_cli_shim_escapes_single_quotes() {
-        let contents = cli_shim_contents(Path::new("/tmp/Panes' Dev"));
+        let contents = panes_cli_shim_contents(Path::new("/tmp/Panes' Dev"));
         assert!(contents.contains("'/tmp/Panes'\\'' Dev'"));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn unix_claude_cli_shim_invokes_wrapper_subcommand() {
+        let contents = claude_cli_shim_contents(Path::new("/tmp/Panes' Dev"));
+        assert!(contents.contains(CLAUDE_WRAPPER_SUBCOMMAND));
     }
 }

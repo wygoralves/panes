@@ -124,6 +124,14 @@ Hoje o Codex envia um único payload JSON para o programa configurado em `notify
 
 Isso só funciona dentro de terminais abertos pelo Panes, porque o shim `panes` injetado depende de `PANES_NOTIFY_ADDR`, `PANES_NOTIFY_TOKEN`, `PANES_WORKSPACE_ID` e `PANES_SESSION_ID`.
 
+### Notificações de Terminal do Claude
+
+Dentro de uma sessão de terminal aberta pelo Panes, não é necessário configurar o Claude manualmente. O Panes injeta um shim `claude` no `PATH` desse terminal, encaminha para o binário real do Claude, adiciona `--session-id <PANES_SESSION_ID>` quando necessário e injeta configurações de hooks do Claude que chamam `panes claude-hook`.
+
+Hoje essa ponte de hooks trata os eventos `Notification`, `Stop`, `StopFailure`, `SessionStart` e `SessionEnd` do Claude, roteando tudo de volta para a sessão de terminal dona do evento para que o Panes mostre notificações no desktop e dentro do app e limpe estado antigo quando uma sessão do Claude começa ou termina.
+
+Isso só funciona dentro de terminais abertos pelo Panes. Se você rodar o Claude explicitamente com `--bare`, o Panes respeita isso e não injeta hooks.
+
 ### Build de Produção
 
 ```bash
