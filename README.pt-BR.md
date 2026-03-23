@@ -112,6 +112,18 @@ pnpm install
 pnpm tauri:dev
 ```
 
+### Notificações de Terminal do Codex
+
+Dentro de uma sessão de terminal aberta pelo Panes, adicione isto ao `~/.codex/config.toml`:
+
+```toml
+notify = ["panes", "codex-notify"]
+```
+
+Hoje o Codex envia um único payload JSON para o programa configurado em `notify`. `panes codex-notify` entende o payload atual `agent-turn-complete`, extrai a última mensagem do assistant e a roteia de volta para a sessão de terminal dona do evento para que o Panes mostre notificações no desktop e dentro do app.
+
+Isso só funciona dentro de terminais abertos pelo Panes, porque o shim `panes` injetado depende de `PANES_NOTIFY_ADDR`, `PANES_NOTIFY_TOKEN`, `PANES_WORKSPACE_ID` e `PANES_SESSION_ID`.
+
 ### Build de Produção
 
 ```bash

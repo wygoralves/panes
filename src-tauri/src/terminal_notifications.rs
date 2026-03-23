@@ -25,6 +25,10 @@ const PANES_NOTIFY_ADDR_ENV: &str = "PANES_NOTIFY_ADDR";
 const PANES_NOTIFY_TOKEN_ENV: &str = "PANES_NOTIFY_TOKEN";
 const PANES_SESSION_ID_ENV: &str = "PANES_SESSION_ID";
 const PANES_WORKSPACE_ID_ENV: &str = "PANES_WORKSPACE_ID";
+const CODEX_NOTIFY_SUBCOMMAND: &str = "codex-notify";
+const TERMINAL_NOTIFY_SUBCOMMAND: &str = "notify";
+const CODEX_NOTIFICATION_TITLE: &str = "Codex";
+const CODEX_NOTIFICATION_KIND_TURN_COMPLETE: &str = "agent-turn-complete";
 const NOTIFICATION_DEFAULT_TITLE: &str = "Panes";
 const NOTIFICATION_DEFAULT_BODY: &str = "Notification";
 const NOTIFICATION_EVENT_PREFIX: &str = "terminal-notification-";
@@ -97,6 +101,17 @@ struct NotifyCliArgs {
     workspace_id: Option<String>,
     session_id: Option<String>,
     source: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct CodexNotifyPayload {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    last_assistant_message: Option<String>,
+    #[serde(default)]
+    input_messages: Vec<String>,
 }
 
 impl TerminalNotificationManager {
@@ -407,16 +422,28 @@ pub fn maybe_handle_cli_subcommand() -> anyhow::Result<bool> {
         return Ok(false);
     };
 
-    if subcommand != "notify" {
-        return Ok(false);
+    match subcommand.as_str() {
+        TERMINAL_NOTIFY_SUBCOMMAND => {
+            let Some(cli_args) = parse_notify_cli_args(args.collect())? else {
+                return Ok(true);
+            };
+            let (addr, request) = build_notify_request_from_cli(cli_args)?;
+            send_notify_request(&addr, &request)?;
+            Ok(true)
+        }
+        CODEX_NOTIFY_SUBCOMMAND => {
+            let Some(payload_json) = parse_codex_notify_args(args.collect())? else {
+                return Ok(true);
+            };
+            let Some((addr, request)) = build_notify_request_from_codex_payload(&payload_json)?
+            else {
+                return Ok(true);
+            };
+            send_notify_request(&addr, &request)?;
+            Ok(true)
+        }
+        _ => Ok(false),
     }
-
-    let Some(cli_args) = parse_notify_cli_args(args.collect())? else {
-        return Ok(true);
-    };
-    let (addr, request) = build_notify_request_from_cli(cli_args)?;
-    send_notify_request(&addr, &request)?;
-    Ok(true)
 }
 
 fn parse_notify_cli_args(args: Vec<String>) -> anyhow::Result<Option<NotifyCliArgs>> {
@@ -460,16 +487,45 @@ fn parse_notify_cli_args(args: Vec<String>) -> anyhow::Result<Option<NotifyCliAr
 fn build_notify_request_from_cli(
     args: NotifyCliArgs,
 ) -> anyhow::Result<(SocketAddr, NotificationIngressRequest)> {
+    build_notify_request(
+        args.workspace_id,
+        args.session_id,
+        args.title,
+        args.body,
+        args.source.or_else(|| Some("cli".to_string())),
+    )
+}
+
+fn build_notify_request_from_codex_payload(
+    payload_json: &str,
+) -> anyhow::Result<Option<(SocketAddr, NotificationIngressRequest)>> {
+    let Some(args) = codex_notify_cli_args_from_payload(payload_json)? else {
+        return Ok(None);
+    };
+    Ok(Some(build_notify_request(
+        args.workspace_id,
+        args.session_id,
+        args.title,
+        args.body,
+        args.source,
+    )?))
+}
+
+fn build_notify_request(
+    workspace_id: Option<String>,
+    session_id: Option<String>,
+    title: Option<String>,
+    body: Option<String>,
+    source: Option<String>,
+) -> anyhow::Result<(SocketAddr, NotificationIngressRequest)> {
     let addr = read_required_env(PANES_NOTIFY_ADDR_ENV)
         .context("PANES terminal notification ingress is not available in this shell")?;
     let token = read_required_env(PANES_NOTIFY_TOKEN_ENV)
         .context("PANES terminal notification token is not available in this shell")?;
-    let workspace_id = args
-        .workspace_id
+    let workspace_id = workspace_id
         .or_else(|| read_non_empty_env(PANES_WORKSPACE_ID_ENV))
         .ok_or_else(|| anyhow::anyhow!("workspace id is required"))?;
-    let session_id = args
-        .session_id
+    let session_id = session_id
         .or_else(|| read_non_empty_env(PANES_SESSION_ID_ENV))
         .ok_or_else(|| anyhow::anyhow!("session id is required"))?;
 
@@ -482,11 +538,44 @@ fn build_notify_request_from_cli(
             token,
             workspace_id,
             session_id,
-            title: args.title,
-            body: args.body,
-            source: args.source.or_else(|| Some("cli".to_string())),
+            title,
+            body,
+            source,
         },
     ))
+}
+
+fn parse_codex_notify_args(args: Vec<String>) -> anyhow::Result<Option<String>> {
+    match args.as_slice() {
+        [] => anyhow::bail!("missing Codex notification payload"),
+        [flag] if matches!(flag.as_str(), "--help" | "-h") => {
+            print_codex_notify_help();
+            Ok(None)
+        }
+        [payload] => Ok(Some(payload.clone())),
+        _ => anyhow::bail!("panes codex-notify expects a single JSON payload argument"),
+    }
+}
+
+fn codex_notify_cli_args_from_payload(raw_payload: &str) -> anyhow::Result<Option<NotifyCliArgs>> {
+    let payload: CodexNotifyPayload =
+        serde_json::from_str(raw_payload).context("failed to parse Codex notify payload")?;
+    if payload.kind != CODEX_NOTIFICATION_KIND_TURN_COMPLETE {
+        return Ok(None);
+    }
+
+    let body = payload
+        .last_assistant_message
+        .or_else(|| payload.input_messages.last().cloned())
+        .or_else(|| Some("Turn complete".to_string()));
+
+    Ok(Some(NotifyCliArgs {
+        title: Some(CODEX_NOTIFICATION_TITLE.to_string()),
+        body,
+        workspace_id: None,
+        session_id: None,
+        source: Some("codex".to_string()),
+    }))
 }
 
 fn send_notify_request(
@@ -669,6 +758,10 @@ fn print_notify_help() {
     );
 }
 
+fn print_codex_notify_help() {
+    println!("Usage: panes codex-notify '<codex notify JSON payload>'");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,6 +800,69 @@ mod tests {
             .expect("notify help args should parse");
 
         assert_eq!(parsed, None);
+    }
+
+    #[test]
+    fn parse_codex_notify_args_reads_single_payload() {
+        let parsed = parse_codex_notify_args(vec![r#"{"type":"agent-turn-complete"}"#.to_string()])
+            .expect("Codex notify args should parse");
+
+        assert_eq!(
+            parsed,
+            Some(r#"{"type":"agent-turn-complete"}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn parse_codex_notify_args_returns_none_for_help() {
+        let parsed =
+            parse_codex_notify_args(vec!["--help".to_string()]).expect("help should parse");
+
+        assert_eq!(parsed, None);
+    }
+
+    #[test]
+    fn codex_notify_cli_args_from_payload_maps_agent_turn_complete() {
+        let parsed = codex_notify_cli_args_from_payload(
+            r#"{"type":"agent-turn-complete","last-assistant-message":"Ship it","input-messages":["please finish"]}"#,
+        )
+        .expect("Codex payload should parse");
+
+        assert_eq!(
+            parsed,
+            Some(NotifyCliArgs {
+                title: Some("Codex".to_string()),
+                body: Some("Ship it".to_string()),
+                workspace_id: None,
+                session_id: None,
+                source: Some("codex".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn codex_notify_cli_args_from_payload_ignores_other_events() {
+        let parsed = codex_notify_cli_args_from_payload(r#"{"type":"approval-requested"}"#)
+            .expect("non-terminal Codex payload should parse");
+
+        assert_eq!(parsed, None);
+    }
+
+    #[test]
+    fn codex_notify_cli_args_from_payload_uses_codex_specific_fallback_body() {
+        let parsed = codex_notify_cli_args_from_payload(r#"{"type":"agent-turn-complete"}"#)
+            .expect("Codex payload should parse");
+
+        assert_eq!(
+            parsed,
+            Some(NotifyCliArgs {
+                title: Some("Codex".to_string()),
+                body: Some("Turn complete".to_string()),
+                workspace_id: None,
+                session_id: None,
+                source: Some("codex".to_string()),
+            })
+        );
     }
 
     #[test]
