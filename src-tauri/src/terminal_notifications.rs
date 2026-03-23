@@ -255,6 +255,30 @@ impl TerminalNotificationManager {
         items
     }
 
+    pub async fn publish_for_session(
+        &self,
+        app: &AppHandle,
+        workspace_id: &str,
+        session_id: &str,
+        title: String,
+        body: String,
+        source: String,
+    ) -> anyhow::Result<Option<TerminalNotificationDto>> {
+        self.publish_request(
+            app,
+            NotificationIngressRequest {
+                token: String::new(),
+                workspace_id: workspace_id.to_string(),
+                session_id: session_id.to_string(),
+                kind: NotificationIngressRequestKind::Notify,
+                title: Some(title),
+                body: Some(body),
+                source: Some(source),
+            },
+        )
+        .await
+    }
+
     pub async fn clear_for_session(
         &self,
         app: &AppHandle,

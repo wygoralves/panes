@@ -165,6 +165,12 @@ That hook bridge currently handles Claude `Notification`, `Stop`, `StopFailure`,
 
 This only works inside terminals launched by Panes. If you explicitly run Claude with `--bare`, Panes preserves that choice and skips hook injection.
 
+### Generic OSC Terminal Notifications
+
+Panes also listens for common desktop-notification OSC sequences emitted directly by programs running inside a Panes terminal session. The backend currently recognizes `OSC 9`, `OSC 777;notify;...`, and `OSC 99` notification payloads before terminal replay is recorded, so live notifications do not fire again when a terminal session is resumed.
+
+`OSC 9;4` progress reports are intentionally left alone and are not treated as notifications.
+
 ### Production Build
 
 ```bash

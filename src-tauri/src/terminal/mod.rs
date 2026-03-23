@@ -10,6 +10,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod osc_notifications;
+
 use anyhow::Context;
 use chrono::Utc;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
@@ -18,6 +20,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+use self::osc_notifications::{TerminalOscNotification, TerminalOscNotificationParser};
 use crate::models::{
     TerminalEnvSnapshotDto, TerminalIoCountersDto, TerminalLatencySnapshotDto,
     TerminalOutputThrottleSnapshotDto, TerminalRendererDiagnosticsDto, TerminalReplayChunkDto,
@@ -630,6 +633,7 @@ impl TerminalManager {
 
             let mut buf = [0_u8; 64 * 1024];
             let mut decode_buffer = Vec::new();
+            let mut osc_notifications = TerminalOscNotificationParser::default();
             let mut pending = String::new();
             loop {
                 match reader.read(&mut buf) {
@@ -651,7 +655,18 @@ impl TerminalManager {
                                 .store(now_ms as u64, Ordering::Relaxed);
                         }
 
-                        decode_buffer.extend_from_slice(&buf[..n]);
+                        let parsed = osc_notifications.consume(&buf[..n]);
+                        if !parsed.notifications.is_empty() {
+                            emit_terminal_osc_notifications(
+                                &runtime,
+                                &app,
+                                &workspace_id,
+                                &session_id,
+                                parsed.notifications,
+                            );
+                        }
+
+                        decode_buffer.extend_from_slice(&parsed.passthrough);
                         while let Some(chunk) = take_next_utf8_chunk(&mut decode_buffer) {
                             if pending.is_empty() {
                                 pending = chunk;
@@ -691,6 +706,18 @@ impl TerminalManager {
                     }
                 }
             }
+
+            let parsed = osc_notifications.finish();
+            if !parsed.notifications.is_empty() {
+                emit_terminal_osc_notifications(
+                    &runtime,
+                    &app,
+                    &workspace_id,
+                    &session_id,
+                    parsed.notifications,
+                );
+            }
+            decode_buffer.extend_from_slice(&parsed.passthrough);
 
             if !pending.is_empty() {
                 let (trimmed, total_bytes) = shared.push_chunk(std::mem::take(&mut pending));
@@ -783,6 +810,32 @@ impl TerminalManager {
         notifications
             .clear_for_session(&app, &workspace_id, &event_session_id)
             .await;
+    }
+}
+
+fn emit_terminal_osc_notifications(
+    runtime: &tokio::runtime::Handle,
+    app: &AppHandle,
+    workspace_id: &str,
+    session_id: &str,
+    notifications: Vec<TerminalOscNotification>,
+) {
+    if notifications.is_empty() {
+        return;
+    }
+
+    let manager = app.state::<AppState>().notifications.clone();
+    for notification in notifications {
+        if let Err(error) = runtime.block_on(manager.publish_for_session(
+            app,
+            workspace_id,
+            session_id,
+            notification.title,
+            notification.body,
+            notification.source,
+        )) {
+            log::warn!("failed to publish terminal OSC notification: {error}");
+        }
     }
 }
 
