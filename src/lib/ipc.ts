@@ -45,6 +45,7 @@ import type {
   Repo,
   SearchResult,
   StreamEvent,
+  TerminalNotification,
   TerminalExitEvent,
   TerminalForegroundChangedEvent,
   TerminalOutputEvent,
@@ -453,6 +454,8 @@ export const ipc = {
       sessionId,
       fromSeq: fromSeq ?? null,
     }),
+  terminalListNotifications: (workspaceId: string) =>
+    invoke<TerminalNotification[]>("terminal_list_notifications", { workspaceId }),
   checkDependencies: async () =>
     normalizeDependencyReport(
       await invoke<Partial<DependencyReport> | null>("check_dependencies"),
@@ -542,6 +545,16 @@ export async function listenTerminalForegroundChanged(
 ): Promise<UnlistenFn> {
   return listen<TerminalForegroundChangedEvent>(
     `terminal-fg-changed-${workspaceId}`,
+    ({ payload }) => onEvent(payload)
+  );
+}
+
+export async function listenTerminalNotification(
+  workspaceId: string,
+  onEvent: (event: TerminalNotification) => void
+): Promise<UnlistenFn> {
+  return listen<TerminalNotification>(
+    `terminal-notification-${workspaceId}`,
     ({ payload }) => onEvent(payload)
   );
 }

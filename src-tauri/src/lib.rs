@@ -15,6 +15,7 @@ mod process_utils;
 mod runtime_env;
 mod state;
 mod terminal;
+mod terminal_notifications;
 mod workspace_startup;
 
 use std::sync::Arc;
@@ -37,6 +38,10 @@ use state::{AppState, TurnManager};
 use tauri::menu::{AboutMetadata, MenuItem, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{image::Image, menu::Menu, Emitter, Manager, RunEvent, WebviewWindowBuilder};
 use terminal::TerminalManager;
+
+pub fn maybe_handle_cli_subcommand() -> anyhow::Result<bool> {
+    terminal_notifications::maybe_handle_cli_subcommand()
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -82,6 +87,7 @@ pub fn run() {
         engines: Arc::new(EngineManager::new()),
         git_watchers: Arc::new(GitWatcherManager::default()),
         terminals: Arc::new(TerminalManager::default()),
+        notifications: Arc::new(terminal_notifications::TerminalNotificationManager::default()),
         keep_awake,
         turns: Arc::new(TurnManager::default()),
         file_tree_cache: Arc::new(FileTreeCache::new()),
@@ -149,6 +155,8 @@ pub fn run() {
             let handle = app.handle().clone();
             let resource_dir = app.path().resource_dir().ok();
             let state = app.state::<AppState>().inner().clone();
+            tauri::async_runtime::block_on(state.notifications.start(handle.clone()))
+                .context("failed to start terminal notification ingress")?;
             state.engines.set_resource_dir(resource_dir);
             tauri::async_runtime::spawn(run_codex_runtime_bridge(handle.clone(), state.clone()));
             app.on_menu_event(move |_app, event| {
@@ -276,6 +284,7 @@ pub fn run() {
             commands::terminal::terminal_list_sessions,
             commands::terminal::terminal_get_renderer_diagnostics,
             commands::terminal::terminal_resume_session,
+            commands::terminal::terminal_list_notifications,
             commands::setup::check_dependencies,
             commands::setup::install_dependency,
             commands::harness::check_harnesses,

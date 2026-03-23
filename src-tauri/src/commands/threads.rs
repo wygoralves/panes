@@ -2023,6 +2023,7 @@ mod tests {
         power::KeepAwakeManager,
         state::{AppState, TurnManager},
         terminal::TerminalManager,
+        terminal_notifications::TerminalNotificationManager,
     };
     use uuid::Uuid;
 
@@ -2038,6 +2039,7 @@ mod tests {
             engines: Arc::new(EngineManager::new()),
             git_watchers: Arc::new(GitWatcherManager::default()),
             terminals: Arc::new(TerminalManager::default()),
+            notifications: Arc::new(TerminalNotificationManager::default()),
             keep_awake: Arc::new(KeepAwakeManager::new()),
             turns: Arc::new(TurnManager::default()),
             file_tree_cache: Arc::new(FileTreeCache::new()),

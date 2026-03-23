@@ -796,6 +796,16 @@ export interface TerminalSession {
   createdAt: string;
 }
 
+export interface TerminalNotification {
+  id: string;
+  workspaceId: string;
+  sessionId: string;
+  source: string;
+  title: string;
+  body: string;
+  createdAt: string;
+}
+
 export interface TerminalOutputEvent {
   sessionId: string;
   seq: number;
