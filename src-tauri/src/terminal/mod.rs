@@ -14,7 +14,7 @@ use anyhow::Context;
 use chrono::Utc;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -26,6 +26,7 @@ use crate::models::{
 #[cfg(target_os = "windows")]
 use crate::process_utils;
 use crate::runtime_env;
+use crate::state::AppState;
 use crate::terminal_notifications::{TerminalNotificationManager, TerminalNotificationSessionEnv};
 
 const TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS: u64 = 16;
@@ -778,6 +779,10 @@ impl TerminalManager {
             }
         };
         emit_exit(&app, &workspace_id, &event_session_id, exit);
+        let notifications = app.state::<AppState>().notifications.clone();
+        notifications
+            .clear_for_session(&app, &workspace_id, &event_session_id)
+            .await;
     }
 }
 
@@ -1285,7 +1290,9 @@ fn build_terminal_path(_home: Option<&str>, prepend: &[PathBuf]) -> Option<Strin
     }
 }
 
-fn read_terminal_env_inputs(notification_env: Option<&TerminalNotificationSessionEnv>) -> TerminalEnvInputs {
+fn read_terminal_env_inputs(
+    notification_env: Option<&TerminalNotificationSessionEnv>,
+) -> TerminalEnvInputs {
     let prepend = notification_env
         .map(|env| vec![env.cli_bin_dir.clone()])
         .unwrap_or_default();

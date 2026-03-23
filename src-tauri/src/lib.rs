@@ -285,6 +285,8 @@ pub fn run() {
             commands::terminal::terminal_get_renderer_diagnostics,
             commands::terminal::terminal_resume_session,
             commands::terminal::terminal_list_notifications,
+            commands::terminal::terminal_clear_notification,
+            commands::terminal::terminal_set_notification_focus,
             commands::setup::check_dependencies,
             commands::setup::install_dependency,
             commands::harness::check_harnesses,

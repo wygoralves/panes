@@ -2084,6 +2084,23 @@ button, input, textarea, select {
   border-color: var(--border-accent);
 }
 
+.terminal-leaf-pane-notified {
+  box-shadow: inset 0 0 0 1px rgba(246, 196, 83, 0.12);
+}
+
+.terminal-pane-notification-dot {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #f6c453;
+  box-shadow: 0 0 0 3px rgba(246, 196, 83, 0.18);
+  z-index: 2;
+  pointer-events: none;
+}
+
 .terminal-tab-badge {
   display: inline-flex;
   align-items: center;
@@ -2096,6 +2113,15 @@ button, input, textarea, select {
   font-weight: 600;
   background: var(--bg-4);
   color: var(--text-3);
+}
+
+.terminal-tab-notification-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #f6c453;
+  box-shadow: 0 0 0 3px rgba(246, 196, 83, 0.14);
+  flex-shrink: 0;
 }
 
 .terminal-tab-dragging {

@@ -806,6 +806,10 @@ export interface TerminalNotification {
   createdAt: string;
 }
 
+export interface TerminalNotificationClearedEvent {
+  sessionId: string | null;
+}
+
 export interface TerminalOutputEvent {
   sessionId: string;
   seq: number;
