@@ -1066,6 +1066,173 @@ describe("terminalStore.createMultiSessionGroup", () => {
     });
   });
 
+  it("preserves live notification events that arrive during hydration", async () => {
+    let resolveNotifications: ((value: TerminalNotification[]) => void) | undefined;
+    mockIpc.terminalListNotifications.mockImplementation(
+      () =>
+        new Promise<TerminalNotification[]>((resolve) => {
+          resolveNotifications = resolve;
+        }),
+    );
+
+    useTerminalStore.setState({
+      workspaces: {
+        "ws-1": {
+          isOpen: true,
+          layoutMode: "split",
+          preEditorLayoutMode: "chat",
+          panelSize: 32,
+          sessions: [makeSession("s1")],
+          notificationsBySessionId: {},
+          activeSessionId: "s1",
+          groups: [
+            {
+              id: "g1",
+              name: "Terminal 1",
+              root: { type: "leaf", sessionId: "s1" },
+              sessionMeta: {
+                s1: {},
+              },
+              worktreeConfig: null,
+            },
+          ],
+          activeGroupId: "g1",
+          focusedSessionId: "s1",
+          broadcastGroupId: null,
+          startupPreset: null,
+          pendingStartupPreset: null,
+          loading: false,
+          error: undefined,
+        },
+      },
+    });
+
+    const hydratePromise = useTerminalStore.getState().hydrateNotifications("ws-1");
+    const liveNotification = {
+      ...makeNotification("s1"),
+      id: "notif-live",
+      createdAt: new Date(1).toISOString(),
+    };
+    useTerminalStore.getState().applyNotification("ws-1", liveNotification);
+    resolveNotifications?.([]);
+    await hydratePromise;
+
+    expect(useTerminalStore.getState().workspaces["ws-1"]?.notificationsBySessionId).toEqual({
+      s1: liveNotification,
+    });
+  });
+
+  it("preserves clears that happen during hydration", async () => {
+    let resolveNotifications: ((value: TerminalNotification[]) => void) | undefined;
+    mockIpc.terminalListNotifications.mockImplementation(
+      () =>
+        new Promise<TerminalNotification[]>((resolve) => {
+          resolveNotifications = resolve;
+        }),
+    );
+
+    useTerminalStore.setState({
+      workspaces: {
+        "ws-1": {
+          isOpen: true,
+          layoutMode: "split",
+          preEditorLayoutMode: "chat",
+          panelSize: 32,
+          sessions: [makeSession("s1")],
+          notificationsBySessionId: {
+            s1: makeNotification("s1"),
+          },
+          activeSessionId: "s1",
+          groups: [
+            {
+              id: "g1",
+              name: "Terminal 1",
+              root: { type: "leaf", sessionId: "s1" },
+              sessionMeta: {
+                s1: {},
+              },
+              worktreeConfig: null,
+            },
+          ],
+          activeGroupId: "g1",
+          focusedSessionId: "s1",
+          broadcastGroupId: null,
+          startupPreset: null,
+          pendingStartupPreset: null,
+          loading: false,
+          error: undefined,
+        },
+      },
+    });
+
+    const hydratePromise = useTerminalStore.getState().hydrateNotifications("ws-1");
+    useTerminalStore.getState().clearNotificationLocal("ws-1", "s1");
+    resolveNotifications?.([makeNotification("s1")]);
+    await hydratePromise;
+
+    expect(useTerminalStore.getState().workspaces["ws-1"]?.notificationsBySessionId).toEqual({});
+  });
+
+  it("ignores stale overlapping hydration responses", async () => {
+    const resolvers: Array<(value: TerminalNotification[]) => void> = [];
+    mockIpc.terminalListNotifications.mockImplementation(
+      () =>
+        new Promise<TerminalNotification[]>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+
+    useTerminalStore.setState({
+      workspaces: {
+        "ws-1": {
+          isOpen: true,
+          layoutMode: "split",
+          preEditorLayoutMode: "chat",
+          panelSize: 32,
+          sessions: [makeSession("s1")],
+          notificationsBySessionId: {},
+          activeSessionId: "s1",
+          groups: [
+            {
+              id: "g1",
+              name: "Terminal 1",
+              root: { type: "leaf", sessionId: "s1" },
+              sessionMeta: {
+                s1: {},
+              },
+              worktreeConfig: null,
+            },
+          ],
+          activeGroupId: "g1",
+          focusedSessionId: "s1",
+          broadcastGroupId: null,
+          startupPreset: null,
+          pendingStartupPreset: null,
+          loading: false,
+          error: undefined,
+        },
+      },
+    });
+
+    const firstHydrate = useTerminalStore.getState().hydrateNotifications("ws-1");
+    const secondHydrate = useTerminalStore.getState().hydrateNotifications("ws-1");
+    const staleNotification = makeNotification("s1");
+    const freshNotification = {
+      ...makeNotification("s1"),
+      id: "notif-fresh",
+      createdAt: new Date(2).toISOString(),
+    };
+
+    resolvers[1]?.([freshNotification]);
+    await secondHydrate;
+    resolvers[0]?.([staleNotification]);
+    await firstHydrate;
+
+    expect(useTerminalStore.getState().workspaces["ws-1"]?.notificationsBySessionId).toEqual({
+      s1: freshNotification,
+    });
+  });
+
   it("clears the focused session notification when syncing focus", async () => {
     useTerminalStore.setState({
       workspaces: {
