@@ -55,6 +55,10 @@
     "keepAwakeInactive": "Enabled, but not currently active",
     "keepAwakeLimited": "Enabled, but lid-close protection is not active",
     "keepAwakePowerSettings": "Power Settings",
+    "terminalNotifications": "Agent notifications",
+    "terminalNotificationsDescription": "Desktop alerts for Claude Code and Codex terminals",
+    "terminalNotificationsReady": "Hooks installed. Turn on to show desktop alerts",
+    "terminalNotificationsEnabled": "Desktop alerts are on for configured terminal tools",
     "terminal": "Terminal",
     "terminalAcceleratedRendering": "Accelerated rendering",
     "terminalAcceleratedRenderingFailed": "Failed to update terminal rendering.",
@@ -389,6 +393,47 @@
       "modifiedExternally": "{{name}} was modified externally. Save again to overwrite.",
       "saved": "Saved {{name}}",
       "saveFailed": "Failed to save: {{error}}"
+    }
+  },
+  "notificationSettings": {
+    "title": "Terminal notifications",
+    "description": "Install Claude Code hooks and Codex notify config once, then use the sidebar toggle whenever you want Panes to surface desktop alerts.",
+    "workflowTitle": "How this works",
+    "workflowDescription": "Panes writes the integration into your user config, then only delivers alerts from terminals launched by Panes. Outside Panes, the commands exit quietly.",
+    "setupRequired": "Install at least one integration before turning terminal notifications on.",
+    "integrationsLabel": "Integrations",
+    "enableButton": "Turn on",
+    "done": "Done",
+    "close": "Close",
+    "install": "Install",
+    "reinstall": "Reinstall",
+    "replace": "Replace",
+    "installing": "Installing...",
+    "footerNote": "Configured tools keep their hooks installed. The sidebar toggle only controls whether Panes publishes notifications.",
+    "status": {
+      "installed": "Installed",
+      "notInstalled": "Not installed",
+      "needsAttention": "Needs attention"
+    },
+    "integrations": {
+      "claude": {
+        "title": "Claude Code",
+        "description": "Merge Panes hook commands into your Claude user settings",
+        "detail": "Adds Panes lifecycle hooks without removing your existing Claude hooks."
+      },
+      "codex": {
+        "title": "Codex CLI",
+        "description": "Write Panes notify config into your Codex user config",
+        "detail": "Sets Codex's notify command so completed turns can reach Panes."
+      }
+    },
+    "toasts": {
+      "enabled": "Terminal notifications enabled.",
+      "disabled": "Terminal notifications disabled.",
+      "enableFailed": "Failed to enable terminal notifications.",
+      "disableFailed": "Failed to disable terminal notifications.",
+      "installSuccess": "{{integration}} notifications configured.",
+      "installFailed": "Failed to configure {{integration}} notifications."
     }
   },
   "powerModal": {

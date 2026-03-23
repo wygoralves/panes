@@ -4,7 +4,6 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 const BEL: u8 = 0x07;
 const ESC: u8 = 0x1b;
-const OSC_C1: u8 = 0x9d;
 const OSC_SOURCE: &str = "terminal-osc";
 const OSC_TITLE: &str = "Terminal";
 
@@ -86,8 +85,6 @@ impl TerminalOscNotificationParser {
             result.passthrough.push(ESC);
             if byte == ESC {
                 self.pending_escape = true;
-            } else if byte == OSC_C1 {
-                self.start_osc(&[OSC_C1]);
             } else {
                 result.passthrough.push(byte);
             }
@@ -96,7 +93,6 @@ impl TerminalOscNotificationParser {
 
         match byte {
             ESC => self.pending_escape = true,
-            OSC_C1 => self.start_osc(&[OSC_C1]),
             _ => result.passthrough.push(byte),
         }
     }
@@ -409,5 +405,14 @@ mod tests {
         assert!(first.notifications.is_empty());
         assert_eq!(tail.passthrough, b"\x1b]777;notify;Title");
         assert!(tail.notifications.is_empty());
+    }
+
+    #[test]
+    fn leaves_utf8_continuation_bytes_untouched() {
+        let input = [0xe2, 0x89, 0x9d];
+        let result = parse_all(&input);
+
+        assert_eq!(result.passthrough, input);
+        assert!(result.notifications.is_empty());
     }
 }

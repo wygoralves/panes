@@ -29,7 +29,6 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { ImageAddon } from "@xterm/addon-image";
-import "@xterm/xterm/css/xterm.css";
 import {
   ipc,
   listenTerminalExit,

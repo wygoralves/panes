@@ -28,6 +28,8 @@ pub struct GeneralConfig {
     pub locale: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_accelerated_rendering: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_notifications: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +69,7 @@ impl Default for GeneralConfig {
             default_model: "gpt-5.3-codex".to_string(),
             locale: None,
             terminal_accelerated_rendering: None,
+            terminal_notifications: None,
         }
     }
 }
@@ -118,6 +121,10 @@ impl Default for AppConfig {
 impl AppConfig {
     pub fn terminal_accelerated_rendering_enabled(&self) -> bool {
         self.general.terminal_accelerated_rendering.unwrap_or(true)
+    }
+
+    pub fn terminal_notifications_enabled(&self) -> bool {
+        self.general.terminal_notifications.unwrap_or(false)
     }
 
     pub fn load_or_create() -> anyhow::Result<Self> {
@@ -282,6 +289,7 @@ max_action_output_chars = 20000
         assert_eq!(config.general.locale, None);
         assert!(!config.power.keep_awake_enabled);
         assert_eq!(config.general.terminal_accelerated_rendering, None);
+        assert_eq!(config.general.terminal_notifications, None);
         assert!(!config.power.prevent_display_sleep);
         assert!(!config.power.prevent_screen_saver);
         assert!(!config.power.ac_only_mode);
@@ -298,6 +306,7 @@ max_action_output_chars = 20000
         assert!(raw.contains("[power]"));
         assert!(raw.contains("keep_awake_enabled = false"));
         assert!(!raw.contains("terminal_accelerated_rendering"));
+        assert!(!raw.contains("terminal_notifications"));
     }
 
     #[test]
@@ -341,6 +350,7 @@ max_action_output_chars = 20000
 
         assert_eq!(config.general.locale, None);
         assert_eq!(config.general.terminal_accelerated_rendering, None);
+        assert_eq!(config.general.terminal_notifications, None);
     }
 
     #[test]
@@ -348,6 +358,13 @@ max_action_output_chars = 20000
         let config = AppConfig::default();
 
         assert!(config.terminal_accelerated_rendering_enabled());
+    }
+
+    #[test]
+    fn terminal_notifications_default_to_disabled() {
+        let config = AppConfig::default();
+
+        assert!(!config.terminal_notifications_enabled());
     }
 
     #[test]

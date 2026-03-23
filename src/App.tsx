@@ -4,6 +4,7 @@ import { CommandPalette } from "./components/shared/CommandPalette";
 import { OnboardingWizard } from "./components/onboarding/OnboardingWizard";
 import { ToastContainer } from "./components/shared/ToastContainer";
 import { PowerSettingsModal } from "./components/shared/PowerSettingsModal";
+import { TerminalNotificationSettingsModal } from "./components/shared/TerminalNotificationSettingsModal";
 import { t } from "./i18n";
 import { useUpdateStore } from "./stores/updateStore";
 import { useHarnessStore } from "./stores/harnessStore";
@@ -16,6 +17,7 @@ import { useGitStore } from "./stores/gitStore";
 import { useTerminalStore, collectSessionIds } from "./stores/terminalStore";
 import { useFileStore } from "./stores/fileStore";
 import { useKeepAwakeStore } from "./stores/keepAwakeStore";
+import { useTerminalNotificationSettingsStore } from "./stores/terminalNotificationSettingsStore";
 import { toast } from "./stores/toastStore";
 import type { RuntimeToast, Thread } from "./types";
 import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMirrorEditor";
@@ -76,6 +78,7 @@ export function App() {
   const applyEngineRuntimeUpdate = useEngineStore((s) => s.applyRuntimeUpdate);
   const scanHarnesses = useHarnessStore((s) => s.scan);
   const loadKeepAwake = useKeepAwakeStore((s) => s.load);
+  const loadTerminalNotificationSettings = useTerminalNotificationSettingsStore((s) => s.load);
   const refreshKeepAwake = useKeepAwakeStore((s) => s.refresh);
   const keepAwakeEnabled = useKeepAwakeStore((s) => s.state?.enabled ?? false);
   const keepAwakeSessionTimer = useKeepAwakeStore((s) => s.state?.sessionRemainingSecs);
@@ -94,7 +97,8 @@ export function App() {
     void loadEngines();
     void scanHarnesses();
     void loadKeepAwake();
-  }, [loadWorkspaces, loadEngines, scanHarnesses, loadKeepAwake]);
+    void loadTerminalNotificationSettings();
+  }, [loadWorkspaces, loadEngines, scanHarnesses, loadKeepAwake, loadTerminalNotificationSettings]);
 
   useEffect(() => {
     void refreshAllThreads(workspaces.map((workspace) => workspace.id));
@@ -460,6 +464,7 @@ export function App() {
       </div>
       <CommandPalette open={commandPaletteOpen} onClose={closeCommandPalette} />
       <PowerSettingsModal />
+      <TerminalNotificationSettingsModal />
       <OnboardingWizard />
       <ToastContainer />
     </div>

@@ -18,6 +18,7 @@ import {
   Rocket,
   RefreshCw,
   PillBottle,
+  BellRing,
   Globe,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
@@ -28,6 +29,7 @@ import { useUiStore } from "../../stores/uiStore";
 import { useOnboardingStore } from "../../stores/onboardingStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import { canToggleKeepAwake, useKeepAwakeStore } from "../../stores/keepAwakeStore";
+import { useTerminalNotificationSettingsStore } from "../../stores/terminalNotificationSettingsStore";
 import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { formatRelativeTime } from "../../lib/formatters";
@@ -111,6 +113,12 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const keepAwakeLoading = useKeepAwakeStore((s) => s.loading);
   const toggleKeepAwake = useKeepAwakeStore((s) => s.toggle);
   const openPowerSettings = useKeepAwakeStore((s) => s.openPowerSettings);
+  const terminalNotificationSettings = useTerminalNotificationSettingsStore((s) => s.settings);
+  const terminalNotificationLoading = useTerminalNotificationSettingsStore((s) => s.loading);
+  const terminalNotificationLoadedOnce = useTerminalNotificationSettingsStore((s) => s.loadedOnce);
+  const terminalNotificationUpdatingEnabled = useTerminalNotificationSettingsStore((s) => s.updatingEnabled);
+  const toggleTerminalNotifications = useTerminalNotificationSettingsStore((s) => s.toggle);
+  const openTerminalNotificationSettings = useTerminalNotificationSettingsStore((s) => s.openModal);
   const hasUpdate = updateStatus === "available" && !updateSnoozed;
   const keepAwakeAvailable = canToggleKeepAwake(keepAwakeState);
   const preferredOnboardingChatSelection = useMemo(
@@ -341,6 +349,18 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     }
     return t("app:sidebar.keepAwakeDescription");
   }, [keepAwakeState, t]);
+  const terminalNotificationDescription = useMemo(() => {
+    if (!terminalNotificationLoadedOnce || !terminalNotificationSettings) {
+      return t("app:sidebar.terminalNotificationsDescription");
+    }
+    if (terminalNotificationSettings.enabled) {
+      return t("app:sidebar.terminalNotificationsEnabled");
+    }
+    if (terminalNotificationSettings.setupComplete) {
+      return t("app:sidebar.terminalNotificationsReady");
+    }
+    return t("app:sidebar.terminalNotificationsDescription");
+  }, [terminalNotificationLoadedOnce, terminalNotificationSettings, t]);
 
   return (
     <div
@@ -736,6 +756,58 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                   checked={keepAwakeState?.enabled ?? false}
                   disabled={keepAwakeLoading || !keepAwakeAvailable}
                   onChange={() => void toggleKeepAwake()}
+                />
+                <span className="ws-toggle-track" />
+                <span className="ws-toggle-thumb" />
+              </label>
+            </div>
+            <div
+              className="git-action-menu-item"
+              style={{
+                justifyContent: "space-between",
+                opacity:
+                  (terminalNotificationLoading && !terminalNotificationLoadedOnce)
+                  || terminalNotificationUpdatingEnabled
+                    ? 0.75
+                    : 1,
+              }}
+            >
+              <button
+                type="button"
+                title={terminalNotificationDescription}
+                onClick={() => openTerminalNotificationSettings()}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "inherit",
+                  padding: 0,
+                  flex: 1,
+                  minWidth: 0,
+                }}
+              >
+                <BellRing size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+                {t("app:sidebar.terminalNotifications")}
+              </button>
+              <label
+                className="ws-toggle"
+                title={terminalNotificationDescription}
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  cursor:
+                    terminalNotificationLoading || terminalNotificationUpdatingEnabled
+                      ? "wait"
+                      : undefined,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={terminalNotificationSettings?.enabled ?? false}
+                  disabled={terminalNotificationLoading || terminalNotificationUpdatingEnabled}
+                  onChange={() => { void toggleTerminalNotifications(); }}
                 />
                 <span className="ws-toggle-track" />
                 <span className="ws-toggle-thumb" />

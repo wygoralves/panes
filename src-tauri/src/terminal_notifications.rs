@@ -28,6 +28,8 @@ const PANES_NOTIFY_TOKEN_ENV: &str = "PANES_NOTIFY_TOKEN";
 const PANES_SESSION_ID_ENV: &str = "PANES_SESSION_ID";
 const PANES_WORKSPACE_ID_ENV: &str = "PANES_WORKSPACE_ID";
 const CODEX_NOTIFY_SUBCOMMAND: &str = "codex-notify";
+const CODEX_WRAPPER_SUBCOMMAND: &str = "codex-wrapper";
+const CODEX_NOTIFY_CONFIG_OVERRIDE: &str = r#"notify=["panes","codex-notify"]"#;
 const CLAUDE_HOOK_SUBCOMMAND: &str = "claude-hook";
 const CLAUDE_WRAPPER_SUBCOMMAND: &str = "claude-wrapper";
 const CLEAR_NOTIFICATION_SUBCOMMAND: &str = "clear-notification";
@@ -93,6 +95,32 @@ pub struct TerminalNotificationSessionEnv {
     pub ingress_token: String,
     pub workspace_id: String,
     pub session_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalNotificationIntegrationKind {
+    Claude,
+    Codex,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalNotificationIntegrationStatusDto {
+    pub configured: bool,
+    pub config_path: Option<String>,
+    pub config_exists: bool,
+    pub conflict: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalNotificationSettingsStatusDto {
+    pub enabled: bool,
+    pub setup_complete: bool,
+    pub claude: TerminalNotificationIntegrationStatusDto,
+    pub codex: TerminalNotificationIntegrationStatusDto,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -423,6 +451,11 @@ impl TerminalNotificationManager {
             .unwrap_or("external")
             .to_string();
 
+        if !terminal_notifications_enabled() {
+            self.clear_for_session(app, &workspace_id, &session_id).await;
+            return Ok(None);
+        }
+
         if self
             .notification_target_is_focused(&workspace_id, &session_id)
             .await
@@ -453,13 +486,14 @@ impl TerminalNotificationManager {
         let event_name = format!("{NOTIFICATION_EVENT_PREFIX}{workspace_id}");
         let _ = app.emit(&event_name, notification.clone());
 
-        if let Err(error) = app
-            .notification()
-            .builder()
-            .title(&notification.title)
-            .body(&notification.body)
-            .show()
-        {
+        log::info!(
+            "terminal notification published workspace={} session={} source={} title={}",
+            notification.workspace_id,
+            notification.session_id,
+            notification.source,
+            notification.title
+        );
+        if let Err(error) = show_desktop_notification(app, &notification) {
             log::warn!("failed to show desktop notification: {error}");
         }
 
@@ -521,6 +555,40 @@ impl TerminalNotificationManager {
     }
 }
 
+pub fn parse_terminal_notification_integration_kind(
+    raw: &str,
+) -> anyhow::Result<TerminalNotificationIntegrationKind> {
+    match raw.trim() {
+        "claude" => Ok(TerminalNotificationIntegrationKind::Claude),
+        "codex" => Ok(TerminalNotificationIntegrationKind::Codex),
+        other => anyhow::bail!("unknown terminal notification integration: {other}"),
+    }
+}
+
+pub fn terminal_notification_settings_status() -> anyhow::Result<TerminalNotificationSettingsStatusDto>
+{
+    let config = crate::config::app_config::AppConfig::load_or_create()
+        .context("failed to load Panes config")?;
+    let claude = inspect_claude_notification_integration();
+    let codex = inspect_codex_notification_integration();
+    Ok(TerminalNotificationSettingsStatusDto {
+        enabled: config.terminal_notifications_enabled(),
+        setup_complete: claude.configured || codex.configured,
+        claude,
+        codex,
+    })
+}
+
+pub fn install_terminal_notification_integration(
+    integration: TerminalNotificationIntegrationKind,
+) -> anyhow::Result<TerminalNotificationSettingsStatusDto> {
+    match integration {
+        TerminalNotificationIntegrationKind::Claude => install_claude_notification_integration()?,
+        TerminalNotificationIntegrationKind::Codex => install_codex_notification_integration()?,
+    }
+    terminal_notification_settings_status()
+}
+
 pub fn maybe_handle_cli_subcommand() -> anyhow::Result<bool> {
     let mut args = std::env::args().skip(1);
     let Some(subcommand) = args.next() else {
@@ -548,11 +616,18 @@ pub fn maybe_handle_cli_subcommand() -> anyhow::Result<bool> {
             let Some(payload_json) = parse_codex_notify_args(args.collect())? else {
                 return Ok(true);
             };
+            if !panes_notification_env_available() {
+                return Ok(true);
+            }
             let Some((addr, request)) = build_notify_request_from_codex_payload(&payload_json)?
             else {
                 return Ok(true);
             };
             send_notify_request(&addr, &request)?;
+            Ok(true)
+        }
+        CODEX_WRAPPER_SUBCOMMAND => {
+            run_codex_wrapper(args.collect())?;
             Ok(true)
         }
         CLAUDE_HOOK_SUBCOMMAND => {
@@ -791,6 +866,9 @@ fn handle_claude_hook(args: Vec<String>) -> anyhow::Result<()> {
     if !args.is_empty() {
         anyhow::bail!("panes claude-hook does not accept arguments");
     }
+    if !panes_notification_env_available() {
+        return Ok(());
+    }
 
     let mut payload = String::new();
     std::io::stdin()
@@ -827,6 +905,36 @@ fn run_claude_wrapper(args: Vec<String>) -> anyhow::Result<()> {
         .status()
         .with_context(|| format!("failed to launch Claude at {}", claude_binary.display()))?;
     std::process::exit(exit_code_from_status(status));
+}
+
+fn run_codex_wrapper(args: Vec<String>) -> anyhow::Result<()> {
+    let shim_dir = runtime_env::app_data_dir().join("bin");
+    let codex_binary = resolve_wrapped_binary("codex", &shim_dir)?;
+    let forwarded_args = build_codex_forwarded_args(args)?;
+    let status = Command::new(&codex_binary)
+        .args(&forwarded_args)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .with_context(|| format!("failed to launch Codex at {}", codex_binary.display()))?;
+    std::process::exit(exit_code_from_status(status));
+}
+
+fn build_codex_forwarded_args(args: Vec<String>) -> anyhow::Result<Vec<String>> {
+    if current_panes_session_id_if_available().is_none() {
+        return Ok(args);
+    }
+    build_codex_forwarded_args_with_notify(args)
+}
+
+fn build_codex_forwarded_args_with_notify(args: Vec<String>) -> anyhow::Result<Vec<String>> {
+    if should_passthrough_codex_invocation(&args) || has_notify_config_override(&args) {
+        return Ok(args);
+    }
+    let mut forwarded = vec!["-c".to_string(), CODEX_NOTIFY_CONFIG_OVERRIDE.to_string()];
+    forwarded.extend(args);
+    Ok(forwarded)
 }
 
 fn build_claude_forwarded_args(args: Vec<String>) -> anyhow::Result<Vec<String>> {
@@ -870,12 +978,9 @@ fn build_claude_forwarded_args_with_session(
 }
 
 fn current_panes_session_id_if_available() -> Option<String> {
-    (read_non_empty_env(PANES_NOTIFY_ADDR_ENV).is_some()
-        && read_non_empty_env(PANES_NOTIFY_TOKEN_ENV).is_some()
-        && read_non_empty_env(PANES_WORKSPACE_ID_ENV).is_some()
-        && read_non_empty_env(PANES_SESSION_ID_ENV).is_some())
-    .then(|| read_non_empty_env(PANES_SESSION_ID_ENV))
-    .flatten()
+    panes_notification_env_available()
+        .then(|| read_non_empty_env(PANES_SESSION_ID_ENV))
+        .flatten()
 }
 
 fn should_passthrough_claude_invocation(args: &[String]) -> bool {
@@ -884,6 +989,11 @@ fn should_passthrough_claude_invocation(args: &[String]) -> bool {
         || first_claude_positional(args)
             .map(|value| CLAUDE_PASSTHROUGH_SUBCOMMANDS.contains(&value))
             .unwrap_or(false)
+}
+
+fn should_passthrough_codex_invocation(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| matches!(arg.as_str(), "-h" | "--help" | "-V" | "--version"))
 }
 
 fn first_claude_positional(args: &[String]) -> Option<&str> {
@@ -936,6 +1046,37 @@ fn has_cli_option(args: &[String], option: &str) -> bool {
         .any(|arg| arg == option || arg.starts_with(&inline))
 }
 
+fn has_notify_config_override(args: &[String]) -> bool {
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        if matches!(arg, "-c" | "--config") {
+            if let Some(value) = args.get(index + 1) {
+                if config_override_targets_notify(value) {
+                    return true;
+                }
+            }
+            index += 2;
+            continue;
+        }
+
+        if let Some(value) = arg.strip_prefix("--config=") {
+            if config_override_targets_notify(value) {
+                return true;
+            }
+        }
+        index += 1;
+    }
+    false
+}
+
+fn config_override_targets_notify(value: &str) -> bool {
+    value
+        .split_once('=')
+        .map(|(key, _)| key.trim() == "notify")
+        .unwrap_or(false)
+}
+
 fn take_cli_option_value(args: &mut Vec<String>, option: &str) -> anyhow::Result<Option<String>> {
     let inline_prefix = format!("{option}=");
     let mut value = None;
@@ -962,12 +1103,20 @@ fn take_cli_option_value(args: &mut Vec<String>, option: &str) -> anyhow::Result
 }
 
 fn merge_claude_settings(existing: Option<&str>) -> anyhow::Result<String> {
+    let merged = merge_claude_settings_value(existing, CLAUDE_HOOK_COMMAND)?;
+    serde_json::to_string(&merged).context("failed to serialize merged Claude settings")
+}
+
+fn merge_claude_settings_value(
+    existing: Option<&str>,
+    command: &str,
+) -> anyhow::Result<Value> {
     let mut merged = match existing {
         Some(value) => parse_claude_settings_value(value)?,
         None => json!({}),
     };
-    merge_json_values(&mut merged, claude_hook_settings());
-    serde_json::to_string(&merged).context("failed to serialize merged Claude settings")
+    merge_json_values(&mut merged, claude_hook_settings_for_command(command));
+    Ok(merged)
 }
 
 fn parse_claude_settings_value(raw: &str) -> anyhow::Result<Value> {
@@ -1009,12 +1158,14 @@ fn merge_json_values(base: &mut Value, overlay: Value) {
     }
 }
 
-fn claude_hook_settings() -> Value {
+fn claude_hook_settings_for_command(command: &str) -> Value {
     let hook_group = json!({
+        "matcher": ".*",
         "hooks": [
             {
                 "type": "command",
-                "command": CLAUDE_HOOK_COMMAND
+                "command": command,
+                "timeout": 10
             }
         ]
     });
@@ -1027,6 +1178,260 @@ fn claude_hook_settings() -> Value {
             CLAUDE_SESSION_END_HOOK_EVENT: [hook_group],
         }
     })
+}
+
+fn inspect_claude_notification_integration() -> TerminalNotificationIntegrationStatusDto {
+    let settings_path = match claude_settings_path() {
+        Ok(path) => path,
+        Err(error) => {
+            return TerminalNotificationIntegrationStatusDto {
+                configured: false,
+                config_path: None,
+                config_exists: false,
+                conflict: false,
+                detail: Some(error.to_string()),
+            };
+        }
+    };
+    let config_exists = settings_path.exists();
+    let config_path = Some(settings_path.to_string_lossy().to_string());
+    if !config_exists {
+        return TerminalNotificationIntegrationStatusDto {
+            configured: false,
+            config_path,
+            config_exists: false,
+            conflict: false,
+            detail: None,
+        };
+    }
+
+    match std::fs::read_to_string(&settings_path)
+        .with_context(|| format!("failed to read {}", settings_path.display()))
+        .and_then(|raw| parse_claude_settings_value(&raw))
+    {
+        Ok(settings) => TerminalNotificationIntegrationStatusDto {
+            configured: claude_settings_contains_managed_hook(&settings),
+            config_path,
+            config_exists: true,
+            conflict: false,
+            detail: None,
+        },
+        Err(error) => TerminalNotificationIntegrationStatusDto {
+            configured: false,
+            config_path,
+            config_exists: true,
+            conflict: false,
+            detail: Some(error.to_string()),
+        },
+    }
+}
+
+fn inspect_codex_notification_integration() -> TerminalNotificationIntegrationStatusDto {
+    let config_path = match codex_config_path() {
+        Ok(path) => path,
+        Err(error) => {
+            return TerminalNotificationIntegrationStatusDto {
+                configured: false,
+                config_path: None,
+                config_exists: false,
+                conflict: false,
+                detail: Some(error.to_string()),
+            };
+        }
+    };
+    let config_exists = config_path.exists();
+    let serialized_path = Some(config_path.to_string_lossy().to_string());
+    if !config_exists {
+        return TerminalNotificationIntegrationStatusDto {
+            configured: false,
+            config_path: serialized_path,
+            config_exists: false,
+            conflict: false,
+            detail: None,
+        };
+    }
+
+    match std::fs::read_to_string(&config_path)
+        .with_context(|| format!("failed to read {}", config_path.display()))
+        .and_then(|raw| raw.parse::<toml::Value>().context("failed to parse Codex config TOML"))
+    {
+        Ok(doc) => match codex_notify_setting_status(&doc) {
+            CodexNotifySettingStatus::Configured => TerminalNotificationIntegrationStatusDto {
+                configured: true,
+                config_path: serialized_path,
+                config_exists: true,
+                conflict: false,
+                detail: None,
+            },
+            CodexNotifySettingStatus::Conflict => TerminalNotificationIntegrationStatusDto {
+                configured: false,
+                config_path: serialized_path,
+                config_exists: true,
+                conflict: true,
+                detail: Some("Codex already has a different notify command configured.".to_string()),
+            },
+            CodexNotifySettingStatus::Missing => TerminalNotificationIntegrationStatusDto {
+                configured: false,
+                config_path: serialized_path,
+                config_exists: true,
+                conflict: false,
+                detail: None,
+            },
+        },
+        Err(error) => TerminalNotificationIntegrationStatusDto {
+            configured: false,
+            config_path: serialized_path,
+            config_exists: true,
+            conflict: false,
+            detail: Some(error.to_string()),
+        },
+    }
+}
+
+fn install_claude_notification_integration() -> anyhow::Result<()> {
+    let settings_path = claude_settings_path()?;
+    let existing = std::fs::read_to_string(&settings_path).ok();
+    let hook_command = claude_hook_command_for_config()?;
+    let merged = merge_claude_settings_value(existing.as_deref(), &hook_command)?;
+    let rendered =
+        serde_json::to_string_pretty(&merged).context("failed to serialize Claude settings")?;
+    write_text_file(&settings_path, &rendered)
+}
+
+fn install_codex_notification_integration() -> anyhow::Result<()> {
+    let config_path = codex_config_path()?;
+    let mut doc = if config_path.exists() {
+        std::fs::read_to_string(&config_path)
+            .with_context(|| format!("failed to read {}", config_path.display()))?
+            .parse::<toml::Value>()
+            .context("failed to parse Codex config TOML")?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let Some(table) = doc.as_table_mut() else {
+        anyhow::bail!("Codex config root must be a TOML table");
+    };
+    let notify_value = codex_notify_config_value()?;
+    table.insert("notify".to_string(), notify_value);
+    let rendered = toml::to_string_pretty(&doc).context("failed to serialize Codex config")?;
+    write_text_file(&config_path, &rendered)
+}
+
+fn claude_settings_contains_managed_hook(settings: &Value) -> bool {
+    settings
+        .get("hooks")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|events| events.values())
+        .filter_map(Value::as_array)
+        .flat_map(|groups| groups.iter())
+        .filter_map(|group| group.get("hooks").and_then(Value::as_array))
+        .flat_map(|hooks| hooks.iter())
+        .filter_map(|hook| hook.get("command").and_then(Value::as_str))
+        .any(is_managed_claude_hook_command)
+}
+
+fn is_managed_claude_hook_command(command: &str) -> bool {
+    let trimmed = command.trim();
+    if trimmed == CLAUDE_HOOK_COMMAND {
+        return true;
+    }
+    trimmed.contains(CLAUDE_HOOK_SUBCOMMAND) && trimmed.contains(&managed_panes_cli_path_string())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexNotifySettingStatus {
+    Missing,
+    Configured,
+    Conflict,
+}
+
+fn codex_notify_setting_status(doc: &toml::Value) -> CodexNotifySettingStatus {
+    let Some(table) = doc.as_table() else {
+        return CodexNotifySettingStatus::Conflict;
+    };
+    let Some(notify_value) = table.get("notify") else {
+        return CodexNotifySettingStatus::Missing;
+    };
+    if is_managed_codex_notify_value(notify_value) {
+        CodexNotifySettingStatus::Configured
+    } else {
+        CodexNotifySettingStatus::Conflict
+    }
+}
+
+fn is_managed_codex_notify_value(value: &toml::Value) -> bool {
+    let Some(items) = value.as_array() else {
+        return false;
+    };
+    if items.len() < 2 {
+        return false;
+    }
+    let Some(command) = items.first().and_then(toml::Value::as_str) else {
+        return false;
+    };
+    let Some(subcommand) = items.get(1).and_then(toml::Value::as_str) else {
+        return false;
+    };
+    subcommand == CODEX_NOTIFY_SUBCOMMAND
+        && (command == "panes" || command == managed_panes_cli_path_string())
+}
+
+fn claude_settings_path() -> anyhow::Result<PathBuf> {
+    let home = runtime_env::home_dir().ok_or_else(|| anyhow::anyhow!("home directory is not available"))?;
+    Ok(home.join(".claude").join("settings.json"))
+}
+
+fn codex_config_path() -> anyhow::Result<PathBuf> {
+    let home = runtime_env::home_dir().ok_or_else(|| anyhow::anyhow!("home directory is not available"))?;
+    Ok(home.join(".codex").join("config.toml"))
+}
+
+fn managed_panes_cli_path() -> anyhow::Result<PathBuf> {
+    Ok(install_cli_shims()?.join(panes_cli_shim_name()))
+}
+
+fn managed_panes_cli_path_string() -> String {
+    runtime_env::app_data_dir()
+        .join("bin")
+        .join(panes_cli_shim_name())
+        .to_string_lossy()
+        .to_string()
+}
+
+fn claude_hook_command_for_config() -> anyhow::Result<String> {
+    let panes_cli_path = managed_panes_cli_path()?;
+    let path = panes_cli_path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        return Ok(format!(r#""{}" {}"#, path, CLAUDE_HOOK_SUBCOMMAND));
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(format!(
+            "{} {}",
+            shell_single_quote_escape(&path),
+            CLAUDE_HOOK_SUBCOMMAND
+        ))
+    }
+}
+
+fn codex_notify_config_value() -> anyhow::Result<toml::Value> {
+    let panes_cli_path = managed_panes_cli_path()?;
+    Ok(toml::Value::Array(vec![
+        toml::Value::String(panes_cli_path.to_string_lossy().to_string()),
+        toml::Value::String(CODEX_NOTIFY_SUBCOMMAND.to_string()),
+    ]))
+}
+
+fn write_text_file(path: &Path, contents: &str) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    std::fs::write(path, contents)
+        .with_context(|| format!("failed to write {}", path.display()))
 }
 
 fn claude_hook_action_from_payload(raw_payload: &str) -> anyhow::Result<Option<ClaudeHookAction>> {
@@ -1161,6 +1566,11 @@ fn install_cli_shims() -> anyhow::Result<PathBuf> {
         &claude_cli_shim_contents(&current_exe),
         "claude",
     )?;
+    write_cli_shim(
+        &bin_dir.join(codex_cli_shim_name()),
+        &codex_cli_shim_contents(&current_exe),
+        "codex",
+    )?;
 
     Ok(bin_dir)
 }
@@ -1211,6 +1621,16 @@ fn claude_cli_shim_name() -> &'static str {
 }
 
 #[cfg(windows)]
+fn codex_cli_shim_name() -> &'static str {
+    "codex.cmd"
+}
+
+#[cfg(not(windows))]
+fn codex_cli_shim_name() -> &'static str {
+    "codex"
+}
+
+#[cfg(windows)]
 fn panes_cli_shim_contents(current_exe: &Path) -> String {
     format!("@echo off\r\n\"{}\" %*\r\n", current_exe.to_string_lossy())
 }
@@ -1241,6 +1661,24 @@ fn claude_cli_shim_contents(current_exe: &Path) -> String {
     )
 }
 
+#[cfg(windows)]
+fn codex_cli_shim_contents(current_exe: &Path) -> String {
+    format!(
+        "@echo off\r\n\"{}\" {} %*\r\n",
+        current_exe.to_string_lossy(),
+        CODEX_WRAPPER_SUBCOMMAND
+    )
+}
+
+#[cfg(not(windows))]
+fn codex_cli_shim_contents(current_exe: &Path) -> String {
+    format!(
+        "#!/bin/sh\nexec {} {} \"$@\"\n",
+        shell_single_quote_escape(&current_exe.to_string_lossy()),
+        CODEX_WRAPPER_SUBCOMMAND
+    )
+}
+
 #[cfg(not(windows))]
 fn shell_single_quote_escape(value: &str) -> String {
     format!("'{}'", value.replace('\'', r#"'\''"#))
@@ -1252,6 +1690,33 @@ fn normalize_required_value(value: String, label: &str) -> anyhow::Result<String
         anyhow::bail!("{label} is required");
     }
     Ok(trimmed.to_string())
+}
+
+fn notification_sound_name() -> Option<&'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        return Some("Glass");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+fn show_desktop_notification(
+    app: &AppHandle,
+    notification: &TerminalNotificationDto,
+) -> anyhow::Result<()> {
+    let mut desktop_notification = app
+        .notification()
+        .builder()
+        .title(&notification.title)
+        .body(&notification.body);
+    if let Some(sound) = notification_sound_name() {
+        desktop_notification = desktop_notification.sound(sound);
+    }
+    desktop_notification.show().map_err(Into::into)
 }
 
 fn normalize_optional_value(value: Option<String>) -> Option<String> {
@@ -1301,6 +1766,19 @@ fn read_non_empty_env(key: &str) -> Option<String> {
 
 fn read_required_env(key: &str) -> anyhow::Result<String> {
     read_non_empty_env(key).ok_or_else(|| anyhow::anyhow!("missing {key}"))
+}
+
+fn panes_notification_env_available() -> bool {
+    read_non_empty_env(PANES_NOTIFY_ADDR_ENV).is_some()
+        && read_non_empty_env(PANES_NOTIFY_TOKEN_ENV).is_some()
+        && read_non_empty_env(PANES_WORKSPACE_ID_ENV).is_some()
+        && read_non_empty_env(PANES_SESSION_ID_ENV).is_some()
+}
+
+fn terminal_notifications_enabled() -> bool {
+    crate::config::app_config::AppConfig::load_or_create()
+        .map(|config| config.terminal_notifications_enabled())
+        .unwrap_or(false)
 }
 
 fn resolve_wrapped_binary(binary: &str, shim_dir: &Path) -> anyhow::Result<PathBuf> {
@@ -1370,7 +1848,41 @@ fn print_claude_hook_help() {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
+    use uuid::Uuid;
+
+    const APP_DATA_ENV_VARS: [&str; 4] = ["HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA"];
+
+    fn with_temp_app_data_env<T>(f: impl FnOnce() -> T) -> T {
+        let _guard = crate::config::app_config::app_data_env_lock()
+            .lock()
+            .expect("env lock poisoned");
+        let previous: Vec<(&str, Option<std::ffi::OsString>)> = APP_DATA_ENV_VARS
+            .into_iter()
+            .map(|key| (key, std::env::var_os(key)))
+            .collect();
+        let root = std::env::temp_dir()
+            .join(format!("panes-terminal-notify-home-{}", Uuid::new_v4()));
+        let local_app_data = root.join("AppData").join("Local");
+        let roaming_app_data = root.join("AppData").join("Roaming");
+        fs::create_dir_all(&local_app_data).expect("temp local app data should exist");
+        fs::create_dir_all(&roaming_app_data).expect("temp roaming app data should exist");
+        std::env::set_var("HOME", &root);
+        std::env::set_var("USERPROFILE", &root);
+        std::env::set_var("LOCALAPPDATA", &local_app_data);
+        std::env::set_var("APPDATA", &roaming_app_data);
+        let result = f();
+        for (key, value) in previous {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        let _ = fs::remove_dir_all(&root);
+        result
+    }
 
     #[test]
     fn parse_notify_cli_args_reads_all_supported_flags() {
@@ -1515,9 +2027,58 @@ mod tests {
                 .map(Vec::len),
             Some(1)
         );
+        assert_eq!(
+            settings["hooks"][CLAUDE_STOP_HOOK_EVENT][0]["matcher"],
+            Value::String(".*".to_string())
+        );
+        assert_eq!(
+            settings["hooks"][CLAUDE_STOP_HOOK_EVENT][0]["hooks"][0]["timeout"],
+            Value::Number(10.into())
+        );
         assert_eq!(forwarded[2], "--session-id");
         assert_eq!(forwarded[3], "session-1");
         assert_eq!(forwarded[4], "review this diff");
+    }
+
+    #[test]
+    fn build_codex_forwarded_args_injects_notify_override() {
+        let forwarded =
+            build_codex_forwarded_args_with_notify(vec!["fix this".to_string()]).unwrap();
+
+        assert_eq!(
+            forwarded,
+            vec![
+                "-c".to_string(),
+                CODEX_NOTIFY_CONFIG_OVERRIDE.to_string(),
+                "fix this".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_codex_forwarded_args_respects_existing_notify_override() {
+        let forwarded = build_codex_forwarded_args_with_notify(vec![
+            "--config".to_string(),
+            r#"notify=["custom","notify"]"#.to_string(),
+            "fix this".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            forwarded,
+            vec![
+                "--config".to_string(),
+                r#"notify=["custom","notify"]"#.to_string(),
+                "fix this".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_codex_forwarded_args_passthroughs_help() {
+        let forwarded = build_codex_forwarded_args_with_notify(vec!["--help".to_string()]).unwrap();
+
+        assert_eq!(forwarded, vec!["--help".to_string()]);
     }
 
     #[test]
@@ -1734,5 +2295,86 @@ mod tests {
     fn unix_claude_cli_shim_invokes_wrapper_subcommand() {
         let contents = claude_cli_shim_contents(Path::new("/tmp/Panes' Dev"));
         assert!(contents.contains(CLAUDE_WRAPPER_SUBCOMMAND));
+    }
+
+    #[test]
+    fn install_claude_notification_integration_merges_existing_hooks() {
+        with_temp_app_data_env(|| {
+            let settings_path = claude_settings_path().expect("Claude settings path should resolve");
+            fs::create_dir_all(settings_path.parent().expect("Claude parent should exist"))
+                .expect("Claude dir should exist");
+            fs::write(
+                &settings_path,
+                serde_json::to_string_pretty(&json!({
+                    "hooks": {
+                        "Stop": [
+                            {
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "echo custom"
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                }))
+                .expect("seed Claude settings should serialize"),
+            )
+            .expect("seed Claude settings should write");
+
+            let status =
+                install_terminal_notification_integration(TerminalNotificationIntegrationKind::Claude)
+                    .expect("Claude integration should install");
+
+            assert!(status.claude.configured);
+            let saved = fs::read_to_string(&settings_path).expect("Claude settings should read");
+            let parsed: Value =
+                serde_json::from_str(&saved).expect("Claude settings should remain valid JSON");
+            let stop_groups = parsed["hooks"][CLAUDE_STOP_HOOK_EVENT]
+                .as_array()
+                .expect("Stop hooks should be an array");
+            assert_eq!(stop_groups.len(), 2);
+            assert!(claude_settings_contains_managed_hook(&parsed));
+        });
+    }
+
+    #[test]
+    fn install_codex_notification_integration_writes_absolute_notify_command() {
+        with_temp_app_data_env(|| {
+            let status =
+                install_terminal_notification_integration(TerminalNotificationIntegrationKind::Codex)
+                    .expect("Codex integration should install");
+
+            assert!(status.codex.configured);
+            let config_path = codex_config_path().expect("Codex config path should resolve");
+            let saved = fs::read_to_string(&config_path).expect("Codex config should read");
+            let parsed: toml::Value = saved.parse().expect("Codex config should parse");
+            assert!(is_managed_codex_notify_value(
+                parsed
+                    .as_table()
+                    .and_then(|table| table.get("notify"))
+                    .expect("notify should be set")
+            ));
+        });
+    }
+
+    #[test]
+    fn codex_notification_status_reports_conflict_for_custom_notify() {
+        with_temp_app_data_env(|| {
+            let config_path = codex_config_path().expect("Codex config path should resolve");
+            fs::create_dir_all(config_path.parent().expect("Codex parent should exist"))
+                .expect("Codex dir should exist");
+            fs::write(
+                &config_path,
+                r#"notify = ["custom-notifier", "--flag"]
+"#,
+            )
+            .expect("Codex config should write");
+
+            let status = inspect_codex_notification_integration();
+            assert!(!status.configured);
+            assert!(status.conflict);
+        });
     }
 }
