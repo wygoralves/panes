@@ -49,6 +49,8 @@ import type {
   TerminalNotification,
   TerminalExitEvent,
   TerminalForegroundChangedEvent,
+  TerminalNotificationIntegrationId,
+  TerminalNotificationSettings,
   TerminalOutputEvent,
   TerminalRendererDiagnostics,
   TerminalResumeSession,
@@ -76,6 +78,12 @@ export const ipc = {
     invoke<boolean>("get_terminal_accelerated_rendering"),
   setTerminalAcceleratedRendering: (enabled: boolean) =>
     invoke<boolean>("set_terminal_accelerated_rendering", { enabled }),
+  getTerminalNotificationSettings: () =>
+    invoke<TerminalNotificationSettings>("get_terminal_notification_settings"),
+  setTerminalNotificationsEnabled: (enabled: boolean) =>
+    invoke<boolean>("set_terminal_notifications_enabled", { enabled }),
+  installTerminalNotificationIntegration: (integration: TerminalNotificationIntegrationId) =>
+    invoke<TerminalNotificationSettings>("install_terminal_notification_integration_command", { integration }),
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
   listArchivedWorkspaces: () => invoke<Workspace[]>("list_archived_workspaces"),
   openWorkspace: (path: string, scanDepth?: number) =>

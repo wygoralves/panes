@@ -50,6 +50,23 @@ export interface HelperStatus {
   message?: string | null;
 }
 
+export type TerminalNotificationIntegrationId = "claude" | "codex";
+
+export interface TerminalNotificationIntegrationStatus {
+  configured: boolean;
+  configPath?: string | null;
+  configExists: boolean;
+  conflict: boolean;
+  detail?: string | null;
+}
+
+export interface TerminalNotificationSettings {
+  enabled: boolean;
+  setupComplete: boolean;
+  claude: TerminalNotificationIntegrationStatus;
+  codex: TerminalNotificationIntegrationStatus;
+}
+
 export interface Repo {
   id: string;
   workspaceId: string;

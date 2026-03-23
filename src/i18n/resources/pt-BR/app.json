@@ -55,6 +55,10 @@
     "keepAwakeInactive": "Ativado, mas não está ativo agora",
     "keepAwakeLimited": "Ativado, mas a proteção com a tampa fechada não está ativa",
     "keepAwakePowerSettings": "Configurações de energia",
+    "terminalNotifications": "Notificações de agentes",
+    "terminalNotificationsDescription": "Alertas de desktop para terminais do Claude Code e Codex",
+    "terminalNotificationsReady": "Hooks instalados. Ative para mostrar alertas de desktop",
+    "terminalNotificationsEnabled": "Os alertas de desktop estão ativos para os terminais configurados",
     "terminal": "Terminal",
     "terminalAcceleratedRendering": "Renderização acelerada",
     "terminalAcceleratedRenderingFailed": "Falha ao atualizar a renderização do terminal.",
@@ -389,6 +393,47 @@
       "modifiedExternally": "{{name}} foi modificado externamente. Salve novamente para sobrescrever.",
       "saved": "{{name}} salvo",
       "saveFailed": "Falha ao salvar: {{error}}"
+    }
+  },
+  "notificationSettings": {
+    "title": "Notificações do terminal",
+    "description": "Instale os hooks do Claude Code e a configuração de notify do Codex uma vez, depois use o toggle da sidebar sempre que quiser que o Panes mostre alertas de desktop.",
+    "workflowTitle": "Como isso funciona",
+    "workflowDescription": "O Panes grava a integração na sua configuração de usuário, mas só entrega alertas para terminais iniciados pelo Panes. Fora do Panes, os comandos saem silenciosamente.",
+    "setupRequired": "Instale pelo menos uma integração antes de ativar as notificações do terminal.",
+    "integrationsLabel": "Integrações",
+    "enableButton": "Ativar",
+    "done": "Concluir",
+    "close": "Fechar",
+    "install": "Instalar",
+    "reinstall": "Reinstalar",
+    "replace": "Substituir",
+    "installing": "Instalando...",
+    "footerNote": "As ferramentas configuradas mantêm os hooks instalados. O toggle da sidebar controla apenas se o Panes publica as notificações.",
+    "status": {
+      "installed": "Instalado",
+      "notInstalled": "Não instalado",
+      "needsAttention": "Precisa de atenção"
+    },
+    "integrations": {
+      "claude": {
+        "title": "Claude Code",
+        "description": "Mescla os comandos de hook do Panes nas configurações de usuário do Claude",
+        "detail": "Adiciona os hooks de ciclo de vida do Panes sem remover seus hooks atuais do Claude."
+      },
+      "codex": {
+        "title": "Codex CLI",
+        "description": "Grava a configuração de notify do Panes na configuração de usuário do Codex",
+        "detail": "Define o comando de notify do Codex para que turnos concluídos cheguem ao Panes."
+      }
+    },
+    "toasts": {
+      "enabled": "Notificações do terminal ativadas.",
+      "disabled": "Notificações do terminal desativadas.",
+      "enableFailed": "Falha ao ativar as notificações do terminal.",
+      "disableFailed": "Falha ao desativar as notificações do terminal.",
+      "installSuccess": "Notificações de {{integration}} configuradas.",
+      "installFailed": "Falha ao configurar as notificações de {{integration}}."
     }
   },
   "powerModal": {

@@ -79,8 +79,9 @@ struct HelperResponse {
 ///   Panes.app/Contents/MacOS/Panes          (main binary)
 ///   Panes.app/Contents/MacOS/PanesHelperRegistrar
 ///
-/// During development (`cargo test` / `cargo run`) the binary lives at
-///   src-tauri/helper/build/PanesHelperRegistrar
+/// During development (`cargo test` / `cargo run`) the build script emits the
+/// helper next to the Cargo binary under `target/<profile>/PanesHelperRegistrar`.
+/// Older builds may still leave a copy in `src-tauri/helper/build`.
 fn resolve_registrar_path() -> Option<PathBuf> {
     // Production: next to the main executable inside the app bundle.
     if let Ok(exe) = std::env::current_exe() {
@@ -377,8 +378,9 @@ mod tests {
 
     #[test]
     fn resolve_registrar_does_not_panic() {
-        // In dev, should find helper/build/PanesHelperRegistrar if it was built.
-        // In CI without a build, returns None. Either way: no panic.
+        // In dev, the helper may exist next to the cargo binary or in the legacy
+        // helper/build fallback. In CI without a build, returns None. Either way:
+        // no panic.
         let _ = resolve_registrar_path();
     }
 }

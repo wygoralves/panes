@@ -147,15 +147,11 @@ pnpm tauri:dev
 
 ### Codex Terminal Notifications
 
-Inside a terminal session launched by Panes, add this to `~/.codex/config.toml`:
-
-```toml
-notify = ["panes", "codex-notify"]
-```
+Inside a terminal session launched by Panes, no manual Codex configuration is required. Panes injects a `codex` shim into that terminal's `PATH` and forwards to the real Codex binary with `-c 'notify=["panes","codex-notify"]'` unless you already passed your own `notify` override.
 
 Codex currently passes a single JSON payload to the configured `notify` program. `panes codex-notify` handles the current `agent-turn-complete` payload, extracts the last assistant message, and routes it back to the owning Panes terminal session so Panes can show both desktop and in-app terminal notifications.
 
-This only works inside terminals launched by Panes, because the injected `panes` shim relies on `PANES_NOTIFY_ADDR`, `PANES_NOTIFY_TOKEN`, `PANES_WORKSPACE_ID`, and `PANES_SESSION_ID`.
+This only works inside terminals launched by Panes, because the injected `panes` and `codex` shims rely on `PANES_NOTIFY_ADDR`, `PANES_NOTIFY_TOKEN`, `PANES_WORKSPACE_ID`, and `PANES_SESSION_ID`.
 
 ### Claude Terminal Notifications
 
