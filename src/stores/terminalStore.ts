@@ -369,7 +369,7 @@ function hasNotificationHydrationTouchChange(
   }
 
   const currentTouchedSessionIds = workspace.notificationTouchedSessionIds ?? {};
-  const nextTouchedSessionIds = nextTouch.notificationTouchedSessionIds;
+  const nextTouchedSessionIds = nextTouch.notificationTouchedSessionIds ?? {};
   const currentKeys = Object.keys(currentTouchedSessionIds);
   const nextKeys = Object.keys(nextTouchedSessionIds);
   if (currentKeys.length !== nextKeys.length) {
