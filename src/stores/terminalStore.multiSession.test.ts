@@ -1173,6 +1173,55 @@ describe("terminalStore.createMultiSessionGroup", () => {
     expect(useTerminalStore.getState().workspaces["ws-1"]?.notificationsBySessionId).toEqual({});
   });
 
+  it("preserves no-op clears that happen during hydration", async () => {
+    let resolveNotifications: ((value: TerminalNotification[]) => void) | undefined;
+    mockIpc.terminalListNotifications.mockImplementation(
+      () =>
+        new Promise<TerminalNotification[]>((resolve) => {
+          resolveNotifications = resolve;
+        }),
+    );
+
+    useTerminalStore.setState({
+      workspaces: {
+        "ws-1": {
+          isOpen: true,
+          layoutMode: "split",
+          preEditorLayoutMode: "chat",
+          panelSize: 32,
+          sessions: [makeSession("s1")],
+          notificationsBySessionId: {},
+          activeSessionId: "s1",
+          groups: [
+            {
+              id: "g1",
+              name: "Terminal 1",
+              root: { type: "leaf", sessionId: "s1" },
+              sessionMeta: {
+                s1: {},
+              },
+              worktreeConfig: null,
+            },
+          ],
+          activeGroupId: "g1",
+          focusedSessionId: "s1",
+          broadcastGroupId: null,
+          startupPreset: null,
+          pendingStartupPreset: null,
+          loading: false,
+          error: undefined,
+        },
+      },
+    });
+
+    const hydratePromise = useTerminalStore.getState().hydrateNotifications("ws-1");
+    useTerminalStore.getState().clearNotificationLocal("ws-1", "s1");
+    resolveNotifications?.([makeNotification("s1")]);
+    await hydratePromise;
+
+    expect(useTerminalStore.getState().workspaces["ws-1"]?.notificationsBySessionId).toEqual({});
+  });
+
   it("ignores stale overlapping hydration responses", async () => {
     const resolvers: Array<(value: TerminalNotification[]) => void> = [];
     mockIpc.terminalListNotifications.mockImplementation(

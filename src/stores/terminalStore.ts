@@ -354,6 +354,31 @@ function withNotificationHydrationTouch(
   };
 }
 
+function hasNotificationHydrationTouchChange(
+  workspace: WorkspaceTerminalState,
+  nextTouch: Pick<
+    WorkspaceTerminalState,
+    "notificationHydrating" | "notificationTouchedAll" | "notificationTouchedSessionIds"
+  >,
+): boolean {
+  if ((workspace.notificationHydrating ?? false) !== nextTouch.notificationHydrating) {
+    return true;
+  }
+  if ((workspace.notificationTouchedAll ?? false) !== nextTouch.notificationTouchedAll) {
+    return true;
+  }
+
+  const currentTouchedSessionIds = workspace.notificationTouchedSessionIds ?? {};
+  const nextTouchedSessionIds = nextTouch.notificationTouchedSessionIds;
+  const currentKeys = Object.keys(currentTouchedSessionIds);
+  const nextKeys = Object.keys(nextTouchedSessionIds);
+  if (currentKeys.length !== nextKeys.length) {
+    return true;
+  }
+
+  return nextKeys.some((sessionId) => !currentTouchedSessionIds[sessionId]);
+}
+
 function resolveHydratedNotifications(
   workspace: WorkspaceTerminalState,
   hydrated: Record<string, TerminalNotification>,
@@ -1585,13 +1610,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         current.notificationsBySessionId,
         sessionId ?? null,
       );
-      if (notificationsBySessionId === current.notificationsBySessionId) {
+      const hydrationTouch = withNotificationHydrationTouch(current, sessionId ?? null);
+      if (
+        notificationsBySessionId === current.notificationsBySessionId
+        && !hasNotificationHydrationTouchChange(current, hydrationTouch)
+      ) {
         return state;
       }
       return {
         workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
           notificationsBySessionId,
-          ...withNotificationHydrationTouch(current, sessionId ?? null),
+          ...hydrationTouch,
         }),
       };
     });

@@ -1736,24 +1736,19 @@ async fn run_turn(
 
     let latest_thread = run_db(state.db.clone(), {
         let thread_id = thread.id.clone();
-        move |db| {
-            db::threads::get_thread(db, &thread_id)?
-                .ok_or_else(|| anyhow::anyhow!("thread not found before final thread-updated emit"))
-        }
+        move |db| db::threads::get_thread(db, &thread_id)
     })
     .await
-    .ok();
+    .unwrap_or_else(|error| {
+        log::warn!("failed to load thread before final thread-updated emit: {error}");
+        None
+    });
 
-    let final_thread = latest_thread.unwrap_or_else(|| thread.clone());
-    let _ = app.emit(
-        "thread-updated",
-        ThreadUpdatedEvent {
-            thread_id: final_thread.id.clone(),
-            workspace_id: final_thread.workspace_id.clone(),
-            thread: Some(final_thread.clone()),
-        },
-    );
-    emit_chat_turn_finished(&app, &final_thread, &message_status, &blocks);
+    let (thread_updated_event, final_thread) = build_final_thread_event(latest_thread, &thread);
+    let _ = app.emit("thread-updated", thread_updated_event);
+    if let Some(final_thread) = final_thread.as_ref() {
+        emit_chat_turn_finished(&app, final_thread, &message_status, &blocks);
+    }
 
     state.turns.finish(&thread.id).await;
 }
@@ -2289,24 +2284,19 @@ async fn run_codex_review_turn(
 
     let latest_review_thread = run_db(state.db.clone(), {
         let review_thread_id = review_thread.id.clone();
-        move |db| {
-            db::threads::get_thread(db, &review_thread_id)?.ok_or_else(|| {
-                anyhow::anyhow!("review thread not found before final thread-updated emit")
-            })
-        }
+        move |db| db::threads::get_thread(db, &review_thread_id)
     })
     .await
-    .ok();
-    let _ = app.emit(
-        "thread-updated",
-        ThreadUpdatedEvent {
-            thread_id: review_thread.id.clone(),
-            workspace_id: review_thread.workspace_id.clone(),
-            thread: latest_review_thread.clone(),
-        },
-    );
-    let final_review_thread = latest_review_thread.unwrap_or_else(|| review_thread.clone());
-    emit_chat_turn_finished(&app, &final_review_thread, &message_status, &blocks);
+    .unwrap_or_else(|error| {
+        log::warn!("failed to load review thread before final thread-updated emit: {error}");
+        None
+    });
+    let (thread_updated_event, final_review_thread) =
+        build_final_thread_event(latest_review_thread, &review_thread);
+    let _ = app.emit("thread-updated", thread_updated_event);
+    if let Some(final_review_thread) = final_review_thread.as_ref() {
+        emit_chat_turn_finished(&app, final_review_thread, &message_status, &blocks);
+    }
 
     state.turns.finish(&source_thread.id).await;
     state.turns.finish(&review_thread.id).await;
@@ -2882,6 +2872,30 @@ fn emit_chat_turn_finished(
         preview: chat_notification_preview(blocks),
     };
     let _ = app.emit("chat-turn-finished", event);
+}
+
+fn build_final_thread_event(
+    latest_thread: Option<ThreadDto>,
+    fallback_thread: &ThreadDto,
+) -> (ThreadUpdatedEvent, Option<ThreadDto>) {
+    match latest_thread {
+        Some(latest_thread) => (
+            ThreadUpdatedEvent {
+                thread_id: latest_thread.id.clone(),
+                workspace_id: latest_thread.workspace_id.clone(),
+                thread: Some(latest_thread.clone()),
+            },
+            Some(latest_thread),
+        ),
+        None => (
+            ThreadUpdatedEvent {
+                thread_id: fallback_thread.id.clone(),
+                workspace_id: fallback_thread.workspace_id.clone(),
+                thread: None,
+            },
+            None,
+        ),
+    }
 }
 
 fn apply_event_to_blocks(
@@ -3822,6 +3836,41 @@ mod tests {
             approval_id,
             serde_json::json!({ "command": "touch file.txt" }),
         )
+    }
+
+    #[test]
+    fn build_final_thread_event_uses_latest_thread_when_present() {
+        let state = test_app_state();
+        let fallback_thread = test_thread(&state, "codex", "gpt-5.5-codex");
+        let mut latest_thread = fallback_thread.clone();
+        latest_thread.title = "Renamed".to_string();
+
+        let (event, final_thread) =
+            build_final_thread_event(Some(latest_thread.clone()), &fallback_thread);
+
+        assert_eq!(event.thread_id, latest_thread.id);
+        assert_eq!(event.workspace_id, latest_thread.workspace_id);
+        assert_eq!(
+            event.thread.as_ref().map(|thread| thread.title.as_str()),
+            Some("Renamed")
+        );
+        assert_eq!(
+            final_thread.as_ref().map(|thread| thread.title.as_str()),
+            Some("Renamed")
+        );
+    }
+
+    #[test]
+    fn build_final_thread_event_emits_removal_when_thread_is_missing() {
+        let state = test_app_state();
+        let fallback_thread = test_thread(&state, "codex", "gpt-5.5-codex");
+
+        let (event, final_thread) = build_final_thread_event(None, &fallback_thread);
+
+        assert_eq!(event.thread_id, fallback_thread.id);
+        assert_eq!(event.workspace_id, fallback_thread.workspace_id);
+        assert!(event.thread.is_none());
+        assert!(final_thread.is_none());
     }
 
     #[test]
