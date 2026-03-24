@@ -34,6 +34,7 @@ const ACTION_OUTPUT_MAX_CHUNKS: usize = 240;
 const MAX_ATTACHMENTS_PER_TURN: usize = 10;
 const MESSAGE_WINDOW_DEFAULT_LIMIT: usize = 120;
 const MESSAGE_WINDOW_MAX_LIMIT: usize = 400;
+const MAX_CHAT_NOTIFICATION_PREVIEW_CHARS: usize = 240;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -146,6 +147,18 @@ struct ThreadUpdatedEvent {
     workspace_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     thread: Option<ThreadDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatTurnFinishedEvent {
+    thread_id: String,
+    workspace_id: String,
+    engine_id: String,
+    thread_title: String,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1718,18 +1731,28 @@ async fn run_turn(
         }
     }
 
-    if let Some(updated_thread) =
-        maybe_update_thread_title(&state, &thread, &engine_thread_id, &turn_input.message).await
-    {
-        let _ = app.emit(
-            "thread-updated",
-            ThreadUpdatedEvent {
-                thread_id: thread.id.clone(),
-                workspace_id: thread.workspace_id.clone(),
-                thread: Some(updated_thread),
-            },
-        );
-    }
+    let _ = maybe_update_thread_title(&state, &thread, &engine_thread_id, &turn_input.message).await;
+
+    let latest_thread = run_db(state.db.clone(), {
+        let thread_id = thread.id.clone();
+        move |db| {
+            db::threads::get_thread(db, &thread_id)?
+                .ok_or_else(|| anyhow::anyhow!("thread not found before final thread-updated emit"))
+        }
+    })
+    .await
+    .ok();
+
+    let final_thread = latest_thread.unwrap_or_else(|| thread.clone());
+    let _ = app.emit(
+        "thread-updated",
+        ThreadUpdatedEvent {
+            thread_id: final_thread.id.clone(),
+            workspace_id: final_thread.workspace_id.clone(),
+            thread: Some(final_thread.clone()),
+        },
+    );
+    emit_chat_turn_finished(&app, &final_thread, &message_status, &blocks);
 
     state.turns.finish(&thread.id).await;
 }
@@ -2278,9 +2301,11 @@ async fn run_codex_review_turn(
         ThreadUpdatedEvent {
             thread_id: review_thread.id.clone(),
             workspace_id: review_thread.workspace_id.clone(),
-            thread: latest_review_thread,
+            thread: latest_review_thread.clone(),
         },
     );
+    let final_review_thread = latest_review_thread.unwrap_or_else(|| review_thread.clone());
+    emit_chat_turn_finished(&app, &final_review_thread, &message_status, &blocks);
 
     state.turns.finish(&source_thread.id).await;
     state.turns.finish(&review_thread.id).await;
@@ -2786,6 +2811,76 @@ fn truncate_title(value: String, max_chars: usize) -> String {
     let mut output = value.chars().take(max_chars - 3).collect::<String>();
     output.push_str("...");
     output
+}
+
+fn normalize_chat_notification_preview(raw: &str) -> Option<String> {
+    let compact = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let trimmed = compact.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(truncate_title(
+        trimmed.to_string(),
+        MAX_CHAT_NOTIFICATION_PREVIEW_CHARS,
+    ))
+}
+
+fn chat_notification_preview(blocks: &[ContentBlock]) -> Option<String> {
+    for block in blocks {
+        match block {
+            ContentBlock::Text {
+                is_steer: Some(true),
+                ..
+            } => {}
+            ContentBlock::Text { content, .. }
+            | ContentBlock::Thinking { content }
+            | ContentBlock::Error { message: content } => {
+                if let Some(preview) = normalize_chat_notification_preview(content) {
+                    return Some(preview);
+                }
+            }
+            ContentBlock::Notice { message, title, .. } => {
+                if let Some(preview) = normalize_chat_notification_preview(message) {
+                    return Some(preview);
+                }
+                if let Some(preview) = normalize_chat_notification_preview(title) {
+                    return Some(preview);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn emit_chat_turn_finished(
+    app: &tauri::AppHandle,
+    thread: &ThreadDto,
+    status: &MessageStatusDto,
+    blocks: &[ContentBlock],
+) {
+    let event = ChatTurnFinishedEvent {
+        thread_id: thread.id.clone(),
+        workspace_id: thread.workspace_id.clone(),
+        engine_id: thread.engine_id.clone(),
+        thread_title: thread.title.clone(),
+        status: match status {
+            MessageStatusDto::Completed => "completed",
+            MessageStatusDto::Interrupted => "interrupted",
+            MessageStatusDto::Error => "error",
+            MessageStatusDto::Streaming => "completed",
+        }
+        .to_string(),
+        preview: chat_notification_preview(blocks),
+    };
+    let _ = app.emit("chat-turn-finished", event);
 }
 
 fn apply_event_to_blocks(
@@ -3780,6 +3875,33 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn chat_notification_preview_ignores_steer_blocks_and_uses_first_text_block() {
+        let preview = chat_notification_preview(&[
+            ContentBlock::Text {
+                content: "hidden steer".to_string(),
+                plan_mode: None,
+                is_steer: Some(true),
+            },
+            ContentBlock::Text {
+                content: "  First line\n\nSecond line  ".to_string(),
+                plan_mode: None,
+                is_steer: None,
+            },
+        ]);
+
+        assert_eq!(preview.as_deref(), Some("First line Second line"));
+    }
+
+    #[test]
+    fn chat_notification_preview_falls_back_to_error_blocks() {
+        let preview = chat_notification_preview(&[ContentBlock::Error {
+            message: "Command failed".to_string(),
+        }]);
+
+        assert_eq!(preview.as_deref(), Some("Command failed"));
     }
 
     #[test]

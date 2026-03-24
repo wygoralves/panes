@@ -116,7 +116,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const terminalNotificationSettings = useTerminalNotificationSettingsStore((s) => s.settings);
   const terminalNotificationLoading = useTerminalNotificationSettingsStore((s) => s.loading);
   const terminalNotificationLoadedOnce = useTerminalNotificationSettingsStore((s) => s.loadedOnce);
-  const terminalNotificationUpdatingEnabled = useTerminalNotificationSettingsStore((s) => s.updatingEnabled);
+  const terminalNotificationUpdatingChatEnabled = useTerminalNotificationSettingsStore((s) => s.updatingChatEnabled);
+  const terminalNotificationUpdatingTerminalEnabled = useTerminalNotificationSettingsStore((s) => s.updatingTerminalEnabled);
   const toggleTerminalNotifications = useTerminalNotificationSettingsStore((s) => s.toggle);
   const openTerminalNotificationSettings = useTerminalNotificationSettingsStore((s) => s.openModal);
   const hasUpdate = updateStatus === "available" && !updateSnoozed;
@@ -353,14 +354,28 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     if (!terminalNotificationLoadedOnce || !terminalNotificationSettings) {
       return t("app:sidebar.terminalNotificationsDescription");
     }
-    if (terminalNotificationSettings.enabled) {
-      return t("app:sidebar.terminalNotificationsEnabled");
+    if (terminalNotificationSettings.chatEnabled && terminalNotificationSettings.terminalEnabled) {
+      return t("app:sidebar.terminalNotificationsEnabledAll");
     }
-    if (terminalNotificationSettings.setupComplete) {
+    if (terminalNotificationSettings.chatEnabled) {
+      return t("app:sidebar.terminalNotificationsEnabledChat");
+    }
+    if (terminalNotificationSettings.terminalEnabled) {
+      return t("app:sidebar.terminalNotificationsEnabledTerminal");
+    }
+    if (terminalNotificationSettings.terminalSetupComplete) {
       return t("app:sidebar.terminalNotificationsReady");
     }
     return t("app:sidebar.terminalNotificationsDescription");
   }, [terminalNotificationLoadedOnce, terminalNotificationSettings, t]);
+
+  const terminalNotificationAnyEnabled =
+    (terminalNotificationSettings?.chatEnabled ?? false)
+    || (terminalNotificationSettings?.terminalEnabled ?? false);
+  const terminalNotificationBusy =
+    (terminalNotificationLoading && !terminalNotificationLoadedOnce)
+    || terminalNotificationUpdatingChatEnabled
+    || terminalNotificationUpdatingTerminalEnabled;
 
   return (
     <div
@@ -766,8 +781,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               style={{
                 justifyContent: "space-between",
                 opacity:
-                  (terminalNotificationLoading && !terminalNotificationLoadedOnce)
-                  || terminalNotificationUpdatingEnabled
+                  terminalNotificationBusy
                     ? 0.75
                     : 1,
               }}
@@ -798,15 +812,15 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 onClick={(e) => e.stopPropagation()}
                 style={{
                   cursor:
-                    terminalNotificationLoading || terminalNotificationUpdatingEnabled
+                    terminalNotificationBusy
                       ? "wait"
                       : undefined,
                 }}
               >
                 <input
                   type="checkbox"
-                  checked={terminalNotificationSettings?.enabled ?? false}
-                  disabled={terminalNotificationLoading || terminalNotificationUpdatingEnabled}
+                  checked={terminalNotificationAnyEnabled}
+                  disabled={terminalNotificationBusy}
                   onChange={() => { void toggleTerminalNotifications(); }}
                 />
                 <span className="ws-toggle-track" />

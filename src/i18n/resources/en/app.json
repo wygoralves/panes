@@ -56,9 +56,11 @@
     "keepAwakeLimited": "Enabled, but lid-close protection is not active",
     "keepAwakePowerSettings": "Power Settings",
     "terminalNotifications": "Agent notifications",
-    "terminalNotificationsDescription": "Desktop alerts for Claude Code and Codex terminals",
-    "terminalNotificationsReady": "Hooks installed. Turn on to show desktop alerts",
-    "terminalNotificationsEnabled": "Desktop alerts are on for configured terminal tools",
+    "terminalNotificationsDescription": "Desktop alerts for chat replies and terminal agents",
+    "terminalNotificationsReady": "Chat can be enabled now. Install terminal hooks when you want CLI alerts too",
+    "terminalNotificationsEnabledChat": "Chat reply alerts are on",
+    "terminalNotificationsEnabledTerminal": "Terminal agent alerts are on",
+    "terminalNotificationsEnabledAll": "Chat and terminal alerts are on",
     "terminal": "Terminal",
     "terminalAcceleratedRendering": "Accelerated rendering",
     "terminalAcceleratedRenderingFailed": "Failed to update terminal rendering.",
@@ -396,20 +398,31 @@
     }
   },
   "notificationSettings": {
-    "title": "Terminal notifications",
-    "description": "Install Claude Code hooks and Codex notify config once, then use the sidebar toggle whenever you want Panes to surface desktop alerts.",
+    "title": "Agent notifications",
+    "description": "Control chat reply alerts and terminal agent alerts separately. Terminal tools need one-time setup before Panes can surface their notifications.",
+    "chatSectionTitle": "Chat",
+    "terminalSectionTitle": "Terminal",
+    "chatCard": {
+      "title": "Chat reply notifications",
+      "description": "Show a desktop notification when a Panes chat thread finishes in the background.",
+      "detail": "No extra setup required. Panes can notify for chat replies immediately."
+    },
+    "terminalCard": {
+      "title": "Terminal agent notifications",
+      "description": "Show desktop notifications for Claude Code and Codex sessions running inside Panes terminals.",
+      "ready": "Terminal integrations are installed. You can turn terminal alerts on whenever you want.",
+      "setupRequired": "Install at least one terminal integration below before enabling terminal alerts."
+    },
     "workflowTitle": "How this works",
     "workflowDescription": "Panes writes the integration into your user config, then only delivers alerts from terminals launched by Panes. Outside Panes, the commands exit quietly.",
-    "setupRequired": "Install at least one integration before turning terminal notifications on.",
+    "setupRequired": "Install at least one terminal integration before turning terminal alerts on.",
     "integrationsLabel": "Integrations",
-    "enableButton": "Turn on",
-    "done": "Done",
     "close": "Close",
     "install": "Install",
     "reinstall": "Reinstall",
     "replace": "Replace",
     "installing": "Installing...",
-    "footerNote": "Configured tools keep their hooks installed. The sidebar toggle only controls whether Panes publishes notifications.",
+    "footerNote": "Chat notifications are controlled entirely in Panes. Terminal integrations stay installed until you replace them in Claude or Codex config.",
     "status": {
       "installed": "Installed",
       "notInstalled": "Not installed",
@@ -428,13 +441,21 @@
       }
     },
     "toasts": {
-      "enabled": "Terminal notifications enabled.",
-      "disabled": "Terminal notifications disabled.",
-      "enableFailed": "Failed to enable terminal notifications.",
-      "disableFailed": "Failed to disable terminal notifications.",
+      "chatEnabled": "Chat notifications enabled.",
+      "chatDisabled": "Chat notifications disabled.",
+      "chatEnableFailed": "Failed to enable chat notifications.",
+      "chatDisableFailed": "Failed to disable chat notifications.",
+      "terminalEnabled": "Terminal notifications enabled.",
+      "terminalDisabled": "Terminal notifications disabled.",
+      "terminalEnableFailed": "Failed to enable terminal notifications.",
+      "terminalDisableFailed": "Failed to disable terminal notifications.",
+      "allDisabled": "Agent notifications disabled.",
+      "disableAllFailed": "Failed to disable agent notifications.",
       "installSuccess": "{{integration}} notifications configured.",
       "installFailed": "Failed to configure {{integration}} notifications."
-    }
+    },
+    "chatNotificationFallbackComplete": "Reply ready",
+    "chatNotificationFallbackError": "Reply failed"
   },
   "powerModal": {
     "title": "Power Management",

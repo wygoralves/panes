@@ -78,12 +78,16 @@ export const ipc = {
     invoke<boolean>("get_terminal_accelerated_rendering"),
   setTerminalAcceleratedRendering: (enabled: boolean) =>
     invoke<boolean>("set_terminal_accelerated_rendering", { enabled }),
-  getTerminalNotificationSettings: () =>
-    invoke<TerminalNotificationSettings>("get_terminal_notification_settings"),
+  getAgentNotificationSettings: () =>
+    invoke<TerminalNotificationSettings>("get_agent_notification_settings"),
+  setChatNotificationsEnabled: (enabled: boolean) =>
+    invoke<boolean>("set_chat_notifications_enabled", { enabled }),
   setTerminalNotificationsEnabled: (enabled: boolean) =>
     invoke<boolean>("set_terminal_notifications_enabled", { enabled }),
   installTerminalNotificationIntegration: (integration: TerminalNotificationIntegrationId) =>
     invoke<TerminalNotificationSettings>("install_terminal_notification_integration_command", { integration }),
+  showAgentNotification: (title: string, body: string) =>
+    invoke<void>("show_agent_notification", { title, body }),
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
   listArchivedWorkspaces: () => invoke<Workspace[]>("list_archived_workspaces"),
   openWorkspace: (path: string, scanDepth?: number) =>
@@ -513,10 +517,25 @@ export interface ThreadUpdatedEvent {
   thread?: Thread | null;
 }
 
+export interface ChatTurnFinishedEvent {
+  threadId: string;
+  workspaceId: string;
+  engineId: "codex" | "claude";
+  threadTitle: string;
+  status: "completed" | "interrupted" | "error";
+  preview?: string | null;
+}
+
 export async function listenThreadUpdated(
   onEvent: (event: ThreadUpdatedEvent) => void
 ): Promise<UnlistenFn> {
   return listen<ThreadUpdatedEvent>("thread-updated", ({ payload }) => onEvent(payload));
+}
+
+export async function listenChatTurnFinished(
+  onEvent: (event: ChatTurnFinishedEvent) => void
+): Promise<UnlistenFn> {
+  return listen<ChatTurnFinishedEvent>("chat-turn-finished", ({ payload }) => onEvent(payload));
 }
 
 export async function listenEngineRuntimeUpdated(

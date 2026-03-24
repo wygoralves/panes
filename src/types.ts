@@ -61,8 +61,9 @@ export interface TerminalNotificationIntegrationStatus {
 }
 
 export interface TerminalNotificationSettings {
-  enabled: boolean;
-  setupComplete: boolean;
+  chatEnabled: boolean;
+  terminalEnabled: boolean;
+  terminalSetupComplete: boolean;
   claude: TerminalNotificationIntegrationStatus;
   codex: TerminalNotificationIntegrationStatus;
 }

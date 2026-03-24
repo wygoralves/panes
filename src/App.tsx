@@ -8,7 +8,13 @@ import { TerminalNotificationSettingsModal } from "./components/shared/TerminalN
 import { t } from "./i18n";
 import { useUpdateStore } from "./stores/updateStore";
 import { useHarnessStore } from "./stores/harnessStore";
-import { ipc, listenEngineRuntimeUpdated, listenMenuAction, listenThreadUpdated } from "./lib/ipc";
+import {
+  ipc,
+  listenChatTurnFinished,
+  listenEngineRuntimeUpdated,
+  listenMenuAction,
+  listenThreadUpdated,
+} from "./lib/ipc";
 import { useWorkspaceStore } from "./stores/workspaceStore";
 import { useEngineStore } from "./stores/engineStore";
 import { useUiStore } from "./stores/uiStore";
@@ -71,6 +77,24 @@ function showRuntimeToast(runtimeToast?: RuntimeToast) {
   }
 }
 
+function resolveAgentDisplayName(engineId: "codex" | "claude"): string {
+  return engineId === "claude" ? "Claude" : "Codex";
+}
+
+function resolveChatNotificationBody(
+  status: "completed" | "interrupted" | "error",
+  preview?: string | null,
+): string {
+  const normalizedPreview = preview?.trim();
+  if (normalizedPreview) {
+    return normalizedPreview;
+  }
+  if (status === "error") {
+    return t("app:notificationSettings.chatNotificationFallbackError");
+  }
+  return t("app:notificationSettings.chatNotificationFallbackComplete");
+}
+
 export function App() {
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces);
   const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -119,6 +143,7 @@ export function App() {
   }, [keepAwakeEnabled, keepAwakeSessionTimer, refreshKeepAwake]);
 
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void listenThreadUpdated(async ({ workspaceId, thread }) => {
       if (thread) {
@@ -144,10 +169,15 @@ export function App() {
       void refreshThreads(workspaceId);
       void refreshArchivedThreads(workspaceId);
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
     });
 
     return () => {
+      disposed = true;
       if (unlisten) {
         unlisten();
       }
@@ -155,15 +185,65 @@ export function App() {
   }, [applyThreadUpdateLocal, refreshArchivedThreads, refreshThreads]);
 
   useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listenChatTurnFinished(async (event) => {
+      const notificationStore = useTerminalNotificationSettingsStore.getState();
+      const settings = notificationStore.settings ?? await notificationStore.load();
+      if (!settings?.chatEnabled || event.status === "interrupted") {
+        return;
+      }
+
+      const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+      const activeThreadId = useThreadStore.getState().activeThreadId;
+      if (
+        document.hasFocus()
+        && activeWorkspaceId === event.workspaceId
+        && activeThreadId === event.threadId
+      ) {
+        return;
+      }
+
+      const title = event.threadTitle.trim() || resolveAgentDisplayName(event.engineId);
+      const body = resolveChatNotificationBody(event.status, event.preview);
+
+      try {
+        await ipc.showAgentNotification(title, body);
+      } catch (error) {
+        console.warn(`Failed to show chat notification for thread ${event.threadId}:`, error);
+      }
+    }).then((fn) => {
+      if (disposed) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void listenEngineRuntimeUpdated((event) => {
       applyEngineRuntimeUpdate(event);
       showRuntimeToast(event.toast);
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
     });
 
     return () => {
+      disposed = true;
       if (unlisten) {
         unlisten();
       }
@@ -397,6 +477,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
 
     void listenMenuAction((action) => {
@@ -444,10 +525,15 @@ export function App() {
           break;
       }
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
     });
 
     return () => {
+      disposed = true;
       if (unlisten) unlisten();
     };
   }, []);

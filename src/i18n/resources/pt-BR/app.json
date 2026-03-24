@@ -56,9 +56,11 @@
     "keepAwakeLimited": "Ativado, mas a proteção com a tampa fechada não está ativa",
     "keepAwakePowerSettings": "Configurações de energia",
     "terminalNotifications": "Notificações de agentes",
-    "terminalNotificationsDescription": "Alertas de desktop para terminais do Claude Code e Codex",
-    "terminalNotificationsReady": "Hooks instalados. Ative para mostrar alertas de desktop",
-    "terminalNotificationsEnabled": "Os alertas de desktop estão ativos para os terminais configurados",
+    "terminalNotificationsDescription": "Alertas de desktop para respostas do chat e agentes no terminal",
+    "terminalNotificationsReady": "O chat já pode ser ativado. Instale os hooks do terminal quando quiser alertas das CLIs também",
+    "terminalNotificationsEnabledChat": "Os alertas de respostas do chat estão ativos",
+    "terminalNotificationsEnabledTerminal": "Os alertas de agentes no terminal estão ativos",
+    "terminalNotificationsEnabledAll": "Os alertas de chat e terminal estão ativos",
     "terminal": "Terminal",
     "terminalAcceleratedRendering": "Renderização acelerada",
     "terminalAcceleratedRenderingFailed": "Falha ao atualizar a renderização do terminal.",
@@ -396,20 +398,31 @@
     }
   },
   "notificationSettings": {
-    "title": "Notificações do terminal",
-    "description": "Instale os hooks do Claude Code e a configuração de notify do Codex uma vez, depois use o toggle da sidebar sempre que quiser que o Panes mostre alertas de desktop.",
+    "title": "Notificações de agentes",
+    "description": "Controle separadamente os alertas de respostas do chat e os alertas de agentes no terminal. As ferramentas de terminal precisam de uma configuração inicial antes que o Panes possa mostrar suas notificações.",
+    "chatSectionTitle": "Chat",
+    "terminalSectionTitle": "Terminal",
+    "chatCard": {
+      "title": "Notificações de respostas do chat",
+      "description": "Mostra uma notificação de desktop quando uma thread de chat do Panes termina em segundo plano.",
+      "detail": "Não precisa de configuração extra. O Panes pode notificar respostas do chat imediatamente."
+    },
+    "terminalCard": {
+      "title": "Notificações de agentes no terminal",
+      "description": "Mostra notificações de desktop para sessões do Claude Code e Codex rodando nos terminais do Panes.",
+      "ready": "As integrações do terminal já estão instaladas. Você pode ativar os alertas quando quiser.",
+      "setupRequired": "Instale pelo menos uma integração de terminal abaixo antes de ativar os alertas do terminal."
+    },
     "workflowTitle": "Como isso funciona",
     "workflowDescription": "O Panes grava a integração na sua configuração de usuário, mas só entrega alertas para terminais iniciados pelo Panes. Fora do Panes, os comandos saem silenciosamente.",
-    "setupRequired": "Instale pelo menos uma integração antes de ativar as notificações do terminal.",
+    "setupRequired": "Instale pelo menos uma integração de terminal antes de ativar os alertas do terminal.",
     "integrationsLabel": "Integrações",
-    "enableButton": "Ativar",
-    "done": "Concluir",
     "close": "Fechar",
     "install": "Instalar",
     "reinstall": "Reinstalar",
     "replace": "Substituir",
     "installing": "Instalando...",
-    "footerNote": "As ferramentas configuradas mantêm os hooks instalados. O toggle da sidebar controla apenas se o Panes publica as notificações.",
+    "footerNote": "As notificações de chat são controladas inteiramente pelo Panes. As integrações de terminal ficam instaladas até você substituí-las na configuração do Claude ou Codex.",
     "status": {
       "installed": "Instalado",
       "notInstalled": "Não instalado",
@@ -428,13 +441,21 @@
       }
     },
     "toasts": {
-      "enabled": "Notificações do terminal ativadas.",
-      "disabled": "Notificações do terminal desativadas.",
-      "enableFailed": "Falha ao ativar as notificações do terminal.",
-      "disableFailed": "Falha ao desativar as notificações do terminal.",
+      "chatEnabled": "Notificações de chat ativadas.",
+      "chatDisabled": "Notificações de chat desativadas.",
+      "chatEnableFailed": "Falha ao ativar as notificações de chat.",
+      "chatDisableFailed": "Falha ao desativar as notificações de chat.",
+      "terminalEnabled": "Notificações do terminal ativadas.",
+      "terminalDisabled": "Notificações do terminal desativadas.",
+      "terminalEnableFailed": "Falha ao ativar as notificações do terminal.",
+      "terminalDisableFailed": "Falha ao desativar as notificações do terminal.",
+      "allDisabled": "Notificações de agentes desativadas.",
+      "disableAllFailed": "Falha ao desativar as notificações de agentes.",
       "installSuccess": "Notificações de {{integration}} configuradas.",
       "installFailed": "Falha ao configurar as notificações de {{integration}}."
-    }
+    },
+    "chatNotificationFallbackComplete": "Resposta pronta",
+    "chatNotificationFallbackError": "Resposta falhou"
   },
   "powerModal": {
     "title": "Gerenciamento de energia",

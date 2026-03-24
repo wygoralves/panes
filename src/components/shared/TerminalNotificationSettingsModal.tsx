@@ -1,10 +1,11 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   BellRing,
   Bot,
   CheckCircle2,
   Download,
+  MessageSquare,
   TerminalSquare,
   TriangleAlert,
   X,
@@ -22,6 +23,16 @@ interface IntegrationCardProps {
   installing: boolean;
   disabled: boolean;
   onInstall: (integration: TerminalNotificationIntegrationId) => void;
+}
+
+interface ChannelCardProps {
+  icon: ReactNode;
+  title: string;
+  description: string;
+  detail: string;
+  checked: boolean;
+  disabled?: boolean;
+  onToggle: () => void;
 }
 
 function statusTone(status: TerminalNotificationIntegrationStatus) {
@@ -165,17 +176,86 @@ function IntegrationCard({
   );
 }
 
+function ChannelCard({
+  icon,
+  title,
+  description,
+  detail,
+  checked,
+  disabled = false,
+  onToggle,
+}: ChannelCardProps) {
+  return (
+    <div
+      style={{
+        borderRadius: "var(--radius-md)",
+        border: "1px solid rgba(255, 255, 255, 0.08)",
+        background: "rgba(255, 255, 255, 0.03)",
+        padding: 14,
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: 14,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0 }}>
+        <div
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: 9,
+            display: "grid",
+            placeItems: "center",
+            background: "rgba(255, 255, 255, 0.06)",
+            color: checked ? "var(--accent)" : "var(--text-3)",
+            flexShrink: 0,
+          }}
+        >
+          {icon}
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text-1)" }}>{title}</div>
+          <div style={{ marginTop: 3, fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.55 }}>
+            {description}
+          </div>
+          <div style={{ marginTop: 8, fontSize: 11.5, color: "var(--text-2)", lineHeight: 1.55 }}>
+            {detail}
+          </div>
+        </div>
+      </div>
+      <label
+        className="ws-toggle"
+        style={{
+          cursor: disabled ? "wait" : "pointer",
+          flexShrink: 0,
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={onToggle}
+        />
+        <span className="ws-toggle-track" />
+        <span className="ws-toggle-thumb" />
+      </label>
+    </div>
+  );
+}
+
 export function TerminalNotificationSettingsModal() {
   const { t } = useTranslation("app");
   const open = useTerminalNotificationSettingsStore((s) => s.modalOpen);
   const settings = useTerminalNotificationSettingsStore((s) => s.settings);
   const loading = useTerminalNotificationSettingsStore((s) => s.loading);
   const loadedOnce = useTerminalNotificationSettingsStore((s) => s.loadedOnce);
-  const updatingEnabled = useTerminalNotificationSettingsStore((s) => s.updatingEnabled);
+  const updatingChatEnabled = useTerminalNotificationSettingsStore((s) => s.updatingChatEnabled);
+  const updatingTerminalEnabled = useTerminalNotificationSettingsStore((s) => s.updatingTerminalEnabled);
   const installingIntegration = useTerminalNotificationSettingsStore((s) => s.installingIntegration);
   const load = useTerminalNotificationSettingsStore((s) => s.load);
   const close = useTerminalNotificationSettingsStore((s) => s.closeModal);
-  const setEnabled = useTerminalNotificationSettingsStore((s) => s.setEnabled);
+  const setChatEnabled = useTerminalNotificationSettingsStore((s) => s.setChatEnabled);
+  const setTerminalEnabled = useTerminalNotificationSettingsStore((s) => s.setTerminalEnabled);
   const installIntegration = useTerminalNotificationSettingsStore((s) => s.installIntegration);
 
   useEffect(() => {
@@ -205,23 +285,10 @@ export function TerminalNotificationSettingsModal() {
     return null;
   }
 
-  const busy = loading || updatingEnabled || installingIntegration !== null;
-  const canEnable = settings?.setupComplete ?? false;
-  const primaryLabel = settings?.enabled
-    ? t("notificationSettings.done")
-    : t("notificationSettings.enableButton");
-  const primaryDisabled = !settings?.enabled && (!canEnable || busy);
-
-  const handlePrimaryAction = async () => {
-    if (settings?.enabled) {
-      handleClose();
-      return;
-    }
-    const nextSettings = await setEnabled(true);
-    if (nextSettings?.enabled) {
-      handleClose();
-    }
-  };
+  const integrationBusy = loading || installingIntegration !== null;
+  const terminalBusy = loading || updatingTerminalEnabled || installingIntegration !== null;
+  const terminalToggleDisabled =
+    terminalBusy || (!settings?.terminalSetupComplete && !(settings?.terminalEnabled ?? false));
 
   return createPortal(
     <div
@@ -232,7 +299,7 @@ export function TerminalNotificationSettingsModal() {
         }
       }}
     >
-      <div className="ws-modal" style={{ width: "min(700px, calc(100vw - 40px))" }}>
+      <div className="ws-modal" style={{ width: "min(720px, calc(100vw - 40px))" }}>
         <div className="ws-header">
           <div className="ws-header-icon">
             <BellRing size={18} />
@@ -260,59 +327,88 @@ export function TerminalNotificationSettingsModal() {
         <div className="ws-divider" />
 
         <div className="ws-body" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div
-            style={{
-              borderRadius: "var(--radius-md)",
-              border: "1px solid rgba(255, 255, 255, 0.08)",
-              background: "rgba(255, 255, 255, 0.03)",
-              padding: "12px 14px",
-            }}
-          >
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-1)" }}>
-              {t("notificationSettings.workflowTitle")}
-            </div>
-            <div style={{ marginTop: 4, fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.55 }}>
-              {t("notificationSettings.workflowDescription")}
-            </div>
+          <div className="ws-section" style={{ marginBottom: 0 }}>
+            <div className="ws-section-label">{t("notificationSettings.chatSectionTitle")}</div>
+            <ChannelCard
+              icon={<MessageSquare size={14} />}
+              title={t("notificationSettings.chatCard.title")}
+              description={t("notificationSettings.chatCard.description")}
+              detail={t("notificationSettings.chatCard.detail")}
+              checked={settings?.chatEnabled ?? false}
+              disabled={loading || updatingChatEnabled}
+              onToggle={() => { void setChatEnabled(!(settings?.chatEnabled ?? false)); }}
+            />
           </div>
 
-          {!canEnable && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                gap: 10,
-                padding: "11px 12px",
-                borderRadius: "var(--radius-md)",
-                border: "1px solid rgba(251, 191, 36, 0.22)",
-                background: "rgba(251, 191, 36, 0.08)",
-                color: "var(--text-2)",
-              }}
-            >
-              <TriangleAlert size={15} style={{ color: "var(--warning)", flexShrink: 0, marginTop: 1 }} />
-              <div style={{ fontSize: 11.5, lineHeight: 1.55 }}>
-                {t("notificationSettings.setupRequired")}
-              </div>
-            </div>
-          )}
-
           <div className="ws-section" style={{ marginBottom: 0 }}>
-            <div className="ws-section-label">{t("notificationSettings.integrationsLabel")}</div>
+            <div className="ws-section-label">{t("notificationSettings.terminalSectionTitle")}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <IntegrationCard
-                integration="claude"
-                status={settings?.claude ?? { configured: false, configExists: false, conflict: false }}
-                installing={installingIntegration === "claude"}
-                disabled={busy}
-                onInstall={(integration) => { void installIntegration(integration); }}
+              <ChannelCard
+                icon={<TerminalSquare size={14} />}
+                title={t("notificationSettings.terminalCard.title")}
+                description={t("notificationSettings.terminalCard.description")}
+                detail={
+                  settings?.terminalSetupComplete
+                    ? t("notificationSettings.terminalCard.ready")
+                    : t("notificationSettings.terminalCard.setupRequired")
+                }
+                checked={settings?.terminalEnabled ?? false}
+                disabled={terminalToggleDisabled}
+                onToggle={() => { void setTerminalEnabled(!(settings?.terminalEnabled ?? false)); }}
               />
-              <IntegrationCard
-                integration="codex"
-                status={settings?.codex ?? { configured: false, configExists: false, conflict: false }}
-                installing={installingIntegration === "codex"}
-                disabled={busy}
-                onInstall={(integration) => { void installIntegration(integration); }}
-              />
+
+              <div
+                style={{
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid rgba(255, 255, 255, 0.08)",
+                  background: "rgba(255, 255, 255, 0.03)",
+                  padding: "12px 14px",
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-1)" }}>
+                  {t("notificationSettings.workflowTitle")}
+                </div>
+                <div style={{ marginTop: 4, fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.55 }}>
+                  {t("notificationSettings.workflowDescription")}
+                </div>
+              </div>
+
+              {!settings?.terminalSetupComplete && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 10,
+                    padding: "11px 12px",
+                    borderRadius: "var(--radius-md)",
+                    border: "1px solid rgba(251, 191, 36, 0.22)",
+                    background: "rgba(251, 191, 36, 0.08)",
+                    color: "var(--text-2)",
+                  }}
+                >
+                  <TriangleAlert size={15} style={{ color: "var(--warning)", flexShrink: 0, marginTop: 1 }} />
+                  <div style={{ fontSize: 11.5, lineHeight: 1.55 }}>
+                    {t("notificationSettings.setupRequired")}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <IntegrationCard
+                  integration="claude"
+                  status={settings?.claude ?? { configured: false, configExists: false, conflict: false }}
+                  installing={installingIntegration === "claude"}
+                  disabled={integrationBusy}
+                  onInstall={(integration) => { void installIntegration(integration); }}
+                />
+                <IntegrationCard
+                  integration="codex"
+                  status={settings?.codex ?? { configured: false, configExists: false, conflict: false }}
+                  installing={installingIntegration === "codex"}
+                  disabled={integrationBusy}
+                  onInstall={(integration) => { void installIntegration(integration); }}
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -327,26 +423,9 @@ export function TerminalNotificationSettingsModal() {
           <div style={{ fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.5 }}>
             {t("notificationSettings.footerNote")}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-            <button type="button" className="ws-prop-btn" onClick={handleClose}>
-              {t("notificationSettings.close")}
-            </button>
-            <button
-              type="button"
-              className="ws-prop-btn"
-              disabled={primaryDisabled}
-              onClick={() => { void handlePrimaryAction(); }}
-              style={{
-                background: "var(--accent-dim)",
-                borderColor: "var(--border-accent)",
-                color: "var(--accent)",
-                minWidth: 132,
-                justifyContent: "center",
-              }}
-            >
-              {primaryLabel}
-            </button>
-          </div>
+          <button type="button" className="ws-prop-btn" onClick={handleClose}>
+            {t("notificationSettings.close")}
+          </button>
         </div>
       </div>
     </div>,

@@ -116,9 +116,10 @@ pub struct TerminalNotificationIntegrationStatusDto {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TerminalNotificationSettingsStatusDto {
-    pub enabled: bool,
-    pub setup_complete: bool,
+pub struct AgentNotificationSettingsStatusDto {
+    pub chat_enabled: bool,
+    pub terminal_enabled: bool,
+    pub terminal_setup_complete: bool,
     pub claude: TerminalNotificationIntegrationStatusDto,
     pub codex: TerminalNotificationIntegrationStatusDto,
 }
@@ -493,7 +494,7 @@ impl TerminalNotificationManager {
             notification.source,
             notification.title
         );
-        if let Err(error) = show_desktop_notification(app, &notification) {
+        if let Err(error) = show_desktop_notification_content(app, &notification.title, &notification.body) {
             log::warn!("failed to show desktop notification: {error}");
         }
 
@@ -565,15 +566,15 @@ pub fn parse_terminal_notification_integration_kind(
     }
 }
 
-pub fn terminal_notification_settings_status() -> anyhow::Result<TerminalNotificationSettingsStatusDto>
-{
+pub fn agent_notification_settings_status() -> anyhow::Result<AgentNotificationSettingsStatusDto> {
     let config = crate::config::app_config::AppConfig::load_or_create()
         .context("failed to load Panes config")?;
     let claude = inspect_claude_notification_integration();
     let codex = inspect_codex_notification_integration();
-    Ok(TerminalNotificationSettingsStatusDto {
-        enabled: config.terminal_notifications_enabled(),
-        setup_complete: claude.configured || codex.configured,
+    Ok(AgentNotificationSettingsStatusDto {
+        chat_enabled: config.chat_notifications_enabled(),
+        terminal_enabled: config.terminal_notifications_enabled(),
+        terminal_setup_complete: claude.configured || codex.configured,
         claude,
         codex,
     })
@@ -581,12 +582,12 @@ pub fn terminal_notification_settings_status() -> anyhow::Result<TerminalNotific
 
 pub fn install_terminal_notification_integration(
     integration: TerminalNotificationIntegrationKind,
-) -> anyhow::Result<TerminalNotificationSettingsStatusDto> {
+) -> anyhow::Result<AgentNotificationSettingsStatusDto> {
     match integration {
         TerminalNotificationIntegrationKind::Claude => install_claude_notification_integration()?,
         TerminalNotificationIntegrationKind::Codex => install_codex_notification_integration()?,
     }
-    terminal_notification_settings_status()
+    agent_notification_settings_status()
 }
 
 pub fn maybe_handle_cli_subcommand() -> anyhow::Result<bool> {
@@ -1704,19 +1705,30 @@ fn notification_sound_name() -> Option<&'static str> {
     }
 }
 
-fn show_desktop_notification(
+fn show_desktop_notification_content(
     app: &AppHandle,
-    notification: &TerminalNotificationDto,
+    title: &str,
+    body: &str,
 ) -> anyhow::Result<()> {
     let mut desktop_notification = app
         .notification()
         .builder()
-        .title(&notification.title)
-        .body(&notification.body);
+        .title(title)
+        .body(body);
     if let Some(sound) = notification_sound_name() {
         desktop_notification = desktop_notification.sound(sound);
     }
     desktop_notification.show().map_err(Into::into)
+}
+
+pub fn show_agent_desktop_notification(
+    app: &AppHandle,
+    title: &str,
+    body: &str,
+) -> anyhow::Result<()> {
+    let normalized_title = normalize_notification_text(Some(title), NOTIFICATION_DEFAULT_TITLE, MAX_TITLE_CHARS);
+    let normalized_body = normalize_notification_text(Some(body), NOTIFICATION_DEFAULT_BODY, MAX_BODY_CHARS);
+    show_desktop_notification_content(app, &normalized_title, &normalized_body)
 }
 
 fn normalize_optional_value(value: Option<String>) -> Option<String> {

@@ -29,6 +29,8 @@ pub struct GeneralConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_accelerated_rendering: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_notifications: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_notifications: Option<bool>,
 }
 
@@ -69,6 +71,7 @@ impl Default for GeneralConfig {
             default_model: "gpt-5.3-codex".to_string(),
             locale: None,
             terminal_accelerated_rendering: None,
+            chat_notifications: None,
             terminal_notifications: None,
         }
     }
@@ -121,6 +124,10 @@ impl Default for AppConfig {
 impl AppConfig {
     pub fn terminal_accelerated_rendering_enabled(&self) -> bool {
         self.general.terminal_accelerated_rendering.unwrap_or(true)
+    }
+
+    pub fn chat_notifications_enabled(&self) -> bool {
+        self.general.chat_notifications.unwrap_or(false)
     }
 
     pub fn terminal_notifications_enabled(&self) -> bool {
