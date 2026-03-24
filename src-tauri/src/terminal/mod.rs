@@ -1344,11 +1344,7 @@ fn build_terminal_path(_home: Option<&str>, prepend: &[PathBuf]) -> Option<Strin
 }
 
 fn read_terminal_env_inputs(
-    notification_env: Option<&TerminalNotificationSessionEnv>,
 ) -> TerminalEnvInputs {
-    let prepend = notification_env
-        .map(|env| vec![env.cli_bin_dir.clone()])
-        .unwrap_or_default();
     TerminalEnvInputs {
         term: read_non_empty_env("TERM"),
         colorterm: read_non_empty_env("COLORTERM"),
@@ -1363,7 +1359,7 @@ fn read_terminal_env_inputs(
         lang: read_non_empty_env("LANG"),
         lc_all: read_non_empty_env("LC_ALL"),
         lc_ctype: read_non_empty_env("LC_CTYPE"),
-        path: build_terminal_path(None, &prepend).or_else(|| read_non_empty_env("PATH")),
+        path: build_terminal_path(None, &[]).or_else(|| read_non_empty_env("PATH")),
         user_profile: read_non_empty_env("USERPROFILE"),
         local_app_data: read_non_empty_env("LOCALAPPDATA"),
         roaming_app_data: read_non_empty_env("APPDATA"),
@@ -1377,11 +1373,11 @@ fn read_terminal_env_inputs(
 }
 
 fn build_terminal_env_config(
-    notification_env: Option<&TerminalNotificationSessionEnv>,
+    _notification_env: Option<&TerminalNotificationSessionEnv>,
 ) -> TerminalEnvConfig {
     build_terminal_env_config_for(
         cfg!(target_os = "windows"),
-        read_terminal_env_inputs(notification_env),
+        read_terminal_env_inputs(),
     )
 }
 

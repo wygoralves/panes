@@ -80,8 +80,7 @@ export function TerminalNotificationSettingsModal() {
   const codex = settings?.codex ?? { configured: false, configExists: false, conflict: false };
   const integrationBusy = loading || installingIntegration !== null;
   const terminalBusy = loading || updatingTerminalEnabled || installingIntegration !== null;
-  const terminalToggleDisabled =
-    terminalBusy || (!settings?.terminalSetupComplete && !(settings?.terminalEnabled ?? false));
+  const terminalToggleDisabled = terminalBusy;
 
   const allConfigured = claude.configured && codex.configured;
   const anyNeedsSetup = needsAction(claude) || needsAction(codex);
@@ -213,11 +212,12 @@ export function TerminalNotificationSettingsModal() {
           {/* Sound picker row */}
           <div className="ntf-row">
             <div className="ntf-row-left">
-              <div className="ntf-row-icon" data-on={String(settings?.notificationSound !== null)}>
+              <div className="ntf-row-icon" data-on={String((settings?.notificationSound ?? "Glass") !== "none")}>
                 <Volume2 size={14} />
               </div>
               <div>
                 <div className="ntf-row-title">{t("notificationSettings.sound.title")}</div>
+                <div className="ntf-row-desc">{t("notificationSettings.sound.description")}</div>
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
@@ -227,7 +227,12 @@ export function TerminalNotificationSettingsModal() {
                   ...SOUND_OPTIONS.map((name) => ({ value: name, label: name })),
                 ]}
                 value={settings?.notificationSound ?? "Glass"}
-                onChange={(value) => { void setNotificationSound(value); }}
+                onChange={(value) => {
+                  void setNotificationSound(value);
+                  if (value !== "none") {
+                    void previewSound(value);
+                  }
+                }}
                 disabled={loading}
               />
               <button
@@ -246,7 +251,7 @@ export function TerminalNotificationSettingsModal() {
           {/* Integration status section */}
           <div className="ntf-section-gap" />
 
-          {allConfigured && !manageOpen && (
+          {allConfigured && (
             <div className="ntf-hooks-row">
               <div className="ntf-hook-item">
                 <CheckCircle2 size={10} />
@@ -259,10 +264,10 @@ export function TerminalNotificationSettingsModal() {
               <button
                 type="button"
                 className="ntf-hooks-manage"
-                onClick={() => setManageOpen(true)}
+                onClick={() => setManageOpen(!manageOpen)}
               >
-                {t("notificationSettings.manage")}
-                <ChevronDown size={10} />
+                {manageOpen ? t("notificationSettings.collapse") : t("notificationSettings.manage")}
+                {manageOpen ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
               </button>
             </div>
           )}
@@ -270,18 +275,6 @@ export function TerminalNotificationSettingsModal() {
           <div className="ntf-expand-wrap" data-open={String(showExpanded)}>
             <div className="ntf-expand-inner">
               <div className="ntf-setup-area">
-                {allConfigured && manageOpen && (
-                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                    <button
-                      type="button"
-                      className="ntf-hooks-manage"
-                      onClick={() => setManageOpen(false)}
-                    >
-                      {t("notificationSettings.collapse")}
-                      <ChevronUp size={10} />
-                    </button>
-                  </div>
-                )}
                 {renderIntegrationRow("claude", claude)}
                 {renderIntegrationRow("codex", codex)}
                 <div className="ntf-footnote">

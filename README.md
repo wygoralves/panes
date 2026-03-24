@@ -147,23 +147,23 @@ pnpm tauri:dev
 
 ### Codex Terminal Notifications
 
-Inside a terminal session launched by Panes, no manual Codex configuration is required. Panes injects a `codex` shim into that terminal's `PATH` and forwards to the real Codex binary with `-c 'notify=["panes","codex-notify"]'` unless you already passed your own `notify` override.
+Panes can surface Codex terminal notifications after a one-time install from `Agent notifications` in the app settings. That writes a `notify = [...]` command into your Codex user config that points back to Panes.
 
 Codex currently passes a single JSON payload to the configured `notify` program. `panes codex-notify` handles the current `agent-turn-complete` payload, extracts the last assistant message, and routes it back to the owning Panes terminal session so Panes can show both desktop and in-app terminal notifications.
 
-This only works inside terminals launched by Panes, because the injected `panes` and `codex` shims rely on `PANES_NOTIFY_ADDR`, `PANES_NOTIFY_TOKEN`, `PANES_WORKSPACE_ID`, and `PANES_SESSION_ID`.
+This only works inside terminals launched by Panes, because the installed command relies on `PANES_NOTIFY_ADDR`, `PANES_NOTIFY_TOKEN`, `PANES_WORKSPACE_ID`, and `PANES_SESSION_ID`.
 
 ### Claude Terminal Notifications
 
-Inside a terminal session launched by Panes, no manual Claude configuration is required. Panes injects a `claude` shim into that terminal's `PATH`, forwards to the real Claude binary, adds `--session-id <PANES_SESSION_ID>` when needed, and injects Claude hook settings that call `panes claude-hook`.
+Panes can surface Claude terminal notifications after a one-time install from `Agent notifications` in the app settings. That merges Panes-managed hook commands into your Claude user settings without removing existing hooks.
 
 That hook bridge currently handles Claude `Notification`, `Stop`, `StopFailure`, `SessionStart`, and `SessionEnd` events, routing them back to the owning Panes terminal session so Panes can show desktop and in-app notifications and clear stale state when a Claude session starts or ends.
 
-This only works inside terminals launched by Panes. If you explicitly run Claude with `--bare`, Panes preserves that choice and skips hook injection.
+This only works inside terminals launched by Panes, because the installed hook command depends on the Panes terminal session environment.
 
 ### Generic OSC Terminal Notifications
 
-Panes also listens for common desktop-notification OSC sequences emitted directly by programs running inside a Panes terminal session. The backend currently recognizes `OSC 9`, `OSC 777;notify;...`, and `OSC 99` notification payloads before terminal replay is recorded, so live notifications do not fire again when a terminal session is resumed.
+Panes also listens for common desktop-notification OSC sequences emitted directly by programs running inside a Panes terminal session. These work without any Claude or Codex setup. The backend currently recognizes `OSC 9`, `OSC 777;notify;...`, and `OSC 99` notification payloads before terminal replay is recorded, so live notifications do not fire again when a terminal session is resumed.
 
 `OSC 9;4` progress reports are intentionally left alone and are not treated as notifications.
 

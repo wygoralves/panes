@@ -56,7 +56,7 @@
     "keepAwakeLimited": "Enabled, but lid-close protection is not active",
     "keepAwakePowerSettings": "Power Settings",
     "terminalNotifications": "Agent notifications",
-    "terminalNotificationsDescription": "Desktop alerts for chat replies and terminal agents",
+    "terminalNotificationsDescription": "Desktop alerts for chat replies and Panes terminal activity",
     "terminalNotificationsReady": "Chat can be enabled now. Install terminal hooks when you want CLI alerts too",
     "terminalNotificationsEnabledChat": "Chat reply alerts are on",
     "terminalNotificationsEnabledTerminal": "Terminal agent alerts are on",
@@ -411,18 +411,19 @@
     },
     "terminalCard": {
       "title": "Terminal agent notifications",
-      "description": "Show desktop notifications for Claude Code and Codex sessions running inside Panes terminals.",
-      "descriptionShort": "Notify for Claude Code and Codex sessions in terminals.",
+      "description": "Show desktop notifications for Panes terminal activity, including OSC alerts and optional Claude Code or Codex integrations.",
+      "descriptionShort": "Notify for terminal activity. OSC works immediately; Claude and Codex need one-time setup.",
       "ready": "Terminal integrations are installed. You can turn terminal alerts on whenever you want.",
       "setupRequired": "Install at least one terminal integration below before enabling terminal alerts."
     },
     "workflowTitle": "How this works",
-    "workflowDescription": "Panes writes the integration into your user config, then only delivers alerts from terminals launched by Panes. Outside Panes, the commands exit quietly.",
-    "workflowShort": "Hooks are written to your config and only fire from terminals launched by Panes.",
+    "workflowDescription": "OSC notifications work immediately in Panes terminals. Claude Code and Codex need a one-time config install, and those commands only deliver alerts from terminals launched by Panes.",
+    "workflowShort": "OSC works immediately. Claude and Codex hooks are written to your config and only fire from terminals launched by Panes.",
     "setupRequired": "Install at least one terminal integration before turning terminal alerts on.",
     "integrationsLabel": "Integrations",
     "sound": {
       "title": "Sound",
+      "description": "Plays when a notification is delivered.",
       "none": "None",
       "preview": "Preview sound"
     },

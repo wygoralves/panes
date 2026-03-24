@@ -155,8 +155,9 @@ pub fn run() {
             let handle = app.handle().clone();
             let resource_dir = app.path().resource_dir().ok();
             let state = app.state::<AppState>().inner().clone();
-            tauri::async_runtime::block_on(state.notifications.start(handle.clone()))
-                .context("failed to start terminal notification ingress")?;
+            if let Err(error) = tauri::async_runtime::block_on(state.notifications.start(handle.clone())) {
+                log::warn!("failed to start terminal notification ingress: {error}");
+            }
             state.engines.set_resource_dir(resource_dir);
             tauri::async_runtime::spawn(run_codex_runtime_bridge(handle.clone(), state.clone()));
             app.on_menu_event(move |_app, event| {

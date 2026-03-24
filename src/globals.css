@@ -4599,6 +4599,7 @@ button, input, textarea, select {
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: var(--text-3);
   cursor: pointer;
+  flex-shrink: 0;
   transition: all var(--duration-fast) var(--ease-out);
 }
 
@@ -4619,26 +4620,6 @@ button, input, textarea, select {
   color: var(--text-3);
   line-height: 1.5;
   padding-top: 4px;
-}
-
-/* Footer status line */
-.ntf-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 12px 20px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--text-3);
-}
-
-.ntf-status[data-ok="true"] {
-  color: var(--success);
-}
-
-.ntf-status[data-ok="true"] svg {
-  color: var(--success);
 }
 
 /* Section divider inside body */

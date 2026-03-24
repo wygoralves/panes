@@ -78,7 +78,6 @@ pub struct TerminalNotificationManager {
 struct NotificationIngressRuntime {
     addr: String,
     token: String,
-    cli_bin_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -90,7 +89,6 @@ struct NotificationFocusState {
 
 #[derive(Debug, Clone)]
 pub struct TerminalNotificationSessionEnv {
-    pub cli_bin_dir: PathBuf,
     pub ingress_addr: String,
     pub ingress_token: String,
     pub workspace_id: String,
@@ -224,8 +222,6 @@ impl TerminalNotificationManager {
             return Ok(());
         }
 
-        let cli_bin_dir =
-            install_cli_shims().context("failed to install notification CLI shims")?;
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
             .context("failed to bind terminal notification ingress")?;
@@ -243,7 +239,6 @@ impl TerminalNotificationManager {
             *runtime = Some(NotificationIngressRuntime {
                 addr: addr.clone(),
                 token: token.clone(),
-                cli_bin_dir,
             });
         }
 
@@ -262,7 +257,6 @@ impl TerminalNotificationManager {
     ) -> Option<TerminalNotificationSessionEnv> {
         let runtime = self.runtime.read().await.clone()?;
         Some(TerminalNotificationSessionEnv {
-            cli_bin_dir: runtime.cli_bin_dir,
             ingress_addr: runtime.addr,
             ingress_token: runtime.token,
             workspace_id: workspace_id.to_string(),

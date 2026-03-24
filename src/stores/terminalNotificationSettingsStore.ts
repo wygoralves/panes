@@ -181,11 +181,6 @@ export const useTerminalNotificationSettingsStore =
         return null;
       }
 
-      if (enabled && !current.terminalSetupComplete) {
-        get().openModal();
-        return current;
-      }
-
       set({ updatingTerminalEnabled: true });
       try {
         await ipc.setTerminalNotificationsEnabled(enabled);
