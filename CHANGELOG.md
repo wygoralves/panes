@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.46.0...vnull) (2026-03-24)
+
+### Bug Fixes
+
+* **notifications:** play macOS preview sounds directly ([11360bd](https://github.com/wygoralves/panes/commit/11360bded91687c4e95524546319906a3efcc21a))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.45.2...vnull) (2026-03-24)
 
 ### Features
