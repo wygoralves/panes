@@ -400,28 +400,36 @@
   "notificationSettings": {
     "title": "Agent notifications",
     "description": "Control chat reply alerts and terminal agent alerts separately. Terminal tools need one-time setup before Panes can surface their notifications.",
+    "descriptionShort": "Desktop alerts for chat replies and terminal agents.",
     "chatSectionTitle": "Chat",
     "terminalSectionTitle": "Terminal",
     "chatCard": {
       "title": "Chat reply notifications",
       "description": "Show a desktop notification when a Panes chat thread finishes in the background.",
+      "descriptionShort": "Notify when a chat thread finishes in the background.",
       "detail": "No extra setup required. Panes can notify for chat replies immediately."
     },
     "terminalCard": {
       "title": "Terminal agent notifications",
       "description": "Show desktop notifications for Claude Code and Codex sessions running inside Panes terminals.",
+      "descriptionShort": "Notify for Claude Code and Codex sessions in terminals.",
       "ready": "Terminal integrations are installed. You can turn terminal alerts on whenever you want.",
       "setupRequired": "Install at least one terminal integration below before enabling terminal alerts."
     },
     "workflowTitle": "How this works",
     "workflowDescription": "Panes writes the integration into your user config, then only delivers alerts from terminals launched by Panes. Outside Panes, the commands exit quietly.",
+    "workflowShort": "Hooks are written to your config and only fire from terminals launched by Panes.",
     "setupRequired": "Install at least one terminal integration before turning terminal alerts on.",
     "integrationsLabel": "Integrations",
+    "manage": "Manage",
+    "collapse": "Collapse",
     "close": "Close",
     "install": "Install",
     "reinstall": "Reinstall",
     "replace": "Replace",
     "installing": "Installing...",
+    "statusReady": "Notifications are active",
+    "statusOff": "All notifications are off",
     "footerNote": "Chat notifications are controlled entirely in Panes. Terminal integrations stay installed until you replace them in Claude or Codex config.",
     "status": {
       "installed": "Installed",

@@ -400,28 +400,36 @@
   "notificationSettings": {
     "title": "Notificações de agentes",
     "description": "Controle separadamente os alertas de respostas do chat e os alertas de agentes no terminal. As ferramentas de terminal precisam de uma configuração inicial antes que o Panes possa mostrar suas notificações.",
+    "descriptionShort": "Alertas de desktop para respostas do chat e agentes no terminal.",
     "chatSectionTitle": "Chat",
     "terminalSectionTitle": "Terminal",
     "chatCard": {
       "title": "Notificações de respostas do chat",
       "description": "Mostra uma notificação de desktop quando uma thread de chat do Panes termina em segundo plano.",
+      "descriptionShort": "Notifica quando uma thread do chat termina em segundo plano.",
       "detail": "Não precisa de configuração extra. O Panes pode notificar respostas do chat imediatamente."
     },
     "terminalCard": {
       "title": "Notificações de agentes no terminal",
       "description": "Mostra notificações de desktop para sessões do Claude Code e Codex rodando nos terminais do Panes.",
+      "descriptionShort": "Notifica para sessões do Claude Code e Codex nos terminais.",
       "ready": "As integrações do terminal já estão instaladas. Você pode ativar os alertas quando quiser.",
       "setupRequired": "Instale pelo menos uma integração de terminal abaixo antes de ativar os alertas do terminal."
     },
     "workflowTitle": "Como isso funciona",
     "workflowDescription": "O Panes grava a integração na sua configuração de usuário, mas só entrega alertas para terminais iniciados pelo Panes. Fora do Panes, os comandos saem silenciosamente.",
+    "workflowShort": "Os hooks são gravados na sua configuração e só disparam em terminais iniciados pelo Panes.",
     "setupRequired": "Instale pelo menos uma integração de terminal antes de ativar os alertas do terminal.",
     "integrationsLabel": "Integrações",
+    "manage": "Gerenciar",
+    "collapse": "Recolher",
     "close": "Fechar",
     "install": "Instalar",
     "reinstall": "Reinstalar",
     "replace": "Substituir",
     "installing": "Instalando...",
+    "statusReady": "Notificações estão ativas",
+    "statusOff": "Todas as notificações estão desligadas",
     "footerNote": "As notificações de chat são controladas inteiramente pelo Panes. As integrações de terminal ficam instaladas até você substituí-las na configuração do Claude ou Codex.",
     "status": {
       "installed": "Instalado",
