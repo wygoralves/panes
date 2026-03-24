@@ -1731,7 +1731,8 @@ async fn run_turn(
         }
     }
 
-    let _ = maybe_update_thread_title(&state, &thread, &engine_thread_id, &turn_input.message).await;
+    let _ =
+        maybe_update_thread_title(&state, &thread, &engine_thread_id, &turn_input.message).await;
 
     let latest_thread = run_db(state.db.clone(), {
         let thread_id = thread.id.clone();

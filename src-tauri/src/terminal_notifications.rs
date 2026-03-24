@@ -448,7 +448,8 @@ impl TerminalNotificationManager {
             .to_string();
 
         if !terminal_notifications_enabled() {
-            self.clear_for_session(app, &workspace_id, &session_id).await;
+            self.clear_for_session(app, &workspace_id, &session_id)
+                .await;
             return Ok(None);
         }
 
@@ -489,7 +490,9 @@ impl TerminalNotificationManager {
             notification.source,
             notification.title
         );
-        if let Err(error) = show_desktop_notification_content(app, &notification.title, &notification.body) {
+        if let Err(error) =
+            show_desktop_notification_content(app, &notification.title, &notification.body)
+        {
             log::warn!("failed to show desktop notification: {error}");
         }
 
@@ -1104,10 +1107,7 @@ fn merge_claude_settings(existing: Option<&str>) -> anyhow::Result<String> {
     serde_json::to_string(&merged).context("failed to serialize merged Claude settings")
 }
 
-fn merge_claude_settings_value(
-    existing: Option<&str>,
-    command: &str,
-) -> anyhow::Result<Value> {
+fn merge_claude_settings_value(existing: Option<&str>, command: &str) -> anyhow::Result<Value> {
     let mut merged = match existing {
         Some(value) => parse_claude_settings_value(value)?,
         None => json!({}),
@@ -1250,8 +1250,10 @@ fn inspect_codex_notification_integration() -> TerminalNotificationIntegrationSt
 
     match std::fs::read_to_string(&config_path)
         .with_context(|| format!("failed to read {}", config_path.display()))
-        .and_then(|raw| raw.parse::<toml::Value>().context("failed to parse Codex config TOML"))
-    {
+        .and_then(|raw| {
+            raw.parse::<toml::Value>()
+                .context("failed to parse Codex config TOML")
+        }) {
         Ok(doc) => match codex_notify_setting_status(&doc) {
             CodexNotifySettingStatus::Configured => TerminalNotificationIntegrationStatusDto {
                 configured: true,
@@ -1265,7 +1267,9 @@ fn inspect_codex_notification_integration() -> TerminalNotificationIntegrationSt
                 config_path: serialized_path,
                 config_exists: true,
                 conflict: true,
-                detail: Some("Codex already has a different notify command configured.".to_string()),
+                detail: Some(
+                    "Codex already has a different notify command configured.".to_string(),
+                ),
             },
             CodexNotifySettingStatus::Missing => TerminalNotificationIntegrationStatusDto {
                 configured: false,
@@ -1375,12 +1379,14 @@ fn is_managed_codex_notify_value(value: &toml::Value) -> bool {
 }
 
 fn claude_settings_path() -> anyhow::Result<PathBuf> {
-    let home = runtime_env::home_dir().ok_or_else(|| anyhow::anyhow!("home directory is not available"))?;
+    let home = runtime_env::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("home directory is not available"))?;
     Ok(home.join(".claude").join("settings.json"))
 }
 
 fn codex_config_path() -> anyhow::Result<PathBuf> {
-    let home = runtime_env::home_dir().ok_or_else(|| anyhow::anyhow!("home directory is not available"))?;
+    let home = runtime_env::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("home directory is not available"))?;
     Ok(home.join(".codex").join("config.toml"))
 }
 
@@ -1427,8 +1433,7 @@ fn write_text_file(path: &Path, contents: &str) -> anyhow::Result<()> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    std::fs::write(path, contents)
-        .with_context(|| format!("failed to write {}", path.display()))
+    std::fs::write(path, contents).with_context(|| format!("failed to write {}", path.display()))
 }
 
 fn claude_hook_action_from_payload(raw_payload: &str) -> anyhow::Result<Option<ClaudeHookAction>> {
@@ -1699,11 +1704,7 @@ fn show_desktop_notification_content(
     title: &str,
     body: &str,
 ) -> anyhow::Result<()> {
-    let mut desktop_notification = app
-        .notification()
-        .builder()
-        .title(title)
-        .body(body);
+    let mut desktop_notification = app.notification().builder().title(title).body(body);
     if let Some(sound) = resolved_notification_sound() {
         desktop_notification = desktop_notification.sound(sound);
     }
@@ -1715,8 +1716,10 @@ pub fn show_agent_desktop_notification(
     title: &str,
     body: &str,
 ) -> anyhow::Result<()> {
-    let normalized_title = normalize_notification_text(Some(title), NOTIFICATION_DEFAULT_TITLE, MAX_TITLE_CHARS);
-    let normalized_body = normalize_notification_text(Some(body), NOTIFICATION_DEFAULT_BODY, MAX_BODY_CHARS);
+    let normalized_title =
+        normalize_notification_text(Some(title), NOTIFICATION_DEFAULT_TITLE, MAX_TITLE_CHARS);
+    let normalized_body =
+        normalize_notification_text(Some(body), NOTIFICATION_DEFAULT_BODY, MAX_BODY_CHARS);
     show_desktop_notification_content(app, &normalized_title, &normalized_body)
 }
 
@@ -1864,8 +1867,8 @@ mod tests {
             .into_iter()
             .map(|key| (key, std::env::var_os(key)))
             .collect();
-        let root = std::env::temp_dir()
-            .join(format!("panes-terminal-notify-home-{}", Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("panes-terminal-notify-home-{}", Uuid::new_v4()));
         let local_app_data = root.join("AppData").join("Local");
         let roaming_app_data = root.join("AppData").join("Roaming");
         fs::create_dir_all(&local_app_data).expect("temp local app data should exist");
@@ -2301,7 +2304,8 @@ mod tests {
     #[test]
     fn install_claude_notification_integration_merges_existing_hooks() {
         with_temp_app_data_env(|| {
-            let settings_path = claude_settings_path().expect("Claude settings path should resolve");
+            let settings_path =
+                claude_settings_path().expect("Claude settings path should resolve");
             fs::create_dir_all(settings_path.parent().expect("Claude parent should exist"))
                 .expect("Claude dir should exist");
             fs::write(
@@ -2324,9 +2328,10 @@ mod tests {
             )
             .expect("seed Claude settings should write");
 
-            let status =
-                install_terminal_notification_integration(TerminalNotificationIntegrationKind::Claude)
-                    .expect("Claude integration should install");
+            let status = install_terminal_notification_integration(
+                TerminalNotificationIntegrationKind::Claude,
+            )
+            .expect("Claude integration should install");
 
             assert!(status.claude.configured);
             let saved = fs::read_to_string(&settings_path).expect("Claude settings should read");
@@ -2343,9 +2348,10 @@ mod tests {
     #[test]
     fn install_codex_notification_integration_writes_absolute_notify_command() {
         with_temp_app_data_env(|| {
-            let status =
-                install_terminal_notification_integration(TerminalNotificationIntegrationKind::Codex)
-                    .expect("Codex integration should install");
+            let status = install_terminal_notification_integration(
+                TerminalNotificationIntegrationKind::Codex,
+            )
+            .expect("Codex integration should install");
 
             assert!(status.codex.configured);
             let config_path = codex_config_path().expect("Codex config path should resolve");

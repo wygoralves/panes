@@ -3,8 +3,8 @@ use crate::{
     locale::{normalize_app_locale, resolve_app_locale},
     state::AppState,
     terminal_notifications::{
-        agent_notification_settings_status, show_agent_desktop_notification,
-        install_terminal_notification_integration, parse_terminal_notification_integration_kind,
+        agent_notification_settings_status, install_terminal_notification_integration,
+        parse_terminal_notification_integration_kind, show_agent_desktop_notification,
         AgentNotificationSettingsStatusDto,
     },
 };
@@ -72,7 +72,8 @@ pub async fn set_terminal_accelerated_rendering(
 }
 
 #[tauri::command]
-pub async fn get_agent_notification_settings() -> Result<AgentNotificationSettingsStatusDto, String> {
+pub async fn get_agent_notification_settings() -> Result<AgentNotificationSettingsStatusDto, String>
+{
     tokio::task::spawn_blocking(agent_notification_settings_status)
         .await
         .map_err(err_to_string)?
@@ -120,8 +121,8 @@ pub async fn install_terminal_notification_integration_command(
     integration: String,
 ) -> Result<AgentNotificationSettingsStatusDto, String> {
     tokio::task::spawn_blocking(move || {
-        let parsed = parse_terminal_notification_integration_kind(&integration)
-            .map_err(err_to_string)?;
+        let parsed =
+            parse_terminal_notification_integration_kind(&integration).map_err(err_to_string)?;
         install_terminal_notification_integration(parsed).map_err(err_to_string)
     })
     .await

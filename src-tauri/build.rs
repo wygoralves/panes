@@ -59,8 +59,5 @@ fn helper_output_dir() -> Option<std::path::PathBuf> {
     let out_dir = std::env::var_os("OUT_DIR")?;
     let out_dir = std::path::PathBuf::from(out_dir);
 
-    out_dir
-        .ancestors()
-        .nth(3)
-        .map(std::path::Path::to_path_buf)
+    out_dir.ancestors().nth(3).map(std::path::Path::to_path_buf)
 }

@@ -1343,8 +1343,7 @@ fn build_terminal_path(_home: Option<&str>, prepend: &[PathBuf]) -> Option<Strin
     }
 }
 
-fn read_terminal_env_inputs(
-) -> TerminalEnvInputs {
+fn read_terminal_env_inputs() -> TerminalEnvInputs {
     TerminalEnvInputs {
         term: read_non_empty_env("TERM"),
         colorterm: read_non_empty_env("COLORTERM"),
@@ -1375,10 +1374,7 @@ fn read_terminal_env_inputs(
 fn build_terminal_env_config(
     _notification_env: Option<&TerminalNotificationSessionEnv>,
 ) -> TerminalEnvConfig {
-    build_terminal_env_config_for(
-        cfg!(target_os = "windows"),
-        read_terminal_env_inputs(),
-    )
+    build_terminal_env_config_for(cfg!(target_os = "windows"), read_terminal_env_inputs())
 }
 
 fn build_terminal_env_config_for(is_windows: bool, inputs: TerminalEnvInputs) -> TerminalEnvConfig {
