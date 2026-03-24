@@ -32,6 +32,8 @@ pub struct GeneralConfig {
     pub chat_notifications: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_notifications: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notification_sound: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +75,20 @@ impl Default for GeneralConfig {
             terminal_accelerated_rendering: None,
             chat_notifications: None,
             terminal_notifications: None,
+            notification_sound: None,
+        }
+    }
+}
+
+impl AppConfig {
+    /// Resolve the configured notification sound name.
+    /// Returns `None` if explicitly set to `"none"`, the stored value if set,
+    /// or the platform default (`"Glass"` on macOS) otherwise.
+    pub fn notification_sound(&self) -> Option<&str> {
+        match self.general.notification_sound.as_deref() {
+            Some("none") => None,
+            Some(name) => Some(name),
+            None => default_notification_sound(),
         }
     }
 }
@@ -184,6 +200,18 @@ impl AppConfig {
 
     pub fn path() -> PathBuf {
         runtime_env::app_data_dir().join("config.toml")
+    }
+}
+
+fn default_notification_sound() -> Option<&'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        return Some("Glass");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
     }
 }
 

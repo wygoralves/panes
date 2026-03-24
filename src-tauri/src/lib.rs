@@ -251,6 +251,8 @@ pub fn run() {
             commands::app::set_chat_notifications_enabled,
             commands::app::set_terminal_notifications_enabled,
             commands::app::install_terminal_notification_integration_command,
+            commands::app::set_notification_sound,
+            commands::app::preview_notification_sound,
             commands::app::show_agent_notification,
             commands::files::list_dir,
             commands::files::read_file,

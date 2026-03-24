@@ -86,6 +86,10 @@ export const ipc = {
     invoke<boolean>("set_terminal_notifications_enabled", { enabled }),
   installTerminalNotificationIntegration: (integration: TerminalNotificationIntegrationId) =>
     invoke<TerminalNotificationSettings>("install_terminal_notification_integration_command", { integration }),
+  setNotificationSound: (sound: string) =>
+    invoke<string>("set_notification_sound", { sound }),
+  previewNotificationSound: (sound: string) =>
+    invoke<void>("preview_notification_sound", { sound }),
   showAgentNotification: (title: string, body: string) =>
     invoke<void>("show_agent_notification", { title, body }),
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),

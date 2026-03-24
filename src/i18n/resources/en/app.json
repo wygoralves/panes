@@ -421,6 +421,11 @@
     "workflowShort": "Hooks are written to your config and only fire from terminals launched by Panes.",
     "setupRequired": "Install at least one terminal integration before turning terminal alerts on.",
     "integrationsLabel": "Integrations",
+    "sound": {
+      "title": "Sound",
+      "none": "None",
+      "preview": "Preview sound"
+    },
     "manage": "Manage",
     "collapse": "Collapse",
     "close": "Close",

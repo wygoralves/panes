@@ -38,6 +38,8 @@ interface TerminalNotificationSettingsStoreState {
   setChatEnabled: (enabled: boolean) => Promise<TerminalNotificationSettings | null>;
   setTerminalEnabled: (enabled: boolean) => Promise<TerminalNotificationSettings | null>;
   disableAll: () => Promise<TerminalNotificationSettings | null>;
+  setNotificationSound: (sound: string) => Promise<void>;
+  previewSound: (sound: string) => Promise<void>;
   installIntegration: (
     integration: TerminalNotificationIntegrationId,
   ) => Promise<TerminalNotificationSettings | null>;
@@ -257,6 +259,28 @@ export const useTerminalNotificationSettingsStore =
         });
         void get().refresh();
         return current;
+      }
+    },
+
+    setNotificationSound: async (sound) => {
+      try {
+        await ipc.setNotificationSound(sound);
+        const current = get().settings;
+        if (current) {
+          set({
+            settings: { ...current, notificationSound: sound === "none" ? null : sound },
+          });
+        }
+      } catch (error) {
+        console.warn("[terminalNotificationSettingsStore] Failed to set notification sound", error);
+      }
+    },
+
+    previewSound: async (sound) => {
+      try {
+        await ipc.previewNotificationSound(sound);
+      } catch (error) {
+        console.warn("[terminalNotificationSettingsStore] Failed to preview sound", error);
       }
     },
 

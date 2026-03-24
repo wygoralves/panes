@@ -120,6 +120,7 @@ pub struct AgentNotificationSettingsStatusDto {
     pub chat_enabled: bool,
     pub terminal_enabled: bool,
     pub terminal_setup_complete: bool,
+    pub notification_sound: Option<String>,
     pub claude: TerminalNotificationIntegrationStatusDto,
     pub codex: TerminalNotificationIntegrationStatusDto,
 }
@@ -575,6 +576,7 @@ pub fn agent_notification_settings_status() -> anyhow::Result<AgentNotificationS
         chat_enabled: config.chat_notifications_enabled(),
         terminal_enabled: config.terminal_notifications_enabled(),
         terminal_setup_complete: claude.configured || codex.configured,
+        notification_sound: config.notification_sound().map(|s| s.to_string()),
         claude,
         codex,
     })
@@ -1693,16 +1695,9 @@ fn normalize_required_value(value: String, label: &str) -> anyhow::Result<String
     Ok(trimmed.to_string())
 }
 
-fn notification_sound_name() -> Option<&'static str> {
-    #[cfg(target_os = "macos")]
-    {
-        return Some("Glass");
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
+fn resolved_notification_sound() -> Option<String> {
+    let config = crate::config::app_config::AppConfig::load_or_create().ok()?;
+    config.notification_sound().map(|s| s.to_string())
 }
 
 fn show_desktop_notification_content(
@@ -1715,7 +1710,7 @@ fn show_desktop_notification_content(
         .builder()
         .title(title)
         .body(body);
-    if let Some(sound) = notification_sound_name() {
+    if let Some(sound) = resolved_notification_sound() {
         desktop_notification = desktop_notification.sound(sound);
     }
     desktop_notification.show().map_err(Into::into)

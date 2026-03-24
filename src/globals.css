@@ -4588,6 +4588,31 @@ button, input, textarea, select {
   cursor: not-allowed;
 }
 
+/* Sound preview button */
+.ntf-preview-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-xs);
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.ntf-preview-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: var(--text-1);
+}
+
+.ntf-preview-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
 /* Footnote — replaces the "how this works" card */
 .ntf-footnote {
   font-size: 11px;

@@ -9,6 +9,7 @@ use crate::{
     },
 };
 use tauri::State;
+use tauri_plugin_notification::NotificationExt;
 
 fn err_to_string(error: impl ToString) -> String {
     error.to_string()
@@ -125,6 +126,45 @@ pub async fn install_terminal_notification_integration_command(
     })
     .await
     .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn set_notification_sound(
+    state: State<'_, AppState>,
+    sound: String,
+) -> Result<String, String> {
+    let config_write_lock = state.config_write_lock.clone();
+    let _guard = config_write_lock.lock_owned().await;
+
+    tokio::task::spawn_blocking(move || -> Result<String, String> {
+        AppConfig::mutate(|config| {
+            config.general.notification_sound = if sound == "none" || sound.is_empty() {
+                Some("none".to_string())
+            } else {
+                Some(sound.clone())
+            };
+            Ok(sound)
+        })
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn preview_notification_sound(
+    app: tauri::AppHandle,
+    sound: String,
+) -> Result<(), String> {
+    let mut notification = app
+        .notification()
+        .builder()
+        .title("Panes")
+        .body("Notification sound preview");
+    if sound != "none" && !sound.is_empty() {
+        notification = notification.sound(&sound);
+    }
+    notification.show().map_err(err_to_string)
 }
 
 #[tauri::command]

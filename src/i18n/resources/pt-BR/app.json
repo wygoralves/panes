@@ -421,6 +421,11 @@
     "workflowShort": "Os hooks são gravados na sua configuração e só disparam em terminais iniciados pelo Panes.",
     "setupRequired": "Instale pelo menos uma integração de terminal antes de ativar os alertas do terminal.",
     "integrationsLabel": "Integrações",
+    "sound": {
+      "title": "Som",
+      "none": "Nenhum",
+      "preview": "Pré-visualizar som"
+    },
     "manage": "Gerenciar",
     "collapse": "Recolher",
     "close": "Fechar",

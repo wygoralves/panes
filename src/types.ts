@@ -64,6 +64,7 @@ export interface TerminalNotificationSettings {
   chatEnabled: boolean;
   terminalEnabled: boolean;
   terminalSetupComplete: boolean;
+  notificationSound: string | null;
   claude: TerminalNotificationIntegrationStatus;
   codex: TerminalNotificationIntegrationStatus;
 }

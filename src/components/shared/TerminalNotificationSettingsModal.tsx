@@ -7,16 +7,25 @@ import {
   ChevronUp,
   Download,
   MessageSquare,
+  Play,
   TerminalSquare,
+  Volume2,
   X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useTerminalNotificationSettingsStore } from "../../stores/terminalNotificationSettingsStore";
+import { Dropdown } from "./Dropdown";
 import { getHarnessIcon } from "./HarnessLogos";
 import type {
   TerminalNotificationIntegrationId,
   TerminalNotificationIntegrationStatus,
 } from "../../types";
+
+const SOUND_OPTIONS = [
+  "Glass", "Ping", "Pop", "Purr", "Tink",
+  "Blow", "Bottle", "Frog", "Funk", "Hero",
+  "Morse", "Sosumi", "Submarine", "Basso",
+] as const;
 
 function needsAction(status: TerminalNotificationIntegrationStatus) {
   return !status.configured;
@@ -35,6 +44,8 @@ export function TerminalNotificationSettingsModal() {
   const close = useTerminalNotificationSettingsStore((s) => s.closeModal);
   const setChatEnabled = useTerminalNotificationSettingsStore((s) => s.setChatEnabled);
   const setTerminalEnabled = useTerminalNotificationSettingsStore((s) => s.setTerminalEnabled);
+  const setNotificationSound = useTerminalNotificationSettingsStore((s) => s.setNotificationSound);
+  const previewSound = useTerminalNotificationSettingsStore((s) => s.previewSound);
   const installIntegration = useTerminalNotificationSettingsStore((s) => s.installIntegration);
 
   const [manageOpen, setManageOpen] = useState(false);
@@ -197,6 +208,39 @@ export function TerminalNotificationSettingsModal() {
               <span className="ws-toggle-track" />
               <span className="ws-toggle-thumb" />
             </label>
+          </div>
+
+          {/* Sound picker row */}
+          <div className="ntf-row">
+            <div className="ntf-row-left">
+              <div className="ntf-row-icon" data-on={String(settings?.notificationSound !== null)}>
+                <Volume2 size={14} />
+              </div>
+              <div>
+                <div className="ntf-row-title">{t("notificationSettings.sound.title")}</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+              <Dropdown
+                options={[
+                  { value: "none", label: t("notificationSettings.sound.none") },
+                  ...SOUND_OPTIONS.map((name) => ({ value: name, label: name })),
+                ]}
+                value={settings?.notificationSound ?? "Glass"}
+                onChange={(value) => { void setNotificationSound(value); }}
+                disabled={loading}
+              />
+              <button
+                type="button"
+                className="ntf-preview-btn"
+                disabled={loading || (settings?.notificationSound ?? "Glass") === "none"}
+                onClick={() => { void previewSound(settings?.notificationSound ?? "Glass"); }}
+                aria-label={t("notificationSettings.sound.preview")}
+                title={t("notificationSettings.sound.preview")}
+              >
+                <Play size={10} />
+              </button>
+            </div>
           </div>
 
           {/* Integration status section */}
