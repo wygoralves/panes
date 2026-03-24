@@ -761,6 +761,18 @@ pub struct TerminalSessionDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TerminalNotificationDto {
+    pub id: String,
+    pub workspace_id: String,
+    pub session_id: String,
+    pub source: String,
+    pub title: String,
+    pub body: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TerminalReplayChunkDto {
     pub seq: u64,
     pub ts: String,

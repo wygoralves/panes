@@ -45,8 +45,12 @@ import type {
   Repo,
   SearchResult,
   StreamEvent,
+  TerminalNotificationClearedEvent,
+  TerminalNotification,
   TerminalExitEvent,
   TerminalForegroundChangedEvent,
+  TerminalNotificationIntegrationId,
+  TerminalNotificationSettings,
   TerminalOutputEvent,
   TerminalRendererDiagnostics,
   TerminalResumeSession,
@@ -74,6 +78,20 @@ export const ipc = {
     invoke<boolean>("get_terminal_accelerated_rendering"),
   setTerminalAcceleratedRendering: (enabled: boolean) =>
     invoke<boolean>("set_terminal_accelerated_rendering", { enabled }),
+  getAgentNotificationSettings: () =>
+    invoke<TerminalNotificationSettings>("get_agent_notification_settings"),
+  setChatNotificationsEnabled: (enabled: boolean) =>
+    invoke<boolean>("set_chat_notifications_enabled", { enabled }),
+  setTerminalNotificationsEnabled: (enabled: boolean) =>
+    invoke<boolean>("set_terminal_notifications_enabled", { enabled }),
+  installTerminalNotificationIntegration: (integration: TerminalNotificationIntegrationId) =>
+    invoke<TerminalNotificationSettings>("install_terminal_notification_integration_command", { integration }),
+  setNotificationSound: (sound: string) =>
+    invoke<string>("set_notification_sound", { sound }),
+  previewNotificationSound: (sound: string) =>
+    invoke<void>("preview_notification_sound", { sound }),
+  showAgentNotification: (title: string, body: string) =>
+    invoke<void>("show_agent_notification", { title, body }),
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
   listArchivedWorkspaces: () => invoke<Workspace[]>("list_archived_workspaces"),
   openWorkspace: (path: string, scanDepth?: number) =>
@@ -453,6 +471,20 @@ export const ipc = {
       sessionId,
       fromSeq: fromSeq ?? null,
     }),
+  terminalListNotifications: (workspaceId: string) =>
+    invoke<TerminalNotification[]>("terminal_list_notifications", { workspaceId }),
+  terminalClearNotification: (workspaceId: string, sessionId?: string | null) =>
+    invoke<void>("terminal_clear_notification", { workspaceId, sessionId: sessionId ?? null }),
+  terminalSetNotificationFocus: (
+    workspaceId: string | null,
+    sessionId: string | null,
+    windowFocused: boolean,
+  ) =>
+    invoke<void>("terminal_set_notification_focus", {
+      workspaceId: workspaceId ?? null,
+      sessionId: sessionId ?? null,
+      windowFocused,
+    }),
   checkDependencies: async () =>
     normalizeDependencyReport(
       await invoke<Partial<DependencyReport> | null>("check_dependencies"),
@@ -489,10 +521,25 @@ export interface ThreadUpdatedEvent {
   thread?: Thread | null;
 }
 
+export interface ChatTurnFinishedEvent {
+  threadId: string;
+  workspaceId: string;
+  engineId: "codex" | "claude";
+  threadTitle: string;
+  status: "completed" | "interrupted" | "error";
+  preview?: string | null;
+}
+
 export async function listenThreadUpdated(
   onEvent: (event: ThreadUpdatedEvent) => void
 ): Promise<UnlistenFn> {
   return listen<ThreadUpdatedEvent>("thread-updated", ({ payload }) => onEvent(payload));
+}
+
+export async function listenChatTurnFinished(
+  onEvent: (event: ChatTurnFinishedEvent) => void
+): Promise<UnlistenFn> {
+  return listen<ChatTurnFinishedEvent>("chat-turn-finished", ({ payload }) => onEvent(payload));
 }
 
 export async function listenEngineRuntimeUpdated(
@@ -542,6 +589,26 @@ export async function listenTerminalForegroundChanged(
 ): Promise<UnlistenFn> {
   return listen<TerminalForegroundChangedEvent>(
     `terminal-fg-changed-${workspaceId}`,
+    ({ payload }) => onEvent(payload)
+  );
+}
+
+export async function listenTerminalNotification(
+  workspaceId: string,
+  onEvent: (event: TerminalNotification) => void
+): Promise<UnlistenFn> {
+  return listen<TerminalNotification>(
+    `terminal-notification-${workspaceId}`,
+    ({ payload }) => onEvent(payload)
+  );
+}
+
+export async function listenTerminalNotificationCleared(
+  workspaceId: string,
+  onEvent: (event: TerminalNotificationClearedEvent) => void
+): Promise<UnlistenFn> {
+  return listen<TerminalNotificationClearedEvent>(
+    `terminal-notification-cleared-${workspaceId}`,
     ({ payload }) => onEvent(payload)
   );
 }

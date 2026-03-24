@@ -1,5 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
+import "@xterm/xterm/css/xterm.css";
 import { App } from "./App";
 import { AppErrorBoundary } from "./components/shared/AppErrorBoundary";
 import { initializeI18n } from "./i18n";

@@ -50,6 +50,25 @@ export interface HelperStatus {
   message?: string | null;
 }
 
+export type TerminalNotificationIntegrationId = "claude" | "codex";
+
+export interface TerminalNotificationIntegrationStatus {
+  configured: boolean;
+  configPath?: string | null;
+  configExists: boolean;
+  conflict: boolean;
+  detail?: string | null;
+}
+
+export interface TerminalNotificationSettings {
+  chatEnabled: boolean;
+  terminalEnabled: boolean;
+  terminalSetupComplete: boolean;
+  notificationSound: string | null;
+  claude: TerminalNotificationIntegrationStatus;
+  codex: TerminalNotificationIntegrationStatus;
+}
+
 export interface Repo {
   id: string;
   workspaceId: string;
@@ -794,6 +813,20 @@ export interface TerminalSession {
   shell: string;
   cwd: string;
   createdAt: string;
+}
+
+export interface TerminalNotification {
+  id: string;
+  workspaceId: string;
+  sessionId: string;
+  source: string;
+  title: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface TerminalNotificationClearedEvent {
+  sessionId: string | null;
 }
 
 export interface TerminalOutputEvent {

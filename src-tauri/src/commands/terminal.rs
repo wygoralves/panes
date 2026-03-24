@@ -3,7 +3,10 @@ use tauri::State;
 
 use crate::{
     db,
-    models::{TerminalRendererDiagnosticsDto, TerminalResumeSessionDto, TerminalSessionDto},
+    models::{
+        TerminalNotificationDto, TerminalRendererDiagnosticsDto, TerminalResumeSessionDto,
+        TerminalSessionDto,
+    },
     path_utils,
     state::AppState,
 };
@@ -46,7 +49,14 @@ pub async fn terminal_create_session(
     };
     state
         .terminals
-        .create_session(app, workspace_id, resolved_cwd, cols.max(1), rows.max(1))
+        .create_session(
+            app,
+            state.notifications.clone(),
+            workspace_id,
+            resolved_cwd,
+            cols.max(1),
+            rows.max(1),
+        )
         .await
         .map_err(err_to_string)
 }
@@ -122,9 +132,14 @@ pub async fn terminal_close_session(
 ) -> Result<(), String> {
     state
         .terminals
-        .close_session(app, &workspace_id, &session_id)
+        .close_session(app.clone(), &workspace_id, &session_id)
         .await
-        .map_err(err_to_string)
+        .map_err(err_to_string)?;
+    state
+        .notifications
+        .clear_for_session(&app, &workspace_id, &session_id)
+        .await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -135,9 +150,14 @@ pub async fn terminal_close_workspace_sessions(
 ) -> Result<(), String> {
     state
         .terminals
-        .close_workspace(app, &workspace_id)
+        .close_workspace(app.clone(), &workspace_id)
         .await
-        .map_err(err_to_string)
+        .map_err(err_to_string)?;
+    state
+        .notifications
+        .clear_for_workspace(&app, &workspace_id)
+        .await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -173,6 +193,65 @@ pub async fn terminal_resume_session(
         .resume_session(&workspace_id, &session_id, from_seq)
         .await
         .map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn terminal_list_notifications(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<Vec<TerminalNotificationDto>, String> {
+    Ok(state.notifications.list_for_workspace(&workspace_id).await)
+}
+
+#[tauri::command]
+pub async fn terminal_clear_notification(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    workspace_id: String,
+    session_id: Option<String>,
+) -> Result<(), String> {
+    match session_id.as_deref() {
+        Some(session_id) => {
+            state
+                .notifications
+                .clear_for_session(&app, &workspace_id, session_id)
+                .await;
+        }
+        None => {
+            state
+                .notifications
+                .clear_for_workspace(&app, &workspace_id)
+                .await;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn terminal_set_notification_focus(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    workspace_id: Option<String>,
+    session_id: Option<String>,
+    window_focused: bool,
+) -> Result<(), String> {
+    state
+        .notifications
+        .set_focus(window_focused, workspace_id.clone(), session_id.clone())
+        .await;
+
+    if window_focused {
+        if let (Some(workspace_id), Some(session_id)) =
+            (workspace_id.as_deref(), session_id.as_deref())
+        {
+            state
+                .notifications
+                .clear_for_session(&app, workspace_id, session_id)
+                .await;
+        }
+    }
+
+    Ok(())
 }
 
 async fn workspace_root_path(state: &AppState, workspace_id: &str) -> Result<String, String> {
