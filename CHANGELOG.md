@@ -1,5 +1,25 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.45.2...vnull) (2026-03-24)
+
+### Features
+
+* **notifications:** add chat notifications ([a4ca990](https://github.com/wygoralves/panes/commit/a4ca9900355868bc1d268647bc9a9ac3f2b3a781))
+* **notifications:** add interface and configs for notifications on terminal ([c5fcedd](https://github.com/wygoralves/panes/commit/c5fcedd620c2c1ae0b691ed9c1c185df9ab0acb0))
+* **notifications:** add sound settings for notifications ([2f65897](https://github.com/wygoralves/panes/commit/2f6589723af421dc52ac6d62efc2d1eec2e08d01))
+* **notifications:** improve ui for notifications ([0f15fa4](https://github.com/wygoralves/panes/commit/0f15fa47fb540e7b72852b47eba5cb2b05a511e5))
+* **terminal:** add Claude notification hooks ([64dae9c](https://github.com/wygoralves/panes/commit/64dae9c38d72187f4230fc7f14c77ec150bdf9c0))
+* **terminal:** add Codex notification bridge ([8bab1b3](https://github.com/wygoralves/panes/commit/8bab1b3c3593c548df6c6bcbce54592ab24d1a69))
+* **terminal:** add notification ingress foundation ([42d9126](https://github.com/wygoralves/panes/commit/42d9126aa28d21b33295a6097ece84c3554bedea))
+* **terminal:** add OSC notification fallback ([0da172b](https://github.com/wygoralves/panes/commit/0da172b383fcf2fd303f74545a621a92aaa8fc8a))
+* **terminal:** wire notification state into terminal UI ([b43065b](https://github.com/wygoralves/panes/commit/b43065ba044bd0084dcf9d237bffd641ff2b6f32))
+
+### Bug Fixes
+
+* address code review findings on notifications ([c4d06b8](https://github.com/wygoralves/panes/commit/c4d06b84bd81443c0d517467375596fa4e807bb7))
+* **notifications:** decouple agent notifications from terminal startup ([b94715f](https://github.com/wygoralves/panes/commit/b94715f316272496c99b53c80b9b5fd61e1ce5aa))
+* **terminal:** preserve notification hydration ordering ([ea14f40](https://github.com/wygoralves/panes/commit/ea14f40d01a799cb9bc2560e280453a40c132c01))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.45.1...vnull) (2026-03-22)
 
 ### Bug Fixes
