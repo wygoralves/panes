@@ -2045,6 +2045,8 @@ export function ChatPanel() {
   const showPlanImplementationComposer = Boolean(
     planImplementationPrompt && !showPendingToolInputComposer,
   );
+  const showSpecialInputComposer =
+    showPendingToolInputComposer || showPlanImplementationComposer;
   const pendingToolInputSupportsDecline =
     activeThreadApprovalDecisionCapabilities.includes("decline");
   const pendingToolInputSupportsCancel =
@@ -4685,7 +4687,7 @@ export function ChatPanel() {
 
           {/* Input container */}
           <div
-            className={`chat-input-box ${planMode && !showPendingToolInputComposer && !showPlanImplementationComposer ? "chat-input-box-plan" : ""} ${showPendingToolInputComposer || showPlanImplementationComposer ? "chat-input-box-tool-input" : ""}`.trim()}
+            className={`chat-input-box ${planMode && !showSpecialInputComposer ? "chat-input-box-plan" : ""} ${showSpecialInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
           >
             {showPendingToolInputComposer && pendingToolInputApproval ? (
               <ToolInputQuestionnaire
@@ -4900,7 +4902,7 @@ export function ChatPanel() {
               }}
             >
               {/* Attach file button */}
-              {!showPendingToolInputComposer && (
+              {!showSpecialInputComposer && (
                 <button
                   type="button"
                   className="chat-toolbar-btn"
@@ -4915,7 +4917,7 @@ export function ChatPanel() {
                 </button>
               )}
 
-              {!showPendingToolInputComposer && (
+              {!showSpecialInputComposer && (
                 <button
                   type="button"
                   className={`chat-toolbar-btn chat-toolbar-btn-bordered ${planMode ? "chat-toolbar-btn-active" : ""}`}
@@ -4936,10 +4938,10 @@ export function ChatPanel() {
                 </button>
               )}
 
-              {!showPendingToolInputComposer && <div className="chat-toolbar-divider" />}
+              {!showSpecialInputComposer && <div className="chat-toolbar-divider" />}
 
               {/* Engine + Model + Effort selector */}
-              {!showPendingToolInputComposer && (
+              {!showSpecialInputComposer && (
                 <ModelPicker
                   engines={engines}
                   health={health}
@@ -4973,7 +4975,7 @@ export function ChatPanel() {
 
               {/* Codex Runtime + Config removed from toolbar — accessed via /slash commands */}
 
-              {!showPendingToolInputComposer &&
+              {!showSpecialInputComposer &&
                 (activeRepo ||
                   repos.length > 0 ||
                   activeThread?.engineId === "codex" ||
@@ -5085,7 +5087,7 @@ export function ChatPanel() {
               <div style={{ flex: 1 }} />
 
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {streaming && !showPendingToolInputComposer && (
+                {streaming && !showSpecialInputComposer && (
                   <button
                     type="button"
                     onClick={() => void cancel()}
@@ -5108,7 +5110,7 @@ export function ChatPanel() {
                   </button>
                 )}
 
-                {(!streaming || canSteerActiveTurn) && !showPendingToolInputComposer && (
+                {(!streaming || canSteerActiveTurn) && !showSpecialInputComposer && (
                 <button
                   type="submit"
                   disabled={!activeWorkspaceId || !input.trim()}

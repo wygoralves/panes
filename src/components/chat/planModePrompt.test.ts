@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Message } from "../../types";
 import {
+  PLAN_IMPLEMENTATION_CODING_MESSAGE,
   latestAssistantMessage,
   messageHasStructuredPlan,
   shouldPromptToImplementPlan,
@@ -26,6 +27,12 @@ function buildAssistantMessage(content: string): Message {
 }
 
 describe("planModePrompt", () => {
+  it("uses an explicit handoff instruction that exits plan mode", () => {
+    expect(PLAN_IMPLEMENTATION_CODING_MESSAGE).toBe(
+      "Exit plan mode and implement the plan.",
+    );
+  });
+
   it("detects structured plan output from assistant messages", () => {
     const message = buildAssistantMessage(
       [

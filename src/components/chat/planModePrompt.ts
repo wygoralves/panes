@@ -1,6 +1,6 @@
 import type { Message, ThreadStatus } from "../../types";
 
-export const PLAN_IMPLEMENTATION_CODING_MESSAGE = "Implement the plan.";
+export const PLAN_IMPLEMENTATION_CODING_MESSAGE = "Exit plan mode and implement the plan.";
 
 const STRUCTURED_PLAN_LINE_PATTERN = /(^|\n)- \[(?:pending|in_progress|completed)\] /;
 const GENERIC_PLAN_LIST_PATTERN = /(^|\n)(?:[-*]|\d+\.)\s+\S+/g;

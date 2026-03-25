@@ -411,6 +411,10 @@ impl Engine for CodexEngine {
             if self.can_reuse_live_thread(existing_thread_id).await {
                 // Codex applies model and effort per `turn/start`, so a live thread can stay put
                 // while we swap the requested runtime for the next turn.
+                requested_runtime = preserve_live_thread_runtime_flags(
+                    requested_runtime,
+                    self.thread_runtime(existing_thread_id).await.as_ref(),
+                );
                 self.store_thread_runtime(existing_thread_id, requested_runtime.clone())
                     .await;
                 return Ok(EngineThread {
@@ -3510,6 +3514,17 @@ fn collaboration_mode_protocol_payload(
       "mode": if plan_mode { "plan" } else { "default" },
       "settings": settings,
     }))
+}
+
+fn preserve_live_thread_runtime_flags(
+    mut requested_runtime: ThreadRuntime,
+    existing_runtime: Option<&ThreadRuntime>,
+) -> ThreadRuntime {
+    if let Some(existing_runtime) = existing_runtime {
+        requested_runtime.native_plan_mode_active = existing_runtime.native_plan_mode_active;
+    }
+
+    requested_runtime
 }
 
 fn plan_mode_activation_from_diagnostics(
@@ -6789,6 +6804,48 @@ mod tests {
         let runtime = thread_runtime_from_resume_response(&response, &requested_runtime);
 
         assert_eq!(runtime, requested_runtime);
+    }
+
+    #[test]
+    fn preserve_live_thread_runtime_flags_keeps_native_plan_mode_from_existing_runtime() {
+        let existing_runtime = ThreadRuntime {
+            cwd: "/tmp/original".to_string(),
+            model_id: "gpt-5.4".to_string(),
+            approval_policy: json!("on-request"),
+            sandbox_policy: json!({
+                "type": "workspaceWrite",
+                "writableRoots": ["/tmp/original"],
+                "networkAccess": false,
+            }),
+            reasoning_effort: Some("medium".to_string()),
+            service_tier: Some("default".to_string()),
+            personality: Some("friendly".to_string()),
+            output_schema: Some(json!({"type":"object"})),
+            native_plan_mode_active: true,
+        };
+        let requested_runtime = ThreadRuntime {
+            cwd: "/tmp/updated".to_string(),
+            model_id: "gpt-5.4".to_string(),
+            approval_policy: json!("never"),
+            sandbox_policy: json!({
+                "type": "workspaceWrite",
+                "writableRoots": ["/tmp/updated"],
+                "networkAccess": true,
+            }),
+            reasoning_effort: Some("high".to_string()),
+            service_tier: Some("flex".to_string()),
+            personality: Some("precise".to_string()),
+            output_schema: None,
+            native_plan_mode_active: false,
+        };
+
+        let preserved_runtime =
+            preserve_live_thread_runtime_flags(requested_runtime, Some(&existing_runtime));
+
+        assert!(preserved_runtime.native_plan_mode_active);
+        assert_eq!(preserved_runtime.cwd, "/tmp/updated");
+        assert_eq!(preserved_runtime.approval_policy, json!("never"));
+        assert_eq!(preserved_runtime.reasoning_effort.as_deref(), Some("high"));
     }
 
     #[test]
