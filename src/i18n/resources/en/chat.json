@@ -297,6 +297,11 @@
     "planModeBannerCodex": "Plan mode: Panes asks Codex to use its native plan collaboration mode before acting.",
     "planModeBannerCodexFallback": "Prompt-guided plan mode: Panes asks Codex to plan before acting because this runtime does not currently advertise native plan collaboration mode.",
     "planModeBannerCodexUnknown": "Plan mode: Panes will prefer Codex native plan collaboration mode when available and otherwise fall back to prompt-guided planning.",
+    "planImplementationQuestion": "The plan is ready. What should Panes do next?",
+    "planImplementationOptionImplement": "Implement the plan",
+    "planImplementationOptionImplementDescription": "Leave plan mode and ask Codex to start executing this plan in the current thread.",
+    "planImplementationOptionStay": "Stay in plan mode",
+    "planImplementationOptionStayDescription": "Keep plan mode enabled so the next message stays in planning mode.",
     "placeholders": {
       "plan": "Describe what you want to plan...",
       "chat": "Ask for follow-up changes"

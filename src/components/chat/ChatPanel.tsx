@@ -46,6 +46,11 @@ import { isMacDesktop, usesCustomWindowFrame } from "../../lib/windowActions";
 import { MessageBlocks, shouldShowClaudeUnsupportedApproval } from "./MessageBlocks";
 import { resolveEngineCapabilities } from "./engineCapabilities";
 import { buildCodexInputItems } from "./codexInputItems";
+import {
+  latestAssistantMessage as findLatestAssistantMessage,
+  PLAN_IMPLEMENTATION_CODING_MESSAGE,
+  shouldPromptToImplementPlan,
+} from "./planModePrompt";
 import { resolveReasoningEffortForModel } from "./reasoningEffort";
 import { ToolInputQuestionnaire } from "./ToolInputQuestionnaire";
 import {
@@ -1306,6 +1311,7 @@ export function ChatPanel() {
   );
   const {
     messages,
+    status,
     hasOlderMessages,
     loadingOlderMessages,
     loadOlderMessages,
@@ -1322,6 +1328,7 @@ export function ChatPanel() {
   } = useChatStore(
     useShallow((state) => ({
       messages: state.messages,
+      status: state.status,
       hasOlderMessages: state.hasOlderMessages,
       loadingOlderMessages: state.loadingOlderMessages,
       loadOlderMessages: state.loadOlderMessages,
@@ -1467,6 +1474,10 @@ export function ChatPanel() {
     serviceTier: CodexServiceTierValue;
     outputSchemaText: string;
     customApprovalPolicyText: string;
+    restorePlanModeOnCancel: boolean;
+  } | null>(null);
+  const [planImplementationPrompt, setPlanImplementationPrompt] = useState<{
+    threadId: string;
   } | null>(null);
 
   const trustLevelOptions = useMemo(() => getTrustLevelOptions(t), [t]);
@@ -1876,6 +1887,9 @@ export function ChatPanel() {
       ),
     [activeThread?.engineId, pendingApprovals, selectedPendingToolInputApprovalId],
   );
+  const latestAssistant = useMemo(() => findLatestAssistantMessage(messages), [messages]);
+  const pendingPlanImplementationThreadIdRef = useRef<string | null>(null);
+  const previousStreamingRef = useRef(false);
 
   useEffect(() => {
     if (!selectedPendingToolInputApprovalId) {
@@ -1889,6 +1903,52 @@ export function ChatPanel() {
       setSelectedPendingToolInputApprovalId(null);
     }
   }, [pendingApprovals, selectedPendingToolInputApprovalId]);
+
+  useEffect(() => {
+    if (planImplementationPrompt && planImplementationPrompt.threadId !== threadId) {
+      setPlanImplementationPrompt(null);
+    }
+
+    if (
+      pendingPlanImplementationThreadIdRef.current &&
+      pendingPlanImplementationThreadIdRef.current !== threadId &&
+      !streaming
+    ) {
+      pendingPlanImplementationThreadIdRef.current = null;
+    }
+  }, [planImplementationPrompt, streaming, threadId]);
+
+  useEffect(() => {
+    const wasStreaming = previousStreamingRef.current;
+    previousStreamingRef.current = streaming;
+
+    const armedThreadId = pendingPlanImplementationThreadIdRef.current;
+    if (
+      shouldPromptToImplementPlan({
+        wasStreaming,
+        streaming,
+        status,
+        activeThreadId: threadId,
+        armedThreadId,
+        latestAssistant,
+      })
+    ) {
+      const promptThreadId = threadId ?? armedThreadId;
+      if (!promptThreadId) {
+        pendingPlanImplementationThreadIdRef.current = null;
+        return;
+      }
+      pendingPlanImplementationThreadIdRef.current = null;
+      setPlanImplementationPrompt({
+        threadId: promptThreadId,
+      });
+      return;
+    }
+
+    if (wasStreaming && !streaming && armedThreadId === threadId && status !== "completed") {
+      pendingPlanImplementationThreadIdRef.current = null;
+    }
+  }, [latestAssistant, status, streaming, threadId]);
 
   const pendingApprovalBannerRows = useMemo(
     () =>
@@ -1910,6 +1970,43 @@ export function ChatPanel() {
 
   const showPendingToolInputComposer = Boolean(
     pendingToolInputApproval && pendingToolInputQuestions.length > 0,
+  );
+  const planImplementationQuestionChoiceImplement = useMemo(
+    () => t("panel.planImplementationOptionImplement"),
+    [t],
+  );
+  const planImplementationQuestionChoiceStay = useMemo(
+    () => t("panel.planImplementationOptionStay"),
+    [t],
+  );
+  const planImplementationQuestionDetails = useMemo(
+    () => ({
+      questions: [
+        {
+          id: "plan_implementation_decision",
+          question: t("panel.planImplementationQuestion"),
+          options: [
+            {
+              label: planImplementationQuestionChoiceImplement,
+              description: t("panel.planImplementationOptionImplementDescription"),
+              recommended: true,
+            },
+            {
+              label: planImplementationQuestionChoiceStay,
+              description: t("panel.planImplementationOptionStayDescription"),
+            },
+          ],
+        },
+      ],
+    }),
+    [
+      planImplementationQuestionChoiceImplement,
+      planImplementationQuestionChoiceStay,
+      t,
+    ],
+  );
+  const showPlanImplementationComposer = Boolean(
+    planImplementationPrompt && !showPendingToolInputComposer,
   );
   const pendingToolInputSupportsDecline =
     activeThreadApprovalDecisionCapabilities.includes("decline");
@@ -3191,6 +3288,7 @@ export function ChatPanel() {
           serviceTier: selectedServiceTier,
           outputSchemaText,
           customApprovalPolicyText,
+          restorePlanModeOnCancel: false,
         });
         return;
       }
@@ -3217,6 +3315,7 @@ export function ChatPanel() {
       planMode,
     });
     if (sent) {
+      pendingPlanImplementationThreadIdRef.current = planMode ? targetThreadId : null;
       setInput("");
       setAttachments([]);
     }
@@ -3260,6 +3359,7 @@ export function ChatPanel() {
         return;
       }
 
+      pendingPlanImplementationThreadIdRef.current = prompt.planMode ? prompt.threadId : null;
       setInput("");
       setAttachments([]);
 
@@ -3268,6 +3368,125 @@ export function ChatPanel() {
       setInput(prompt.text);
       setAttachments(prompt.attachments);
     }
+  }
+
+  async function executePlanImplementation() {
+    const prompt = planImplementationPrompt;
+    if (!prompt || !activeWorkspaceId) {
+      return;
+    }
+
+    setPlanImplementationPrompt(null);
+
+    const currentThread =
+      useThreadStore.getState().threads.find((thread) => thread.id === prompt.threadId) ??
+      activeThread;
+    if (!currentThread || currentThread.id !== prompt.threadId) {
+      return;
+    }
+
+    const modelId = readThreadLastModelId(currentThread) ?? currentThread.modelId;
+    const effort =
+      typeof currentThread.engineMetadata?.reasoningEffort === "string"
+        ? currentThread.engineMetadata.reasoningEffort
+        : activeThreadReasoningEffort ?? null;
+
+    if (
+      currentThread.repoId === null &&
+      repos.length > 1 &&
+      readThreadSandboxModeValue(currentThread) !== "read-only"
+    ) {
+      const availableRepoPaths = repos.map((repo) => repo.path);
+      const optIn = Boolean(currentThread.engineMetadata?.workspaceWriteOptIn);
+      const confirmedWritableRoots = readThreadWorkspaceWritableRoots(currentThread);
+      const hasValidConfirmedRoots = confirmedWritableRoots.some((root) =>
+        availableRepoPaths.includes(root),
+      );
+      if (!optIn || !hasValidConfirmedRoots) {
+        const repoNames = repos.map((repo) => repo.name).join(", ");
+        setPlanMode(false);
+        setWorkspaceOptInPrompt({
+          repoNames,
+          workspaceId: activeWorkspaceId,
+          threadId: currentThread.id,
+          threadPaths: availableRepoPaths,
+          text: PLAN_IMPLEMENTATION_CODING_MESSAGE,
+          attachments: [],
+          inputItems: null,
+          planMode: false,
+          engineId: currentThread.engineId,
+          modelId,
+          effort,
+          personality: selectedPersonality,
+          serviceTier: selectedServiceTier,
+          outputSchemaText,
+          customApprovalPolicyText,
+          restorePlanModeOnCancel: true,
+        });
+        return;
+      }
+    }
+
+    setPlanMode(false);
+    try {
+      await ipc.setThreadReasoningEffort(currentThread.id, effort, modelId);
+      setThreadReasoningEffortLocal(currentThread.id, effort);
+      if (
+        !(await applyCodexConfigToThread(currentThread.id, {
+          engineId: currentThread.engineId,
+          personality: selectedPersonality,
+          serviceTier: selectedServiceTier,
+          outputSchemaText,
+          customApprovalPolicyText,
+        }))
+      ) {
+        setPlanMode(true);
+        setPlanImplementationPrompt(prompt);
+        return;
+      }
+      setThreadLastModelLocal(currentThread.id, modelId);
+
+      const sent = await send(PLAN_IMPLEMENTATION_CODING_MESSAGE, {
+        threadIdOverride: currentThread.id,
+        engineId: currentThread.engineId,
+        modelId,
+        reasoningEffort: effort,
+        planMode: false,
+      });
+      if (!sent) {
+        setPlanMode(true);
+        setPlanImplementationPrompt(prompt);
+      }
+    } catch {
+      setPlanMode(true);
+      setPlanImplementationPrompt(prompt);
+    }
+  }
+
+  function handlePlanImplementationQuestionnaireSubmit(response: ApprovalResponse) {
+    const answerMap =
+      "answers" in response &&
+      response.answers &&
+      typeof response.answers === "object" &&
+      !Array.isArray(response.answers) &&
+      "plan_implementation_decision" in response.answers
+        ? (response.answers as Record<string, { answers?: string[] }>)
+        : null;
+    const selectedAnswer = answerMap?.plan_implementation_decision?.answers?.[0]?.trim();
+    if (selectedAnswer === planImplementationQuestionChoiceStay) {
+      setPlanImplementationPrompt(null);
+      setPlanMode(true);
+      return;
+    }
+
+    void executePlanImplementation();
+  }
+
+  function dismissWorkspaceOptInPrompt() {
+    if (workspaceOptInPrompt?.restorePlanModeOnCancel) {
+      setPlanMode(true);
+    }
+    setWorkspaceOptInPrompt(null);
   }
 
   async function onReasoningEffortChange(nextEffort: string) {
@@ -4434,7 +4653,7 @@ export function ChatPanel() {
 
           {/* Input container */}
           <div
-            className={`chat-input-box ${planMode && !showPendingToolInputComposer ? "chat-input-box-plan" : ""} ${showPendingToolInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
+            className={`chat-input-box ${planMode && !showPendingToolInputComposer && !showPlanImplementationComposer ? "chat-input-box-plan" : ""} ${showPendingToolInputComposer || showPlanImplementationComposer ? "chat-input-box-tool-input" : ""}`.trim()}
           >
             {showPendingToolInputComposer && pendingToolInputApproval ? (
               <ToolInputQuestionnaire
@@ -4458,6 +4677,13 @@ export function ChatPanel() {
                 onSubmit={(response) => {
                   void respondApproval(pendingToolInputApproval.approvalId, response);
                 }}
+              />
+            ) : showPlanImplementationComposer ? (
+              <ToolInputQuestionnaire
+                details={planImplementationQuestionDetails}
+                allowCustomAnswer={false}
+                submitLabel={t("panel.continue")}
+                onSubmit={handlePlanImplementationQuestionnaireSubmit}
               />
             ) : (
               <>
@@ -5073,7 +5299,7 @@ export function ChatPanel() {
         }
         confirmLabel={t("panel.continue")}
         onConfirm={() => void executeWorkspaceOptInSend()}
-        onCancel={() => setWorkspaceOptInPrompt(null)}
+        onCancel={dismissWorkspaceOptInPrompt}
       />
     </div>
   );

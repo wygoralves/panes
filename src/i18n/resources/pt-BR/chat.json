@@ -297,6 +297,11 @@
     "planModeBannerCodex": "Modo de plano: o Panes pede que o Codex use seu modo de colaboração nativo de plano antes de agir.",
     "planModeBannerCodexFallback": "Modo de plano guiado por prompt: o Panes pede que o Codex planeje antes de agir porque este runtime não anuncia atualmente um modo de colaboração nativo de plano.",
     "planModeBannerCodexUnknown": "Modo de plano: o Panes vai preferir o modo de colaboração nativo de plano do Codex quando disponível e, caso contrário, cair para planejamento guiado por prompt.",
+    "planImplementationQuestion": "O plano está pronto. O que o Panes deve fazer agora?",
+    "planImplementationOptionImplement": "Implementar o plano",
+    "planImplementationOptionImplementDescription": "Sair do modo de plano e pedir ao Codex que comece a executar este plano na thread atual.",
+    "planImplementationOptionStay": "Continuar no modo de plano",
+    "planImplementationOptionStayDescription": "Manter o modo de plano ativo para que a próxima mensagem continue em planejamento.",
     "placeholders": {
       "plan": "Descreva o que você quer planejar...",
       "chat": "Peça alterações de continuação"

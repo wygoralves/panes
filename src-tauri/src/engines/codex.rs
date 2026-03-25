@@ -76,8 +76,7 @@ const CODEX_MISSING_DEFAULT_DETAILS: &str = "`codex` executable not found in PAT
 const MAX_ATTACHMENTS_PER_TURN: usize = 10;
 const MAX_ATTACHMENT_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_TEXT_ATTACHMENT_CHARS: usize = 40_000;
-const PLAN_MODE_PROMPT_PREFIX: &str =
-    "Plan the solution first. Do not execute commands or edit files until the plan is complete.";
+const PLAN_MODE_PROMPT_PREFIX: &str = "Plan the solution first. Do not execute commands or edit files until the plan is complete. Reply with a structured plan using one line per step in the exact format `- [pending] Step`.";
 
 pub struct CodexEngine {
     state: Arc<Mutex<CodexState>>,
@@ -6152,6 +6151,7 @@ mod tests {
             .and_then(Value::as_str)
             .expect("text payload");
         assert!(text.starts_with(PLAN_MODE_PROMPT_PREFIX));
+        assert!(text.contains("- [pending] Step"));
         assert!(text.contains("Inspect the repo first"));
     }
 
