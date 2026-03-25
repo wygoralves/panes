@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.46.1...vnull) (2026-03-25)
+
+### Bug Fixes
+
+* **chat:** adjust and fix plan-mode handoff flow ([2e3ca87](https://github.com/wygoralves/panes/commit/2e3ca8764a0d60a17eb0b8f08a174d92f9158941))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.46.0...vnull) (2026-03-24)
 
 ### Bug Fixes
