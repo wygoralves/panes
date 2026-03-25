@@ -1,5 +1,13 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.46.2...vnull) (2026-03-25)
+
+### Bug Fixes
+
+* **chat:** address more edge cases on planning handoff ([4680279](https://github.com/wygoralves/panes/commit/4680279cf114068a3e485c3c109838d39de2f463))
+* **chat:** fix frontend race on codex plan execution ([1f3508d](https://github.com/wygoralves/panes/commit/1f3508d4bf326fff56b5d10b408271549a18a79d))
+* **chat:** some more adjustments to the plan handoff to execution mode ([2b52f52](https://github.com/wygoralves/panes/commit/2b52f52a8586e417d9f2712333bdc69395e43344))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.46.1...vnull) (2026-03-25)
 
 ### Bug Fixes
