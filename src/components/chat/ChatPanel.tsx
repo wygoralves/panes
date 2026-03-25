@@ -1478,6 +1478,13 @@ export function ChatPanel() {
   } | null>(null);
   const [planImplementationPrompt, setPlanImplementationPrompt] = useState<{
     threadId: string;
+    engineId: string;
+    modelId: string;
+    effort: string | null;
+    personality: CodexPersonalityValue;
+    serviceTier: CodexServiceTierValue;
+    outputSchemaText: string;
+    customApprovalPolicyText: string;
   } | null>(null);
 
   const trustLevelOptions = useMemo(() => getTrustLevelOptions(t), [t]);
@@ -1938,9 +1945,28 @@ export function ChatPanel() {
         pendingPlanImplementationThreadIdRef.current = null;
         return;
       }
+      const promptThread =
+        useThreadStore
+          .getState()
+          .threads.find((thread) => thread.id === promptThreadId) ??
+        (activeThread?.id === promptThreadId ? activeThread : null);
+      if (!promptThread) {
+        pendingPlanImplementationThreadIdRef.current = null;
+        return;
+      }
       pendingPlanImplementationThreadIdRef.current = null;
       setPlanImplementationPrompt({
         threadId: promptThreadId,
+        engineId: promptThread.engineId,
+        modelId: readThreadLastModelId(promptThread) ?? promptThread.modelId,
+        effort:
+          typeof promptThread.engineMetadata?.reasoningEffort === "string"
+            ? promptThread.engineMetadata.reasoningEffort
+            : activeThreadReasoningEffort ?? null,
+        personality: selectedPersonality,
+        serviceTier: selectedServiceTier,
+        outputSchemaText,
+        customApprovalPolicyText,
       });
       return;
     }
@@ -1948,7 +1974,18 @@ export function ChatPanel() {
     if (wasStreaming && !streaming && armedThreadId === threadId && status !== "completed") {
       pendingPlanImplementationThreadIdRef.current = null;
     }
-  }, [latestAssistant, status, streaming, threadId]);
+  }, [
+    activeThread,
+    activeThreadReasoningEffort,
+    customApprovalPolicyText,
+    latestAssistant,
+    outputSchemaText,
+    selectedPersonality,
+    selectedServiceTier,
+    status,
+    streaming,
+    threadId,
+  ]);
 
   const pendingApprovalBannerRows = useMemo(
     () =>
@@ -3376,20 +3413,13 @@ export function ChatPanel() {
       return;
     }
 
-    setPlanImplementationPrompt(null);
-
     const currentThread =
       useThreadStore.getState().threads.find((thread) => thread.id === prompt.threadId) ??
-      activeThread;
-    if (!currentThread || currentThread.id !== prompt.threadId) {
+      (activeThread?.id === prompt.threadId ? activeThread : null);
+    if (!currentThread) {
+      toast.error(t("panel.toasts.planImplementationThreadUnavailable"));
       return;
     }
-
-    const modelId = readThreadLastModelId(currentThread) ?? currentThread.modelId;
-    const effort =
-      typeof currentThread.engineMetadata?.reasoningEffort === "string"
-        ? currentThread.engineMetadata.reasoningEffort
-        : activeThreadReasoningEffort ?? null;
 
     if (
       currentThread.repoId === null &&
@@ -3404,6 +3434,7 @@ export function ChatPanel() {
       );
       if (!optIn || !hasValidConfirmedRoots) {
         const repoNames = repos.map((repo) => repo.name).join(", ");
+        setPlanImplementationPrompt(null);
         setPlanMode(false);
         setWorkspaceOptInPrompt({
           repoNames,
@@ -3414,43 +3445,44 @@ export function ChatPanel() {
           attachments: [],
           inputItems: null,
           planMode: false,
-          engineId: currentThread.engineId,
-          modelId,
-          effort,
-          personality: selectedPersonality,
-          serviceTier: selectedServiceTier,
-          outputSchemaText,
-          customApprovalPolicyText,
+          engineId: prompt.engineId,
+          modelId: prompt.modelId,
+          effort: prompt.effort,
+          personality: prompt.personality,
+          serviceTier: prompt.serviceTier,
+          outputSchemaText: prompt.outputSchemaText,
+          customApprovalPolicyText: prompt.customApprovalPolicyText,
           restorePlanModeOnCancel: true,
         });
         return;
       }
     }
 
+    setPlanImplementationPrompt(null);
     setPlanMode(false);
     try {
-      await ipc.setThreadReasoningEffort(currentThread.id, effort, modelId);
-      setThreadReasoningEffortLocal(currentThread.id, effort);
+      await ipc.setThreadReasoningEffort(currentThread.id, prompt.effort, prompt.modelId);
+      setThreadReasoningEffortLocal(currentThread.id, prompt.effort);
       if (
         !(await applyCodexConfigToThread(currentThread.id, {
-          engineId: currentThread.engineId,
-          personality: selectedPersonality,
-          serviceTier: selectedServiceTier,
-          outputSchemaText,
-          customApprovalPolicyText,
+          engineId: prompt.engineId,
+          personality: prompt.personality,
+          serviceTier: prompt.serviceTier,
+          outputSchemaText: prompt.outputSchemaText,
+          customApprovalPolicyText: prompt.customApprovalPolicyText,
         }))
       ) {
         setPlanMode(true);
         setPlanImplementationPrompt(prompt);
         return;
       }
-      setThreadLastModelLocal(currentThread.id, modelId);
+      setThreadLastModelLocal(currentThread.id, prompt.modelId);
 
       const sent = await send(PLAN_IMPLEMENTATION_CODING_MESSAGE, {
         threadIdOverride: currentThread.id,
-        engineId: currentThread.engineId,
-        modelId,
-        reasoningEffort: effort,
+        engineId: prompt.engineId,
+        modelId: prompt.modelId,
+        reasoningEffort: prompt.effort,
         planMode: false,
       });
       if (!sent) {

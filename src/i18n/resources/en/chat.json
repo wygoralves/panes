@@ -366,6 +366,7 @@
       "fullAccessNetworkWarning": "Full access sandbox temporarily enables network access.",
       "updateExecutionPolicyFailed": "Failed to update thread execution policy: {{error}}",
       "updateCodexConfigFailed": "Failed to update Codex turn config: {{error}}",
+      "planImplementationThreadUnavailable": "The original planning thread is no longer available. Reopen the thread and try again.",
       "invalidOutputSchema": "Output schema must be valid JSON Schema object or boolean: {{error}}",
       "invalidCustomApprovalPolicy": "Structured approval policy must be a JSON object.",
       "invalidCustomApprovalPolicyWithError": "Structured approval policy is invalid JSON: {{error}}"

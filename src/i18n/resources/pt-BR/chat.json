@@ -366,6 +366,7 @@
       "fullAccessNetworkWarning": "O modo acesso total habilita temporariamente o acesso à rede.",
       "updateExecutionPolicyFailed": "Falha ao atualizar a política de execução da thread: {{error}}",
       "updateCodexConfigFailed": "Falha ao atualizar a configuração de turno do Codex: {{error}}",
+      "planImplementationThreadUnavailable": "A thread original de planejamento não está mais disponível. Reabra a thread e tente novamente.",
       "invalidOutputSchema": "O schema de saída deve ser um objeto ou booleano JSON Schema válido: {{error}}",
       "invalidCustomApprovalPolicy": "A política de aprovação estruturada deve ser um objeto JSON.",
       "invalidCustomApprovalPolicyWithError": "A política de aprovação estruturada contém JSON inválido: {{error}}"
