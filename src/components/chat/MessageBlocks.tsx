@@ -319,9 +319,9 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
         <Brain
           size={12}
           className={isStreaming ? "thinking-icon-active" : undefined}
-          style={isStreaming ? { color: "var(--info)", flexShrink: 0 } : { color: "var(--info)", opacity: 0.45, flexShrink: 0 }}
+          style={{ color: "var(--text-3)", flexShrink: 0, verticalAlign: "middle" }}
         />
-        <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>
+        <span style={{ fontSize: 11.5, color: "var(--text-2)", lineHeight: 1 }}>
           {thinkingLabel}
         </span>
       </div>
@@ -463,7 +463,7 @@ function ActionStatusBadge({ status }: { status: string }) {
   const { t } = useTranslation("chat");
   if (status === "done") {
     return (
-      <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--success)", fontSize: 10, opacity: 0.7 }}>
+      <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-3)", fontSize: 10 }}>
         <CheckCircle2 size={11} />
       </span>
     );
@@ -485,7 +485,7 @@ function ActionStatusBadge({ status }: { status: string }) {
     );
   }
   return (
-    <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-3)", fontSize: 10, opacity: 0.5 }}>
+    <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-3)", fontSize: 10 }}>
       <Circle size={11} />
     </span>
   );
@@ -589,13 +589,13 @@ function ActionBlockView({
             className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
           />
         )}
-        <Icon size={12} style={{ color: "var(--text-3)", flexShrink: 0, opacity: 0.7 }} />
+        <Icon size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
         <span style={{ fontSize: 11.5, color: "var(--text-2)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {block.summary}
         </span>
         <ActionStatusBadge status={block.status} />
         {block.result?.durationMs != null && block.status === "done" && (
-          <span style={{ fontSize: 9.5, color: "var(--text-3)", opacity: 0.6, flexShrink: 0 }}>
+          <span style={{ fontSize: 9.5, color: "var(--text-3)", flexShrink: 0 }}>
             {block.result.durationMs < 1000
               ? `${block.result.durationMs}ms`
               : `${(block.result.durationMs / 1000).toFixed(1)}s`}
@@ -782,7 +782,7 @@ function ActionGroupView({
         {hasError ? (
           <XCircle size={11} style={{ color: "var(--danger)", flexShrink: 0 }} />
         ) : (
-          <CheckCircle2 size={11} style={{ color: "var(--success)", opacity: 0.7, flexShrink: 0 }} />
+          <CheckCircle2 size={11} style={{ color: "var(--text-3)", flexShrink: 0 }} />
         )}
       </div>
       <div className={`action-group-body${expanded ? " action-group-body--expanded" : ""}`}>
@@ -908,15 +908,14 @@ function ToolInputApprovalCard({
   return (
     <div>
       <div
-        className={hasAnswers ? "msg-block-header" : undefined}
-        style={hasAnswers ? undefined : { display: "flex", alignItems: "center", gap: 6, padding: "6px 12px" }}
+        className="msg-block-header"
         {...(hasAnswers ? {
           role: "button" as const,
           tabIndex: 0,
           "aria-expanded": expanded,
           onClick: toggleExpanded,
           onKeyDown: (e: React.KeyboardEvent) => handleToggleKeyDown(e, toggleExpanded),
-        } : {})}
+        } : { style: { cursor: "default" } })}
       >
         {hasAnswers && (
           <ChevronRight size={11} className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`} />

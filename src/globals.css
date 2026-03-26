@@ -774,6 +774,7 @@ button, input, textarea, select {
   cursor: pointer; user-select: none;
   border-radius: var(--radius-sm);
 }
+.msg-block-header:hover span { color: var(--text-1) !important; }
 .msg-block-chevron {
   flex-shrink: 0; color: var(--text-3); opacity: 0.5;
   transition: transform var(--duration-fast) var(--ease-out);
@@ -795,11 +796,11 @@ button, input, textarea, select {
   padding: 6px 0;
   border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
   border-radius: var(--radius-md);
-  overflow: hidden;
   display: flex;
   flex-direction: column;
-  opacity: 0.7;
 }
+.msg-action-card .acard { background: none; border: none; margin: 0; }
+.msg-action-card .acard-header { background: none; border-bottom: none; padding: 6px 12px; }
 
 /* ── Chat Block Shared Styles ── */
 
