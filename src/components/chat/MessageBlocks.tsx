@@ -130,17 +130,10 @@ type BlockSegment =
 
 function buildBlockSegments(blocks: ContentBlock[]): BlockSegment[] {
   const segments: BlockSegment[] = [];
-  const deferredSteerSegments: BlockSegment[] = [];
   let i = 0;
   while (i < blocks.length) {
     const block = blocks[i];
     if (block.type !== "action") {
-      // Defer steer blocks to the end of the message
-      if (block.type === "steer") {
-        deferredSteerSegments.push({ kind: "single", block, index: i });
-        i++;
-        continue;
-      }
       // Insert divider when a non-action text block transitions to action blocks
       if (
         block.type === "text" &&
@@ -196,10 +189,6 @@ function buildBlockSegments(blocks: ContentBlock[]): BlockSegment[] {
       }
       subStart = subEnd;
     }
-  }
-  // Append steer blocks at the end so they appear at the bottom of the message
-  for (const s of deferredSteerSegments) {
-    segments.push(s);
   }
   return segments;
 }

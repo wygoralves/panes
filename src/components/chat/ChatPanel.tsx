@@ -17,6 +17,8 @@ import {
   Image,
   File,
   ListChecks,
+  Copy,
+  Check,
   Clock,
   Zap,
   RotateCcw,
@@ -973,6 +975,53 @@ interface MessageRowProps {
   onLoadActionOutput: (messageId: string, actionId: string) => Promise<void>;
 }
 
+function extractMessageCopyText(message: Message): string {
+  if (message.role === "user") {
+    if (message.content) return message.content;
+    return (message.blocks ?? [])
+      .filter((b) => b.type === "text")
+      .map((b) => String(b.content ?? ""))
+      .join("\n");
+  }
+  return (message.blocks ?? [])
+    .filter((b) => b.type === "text" || b.type === "code")
+    .map((b) => {
+      if (b.type === "code") return `\`\`\`${b.language ?? ""}\n${b.content ?? ""}\n\`\`\``;
+      return String(b.content ?? "");
+    })
+    .join("\n\n");
+}
+
+function MessageCopyButton({ message }: { message: Message }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    const text = extractMessageCopyText(message);
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [message]);
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      style={{
+        cursor: "pointer",
+        background: "none",
+        border: "none",
+        padding: "2px 4px",
+        display: "inline-flex",
+        alignItems: "center",
+        color: copied ? "var(--success)" : "var(--text-3)",
+      }}
+      aria-label="Copy message"
+    >
+      {copied ? <Check size={11} /> : <Copy size={11} />}
+    </button>
+  );
+}
+
 function MessageRowView({
   message,
   index,
@@ -1094,11 +1143,10 @@ function MessageRowView({
             )}
             {userContent}
           </div>
-          {messageTimestamp && (
-            <span className="msg-row-timestamp" style={{ paddingRight: 4, marginTop: 4 }}>
-              {messageTimestamp}
-            </span>
-          )}
+          <div className="msg-row-timestamp" style={{ display: "flex", alignItems: "center", gap: 2, justifyContent: "flex-end", marginTop: 4, paddingRight: 4 }}>
+            <MessageCopyButton message={message} />
+            {messageTimestamp && <span>{messageTimestamp}</span>}
+          </div>
         </>
       ) : showAssistantShell ? (
         <>
@@ -1160,11 +1208,10 @@ function MessageRowView({
               </div>
             )}
           </div>
-          {messageTimestamp && (
-            <span className="msg-row-timestamp" style={{ marginTop: 4, paddingLeft: 4 }}>
-              {messageTimestamp}
-            </span>
-          )}
+          <div className="msg-row-timestamp" style={{ display: "flex", alignItems: "center", gap: 2, marginTop: 4, paddingLeft: 4 }}>
+            <MessageCopyButton message={message} />
+            {messageTimestamp && <span>{messageTimestamp}</span>}
+          </div>
         </>
       ) : null}
     </div>

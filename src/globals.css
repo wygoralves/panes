@@ -841,10 +841,9 @@ button, input, textarea, select {
 .msg-row-timestamp {
   font-size: 10px; color: var(--text-3);
   opacity: 0; transition: opacity var(--duration-fast) var(--ease-out);
-  pointer-events: none;
 }
 .msg-row:hover .msg-row-timestamp,
-.msg-row:focus-within .msg-row-timestamp { opacity: 1; }
+.msg-row:focus-within .msg-row-timestamp { opacity: 1; pointer-events: auto; }
 .msg-section-divider { height: 1px; background: var(--border); opacity: 0.4; margin: 4px 12px; }
 
 /* ── Tauri window drag area ── */
