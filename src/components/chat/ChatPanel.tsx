@@ -87,7 +87,6 @@ import { ChatSlashMenu, type SlashCommand } from "./ChatSlashMenu";
 import { ChatCommandPanel, type ActiveSlashCommand } from "./ChatCommandPanel";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
-import { getHarnessIcon } from "../shared/HarnessLogos";
 import { shouldSubmitChatInput } from "./chatInputShortcuts";
 import type {
   ApprovalBlock,
@@ -1183,27 +1182,9 @@ function MessageRowView({
             style={{
               width: "100%",
               maxWidth: "100%",
-              padding: "6px 0",
-              borderRadius: "var(--radius-md)",
-              background: "var(--bg-2)",
-              border: "1px solid var(--border)",
-              overflow: "hidden",
+              padding: "4px 0",
             }}
           >
-            <div
-              style={{
-                padding: "2px 14px 6px",
-                fontSize: 11,
-                fontWeight: 600,
-                color: "var(--text-3)",
-                letterSpacing: "0.02em",
-              }}
-            >
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                {assistantEngineId && getHarnessIcon(assistantEngineId, 11)}
-                <span>{assistantLabel}</span>
-              </span>
-            </div>
             {hasAssistantContent ? (
               <MessageBlocks
                 blocks={message.blocks}
@@ -1215,7 +1196,7 @@ function MessageRowView({
             ) : (
               <div
                 style={{
-                  padding: "8px 14px 12px",
+                  padding: "4px 14px 8px",
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 8,
@@ -1236,7 +1217,7 @@ function MessageRowView({
               </div>
             )}
           </div>
-          <div className="msg-row-timestamp" style={{ display: "flex", alignItems: "center", gap: 2, marginTop: 4, paddingLeft: 4 }}>
+          <div className="msg-row-timestamp" style={{ display: "flex", alignItems: "center", gap: 2, marginTop: 2, paddingLeft: 14 }}>
             <MessageCopyButton message={message} />
             {messageTimestamp && <span>{messageTimestamp}</span>}
           </div>

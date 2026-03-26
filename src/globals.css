@@ -773,9 +773,7 @@ button, input, textarea, select {
   display: flex; align-items: center; gap: 6px; padding: 6px 12px;
   cursor: pointer; user-select: none;
   border-radius: var(--radius-sm);
-  transition: background var(--duration-fast) var(--ease-out);
 }
-.msg-block-header:hover { background: rgba(255, 255, 255, 0.06); }
 .msg-block-chevron {
   flex-shrink: 0; color: var(--text-3); opacity: 0.5;
   transition: transform var(--duration-fast) var(--ease-out);
@@ -792,8 +790,18 @@ button, input, textarea, select {
 .action-group-body--expanded { grid-template-rows: 1fr; }
 .action-group-body-inner { overflow: hidden; }
 
+.msg-action-card {
+  margin: 2px 12px;
+  padding: 6px 0;
+  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  opacity: 0.7;
+}
+
 /* ── Chat Block Shared Styles ── */
-.msg-block-inset { margin: 0 8px; }
 
 .msg-notice-block {
   margin: 2px 12px 8px; padding: 9px 12px;

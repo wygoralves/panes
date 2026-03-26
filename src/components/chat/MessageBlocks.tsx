@@ -125,29 +125,29 @@ const actionIcons: Record<string, typeof Terminal> = {
 
 const ACTION_GROUP_MIN_SIZE = 3;
 
-type BlockSegment =
+type InnerSegment =
   | { kind: "single"; block: ContentBlock; index: number }
-  | { kind: "action-group"; blocks: ActionBlock[]; indices: number[]; hasError: boolean }
+  | { kind: "action-group"; blocks: ActionBlock[]; indices: number[]; hasError: boolean };
+
+type BlockSegment =
+  | InnerSegment
+  | { kind: "action-card"; segments: InnerSegment[] }
   | { kind: "divider" };
 
+function isCardSegment(seg: BlockSegment): seg is InnerSegment {
+  if (seg.kind === "action-group") return true;
+  if (seg.kind === "single" && (seg.block.type === "action" || seg.block.type === "thinking" || seg.block.type === "approval")) return true;
+  return false;
+}
+
 function buildBlockSegments(blocks: ContentBlock[], isStreaming?: boolean): BlockSegment[] {
-  const segments: BlockSegment[] = [];
+  // Phase 1: build flat inner segments
+  const flat: BlockSegment[] = [];
   let i = 0;
   while (i < blocks.length) {
     const block = blocks[i];
     if (block.type !== "action") {
-      // Insert divider when a non-action text block transitions to action blocks
-      if (
-        block.type === "text" &&
-        i + 1 < blocks.length &&
-        blocks[i + 1].type === "action"
-      ) {
-        segments.push({ kind: "single", block, index: i });
-        segments.push({ kind: "divider" });
-        i++;
-        continue;
-      }
-      segments.push({ kind: "single", block, index: i });
+      flat.push({ kind: "single", block, index: i });
       i++;
       continue;
     }
@@ -165,7 +165,7 @@ function buildBlockSegments(blocks: ContentBlock[], isStreaming?: boolean): Bloc
     while (subStart < runEnd) {
       const actionBlock = blocks[subStart] as ActionBlock;
       if (actionBlock.status === "running" || actionBlock.status === "pending") {
-        segments.push({ kind: "single", block: actionBlock, index: subStart });
+        flat.push({ kind: "single", block: actionBlock, index: subStart });
         subStart++;
         continue;
       }
@@ -183,14 +183,33 @@ function buildBlockSegments(blocks: ContentBlock[], isStreaming?: boolean): Bloc
         const groupBlocks = blocks.slice(subStart, subEnd) as ActionBlock[];
         const indices = Array.from({ length: count }, (_, k) => subStart + k);
         const hasError = groupBlocks.some((b) => b.status === "error");
-        segments.push({ kind: "action-group", blocks: groupBlocks, indices, hasError });
+        flat.push({ kind: "action-group", blocks: groupBlocks, indices, hasError });
       } else {
         for (let j = subStart; j < subEnd; j++) {
-          segments.push({ kind: "single", block: blocks[j], index: j });
+          flat.push({ kind: "single", block: blocks[j], index: j });
         }
       }
       subStart = subEnd;
     }
+  }
+
+  // Phase 2: wrap consecutive action segments into action-card containers
+  const segments: BlockSegment[] = [];
+  let j = 0;
+  while (j < flat.length) {
+    const seg = flat[j];
+    if (!isCardSegment(seg)) {
+      segments.push(seg);
+      j++;
+      continue;
+    }
+    const cardSegments: InnerSegment[] = [seg];
+    j++;
+    while (j < flat.length && isCardSegment(flat[j])) {
+      cardSegments.push(flat[j] as InnerSegment);
+      j++;
+    }
+    segments.push({ kind: "action-card", segments: cardSegments });
   }
   return segments;
 }
@@ -740,7 +759,7 @@ function ActionGroupView({
 
   const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
   return (
-    <div className="animate-slide-up msg-block-inset">
+    <div className="animate-slide-up">
       <div
         className="msg-block-header"
         role="button"
@@ -1033,7 +1052,7 @@ function ApprovalCard({
 
   if (isToolInputRequest && toolInputQuestions.length > 0 && !showClaudeUnsupportedApproval) {
     return (
-      <div className="msg-block-inset">
+      <div>
         <ToolInputApprovalCard
           block={block}
           questions={toolInputQuestions}
@@ -1385,7 +1404,7 @@ function renderSingleBlock(
   /* ── Diff ── */
   if (block.type === "diff") {
     return (
-      <div key={blockKey} className="msg-block-inset">
+      <div key={blockKey} >
         <MessageDiffBlock block={block} />
       </div>
     );
@@ -1404,7 +1423,7 @@ function renderSingleBlock(
   /* ── Action ── */
   if (block.type === "action") {
     return (
-      <div key={blockKey} className="msg-block-inset">
+      <div key={blockKey} >
         <ActionBlockView
           block={block}
           onLoadDeferredOutput={
@@ -1432,7 +1451,7 @@ function renderSingleBlock(
     const isLastBlock = index === safeBlocks.length - 1;
     const thinkingActive = status === "streaming" && isLastBlock;
     return (
-      <div key={blockKey} className="msg-block-inset">
+      <div key={blockKey} >
         <ThinkingBlockView block={block} isStreaming={thinkingActive} />
       </div>
     );
@@ -1486,6 +1505,58 @@ function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadAc
       {blockSegments.map((segment, segIdx) => {
         if (segment.kind === "divider") {
           return <div key={`divider-${segIdx}`} className="msg-section-divider" />;
+        }
+
+        if (segment.kind === "action-card") {
+          return (
+            <div key={`action-card-${segIdx}`} className="msg-action-card">
+              {segment.segments.map((inner, innerIdx) => {
+                if (inner.kind === "action-group") {
+                  const first = inner.blocks[0];
+                  const last = inner.blocks[inner.blocks.length - 1];
+                  return (
+                    <ActionGroupView
+                      key={`action-group:${first.actionId}:${last.actionId}`}
+                      blocks={inner.blocks}
+                      hasError={inner.hasError}
+                      onLoadActionOutput={onLoadActionOutput}
+                    />
+                  );
+                }
+                if (inner.block.type === "thinking") {
+                  const thinkingBlock = inner.block as ThinkingBlock;
+                  const isLastBlock = inner.index === safeBlocks.length - 1;
+                  const thinkingActive = status === "streaming" && isLastBlock;
+                  return (
+                    <ThinkingBlockView
+                      key={getMessageBlockKey(inner.block, inner.index, safeBlocks)}
+                      block={thinkingBlock}
+                      isStreaming={thinkingActive}
+                    />
+                  );
+                }
+                if (inner.block.type === "approval") {
+                  return (
+                    <ApprovalCard
+                      key={(inner.block as ApprovalBlock).approvalId}
+                      block={inner.block as ApprovalBlock}
+                      engineId={engineId}
+                      onApproval={onApproval}
+                    />
+                  );
+                }
+                return (
+                  <ActionBlockView
+                    key={inner.block.type === "action" ? (inner.block as ActionBlock).actionId : `inner-${innerIdx}`}
+                    block={inner.block as ActionBlock}
+                    onLoadDeferredOutput={
+                      onLoadActionOutput ? () => onLoadActionOutput((inner.block as ActionBlock).actionId) : undefined
+                    }
+                  />
+                );
+              })}
+            </div>
+          );
         }
 
         if (segment.kind === "action-group") {
