@@ -576,7 +576,7 @@ function appendSteerBlockToAssistantMessage(message: Message, steerBlock: SteerB
     return message;
   }
 
-  const blocks = [steerBlock, ...existingBlocks];
+  const blocks = [...existingBlocks, steerBlock];
   return {
     ...message,
     blocks,

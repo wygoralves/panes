@@ -880,13 +880,13 @@ describe("chatStore send", () => {
       status: "completed",
       blocks: [
         {
+          type: "text",
+          content: "Working on it",
+        },
+        {
           type: "steer",
           steerId: "steer-user-1",
           content: "focus on the failing test",
-        },
-        {
-          type: "text",
-          content: "Working on it",
         },
       ],
     });
