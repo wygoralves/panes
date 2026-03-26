@@ -18,6 +18,8 @@ import {
   File,
   Info,
   Layers,
+  Copy,
+  Check,
 } from "lucide-react";
 import type {
   ActionBlock,
@@ -76,6 +78,39 @@ function isBlockLike(value: unknown): value is { type: string } {
   return typeof value === "object" && value !== null && "type" in value;
 }
 
+function CodeBlockCopyButton({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [content]);
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      style={{
+        marginLeft: "auto", flexShrink: 0, cursor: "pointer",
+        background: "none", border: "none", padding: "2px",
+        color: copied ? "var(--success)" : "var(--text-3)",
+        opacity: copied ? 1 : 0.5,
+        transition: "color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out)",
+      }}
+      aria-label="Copy code"
+    >
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+    </button>
+  );
+}
+
+function handleToggleKeyDown(e: React.KeyboardEvent, toggle: () => void) {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    toggle();
+  }
+}
+
 const actionIcons: Record<string, typeof Terminal> = {
   command: Terminal,
   file_write: FileCode2,
@@ -95,10 +130,17 @@ type BlockSegment =
 
 function buildBlockSegments(blocks: ContentBlock[]): BlockSegment[] {
   const segments: BlockSegment[] = [];
+  const deferredSteerSegments: BlockSegment[] = [];
   let i = 0;
   while (i < blocks.length) {
     const block = blocks[i];
     if (block.type !== "action") {
+      // Defer steer blocks to the end of the message
+      if (block.type === "steer") {
+        deferredSteerSegments.push({ kind: "single", block, index: i });
+        i++;
+        continue;
+      }
       // Insert divider when a non-action text block transitions to action blocks
       if (
         block.type === "text" &&
@@ -155,6 +197,10 @@ function buildBlockSegments(blocks: ContentBlock[]): BlockSegment[] {
       subStart = subEnd;
     }
   }
+  // Append steer blocks at the end so they appear at the bottom of the message
+  for (const s of deferredSteerSegments) {
+    segments.push(s);
+  }
   return segments;
 }
 
@@ -176,9 +222,17 @@ function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaul
   const adds = parseResult?.adds ?? 0;
   const dels = parseResult?.dels ?? 0;
 
+  const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
   return (
     <div>
-      <div className="msg-block-header" onClick={() => setExpanded((v) => !v)}>
+      <div
+        className="msg-block-header"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={toggleExpanded}
+        onKeyDown={(e) => handleToggleKeyDown(e, toggleExpanded)}
+      >
         <ChevronRight
           size={11}
           className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
@@ -236,10 +290,18 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
     : durationSec != null && durationSec > 0
       ? t("messageBlocks.thinkingDone", { seconds: durationSec })
       : t("messageBlocks.thinking");
+  const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
 
   return (
     <div>
-      <div className="msg-block-header" onClick={() => setExpanded((v) => !v)}>
+      <div
+        className="msg-block-header"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={toggleExpanded}
+        onKeyDown={(e) => handleToggleKeyDown(e, toggleExpanded)}
+      >
         <ChevronRight
           size={11}
           className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
@@ -307,21 +369,7 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
 
 function NoticeBlockView({ block }: { block: NoticeBlock }) {
   return (
-    <div
-      style={{
-        margin: "2px 12px 8px",
-        padding: "9px 12px",
-        borderRadius: "var(--radius-sm)",
-        border: "1px solid rgba(96, 165, 250, 0.16)",
-        background: "rgba(96, 165, 250, 0.08)",
-        color: "var(--text-2)",
-        fontSize: 12,
-        lineHeight: 1.5,
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 8,
-      }}
-    >
+    <div className="msg-notice-block msg-notice-block--info">
       <Info size={14} style={{ flexShrink: 0, color: "var(--info)", marginTop: 1 }} />
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: "var(--info)", marginBottom: 2 }}>
@@ -340,21 +388,7 @@ function SteerBlockView({ block }: { block: SteerBlock }) {
   const hasContent = block.content.trim().length > 0;
 
   return (
-    <div
-      style={{
-        margin: "2px 12px 8px",
-        padding: "9px 12px",
-        borderRadius: "var(--radius-sm)",
-        border: "1px solid rgba(255, 107, 107, 0.16)",
-        background: "rgba(255, 107, 107, 0.06)",
-        color: "var(--text-2)",
-        fontSize: 12,
-        lineHeight: 1.5,
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 8,
-      }}
-    >
+    <div className="msg-notice-block msg-notice-block--steer">
       <CornerDownRight size={14} style={{ flexShrink: 0, color: "var(--danger)", marginTop: 1 }} />
       <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
         {hasContent && (
@@ -518,12 +552,19 @@ function ActionBlockView({
     }
   }, [outputDeferred, outputChunks.length]);
 
+  const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
   return (
     <div>
       <div
         className={canToggle ? "msg-block-header msg-block-header--compact" : undefined}
         style={canToggle ? undefined : { display: "flex", alignItems: "center", gap: 6, padding: "3px 12px" }}
-        onClick={canToggle ? () => setExpanded((v) => !v) : undefined}
+        {...(canToggle ? {
+          role: "button" as const,
+          tabIndex: 0,
+          "aria-expanded": expanded,
+          onClick: toggleExpanded,
+          onKeyDown: (e: React.KeyboardEvent) => handleToggleKeyDown(e, toggleExpanded),
+        } : {})}
       >
         {canToggle && (
           <ChevronRight
@@ -582,7 +623,7 @@ function ActionBlockView({
             >
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                 {loadingDeferredOutput && (
-                  <Loader2 size={12} style={{ animation: "pulse-soft 1s ease-in-out infinite" }} />
+                  <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
                 )}
                 {loadingDeferredOutput
                   ? t("messageBlocks.deferredOutput.loadingFull")
@@ -615,56 +656,28 @@ function ActionBlockView({
           )}
 
           {outputChunks.length > 0 && (
-            <pre
-              style={{
-                margin: 0,
-                padding: "8px 12px",
-                background: "var(--code-bg)",
-                fontSize: 11.5,
-                lineHeight: 1.5,
-                fontFamily: '"JetBrains Mono", monospace',
-                whiteSpace: "pre-wrap",
-                overflow: "auto",
-                maxHeight: 160,
-                color: "var(--text-2)",
-              }}
-            >
+            <pre className="action-output-pre" style={{ maxHeight: 260 }}>
               {outputText}
             </pre>
           )}
 
           {outputTruncated && (
-            <div
-              style={{
-                margin: 0,
-                padding: "5px 12px",
-                borderTop: outputChunks.length > 0 ? "1px solid var(--border)" : undefined,
-                background: "rgba(148, 163, 184, 0.06)",
-                fontSize: 10.5,
-                color: "var(--text-3)",
-              }}
-            >
+            <div style={{
+              margin: 0, padding: "5px 12px",
+              borderTop: outputChunks.length > 0 ? "1px solid var(--border)" : undefined,
+              background: "rgba(148, 163, 184, 0.06)",
+              fontSize: 10.5, color: "var(--text-3)",
+            }}>
               {t("messageBlocks.outputTruncated")}
             </div>
           )}
 
           {block.result?.error && (
             <pre
+              className="action-output-error"
               style={{
-                margin: 0,
-                padding: "8px 12px",
-                borderTop:
-                  outputChunks.length > 0 || outputTruncated
-                    ? "1px solid rgba(248, 113, 113, 0.2)"
-                    : undefined,
-                background: "rgba(248, 113, 113, 0.06)",
-                fontSize: 11.5,
-                lineHeight: 1.5,
-                fontFamily: '"JetBrains Mono", monospace',
-                whiteSpace: "pre-wrap",
-                overflow: "auto",
-                maxHeight: 120,
-                color: "var(--danger)",
+                borderTop: outputChunks.length > 0 || outputTruncated
+                  ? "1px solid rgba(248, 113, 113, 0.2)" : undefined,
               }}
             >
               {String(block.result.error)}
@@ -727,11 +740,16 @@ function ActionGroupView({
     ? t("messageBlocks.actionGroup.summaryWithError", { count: blocks.length, errorCount })
     : t("messageBlocks.actionGroup.summary", { count: blocks.length });
 
+  const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
   return (
-    <div className="animate-slide-up">
+    <div className="animate-slide-up msg-block-inset">
       <div
         className="msg-block-header"
-        onClick={() => setExpanded((v) => !v)}
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={toggleExpanded}
+        onKeyDown={(e) => handleToggleKeyDown(e, toggleExpanded)}
       >
         <ChevronRight
           size={11}
@@ -1047,8 +1065,8 @@ function ApprovalCard({
         )}
       </div>
 
-      {/* Details */}
-      {!isToolInputRequest && (command || displayReason || commandActionCount > 0 || requestedPermissions || mcpUrl || mcpSchema || hasRemainingDetails) && (
+      {/* Details — collapsed for resolved approvals */}
+      {!isToolInputRequest && (command || displayReason || commandActionCount > 0 || requestedPermissions || mcpUrl || mcpSchema || hasRemainingDetails) && (isPending || !block.decision) && (
         <div className="acard-details">
           {command && (
             <pre className="acard-command">{command}</pre>
@@ -1253,7 +1271,7 @@ function renderSingleBlock(
           key={blockKey}
           style={{
             fontSize: 13,
-            padding: "4px 14px",
+            padding: "6px 14px",
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
           }}
@@ -1270,7 +1288,7 @@ function renderSingleBlock(
           <div
             style={{
               fontSize: 13,
-              padding: "4px 14px",
+              padding: "6px 14px",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
             }}
@@ -1282,7 +1300,7 @@ function renderSingleBlock(
         <MarkdownContent
           content={textContent}
           className="prose"
-          style={{ fontSize: 13, padding: "4px 14px" }}
+          style={{ fontSize: 13, padding: "6px 14px" }}
         />
       </Suspense>
     );
@@ -1314,7 +1332,8 @@ function renderSingleBlock(
           }}
         >
           <FileCode2 size={12} style={{ opacity: 0.5 }} />
-          {block.filename || lang}
+          <span style={{ flex: 1 }}>{block.filename || lang}</span>
+          <CodeBlockCopyButton content={String(block.content ?? "")} />
         </div>
         <pre
           style={{
@@ -1337,7 +1356,11 @@ function renderSingleBlock(
 
   /* ── Diff ── */
   if (block.type === "diff") {
-    return <MessageDiffBlock key={blockKey} block={block} defaultExpanded={index === lastDiffIndex} />;
+    return (
+      <div key={blockKey} className="msg-block-inset">
+        <MessageDiffBlock block={block} defaultExpanded={index === lastDiffIndex} />
+      </div>
+    );
   }
 
   /* ── Notice ── */
@@ -1353,25 +1376,27 @@ function renderSingleBlock(
   /* ── Action ── */
   if (block.type === "action") {
     return (
-      <ActionBlockView
-        key={blockKey}
-        block={block}
-        onLoadDeferredOutput={
-          onLoadActionOutput ? () => onLoadActionOutput(block.actionId) : undefined
-        }
-      />
+      <div key={blockKey} className="msg-block-inset">
+        <ActionBlockView
+          block={block}
+          onLoadDeferredOutput={
+            onLoadActionOutput ? () => onLoadActionOutput(block.actionId) : undefined
+          }
+        />
+      </div>
     );
   }
 
   /* ── Approval ── */
   if (block.type === "approval") {
     return (
-      <ApprovalCard
-        key={blockKey}
-        block={block}
-        engineId={engineId}
-        onApproval={onApproval}
-      />
+      <div key={blockKey} className="msg-block-inset">
+        <ApprovalCard
+          block={block}
+          engineId={engineId}
+          onApproval={onApproval}
+        />
+      </div>
     );
   }
 
@@ -1379,7 +1404,11 @@ function renderSingleBlock(
   if (block.type === "thinking") {
     const isLastBlock = index === safeBlocks.length - 1;
     const thinkingActive = status === "streaming" && isLastBlock;
-    return <ThinkingBlockView key={blockKey} block={block} isStreaming={thinkingActive} />;
+    return (
+      <div key={blockKey} className="msg-block-inset">
+        <ThinkingBlockView block={block} isStreaming={thinkingActive} />
+      </div>
+    );
   }
 
   /* ── Attachment ── */
@@ -1406,20 +1435,7 @@ function renderSingleBlock(
   /* ── Error ── */
   if (block.type === "error") {
     return (
-      <div
-        key={blockKey}
-        style={{
-          padding: "10px 14px",
-          borderRadius: "var(--radius-sm)",
-          border: "1px solid rgba(248, 113, 113, 0.15)",
-          background: "rgba(248, 113, 113, 0.06)",
-          color: "var(--danger)",
-          fontSize: 13,
-          display: "flex",
-          alignItems: "flex-start",
-          gap: 8,
-        }}
-      >
+      <div key={blockKey} className="msg-error-block">
         <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
         {block.message}
       </div>

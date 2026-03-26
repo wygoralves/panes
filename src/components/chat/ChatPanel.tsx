@@ -1020,7 +1020,7 @@ function MessageRowView({
   return (
     <div
       data-message-id={message.id}
-      className="animate-slide-up"
+      className="animate-slide-up msg-row"
       style={{
         animationDelay: `${Math.min(index * 20, 200)}ms`,
         display: "flex",
@@ -1095,14 +1095,7 @@ function MessageRowView({
             {userContent}
           </div>
           {messageTimestamp && (
-            <span
-              style={{
-                fontSize: 10,
-                color: "var(--text-3)",
-                paddingRight: 4,
-                marginTop: 4,
-              }}
-            >
+            <span className="msg-row-timestamp" style={{ paddingRight: 4, marginTop: 4 }}>
               {messageTimestamp}
             </span>
           )}
@@ -1168,14 +1161,7 @@ function MessageRowView({
             )}
           </div>
           {messageTimestamp && (
-            <span
-              style={{
-                fontSize: 10,
-                color: "var(--text-3)",
-                marginTop: 4,
-                paddingLeft: 4,
-              }}
-            >
+            <span className="msg-row-timestamp" style={{ marginTop: 4, paddingLeft: 4 }}>
               {messageTimestamp}
             </span>
           )}
