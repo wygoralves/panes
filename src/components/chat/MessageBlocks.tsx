@@ -197,9 +197,9 @@ function buildBlockSegments(blocks: ContentBlock[], isStreaming?: boolean): Bloc
 
 /* ── Diff Block ── */
 
-function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaultExpanded: boolean }) {
+function MessageDiffBlock({ block }: { block: DiffBlock }) {
   const { t } = useTranslation("chat");
-  const [expanded, setExpanded] = useState(defaultExpanded);
+  const [expanded, setExpanded] = useState(false);
   const raw = String(block.diff ?? "");
   const fallbackFilename = useMemo(() => extractDiffFilename(raw), [raw]);
   const {
@@ -513,8 +513,7 @@ function ActionBlockView({
     actionDetails.progressKind === "mcp" && typeof actionDetails.progressMessage === "string"
       ? actionDetails.progressMessage
       : null;
-  const isReadAction = block.actionType === "file_read" || block.actionType === "search";
-  const [expanded, setExpanded] = useState((isRunning || isPending) && !isReadAction);
+  const [expanded, setExpanded] = useState(false);
   const [loadingDeferredOutput, setLoadingDeferredOutput] = useState(false);
   const [deferredOutputError, setDeferredOutputError] = useState<string | null>(null);
   const deferredOutputRequestedRef = useRef(false);
@@ -884,7 +883,7 @@ function ToolInputApprovalCard({
     : undefined;
   const isAnswered = !isPending && block.decision;
   const hasAnswers = isAnswered && answers;
-  const [expanded, setExpanded] = useState(isPending);
+  const [expanded, setExpanded] = useState(false);
   const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
 
   return (
@@ -1281,7 +1280,6 @@ function renderSingleBlock(
   block: ContentBlock,
   index: number,
   safeBlocks: ContentBlock[],
-  lastDiffIndex: number,
   status: MessageStatus | undefined,
   engineId: string | undefined,
   onApproval: (approvalId: string, response: ApprovalResponse) => void,
@@ -1388,7 +1386,7 @@ function renderSingleBlock(
   if (block.type === "diff") {
     return (
       <div key={blockKey} className="msg-block-inset">
-        <MessageDiffBlock block={block} defaultExpanded={index === lastDiffIndex} />
+        <MessageDiffBlock block={block} />
       </div>
     );
   }
@@ -1480,13 +1478,6 @@ function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadAc
     [blocks],
   );
 
-  const lastDiffIndex = useMemo(() => {
-    for (let i = safeBlocks.length - 1; i >= 0; i--) {
-      if (safeBlocks[i].type === "diff") return i;
-    }
-    return -1;
-  }, [safeBlocks]);
-
   const isStreaming = status === "streaming";
   const blockSegments = useMemo(() => buildBlockSegments(safeBlocks, isStreaming), [safeBlocks, isStreaming]);
 
@@ -1514,7 +1505,6 @@ function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadAc
           segment.block,
           segment.index,
           safeBlocks,
-          lastDiffIndex,
           status,
           engineId,
           onApproval,
