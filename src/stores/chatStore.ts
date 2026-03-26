@@ -297,6 +297,7 @@ function resolveApprovalInMessages(
   messages: Message[],
   approvalId: string,
   decision?: ApprovalBlock["decision"],
+  responseData?: Record<string, unknown>,
 ): Message[] {
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
     const message = messages[messageIndex];
@@ -321,17 +322,13 @@ function resolveApprovalInMessages(
     }
 
     const nextBlocks = [...blocks];
-    nextBlocks[approvalIndex] =
-      decision === undefined
-        ? {
-            ...approvalBlock,
-            status: "answered",
-          }
-        : {
-            ...approvalBlock,
-            status: "answered",
-            decision,
-          };
+    const updatedBlock: ApprovalBlock = {
+      ...approvalBlock,
+      status: "answered",
+      ...(decision !== undefined ? { decision } : {}),
+      ...(responseData !== undefined ? { responseData } : {}),
+    };
+    nextBlocks[approvalIndex] = updatedBlock;
 
     const nextMessages = [...messages];
     nextMessages[messageIndex] = {
@@ -1958,9 +1955,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Apply optimistic update BEFORE the IPC call
     const decision = resolveApprovalDecision(response);
+    const responseData = typeof response === "object" && response !== null && !Array.isArray(response)
+      ? response as Record<string, unknown>
+      : undefined;
     const previousMessages = get().messages;
     set((state) => {
-      const nextMessages = resolveApprovalInMessages(state.messages, approvalId, decision);
+      const nextMessages = resolveApprovalInMessages(state.messages, approvalId, decision, responseData);
       if (nextMessages === state.messages) {
         return state;
       }

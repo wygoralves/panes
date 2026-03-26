@@ -302,6 +302,7 @@ export interface ApprovalBlock {
     | "decline"
     | "cancel"
     | "custom";
+  responseData?: Record<string, unknown>;
 }
 
 export type ApprovalDecision =

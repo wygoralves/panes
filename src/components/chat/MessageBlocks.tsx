@@ -847,32 +847,34 @@ function extractApprovalDetails(details: Record<string, unknown>) {
 
 function ToolInputApprovalCard({
   block,
-  questionCount,
+  questions,
   isPending,
   decisionLabel,
   decisionBackground,
   decisionColor,
 }: {
   block: ApprovalBlock;
-  questionCount: number;
+  questions: { id: string; question: string }[];
   isPending: boolean;
   decisionLabel: string;
   decisionBackground: string;
   decisionColor: string;
 }) {
   const { t } = useTranslation("chat");
-  if (questionCount <= 0) {
+  if (questions.length <= 0) {
     return null;
   }
+
+  const answers = block.responseData?.answers as Record<string, string> | undefined;
 
   return (
     <div className="tool-input-preview-card">
       <div className="tool-input-preview-body">
         <div className="tool-input-preview-header">
           <span className="tool-input-preview-count">
-            {t("messageBlocks.approval.pendingQuestions", {
-              count: questionCount,
-            })}
+            {isPending
+              ? t("messageBlocks.approval.pendingQuestions", { count: questions.length })
+              : t("messageBlocks.approval.answeredQuestions", { count: questions.length })}
           </span>
 
           {!isPending && block.decision ? (
@@ -890,6 +892,19 @@ function ToolInputApprovalCard({
             <span className="tool-input-preview-note">
               {t("messageBlocks.toolInput.answerInComposer")}
             </span>
+          </div>
+        ) : answers ? (
+          <div style={{ padding: "6px 12px 10px", display: "flex", flexDirection: "column", gap: 8 }}>
+            {questions.map((q) => {
+              const answer = answers[q.id];
+              if (!answer) return null;
+              return (
+                <div key={q.id} style={{ fontSize: 12, lineHeight: 1.5 }}>
+                  <div style={{ color: "var(--text-3)", fontSize: 11, marginBottom: 2 }}>{q.question}</div>
+                  <div style={{ color: "var(--text-1)" }}>{answer}</div>
+                </div>
+              );
+            })}
           </div>
         ) : null}
       </div>
@@ -1006,7 +1021,7 @@ function ApprovalCard({
     return (
       <ToolInputApprovalCard
         block={block}
-        questionCount={toolInputQuestions.length}
+        questions={toolInputQuestions}
         isPending={isPending}
         decisionLabel={decisionLabel}
         decisionBackground={decisionBackground}
