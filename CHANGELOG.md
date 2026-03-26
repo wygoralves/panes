@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.46.3...vnull) (2026-03-26)
+
+### Bug Fixes
+
+* **startup:** harden lazy startup without stale engine state ([22db45c](https://github.com/wygoralves/panes/commit/22db45c0f5ceeb6a24e992247e1a15c549bd6bca))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.46.2...vnull) (2026-03-25)
 
 ### Bug Fixes
