@@ -65,7 +65,8 @@ import {
   useParsedDiff,
 } from "../shared/DiffViewer";
 
-const MarkdownContent = lazy(() => import("./MarkdownContent"));
+const markdownContentImport = import("./MarkdownContent");
+const MarkdownContent = lazy(() => markdownContentImport);
 interface Props {
   blocks?: ContentBlock[];
   status?: MessageStatus;
