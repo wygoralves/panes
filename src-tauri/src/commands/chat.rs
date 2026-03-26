@@ -82,7 +82,13 @@ enum ContentBlock {
     },
 
     #[serde(rename = "thinking")]
-    Thinking { content: String },
+    Thinking {
+        content: String,
+        #[serde(rename = "startedAt", skip_serializing_if = "Option::is_none")]
+        started_at: Option<f64>,
+        #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<f64>,
+    },
 
     #[serde(rename = "notice")]
     Notice {
@@ -2830,7 +2836,7 @@ fn chat_notification_preview(blocks: &[ContentBlock]) -> Option<String> {
                 ..
             } => {}
             ContentBlock::Text { content, .. }
-            | ContentBlock::Thinking { content }
+            | ContentBlock::Thinking { content, .. }
             | ContentBlock::Error { message: content } => {
                 if let Some(preview) = normalize_chat_notification_preview(content) {
                     return Some(preview);
@@ -3147,13 +3153,15 @@ fn append_thinking_delta(blocks: &mut Vec<ContentBlock>, content: &str) -> bool 
         return false;
     }
 
-    if let Some(ContentBlock::Thinking { content: current }) = blocks.last_mut() {
+    if let Some(ContentBlock::Thinking { content: current, .. }) = blocks.last_mut() {
         current.push_str(content);
         return true;
     }
 
     blocks.push(ContentBlock::Thinking {
         content: content.to_string(),
+        started_at: None,
+        duration_ms: None,
     });
     true
 }

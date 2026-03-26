@@ -20,12 +20,6 @@ import {
   Layers,
   Copy,
   Check,
-  Lightbulb,
-  Eye,
-  Compass,
-  BookOpen,
-  Search as SearchIcon,
-  Sparkles,
 } from "lucide-react";
 import type {
   ActionBlock,
@@ -275,35 +269,14 @@ function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaul
 
 /* ── Thinking Block ── */
 
-const THINKING_BLOCK_VARIANTS = [
-  { icon: Brain, key: "thinkingVariants.thinking" },
-  { icon: Lightbulb, key: "thinkingVariants.reasoning" },
-  { icon: Eye, key: "thinkingVariants.analyzing" },
-  { icon: Compass, key: "thinkingVariants.exploring" },
-  { icon: SearchIcon, key: "thinkingVariants.researching" },
-  { icon: Sparkles, key: "thinkingVariants.generating" },
-  { icon: BookOpen, key: "thinkingVariants.reading" },
-  { icon: Brain, key: "thinkingVariants.considering" },
-] as const;
-
 function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStreaming: boolean }) {
   const { t } = useTranslation("chat");
   const [expanded, setExpanded] = useState(false);
   const content = String(block.content ?? "");
 
   const durationSec = block.durationMs != null ? Math.round(block.durationMs / 1000) : null;
-  const [variantIdx, setVariantIdx] = useState(() => Math.floor(Math.random() * THINKING_BLOCK_VARIANTS.length));
-  useEffect(() => {
-    if (!isStreaming) return;
-    const interval = setInterval(() => {
-      setVariantIdx((i) => (i + 1) % THINKING_BLOCK_VARIANTS.length);
-    }, 4000);
-    return () => clearInterval(interval);
-  }, [isStreaming]);
-  const variant = THINKING_BLOCK_VARIANTS[variantIdx];
-  const ThinkIcon = isStreaming ? variant.icon : Brain;
   const thinkingLabel = isStreaming
-    ? `${t(variant.key)}\u2026`
+    ? `${t("messageBlocks.thinking")}\u2026`
     : durationSec != null && durationSec > 0
       ? t("messageBlocks.thinkingDone", { seconds: durationSec })
       : t("messageBlocks.thinking");
@@ -323,7 +296,7 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
           size={11}
           className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
         />
-        <ThinkIcon
+        <Brain
           size={12}
           className={isStreaming ? "thinking-icon-active" : undefined}
           style={isStreaming ? { color: "var(--info)", flexShrink: 0 } : { color: "var(--info)", opacity: 0.45, flexShrink: 0 }}
