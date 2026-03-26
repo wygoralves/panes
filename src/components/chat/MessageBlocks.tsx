@@ -510,14 +510,21 @@ function ActionBlockView({
   const outputDeferred = block.outputDeferred === true;
   const outputText = useMemo(
     () => {
+      let raw: string;
       if (outputChunks.length === 0) {
         return "";
       }
       if (outputChunks.length === 1) {
         const firstContent = outputChunks[0].content;
-        return typeof firstContent === "string" ? firstContent : String(firstContent ?? "");
+        raw = typeof firstContent === "string" ? firstContent : String(firstContent ?? "");
+      } else {
+        raw = outputChunks.map((chunk) => String(chunk.content ?? "")).join("");
       }
-      return outputChunks.map((chunk) => String(chunk.content ?? "")).join("");
+      // Unescape literal \n and \t sequences that come from JSON-encoded engine output
+      if (raw.includes("\\n") || raw.includes("\\t")) {
+        raw = raw.replace(/\\n/g, "\n").replace(/\\t/g, "\t");
+      }
+      return raw;
     },
     [outputChunks],
   );
@@ -532,7 +539,8 @@ function ActionBlockView({
     actionDetails.progressKind === "mcp" && typeof actionDetails.progressMessage === "string"
       ? actionDetails.progressMessage
       : null;
-  const [expanded, setExpanded] = useState(isRunning || isPending);
+  const isReadAction = block.actionType === "file_read" || block.actionType === "search";
+  const [expanded, setExpanded] = useState((isRunning || isPending) && !isReadAction);
   const [loadingDeferredOutput, setLoadingDeferredOutput] = useState(false);
   const [deferredOutputError, setDeferredOutputError] = useState<string | null>(null);
   const deferredOutputRequestedRef = useRef(false);
