@@ -1311,6 +1311,9 @@ export function ChatPanel() {
   renderStartedAtRef.current = performance.now();
 
   const [input, setInput] = useState("");
+  const inputHistoryRef = useRef<string[]>([]);
+  const inputHistCursorRef = useRef(-1);
+  const inputLiveDraftRef = useRef("");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [isFileDropOver, setIsFileDropOver] = useState(false);
   const [planMode, setPlanMode] = useState(false);
@@ -3360,6 +3363,15 @@ export function ChatPanel() {
         planMode,
       });
       if (steered) {
+        const trimmed = input.trim();
+        if (trimmed) {
+          const hist = inputHistoryRef.current;
+          if (hist[0] !== trimmed) {
+            inputHistoryRef.current = [trimmed, ...hist].slice(0, 50);
+          }
+        }
+        inputHistCursorRef.current = -1;
+        inputLiveDraftRef.current = "";
         setInput("");
         setAttachments([]);
       }
@@ -3482,6 +3494,15 @@ export function ChatPanel() {
     });
     if (sent) {
       pendingPlanImplementationThreadIdRef.current = planMode ? targetThreadId : null;
+      const trimmed = input.trim();
+      if (trimmed) {
+        const hist = inputHistoryRef.current;
+        if (hist[0] !== trimmed) {
+          inputHistoryRef.current = [trimmed, ...hist].slice(0, 50);
+        }
+      }
+      inputHistCursorRef.current = -1;
+      inputLiveDraftRef.current = "";
       setInput("");
       setAttachments([]);
     }
@@ -4927,6 +4948,7 @@ export function ChatPanel() {
                   rows={3}
                   value={input}
                   onChange={(e) => {
+                    inputHistCursorRef.current = -1;
                     setInput(e.target.value);
                     handleSlashDetection(
                       e.target.value,
@@ -4965,6 +4987,29 @@ export function ChatPanel() {
                       e.preventDefault();
                       setActiveCommandPanel(null);
                       setCommandPanelError(null);
+                      return;
+                    }
+                    /* ── Input history cycling (Option+Up / Option+Down) ── */
+                    if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+                      const history = inputHistoryRef.current;
+                      if (history.length === 0) return;
+                      e.preventDefault();
+                      if (e.key === "ArrowUp") {
+                        if (inputHistCursorRef.current === -1) {
+                          inputLiveDraftRef.current = input;
+                        }
+                        const next = Math.min(inputHistCursorRef.current + 1, history.length - 1);
+                        inputHistCursorRef.current = next;
+                        setInput(history[next]);
+                      } else {
+                        const next = inputHistCursorRef.current - 1;
+                        inputHistCursorRef.current = next;
+                        if (next < 0) {
+                          setInput(inputLiveDraftRef.current);
+                        } else {
+                          setInput(history[next]);
+                        }
+                      }
                       return;
                     }
                     if (shouldSubmitChatInput({
