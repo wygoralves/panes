@@ -322,13 +322,12 @@ function resolveApprovalInMessages(
     }
 
     const nextBlocks = [...blocks];
-    const updatedBlock: ApprovalBlock = {
+    nextBlocks[approvalIndex] = {
       ...approvalBlock,
-      status: "answered",
+      status: "answered" as const,
       ...(decision !== undefined ? { decision } : {}),
       ...(responseData !== undefined ? { responseData } : {}),
     };
-    nextBlocks[approvalIndex] = updatedBlock;
 
     const nextMessages = [...messages];
     nextMessages[messageIndex] = {

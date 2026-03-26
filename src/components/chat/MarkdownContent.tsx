@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import rehypeRaw from "rehype-raw";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import type {
   MarkdownParseWorkerRequest,
@@ -10,7 +9,7 @@ import type {
 } from "../../workers/markdownParser.types";
 
 const REMARK_PLUGINS = [remarkGfm];
-const REHYPE_PLUGINS = [rehypeRaw, rehypeHighlight];
+const REHYPE_PLUGINS = [rehypeHighlight];
 const MARKDOWN_WORKER_THRESHOLD_CHARS = 1000;
 const MARKDOWN_CACHE_LIMIT = 280;
 const MARKDOWN_CACHE_MAX_BYTES = 8 * 1024 * 1024;
@@ -230,7 +229,7 @@ export default function MarkdownContent({
         remarkPlugins={REMARK_PLUGINS}
         rehypePlugins={REHYPE_PLUGINS}
       >
-        {content}
+        {content.replace(/<br\s*\/?>/gi, "  \n")}
       </ReactMarkdown>
     </div>
   );
