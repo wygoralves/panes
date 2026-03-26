@@ -378,6 +378,7 @@
     "parsingDiff": "Analisando diff...",
     "noChanges": "Sem alterações",
     "thinking": "Raciocínio",
+    "thinkingDone": "Pensou por {{seconds}}s",
     "actionStatus": {
       "done": "Concluído",
       "running": "Em andamento",
@@ -391,6 +392,22 @@
       "retry": "Tentar novamente"
     },
     "outputTruncated": "Mostrando apenas a saída mais recente da ação (blocos anteriores truncados por desempenho).",
+    "actionGroup": {
+      "summary_one": "{{count}} ação concluída",
+      "summary_other": "{{count}} ações concluídas",
+      "summaryWithError_one": "{{count}} ação concluída, {{errorCount}} erro",
+      "summaryWithError_other": "{{count}} ações concluídas, {{errorCount}} erros",
+      "types": {
+        "command": "cmd",
+        "file_read": "leitura",
+        "file_write": "escrita",
+        "file_edit": "edição",
+        "file_delete": "excl.",
+        "git": "git",
+        "search": "busca",
+        "other": "outro"
+      }
+    },
     "approval": {
       "decision": {
         "answered": "Respondido",

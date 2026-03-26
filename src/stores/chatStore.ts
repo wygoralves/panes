@@ -1134,6 +1134,18 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     assistant.clientTurnId = event.client_turn_id;
   }
 
+  // Stamp durationMs on the last thinking block when a non-thinking event arrives
+  if (event.type !== "ThinkingDelta") {
+    const blocks = assistant.blocks ?? [];
+    const last = blocks[blocks.length - 1];
+    if (last?.type === "thinking" && last.startedAt != null && last.durationMs == null) {
+      assistant.blocks = [
+        ...blocks.slice(0, -1),
+        { ...last, durationMs: Date.now() - last.startedAt },
+      ];
+    }
+  }
+
   if (event.type === "TextDelta") {
     const blocks = assistant.blocks ?? [];
     const delta = String(event.content ?? "");
@@ -1170,7 +1182,7 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
         },
       ];
     } else {
-      assistant.blocks = [...blocks, { type: "thinking", content: delta }];
+      assistant.blocks = [...blocks, { type: "thinking" as const, content: delta, startedAt: Date.now() }];
     }
   }
 

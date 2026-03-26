@@ -374,6 +374,8 @@ export type ApprovalResponse =
 export interface ThinkingBlock {
   type: "thinking";
   content: string;
+  startedAt?: number;
+  durationMs?: number;
 }
 
 export interface ErrorBlock {

@@ -99,7 +99,7 @@ import type {
 
 const MESSAGE_VIRTUALIZATION_THRESHOLD = 40;
 const MESSAGE_ESTIMATED_ROW_HEIGHT = 220;
-const MESSAGE_ROW_GAP = 16;
+const MESSAGE_ROW_GAP = 12;
 const MESSAGE_OVERSCAN_PX = 700;
 const LazyTerminalPanel = lazy(() =>
   import("../terminal/TerminalPanel").then((module) => ({
@@ -1043,8 +1043,8 @@ function MessageRowView({
               maxWidth: "75%",
               padding: "10px 14px",
               borderRadius: "var(--radius-md)",
-              background: "rgba(255, 107, 107, 0.06)",
-              border: "1px solid rgba(255, 107, 107, 0.10)",
+              background: "rgba(255, 107, 107, 0.09)",
+              border: "1px solid rgba(255, 107, 107, 0.16)",
               fontSize: 13,
               lineHeight: 1.6,
               whiteSpace: "pre-wrap",
@@ -1113,7 +1113,7 @@ function MessageRowView({
             style={{
               width: "100%",
               maxWidth: "100%",
-              padding: "8px 4px",
+              padding: "6px 0",
               borderRadius: "var(--radius-md)",
               background: "var(--bg-2)",
               border: "1px solid var(--border)",

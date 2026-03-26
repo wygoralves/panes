@@ -378,6 +378,7 @@
     "parsingDiff": "Parsing diff...",
     "noChanges": "No changes",
     "thinking": "Thinking",
+    "thinkingDone": "Thought for {{seconds}}s",
     "actionStatus": {
       "done": "Done",
       "running": "Running",
@@ -391,6 +392,22 @@
       "retry": "Retry"
     },
     "outputTruncated": "Showing latest action output only (older chunks truncated for performance).",
+    "actionGroup": {
+      "summary_one": "{{count}} action completed",
+      "summary_other": "{{count}} actions completed",
+      "summaryWithError_one": "{{count}} action completed, {{errorCount}} error",
+      "summaryWithError_other": "{{count}} actions completed, {{errorCount}} errors",
+      "types": {
+        "command": "cmd",
+        "file_read": "read",
+        "file_write": "write",
+        "file_edit": "edit",
+        "file_delete": "del",
+        "git": "git",
+        "search": "search",
+        "other": "other"
+      }
+    },
     "approval": {
       "decision": {
         "answered": "Answered",

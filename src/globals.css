@@ -772,6 +772,17 @@ button, input, textarea, select {
   transition: transform var(--duration-fast) var(--ease-out);
 }
 .msg-block-chevron-open { transform: rotate(90deg); }
+.msg-block-header--compact { padding: 3px 12px; }
+
+/* ── Action Group ── */
+.action-group-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--duration-normal) var(--ease-out);
+}
+.action-group-body--expanded { grid-template-rows: 1fr; }
+.action-group-body-inner { overflow: hidden; }
+.msg-section-divider { height: 1px; background: var(--border); opacity: 0.4; margin: 4px 12px; }
 
 /* ── Tauri window drag area ── */
 .drag-region {
