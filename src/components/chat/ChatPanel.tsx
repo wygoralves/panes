@@ -31,6 +31,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import { useChatStore } from "../../stores/chatStore";
+import { useChatComposerStore } from "../../stores/chatComposerStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useOnboardingStore } from "../../stores/onboardingStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -51,6 +52,7 @@ import {
   PLAN_IMPLEMENTATION_CODING_MESSAGE,
   shouldPromptToImplementPlan,
 } from "./planModePrompt";
+import { buildComposerRuntimeSnapshot } from "./composerRuntime";
 import { resolveReasoningEffortForModel } from "./reasoningEffort";
 import { ToolInputQuestionnaire } from "./ToolInputQuestionnaire";
 import {
@@ -1435,6 +1437,8 @@ export function ChatPanel() {
     })),
   );
   const gitStatus = useGitStore((s) => s.status);
+  const setComposerRuntime = useChatComposerStore((state) => state.setWorkspaceRuntime);
+  const clearComposerRuntime = useChatComposerStore((state) => state.clearWorkspaceRuntime);
   const terminalWorkspaceState = useTerminalStore((s) =>
     activeWorkspaceId ? s.workspaces[activeWorkspaceId] : undefined,
   );
@@ -1459,6 +1463,7 @@ export function ChatPanel() {
   const [viewportScrollTop, setViewportScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [autoScrollLocked, setAutoScrollLocked] = useState(false);
+  const [hasExplicitComposerRuntime, setHasExplicitComposerRuntime] = useState(false);
   const [workspaceOptInPrompt, setWorkspaceOptInPrompt] = useState<{
     repoNames: string;
     workspaceId: string;
@@ -1713,6 +1718,8 @@ export function ChatPanel() {
     typeof activeThread?.engineMetadata?.reasoningEffort === "string"
       ? activeThread.engineMetadata.reasoningEffort
       : undefined;
+  const activeThreadInCurrentWorkspace =
+    activeThread?.workspaceId === activeWorkspaceId;
   const modelPickerLabel = useMemo(() => {
     return formatEngineModelLabel(t, selectedEngine?.name, selectedModel?.displayName);
   }, [t, selectedEngine?.name, selectedModel?.displayName]);
@@ -2311,6 +2318,7 @@ export function ChatPanel() {
       return;
     }
 
+    setHasExplicitComposerRuntime(false);
     setSelectedEngineId((current) =>
       current === preferredOnboardingChatSelection.engineId
         ? current
@@ -2500,6 +2508,54 @@ export function ChatPanel() {
     supportedEfforts,
   ]);
 
+  const composerRuntimeSnapshot = useMemo(
+    () =>
+      buildComposerRuntimeSnapshot({
+        hasActiveThread: activeThreadInCurrentWorkspace,
+        hasExplicitOverride: hasExplicitComposerRuntime,
+        selectedEngineId,
+        selectedModel,
+        selectedEffort,
+        selectedServiceTier,
+      }),
+    [
+      activeThreadInCurrentWorkspace,
+      hasExplicitComposerRuntime,
+      selectedEffort,
+      selectedEngineId,
+      selectedModel,
+      selectedServiceTier,
+    ],
+  );
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      return;
+    }
+
+    if (!composerRuntimeSnapshot) {
+      clearComposerRuntime(activeWorkspaceId);
+      return;
+    }
+
+    setComposerRuntime(activeWorkspaceId, composerRuntimeSnapshot);
+  }, [
+    activeWorkspaceId,
+    clearComposerRuntime,
+    composerRuntimeSnapshot,
+    setComposerRuntime,
+  ]);
+
+  useEffect(() => {
+    if (
+      activeThreadInCurrentWorkspace &&
+      activeThread?.engineId !== "codex" &&
+      selectedServiceTier !== "inherit"
+    ) {
+      setSelectedServiceTier("inherit");
+    }
+  }, [activeThread?.engineId, activeThreadInCurrentWorkspace, selectedServiceTier]);
+
   useEffect(() => {
     if (activeThread?.engineId !== "codex") {
       return;
@@ -2523,6 +2579,7 @@ export function ChatPanel() {
     }
     lastSyncedThreadIdRef.current = activeThread.id;
     manuallyOverrodeThreadSelectionRef.current = false;
+    setHasExplicitComposerRuntime(false);
     if (activeThread.engineId !== selectedEngineId) {
       setSelectedEngineId(activeThread.engineId);
     }
@@ -2830,6 +2887,9 @@ export function ChatPanel() {
       ? serializePrettyJson(patch.approvalPolicy)
       : customApprovalPolicyText;
     const applyLocalState = () => {
+      if (patch.updateServiceTier) {
+        setHasExplicitComposerRuntime(true);
+      }
       setSelectedPersonality(nextPersonality);
       setSelectedServiceTier(nextServiceTier);
       setOutputSchemaText(nextOutputSchemaText);
@@ -3309,6 +3369,11 @@ export function ChatPanel() {
         repoId: activeScopeRepoId,
         engineId: submitEngineId,
         modelId: submitModelId,
+        reasoningEffort: submitReasoningEffort,
+        serviceTier:
+          submitEngineId === "codex" && selectedServiceTier !== "inherit"
+            ? selectedServiceTier
+            : null,
         title: activeRepo
           ? t("panel.repoChatTitle", { name: activeRepo.name })
           : t("panel.workspaceChatTitle"),
@@ -3553,6 +3618,7 @@ export function ChatPanel() {
   }
 
   async function onReasoningEffortChange(nextEffort: string) {
+    setHasExplicitComposerRuntime(true);
     selectedEffortRef.current = nextEffort;
     setSelectedEffort(nextEffort);
     const targetThreadId = threadId ?? activeThread?.id ?? null;
@@ -4977,9 +5043,14 @@ export function ChatPanel() {
                   selectedEngineId={selectedEngineId}
                   selectedModelId={selectedModelId ?? selectedModel?.id ?? ""}
                   selectedEffort={selectedEffort}
-                  serviceTier={selectedServiceTier !== "inherit" ? selectedServiceTier : null}
+                  serviceTier={
+                    selectedEngineId === "codex" && selectedServiceTier !== "inherit"
+                      ? selectedServiceTier
+                      : null
+                  }
                   onEngineModelChange={(engineId, modelId) => {
                     manuallyOverrodeThreadSelectionRef.current = true;
+                    setHasExplicitComposerRuntime(true);
                     selectedEngineIdRef.current = engineId;
                     if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
                     const nextEngine =

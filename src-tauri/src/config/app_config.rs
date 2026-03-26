@@ -70,7 +70,7 @@ impl Default for GeneralConfig {
         Self {
             theme: "dark".to_string(),
             default_engine: "codex".to_string(),
-            default_model: "gpt-5.3-codex".to_string(),
+            default_model: "gpt-5.4".to_string(),
             locale: None,
             terminal_accelerated_rendering: None,
             chat_notifications: None,
@@ -307,7 +307,7 @@ mod tests {
 [general]
 theme = "dark"
 default_engine = "codex"
-default_model = "gpt-5.3-codex"
+default_model = "gpt-5.4"
 
 [ui]
 sidebar_width = 260
@@ -368,7 +368,7 @@ max_action_output_chars = 20000
 [general]
 theme = "dark"
 default_engine = "codex"
-default_model = "gpt-5.3-codex"
+default_model = "gpt-5.4"
 native_window_decorations = false
 
 [ui]
@@ -429,7 +429,7 @@ max_action_output_chars = 20000
 [general]
 theme = "dark"
 default_engine = "codex"
-default_model = "gpt-5.3-codex"
+default_model = "gpt-5.4"
 
 [ui]
 sidebar_width = 260

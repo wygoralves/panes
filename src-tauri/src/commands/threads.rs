@@ -398,16 +398,87 @@ pub async fn create_thread(
     engine_id: String,
     model_id: String,
     title: String,
+    reasoning_effort: Option<String>,
+    service_tier: Option<String>,
 ) -> Result<ThreadDto, String> {
+    create_thread_inner(
+        state.inner(),
+        workspace_id,
+        repo_id,
+        engine_id,
+        model_id,
+        title,
+        reasoning_effort,
+        service_tier,
+    )
+    .await
+}
+
+async fn create_thread_inner(
+    state: &AppState,
+    workspace_id: String,
+    repo_id: Option<String>,
+    engine_id: String,
+    model_id: String,
+    title: String,
+    reasoning_effort: Option<String>,
+    service_tier: Option<String>,
+) -> Result<ThreadDto, String> {
+    let effective_model_id = validate_model_for_engine(state, &engine_id, model_id.trim()).await?;
+    let normalized_reasoning_effort = reasoning_effort
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_lowercase);
+    let validated_reasoning_effort =
+        if let Some(requested_effort) = normalized_reasoning_effort.as_deref() {
+            Some(
+                validate_reasoning_effort(state, &engine_id, &effective_model_id, requested_effort)
+                    .await?,
+            )
+        } else {
+            None
+        };
+    let normalized_service_tier = if engine_id == "codex" {
+        normalize_thread_service_tier(service_tier)?
+    } else {
+        let candidate = service_tier
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if candidate.is_some() {
+            return Err("service tier is only supported for Codex threads".to_string());
+        }
+        None
+    };
+
+    let metadata = if validated_reasoning_effort.is_some() || normalized_service_tier.is_some() {
+        let mut object = serde_json::Map::new();
+        if let Some(value) = validated_reasoning_effort {
+            object.insert("reasoningEffort".to_string(), json!(value));
+        }
+        if let Some(value) = normalized_service_tier {
+            object.insert("serviceTier".to_string(), json!(value));
+        }
+        Some(Value::Object(object))
+    } else {
+        None
+    };
+
     run_db(state.db.clone(), move |db| {
-        db::threads::create_thread(
+        let created = db::threads::create_thread(
             db,
             &workspace_id,
             repo_id.as_deref(),
             &engine_id,
-            &model_id,
+            &effective_model_id,
             &title,
-        )
+        )?;
+        if let Some(metadata) = metadata.as_ref() {
+            db::threads::update_engine_metadata(db, &created.id, metadata)?;
+        }
+        db::threads::get_thread(db, &created.id)?
+            .ok_or_else(|| anyhow::anyhow!("thread not found after insert: {}", created.id))
     })
     .await
 }
@@ -1186,30 +1257,7 @@ async fn validate_model_for_thread_engine(
         return Ok(thread.model_id.clone());
     }
 
-    if let Ok(engines) = state.engines.list_engines().await {
-        if let Some(engine) = engines.iter().find(|engine| engine.id == thread.engine_id) {
-            if engine
-                .models
-                .iter()
-                .any(|model| model.id == requested_model_id)
-            {
-                return Ok(requested_model_id.to_string());
-            }
-
-            let available = engine
-                .models
-                .iter()
-                .map(|model| model.id.clone())
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(format!(
-                "model `{requested_model_id}` is not supported by engine `{}`. available models: {available}",
-                thread.engine_id
-            ));
-        }
-    }
-
-    Ok(requested_model_id.to_string())
+    validate_model_for_engine(state, &thread.engine_id, requested_model_id).await
 }
 
 fn merge_codex_runtime_metadata(
@@ -2046,16 +2094,20 @@ mod tests {
         }
     }
 
-    fn test_thread(state: &AppState, engine_id: &str, model_id: &str) -> ThreadDto {
+    fn test_workspace(state: &AppState) -> crate::models::WorkspaceDto {
         let workspace_root =
             std::env::temp_dir().join(format!("panes-threads-workspace-{}", Uuid::new_v4()));
         fs::create_dir_all(&workspace_root).expect("failed to create workspace root");
-        let workspace = crate::db::workspaces::upsert_workspace(
+        crate::db::workspaces::upsert_workspace(
             &state.db,
             workspace_root.to_string_lossy().as_ref(),
             Some(1),
         )
-        .expect("failed to create workspace");
+        .expect("failed to create workspace")
+    }
+
+    fn test_thread(state: &AppState, engine_id: &str, model_id: &str) -> ThreadDto {
+        let workspace = test_workspace(state);
         crate::db::threads::create_thread(
             &state.db,
             &workspace.id,
@@ -2454,6 +2506,73 @@ mod tests {
             Some(&json!("branch_thread_requires_sync"))
         );
         assert_eq!(metadata.get("serviceTier"), Some(&json!("fast")));
+    }
+
+    #[tokio::test]
+    async fn create_thread_inner_persists_initial_runtime_metadata() {
+        let state = test_app_state();
+        let workspace = test_workspace(&state);
+
+        let created = create_thread_inner(
+            &state,
+            workspace.id,
+            None,
+            "codex".to_string(),
+            "gpt-5.4".to_string(),
+            "Thread".to_string(),
+            Some("HIGH".to_string()),
+            Some("FAST".to_string()),
+        )
+        .await
+        .expect("expected thread creation to succeed");
+
+        let metadata = created
+            .engine_metadata
+            .expect("expected runtime metadata to be stored");
+        assert_eq!(metadata.get("reasoningEffort"), Some(&json!("high")));
+        assert_eq!(metadata.get("serviceTier"), Some(&json!("fast")));
+    }
+
+    #[tokio::test]
+    async fn create_thread_inner_rejects_unsupported_reasoning_effort() {
+        let state = test_app_state();
+        let workspace = test_workspace(&state);
+
+        let error = create_thread_inner(
+            &state,
+            workspace.id,
+            None,
+            "codex".to_string(),
+            "gpt-5.1-codex-mini".to_string(),
+            "Thread".to_string(),
+            Some("low".to_string()),
+            None,
+        )
+        .await
+        .expect_err("expected unsupported effort to be rejected");
+
+        assert!(error.contains("reasoning effort `low` is not supported"));
+    }
+
+    #[tokio::test]
+    async fn create_thread_inner_rejects_service_tier_for_non_codex_threads() {
+        let state = test_app_state();
+        let workspace = test_workspace(&state);
+
+        let error = create_thread_inner(
+            &state,
+            workspace.id,
+            None,
+            "claude".to_string(),
+            "claude-sonnet-4-6".to_string(),
+            "Thread".to_string(),
+            None,
+            Some("fast".to_string()),
+        )
+        .await
+        .expect_err("expected non-codex service tier to be rejected");
+
+        assert!(error.contains("service tier is only supported for Codex threads"));
     }
 
     #[tokio::test]
