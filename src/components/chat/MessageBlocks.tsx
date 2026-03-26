@@ -20,6 +20,7 @@ import {
   Layers,
   Copy,
   Check,
+  MessageSquare,
 } from "lucide-react";
 import type {
   ActionBlock,
@@ -845,13 +846,27 @@ function extractApprovalDetails(details: Record<string, unknown>) {
   return { command, reason, commandActionCount, remainingDetails, hasRemainingDetails };
 }
 
+function extractAnswerText(raw: unknown): string | null {
+  if (typeof raw === "string") return raw;
+  if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+    const obj = raw as Record<string, unknown>;
+    // Shape from buildToolInputResponseFromSelections: { answers: string[] }
+    if (Array.isArray(obj.answers) && obj.answers.length > 0) {
+      return obj.answers.map(String).join(", ");
+    }
+    if (typeof obj.label === "string") return obj.label;
+    if (typeof obj.value === "string") return obj.value;
+  }
+  if (Array.isArray(raw) && raw.length > 0) {
+    return raw.map(String).join(", ");
+  }
+  return null;
+}
+
 function ToolInputApprovalCard({
   block,
   questions,
   isPending,
-  decisionLabel,
-  decisionBackground,
-  decisionColor,
 }: {
   block: ApprovalBlock;
   questions: { id: string; question: string }[];
@@ -861,53 +876,53 @@ function ToolInputApprovalCard({
   decisionColor: string;
 }) {
   const { t } = useTranslation("chat");
-  if (questions.length <= 0) {
-    return null;
-  }
+  if (questions.length <= 0) return null;
 
-  const answers = block.responseData?.answers as Record<string, string> | undefined;
+  const rawAnswers = block.responseData?.answers;
+  const answers = typeof rawAnswers === "object" && rawAnswers !== null && !Array.isArray(rawAnswers)
+    ? rawAnswers as Record<string, unknown>
+    : undefined;
+  const isAnswered = !isPending && block.decision;
+  const hasAnswers = isAnswered && answers;
+  const [expanded, setExpanded] = useState(isPending);
+  const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
 
   return (
-    <div className="tool-input-preview-card">
-      <div className="tool-input-preview-body">
-        <div className="tool-input-preview-header">
-          <span className="tool-input-preview-count">
-            {isPending
-              ? t("messageBlocks.approval.pendingQuestions", { count: questions.length })
-              : t("messageBlocks.approval.answeredQuestions", { count: questions.length })}
-          </span>
-
-          {!isPending && block.decision ? (
-            <span
-              className="tool-input-preview-status"
-              style={{ background: decisionBackground, color: decisionColor }}
-            >
-              {decisionLabel}
-            </span>
-          ) : null}
-        </div>
-
-        {isPending ? (
-          <div className="tool-input-preview-footer">
-            <span className="tool-input-preview-note">
-              {t("messageBlocks.toolInput.answerInComposer")}
-            </span>
-          </div>
-        ) : answers ? (
-          <div style={{ padding: "6px 12px 10px", display: "flex", flexDirection: "column", gap: 8 }}>
-            {questions.map((q) => {
-              const answer = answers[q.id];
-              if (!answer) return null;
-              return (
-                <div key={q.id} style={{ fontSize: 12, lineHeight: 1.5 }}>
-                  <div style={{ color: "var(--text-3)", fontSize: 11, marginBottom: 2 }}>{q.question}</div>
-                  <div style={{ color: "var(--text-1)" }}>{answer}</div>
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
+    <div>
+      <div
+        className={hasAnswers ? "msg-block-header" : undefined}
+        style={hasAnswers ? undefined : { display: "flex", alignItems: "center", gap: 6, padding: "6px 12px" }}
+        {...(hasAnswers ? {
+          role: "button" as const,
+          tabIndex: 0,
+          "aria-expanded": expanded,
+          onClick: toggleExpanded,
+          onKeyDown: (e: React.KeyboardEvent) => handleToggleKeyDown(e, toggleExpanded),
+        } : {})}
+      >
+        {hasAnswers && (
+          <ChevronRight size={11} className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`} />
+        )}
+        <MessageSquare size={12} style={{ color: isPending ? "var(--info)" : "var(--text-3)", flexShrink: 0, opacity: 0.7 }} />
+        <span style={{ fontSize: 11.5, color: "var(--text-2)", flex: 1 }}>
+          {isPending
+            ? t("messageBlocks.approval.pendingQuestions", { count: questions.length })
+            : t("messageBlocks.approval.answeredQuestions", { count: questions.length })}
+        </span>
       </div>
+      {hasAnswers && expanded && (
+        <div className="tool-input-qa-body">
+          {questions.map((q) => {
+            const text = extractAnswerText(answers[q.id]);
+            if (!text) return null;
+            return (
+              <div key={q.id} className="tool-input-qa-row">
+                {q.question} → <strong>{text}</strong>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -1019,14 +1034,16 @@ function ApprovalCard({
 
   if (isToolInputRequest && toolInputQuestions.length > 0 && !showClaudeUnsupportedApproval) {
     return (
-      <ToolInputApprovalCard
-        block={block}
-        questions={toolInputQuestions}
-        isPending={isPending}
-        decisionLabel={decisionLabel}
-        decisionBackground={decisionBackground}
-        decisionColor={decisionColor}
-      />
+      <div className="msg-block-inset">
+        <ToolInputApprovalCard
+          block={block}
+          questions={toolInputQuestions}
+          isPending={isPending}
+          decisionLabel={decisionLabel}
+          decisionBackground={decisionBackground}
+          decisionColor={decisionColor}
+        />
+      </div>
     );
   }
 
@@ -1403,13 +1420,12 @@ function renderSingleBlock(
   /* ── Approval ── */
   if (block.type === "approval") {
     return (
-      <div key={blockKey} className="msg-block-inset">
-        <ApprovalCard
-          block={block}
-          engineId={engineId}
-          onApproval={onApproval}
-        />
-      </div>
+      <ApprovalCard
+        key={blockKey}
+        block={block}
+        engineId={engineId}
+        onApproval={onApproval}
+      />
     );
   }
 
