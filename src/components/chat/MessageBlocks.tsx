@@ -128,7 +128,7 @@ type BlockSegment =
   | { kind: "action-group"; blocks: ActionBlock[]; indices: number[]; hasError: boolean }
   | { kind: "divider" };
 
-function buildBlockSegments(blocks: ContentBlock[]): BlockSegment[] {
+function buildBlockSegments(blocks: ContentBlock[], isStreaming?: boolean): BlockSegment[] {
   const segments: BlockSegment[] = [];
   let i = 0;
   while (i < blocks.length) {
@@ -177,7 +177,7 @@ function buildBlockSegments(blocks: ContentBlock[]): BlockSegment[] {
       }
 
       const count = subEnd - subStart;
-      if (count >= ACTION_GROUP_MIN_SIZE) {
+      if (!isStreaming && count >= ACTION_GROUP_MIN_SIZE) {
         const groupBlocks = blocks.slice(subStart, subEnd) as ActionBlock[];
         const indices = Array.from({ length: count }, (_, k) => subStart + k);
         const hasError = groupBlocks.some((b) => b.status === "error");
@@ -1447,7 +1447,8 @@ function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadAc
     return -1;
   }, [safeBlocks]);
 
-  const blockSegments = useMemo(() => buildBlockSegments(safeBlocks), [safeBlocks]);
+  const isStreaming = status === "streaming";
+  const blockSegments = useMemo(() => buildBlockSegments(safeBlocks, isStreaming), [safeBlocks, isStreaming]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
