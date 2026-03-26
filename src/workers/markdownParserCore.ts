@@ -18,11 +18,29 @@ interface IndentInfo {
   nextIndex: number;
 }
 
+const SAFE_HTML_TAG_RE = /<(br|hr)\s*\/?>/gi;
+
 function escapeNonFenceHtml(input: string): string {
-  return input
+  // Preserve known safe self-closing HTML tags (<br>, <hr>) by replacing them
+  // with placeholders before escaping, then restoring after.
+  const placeholders: { placeholder: string; tag: string }[] = [];
+  let idx = 0;
+  const withPlaceholders = input.replace(SAFE_HTML_TAG_RE, (match) => {
+    const placeholder = `\x00SAFE_TAG_${idx++}\x00`;
+    placeholders.push({ placeholder, tag: match });
+    return placeholder;
+  });
+
+  let escaped = withPlaceholders
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+
+  for (const { placeholder, tag } of placeholders) {
+    escaped = escaped.replace(placeholder, tag);
+  }
+
+  return escaped;
 }
 
 function sanitizeUrl(url: string): string {

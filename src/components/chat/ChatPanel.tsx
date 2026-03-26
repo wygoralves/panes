@@ -29,6 +29,10 @@ import {
   Server,
   FlaskConical,
   UserCircle,
+  Lightbulb,
+  Eye,
+  Compass,
+  BookOpen,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
@@ -975,6 +979,29 @@ interface MessageRowProps {
   onLoadActionOutput: (messageId: string, actionId: string) => Promise<void>;
 }
 
+const THINKING_VARIANTS = [
+  { icon: Brain, key: "thinkingVariants.thinking" },
+  { icon: Lightbulb, key: "thinkingVariants.reasoning" },
+  { icon: Eye, key: "thinkingVariants.analyzing" },
+  { icon: Compass, key: "thinkingVariants.exploring" },
+  { icon: Search, key: "thinkingVariants.researching" },
+  { icon: Sparkles, key: "thinkingVariants.generating" },
+  { icon: BookOpen, key: "thinkingVariants.reading" },
+  { icon: Brain, key: "thinkingVariants.considering" },
+] as const;
+
+function useThinkingVariant(active: boolean) {
+  const [index, setIndex] = useState(() => Math.floor(Math.random() * THINKING_VARIANTS.length));
+  useEffect(() => {
+    if (!active) return;
+    const interval = setInterval(() => {
+      setIndex((i) => (i + 1) % THINKING_VARIANTS.length);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [active]);
+  return THINKING_VARIANTS[index];
+}
+
 function extractMessageCopyText(message: Message): string {
   if (message.role === "user") {
     if (message.content) return message.content;
@@ -1065,6 +1092,8 @@ function MessageRowView({
   );
   const hasAssistantContent = !isUser && hasVisibleContent(message.blocks);
   const showAssistantShell = !isUser && (hasAssistantContent || message.status === "streaming");
+  const showThinkingPlaceholder = showAssistantShell && !hasAssistantContent;
+  const thinkingVariant = useThinkingVariant(showThinkingPlaceholder);
 
   return (
     <div
@@ -1194,12 +1223,11 @@ function MessageRowView({
                   fontSize: 12,
                 }}
               >
-                <Brain
-                  size={12}
-                  className="thinking-icon-active"
-                  style={{ color: "var(--info)" }}
-                />
-                <span>{t("modelPicker.thinking")}</span>
+                {(() => {
+                  const ThinkIcon = thinkingVariant.icon;
+                  return <ThinkIcon size={12} className="thinking-icon-active" style={{ color: "var(--info)" }} />;
+                })()}
+                <span>{t(thinkingVariant.key)}</span>
                 <span className="chat-streaming-dots">
                   <span />
                   <span />
