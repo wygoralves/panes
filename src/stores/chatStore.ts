@@ -63,6 +63,22 @@ interface ChatState {
 
 let activeThreadBindSeq = 0;
 const STREAM_EVENT_BATCH_WINDOW_MS = 16;
+
+/**
+ * Background listeners for threads that are still streaming when the user switches away.
+ * Keeps the event stream alive so events are not lost. On switch-back, the DB state
+ * will include all events that arrived while the thread was in the background.
+ * Cleaned up on TurnCompleted or when the thread is explicitly cancelled.
+ */
+const backgroundStreamListeners = new Map<string, () => void>();
+
+function cleanupBackgroundListener(threadId: string) {
+  const cleanup = backgroundStreamListeners.get(threadId);
+  if (cleanup) {
+    cleanup();
+    backgroundStreamListeners.delete(threadId);
+  }
+}
 const MESSAGE_WINDOW_INITIAL_LIMIT = 80;
 const OLDER_MESSAGES_RETRY_BACKOFF_MS = 2_000;
 const MAX_FULLY_HYDRATED_MESSAGES = 80;
@@ -1440,9 +1456,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
     activeThreadBindSeq += 1;
     const bindSeq = activeThreadBindSeq;
 
-    const current = currentUnlisten;
-    if (current) {
-      current();
+    // Tear down the current listener. If the thread was still streaming,
+    // install a lightweight background listener that watches for TurnCompleted
+    // so the thread status updates correctly when the user switches back.
+    if (currentUnlisten) {
+      currentUnlisten();
+    }
+    if (currentThreadId && get().streaming) {
+      cleanupBackgroundListener(currentThreadId);
+      listenThreadEvents(currentThreadId, (event) => {
+        if (event.type === "TurnCompleted") {
+          cleanupBackgroundListener(currentThreadId!);
+        }
+      }).then((unsub) => {
+        // If the user already switched back to this thread, don't register
+        if (useChatStore.getState().threadId === currentThreadId) {
+          unsub();
+          return;
+        }
+        const existing = backgroundStreamListeners.get(currentThreadId!);
+        if (existing) {
+          // Another background listener was set up in the meantime
+          unsub();
+        } else {
+          backgroundStreamListeners.set(currentThreadId!, unsub);
+        }
+      });
     }
 
     if (!threadId) {
@@ -1466,6 +1505,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     try {
+      // Clean up any background listener for this thread before re-subscribing
+      cleanupBackgroundListener(threadId);
+
       const threadState = useThreadStore.getState();
       let activeThread = threadState.threads.find((thread) => thread.id === threadId);
       if (activeThread?.engineId === "codex" && isCodexThreadSyncRequired(activeThread.engineMetadata)) {
