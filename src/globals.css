@@ -731,10 +731,10 @@ button, input, textarea, select {
 .prose code {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.88em;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--bg-4);
-  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  border: none;
 }
 .prose pre { margin: 8px 0; padding: 10px 14px; border-radius: var(--radius-sm); background: var(--code-bg); border: 1px solid var(--border); overflow-x: auto; }
 .prose pre code {
