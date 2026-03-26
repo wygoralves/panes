@@ -1080,6 +1080,12 @@ async function handleQuery(req) {
               if (toolName === "AskUserQuestion") {
                 return {};
               }
+              if (toolName === "ExitPlanMode" || toolName === "EnterPlanMode") {
+                return {
+                  decision: "block",
+                  reason: `${toolName} handled by Panes. The plan is ready and will be presented to the user for review.`,
+                };
+              }
               const toolInput = hookInput?.tool_input || hookInput?.input || {};
               const toolUseId =
                 hookInput?.tool_use_id || hookInput?.toolUseID || hookInput?.toolUseId;

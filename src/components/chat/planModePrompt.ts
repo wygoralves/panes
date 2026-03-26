@@ -41,6 +41,18 @@ export function latestAssistantMessage(messages: Message[]): Message | undefined
   return undefined;
 }
 
+function messageHasExitPlanModeAttempt(message: Message | null | undefined): boolean {
+  if (!message || message.role !== "assistant") {
+    return false;
+  }
+  return (message.blocks ?? []).some(
+    (block) =>
+      block.type === "action" &&
+      typeof block.summary === "string" &&
+      block.summary.includes("ExitPlanMode"),
+  );
+}
+
 export function shouldPromptToImplementPlan({
   wasStreaming,
   streaming,
@@ -68,5 +80,8 @@ export function shouldPromptToImplementPlan({
     return false;
   }
 
-  return messageHasStructuredPlan(latestAssistant);
+  // Show the prompt if the assistant produced a structured plan, or if it
+  // attempted to call ExitPlanMode (which may fail at the SDK level but
+  // still signals the agent considers planning complete).
+  return messageHasStructuredPlan(latestAssistant) || messageHasExitPlanModeAttempt(latestAssistant);
 }

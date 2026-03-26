@@ -90,6 +90,42 @@ describe("planModePrompt", () => {
     expect(latestAssistantMessage(messages)).toEqual(assistant);
   });
 
+  it("detects ExitPlanMode tool attempts as a plan completion signal", () => {
+    const message: Message = {
+      id: "assistant-1",
+      threadId: "thread-1",
+      role: "assistant",
+      status: "completed",
+      schemaVersion: 1,
+      blocks: [
+        { type: "text", content: "The plan is ready." },
+        {
+          type: "action",
+          actionId: "a1",
+          actionType: "other",
+          summary: "ExitPlanMode",
+          details: {},
+          outputChunks: [],
+          status: "error",
+        },
+      ],
+      createdAt: new Date().toISOString(),
+      hydration: "full",
+      hasDeferredContent: false,
+    };
+
+    expect(
+      shouldPromptToImplementPlan({
+        wasStreaming: true,
+        streaming: false,
+        status: "completed",
+        activeThreadId: "thread-1",
+        armedThreadId: "thread-1",
+        latestAssistant: message,
+      }),
+    ).toBe(true);
+  });
+
   it("prompts to implement only after a live plan turn completes", () => {
     const latestAssistant = buildAssistantMessage(
       "- [completed] Investigate\n- [pending] Implement",
