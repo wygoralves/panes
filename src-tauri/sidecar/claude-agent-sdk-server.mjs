@@ -347,7 +347,7 @@ function requiresApproval(permissionMode, toolName) {
   if (permissionMode === "restricted") {
     return true;
   }
-  return !["Read", "Glob", "Grep"].includes(toolName);
+  return !["Read", "Glob", "Grep", "ExitPlanMode", "EnterPlanMode"].includes(toolName);
 }
 
 function createQueryContext(id) {
