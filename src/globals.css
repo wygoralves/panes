@@ -2168,8 +2168,8 @@ button, input, textarea, select {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: #f6c453;
-  box-shadow: 0 0 0 3px rgba(246, 196, 83, 0.18);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.18);
   z-index: 2;
   pointer-events: none;
 }
@@ -2192,8 +2192,8 @@ button, input, textarea, select {
   width: 7px;
   height: 7px;
   border-radius: 999px;
-  background: #f6c453;
-  box-shadow: 0 0 0 3px rgba(246, 196, 83, 0.14);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.14);
   flex-shrink: 0;
 }
 
