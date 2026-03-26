@@ -1013,6 +1013,8 @@ export function CommandPalette({ open, onClose }: Props) {
   const activeThreadId = useThreadStore((s) => s.activeThreadId);
   const setActiveThread = useThreadStore((s) => s.setActiveThread);
   const harnesses = useHarnessStore((s) => s.harnesses);
+  const harnessesLoadedOnce = useHarnessStore((s) => s.loadedOnce);
+  const ensureHarnessesScanned = useHarnessStore((s) => s.ensureScanned);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
   const setMessageFocusTarget = useUiStore((s) => s.setMessageFocusTarget);
   const commandPaletteLaunch = useUiStore((s) => s.commandPaletteLaunch);
@@ -1072,6 +1074,13 @@ export function CommandPalette({ open, onClose }: Props) {
       ),
     [commandCtx, keepAwakeAvailable, t],
   );
+
+  useEffect(() => {
+    if (!open || harnessesLoadedOnce) {
+      return;
+    }
+    void ensureHarnessesScanned();
+  }, [ensureHarnessesScanned, harnessesLoadedOnce, open]);
 
   /* ---- Reset on open/close ---- */
   useEffect(() => {

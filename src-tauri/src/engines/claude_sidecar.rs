@@ -10,8 +10,7 @@ use std::{
 use anyhow::Context;
 use async_trait::async_trait;
 use serde::Deserialize;
-#[cfg(target_os = "windows")]
-use tokio::time::{timeout, Duration as TokioDuration};
+use tokio::time::timeout;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, Command},
@@ -27,6 +26,8 @@ use super::{
     EngineEvent, EngineThread, ModelInfo, OutputStream, ReasoningEffortOption, SandboxPolicy,
     ThreadScope, TurnCompletionStatus, TurnInput,
 };
+
+const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 // ── Sidecar event protocol ────────────────────────────────────────────
 
@@ -711,7 +712,7 @@ async fn detect_node_via_login_shell() -> Option<PathBuf> {
             ]);
             process_utils::configure_tokio_command(&mut cmd);
 
-            let Ok(Ok(output)) = timeout(TokioDuration::from_secs(10), cmd.output()).await else {
+            let Ok(Ok(output)) = timeout(Duration::from_secs(10), cmd.output()).await else {
                 continue;
             };
             if !output.status.success() {
@@ -734,15 +735,25 @@ async fn detect_node_via_login_shell() -> Option<PathBuf> {
     #[cfg(not(target_os = "windows"))]
     {
         for shell in runtime_env::login_probe_shells() {
-            let output = match Command::new(&shell)
-                .args(runtime_env::login_probe_shell_args(
-                    &shell,
-                    "command -v node",
-                ))
-                .output()
-                .await
+            let output = match timeout(
+                LOGIN_SHELL_PROBE_TIMEOUT,
+                Command::new(&shell)
+                    .args(runtime_env::login_probe_shell_args(
+                        &shell,
+                        "command -v node",
+                    ))
+                    .output(),
+            )
+            .await
             {
-                Ok(output) if output.status.success() => output,
+                Err(_) => {
+                    log::warn!(
+                        "timed out probing Node.js via login shell `{}`",
+                        shell.display()
+                    );
+                    continue;
+                }
+                Ok(Ok(output)) if output.status.success() => output,
                 _ => continue,
             };
 

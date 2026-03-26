@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Check, ChevronDown, ChevronRight } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
+import { useEngineStore } from "../../stores/engineStore";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import type { EngineHealth, EngineInfo, EngineModel } from "../../types";
 
@@ -129,7 +130,9 @@ export function ModelPicker({
   const [legacyExpanded, setLegacyExpanded] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const wasOpenRef = useRef(false);
   const [pos, setPos] = useState({ bottom: 0, left: 0 });
+  const ensureEngineHealth = useEngineStore((state) => state.ensureHealth);
 
   // Sync active engine when selection changes externally
   useEffect(() => {
@@ -140,6 +143,28 @@ export function ModelPicker({
   useEffect(() => {
     setLegacyExpanded(false);
   }, [activeEngineId]);
+
+  useEffect(() => {
+    if (!open) {
+      wasOpenRef.current = false;
+      return;
+    }
+    if (wasOpenRef.current) {
+      return;
+    }
+    wasOpenRef.current = true;
+
+    for (const engine of engines) {
+      const engineHealth = health[engine.id];
+      if (!engineHealth) {
+        void ensureEngineHealth(engine.id);
+        continue;
+      }
+      if (engineHealth.available === false) {
+        void ensureEngineHealth(engine.id, { force: true });
+      }
+    }
+  }, [engines, ensureEngineHealth, health, open]);
 
   // Position popover above trigger
   useLayoutEffect(() => {

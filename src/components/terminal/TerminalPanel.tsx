@@ -2846,7 +2846,16 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
 
   // ── Auto-detect harness in terminal tabs ──────────────────────────
   const updateSessionHarness = useTerminalStore((state) => state.updateSessionHarness);
+  const harnessesLoadedOnce = useHarnessStore((s) => s.loadedOnce);
+  const ensureHarnessesScanned = useHarnessStore((s) => s.ensureScanned);
   const allHarnessesForDetect = useHarnessStore((s) => s.harnesses);
+
+  useEffect(() => {
+    if (harnessesLoadedOnce) {
+      return;
+    }
+    void ensureHarnessesScanned();
+  }, [ensureHarnessesScanned, harnessesLoadedOnce]);
 
   useEffect(() => {
     // Build command → harness mapping from installed harnesses

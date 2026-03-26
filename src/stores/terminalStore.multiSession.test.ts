@@ -95,6 +95,7 @@ describe("terminalStore.createMultiSessionGroup", () => {
       phase: "idle",
       harnesses: [],
       npmAvailable: false,
+      loadedOnce: false,
       error: null,
     });
     useWorkspaceStore.setState({
@@ -733,6 +734,7 @@ describe("terminalStore.createMultiSessionGroup", () => {
       phase: "scanning",
       harnesses: [],
       npmAvailable: false,
+      loadedOnce: false,
       error: null,
     });
 

@@ -1353,6 +1353,7 @@ export function ChatPanel() {
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar;
   const engines = useEngineStore((s) => s.engines);
   const health = useEngineStore((s) => s.health);
+  const ensureEngineHealth = useEngineStore((s) => s.ensureHealth);
   const onboardingOpen = useOnboardingStore((s) => s.open);
   const onboardingSelectedChatEngines = useOnboardingStore((s) => s.selectedChatEngines);
   const codexExternalSandboxActive = useMemo(
@@ -2331,6 +2332,34 @@ export function ChatPanel() {
       setSelectedModelId(selectedModel.id);
     }
   }, [selectedModel, selectedModelId]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId || engines.length === 0) {
+      return;
+    }
+
+    const engineIds = new Set<string>();
+    if (selectedEngineId) {
+      engineIds.add(selectedEngineId);
+    }
+    if (activeThread?.engineId) {
+      engineIds.add(activeThread.engineId);
+    }
+
+    for (const engineId of engineIds) {
+      if (!engines.some((engine) => engine.id === engineId) || health[engineId]) {
+        continue;
+      }
+      void ensureEngineHealth(engineId);
+    }
+  }, [
+    activeWorkspaceId,
+    activeThread?.engineId,
+    engines,
+    ensureEngineHealth,
+    health,
+    selectedEngineId,
+  ]);
 
   useEffect(() => {
     if (!activeWorkspaceId || engines.length === 0) {

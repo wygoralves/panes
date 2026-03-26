@@ -274,6 +274,8 @@ interface WorkspaceStartupSectionProps {
 export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionProps) {
   const { t } = useTranslation("workspace");
   const harnesses = useHarnessStore((s) => s.harnesses);
+  const harnessesLoadedOnce = useHarnessStore((s) => s.loadedOnce);
+  const ensureHarnessesScanned = useHarnessStore((s) => s.ensureScanned);
   const isActiveWorkspace = useWorkspaceStore((s) => s.activeWorkspaceId === workspace.id);
   const runtimeWorkspace = useTerminalStore((s) => s.workspaces[workspace.id]);
 
@@ -312,6 +314,13 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (harnessesLoadedOnce) {
+      return;
+    }
+    void ensureHarnessesScanned();
+  }, [ensureHarnessesScanned, harnessesLoadedOnce]);
 
   /* ── Serialization ── */
 

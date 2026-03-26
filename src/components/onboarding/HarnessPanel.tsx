@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-shell";
 import {
@@ -117,7 +117,9 @@ export function HarnessPanel() {
   const phase = useHarnessStore((s) => s.phase);
   const harnesses = useHarnessStore((s) => s.harnesses);
   const error = useHarnessStore((s) => s.error);
+  const loadedOnce = useHarnessStore((s) => s.loadedOnce);
   const scan = useHarnessStore((s) => s.scan);
+  const ensureScanned = useHarnessStore((s) => s.ensureScanned);
   const launch = useHarnessStore((s) => s.launch);
 
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
@@ -128,6 +130,13 @@ export function HarnessPanel() {
 
   const installedCount = harnesses.filter((h) => h.found).length;
   const goBack = useCallback(() => setActiveView("chat"), [setActiveView]);
+
+  useEffect(() => {
+    if (loadedOnce) {
+      return;
+    }
+    void ensureScanned();
+  }, [ensureScanned, loadedOnce]);
 
   const spawnInTerminal = useCallback(
     async (command: string) => {

@@ -12,8 +12,7 @@ use anyhow::Context;
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::Deserialize;
-#[cfg(target_os = "windows")]
-use tokio::time::{timeout, Duration as TokioDuration};
+use tokio::time::timeout;
 use tokio::{
     fs as tokio_fs,
     process::Command,
@@ -69,6 +68,7 @@ const ACCOUNT_RATE_LIMITS_READ_METHODS: &[&str] = &["account/rateLimits/read"];
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const TURN_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
 const HEALTH_APP_SERVER_TIMEOUT: Duration = Duration::from_secs(12);
+const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const TRANSPORT_RESTART_MAX_ATTEMPTS: usize = 3;
 const TRANSPORT_RESTART_BASE_BACKOFF: Duration = Duration::from_millis(250);
 const TRANSPORT_RESTART_MAX_BACKOFF: Duration = Duration::from_secs(2);
@@ -2639,7 +2639,11 @@ impl CodexEngine {
             );
         }
 
-        let preflight_failed = detect_macos_sandbox_exec_failure().await;
+        let preflight_failed = if prefer_external_default {
+            false
+        } else {
+            detect_macos_sandbox_exec_failure().await
+        };
         if preflight_failed {
             log::warn!(
                 "detected macOS sandbox-exec preflight failure; forcing externalSandbox mode"
@@ -3204,7 +3208,7 @@ async fn detect_codex_via_login_shell() -> Option<PathBuf> {
             ]);
             process_utils::configure_tokio_command(&mut cmd);
 
-            let Ok(Ok(output)) = timeout(TokioDuration::from_secs(10), cmd.output()).await else {
+            let Ok(Ok(output)) = timeout(Duration::from_secs(10), cmd.output()).await else {
                 continue;
             };
             if !output.status.success() {
@@ -3227,17 +3231,27 @@ async fn detect_codex_via_login_shell() -> Option<PathBuf> {
     #[cfg(not(target_os = "windows"))]
     {
         for shell in runtime_env::login_probe_shells() {
-            let output = match Command::new(&shell)
-                .args(runtime_env::login_probe_shell_args(
-                    &shell,
-                    "command -v codex",
-                ))
-                .output()
-                .await
+            let output = match timeout(
+                LOGIN_SHELL_PROBE_TIMEOUT,
+                Command::new(&shell)
+                    .args(runtime_env::login_probe_shell_args(
+                        &shell,
+                        "command -v codex",
+                    ))
+                    .output(),
+            )
+            .await
             {
-                Ok(output) if output.status.success() => output,
-                Ok(_) => continue,
-                Err(_) => continue,
+                Err(_) => {
+                    log::warn!(
+                        "timed out probing Codex via login shell `{}`",
+                        shell.display()
+                    );
+                    continue;
+                }
+                Ok(Ok(output)) if output.status.success() => output,
+                Ok(Ok(_)) => continue,
+                Ok(Err(_)) => continue,
             };
 
             let stdout = String::from_utf8_lossy(&output.stdout);

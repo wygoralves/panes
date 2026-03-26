@@ -3,13 +3,14 @@ use std::{ffi::OsString, path::Path};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-#[cfg(target_os = "windows")]
 use tokio::time::{timeout, Duration};
 
 use crate::engines::codex::resolve_codex_executable;
 use crate::models::{DepStatus, DependencyReport, InstallProgressEvent, InstallResult};
 use crate::process_utils;
 use crate::runtime_env;
+
+const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 // ---------------------------------------------------------------------------
 // check_dependencies
@@ -338,12 +339,22 @@ fn executable_augmented_path(executable: &Path) -> Option<OsString> {
 async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(String, String)> {
     for shell in runtime_env::login_probe_shells() {
         let probe_cmd = format!("command -v {command} && {command} {version_flag}");
-        let output = match Command::new(&shell)
-            .args(runtime_env::login_probe_shell_args(&shell, &probe_cmd))
-            .output()
-            .await
+        let output = match timeout(
+            LOGIN_SHELL_PROBE_TIMEOUT,
+            Command::new(&shell)
+                .args(runtime_env::login_probe_shell_args(&shell, &probe_cmd))
+                .output(),
+        )
+        .await
         {
-            Ok(output) if output.status.success() => output,
+            Err(_) => {
+                log::warn!(
+                    "timed out probing `{command}` via login shell `{}`",
+                    shell.display()
+                );
+                continue;
+            }
+            Ok(Ok(output)) if output.status.success() => output,
             _ => continue,
         };
 

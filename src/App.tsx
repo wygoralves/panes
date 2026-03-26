@@ -7,7 +7,6 @@ import { PowerSettingsModal } from "./components/shared/PowerSettingsModal";
 import { TerminalNotificationSettingsModal } from "./components/shared/TerminalNotificationSettingsModal";
 import { t } from "./i18n";
 import { useUpdateStore } from "./stores/updateStore";
-import { useHarnessStore } from "./stores/harnessStore";
 import {
   ipc,
   listenChatTurnFinished,
@@ -100,9 +99,7 @@ export function App() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const loadEngines = useEngineStore((s) => s.load);
   const applyEngineRuntimeUpdate = useEngineStore((s) => s.applyRuntimeUpdate);
-  const scanHarnesses = useHarnessStore((s) => s.scan);
   const loadKeepAwake = useKeepAwakeStore((s) => s.load);
-  const loadTerminalNotificationSettings = useTerminalNotificationSettingsStore((s) => s.load);
   const refreshKeepAwake = useKeepAwakeStore((s) => s.refresh);
   const keepAwakeEnabled = useKeepAwakeStore((s) => s.state?.enabled ?? false);
   const keepAwakeSessionTimer = useKeepAwakeStore((s) => s.state?.sessionRemainingSecs);
@@ -119,10 +116,8 @@ export function App() {
   useEffect(() => {
     void loadWorkspaces();
     void loadEngines();
-    void scanHarnesses();
     void loadKeepAwake();
-    void loadTerminalNotificationSettings();
-  }, [loadWorkspaces, loadEngines, scanHarnesses, loadKeepAwake, loadTerminalNotificationSettings]);
+  }, [loadWorkspaces, loadEngines, loadKeepAwake]);
 
   useEffect(() => {
     void refreshAllThreads(workspaces.map((workspace) => workspace.id));
