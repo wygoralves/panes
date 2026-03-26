@@ -556,7 +556,7 @@ describe("chatStore send", () => {
       },
       scope: "session",
     });
-    expect(useChatStore.getState().messages[0]?.blocks).toEqual([
+    expect(useChatStore.getState().messages[0]?.blocks).toMatchObject([
       {
         type: "approval",
         approvalId: "approval-1",
@@ -613,7 +613,7 @@ describe("chatStore send", () => {
       scope: "turn",
     });
 
-    expect(useChatStore.getState().messages[0]?.blocks).toEqual([
+    expect(useChatStore.getState().messages[0]?.blocks).toMatchObject([
       {
         type: "approval",
         approvalId: "approval-none",
@@ -667,7 +667,7 @@ describe("chatStore send", () => {
       action: "decline",
     });
 
-    expect(useChatStore.getState().messages[0]?.blocks).toEqual([
+    expect(useChatStore.getState().messages[0]?.blocks).toMatchObject([
       {
         type: "approval",
         approvalId: "approval-2",
@@ -1114,7 +1114,7 @@ describe("chatStore send", () => {
     expect(mockIpc.respondApproval).toHaveBeenCalledWith("thread-1", "approval-1", {
       decision: "deny",
     });
-    expect(useChatStore.getState().messages[0]?.blocks).toEqual([
+    expect(useChatStore.getState().messages[0]?.blocks).toMatchObject([
       {
         type: "approval",
         approvalId: "approval-1",

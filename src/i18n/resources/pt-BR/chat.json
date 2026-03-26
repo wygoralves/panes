@@ -436,6 +436,8 @@
       "hideDetails": "Ocultar detalhes",
       "pendingQuestions_one": "{{count}} pergunta aguardando resposta.",
       "pendingQuestions_other": "{{count}} perguntas aguardando resposta.",
+      "answeredQuestions_one": "{{count}} pergunta respondida.",
+      "answeredQuestions_other": "{{count}} perguntas respondidas.",
       "dynamicToolPrompt": "Responda à chamada da ferramenta dinâmica sem escrever JSON manualmente.",
       "dynamicToolSuccess": "Sucesso",
       "dynamicToolFailure": "Falha",
