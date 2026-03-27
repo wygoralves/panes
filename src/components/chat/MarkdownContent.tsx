@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
+import { renderMarkdownToHtml } from "../../workers/markdownParserCore";
 import type {
   MarkdownParseWorkerRequest,
   MarkdownParseWorkerResponse,
 } from "../../workers/markdownParser.types";
 
-const REMARK_PLUGINS = [remarkGfm];
-const REHYPE_PLUGINS = [rehypeHighlight];
 const MARKDOWN_WORKER_THRESHOLD_CHARS = 1000;
 const MARKDOWN_CACHE_LIMIT = 280;
 const MARKDOWN_CACHE_MAX_BYTES = 8 * 1024 * 1024;
@@ -44,6 +40,10 @@ function readCachedMarkdownHtml(cacheKey: string): string | null {
   markdownHtmlCache.delete(cacheKey);
   markdownHtmlCache.set(cacheKey, html);
   return html;
+}
+
+function peekCachedMarkdownHtml(cacheKey: string): string | null {
+  return markdownHtmlCache.get(cacheKey) ?? null;
 }
 
 function writeCachedMarkdownHtml(cacheKey: string, html: string) {
@@ -139,22 +139,82 @@ interface MarkdownContentProps {
   content: string;
   className?: string;
   style?: CSSProperties;
+  streaming?: boolean;
+}
+
+interface MarkdownWorkerPlaceholderOptions {
+  hasStreamed: boolean;
+  streaming: boolean;
+  workerEligible: boolean;
+  workerError: boolean;
+  workerHtml: string | null;
+}
+
+export function shouldRenderMarkdownWorkerPlaceholder({
+  hasStreamed,
+  streaming,
+  workerEligible,
+  workerError,
+  workerHtml,
+}: MarkdownWorkerPlaceholderOptions): boolean {
+  return (
+    workerEligible &&
+    !streaming &&
+    !hasStreamed &&
+    !workerError &&
+    workerHtml === null
+  );
 }
 
 export default function MarkdownContent({
   content,
   className,
   style,
+  streaming = false,
 }: MarkdownContentProps) {
   const [workerHtml, setWorkerHtml] = useState<string | null>(null);
   const [workerError, setWorkerError] = useState(false);
   const parseStartedAtRef = useRef(0);
+  const hasStreamedRef = useRef(streaming);
 
   const workerEligible = content.length >= MARKDOWN_WORKER_THRESHOLD_CHARS;
   const cacheKey = useMemo(() => computeCacheKey(content), [content]);
+  const hasStreamed = hasStreamedRef.current || streaming;
+  const cachedHtml = useMemo(() => peekCachedMarkdownHtml(cacheKey), [cacheKey]);
+  const showWorkerPlaceholder = shouldRenderMarkdownWorkerPlaceholder({
+    hasStreamed,
+    streaming,
+    workerEligible,
+    workerError,
+    workerHtml,
+  }) && cachedHtml === null;
+
+  const immediateHtml = useMemo(() => {
+    if (cachedHtml !== null) {
+      return cachedHtml;
+    }
+    if (showWorkerPlaceholder) {
+      return null;
+    }
+    return renderMarkdownToHtml(content);
+  }, [cachedHtml, content, showWorkerPlaceholder]);
 
   useEffect(() => {
-    if (!workerEligible) {
+    if (!streaming) {
+      return;
+    }
+    hasStreamedRef.current = true;
+  }, [streaming]);
+
+  useEffect(() => {
+    if (immediateHtml === null) {
+      return;
+    }
+    writeCachedMarkdownHtml(cacheKey, immediateHtml);
+  }, [cacheKey, immediateHtml]);
+
+  useEffect(() => {
+    if (!workerEligible || streaming || hasStreamed) {
       setWorkerHtml(null);
       setWorkerError(false);
       return;
@@ -194,43 +254,51 @@ export default function MarkdownContent({
     return () => {
       disposed = true;
     };
-  }, [cacheKey, content, workerEligible]);
+  }, [cacheKey, content, hasStreamed, streaming, workerEligible]);
 
-  if (workerEligible && !workerError) {
-    if (workerHtml === null) {
-      return (
-        <div className={className} style={style}>
-          <pre
-            style={{
-              margin: 0,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              fontFamily: "inherit",
-            }}
-          >
-            {content}
-          </pre>
-        </div>
-      );
-    }
-
+  if (showWorkerPlaceholder) {
     return (
-      <div
-        className={className}
-        style={style}
-        dangerouslySetInnerHTML={{ __html: workerHtml }}
-      />
+      <div className={className} style={style}>
+        <pre
+          style={{
+            margin: 0,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            fontFamily: "inherit",
+          }}
+        >
+          {content}
+        </pre>
+      </div>
+    );
+  }
+
+  const html = workerEligible && !streaming && !hasStreamed && workerHtml !== null
+    ? workerHtml
+    : immediateHtml;
+
+  if (html === null) {
+    return (
+      <div className={className} style={style}>
+        <pre
+          style={{
+            margin: 0,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            fontFamily: "inherit",
+          }}
+        >
+          {content}
+        </pre>
+      </div>
     );
   }
 
   return (
-    <div className={className} style={style}>
-      <ReactMarkdown
-        remarkPlugins={REMARK_PLUGINS}
-        rehypePlugins={REHYPE_PLUGINS}
-      >
-        {content.replace(/<br\s*\/?>/gi, "  \n")}
-      </ReactMarkdown>
-    </div>
+    <div
+      className={className}
+      style={style}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 }

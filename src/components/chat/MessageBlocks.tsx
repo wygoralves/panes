@@ -1,4 +1,4 @@
-import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   CheckCircle2,
@@ -65,9 +65,7 @@ import {
   VirtualizedDiffBody,
   useParsedDiff,
 } from "../shared/DiffViewer";
-
-const markdownContentImport = import("./MarkdownContent");
-const MarkdownContent = lazy(() => markdownContentImport);
+import MarkdownContent from "./MarkdownContent";
 interface Props {
   blocks?: ContentBlock[];
   status?: MessageStatus;
@@ -342,35 +340,16 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
             {content}
           </pre>
         ) : (
-          <Suspense
-            fallback={
-              <pre
-                style={{
-                  margin: 0,
-                  fontSize: 12.5,
-                  color: "var(--text-2)",
-                  padding: "2px 12px 8px 30px",
-                  minWidth: 0,
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  fontFamily: "inherit",
-                }}
-              >
-                {content}
-              </pre>
-            }
-          >
-            <MarkdownContent
-              content={content}
-              className="prose"
-              style={{
-                fontSize: 12.5,
-                color: "var(--text-2)",
-                padding: "2px 12px 8px 30px",
-                minWidth: 0,
-              }}
-            />
-          </Suspense>
+          <MarkdownContent
+            content={content}
+            className="prose"
+            style={{
+              fontSize: 12.5,
+              color: "var(--text-2)",
+              padding: "2px 12px 8px 30px",
+              minWidth: 0,
+            }}
+          />
         )
       )}
     </div>
@@ -1313,42 +1292,23 @@ function renderSingleBlock(
 
     if (isStreamingText) {
       return (
-        <div
+        <MarkdownContent
           key={blockKey}
-          style={{
-            fontSize: 13,
-            padding: "6px 14px",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-          }}
-        >
-          {textContent}
-        </div>
+          content={textContent}
+          streaming
+          className="prose"
+          style={{ fontSize: 13, padding: "6px 14px" }}
+        />
       );
     }
 
     return (
-      <Suspense
+      <MarkdownContent
         key={blockKey}
-        fallback={
-          <div
-            style={{
-              fontSize: 13,
-              padding: "6px 14px",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-            }}
-          >
-            {textContent}
-          </div>
-        }
-      >
-        <MarkdownContent
-          content={textContent}
-          className="prose"
-          style={{ fontSize: 13, padding: "6px 14px" }}
-        />
-      </Suspense>
+        content={textContent}
+        className="prose"
+        style={{ fontSize: 13, padding: "6px 14px" }}
+      />
     );
   }
 
