@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.48.0...vnull) (2026-03-27)
+
+### Features
+
+* **nav:** improve file management and opening in the file editor ([b900ed2](https://github.com/wygoralves/panes/commit/b900ed26c78e50b8b5489d753f4ff4f053e20fc9))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.47.0...vnull) (2026-03-27)
 
 ### Features
