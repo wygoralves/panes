@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { X, FileText, Loader2 } from "lucide-react";
+import { FileDiff, FileText, Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useFileStore } from "../../stores/fileStore";
 import { useTerminalStore } from "../../stores/terminalStore";
@@ -21,12 +21,42 @@ export function FileEditorPanel() {
   const requestCloseTab = useFileStore((s) => s.requestCloseTab);
   const confirmCloseTab = useFileStore((s) => s.confirmCloseTab);
   const cancelCloseTab = useFileStore((s) => s.cancelCloseTab);
+  const clearPendingReveal = useFileStore((s) => s.clearPendingReveal);
   const focusMode = useUiStore((s) => s.focusMode);
   const showSidebar = useUiStore((s) => s.showSidebar);
+  const repos = useWorkspaceStore((s) => s.repos);
+  const openFile = useFileStore((s) => s.openFile);
+  const openGitDiffFile = useFileStore((s) => s.openGitDiffFile);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const isMac = isMacDesktop();
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar;
+  const activeTabRepo = activeTab
+    ? repos.find((repo) => repo.path === activeTab.repoPath) ?? null
+    : null;
+  const canToggleDiffView = Boolean(
+    activeTab
+      && activeTabRepo
+      && !activeTab.isLoading
+      && !activeTab.loadError
+      && (activeTab.renderMode === "git-diff-editor" || !activeTab.isBinary),
+  );
+  const diffToggleLabel = activeTab?.renderMode === "git-diff-editor"
+    ? t("editor.hideDiff")
+    : t("editor.showDiff");
+
+  function handleToggleDiffView() {
+    if (!activeTab || !activeTabRepo) {
+      return;
+    }
+
+    if (activeTab.renderMode === "git-diff-editor") {
+      void openFile(activeTab.repoPath, activeTab.filePath);
+      return;
+    }
+
+    void openGitDiffFile(activeTab.repoPath, activeTab.filePath, { source: "changes" });
+  }
 
   // Cmd+S to save — Cmd+W is handled via native menu "close-window" action.
   // Note: e.preventDefault() for Cmd+S is handled at the app level (App.tsx)
@@ -51,34 +81,49 @@ export function FileEditorPanel() {
       {/* Tab bar */}
       {tabs.length > 0 && (
         <div className={`editor-tabs-bar${useTitlebarSafeInset ? " editor-tabs-bar-titlebar-safe" : ""}`}>
-          {tabs.map((tab) => (
-            <div
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`editor-tab ${tab.id === activeTabId ? "active" : ""}`}
-            >
-              <FileText
-                size={12}
-                style={{
-                  flexShrink: 0,
-                  color: tab.id === activeTabId ? "var(--text-2)" : "var(--text-3)",
-                }}
-              />
-              <span className="editor-tab-name">{tab.fileName}</span>
-              {tab.isDirty && <span className="editor-tab-dirty">&bull;</span>}
+          <div className="editor-tabs-bar-scroll">
+            {tabs.map((tab) => (
+              <div
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`editor-tab ${tab.id === activeTabId ? "active" : ""}`}
+              >
+                <FileText
+                  size={12}
+                  style={{
+                    flexShrink: 0,
+                    color: tab.id === activeTabId ? "var(--text-2)" : "var(--text-3)",
+                  }}
+                />
+                <span className="editor-tab-name">{tab.fileName}</span>
+                {tab.isDirty && <span className="editor-tab-dirty">&bull;</span>}
+                <button
+                  type="button"
+                  className="editor-tab-close"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    requestCloseTab(tab.id);
+                  }}
+                  title={t("editor.closeTab")}
+                >
+                  <X size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
+          {canToggleDiffView ? (
+            <div className="editor-tabs-actions">
               <button
                 type="button"
-                className="editor-tab-close"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  requestCloseTab(tab.id);
-                }}
-                title={t("editor.closeTab")}
+                className={`editor-tab-action${activeTab?.renderMode === "git-diff-editor" ? " active" : ""}`}
+                onClick={handleToggleDiffView}
+                title={diffToggleLabel}
+                aria-label={diffToggleLabel}
               >
-                <X size={10} />
+                <FileDiff size={12} />
               </button>
             </div>
-          ))}
+          ) : null}
         </div>
       )}
 
@@ -142,6 +187,8 @@ export function FileEditorPanel() {
               content={activeTab.content}
               filePath={activeTab.filePath}
               onChange={(content) => setTabContent(activeTab.id, content)}
+              pendingReveal={activeTab.pendingReveal}
+              onRevealHandled={(nonce) => clearPendingReveal(activeTab.id, nonce)}
             />
           )
         ) : (

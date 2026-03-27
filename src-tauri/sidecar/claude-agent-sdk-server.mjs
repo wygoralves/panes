@@ -347,7 +347,7 @@ function requiresApproval(permissionMode, toolName) {
   if (permissionMode === "restricted") {
     return true;
   }
-  return !["Read", "Glob", "Grep"].includes(toolName);
+  return !["Read", "Glob", "Grep", "ExitPlanMode", "EnterPlanMode"].includes(toolName);
 }
 
 function createQueryContext(id) {
@@ -1079,6 +1079,12 @@ async function handleQuery(req) {
               const toolName = hookInput?.tool_name || hookInput?.name || "unknown";
               if (toolName === "AskUserQuestion") {
                 return {};
+              }
+              if (toolName === "ExitPlanMode" || toolName === "EnterPlanMode") {
+                return {
+                  decision: "block",
+                  reason: `${toolName} handled by Panes. The plan is ready and will be presented to the user for review.`,
+                };
               }
               const toolInput = hookInput?.tool_input || hookInput?.input || {};
               const toolUseId =

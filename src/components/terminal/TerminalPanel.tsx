@@ -19,12 +19,13 @@ import {
   getTerminalAcceleratedRenderingPreferenceVersion,
   listenTerminalAcceleratedRenderingChanged,
 } from "../../lib/terminalRenderingSettings";
+import { extractTextLinkMatches, navigateLinkTarget } from "../../lib/fileLinkNavigation";
 import {
   collectDetachedTerminalEvictionKeys,
   markPaneTerminalDetached,
   markWorkspaceTerminalDetached,
 } from "./terminalCacheLifecycle";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ILink, type ILinkProvider } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -1882,13 +1883,23 @@ function createCachedTerminal(
   container: HTMLElement,
 ): SessionTerminal {
   const cacheKey = terminalCacheKey(workspaceId, sessionId);
-  const terminal = new Terminal({
+  const terminalOptions: ConstructorParameters<typeof Terminal>[0] & {
+    allowNonHttpProtocols?: boolean;
+    linkHandler: {
+      activate(event: MouseEvent | undefined, text: string): void;
+    };
+  } = {
     allowProposedApi: true,
     convertEol: false,
     cursorBlink: true,
     cursorInactiveStyle: "none",
     fontFamily: '"JetBrains Mono", monospace',
     fontSize: 12,
+    linkHandler: {
+      activate(event, text) {
+        void navigateLinkTarget(text, { shiftKey: Boolean(event?.shiftKey) });
+      },
+    },
     lineHeight: 1.3,
     scrollback: TERMINAL_SCROLLBACK_LINES,
     theme: {
@@ -1897,7 +1908,9 @@ function createCachedTerminal(
       selectionBackground: "rgba(255, 107, 107, 0.28)",
       cursor: "#FF6B6B",
     },
-  });
+  };
+  terminalOptions.allowNonHttpProtocols = true;
+  const terminal = new Terminal(terminalOptions);
 
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
@@ -1909,6 +1922,9 @@ function createCachedTerminal(
   const rendererDiagnostics = createRendererDiagnostics();
 
   terminal.open(container);
+  const textLinkProviderDisposable = terminal.registerLinkProvider(
+    createTerminalTextLinkProvider(terminal),
+  );
 
   // xterm.js fires onData for BOTH user keystrokes AND auto-generated
   // terminal protocol responses (DA1/DA2 device attributes, cursor position
@@ -2090,6 +2106,7 @@ function createCachedTerminal(
       entry.imageAddonCleanup = undefined;
       entry.webglCleanup?.();
       entry.webglCleanup = undefined;
+      textLinkProviderDisposable.dispose();
       writeDisposable.dispose();
       binaryDisposable.dispose();
       resizeDisposable.dispose();
@@ -2115,6 +2132,42 @@ function createCachedTerminal(
   void resumeSessionOutput(workspaceId, sessionId, "attach");
   scheduleTerminalFit(workspaceId, sessionId, 0);
   return entry;
+}
+
+function createTerminalTextLinkProvider(terminal: Terminal): ILinkProvider {
+  return {
+    provideLinks(bufferLineNumber, callback) {
+      const line = terminal.buffer.active.getLine(bufferLineNumber - 1);
+      const lineText = line?.translateToString(true) ?? "";
+      const matches = extractTextLinkMatches(lineText);
+      if (matches.length === 0) {
+        callback(undefined);
+        return;
+      }
+
+      const links: ILink[] = matches.map((match) => ({
+        text: match.text,
+        range: {
+          start: { x: match.startIndex + 1, y: bufferLineNumber },
+          end: { x: match.endIndex, y: bufferLineNumber },
+        },
+        decorations: {
+          pointerCursor: false,
+          underline: false,
+        },
+        activate(event, text) {
+          void navigateLinkTarget(text, { shiftKey: Boolean(event?.shiftKey) });
+        },
+        hover() {
+          terminal.element?.classList.add("xterm-cursor-pointer");
+        },
+        leave() {
+          terminal.element?.classList.remove("xterm-cursor-pointer");
+        },
+      }));
+      callback(links);
+    },
+  };
 }
 
 // ── Split pane components ───────────────────────────────────────────

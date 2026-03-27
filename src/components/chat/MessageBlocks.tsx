@@ -1,4 +1,4 @@
-import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   CheckCircle2,
@@ -17,6 +17,10 @@ import {
   Image,
   File,
   Info,
+  Layers,
+  Copy,
+  Check,
+  MessageSquare,
 } from "lucide-react";
 import type {
   ActionBlock,
@@ -61,8 +65,7 @@ import {
   VirtualizedDiffBody,
   useParsedDiff,
 } from "../shared/DiffViewer";
-
-const MarkdownContent = lazy(() => import("./MarkdownContent"));
+import MarkdownContent from "./MarkdownContent";
 interface Props {
   blocks?: ContentBlock[];
   status?: MessageStatus;
@@ -75,6 +78,39 @@ function isBlockLike(value: unknown): value is { type: string } {
   return typeof value === "object" && value !== null && "type" in value;
 }
 
+function CodeBlockCopyButton({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [content]);
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      style={{
+        marginLeft: "auto", flexShrink: 0, cursor: "pointer",
+        background: "none", border: "none", padding: "2px",
+        color: copied ? "var(--success)" : "var(--text-3)",
+        opacity: copied ? 1 : 0.5,
+        transition: "color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out)",
+      }}
+      aria-label="Copy code"
+    >
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+    </button>
+  );
+}
+
+function handleToggleKeyDown(e: React.KeyboardEvent, toggle: () => void) {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    toggle();
+  }
+}
+
 const actionIcons: Record<string, typeof Terminal> = {
   command: Terminal,
   file_write: FileCode2,
@@ -83,11 +119,104 @@ const actionIcons: Record<string, typeof Terminal> = {
   file_delete: FileCode2,
 };
 
+/* ── Action Group Segmentation ── */
+
+const ACTION_GROUP_MIN_SIZE = 3;
+
+type InnerSegment =
+  | { kind: "single"; block: ContentBlock; index: number }
+  | { kind: "action-group"; blocks: ActionBlock[]; indices: number[]; hasError: boolean };
+
+type BlockSegment =
+  | InnerSegment
+  | { kind: "action-card"; segments: InnerSegment[] }
+  | { kind: "divider" };
+
+function isCardSegment(seg: BlockSegment): seg is InnerSegment {
+  if (seg.kind === "action-group") return true;
+  if (seg.kind === "single" && (seg.block.type === "action" || seg.block.type === "thinking" || seg.block.type === "approval")) return true;
+  return false;
+}
+
+function buildBlockSegments(blocks: ContentBlock[], isStreaming?: boolean): BlockSegment[] {
+  // Phase 1: build flat inner segments
+  const flat: BlockSegment[] = [];
+  let i = 0;
+  while (i < blocks.length) {
+    const block = blocks[i];
+    if (block.type !== "action") {
+      flat.push({ kind: "single", block, index: i });
+      i++;
+      continue;
+    }
+
+    // Collect consecutive action blocks
+    const runStart = i;
+    while (i < blocks.length && blocks[i].type === "action") {
+      i++;
+    }
+    const runEnd = i; // exclusive
+
+    // Split the run: active (running/pending) actions break out as singles,
+    // completed sub-runs of 3+ become groups
+    let subStart = runStart;
+    while (subStart < runEnd) {
+      const actionBlock = blocks[subStart] as ActionBlock;
+      if (actionBlock.status === "running" || actionBlock.status === "pending") {
+        flat.push({ kind: "single", block: actionBlock, index: subStart });
+        subStart++;
+        continue;
+      }
+
+      // Collect consecutive completed/error actions
+      let subEnd = subStart;
+      while (subEnd < runEnd) {
+        const ab = blocks[subEnd] as ActionBlock;
+        if (ab.status === "running" || ab.status === "pending") break;
+        subEnd++;
+      }
+
+      const count = subEnd - subStart;
+      if (!isStreaming && count >= ACTION_GROUP_MIN_SIZE) {
+        const groupBlocks = blocks.slice(subStart, subEnd) as ActionBlock[];
+        const indices = Array.from({ length: count }, (_, k) => subStart + k);
+        const hasError = groupBlocks.some((b) => b.status === "error");
+        flat.push({ kind: "action-group", blocks: groupBlocks, indices, hasError });
+      } else {
+        for (let j = subStart; j < subEnd; j++) {
+          flat.push({ kind: "single", block: blocks[j], index: j });
+        }
+      }
+      subStart = subEnd;
+    }
+  }
+
+  // Phase 2: wrap consecutive action segments into action-card containers
+  const segments: BlockSegment[] = [];
+  let j = 0;
+  while (j < flat.length) {
+    const seg = flat[j];
+    if (!isCardSegment(seg)) {
+      segments.push(seg);
+      j++;
+      continue;
+    }
+    const cardSegments: InnerSegment[] = [seg];
+    j++;
+    while (j < flat.length && isCardSegment(flat[j])) {
+      cardSegments.push(flat[j] as InnerSegment);
+      j++;
+    }
+    segments.push({ kind: "action-card", segments: cardSegments });
+  }
+  return segments;
+}
+
 /* ── Diff Block ── */
 
-function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaultExpanded: boolean }) {
+function MessageDiffBlock({ block }: { block: DiffBlock }) {
   const { t } = useTranslation("chat");
-  const [expanded, setExpanded] = useState(defaultExpanded);
+  const [expanded, setExpanded] = useState(false);
   const raw = String(block.diff ?? "");
   const fallbackFilename = useMemo(() => extractDiffFilename(raw), [raw]);
   const {
@@ -101,9 +230,17 @@ function MessageDiffBlock({ block, defaultExpanded }: { block: DiffBlock; defaul
   const adds = parseResult?.adds ?? 0;
   const dels = parseResult?.dels ?? 0;
 
+  const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
   return (
     <div>
-      <div className="msg-block-header" onClick={() => setExpanded((v) => !v)}>
+      <div
+        className="msg-block-header"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={toggleExpanded}
+        onKeyDown={(e) => handleToggleKeyDown(e, toggleExpanded)}
+      >
         <ChevronRight
           size={11}
           className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
@@ -155,9 +292,24 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
   const [expanded, setExpanded] = useState(false);
   const content = String(block.content ?? "");
 
+  const durationSec = block.durationMs != null ? Math.round(block.durationMs / 1000) : null;
+  const thinkingLabel = isStreaming
+    ? `${t("messageBlocks.thinking")}\u2026`
+    : durationSec != null && durationSec > 0
+      ? t("messageBlocks.thinkingDone", { seconds: durationSec })
+      : t("messageBlocks.thinking");
+  const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
+
   return (
     <div>
-      <div className="msg-block-header" onClick={() => setExpanded((v) => !v)}>
+      <div
+        className="msg-block-header"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={toggleExpanded}
+        onKeyDown={(e) => handleToggleKeyDown(e, toggleExpanded)}
+      >
         <ChevronRight
           size={11}
           className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
@@ -165,11 +317,10 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
         <Brain
           size={12}
           className={isStreaming ? "thinking-icon-active" : undefined}
-          style={isStreaming ? { color: "var(--info)", flexShrink: 0 } : { color: "var(--info)", opacity: 0.45, flexShrink: 0 }}
+          style={{ color: "var(--text-3)", flexShrink: 0, verticalAlign: "middle" }}
         />
-        <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>
-          {t("messageBlocks.thinking")}
-          {isStreaming ? "\u2026" : ""}
+        <span style={{ fontSize: 11.5, color: "var(--text-2)", lineHeight: 1 }}>
+          {thinkingLabel}
         </span>
       </div>
       {expanded && (
@@ -189,35 +340,16 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
             {content}
           </pre>
         ) : (
-          <Suspense
-            fallback={
-              <pre
-                style={{
-                  margin: 0,
-                  fontSize: 12.5,
-                  color: "var(--text-2)",
-                  padding: "2px 12px 8px 30px",
-                  minWidth: 0,
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  fontFamily: "inherit",
-                }}
-              >
-                {content}
-              </pre>
-            }
-          >
-            <MarkdownContent
-              content={content}
-              className="prose"
-              style={{
-                fontSize: 12.5,
-                color: "var(--text-2)",
-                padding: "2px 12px 8px 30px",
-                minWidth: 0,
-              }}
-            />
-          </Suspense>
+          <MarkdownContent
+            content={content}
+            className="prose"
+            style={{
+              fontSize: 12.5,
+              color: "var(--text-2)",
+              padding: "2px 12px 8px 30px",
+              minWidth: 0,
+            }}
+          />
         )
       )}
     </div>
@@ -226,21 +358,7 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
 
 function NoticeBlockView({ block }: { block: NoticeBlock }) {
   return (
-    <div
-      style={{
-        margin: "2px 12px 8px",
-        padding: "9px 12px",
-        borderRadius: "var(--radius-sm)",
-        border: "1px solid rgba(96, 165, 250, 0.16)",
-        background: "rgba(96, 165, 250, 0.08)",
-        color: "var(--text-2)",
-        fontSize: 12,
-        lineHeight: 1.5,
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 8,
-      }}
-    >
+    <div className="msg-notice-block msg-notice-block--info">
       <Info size={14} style={{ flexShrink: 0, color: "var(--info)", marginTop: 1 }} />
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: "var(--info)", marginBottom: 2 }}>
@@ -259,21 +377,7 @@ function SteerBlockView({ block }: { block: SteerBlock }) {
   const hasContent = block.content.trim().length > 0;
 
   return (
-    <div
-      style={{
-        margin: "2px 12px 8px",
-        padding: "9px 12px",
-        borderRadius: "var(--radius-sm)",
-        border: "1px solid rgba(255, 107, 107, 0.16)",
-        background: "rgba(255, 107, 107, 0.06)",
-        color: "var(--text-2)",
-        fontSize: 12,
-        lineHeight: 1.5,
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 8,
-      }}
-    >
+    <div className="msg-notice-block msg-notice-block--steer">
       <CornerDownRight size={14} style={{ flexShrink: 0, color: "var(--danger)", marginTop: 1 }} />
       <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
         {hasContent && (
@@ -338,16 +442,15 @@ function ActionStatusBadge({ status }: { status: string }) {
   const { t } = useTranslation("chat");
   if (status === "done") {
     return (
-      <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--success)", fontSize: 10, opacity: 0.7 }}>
+      <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-3)", fontSize: 10 }}>
         <CheckCircle2 size={11} />
-        {t("messageBlocks.actionStatus.done")}
       </span>
     );
   }
   if (status === "running") {
     return (
       <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--warning)", fontSize: 10, fontWeight: 500 }}>
-        <Loader2 size={11} style={{ animation: "pulse-soft 1s ease-in-out infinite" }} />
+        <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />
         {t("messageBlocks.actionStatus.running")}
       </span>
     );
@@ -363,7 +466,6 @@ function ActionStatusBadge({ status }: { status: string }) {
   return (
     <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-3)", fontSize: 10 }}>
       <Circle size={11} />
-      {t("messageBlocks.actionStatus.pending")}
     </span>
   );
 }
@@ -380,14 +482,21 @@ function ActionBlockView({
   const outputDeferred = block.outputDeferred === true;
   const outputText = useMemo(
     () => {
+      let raw: string;
       if (outputChunks.length === 0) {
         return "";
       }
       if (outputChunks.length === 1) {
         const firstContent = outputChunks[0].content;
-        return typeof firstContent === "string" ? firstContent : String(firstContent ?? "");
+        raw = typeof firstContent === "string" ? firstContent : String(firstContent ?? "");
+      } else {
+        raw = outputChunks.map((chunk) => String(chunk.content ?? "")).join("");
       }
-      return outputChunks.map((chunk) => String(chunk.content ?? "")).join("");
+      // Unescape literal \n and \t sequences that come from JSON-encoded engine output
+      if (raw.includes("\\n") || raw.includes("\\t")) {
+        raw = raw.replace(/\\n/g, "\n").replace(/\\t/g, "\t");
+      }
+      return raw;
     },
     [outputChunks],
   );
@@ -402,7 +511,7 @@ function ActionBlockView({
     actionDetails.progressKind === "mcp" && typeof actionDetails.progressMessage === "string"
       ? actionDetails.progressMessage
       : null;
-  const [expanded, setExpanded] = useState(isRunning || isPending);
+  const [expanded, setExpanded] = useState(false);
   const [loadingDeferredOutput, setLoadingDeferredOutput] = useState(false);
   const [deferredOutputError, setDeferredOutputError] = useState<string | null>(null);
   const deferredOutputRequestedRef = useRef(false);
@@ -439,12 +548,19 @@ function ActionBlockView({
     }
   }, [outputDeferred, outputChunks.length]);
 
+  const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
   return (
     <div>
       <div
-        className={canToggle ? "msg-block-header" : undefined}
+        className={canToggle ? "msg-block-header msg-block-header--compact" : undefined}
         style={canToggle ? undefined : { display: "flex", alignItems: "center", gap: 6, padding: "3px 12px" }}
-        onClick={canToggle ? () => setExpanded((v) => !v) : undefined}
+        {...(canToggle ? {
+          role: "button" as const,
+          tabIndex: 0,
+          "aria-expanded": expanded,
+          onClick: toggleExpanded,
+          onKeyDown: (e: React.KeyboardEvent) => handleToggleKeyDown(e, toggleExpanded),
+        } : {})}
       >
         {canToggle && (
           <ChevronRight
@@ -452,11 +568,18 @@ function ActionBlockView({
             className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
           />
         )}
-        <Icon size={12} style={{ color: "var(--text-3)", flexShrink: 0, opacity: 0.7 }} />
+        <Icon size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
         <span style={{ fontSize: 11.5, color: "var(--text-2)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {block.summary}
         </span>
         <ActionStatusBadge status={block.status} />
+        {block.result?.durationMs != null && block.status === "done" && (
+          <span style={{ fontSize: 9.5, color: "var(--text-3)", flexShrink: 0 }}>
+            {block.result.durationMs < 1000
+              ? `${block.result.durationMs}ms`
+              : `${(block.result.durationMs / 1000).toFixed(1)}s`}
+          </span>
+        )}
       </div>
 
       {progressMessage && (
@@ -496,7 +619,7 @@ function ActionBlockView({
             >
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                 {loadingDeferredOutput && (
-                  <Loader2 size={12} style={{ animation: "pulse-soft 1s ease-in-out infinite" }} />
+                  <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
                 )}
                 {loadingDeferredOutput
                   ? t("messageBlocks.deferredOutput.loadingFull")
@@ -529,56 +652,28 @@ function ActionBlockView({
           )}
 
           {outputChunks.length > 0 && (
-            <pre
-              style={{
-                margin: 0,
-                padding: "8px 12px",
-                background: "var(--code-bg)",
-                fontSize: 11.5,
-                lineHeight: 1.5,
-                fontFamily: '"JetBrains Mono", monospace',
-                whiteSpace: "pre-wrap",
-                overflow: "auto",
-                maxHeight: 160,
-                color: "var(--text-2)",
-              }}
-            >
+            <pre className="action-output-pre" style={{ maxHeight: 260 }}>
               {outputText}
             </pre>
           )}
 
           {outputTruncated && (
-            <div
-              style={{
-                margin: 0,
-                padding: "5px 12px",
-                borderTop: outputChunks.length > 0 ? "1px solid var(--border)" : undefined,
-                background: "rgba(148, 163, 184, 0.06)",
-                fontSize: 10.5,
-                color: "var(--text-3)",
-              }}
-            >
+            <div style={{
+              margin: 0, padding: "5px 12px",
+              borderTop: outputChunks.length > 0 ? "1px solid var(--border)" : undefined,
+              background: "rgba(148, 163, 184, 0.06)",
+              fontSize: 10.5, color: "var(--text-3)",
+            }}>
               {t("messageBlocks.outputTruncated")}
             </div>
           )}
 
           {block.result?.error && (
             <pre
+              className="action-output-error"
               style={{
-                margin: 0,
-                padding: "8px 12px",
-                borderTop:
-                  outputChunks.length > 0 || outputTruncated
-                    ? "1px solid rgba(248, 113, 113, 0.2)"
-                    : undefined,
-                background: "rgba(248, 113, 113, 0.06)",
-                fontSize: 11.5,
-                lineHeight: 1.5,
-                fontFamily: '"JetBrains Mono", monospace',
-                whiteSpace: "pre-wrap",
-                overflow: "auto",
-                maxHeight: 120,
-                color: "var(--danger)",
+                borderTop: outputChunks.length > 0 || outputTruncated
+                  ? "1px solid rgba(248, 113, 113, 0.2)" : undefined,
               }}
             >
               {String(block.result.error)}
@@ -586,6 +681,112 @@ function ActionBlockView({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── Action Group ── */
+
+const actionTypeLabels: Record<string, string> = {
+  command: "command",
+  file_read: "file_read",
+  file_write: "file_write",
+  file_edit: "file_edit",
+  file_delete: "file_delete",
+  git: "git",
+  search: "search",
+  other: "other",
+};
+
+function ActionGroupView({
+  blocks,
+  hasError,
+  onLoadActionOutput,
+}: {
+  blocks: ActionBlock[];
+  hasError: boolean;
+  onLoadActionOutput?: (actionId: string) => Promise<void>;
+}) {
+  const { t } = useTranslation("chat");
+  const [expanded, setExpanded] = useState(false);
+
+  const typeCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const b of blocks) {
+      counts[b.actionType] = (counts[b.actionType] ?? 0) + 1;
+    }
+    return counts;
+  }, [blocks]);
+
+  const errorCount = useMemo(
+    () => blocks.filter((b) => b.status === "error").length,
+    [blocks],
+  );
+
+  const typeBreakdown = useMemo(() => {
+    return Object.entries(typeCounts)
+      .map(([type, count]) => {
+        const label = t(`messageBlocks.actionGroup.types.${actionTypeLabels[type] ?? "other"}`);
+        return `${count} ${label}`;
+      })
+      .join(" · ");
+  }, [typeCounts, t]);
+
+  const summaryText = hasError
+    ? t("messageBlocks.actionGroup.summaryWithError", { count: blocks.length, errorCount })
+    : t("messageBlocks.actionGroup.summary", { count: blocks.length });
+
+  const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
+  return (
+    <div className="animate-slide-up">
+      <div
+        className="msg-block-header"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={toggleExpanded}
+        onKeyDown={(e) => handleToggleKeyDown(e, toggleExpanded)}
+      >
+        <ChevronRight
+          size={11}
+          className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
+        />
+        <Layers size={12} style={{ color: "var(--text-3)", flexShrink: 0, opacity: 0.7 }} />
+        <span style={{ fontSize: 11.5, color: "var(--text-2)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {summaryText}
+        </span>
+        <span style={{ fontSize: 10, color: "var(--text-3)", flexShrink: 0 }}>
+          {typeBreakdown}
+        </span>
+        {hasError ? (
+          <XCircle size={11} style={{ color: "var(--danger)", flexShrink: 0 }} />
+        ) : (
+          <CheckCircle2 size={11} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+        )}
+      </div>
+      <div className={`action-group-body${expanded ? " action-group-body--expanded" : ""}`}>
+        <div
+          className="action-group-body-inner"
+          style={{
+            background: expanded ? "rgba(255, 255, 255, 0.02)" : undefined,
+            borderRadius: "var(--radius-sm)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+          }}
+        >
+          {expanded &&
+            blocks.map((block) => (
+              <ActionBlockView
+                key={block.actionId}
+                block={block}
+                onLoadDeferredOutput={
+                  onLoadActionOutput ? () => onLoadActionOutput(block.actionId) : undefined
+                }
+              />
+            ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -642,54 +843,82 @@ function extractApprovalDetails(details: Record<string, unknown>) {
   return { command, reason, commandActionCount, remainingDetails, hasRemainingDetails };
 }
 
+function extractAnswerText(raw: unknown): string | null {
+  if (typeof raw === "string") return raw;
+  if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+    const obj = raw as Record<string, unknown>;
+    // Shape from buildToolInputResponseFromSelections: { answers: string[] }
+    if (Array.isArray(obj.answers) && obj.answers.length > 0) {
+      return obj.answers.map(String).join(", ");
+    }
+    if (typeof obj.label === "string") return obj.label;
+    if (typeof obj.value === "string") return obj.value;
+  }
+  if (Array.isArray(raw) && raw.length > 0) {
+    return raw.map(String).join(", ");
+  }
+  return null;
+}
+
 function ToolInputApprovalCard({
   block,
-  questionCount,
+  questions,
   isPending,
-  decisionLabel,
-  decisionBackground,
-  decisionColor,
 }: {
   block: ApprovalBlock;
-  questionCount: number;
+  questions: { id: string; question: string }[];
   isPending: boolean;
   decisionLabel: string;
   decisionBackground: string;
   decisionColor: string;
 }) {
   const { t } = useTranslation("chat");
-  if (questionCount <= 0) {
-    return null;
-  }
+  if (questions.length <= 0) return null;
+
+  const rawAnswers = block.responseData?.answers;
+  const answers = typeof rawAnswers === "object" && rawAnswers !== null && !Array.isArray(rawAnswers)
+    ? rawAnswers as Record<string, unknown>
+    : undefined;
+  const isAnswered = !isPending && block.decision;
+  const hasAnswers = isAnswered && answers;
+  const [expanded, setExpanded] = useState(false);
+  const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
 
   return (
-    <div className="tool-input-preview-card">
-      <div className="tool-input-preview-body">
-        <div className="tool-input-preview-header">
-          <span className="tool-input-preview-count">
-            {t("messageBlocks.approval.pendingQuestions", {
-              count: questionCount,
-            })}
-          </span>
-
-          {!isPending && block.decision ? (
-            <span
-              className="tool-input-preview-status"
-              style={{ background: decisionBackground, color: decisionColor }}
-            >
-              {decisionLabel}
-            </span>
-          ) : null}
-        </div>
-
-        {isPending ? (
-          <div className="tool-input-preview-footer">
-            <span className="tool-input-preview-note">
-              {t("messageBlocks.toolInput.answerInComposer")}
-            </span>
-          </div>
-        ) : null}
+    <div>
+      <div
+        className="msg-block-header"
+        {...(hasAnswers ? {
+          role: "button" as const,
+          tabIndex: 0,
+          "aria-expanded": expanded,
+          onClick: toggleExpanded,
+          onKeyDown: (e: React.KeyboardEvent) => handleToggleKeyDown(e, toggleExpanded),
+        } : { style: { cursor: "default" } })}
+      >
+        {hasAnswers && (
+          <ChevronRight size={11} className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`} />
+        )}
+        <MessageSquare size={12} style={{ color: isPending ? "var(--info)" : "var(--text-3)", flexShrink: 0, opacity: 0.7 }} />
+        <span style={{ fontSize: 11.5, color: "var(--text-2)", flex: 1 }}>
+          {isPending
+            ? t("messageBlocks.approval.pendingQuestions", { count: questions.length })
+            : t("messageBlocks.approval.answeredQuestions", { count: questions.length })}
+        </span>
       </div>
+      {hasAnswers && expanded && (
+        <div className="tool-input-qa-body">
+          {questions.map((q) => {
+            const text = extractAnswerText(answers[q.id]);
+            if (!text) return null;
+            return (
+              <div key={q.id} className="tool-input-qa-row">
+                {q.question} → <strong>{text}</strong>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -801,14 +1030,16 @@ function ApprovalCard({
 
   if (isToolInputRequest && toolInputQuestions.length > 0 && !showClaudeUnsupportedApproval) {
     return (
-      <ToolInputApprovalCard
-        block={block}
-        questionCount={toolInputQuestions.length}
-        isPending={isPending}
-        decisionLabel={decisionLabel}
-        decisionBackground={decisionBackground}
-        decisionColor={decisionColor}
-      />
+      <div>
+        <ToolInputApprovalCard
+          block={block}
+          questions={toolInputQuestions}
+          isPending={isPending}
+          decisionLabel={decisionLabel}
+          decisionBackground={decisionBackground}
+          decisionColor={decisionColor}
+        />
+      </div>
     );
   }
 
@@ -860,8 +1091,8 @@ function ApprovalCard({
         )}
       </div>
 
-      {/* Details */}
-      {!isToolInputRequest && (command || displayReason || commandActionCount > 0 || requestedPermissions || mcpUrl || mcpSchema || hasRemainingDetails) && (
+      {/* Details — collapsed for resolved approvals */}
+      {!isToolInputRequest && (command || displayReason || commandActionCount > 0 || requestedPermissions || mcpUrl || mcpSchema || hasRemainingDetails) && (isPending || !block.decision) && (
         <div className="acard-details">
           {command && (
             <pre className="acard-command">{command}</pre>
@@ -1042,210 +1273,273 @@ function ApprovalCard({
 
 /* ── Main Component ── */
 
-function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadActionOutput }: Props) {
-  const safeBlocks = Array.isArray(blocks) ? blocks : [];
+function renderSingleBlock(
+  block: ContentBlock,
+  index: number,
+  safeBlocks: ContentBlock[],
+  status: MessageStatus | undefined,
+  engineId: string | undefined,
+  onApproval: (approvalId: string, response: ApprovalResponse) => void,
+  onLoadActionOutput: ((actionId: string) => Promise<void>) | undefined,
+) {
+  const blockKey = getMessageBlockKey(block, index, safeBlocks);
 
-  const lastDiffIndex = useMemo(() => {
-    for (let i = safeBlocks.length - 1; i >= 0; i--) {
-      const b = safeBlocks[i];
-      if (isBlockLike(b) && b.type === "diff") return i;
+  /* ── Text ── */
+  if (block.type === "text") {
+    const textContent = String(block.content ?? "");
+    const isLastBlock = index === safeBlocks.length - 1;
+    const isStreamingText = status === "streaming" && isLastBlock;
+
+    if (isStreamingText) {
+      return (
+        <MarkdownContent
+          key={blockKey}
+          content={textContent}
+          streaming
+          className="prose"
+          style={{ fontSize: 13, padding: "6px 14px" }}
+        />
+      );
     }
-    return -1;
-  }, [safeBlocks]);
+
+    return (
+      <MarkdownContent
+        key={blockKey}
+        content={textContent}
+        className="prose"
+        style={{ fontSize: 13, padding: "6px 14px" }}
+      />
+    );
+  }
+
+  /* ── Code ── */
+  if (block.type === "code") {
+    const lang = String(block.language ?? "text");
+    return (
+      <div
+        key={blockKey}
+        style={{
+          borderRadius: "var(--radius-sm)",
+          border: "1px solid var(--border)",
+          overflow: "hidden",
+          background: "var(--code-bg)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "6px 12px",
+            borderBottom: "1px solid var(--border)",
+            fontSize: 11,
+            color: "var(--text-3)",
+            fontFamily: '"JetBrains Mono", monospace',
+          }}
+        >
+          <FileCode2 size={12} style={{ opacity: 0.5 }} />
+          <span style={{ flex: 1 }}>{block.filename || lang}</span>
+          <CodeBlockCopyButton content={String(block.content ?? "")} />
+        </div>
+        <pre
+          style={{
+            margin: 0,
+            padding: "12px 14px",
+            fontSize: 12.5,
+            lineHeight: 1.6,
+            fontFamily: '"JetBrains Mono", monospace',
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            overflow: "auto",
+            maxHeight: 400,
+          }}
+        >
+          <code className={`language-${lang}`}>{String(block.content ?? "")}</code>
+        </pre>
+      </div>
+    );
+  }
+
+  /* ── Diff ── */
+  if (block.type === "diff") {
+    return (
+      <div key={blockKey} >
+        <MessageDiffBlock block={block} />
+      </div>
+    );
+  }
+
+  /* ── Notice ── */
+  if (block.type === "notice") {
+    return <NoticeBlockView key={blockKey} block={block} />;
+  }
+
+  /* ── Steer ── */
+  if (block.type === "steer") {
+    return <SteerBlockView key={blockKey} block={block} />;
+  }
+
+  /* ── Action ── */
+  if (block.type === "action") {
+    return (
+      <div key={blockKey} >
+        <ActionBlockView
+          block={block}
+          onLoadDeferredOutput={
+            onLoadActionOutput ? () => onLoadActionOutput(block.actionId) : undefined
+          }
+        />
+      </div>
+    );
+  }
+
+  /* ── Approval ── */
+  if (block.type === "approval") {
+    return (
+      <ApprovalCard
+        key={blockKey}
+        block={block}
+        engineId={engineId}
+        onApproval={onApproval}
+      />
+    );
+  }
+
+  /* ── Thinking ── */
+  if (block.type === "thinking") {
+    const isLastBlock = index === safeBlocks.length - 1;
+    const thinkingActive = status === "streaming" && isLastBlock;
+    return (
+      <div key={blockKey} >
+        <ThinkingBlockView block={block} isStreaming={thinkingActive} />
+      </div>
+    );
+  }
+
+  /* ── Attachment ── */
+  if (block.type === "attachment") {
+    const attachmentBlock = block as AttachmentBlock;
+    const mime = attachmentBlock.mimeType ?? "";
+    const AttachIcon = mime.startsWith("image/")
+      ? Image
+      : mime.startsWith("text/") || mime.includes("json") || mime.includes("javascript")
+        ? FileText
+        : File;
+    return (
+      <div
+        key={blockKey}
+        className="chat-attachment-chip"
+        style={{ margin: "2px 12px", display: "inline-flex" }}
+      >
+        <AttachIcon size={12} />
+        <span className="chat-attachment-chip-name">{attachmentBlock.fileName}</span>
+      </div>
+    );
+  }
+
+  /* ── Error ── */
+  if (block.type === "error") {
+    return (
+      <div key={blockKey} className="msg-error-block">
+        <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+        {block.message}
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadActionOutput }: Props) {
+  const safeBlocks = useMemo(
+    () => (Array.isArray(blocks) ? blocks : []).filter(isBlockLike) as ContentBlock[],
+    [blocks],
+  );
+
+  const isStreaming = status === "streaming";
+  const blockSegments = useMemo(() => buildBlockSegments(safeBlocks, isStreaming), [safeBlocks, isStreaming]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      {safeBlocks.map((rawBlock, index) => {
-        if (!isBlockLike(rawBlock)) return null;
-        const block = rawBlock as ContentBlock;
-        const blockKey = getMessageBlockKey(block, index, safeBlocks);
-
-        /* ── Text ── */
-        if (block.type === "text") {
-          const textContent = String(block.content ?? "");
-          const isLastBlock = index === safeBlocks.length - 1;
-          const isStreamingText = status === "streaming" && isLastBlock;
-
-          if (isStreamingText) {
-            return (
-              <div
-                key={blockKey}
-                style={{
-                  fontSize: 13,
-                  padding: "4px 14px",
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                }}
-              >
-                {textContent}
-              </div>
-            );
-          }
-
-          return (
-            <Suspense
-              key={blockKey}
-              fallback={
-                <div
-                  style={{
-                    fontSize: 13,
-                    padding: "4px 14px",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  {textContent}
-                </div>
-              }
-            >
-              <MarkdownContent
-                content={textContent}
-                className="prose"
-                style={{ fontSize: 13, padding: "4px 14px" }}
-              />
-            </Suspense>
-          );
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      {blockSegments.map((segment, segIdx) => {
+        if (segment.kind === "divider") {
+          return <div key={`divider-${segIdx}`} className="msg-section-divider" />;
         }
 
-        /* ── Code ── */
-        if (block.type === "code") {
-          const lang = String(block.language ?? "text");
+        if (segment.kind === "action-card") {
           return (
-            <div
-              key={blockKey}
-              style={{
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid var(--border)",
-                overflow: "hidden",
-                background: "var(--code-bg)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "6px 12px",
-                  borderBottom: "1px solid var(--border)",
-                  fontSize: 11,
-                  color: "var(--text-3)",
-                  fontFamily: '"JetBrains Mono", monospace',
-                }}
-              >
-                <FileCode2 size={12} style={{ opacity: 0.5 }} />
-                {block.filename || lang}
-              </div>
-              <pre
-                style={{
-                  margin: 0,
-                  padding: "12px 14px",
-                  fontSize: 12.5,
-                  lineHeight: 1.6,
-                  fontFamily: '"JetBrains Mono", monospace',
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  overflow: "auto",
-                  maxHeight: 400,
-                }}
-              >
-                <code className={`language-${lang}`}>{String(block.content ?? "")}</code>
-              </pre>
+            <div key={`action-card-${segIdx}`} className="msg-action-card">
+              {segment.segments.map((inner, innerIdx) => {
+                if (inner.kind === "action-group") {
+                  const first = inner.blocks[0];
+                  const last = inner.blocks[inner.blocks.length - 1];
+                  return (
+                    <ActionGroupView
+                      key={`action-group:${first.actionId}:${last.actionId}`}
+                      blocks={inner.blocks}
+                      hasError={inner.hasError}
+                      onLoadActionOutput={onLoadActionOutput}
+                    />
+                  );
+                }
+                if (inner.block.type === "thinking") {
+                  const thinkingBlock = inner.block as ThinkingBlock;
+                  const isLastBlock = inner.index === safeBlocks.length - 1;
+                  const thinkingActive = status === "streaming" && isLastBlock;
+                  return (
+                    <ThinkingBlockView
+                      key={getMessageBlockKey(inner.block, inner.index, safeBlocks)}
+                      block={thinkingBlock}
+                      isStreaming={thinkingActive}
+                    />
+                  );
+                }
+                if (inner.block.type === "approval") {
+                  return (
+                    <ApprovalCard
+                      key={(inner.block as ApprovalBlock).approvalId}
+                      block={inner.block as ApprovalBlock}
+                      engineId={engineId}
+                      onApproval={onApproval}
+                    />
+                  );
+                }
+                return (
+                  <ActionBlockView
+                    key={inner.block.type === "action" ? (inner.block as ActionBlock).actionId : `inner-${innerIdx}`}
+                    block={inner.block as ActionBlock}
+                    onLoadDeferredOutput={
+                      onLoadActionOutput ? () => onLoadActionOutput((inner.block as ActionBlock).actionId) : undefined
+                    }
+                  />
+                );
+              })}
             </div>
           );
         }
 
-        /* ── Diff ── */
-        if (block.type === "diff") {
-          return <MessageDiffBlock key={blockKey} block={block} defaultExpanded={index === lastDiffIndex} />;
-        }
-
-        /* ── Notice ── */
-        if (block.type === "notice") {
-          return <NoticeBlockView key={blockKey} block={block} />;
-        }
-
-        /* ── Steer ── */
-        if (block.type === "steer") {
-          return <SteerBlockView key={blockKey} block={block} />;
-        }
-
-        /* ── Action ── */
-        if (block.type === "action") {
+        if (segment.kind === "action-group") {
+          const first = segment.blocks[0];
+          const last = segment.blocks[segment.blocks.length - 1];
           return (
-            <ActionBlockView
-              key={blockKey}
-              block={block}
-              onLoadDeferredOutput={
-                onLoadActionOutput ? () => onLoadActionOutput(block.actionId) : undefined
-              }
+            <ActionGroupView
+              key={`action-group:${first.actionId}:${last.actionId}`}
+              blocks={segment.blocks}
+              hasError={segment.hasError}
+              onLoadActionOutput={onLoadActionOutput}
             />
           );
         }
 
-        /* ── Approval ── */
-        if (block.type === "approval") {
-          return (
-            <ApprovalCard
-              key={blockKey}
-              block={block}
-              engineId={engineId}
-              onApproval={onApproval}
-            />
-          );
-        }
-
-        /* ── Thinking ── */
-        if (block.type === "thinking") {
-          const isLastBlock = index === safeBlocks.length - 1;
-          const thinkingActive = status === "streaming" && isLastBlock;
-          return <ThinkingBlockView key={blockKey} block={block} isStreaming={thinkingActive} />;
-        }
-
-        /* ── Attachment ── */
-        if (block.type === "attachment") {
-          const attachmentBlock = block as AttachmentBlock;
-          const mime = attachmentBlock.mimeType ?? "";
-          const AttachIcon = mime.startsWith("image/")
-            ? Image
-            : mime.startsWith("text/") || mime.includes("json") || mime.includes("javascript")
-              ? FileText
-              : File;
-          return (
-            <div
-              key={blockKey}
-              className="chat-attachment-chip"
-              style={{ margin: "2px 12px", display: "inline-flex" }}
-            >
-              <AttachIcon size={12} />
-              <span className="chat-attachment-chip-name">{attachmentBlock.fileName}</span>
-            </div>
-          );
-        }
-
-        /* ── Error ── */
-        if (block.type === "error") {
-          return (
-            <div
-              key={blockKey}
-              style={{
-                padding: "10px 14px",
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid rgba(248, 113, 113, 0.15)",
-                background: "rgba(248, 113, 113, 0.06)",
-                color: "var(--danger)",
-                fontSize: 13,
-                display: "flex",
-                alignItems: "flex-start",
-                gap: 8,
-              }}
-            >
-              <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
-              {block.message}
-            </div>
-          );
-        }
-
-        return null;
+        return renderSingleBlock(
+          segment.block,
+          segment.index,
+          safeBlocks,
+          status,
+          engineId,
+          onApproval,
+          onLoadActionOutput,
+        );
       })}
     </div>
   );

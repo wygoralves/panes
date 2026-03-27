@@ -185,14 +185,18 @@ export const ipc = {
     repoId: string | null,
     engineId: string,
     modelId: string,
-    title: string
+    title: string,
+    reasoningEffort?: string | null,
+    serviceTier?: string | null,
   ) =>
     invoke<Thread>("create_thread", {
       workspaceId,
       repoId,
       engineId,
       modelId,
-      title
+      title,
+      reasoningEffort: reasoningEffort ?? null,
+      serviceTier: serviceTier ?? null,
     }),
   renameThread: (threadId: string, title: string) =>
     invoke<Thread>("rename_thread", {

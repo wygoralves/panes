@@ -63,6 +63,22 @@ interface ChatState {
 
 let activeThreadBindSeq = 0;
 const STREAM_EVENT_BATCH_WINDOW_MS = 16;
+
+/**
+ * Background listeners for threads that are still streaming when the user switches away.
+ * Keeps the event stream alive so events are not lost. On switch-back, the DB state
+ * will include all events that arrived while the thread was in the background.
+ * Cleaned up on TurnCompleted or when the thread is explicitly cancelled.
+ */
+const backgroundStreamListeners = new Map<string, () => void>();
+
+function cleanupBackgroundListener(threadId: string) {
+  const cleanup = backgroundStreamListeners.get(threadId);
+  if (cleanup) {
+    cleanup();
+    backgroundStreamListeners.delete(threadId);
+  }
+}
 const MESSAGE_WINDOW_INITIAL_LIMIT = 80;
 const OLDER_MESSAGES_RETRY_BACKOFF_MS = 2_000;
 const MAX_FULLY_HYDRATED_MESSAGES = 80;
@@ -281,6 +297,7 @@ function resolveApprovalInMessages(
   messages: Message[],
   approvalId: string,
   decision?: ApprovalBlock["decision"],
+  responseData?: Record<string, unknown>,
 ): Message[] {
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
     const message = messages[messageIndex];
@@ -305,17 +322,12 @@ function resolveApprovalInMessages(
     }
 
     const nextBlocks = [...blocks];
-    nextBlocks[approvalIndex] =
-      decision === undefined
-        ? {
-            ...approvalBlock,
-            status: "answered",
-          }
-        : {
-            ...approvalBlock,
-            status: "answered",
-            decision,
-          };
+    nextBlocks[approvalIndex] = {
+      ...approvalBlock,
+      status: "answered" as const,
+      ...(decision !== undefined ? { decision } : {}),
+      ...(responseData !== undefined ? { responseData } : {}),
+    };
 
     const nextMessages = [...messages];
     nextMessages[messageIndex] = {
@@ -576,7 +588,7 @@ function appendSteerBlockToAssistantMessage(message: Message, steerBlock: SteerB
     return message;
   }
 
-  const blocks = [steerBlock, ...existingBlocks];
+  const blocks = [...existingBlocks, steerBlock];
   return {
     ...message,
     blocks,
@@ -1134,6 +1146,18 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     assistant.clientTurnId = event.client_turn_id;
   }
 
+  // Stamp durationMs on the last thinking block when a non-thinking event arrives
+  if (event.type !== "ThinkingDelta") {
+    const blocks = assistant.blocks ?? [];
+    const last = blocks[blocks.length - 1];
+    if (last?.type === "thinking" && last.startedAt != null && last.durationMs == null) {
+      assistant.blocks = [
+        ...blocks.slice(0, -1),
+        { ...last, durationMs: Date.now() - last.startedAt },
+      ];
+    }
+  }
+
   if (event.type === "TextDelta") {
     const blocks = assistant.blocks ?? [];
     const delta = String(event.content ?? "");
@@ -1170,7 +1194,7 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
         },
       ];
     } else {
-      assistant.blocks = [...blocks, { type: "thinking", content: delta }];
+      assistant.blocks = [...blocks, { type: "thinking" as const, content: delta, startedAt: Date.now() }];
     }
   }
 
@@ -1428,9 +1452,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
     activeThreadBindSeq += 1;
     const bindSeq = activeThreadBindSeq;
 
-    const current = currentUnlisten;
-    if (current) {
-      current();
+    // Tear down the current listener. If the thread was still streaming,
+    // install a lightweight background listener that watches for TurnCompleted
+    // so the thread status updates correctly when the user switches back.
+    if (currentUnlisten) {
+      currentUnlisten();
+    }
+    if (currentThreadId && get().streaming) {
+      cleanupBackgroundListener(currentThreadId);
+      listenThreadEvents(currentThreadId, (event) => {
+        if (event.type === "TurnCompleted") {
+          cleanupBackgroundListener(currentThreadId!);
+        }
+      }).then((unsub) => {
+        // If the user already switched back to this thread, don't register
+        if (useChatStore.getState().threadId === currentThreadId) {
+          unsub();
+          return;
+        }
+        const existing = backgroundStreamListeners.get(currentThreadId!);
+        if (existing) {
+          // Another background listener was set up in the meantime
+          unsub();
+        } else {
+          backgroundStreamListeners.set(currentThreadId!, unsub);
+        }
+      });
     }
 
     if (!threadId) {
@@ -1454,6 +1501,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     try {
+      // Clean up any background listener for this thread before re-subscribing
+      cleanupBackgroundListener(threadId);
+
       const threadState = useThreadStore.getState();
       let activeThread = threadState.threads.find((thread) => thread.id === threadId);
       if (activeThread?.engineId === "codex" && isCodexThreadSyncRequired(activeThread.engineMetadata)) {
@@ -1878,7 +1928,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       await ipc.cancelTurn(threadId);
       pendingTurnMetaByThread.delete(threadId);
-      set({ status: "idle", streaming: false });
+      // Remove the trailing assistant message if it has no meaningful content
+      // (e.g. only thinking blocks with no text, or completely empty)
+      const messages = get().messages;
+      const last = messages[messages.length - 1];
+      const lastHasContent = last?.role === "assistant" && (last.blocks ?? []).some((b) => {
+        if (b.type === "text") return Boolean(b.content?.trim());
+        if (b.type === "action" || b.type === "diff" || b.type === "code" || b.type === "approval") return true;
+        return false;
+      });
+      const nextMessages = last?.role === "assistant" && !lastHasContent
+        ? messages.slice(0, -1)
+        : messages;
+      set({ status: "idle", streaming: false, messages: nextMessages });
     } catch (error) {
       set({ error: String(error) });
     }
@@ -1892,9 +1954,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Apply optimistic update BEFORE the IPC call
     const decision = resolveApprovalDecision(response);
+    const responseData = typeof response === "object" && response !== null && !Array.isArray(response)
+      ? response as Record<string, unknown>
+      : undefined;
     const previousMessages = get().messages;
     set((state) => {
-      const nextMessages = resolveApprovalInMessages(state.messages, approvalId, decision);
+      const nextMessages = resolveApprovalInMessages(state.messages, approvalId, decision, responseData);
       if (nextMessages === state.messages) {
         return state;
       }
