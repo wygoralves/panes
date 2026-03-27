@@ -1,0 +1,31 @@
+{
+  "version": "0.49.0",
+  "notes": "## [](https://github.com/wygoralves/panes/compare/v0.48.0...vnull) (2026-03-27)\n\n### Features\n\n* **nav:** improve file management and opening in the file editor ([b900ed2](https://github.com/wygoralves/panes/commit/b900ed26c78e50b8b5489d753f4ff4f053e20fc9))",
+  "pub_date": "2026-03-27T13:47:40Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cXJUd1lpOTJseS9Mellhc2JoNE9jditjcmlJRUo1S0tucWxZQ1Q1aUo0MUpCZFhOSFhiWVJRTWFDcEdFVHJsNEV3Mzd6blRQNnNMT3MrNmFUS081OFFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc0NjIwMDUxCWZpbGU6UGFuZXMuYXBwLnRhci5negpaVTJESm9KKzA2RG9BQ2MzUjhVOVFmRDNyaHFjRVZOTW8xcXNOYlQ5SFAxdGE2RjdLMTFWVGdYRUlpM1RienM3c1pBQ0k0TXNhYWNYeUNKUXJjalZBUT09Cg==",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.49.0/Panes.app.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cXJUd1lpOTJseS9Mellhc2JoNE9jditjcmlJRUo1S0tucWxZQ1Q1aUo0MUpCZFhOSFhiWVJRTWFDcEdFVHJsNEV3Mzd6blRQNnNMT3MrNmFUS081OFFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc0NjIwMDUxCWZpbGU6UGFuZXMuYXBwLnRhci5negpaVTJESm9KKzA2RG9BQ2MzUjhVOVFmRDNyaHFjRVZOTW8xcXNOYlQ5SFAxdGE2RjdLMTFWVGdYRUlpM1RienM3c1pBQ0k0TXNhYWNYeUNKUXJjalZBUT09Cg==",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.49.0/Panes.app.tar.gz"
+    },
+    "linux-x86_64-appimage": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cXRHT0dnL1JMZnVRSzR2OW12bHJXSTdNVXBQL05yM2ltRDFUN3pHV3FpQ3g0L0MwTi9WRG5PQzA2QmUza3NpMTVXSG9SZjFhM2JJVVMzSmlVRWZVa3c0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc0NjE5OTIyCWZpbGU6UGFuZXNfMC40OS4wX2FtZDY0LkFwcEltYWdlCkwrL0prNnJiL1dQVXlEWWJQTWR6eDZleVRQVy9nYnBEVVNtM1pscUpJeEZTL3haQzZGZThCNEo3OFBaRUptdkV5eVc2ai8yeTcwOVpDR3gzb3ZXUERBPT0K",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.49.0/Panes_0.49.0_amd64.AppImage"
+    },
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cXRHT0dnL1JMZnVRSzR2OW12bHJXSTdNVXBQL05yM2ltRDFUN3pHV3FpQ3g0L0MwTi9WRG5PQzA2QmUza3NpMTVXSG9SZjFhM2JJVVMzSmlVRWZVa3c0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc0NjE5OTIyCWZpbGU6UGFuZXNfMC40OS4wX2FtZDY0LkFwcEltYWdlCkwrL0prNnJiL1dQVXlEWWJQTWR6eDZleVRQVy9nYnBEVVNtM1pscUpJeEZTL3haQzZGZThCNEo3OFBaRUptdkV5eVc2ai8yeTcwOVpDR3gzb3ZXUERBPT0K",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.49.0/Panes_0.49.0_amd64.AppImage"
+    },
+    "linux-x86_64-deb": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cW4vNFJnZnZiZEl4VTZZRGJTZDZkbGNDZC9zYmIvODlEUll1RzA1cDBNUmJmSHMrNGxSdW1iZlo3bk5KMkgzOEtlekpVak9Wall6OG9EN0UxbEF0Y1FJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc0NjE5OTIyCWZpbGU6UGFuZXNfMC40OS4wX2FtZDY0LmRlYgpjK3dLeWhNRVFGWE1RWlRtWHMrZG52UVdMMHZnbkp0MTAzQ01HTEU3STlqWDgyZGdna01qZ0lKNURQbFVOa0JoMWhvN0NyQk5WK3BYQWE1ZnZqOW5DQT09Cg==",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.49.0/Panes_0.49.0_amd64.deb"
+    },
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWhOWElTaFhMWFFsV2JGUzFJYVhsbk9jT2lOSFRqN2N5YXhqd3U3RXdqMVd5V2dSdVluKzRzRnZhdGk2d29nYzFqLysrVEVFaWdRTDhCcU43WklFQ3dZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc0NjIwMDkzCWZpbGU6UGFuZXNfMC40OS4wX3g2NC1zZXR1cC5leGUKdTYvaUdQK1FjOUhvWFVkT21GeW9ybHQ3UWpsbmNsSkloaTI5dnFHUUtINXRFclVtZkFYdDUwblIxMkRsOXJOS3FwNVhudEt2bUpnSXV1d080SkpzQmc9PQo=",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.49.0/Panes_0.49.0_x64-setup.exe"
+    }
+  }
+}
