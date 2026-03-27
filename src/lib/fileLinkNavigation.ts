@@ -181,7 +181,12 @@ function parseLocalUrlTarget(rawTarget: string): {
   }
 
   if (url.protocol === "file:" || url.hostname === "file") {
-    const decodedPath = decodeURIComponent(url.pathname);
+    let decodedPath: string;
+    try {
+      decodedPath = decodeURIComponent(url.pathname);
+    } catch {
+      return null;
+    }
     const { path, reveal } = stripLocationSuffix(decodedPath);
     if (!isLocalAbsolutePath(path) && !/^\/[A-Za-z]:\//.test(path)) {
       return null;

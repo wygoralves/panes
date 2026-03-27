@@ -149,6 +149,27 @@ describe("fileLinkNavigation", () => {
     });
   });
 
+  it("ignores malformed percent-encoding in file URLs", () => {
+    expect(
+      resolveLocalFileLinkTarget("file:///workspace/apps/app/docs/%ZZ.md#L9", {
+        workspaceRoot: "/workspace",
+        repos: [{ id: "repo-1", path: "/workspace/apps/app" }],
+      }),
+    ).toBeNull();
+
+    expect(classifyLinkTarget("file:///workspace/apps/app/docs/%ZZ.md#L9")).toBe("other");
+    expect(() =>
+      extractTextLinkMatches(
+        "bad file:///workspace/apps/app/docs/%ZZ.md should not break parsing",
+      ),
+    ).not.toThrow();
+    expect(
+      extractTextLinkMatches(
+        "bad file:///workspace/apps/app/docs/%ZZ.md should not break parsing",
+      ),
+    ).toEqual([]);
+  });
+
   it("resolves Windows absolute paths and file URLs", () => {
     expect(
       resolveLocalFileLinkTarget("C:\\Users\\dev\\repo\\src\\app.ts:7:3", {
