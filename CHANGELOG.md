@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.47.0...vnull) (2026-03-27)
+
+### Features
+
+* **nav:** add smart compress expand for git and nav panels ([503bc7d](https://github.com/wygoralves/panes/commit/503bc7d9b7b57f564967eca13875a226b92285f9))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.46.4...vnull) (2026-03-27)
 
 ### Features
