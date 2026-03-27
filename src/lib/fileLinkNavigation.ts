@@ -1,4 +1,9 @@
 import { open as openExternal } from "@tauri-apps/plugin-shell";
+import {
+  compareRepoRoots,
+  isWithinRoot,
+  normalizeAbsolutePath,
+} from "./fileRootUtils";
 import { useFileStore } from "../stores/fileStore";
 import { useTerminalStore } from "../stores/terminalStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
@@ -54,53 +59,8 @@ function isWindowsDrivePath(path: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(path);
 }
 
-function isUncPath(path: string): boolean {
-  return /^\\\\/.test(path) || path.startsWith("//");
-}
-
 function isLocalAbsolutePath(path: string): boolean {
   return (path.startsWith("/") && !path.startsWith("//")) || isWindowsDrivePath(path) || /^\\\\/.test(path);
-}
-
-function normalizeAbsolutePath(path: string): string {
-  let normalized = path.replace(/\\/g, "/");
-  if (/^\/[A-Za-z]:\//.test(normalized)) {
-    normalized = normalized.slice(1);
-  }
-  if (/^[A-Za-z]:\//.test(normalized)) {
-    normalized = `${normalized[0].toUpperCase()}${normalized.slice(1)}`;
-  }
-
-  const isUnc = normalized.startsWith("//");
-  normalized = normalized.replace(/\/+/g, "/");
-  if (isUnc) {
-    normalized = `/${normalized}`;
-    normalized = normalized.replace(/^\/+/, "//");
-  }
-
-  if (normalized.length > 1 && /\/$/.test(normalized) && !/^[A-Za-z]:\/$/.test(normalized)) {
-    normalized = normalized.replace(/\/+$/, "");
-  }
-  return normalized;
-}
-
-function shouldCompareCaseInsensitive(path: string): boolean {
-  const normalized = normalizeAbsolutePath(path);
-  return isWindowsDrivePath(normalized) || isUncPath(normalized);
-}
-
-function normalizeForComparison(path: string): string {
-  const normalized = normalizeAbsolutePath(path);
-  return shouldCompareCaseInsensitive(normalized) ? normalized.toLowerCase() : normalized;
-}
-
-function isWithinRoot(absolutePath: string, rootPath: string): boolean {
-  const normalizedPath = normalizeForComparison(absolutePath);
-  const normalizedRoot = normalizeForComparison(rootPath);
-  if (normalizedPath === normalizedRoot) {
-    return true;
-  }
-  return normalizedPath.startsWith(`${normalizedRoot}/`);
 }
 
 function stripLocationSuffix(path: string): {
@@ -198,27 +158,6 @@ function parseLocalUrlTarget(rawTarget: string): {
   }
 
   return null;
-}
-
-function compareRepoRoots(
-  left: Pick<Repo, "id" | "path">,
-  right: Pick<Repo, "id" | "path">,
-  activeRepoId: string | null | undefined,
-): number {
-  const leftPath = normalizeAbsolutePath(left.path);
-  const rightPath = normalizeAbsolutePath(right.path);
-  if (leftPath.length !== rightPath.length) {
-    return rightPath.length - leftPath.length;
-  }
-  if (activeRepoId) {
-    if (left.id === activeRepoId && right.id !== activeRepoId) {
-      return -1;
-    }
-    if (right.id === activeRepoId && left.id !== activeRepoId) {
-      return 1;
-    }
-  }
-  return leftPath.localeCompare(rightPath);
 }
 
 export function classifyLinkTarget(rawTarget: string): LinkTargetKind {

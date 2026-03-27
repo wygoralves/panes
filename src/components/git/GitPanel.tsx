@@ -589,7 +589,9 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
         </div>
       )}
 
-      {effectiveRepo ? (
+      {(activeView === "files" && activeWorkspaceRootPath) ? (
+        <GitFilesView rootPath={activeWorkspaceRootPath} />
+      ) : effectiveRepo ? (
         <>
           {activeView === "changes" && (
             <GitChangesView
@@ -605,7 +607,6 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
           {activeView === "stash" && (
             <GitStashView repo={effectiveRepo} onError={setLocalError} />
           )}
-          {activeView === "files" && <GitFilesView repo={effectiveRepo} />}
           {activeView === "worktrees" && activeRepo && (
             <GitWorktreesView repo={activeRepo} onError={setLocalError} />
           )}

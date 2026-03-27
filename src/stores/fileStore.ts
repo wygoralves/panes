@@ -1,5 +1,9 @@
 import { create } from "zustand";
 import { ipc } from "../lib/ipc";
+import {
+  resolveAbsoluteFilePath,
+  resolveOwningRepoForAbsolutePath,
+} from "../lib/fileRootUtils";
 import { t } from "../i18n";
 import { toast } from "./toastStore";
 import { useWorkspaceStore } from "./workspaceStore";
@@ -14,11 +18,43 @@ import type {
   GitFileCompare,
 } from "../types";
 
-function createPlainTab(id: string, repoPath: string, filePath: string): EditorTab {
+interface ResolvedFileContext {
+  absolutePath: string;
+  gitRepoPath: string | null;
+  gitFilePath: string | null;
+}
+
+function resolveFileContext(rootPath: string, filePath: string): ResolvedFileContext {
+  const absolutePath = resolveAbsoluteFilePath(rootPath, filePath);
+  const workspaceState = useWorkspaceStore.getState();
+  const ownership = resolveOwningRepoForAbsolutePath(
+    absolutePath,
+    workspaceState.repos,
+    workspaceState.activeRepoId,
+  );
+
+  return {
+    absolutePath,
+    gitRepoPath: ownership?.repo.path ?? null,
+    gitFilePath: ownership?.filePath ?? null,
+  };
+}
+
+function createPlainTab(
+  id: string,
+  workspaceId: string | null,
+  rootPath: string,
+  filePath: string,
+  resolved: ResolvedFileContext,
+): EditorTab {
   return {
     id,
-    repoPath,
+    workspaceId,
+    rootPath,
+    absolutePath: resolved.absolutePath,
     filePath,
+    gitRepoPath: resolved.gitRepoPath,
+    gitFilePath: resolved.gitFilePath,
     fileName: filePath.split("/").pop() ?? filePath,
     content: "",
     savedContent: "",
@@ -79,9 +115,9 @@ interface FileStoreState {
   tabs: EditorTab[];
   activeTabId: string | null;
   pendingCloseTabId: string | null;
-  openFile: (repoPath: string, filePath: string) => Promise<void>;
+  openFile: (rootPath: string, filePath: string) => Promise<void>;
   openFileAtLocation: (
-    repoPath: string,
+    rootPath: string,
     filePath: string,
     reveal?: EditorRevealLocation | null,
   ) => Promise<void>;
@@ -106,14 +142,14 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
   activeTabId: null,
   pendingCloseTabId: null,
 
-  openFile: async (repoPath, filePath) => {
-    await get().openFileAtLocation(repoPath, filePath);
+  openFile: async (rootPath, filePath) => {
+    await get().openFileAtLocation(rootPath, filePath);
   },
 
-  openFileAtLocation: async (repoPath, filePath, reveal) => {
-    const existing = get().tabs.find(
-      (t) => t.repoPath === repoPath && t.filePath === filePath,
-    );
+  openFileAtLocation: async (rootPath, filePath, reveal) => {
+    const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+    const resolved = resolveFileContext(rootPath, filePath);
+    const existing = get().tabs.find((tab) => tab.absolutePath === resolved.absolutePath);
     const pendingReveal = createRevealRequest(reveal);
     if (existing) {
       destroyCachedEditor(`${existing.id}:git-base`);
@@ -122,7 +158,14 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
         activeTabId: existing.id,
         tabs: state.tabs.map((tab) =>
           tab.id === existing.id
-            ? toPlainEditorTab(tab, pendingReveal)
+            ? {
+                ...toPlainEditorTab(tab, pendingReveal),
+                workspaceId,
+                rootPath,
+                filePath,
+                gitRepoPath: resolved.gitRepoPath ?? tab.gitRepoPath,
+                gitFilePath: resolved.gitFilePath ?? tab.gitFilePath,
+              }
             : tab,
         ),
       }));
@@ -130,7 +173,7 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
     }
 
     const id = crypto.randomUUID();
-    const tab = createPlainTab(id, repoPath, filePath);
+    const tab = createPlainTab(id, workspaceId, rootPath, filePath, resolved);
 
     set((state) => ({
       tabs: [...state.tabs, tab],
@@ -138,7 +181,7 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
     }));
 
     try {
-      const result = await ipc.readFile(repoPath, filePath);
+      const result = await ipc.readFile(rootPath, filePath);
       set((state) => ({
         tabs: state.tabs.map((t) =>
           t.id === id
@@ -164,9 +207,13 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
   },
 
   openGitDiffFile: async (repoPath, filePath, options) => {
-    const existing = get().tabs.find(
-      (tab) => tab.repoPath === repoPath && tab.filePath === filePath,
-    );
+    const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+    const resolved = {
+      absolutePath: resolveAbsoluteFilePath(repoPath, filePath),
+      gitRepoPath: repoPath,
+      gitFilePath: filePath,
+    };
+    const existing = get().tabs.find((tab) => tab.absolutePath === resolved.absolutePath);
     const tabId = existing?.id ?? crypto.randomUUID();
 
     if (existing) {
@@ -177,6 +224,9 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
           tab.id === existing.id
             ? {
                 ...tab,
+                workspaceId,
+                gitRepoPath: repoPath,
+                gitFilePath: filePath,
                 isLoading: true,
                 renderMode: "git-diff-editor",
                 pendingReveal: null,
@@ -187,7 +237,7 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
       }));
     } else {
       const tab = {
-        ...createPlainTab(tabId, repoPath, filePath),
+        ...createPlainTab(tabId, workspaceId, repoPath, filePath, resolved),
         renderMode: "git-diff-editor" as const,
       };
       set((state) => ({
@@ -204,10 +254,14 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
     if (!tab) return;
 
     const compareSource = source ?? tab.gitContext?.source;
-    if (!compareSource) return;
+    if (!compareSource || !tab.gitRepoPath || !tab.gitFilePath) return;
 
     try {
-      const compare = await ipc.getGitFileCompare(tab.repoPath, tab.filePath, compareSource);
+      const compare = await ipc.getGitFileCompare(
+        tab.gitRepoPath,
+        tab.gitFilePath,
+        compareSource,
+      );
       set((state) => ({
         tabs: state.tabs.map((item) =>
           item.id === tabId ? applyGitCompare(item, compare) : item,
@@ -316,7 +370,7 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
 
     // Check if the file was modified externally since we loaded/last-saved it
     try {
-      const disk = await ipc.readFile(tab.repoPath, tab.filePath);
+      const disk = await ipc.readFile(tab.rootPath, tab.filePath);
       if (!disk.isBinary && disk.content !== tab.savedContent) {
         toast.warning(t("app:editor.toasts.modifiedExternally", { name: tab.fileName }));
         set((state) => ({
@@ -334,7 +388,7 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
 
     const contentToSave = tab.content;
     try {
-      await ipc.writeFile(tab.repoPath, tab.filePath, contentToSave);
+      await ipc.writeFile(tab.rootPath, tab.filePath, contentToSave, tab.workspaceId);
       set((state) => ({
         tabs: state.tabs.map((t) =>
           t.id === tabId
@@ -343,11 +397,11 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
         ),
       }));
 
-      if (tab.gitContext) {
+      if (tab.gitContext && tab.gitRepoPath) {
         const gitStore = useGitStore.getState();
         try {
-          gitStore.invalidateRepoCache(tab.repoPath);
-          await gitStore.refresh(tab.repoPath, { force: true });
+          gitStore.invalidateRepoCache(tab.gitRepoPath);
+          await gitStore.refresh(tab.gitRepoPath, { force: true });
           await get().refreshGitContext(tabId, tab.gitContext.source);
         } catch {
           // Saving already succeeded; leave the editor usable even if the git refresh fails.
