@@ -806,8 +806,12 @@ export interface EditorRevealRequest extends EditorRevealLocation {
 
 export interface EditorTab {
   id: string;
-  repoPath: string;
+  workspaceId: string | null;
+  rootPath: string;
+  absolutePath: string;
   filePath: string;
+  gitRepoPath: string | null;
+  gitFilePath: string | null;
   fileName: string;
   content: string;
   savedContent: string;

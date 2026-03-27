@@ -155,6 +155,18 @@ export const ipc = {
       workspaceId,
       dirPath: dirPath ?? null,
     }),
+  getWorkspaceFileTreePage: (
+    workspaceId: string,
+    offset?: number,
+    limit?: number,
+    refresh?: boolean,
+  ) =>
+    invoke<FileTreePage>("get_workspace_file_tree_page", {
+      workspaceId,
+      offset: offset ?? null,
+      limit: limit ?? null,
+      refresh: refresh ?? null,
+    }),
   listThreads: (workspaceId: string) => invoke<Thread[]>("list_threads", { workspaceId }),
   listArchivedThreads: (workspaceId: string) =>
     invoke<Thread[]>("list_archived_threads", { workspaceId }),
@@ -396,8 +408,8 @@ export const ipc = {
     invoke<void>("pop_git_stash", { repoPath, stashIndex }),
   readFile: (repoPath: string, filePath: string) =>
     invoke<ReadFileResult>("read_file", { repoPath, filePath }),
-  writeFile: (repoPath: string, filePath: string, content: string) =>
-    invoke<void>("write_file", { repoPath, filePath, content }),
+  writeFile: (repoPath: string, filePath: string, content: string, workspaceId?: string | null) =>
+    invoke<void>("write_file", { repoPath, filePath, content, workspaceId: workspaceId ?? null }),
   watchGitRepo: (repoPath: string) => invoke<void>("watch_git_repo", { repoPath }),
   addGitWorktree: (repoPath: string, worktreePath: string, branchName: string, baseRef?: string | null) =>
     invoke<GitWorktree>("add_git_worktree", { repoPath, worktreePath, branchName, baseRef: baseRef ?? null }),

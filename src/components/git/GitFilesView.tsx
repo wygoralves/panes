@@ -13,10 +13,10 @@ import { ipc } from "../../lib/ipc";
 import { useFileStore } from "../../stores/fileStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
-import type { Repo, FileTreeEntry } from "../../types";
+import type { FileTreeEntry } from "../../types";
 
 interface Props {
-  repo: Repo;
+  rootPath: string;
 }
 
 interface DirRow {
@@ -74,7 +74,7 @@ function entryName(entry: FileTreeEntry): string {
   return entry.path.split("/").pop() ?? entry.path;
 }
 
-export function GitFilesView({ repo }: Props) {
+export function GitFilesView({ rootPath }: Props) {
   const { t } = useTranslation("git");
   // Map from dirPath -> children entries ("" = root)
   const [dirContents, setDirContents] = useState<Map<string, FileTreeEntry[]>>(new Map());
@@ -87,8 +87,8 @@ export function GitFilesView({ repo }: Props) {
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setLayoutMode = useTerminalStore((s) => s.setLayoutMode);
 
-  // Track repo path to reset on change
-  const prevRepoPath = useRef(repo.path);
+  // Track root path to reset on change
+  const prevRootPath = useRef(rootPath);
   const dirContentsRef = useRef(dirContents);
   const treeViewportRef = useRef<HTMLDivElement>(null);
   dirContentsRef.current = dirContents;
@@ -102,7 +102,7 @@ export function GitFilesView({ repo }: Props) {
       else setLoadingDirs((prev) => new Set(prev).add(dirPath));
 
       try {
-        const entries = await ipc.listDir(repo.path, dirPath);
+        const entries = await ipc.listDir(rootPath, dirPath);
         setDirContents((prev) => {
           const next = new Map(prev);
           next.set(dirPath, entries);
@@ -119,20 +119,20 @@ export function GitFilesView({ repo }: Props) {
         });
       }
     },
-    [repo.path],
+    [rootPath],
   );
 
-  // Load root on mount or repo change
+  // Load root on mount or root change
   useEffect(() => {
-    if (prevRepoPath.current !== repo.path) {
+    if (prevRootPath.current !== rootPath) {
       setDirContents(new Map());
       setExpandedDirs(new Set());
       setLoadingDirs(new Set());
       setFilter("");
-      prevRepoPath.current = repo.path;
+      prevRootPath.current = rootPath;
     }
     void loadDir("");
-  }, [loadDir, repo.path]);
+  }, [loadDir, rootPath]);
 
   const toggleDir = useCallback(
     (dirPath: string) => {
@@ -155,12 +155,12 @@ export function GitFilesView({ repo }: Props) {
 
   const handleFileClick = useCallback(
     (filePath: string) => {
-      void openFile(repo.path, filePath);
+      void openFile(rootPath, filePath);
       if (activeWorkspaceId) {
         void setLayoutMode(activeWorkspaceId, "editor");
       }
     },
-    [repo.path, openFile, activeWorkspaceId, setLayoutMode],
+    [rootPath, openFile, activeWorkspaceId, setLayoutMode],
   );
 
   // Build flat row list from loaded data

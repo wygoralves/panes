@@ -4,6 +4,7 @@ use std::{
     process::Command,
 };
 
+use anyhow::Context;
 use tauri::State;
 
 use crate::{
@@ -39,14 +40,28 @@ pub async fn write_file(
     repo_path: String,
     file_path: String,
     content: String,
+    workspace_id: Option<String>,
 ) -> Result<(), String> {
     let db = state.db.clone();
+    let cache = state.file_tree_cache.clone();
     tokio::task::spawn_blocking(move || {
+        let access_root = PathBuf::from(&repo_path)
+            .canonicalize()
+            .map_err(err_to_string)?;
+        let target_for_repo_lookup =
+            resolve_target_path_for_repo_lookup(&access_root, &file_path).map_err(err_to_string)?;
+
         // Trust level check for user-initiated writes from the editor:
         // - Restricted: blocked — explicit opt-in required (must change trust level first)
         // - Standard/Trusted: allowed — these are direct user actions, not agent-initiated,
         //   so they don't require approval flow (approval is for agent operations)
-        if let Some(repo) = db::repos::find_repo_by_path(&db, &repo_path).map_err(err_to_string)? {
+        if let Some(repo) = db::repos::find_deepest_repo_containing_path(
+            &db,
+            target_for_repo_lookup.to_string_lossy().as_ref(),
+            workspace_id.as_deref(),
+        )
+        .map_err(err_to_string)?
+        {
             if matches!(repo.trust_level, TrustLevelDto::Restricted) {
                 return Err(
                     "cannot write to a restricted repository; change the trust level first"
@@ -54,7 +69,9 @@ pub async fn write_file(
                 );
             }
         }
-        fs_ops::write_file(&repo_path, &file_path, &content).map_err(err_to_string)
+        fs_ops::write_file(&repo_path, &file_path, &content).map_err(err_to_string)?;
+        cache.invalidate_containing_path(target_for_repo_lookup.to_string_lossy().as_ref());
+        Ok(())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -206,6 +223,36 @@ fn spawn_command(mut command: Command, path: &std::path::Path) -> anyhow::Result
         .spawn()
         .map(|_| ())
         .map_err(|error| anyhow::anyhow!("failed to reveal {}: {error}", path.display()))
+}
+
+fn resolve_target_path_for_repo_lookup(
+    access_root: &Path,
+    file_path: &str,
+) -> anyhow::Result<PathBuf> {
+    let target = access_root.join(file_path);
+
+    if target.exists() {
+        let canonical = target
+            .canonicalize()
+            .context("failed to resolve file path")?;
+        anyhow::ensure!(
+            canonical.starts_with(access_root),
+            "path traversal not allowed"
+        );
+        return Ok(canonical);
+    }
+
+    let parent = target.parent().context("invalid file path")?;
+    let parent_canonical = parent
+        .canonicalize()
+        .context("parent directory not found")?;
+    anyhow::ensure!(
+        parent_canonical.starts_with(access_root),
+        "path traversal not allowed"
+    );
+
+    let file_name = target.file_name().context("invalid file path")?;
+    Ok(parent_canonical.join(file_name))
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {

@@ -2,9 +2,10 @@ use tauri::State;
 
 use crate::{
     db, fs_ops,
-    git::multi_repo,
+    git::{multi_repo, repo},
     models::{
-        FileTreeEntryDto, RepoDto, TrustLevelDto, WorkspaceDto, WorkspaceGitSelectionStatusDto,
+        FileTreeEntryDto, FileTreePageDto, RepoDto, TrustLevelDto, WorkspaceDto,
+        WorkspaceGitSelectionStatusDto,
     },
     state::AppState,
     workspace_startup::{
@@ -314,6 +315,30 @@ pub async fn list_workspace_dirs(
             fs_ops::list_dir(&workspace.root_path, dir_path.as_deref().unwrap_or(""))?;
         entries.retain(|entry| entry.is_dir);
         Ok(entries)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_workspace_file_tree_page(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    refresh: Option<bool>,
+) -> Result<FileTreePageDto, String> {
+    let cache = state.file_tree_cache.clone();
+    run_db(state.db.clone(), move |db| {
+        let workspace = load_workspace(db, &workspace_id)?;
+        if refresh.unwrap_or(false) {
+            cache.invalidate_workspace(&workspace.root_path);
+        }
+        repo::get_workspace_file_tree_page(
+            &workspace.root_path,
+            offset.unwrap_or(0),
+            limit.unwrap_or(2000),
+            &cache,
+        )
     })
     .await
 }

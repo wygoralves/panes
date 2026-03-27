@@ -1,6 +1,10 @@
 import { useEffect } from "react";
 import { FileDiff, FileText, Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import {
+  resolveOwningRepoForAbsolutePath,
+  resolveRelativePathWithinRoot,
+} from "../../lib/fileRootUtils";
 import { useFileStore } from "../../stores/fileStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useUiStore } from "../../stores/uiStore";
@@ -25,18 +29,35 @@ export function FileEditorPanel() {
   const focusMode = useUiStore((s) => s.focusMode);
   const showSidebar = useUiStore((s) => s.showSidebar);
   const repos = useWorkspaceStore((s) => s.repos);
+  const activeRepoId = useWorkspaceStore((s) => s.activeRepoId);
   const openFile = useFileStore((s) => s.openFile);
   const openGitDiffFile = useFileStore((s) => s.openGitDiffFile);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const isMac = isMacDesktop();
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar;
-  const activeTabRepo = activeTab
-    ? repos.find((repo) => repo.path === activeTab.repoPath) ?? null
+  const activeTabOwnership = activeTab
+    ? (
+        (activeTab.gitRepoPath && activeTab.gitFilePath)
+          ? {
+              repoPath: activeTab.gitRepoPath,
+              filePath: activeTab.gitFilePath,
+            }
+          : (() => {
+              const ownership = resolveOwningRepoForAbsolutePath(
+                activeTab.absolutePath,
+                repos,
+                activeRepoId,
+              );
+              return ownership
+                ? { repoPath: ownership.repo.path, filePath: ownership.filePath }
+                : null;
+            })()
+      )
     : null;
   const canToggleDiffView = Boolean(
     activeTab
-      && activeTabRepo
+      && activeTabOwnership
       && !activeTab.isLoading
       && !activeTab.loadError
       && (activeTab.renderMode === "git-diff-editor" || !activeTab.isBinary),
@@ -46,16 +67,23 @@ export function FileEditorPanel() {
     : t("editor.showDiff");
 
   function handleToggleDiffView() {
-    if (!activeTab || !activeTabRepo) {
+    if (!activeTab || !activeTabOwnership) {
       return;
     }
 
     if (activeTab.renderMode === "git-diff-editor") {
-      void openFile(activeTab.repoPath, activeTab.filePath);
+      void openFile(activeTab.rootPath, activeTab.filePath);
       return;
     }
 
-    void openGitDiffFile(activeTab.repoPath, activeTab.filePath, { source: "changes" });
+    const repoPath = activeTabOwnership.repoPath;
+    const gitFilePath = activeTab.gitFilePath
+      ?? resolveRelativePathWithinRoot(activeTab.absolutePath, repoPath);
+    if (!gitFilePath) {
+      return;
+    }
+
+    void openGitDiffFile(repoPath, gitFilePath, { source: "changes" });
   }
 
   // Cmd+S to save — Cmd+W is handled via native menu "close-window" action.

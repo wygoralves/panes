@@ -18,6 +18,16 @@ pub fn normalize_windows_path(path: PathBuf) -> PathBuf {
     PathBuf::from(strip_windows_verbatim_prefix(path.to_string_lossy().as_ref()).into_owned())
 }
 
+pub fn is_path_within_root(path: &str, root: &str) -> bool {
+    let normalized_path = normalize_for_comparison(path);
+    let normalized_root = normalize_for_comparison(root);
+    if normalized_path == normalized_root {
+        return true;
+    }
+
+    normalized_path.starts_with(&format!("{normalized_root}/"))
+}
+
 pub fn legacy_windows_verbatim_path(path: &Path) -> Option<String> {
     add_windows_verbatim_prefix(path.to_string_lossy().as_ref())
 }
@@ -59,9 +69,24 @@ fn add_windows_verbatim_prefix(rendered: &str) -> Option<String> {
     None
 }
 
+fn normalize_for_comparison(path: &str) -> String {
+    let normalized = normalize_windows_path_string(path).replace('\\', "/");
+    if cfg!(target_os = "windows")
+        || normalized.starts_with("//")
+        || normalized
+            .as_bytes()
+            .get(1)
+            .is_some_and(|byte| *byte == b':')
+    {
+        normalized.to_lowercase()
+    } else {
+        normalized
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{add_windows_verbatim_prefix, strip_windows_verbatim_prefix};
+    use super::{add_windows_verbatim_prefix, is_path_within_root, strip_windows_verbatim_prefix};
 
     #[test]
     fn strips_drive_letter_windows_verbatim_prefix() {
@@ -101,5 +126,17 @@ mod tests {
             add_windows_verbatim_prefix(r"\\server\share\repo").as_deref(),
             Some(r"\\?\UNC\server\share\repo")
         );
+    }
+
+    #[test]
+    fn detects_paths_within_root() {
+        assert!(is_path_within_root(
+            "/workspace/apps/app/src/main.ts",
+            "/workspace/apps/app"
+        ));
+        assert!(!is_path_within_root(
+            "/workspace/apps/api/src/main.ts",
+            "/workspace/apps/app"
+        ));
     }
 }

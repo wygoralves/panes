@@ -14,6 +14,7 @@ use crate::models::{
     GitChangeTypeDto, GitCommitDto, GitCommitPageDto, GitCompareSourceDto, GitDiffPreviewDto,
     GitFileCompareDto, GitFileStatusDto, GitInitRepoStatusDto, GitStashDto, GitStatusDto,
 };
+use crate::path_utils;
 
 use super::cli_fallback::run_git;
 
@@ -31,6 +32,12 @@ const GIT_COMPARE_BINARY_SCAN_SIZE: usize = 8192;
 
 const GIT_RECORD_SEPARATOR: char = '\u{1e}';
 const GIT_FIELD_SEPARATOR: char = '\u{1f}';
+
+#[derive(Clone, Copy)]
+enum FileTreeScanMode {
+    Repo,
+    Workspace,
+}
 
 // ── File Tree Cache ────────────────────────────────────────────
 
@@ -82,9 +89,21 @@ impl FileTreeCache {
         arc
     }
 
-    pub fn invalidate(&self, repo_path: &str) {
+    pub fn invalidate_workspace(&self, root_path: &str) {
         let mut map = self.inner.lock().unwrap();
-        map.remove(repo_path);
+        map.remove(&file_tree_cache_key(root_path, FileTreeScanMode::Workspace));
+    }
+
+    pub fn invalidate_containing_path(&self, path: &str) {
+        let normalized_path = path_utils::normalize_windows_path_string(path);
+        let mut map = self.inner.lock().unwrap();
+        map.retain(|key, _| {
+            if let Some(workspace_root) = workspace_root_from_cache_key(key) {
+                !path_utils::is_path_within_root(&normalized_path, workspace_root)
+            } else {
+                !path_utils::is_path_within_root(&normalized_path, key)
+            }
+        });
     }
 }
 
@@ -749,11 +768,12 @@ pub fn get_file_tree(
     repo_path: &str,
     cache: &FileTreeCache,
 ) -> anyhow::Result<Vec<FileTreeEntryDto>> {
-    if let Some((entries, _)) = cache.get(repo_path) {
+    let cache_key = file_tree_cache_key(repo_path, FileTreeScanMode::Repo);
+    if let Some((entries, _)) = cache.get(&cache_key) {
         return Ok((*entries).clone());
     }
-    let scan = scan_file_tree(repo_path)?;
-    let arc = cache.insert(repo_path, scan.entries, scan.truncated);
+    let scan = scan_file_tree(repo_path, FileTreeScanMode::Repo)?;
+    let arc = cache.insert(&cache_key, scan.entries, scan.truncated);
     Ok((*arc).clone())
 }
 
@@ -763,13 +783,33 @@ pub fn get_file_tree_page(
     limit: usize,
     cache: &FileTreeCache,
 ) -> anyhow::Result<FileTreePageDto> {
-    let limit = limit.clamp(1, FILE_TREE_MAX_PAGE_SIZE);
+    get_cached_file_tree_page(repo_path, offset, limit, FileTreeScanMode::Repo, cache)
+}
 
-    let (all_entries, truncated) = if let Some(hit) = cache.get(repo_path) {
+pub fn get_workspace_file_tree_page(
+    root_path: &str,
+    offset: usize,
+    limit: usize,
+    cache: &FileTreeCache,
+) -> anyhow::Result<FileTreePageDto> {
+    get_cached_file_tree_page(root_path, offset, limit, FileTreeScanMode::Workspace, cache)
+}
+
+fn get_cached_file_tree_page(
+    root_path: &str,
+    offset: usize,
+    limit: usize,
+    mode: FileTreeScanMode,
+    cache: &FileTreeCache,
+) -> anyhow::Result<FileTreePageDto> {
+    let limit = limit.clamp(1, FILE_TREE_MAX_PAGE_SIZE);
+    let cache_key = file_tree_cache_key(root_path, mode);
+
+    let (all_entries, truncated) = if let Some(hit) = cache.get(&cache_key) {
         hit
     } else {
-        let scan = scan_file_tree(repo_path)?;
-        let arc = cache.insert(repo_path, scan.entries, scan.truncated);
+        let scan = scan_file_tree(root_path, mode)?;
+        let arc = cache.insert(&cache_key, scan.entries, scan.truncated);
         (arc, scan.truncated)
     };
 
@@ -788,6 +828,17 @@ pub fn get_file_tree_page(
     })
 }
 
+fn file_tree_cache_key(root_path: &str, mode: FileTreeScanMode) -> String {
+    match mode {
+        FileTreeScanMode::Repo => root_path.to_string(),
+        FileTreeScanMode::Workspace => format!("workspace::{root_path}"),
+    }
+}
+
+fn workspace_root_from_cache_key(cache_key: &str) -> Option<&str> {
+    cache_key.strip_prefix("workspace::")
+}
+
 struct FileTreeScanResult {
     entries: Vec<FileTreeEntryDto>,
     truncated: bool,
@@ -800,9 +851,14 @@ struct FileTreeScanContext {
     deadline: Instant,
 }
 
-fn scan_file_tree(repo_path: &str) -> anyhow::Result<FileTreeScanResult> {
-    let root = PathBuf::from(repo_path);
-    let repo = Repository::open(repo_path).ok();
+fn scan_file_tree(root_path: &str, mode: FileTreeScanMode) -> anyhow::Result<FileTreeScanResult> {
+    let root = PathBuf::from(root_path)
+        .canonicalize()
+        .context("failed to canonicalize file tree root")?;
+    let repo = match mode {
+        FileTreeScanMode::Repo => Repository::open(&root).ok(),
+        FileTreeScanMode::Workspace => None,
+    };
     let mut context = FileTreeScanContext {
         entries: Vec::with_capacity(FILE_TREE_DEFAULT_PAGE_SIZE),
         scanned_count: 0,
@@ -851,6 +907,15 @@ fn visit_dir(
 
         if path.file_name().is_some_and(|name| name == ".git") {
             continue;
+        }
+
+        if path.is_symlink() {
+            let Ok(canonical) = path.canonicalize() else {
+                continue;
+            };
+            if !canonical.starts_with(root) {
+                continue;
+            }
         }
 
         let relative = path
@@ -1280,10 +1345,15 @@ pub fn rename_remote(repo_path: &str, old_name: &str, new_name: &str) -> anyhow:
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::{
-        build_diff_preview, is_diff_preview_metadata_line, truncate_utf8_prefix,
-        GIT_DIFF_PREVIEW_MAX_BYTES, GIT_DIFF_PREVIEW_MAX_LINES,
+        build_diff_preview, get_workspace_file_tree_page, is_diff_preview_metadata_line,
+        truncate_utf8_prefix, FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES,
+        GIT_DIFF_PREVIEW_MAX_LINES,
     };
+    use crate::models::FileTreeEntryDto;
+    use uuid::Uuid;
 
     #[test]
     fn keeps_small_diffs_untruncated() {
@@ -1474,5 +1544,76 @@ mod tests {
                 .count(),
             GIT_DIFF_PREVIEW_MAX_LINES
         );
+    }
+
+    #[test]
+    fn workspace_file_tree_page_includes_workspace_files_and_skips_git_dir() {
+        let root = std::env::temp_dir().join(format!("panes-workspace-tree-{}", Uuid::new_v4()));
+        let app_dir = root.join("apps/app/src");
+        let nested_repo_dir = root.join("apps/app/packages/web/src");
+        let git_dir = root.join(".git");
+
+        fs::create_dir_all(&app_dir).expect("workspace app dir should exist");
+        fs::create_dir_all(&nested_repo_dir).expect("workspace nested repo dir should exist");
+        fs::create_dir_all(&git_dir).expect("workspace .git dir should exist");
+        fs::write(root.join("README.md"), "workspace").expect("workspace file should exist");
+        fs::write(app_dir.join("main.ts"), "console.log('app')").expect("app file should exist");
+        fs::write(
+            nested_repo_dir.join("page.tsx"),
+            "export default function Page() {}",
+        )
+        .expect("nested repo file should exist");
+        fs::write(git_dir.join("config"), "[core]").expect("git config should exist");
+
+        let cache = FileTreeCache::new();
+        let page = get_workspace_file_tree_page(root.to_string_lossy().as_ref(), 0, 100, &cache)
+            .expect("workspace file tree should load");
+        let paths = page
+            .entries
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&"README.md".to_string()));
+        assert!(paths.contains(&"apps/app/src/main.ts".to_string()));
+        assert!(paths.contains(&"apps/app/packages/web/src/page.tsx".to_string()));
+        assert!(!paths.iter().any(|path| path.starts_with(".git")));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn invalidating_a_repo_path_clears_containing_workspace_cache_entries() {
+        let cache = FileTreeCache::new();
+        cache.insert(
+            "/workspace/apps/app",
+            vec![FileTreeEntryDto {
+                path: "src/main.ts".to_string(),
+                is_dir: false,
+            }],
+            false,
+        );
+        cache.insert(
+            "workspace::/workspace",
+            vec![FileTreeEntryDto {
+                path: "apps/app/src/main.ts".to_string(),
+                is_dir: false,
+            }],
+            false,
+        );
+        cache.insert(
+            "workspace::/other-workspace",
+            vec![FileTreeEntryDto {
+                path: "README.md".to_string(),
+                is_dir: false,
+            }],
+            false,
+        );
+
+        cache.invalidate_containing_path("/workspace/apps/app");
+
+        assert!(cache.get("/workspace/apps/app").is_none());
+        assert!(cache.get("workspace::/workspace").is_none());
+        assert!(cache.get("workspace::/other-workspace").is_some());
     }
 }

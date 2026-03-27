@@ -217,38 +217,60 @@ pub fn set_workspace_active_repos(
     Ok(())
 }
 
-pub fn find_repo_by_path(db: &Database, path: &str) -> anyhow::Result<Option<RepoDto>> {
+pub fn find_deepest_repo_containing_path(
+    db: &Database,
+    path: &str,
+    workspace_id: Option<&str>,
+) -> anyhow::Result<Option<RepoDto>> {
     let conn = db.connect()?;
     let normalized_path = path_utils::normalize_windows_path_string(path);
-    let legacy_path = path_utils::legacy_windows_verbatim_path_string(&normalized_path)
-        .filter(|legacy| legacy != &normalized_path);
-
-    let exact = conn
-        .query_row(
-            "SELECT id, workspace_id, name, path, default_branch, is_active, trust_level
-     FROM repos WHERE path = ?1 LIMIT 1",
-            params![normalized_path],
-            map_repo_row,
-        )
-        .optional()
-        .context("failed to load repo by path")?;
-
-    if exact.is_some() {
-        return Ok(exact);
-    }
-
-    let Some(legacy_path) = legacy_path else {
-        return Ok(None);
+    let rows = if let Some(workspace_id) = workspace_id {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, workspace_id, name, path, default_branch, is_active, trust_level
+                 FROM repos
+                 WHERE is_discovered = 1
+                   AND workspace_id = ?1",
+            )
+            .context("failed to prepare containing repo query")?;
+        let rows = stmt
+            .query_map(params![workspace_id], map_repo_row)
+            .context("failed to query containing repos")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("failed to decode containing repo rows")?;
+        rows
+    } else {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, workspace_id, name, path, default_branch, is_active, trust_level
+                 FROM repos
+                 WHERE is_discovered = 1",
+            )
+            .context("failed to prepare containing repo query")?;
+        let rows = stmt
+            .query_map([], map_repo_row)
+            .context("failed to query containing repos")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("failed to decode containing repo rows")?;
+        rows
     };
 
-    conn.query_row(
-        "SELECT id, workspace_id, name, path, default_branch, is_active, trust_level
-     FROM repos WHERE path = ?1 LIMIT 1",
-        params![legacy_path],
-        map_repo_row,
-    )
-    .optional()
-    .context("failed to load repo by legacy path")
+    let mut best_match: Option<RepoDto> = None;
+    let mut best_path_len = 0;
+
+    for repo in rows {
+        if !path_utils::is_path_within_root(&normalized_path, &repo.path) {
+            continue;
+        }
+
+        let repo_path_len = repo.path.len();
+        if repo_path_len > best_path_len {
+            best_path_len = repo_path_len;
+            best_match = Some(repo);
+        }
+    }
+
+    Ok(best_match)
 }
 
 pub fn find_repo_by_id(db: &Database, repo_id: &str) -> anyhow::Result<Option<RepoDto>> {
@@ -403,5 +425,126 @@ mod tests {
             rediscovered_stale_repo.trust_level,
             TrustLevelDto::Restricted
         );
+    }
+
+    #[test]
+    fn finds_deepest_repo_containing_path() {
+        let db = test_db();
+        let root = std::env::temp_dir().join(format!("panes-workspace-{}", Uuid::new_v4()));
+        let app_repo_path = root.join("apps/app");
+        let nested_repo_path = app_repo_path.join("packages/web");
+
+        fs::create_dir_all(&nested_repo_path).expect("failed to create nested repo path");
+
+        let workspace = workspaces::upsert_workspace(&db, root.to_string_lossy().as_ref(), Some(3))
+            .expect("failed to create workspace");
+
+        let app_repo = upsert_repo(
+            &db,
+            &workspace.id,
+            "app",
+            app_repo_path.to_string_lossy().as_ref(),
+            "main",
+            true,
+        )
+        .expect("failed to insert app repo");
+        let nested_repo = upsert_repo(
+            &db,
+            &workspace.id,
+            "web",
+            nested_repo_path.to_string_lossy().as_ref(),
+            "main",
+            true,
+        )
+        .expect("failed to insert nested repo");
+
+        let nested_file = nested_repo_path.join("src/page.tsx");
+        let resolved_nested = find_deepest_repo_containing_path(
+            &db,
+            nested_file.to_string_lossy().as_ref(),
+            Some(&workspace.id),
+        )
+        .expect("failed to resolve nested repo")
+        .expect("nested repo should resolve");
+        assert_eq!(resolved_nested.id, nested_repo.id);
+
+        let app_file = app_repo_path.join("src/main.ts");
+        let resolved_app = find_deepest_repo_containing_path(
+            &db,
+            app_file.to_string_lossy().as_ref(),
+            Some(&workspace.id),
+        )
+        .expect("failed to resolve app repo")
+        .expect("app repo should resolve");
+        assert_eq!(resolved_app.id, app_repo.id);
+
+        let outside_file = root.join("README.md");
+        assert!(find_deepest_repo_containing_path(
+            &db,
+            outside_file.to_string_lossy().as_ref(),
+            Some(&workspace.id),
+        )
+        .expect("failed to resolve outside file")
+        .is_none());
+    }
+
+    #[test]
+    fn scopes_containing_repo_lookup_to_workspace_when_paths_overlap() {
+        let db = test_db();
+        let root = std::env::temp_dir().join(format!("panes-workspace-{}", Uuid::new_v4()));
+        let nested_repo_path = root.join("packages/web");
+
+        fs::create_dir_all(&nested_repo_path).expect("failed to create nested repo path");
+
+        let parent_workspace =
+            workspaces::upsert_workspace(&db, root.to_string_lossy().as_ref(), Some(3))
+                .expect("failed to create parent workspace");
+        let nested_workspace =
+            workspaces::upsert_workspace(&db, nested_repo_path.to_string_lossy().as_ref(), Some(3))
+                .expect("failed to create nested workspace");
+
+        let parent_repo = upsert_repo(
+            &db,
+            &parent_workspace.id,
+            "web-parent",
+            nested_repo_path.to_string_lossy().as_ref(),
+            "main",
+            true,
+        )
+        .expect("failed to insert parent workspace repo");
+        let nested_repo = upsert_repo(
+            &db,
+            &nested_workspace.id,
+            "web-nested",
+            nested_repo_path.to_string_lossy().as_ref(),
+            "main",
+            true,
+        )
+        .expect("failed to insert nested workspace repo");
+        set_repo_trust_level(&db, &parent_repo.id, TrustLevelDto::Trusted)
+            .expect("failed to set parent trust");
+        set_repo_trust_level(&db, &nested_repo.id, TrustLevelDto::Restricted)
+            .expect("failed to set nested trust");
+
+        let nested_file = nested_repo_path.join("src/page.tsx");
+        let resolved_parent = find_deepest_repo_containing_path(
+            &db,
+            nested_file.to_string_lossy().as_ref(),
+            Some(&parent_workspace.id),
+        )
+        .expect("failed to resolve parent-scoped repo")
+        .expect("parent workspace repo should resolve");
+        assert_eq!(resolved_parent.id, parent_repo.id);
+        assert_eq!(resolved_parent.trust_level, TrustLevelDto::Trusted);
+
+        let resolved_nested = find_deepest_repo_containing_path(
+            &db,
+            nested_file.to_string_lossy().as_ref(),
+            Some(&nested_workspace.id),
+        )
+        .expect("failed to resolve nested-scoped repo")
+        .expect("nested workspace repo should resolve");
+        assert_eq!(resolved_nested.id, nested_repo.id);
+        assert_eq!(resolved_nested.trust_level, TrustLevelDto::Restricted);
     }
 }

@@ -61,7 +61,6 @@ import { toast } from "../../stores/toastStore";
 import type { FileTreeEntry, GitBranch, GitStash, HarnessInfo, Repo, SearchResult, Thread, Workspace } from "../../types";
 
 const FILE_SEARCH_PAGE_SIZE = 500;
-const FILE_SEARCH_MAX_PAGES = 20; // 10,000 files ceiling
 const FILE_SEARCH_PAGE_DELAY_MS = 80;
 
 /* ------------------------------------------------------------------ */
@@ -1010,8 +1009,10 @@ export function CommandPalette({ open, onClose }: Props) {
   const setMessageFocusTarget = useUiStore((s) => s.setMessageFocusTarget);
   const commandPaletteLaunch = useUiStore((s) => s.commandPaletteLaunch);
 
+  const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
   const activeRepo = repos.find((r) => r.id === activeRepoId);
   const activeRepoPath = activeRepo?.path ?? null;
+  const activeWorkspaceRootPath = activeWorkspace?.rootPath ?? null;
   const gitStatus = useGitStore((s) => s.status);
   const workspaceNameById = useMemo(() => {
     const byId = new Map<string, string>();
@@ -1108,9 +1109,9 @@ export function CommandPalette({ open, onClose }: Props) {
       mode === "auto" ||
       mode === "file" ||
       (mode === "search" && (searchScope === "all" || searchScope === "files"));
-    if (!open || !isFileMode || !activeRepoPath) {
+    if (!open || !isFileMode || !activeWorkspaceId || !activeWorkspaceRootPath) {
       setFileLoading(false);
-      if (!isFileMode || !activeRepoPath) setFileEntries([]);
+      if (!isFileMode || !activeWorkspaceId || !activeWorkspaceRootPath) setFileEntries([]);
       return;
     }
     // In auto and search modes, require 2+ chars before loading; in file mode, load immediately.
@@ -1119,7 +1120,8 @@ export function CommandPalette({ open, onClose }: Props) {
       return;
     }
 
-    const cached = fileCacheRef.current.get(activeRepoPath);
+    const cacheKey = activeWorkspaceRootPath;
+    const cached = fileCacheRef.current.get(cacheKey);
     if (cached) {
       setFileEntries(cached);
       setFileLoading(false);
@@ -1131,16 +1133,16 @@ export function CommandPalette({ open, onClose }: Props) {
 
     const timer = window.setTimeout(async () => {
       try {
-        const repoPath = activeRepoPath;
         const accumulated: FileTreeEntry[] = [];
 
-        for (let page = 0; page < FILE_SEARCH_MAX_PAGES; page++) {
+        for (let page = 0; ; page++) {
           if (cancelled) return;
 
-          const result = await ipc.getFileTreePage(
-            repoPath,
+          const result = await ipc.getWorkspaceFileTreePage(
+            activeWorkspaceId,
             page * FILE_SEARCH_PAGE_SIZE,
             FILE_SEARCH_PAGE_SIZE,
+            page === 0,
           );
           if (cancelled) return;
 
@@ -1155,7 +1157,7 @@ export function CommandPalette({ open, onClose }: Props) {
         }
 
         if (!cancelled) {
-          fileCacheRef.current.set(repoPath, accumulated);
+          fileCacheRef.current.set(cacheKey, accumulated);
         }
       } catch {
         // Degrade gracefully — no file results
@@ -1168,7 +1170,7 @@ export function CommandPalette({ open, onClose }: Props) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [open, mode, trimmedTerm, activeRepoPath, searchScope]);
+  }, [open, mode, trimmedTerm, activeWorkspaceId, activeWorkspaceRootPath, searchScope]);
 
   /* ---- Workspace message search ---- */
   useEffect(() => {
@@ -1505,12 +1507,12 @@ export function CommandPalette({ open, onClose }: Props) {
       }
 
       if (shouldShowFileResultsInSearch) {
-        if (searchScope === "files" && !activeRepoPath) {
+        if (searchScope === "files" && !activeWorkspaceId) {
           result.push({
             label: t("commandPalette.group.files"),
-            items: [{ type: "sub-action", label: t("commandPalette.status.noActiveRepo") }],
+            items: [{ type: "sub-action", label: t("commandPalette.status.noActiveWorkspace") }],
           });
-        } else if (activeRepoPath) {
+        } else if (activeWorkspaceId) {
           if (fileLoading && fileEntries.length === 0) {
             result.push({
               label: t("commandPalette.group.files"),
@@ -1662,10 +1664,10 @@ export function CommandPalette({ open, onClose }: Props) {
     }
 
     if (mode === "file") {
-      if (!activeRepoPath) {
+      if (!activeWorkspaceId) {
         return [{
           label: t("commandPalette.group.files"),
-          items: [{ type: "sub-action", label: t("commandPalette.status.noActiveRepo") }],
+          items: [{ type: "sub-action", label: t("commandPalette.status.noActiveWorkspace") }],
         }];
       }
       if (fileLoading && fileEntries.length === 0) {
@@ -1861,8 +1863,8 @@ export function CommandPalette({ open, onClose }: Props) {
         }
         case "file": {
           onClose();
-          if (activeRepoPath) {
-            await useFileStore.getState().openFile(activeRepoPath, item.entry.path);
+          if (activeWorkspaceRootPath) {
+            await useFileStore.getState().openFile(activeWorkspaceRootPath, item.entry.path);
             if (activeWorkspaceId) {
               void useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "editor");
             }
@@ -1950,7 +1952,7 @@ export function CommandPalette({ open, onClose }: Props) {
           break;
       }
     },
-    [commandCtx, activeRepoPath, activeWorkspaceId, activeThreadId, onClose, launchHarness, openMessageResult, subFlow, t],
+    [commandCtx, activeWorkspaceRootPath, activeWorkspaceId, activeThreadId, onClose, launchHarness, openMessageResult, subFlow, t],
   );
 
   const executeSubFlow = useCallback(async () => {
