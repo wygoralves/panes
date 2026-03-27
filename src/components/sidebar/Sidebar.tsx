@@ -410,9 +410,10 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             </span>
             <button
               type="button"
-              className={`sb-pin-btn ${sidebarPinned ? "sb-pin-btn-active" : ""}`}
+              className={`shell-pin-btn ${sidebarPinned ? "shell-pin-btn-active" : ""}`}
               onClick={onPin ?? toggleSidebarPin}
               title={sidebarPinned ? t("app:sidebar.unpin") : t("app:sidebar.pin")}
+              aria-label={sidebarPinned ? t("app:sidebar.unpin") : t("app:sidebar.pin")}
             >
               {sidebarPinned ? <Pin size={13} /> : <PinOff size={13} />}
             </button>
@@ -1169,7 +1170,7 @@ export function Sidebar() {
         >
           <div
             ref={flyoutRef}
-            className={`sb-flyout ${hovered ? "sb-flyout-visible" : ""}`}
+            className={`shell-flyout shell-flyout-left ${hovered ? "shell-flyout-visible" : ""}`}
           >
             <SidebarContent
               onPin={() => {

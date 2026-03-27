@@ -2724,6 +2724,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const focusMode = useUiStore((state) => state.focusMode);
   const showSidebar = useUiStore((state) => state.showSidebar);
   const showGitPanel = useUiStore((state) => state.showGitPanel);
+  const gitPanelPinned = useUiStore((state) => state.gitPanelPinned);
   const isOpen = workspaceState?.isOpen ?? false;
   const layoutMode = workspaceState?.layoutMode ?? "chat";
   const sessions = workspaceState?.sessions ?? [];
@@ -2736,7 +2737,8 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const pendingStartupPreset = workspaceState?.pendingStartupPreset ?? null;
   const isMac = isMacDesktop();
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar && layoutMode === "terminal";
-  const useFocusModeHeaderHeight = focusMode && showGitPanel;
+  const gitPanelDocked = showGitPanel && gitPanelPinned;
+  const useFocusModeHeaderHeight = focusMode && gitPanelDocked;
   const linuxDesktop = isLinuxDesktop();
   const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
 
@@ -3836,7 +3838,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       className={`terminal-panel-root${useTitlebarSafeInset ? " terminal-panel-root-titlebar-safe" : ""}${
         useFocusModeHeaderHeight ? " terminal-panel-root-focus-tabs" : ""
       }${
-        !showGitPanel ? " terminal-panel-root-compact-tabs" : ""
+        !gitPanelDocked ? " terminal-panel-root-compact-tabs" : ""
       }`}
     >
       <div className="terminal-tabs-bar">

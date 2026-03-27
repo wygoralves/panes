@@ -6,6 +6,7 @@ import {
   ArrowDown,
   ArrowUp,
   X,
+  Pin,
   Undo2,
   FileDiff,
   FolderTree,
@@ -34,7 +35,12 @@ import { GitWorktreesView } from "./GitWorktreesView";
 const GIT_WATCHER_REFRESH_DEBOUNCE_MS_CHANGES = 550;
 const GIT_WATCHER_REFRESH_DEBOUNCE_MS_BACKGROUND = 1100;
 
-export function GitPanel() {
+interface Props {
+  mode?: "docked" | "flyout";
+  onPin?: () => void;
+}
+
+export function GitPanel({ mode = "docked", onPin }: Props) {
   const { t } = useTranslation("git");
   const {
     workspaces,
@@ -491,6 +497,18 @@ export function GitPanel() {
             )}
           </span>
         )}
+
+        {mode === "flyout" && onPin ? (
+          <button
+            type="button"
+            className="git-toolbar-btn shell-pin-btn no-drag"
+            onClick={onPin}
+            title={t("panel.pin")}
+            aria-label={t("panel.pin")}
+          >
+            <Pin size={13} />
+          </button>
+        ) : null}
 
         <button
           type="button"
