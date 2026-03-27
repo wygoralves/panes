@@ -5257,19 +5257,26 @@ button, input, textarea, select {
 
 .editor-tabs-bar {
   display: flex;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
+  align-items: stretch;
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+.editor-tabs-bar-scroll {
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  min-width: 0;
+  flex: 1;
 }
 
 .editor-tabs-bar-titlebar-safe {
   padding-left: 74px;
 }
 
-.editor-tabs-bar::-webkit-scrollbar {
+.editor-tabs-bar-scroll::-webkit-scrollbar {
   display: none;
 }
 
@@ -5337,6 +5344,41 @@ button, input, textarea, select {
 .editor-tab.active .editor-tab-close:hover {
   opacity: 1;
   background: rgba(255, 255, 255, 0.1);
+}
+
+.editor-tabs-actions {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border-left: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.editor-tab-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out),
+              border-color var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+}
+
+.editor-tab-action:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-1);
+}
+
+.editor-tab-action.active {
+  border-color: var(--border-active);
+  color: var(--accent);
+  background: rgba(255, 107, 107, 0.08);
 }
 
 .cm-editor {

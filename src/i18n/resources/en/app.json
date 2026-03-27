@@ -360,6 +360,8 @@
     "binaryFile": "Binary file - cannot display",
     "emptyTitle": "No files open",
     "emptyHint": "Open a file from the Files view in the Git panel",
+    "showDiff": "Show diff view",
+    "hideDiff": "Hide diff view",
     "unsavedChangesTitle": "Unsaved changes",
     "unsavedChangesMessage": "\"{{name}}\" has unsaved changes. Discard them?",
     "discard": "Discard",
