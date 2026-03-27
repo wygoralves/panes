@@ -3153,7 +3153,10 @@ fn append_thinking_delta(blocks: &mut Vec<ContentBlock>, content: &str) -> bool 
         return false;
     }
 
-    if let Some(ContentBlock::Thinking { content: current, .. }) = blocks.last_mut() {
+    if let Some(ContentBlock::Thinking {
+        content: current, ..
+    }) = blocks.last_mut()
+    {
         current.push_str(content);
         return true;
     }
