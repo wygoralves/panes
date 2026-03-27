@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightActiveLine, drawSelection, rectangularSelection, crosshairCursor, highlightSpecialChars } from "@codemirror/view";
-import { Compartment, EditorState, type Extension } from "@codemirror/state";
+import { Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
 import {
   defaultKeymap,
   history,
@@ -21,6 +21,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { sql } from "@codemirror/lang-sql";
 import { yaml } from "@codemirror/lang-yaml";
 import { tags } from "@lezer/highlight";
+import type { EditorRevealRequest } from "../../types";
 
 interface Props {
   tabId: string;
@@ -29,6 +30,8 @@ interface Props {
   onChange: (content: string) => void;
   readOnly?: boolean;
   extensions?: Extension[];
+  pendingReveal?: EditorRevealRequest | null;
+  onRevealHandled?: (nonce: string) => void;
 }
 
 const EMPTY_EXTENSIONS: Extension[] = [];
@@ -319,6 +322,8 @@ export function CodeMirrorEditor({
   onChange,
   readOnly = false,
   extensions: rawExtensions,
+  pendingReveal = null,
+  onRevealHandled,
 }: Props) {
   const extensions = rawExtensions ?? EMPTY_EXTENSIONS;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -463,6 +468,38 @@ export function CodeMirrorEditor({
       ),
     });
   }, [tabId, readOnly]);
+
+  useEffect(() => {
+    if (!pendingReveal) {
+      return;
+    }
+
+    const cached = editorCache.get(tabId);
+    if (!cached) {
+      return;
+    }
+
+    const doc = cached.view.state.doc;
+    if (doc.lines === 0) {
+      onRevealHandled?.(pendingReveal.nonce);
+      return;
+    }
+
+    const lineNumber = Math.max(1, Math.min(pendingReveal.line, doc.lines));
+    const line = doc.line(lineNumber);
+    const maxColumn = line.to - line.from + 1;
+    const column = pendingReveal.column == null
+      ? 1
+      : Math.max(1, Math.min(pendingReveal.column, maxColumn));
+    const position = line.from + column - 1;
+
+    cached.view.dispatch({
+      selection: EditorSelection.cursor(position),
+      effects: EditorView.scrollIntoView(position, { y: "center" }),
+    });
+    cached.view.focus();
+    onRevealHandled?.(pendingReveal.nonce);
+  }, [onRevealHandled, pendingReveal, tabId]);
 
   return (
     <div

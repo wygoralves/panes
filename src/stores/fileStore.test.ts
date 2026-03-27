@@ -154,6 +154,37 @@ describe("fileStore", () => {
     expect(mockDestroyCachedEditor).toHaveBeenCalledWith(tabId);
   });
 
+  it("opens a plain editor tab with a pending reveal request", async () => {
+    await useFileStore
+      .getState()
+      .openFileAtLocation("/repo", "src/app.ts", { line: 12, column: 4 });
+
+    const tab = useFileStore.getState().tabs[0]!;
+    expect(tab.renderMode).toBe("plain-editor");
+    expect(tab.pendingReveal).toMatchObject({
+      line: 12,
+      column: 4,
+    });
+  });
+
+  it("reuses an existing tab and updates its pending reveal without reloading the file", async () => {
+    await useFileStore.getState().openFile("/repo", "src/app.ts");
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    mockIpc.readFile.mockClear();
+
+    await useFileStore
+      .getState()
+      .openFileAtLocation("/repo", "src/app.ts", { line: 28, column: 2 });
+
+    const tab = useFileStore.getState().tabs[0]!;
+    expect(useFileStore.getState().activeTabId).toBe(tabId);
+    expect(tab.pendingReveal).toMatchObject({
+      line: 28,
+      column: 2,
+    });
+    expect(mockIpc.readFile).not.toHaveBeenCalled();
+  });
+
   it("drops stale diff editor views when returning a shared tab to plain mode", async () => {
     await useFileStore
       .getState()
@@ -162,11 +193,17 @@ describe("fileStore", () => {
     const tabId = useFileStore.getState().tabs[0]!.id;
     mockDestroyCachedEditor.mockClear();
 
-    await useFileStore.getState().openFile("/repo", "src/app.ts");
+    await useFileStore
+      .getState()
+      .openFileAtLocation("/repo", "src/app.ts", { line: 8 });
 
     expect(mockDestroyCachedEditor).toHaveBeenCalledWith(`${tabId}:git-base`);
     expect(mockDestroyCachedEditor).toHaveBeenCalledWith(`${tabId}:git-modified`);
     expect(useFileStore.getState().tabs[0]?.renderMode).toBe("plain-editor");
+    expect(useFileStore.getState().tabs[0]?.pendingReveal).toMatchObject({
+      line: 8,
+      column: null,
+    });
   });
 
   it("refreshes git state and compare metadata after saving a git diff tab", async () => {
@@ -195,5 +232,19 @@ describe("fileStore", () => {
     );
     expect(tab.savedContent).toBe("saved\n");
     expect(tab.isDirty).toBe(false);
+  });
+
+  it("clears a pending reveal only when the nonce matches", async () => {
+    await useFileStore
+      .getState()
+      .openFileAtLocation("/repo", "src/app.ts", { line: 3, column: 1 });
+
+    const tab = useFileStore.getState().tabs[0]!;
+    const nonce = tab.pendingReveal!.nonce;
+    useFileStore.getState().clearPendingReveal(tab.id, "wrong-nonce");
+    expect(useFileStore.getState().tabs[0]?.pendingReveal?.nonce).toBe(nonce);
+
+    useFileStore.getState().clearPendingReveal(tab.id, nonce);
+    expect(useFileStore.getState().tabs[0]?.pendingReveal).toBeNull();
   });
 });

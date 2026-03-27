@@ -1,5 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
+import { classifyLinkTarget, navigateLinkTarget } from "../../lib/fileLinkNavigation";
 import { renderMarkdownToHtml } from "../../workers/markdownParserCore";
 import type {
   MarkdownParseWorkerRequest,
@@ -166,6 +174,43 @@ export function shouldRenderMarkdownWorkerPlaceholder({
   );
 }
 
+function handleMarkdownLinkClick(event: ReactMouseEvent<HTMLDivElement>): void {
+  if (event.defaultPrevented || event.button !== 0) {
+    return;
+  }
+
+  const target = event.target;
+  const element = target instanceof Element
+    ? target
+    : target instanceof Node
+      ? target.parentElement
+      : null;
+  if (!element) {
+    return;
+  }
+
+  const anchor = element.closest("a");
+  if (!(anchor instanceof HTMLAnchorElement)) {
+    return;
+  }
+
+  const rawHref = anchor.getAttribute("href");
+  if (!rawHref) {
+    return;
+  }
+
+  const targetKind = classifyLinkTarget(rawHref);
+  if (targetKind === "other") {
+    return;
+  }
+
+  event.preventDefault();
+  if (targetKind === "local") {
+    event.stopPropagation();
+  }
+  void navigateLinkTarget(rawHref, { shiftKey: event.shiftKey });
+}
+
 export default function MarkdownContent({
   content,
   className,
@@ -298,6 +343,7 @@ export default function MarkdownContent({
     <div
       className={className}
       style={style}
+      onClickCapture={handleMarkdownLinkClick}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

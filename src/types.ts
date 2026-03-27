@@ -795,6 +795,15 @@ export type EditorRenderMode = "plain-editor" | "git-diff-editor";
 
 export interface GitEditorContext extends GitFileCompare {}
 
+export interface EditorRevealLocation {
+  line: number;
+  column?: number | null;
+}
+
+export interface EditorRevealRequest extends EditorRevealLocation {
+  nonce: string;
+}
+
 export interface EditorTab {
   id: string;
   repoPath: string;
@@ -807,6 +816,7 @@ export interface EditorTab {
   isBinary: boolean;
   renderMode: EditorRenderMode;
   gitContext: GitEditorContext | null;
+  pendingReveal: EditorRevealRequest | null;
   loadError?: string;
 }
 

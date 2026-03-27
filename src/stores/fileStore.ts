@@ -6,7 +6,13 @@ import { useWorkspaceStore } from "./workspaceStore";
 import { useTerminalStore } from "./terminalStore";
 import { useGitStore } from "./gitStore";
 import { destroyCachedEditor } from "../components/editor/CodeMirrorEditor";
-import type { EditorTab, GitCompareSource, GitFileCompare } from "../types";
+import type {
+  EditorRevealLocation,
+  EditorRevealRequest,
+  EditorTab,
+  GitCompareSource,
+  GitFileCompare,
+} from "../types";
 
 function createPlainTab(id: string, repoPath: string, filePath: string): EditorTab {
   return {
@@ -21,6 +27,7 @@ function createPlainTab(id: string, repoPath: string, filePath: string): EditorT
     isBinary: false,
     renderMode: "plain-editor",
     gitContext: null,
+    pendingReveal: null,
   };
 }
 
@@ -38,6 +45,32 @@ function applyGitCompare(tab: EditorTab, compare: GitFileCompare): EditorTab {
     isBinary: compare.isBinary,
     renderMode: "git-diff-editor",
     gitContext: compare,
+    pendingReveal: null,
+    loadError: undefined,
+  };
+}
+
+function createRevealRequest(reveal: EditorRevealLocation | null | undefined): EditorRevealRequest | null {
+  if (!reveal) {
+    return null;
+  }
+
+  return {
+    line: reveal.line,
+    column: reveal.column ?? null,
+    nonce: crypto.randomUUID(),
+  };
+}
+
+function toPlainEditorTab(
+  tab: EditorTab,
+  pendingReveal: EditorRevealRequest | null,
+): EditorTab {
+  return {
+    ...tab,
+    renderMode: "plain-editor",
+    gitContext: null,
+    pendingReveal,
     loadError: undefined,
   };
 }
@@ -47,6 +80,11 @@ interface FileStoreState {
   activeTabId: string | null;
   pendingCloseTabId: string | null;
   openFile: (repoPath: string, filePath: string) => Promise<void>;
+  openFileAtLocation: (
+    repoPath: string,
+    filePath: string,
+    reveal?: EditorRevealLocation | null,
+  ) => Promise<void>;
   openGitDiffFile: (
     repoPath: string,
     filePath: string,
@@ -59,6 +97,7 @@ interface FileStoreState {
   cancelCloseTab: () => void;
   setActiveTab: (tabId: string) => void;
   setTabContent: (tabId: string, content: string) => void;
+  clearPendingReveal: (tabId: string, nonce: string) => void;
   saveTab: (tabId: string) => Promise<void>;
 }
 
@@ -68,9 +107,14 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
   pendingCloseTabId: null,
 
   openFile: async (repoPath, filePath) => {
+    await get().openFileAtLocation(repoPath, filePath);
+  },
+
+  openFileAtLocation: async (repoPath, filePath, reveal) => {
     const existing = get().tabs.find(
       (t) => t.repoPath === repoPath && t.filePath === filePath,
     );
+    const pendingReveal = createRevealRequest(reveal);
     if (existing) {
       destroyCachedEditor(`${existing.id}:git-base`);
       destroyCachedEditor(`${existing.id}:git-modified`);
@@ -78,12 +122,7 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
         activeTabId: existing.id,
         tabs: state.tabs.map((tab) =>
           tab.id === existing.id
-            ? {
-                ...tab,
-                renderMode: "plain-editor",
-                gitContext: null,
-                loadError: undefined,
-              }
+            ? toPlainEditorTab(tab, pendingReveal)
             : tab,
         ),
       }));
@@ -104,14 +143,11 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
         tabs: state.tabs.map((t) =>
           t.id === id
             ? {
-                ...t,
+                ...toPlainEditorTab(t, pendingReveal),
                 content: result.content,
                 savedContent: result.content,
                 isBinary: result.isBinary,
                 isLoading: false,
-                renderMode: "plain-editor",
-                gitContext: null,
-                loadError: undefined,
               }
             : t,
         ),
@@ -143,6 +179,7 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
                 ...tab,
                 isLoading: true,
                 renderMode: "git-diff-editor",
+                pendingReveal: null,
                 loadError: undefined,
               }
             : tab,
@@ -259,6 +296,16 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
         t.id === tabId
           ? { ...t, content, isDirty: content !== t.savedContent }
           : t,
+      ),
+    }));
+  },
+
+  clearPendingReveal: (tabId, nonce) => {
+    set((state) => ({
+      tabs: state.tabs.map((tab) =>
+        tab.id === tabId && tab.pendingReveal?.nonce === nonce
+          ? { ...tab, pendingReveal: null }
+          : tab,
       ),
     }));
   },

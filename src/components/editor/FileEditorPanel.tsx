@@ -21,6 +21,7 @@ export function FileEditorPanel() {
   const requestCloseTab = useFileStore((s) => s.requestCloseTab);
   const confirmCloseTab = useFileStore((s) => s.confirmCloseTab);
   const cancelCloseTab = useFileStore((s) => s.cancelCloseTab);
+  const clearPendingReveal = useFileStore((s) => s.clearPendingReveal);
   const focusMode = useUiStore((s) => s.focusMode);
   const showSidebar = useUiStore((s) => s.showSidebar);
 
@@ -142,6 +143,8 @@ export function FileEditorPanel() {
               content={activeTab.content}
               filePath={activeTab.filePath}
               onChange={(content) => setTabContent(activeTab.id, content)}
+              pendingReveal={activeTab.pendingReveal}
+              onRevealHandled={(nonce) => clearPendingReveal(activeTab.id, nonce)}
             />
           )
         ) : (
