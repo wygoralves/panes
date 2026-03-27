@@ -5,6 +5,7 @@ import {
 } from "../lib/commandPalette";
 
 const SIDEBAR_PINNED_KEY = "panes:sidebarPinned";
+const GIT_PANEL_PINNED_KEY = "panes:gitPanelPinned";
 
 interface MessageFocusTarget {
   threadId: string;
@@ -23,6 +24,7 @@ interface UiState {
   showSidebar: boolean;
   sidebarPinned: boolean;
   showGitPanel: boolean;
+  gitPanelPinned: boolean;
   focusMode: boolean;
   focusModeSnapshot: FocusModeSnapshot | null;
   activeView: ActiveView;
@@ -36,6 +38,8 @@ interface UiState {
   toggleSidebarPin: () => void;
   setSidebarPinned: (pinned: boolean) => void;
   toggleGitPanel: () => void;
+  toggleGitPanelPin: () => void;
+  setGitPanelPinned: (pinned: boolean) => void;
   setFocusMode: (enabled: boolean) => void;
   toggleFocusMode: () => void;
   setActiveView: (view: ActiveView) => void;
@@ -52,10 +56,19 @@ const savedPinned = (() => {
   }
 })();
 
+const savedGitPanelPinned = (() => {
+  try {
+    return localStorage.getItem(GIT_PANEL_PINNED_KEY);
+  } catch {
+    return null;
+  }
+})();
+
 export const useUiStore = create<UiState>((set) => ({
   showSidebar: true,
   sidebarPinned: savedPinned !== null ? savedPinned === "true" : true,
   showGitPanel: true,
+  gitPanelPinned: savedGitPanelPinned !== null ? savedGitPanelPinned === "true" : true,
   focusMode: false,
   focusModeSnapshot: null,
   commandPaletteOpen: false,
@@ -96,6 +109,24 @@ export const useUiStore = create<UiState>((set) => ({
     set({ sidebarPinned: pinned, showSidebar: true });
   },
   toggleGitPanel: () => set((state) => ({ showGitPanel: !state.showGitPanel })),
+  toggleGitPanelPin: () =>
+    set((state) => {
+      const next = !state.gitPanelPinned;
+      try {
+        localStorage.setItem(GIT_PANEL_PINNED_KEY, String(next));
+      } catch {
+        // Ignore storage failures in non-browser/test environments.
+      }
+      return { gitPanelPinned: next, showGitPanel: true };
+    }),
+  setGitPanelPinned: (pinned) => {
+    try {
+      localStorage.setItem(GIT_PANEL_PINNED_KEY, String(pinned));
+    } catch {
+      // Ignore storage failures in non-browser/test environments.
+    }
+    set({ gitPanelPinned: pinned, showGitPanel: true });
+  },
   setFocusMode: (enabled) =>
     set((state) => {
       if (enabled) {

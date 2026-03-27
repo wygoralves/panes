@@ -1094,12 +1094,20 @@ button, input, textarea, select {
   border-radius: var(--radius-sm);
   color: var(--text-3);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-out);
+  transition: background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out),
+              opacity var(--duration-fast) var(--ease-out);
   flex-shrink: 0;
 }
 .git-toolbar-btn:hover {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-1);
+}
+.git-toolbar-btn:focus-visible,
+.shell-pin-btn:focus-visible,
+.git-flyout-trigger:focus-visible {
+  outline: 1px solid var(--border-accent);
+  outline-offset: -1px;
 }
 .git-toolbar-btn:disabled {
   opacity: 0.45;
@@ -1108,6 +1116,60 @@ button, input, textarea, select {
 .git-toolbar-btn:disabled:hover {
   background: transparent;
   color: var(--text-3);
+}
+.git-toolbar-btn.shell-pin-btn {
+  padding: 0;
+}
+
+.git-flyout-trigger {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 12px;
+  border: none;
+  border-left: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  z-index: 5;
+  transition: background var(--duration-fast) var(--ease-out),
+              border-color var(--duration-fast) var(--ease-out);
+}
+
+.git-flyout-trigger::after {
+  content: "";
+  position: absolute;
+  top: 18px;
+  right: 4px;
+  bottom: 18px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  transition: background var(--duration-fast) var(--ease-out),
+              opacity var(--duration-fast) var(--ease-out);
+}
+
+.git-flyout-trigger:hover,
+.git-flyout-trigger:focus-visible,
+.git-flyout-trigger-active {
+  background: rgba(255, 255, 255, 0.03);
+  border-left-color: rgba(255, 255, 255, 0.05);
+}
+
+.git-flyout-trigger:hover::after,
+.git-flyout-trigger:focus-visible::after,
+.git-flyout-trigger-active::after {
+  background: var(--accent);
+}
+
+.git-flyout-wrapper {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  z-index: 6;
+  pointer-events: none;
 }
 
 /* Repo bar (multi-repo switcher) */
@@ -2657,14 +2719,10 @@ button, input, textarea, select {
   pointer-events: none;
 }
 
-.sb-flyout {
-  width: 260px;
+.shell-flyout {
   height: 100%;
-  background: var(--sidebar-bg);
-  border-right: 1px solid var(--border);
-  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.4), 2px 0 8px rgba(0, 0, 0, 0.2);
-  transform: translateX(-100%);
   opacity: 0;
+  visibility: hidden;
   transition: transform 220ms var(--ease-out), opacity 180ms var(--ease-out);
   pointer-events: none;
   display: flex;
@@ -2672,14 +2730,36 @@ button, input, textarea, select {
   overflow: hidden;
 }
 
-.sb-flyout-visible {
+.shell-flyout-left {
+  width: 260px;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.4), 2px 0 8px rgba(0, 0, 0, 0.2);
+  transform: translateX(-100%);
+}
+
+.shell-flyout-right {
+  background: var(--content-bg);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.34), -2px 0 8px rgba(0, 0, 0, 0.18);
+  transform: translateX(100%);
+}
+
+.shell-flyout-visible {
   transform: translateX(0);
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .shell-flyout {
+    transition: none;
+  }
+}
+
 /* Pin button */
-.sb-pin-btn {
+.shell-pin-btn {
   width: 28px;
   height: 28px;
   display: flex;
@@ -2687,22 +2767,23 @@ button, input, textarea, select {
   justify-content: center;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-out);
+  transition: background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
   color: var(--text-3);
   flex-shrink: 0;
 }
 
-.sb-pin-btn:hover {
+.shell-pin-btn:hover {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text-1);
 }
 
-.sb-pin-btn-active {
+.shell-pin-btn-active {
   color: var(--accent);
   background: var(--accent-dim);
 }
 
-.sb-pin-btn-active:hover {
+.shell-pin-btn-active:hover {
   background: rgba(255, 107, 107, 0.15);
   color: var(--accent);
 }

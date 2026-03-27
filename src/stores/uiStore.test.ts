@@ -30,6 +30,7 @@ describe("uiStore focus mode", () => {
       showSidebar: true,
       sidebarPinned: true,
       showGitPanel: true,
+      gitPanelPinned: true,
       focusMode: false,
       focusModeSnapshot: null,
       activeView: "chat",
@@ -76,6 +77,7 @@ describe("uiStore focus mode", () => {
     useUiStore.setState({
       showSidebar: true,
       showGitPanel: false,
+      gitPanelPinned: true,
       focusMode: false,
       focusModeSnapshot: null,
     });
@@ -98,6 +100,7 @@ describe("uiStore focus mode", () => {
     useUiStore.setState({
       showSidebar: false,
       showGitPanel: true,
+      gitPanelPinned: false,
       focusMode: false,
       focusModeSnapshot: null,
     });
@@ -112,7 +115,35 @@ describe("uiStore focus mode", () => {
       focusMode: false,
       showSidebar: false,
       showGitPanel: true,
+      gitPanelPinned: false,
       focusModeSnapshot: null,
+    });
+  });
+
+  it("keeps git pin state separate from visibility toggles", () => {
+    const state = useUiStore.getState();
+
+    state.setGitPanelPinned(false);
+    state.toggleGitPanel();
+    state.toggleGitPanel();
+
+    expect(useUiStore.getState()).toMatchObject({
+      showGitPanel: true,
+      gitPanelPinned: false,
+    });
+  });
+
+  it("persists git pin state changes and forces the panel visible", () => {
+    const storage = globalThis.localStorage as unknown as ReturnType<typeof createStorageStub>;
+    const state = useUiStore.getState();
+
+    useUiStore.setState({ showGitPanel: false, gitPanelPinned: true });
+    state.toggleGitPanelPin();
+
+    expect(storage.setItem).toHaveBeenCalledWith("panes:gitPanelPinned", "false");
+    expect(useUiStore.getState()).toMatchObject({
+      showGitPanel: true,
+      gitPanelPinned: false,
     });
   });
 
