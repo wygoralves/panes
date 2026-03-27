@@ -19,6 +19,15 @@ interface IndentInfo {
 }
 
 const SAFE_HTML_TAG_RE = /<(br|hr)\s*\/?>/gi;
+const RAW_HTML_FRAGMENT_RE =
+  /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<![a-z][^>]*>|<\?[\s\S]*?\?>|<\/[a-z][a-z0-9-]*\s*>|<[a-z][a-z0-9-]*(?:\s+(?:"[^"]*"|'[^']*'|[^"'<>])*)?\s*\/?>/gi;
+
+function escapeHtmlFragment(input: string): string {
+  return input
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
 
 function escapeNonFenceHtml(input: string): string {
   // Preserve known safe self-closing HTML tags (<br>, <hr>) by replacing them
@@ -31,10 +40,10 @@ function escapeNonFenceHtml(input: string): string {
     return placeholder;
   });
 
-  let escaped = withPlaceholders
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+  let escaped = withPlaceholders.replace(
+    RAW_HTML_FRAGMENT_RE,
+    (match) => escapeHtmlFragment(match),
+  );
 
   for (const { placeholder, tag } of placeholders) {
     escaped = escaped.replace(placeholder, tag);
@@ -291,4 +300,3 @@ export const markdownParserCoreInternals = {
   splitLinesWithEndings,
   tokenizeFences,
 };
-

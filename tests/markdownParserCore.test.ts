@@ -46,6 +46,16 @@ describe("renderMarkdownToHtml", () => {
     expect(unclosed).not.toContain("panes-code-block");
   });
 
+  it("renders blockquotes and angle-bracket autolinks", () => {
+    const blockquote = renderMarkdownToHtml("> quoted\n> line");
+    expect(blockquote).toContain("<blockquote>");
+    expect(blockquote).toContain("<p>quoted\nline</p>");
+
+    const autolink = renderMarkdownToHtml("<https://example.com>");
+    expect(autolink).toContain('href="https://example.com"');
+    expect(autolink).toContain(">https://example.com</a>");
+  });
+
   it("sanitizes dangerous tags, handlers and javascript links", () => {
     const html = renderMarkdownToHtml(
       [
@@ -60,5 +70,19 @@ describe("renderMarkdownToHtml", () => {
     expect(html).toContain("&lt;script&gt;");
     expect(html).toContain("&lt;img src=&quot;javascript:alert(1)&quot;>");
     expect(html).not.toContain("onerror=");
+  });
+
+  it("keeps safe br/hr tags while escaping other inline html", () => {
+    const html = renderMarkdownToHtml(
+      [
+        "line 1<br>line 2",
+        "<hr>",
+        "<kbd>Cmd</kbd>",
+      ].join("\n\n"),
+    );
+
+    expect(html).toContain("<br>");
+    expect(html).toContain("<hr>");
+    expect(html).toContain("&lt;kbd&gt;Cmd&lt;/kbd&gt;");
   });
 });
