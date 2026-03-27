@@ -1,5 +1,37 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.46.4...vnull) (2026-03-27)
+
+### Features
+
+* **chat:** add cycle between last messages with option + arrow ([a95951f](https://github.com/wygoralves/panes/commit/a95951f1da34d6cc2763bdad6725b5ea99535ef6))
+* **chat:** add file link opening to file editor ([98c6618](https://github.com/wygoralves/panes/commit/98c6618d82a1640569fa3763d037db5ac131d5f3))
+* **chat:** add markdown rendering when streaming and fix some broken md renders ([3a2ac55](https://github.com/wygoralves/panes/commit/3a2ac55c2ef2ca5de51779a15bc238bdcb9626a9))
+* **chat:** add question details for answer blocks ([59b86a2](https://github.com/wygoralves/panes/commit/59b86a2d05861b8f52e72fe1c57f5774680710d3))
+* **chat:** add switch to toggle diff view on file editor ([1e496ae](https://github.com/wygoralves/panes/commit/1e496ae27a8cc0e9b645c1d0f7296309dbe058a2))
+* **chat:** adjust notification dot color ([91e7d4c](https://github.com/wygoralves/panes/commit/91e7d4cbe6a895cb61abba2a124f83b0799e7f8d))
+* **chat:** improve answered questions UI ([8b26ac7](https://github.com/wygoralves/panes/commit/8b26ac73ad89435379c3bc38bc064578d737fc28))
+* **chat:** improve default model heritage between threads ([9444a8e](https://github.com/wygoralves/panes/commit/9444a8e1a6b0d5b64f1160832dffcb9c149077e9))
+* **chat:** improve markdown rendering ([6bf3345](https://github.com/wygoralves/panes/commit/6bf334542afafde8e83feb66126de722999e0968))
+* **chat:** improve styling on text and icons ([bd08469](https://github.com/wygoralves/panes/commit/bd084695dfd9102505471145bd572b657c4a8b61))
+* **chat:** improve thinking blocks handling ([91ec192](https://github.com/wygoralves/panes/commit/91ec192941cc1fbe213f0e0da1b96e47f06e8e3a))
+* **chat:** improve UI for steering and add copy messages ([5d6446f](https://github.com/wygoralves/panes/commit/5d6446f5caf5d2efbadda5c1e95899b8f3bdb168))
+* **chat:** improve UI on the chatarea ([56786b1](https://github.com/wygoralves/panes/commit/56786b19259cf9773b4700fd015f4597c98f1750))
+* **chat:** improve usability for claude code planning mode ([f4ae9c7](https://github.com/wygoralves/panes/commit/f4ae9c7f957ec4ad8192dff1916966a191ed9132))
+* **chat:** improve visibility of commands ([5c807b0](https://github.com/wygoralves/panes/commit/5c807b04f8262d4dc08c5a6c9950250623da3235))
+* **chat:** make code blocks readability better ([a346578](https://github.com/wygoralves/panes/commit/a346578d1570698173dada427b695464286b5b80))
+* **chat:** make expandable blocks appear compressed by default ([74620a0](https://github.com/wygoralves/panes/commit/74620a087eef6df07a8f5db43971453ef6b5204c))
+* **chat:** reduce clutter on chat UI and add thinking duration ([fef6e6e](https://github.com/wygoralves/panes/commit/fef6e6e6c42909c27bb736e68c9e0e9cc05ad844))
+* **chat:** remove orphaned empty messages when stopping turns and improve ui for tool call results ([2299fa8](https://github.com/wygoralves/panes/commit/2299fa80206114af38d950206fe556ecf81b019a))
+* **chat:** smoothen md renderer worker visibility ([19041c5](https://github.com/wygoralves/panes/commit/19041c5aec1fac99a9c59e3ced1fb97c1eb3e12e))
+* **chat:** smoothen UI components on the chat area to make it more scannable ([c3f6f51](https://github.com/wygoralves/panes/commit/c3f6f5153d64034f73e421ef59a48fee67d96c89))
+
+### Bug Fixes
+
+* **chat:** better handle malformed percent encoding in file links ([591c74e](https://github.com/wygoralves/panes/commit/591c74e5aa13e2facc30ec3ae174dd5a1ec3db71))
+* **chat:** fix exitplanmode command for claude code ([35236a0](https://github.com/wygoralves/panes/commit/35236a048d14d482fcf399765662d0615ff9f04b))
+* **chat:** fix frontend losing track of active chats when switching between threads ([9812f33](https://github.com/wygoralves/panes/commit/9812f33510ed09dfcb4f8484306b60dfac3fc638))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.46.3...vnull) (2026-03-26)
 
 ### Bug Fixes
