@@ -54,8 +54,7 @@ import { MessageBlocks, shouldShowClaudeUnsupportedApproval } from "./MessageBlo
 import { resolveEngineCapabilities } from "./engineCapabilities";
 import { buildCodexInputItems } from "./codexInputItems";
 import {
-  latestAssistantMessage as findLatestAssistantMessage,
-  PLAN_IMPLEMENTATION_CODING_MESSAGE,
+  getPlanImplementationCodingMessage,
   shouldPromptToImplementPlan,
 } from "./planModePrompt";
 import { buildComposerRuntimeSnapshot } from "./composerRuntime";
@@ -1408,28 +1407,6 @@ export function ChatPanel() {
     [health],
   );
   const codexProtocolDiagnostics = health.codex?.protocolDiagnostics;
-  const codexPlanModeAdvertisement = useMemo<
-    "advertised" | "notAdvertised" | "unknown"
-  >(() => {
-    if (!codexProtocolDiagnostics) {
-      return "unknown";
-    }
-
-    const collaborationModeStatus = codexProtocolDiagnostics.methodAvailability.find(
-      (entry) => entry.method === "collaborationMode/list",
-    )?.status;
-    if (collaborationModeStatus && collaborationModeStatus !== "available") {
-      return "unknown";
-    }
-
-    return codexProtocolDiagnostics.collaborationModes.includes("plan")
-      ? "advertised"
-      : "notAdvertised";
-  }, [
-    codexProtocolDiagnostics,
-    codexProtocolDiagnostics?.collaborationModes,
-    codexProtocolDiagnostics?.methodAvailability,
-  ]);
   const preferredOnboardingChatSelection = useMemo(
     () => resolvePreferredOnboardingChatSelection(onboardingSelectedChatEngines, engines),
     [engines, onboardingSelectedChatEngines],
@@ -1947,7 +1924,6 @@ export function ChatPanel() {
       ),
     [activeThread?.engineId, pendingApprovals, selectedPendingToolInputApprovalId],
   );
-  const latestAssistant = useMemo(() => findLatestAssistantMessage(messages), [messages]);
   const pendingPlanImplementationThreadIdRef = useRef<string | null>(null);
   const previousStreamingRef = useRef(false);
 
@@ -1990,7 +1966,8 @@ export function ChatPanel() {
         status,
         activeThreadId: threadId,
         armedThreadId,
-        latestAssistant,
+        engineId: activeThread?.engineId,
+        messages,
       })
     ) {
       const promptThreadId = threadId ?? armedThreadId;
@@ -2031,7 +2008,7 @@ export function ChatPanel() {
     activeThread,
     activeThreadReasoningEffort,
     customApprovalPolicyText,
-    latestAssistant,
+    messages,
     outputSchemaText,
     selectedPersonality,
     selectedServiceTier,
@@ -3571,6 +3548,7 @@ export function ChatPanel() {
     if (!prompt || !activeWorkspaceId) {
       return;
     }
+    const implementationMessage = getPlanImplementationCodingMessage(prompt.engineId);
 
     const currentThread =
       useThreadStore.getState().threads.find((thread) => thread.id === prompt.threadId) ??
@@ -3600,7 +3578,7 @@ export function ChatPanel() {
           workspaceId: activeWorkspaceId,
           threadId: currentThread.id,
           threadPaths: availableRepoPaths,
-          text: PLAN_IMPLEMENTATION_CODING_MESSAGE,
+          text: implementationMessage,
           attachments: [],
           inputItems: null,
           planMode: false,
@@ -3637,7 +3615,7 @@ export function ChatPanel() {
       }
       setThreadLastModelLocal(currentThread.id, prompt.modelId);
 
-      const sent = await send(PLAN_IMPLEMENTATION_CODING_MESSAGE, {
+      const sent = await send(implementationMessage, {
         threadIdOverride: currentThread.id,
         engineId: prompt.engineId,
         modelId: prompt.modelId,
@@ -4883,15 +4861,7 @@ export function ChatPanel() {
                 {planMode && (
                   <div className="chat-plan-mode-banner">
                     <ListChecks size={12} />
-                    <span>
-                      {selectedEngineId === "codex"
-                        ? codexPlanModeAdvertisement === "advertised"
-                          ? t("panel.planModeBannerCodex")
-                          : codexPlanModeAdvertisement === "notAdvertised"
-                            ? t("panel.planModeBannerCodexFallback")
-                            : t("panel.planModeBannerCodexUnknown")
-                        : t("panel.planModeBanner")}
-                    </span>
+                    <span>{t("panel.planMode")}</span>
                   </div>
                 )}
 

@@ -730,13 +730,29 @@ fn render_plan_update(params: &Value) -> String {
             let Some(step) = extract_any_string(entry, &["step"]) else {
                 continue;
             };
-            let status =
-                extract_any_string(entry, &["status"]).unwrap_or_else(|| "pending".to_string());
+            let status = extract_any_string(entry, &["status"])
+                .map(|status| normalize_plan_step_status_for_display(&status))
+                .unwrap_or_else(|| "pending".to_string());
             lines.push(format!("- [{status}] {step}"));
         }
     }
 
     lines.join("\n")
+}
+
+fn normalize_plan_step_status_for_display(status: &str) -> String {
+    let normalized = status.trim();
+    if normalized.eq_ignore_ascii_case("inprogress")
+        || normalized.eq_ignore_ascii_case("in_progress")
+    {
+        "in_progress".to_string()
+    } else if normalized.eq_ignore_ascii_case("completed") {
+        "completed".to_string()
+    } else if normalized.eq_ignore_ascii_case("pending") {
+        "pending".to_string()
+    } else {
+        normalized.to_string()
+    }
 }
 
 fn parse_turn_completion_status(status: &str) -> TurnCompletionStatus {
@@ -1478,6 +1494,38 @@ mod tests {
 
         assert_eq!(approval.approval_id, "item_84");
         assert_eq!(approval.server_method, "item/tool/requestuserinput");
+    }
+
+    #[test]
+    fn map_notification_normalizes_turn_plan_status_for_frontend_detection() {
+        let mut mapper = TurnEventMapper::default();
+
+        let events = mapper.map_notification(
+            "turn/plan/updated",
+            &json!({
+                "threadId": "thr_123",
+                "turnId": "turn_123",
+                "plan": [
+                    {
+                        "step": "Inspect the repo",
+                        "status": "inProgress"
+                    },
+                    {
+                        "step": "Apply the fix",
+                        "status": "pending"
+                    }
+                ]
+            }),
+        );
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            EngineEvent::ThinkingDelta { content } => {
+                assert!(content.contains("- [in_progress] Inspect the repo"));
+                assert!(content.contains("- [pending] Apply the fix"));
+            }
+            other => panic!("expected thinking delta event, got {other:?}"),
+        }
     }
 
     #[test]
