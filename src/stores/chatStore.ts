@@ -1043,6 +1043,35 @@ function toIsoTimestamp(value: number | null | undefined): string | null {
   return date.toISOString();
 }
 
+const CONTEXT_WINDOW_BASELINE_TOKENS = 12_000;
+
+function calculateContextPercentRemaining(
+  currentTokens: number | null,
+  maxContextTokens: number | null,
+): number | null {
+  if (
+    typeof currentTokens !== "number" ||
+    !Number.isFinite(currentTokens) ||
+    typeof maxContextTokens !== "number" ||
+    !Number.isFinite(maxContextTokens)
+  ) {
+    return null;
+  }
+
+  if (maxContextTokens <= CONTEXT_WINDOW_BASELINE_TOKENS) {
+    return 0;
+  }
+
+  const effectiveWindow = maxContextTokens - CONTEXT_WINDOW_BASELINE_TOKENS;
+  const usedTokens = Math.max(0, currentTokens - CONTEXT_WINDOW_BASELINE_TOKENS);
+  const remainingTokens = Math.max(0, effectiveWindow - usedTokens);
+
+  return Math.max(
+    0,
+    Math.min(100, Math.round((remainingTokens / effectiveWindow) * 100)),
+  );
+}
+
 function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimitsUpdated" }>): ContextUsage | null {
   const usage = event.usage ?? {};
   const currentTokensRaw = usage.current_tokens;
@@ -1057,17 +1086,12 @@ function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimit
     typeof maxContextTokensRaw === "number" ? Math.max(0, Math.round(maxContextTokensRaw)) : null;
   const hasContextMetrics = currentTokens !== null || maxContextTokens !== null;
 
-  let contextPercent = typeof contextPercentRaw === "number" ? Math.round(contextPercentRaw) : null;
+  let contextPercent = calculateContextPercentRemaining(currentTokens, maxContextTokens);
+  if (contextPercent === null && typeof contextPercentRaw === "number") {
+    contextPercent = Math.round(contextPercentRaw);
+  }
   if (contextPercent !== null && !Number.isFinite(contextPercent)) {
     contextPercent = null;
-  }
-  if (
-    contextPercent === null &&
-    currentTokens !== null &&
-    maxContextTokens !== null &&
-    maxContextTokens > 0
-  ) {
-    contextPercent = Math.round((currentTokens / maxContextTokens) * 100);
   }
 
   const hasAnyMetric =

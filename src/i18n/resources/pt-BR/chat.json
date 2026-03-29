@@ -467,7 +467,7 @@
     "minutesShort": "{{count}} min",
     "hoursMinutesShort": "{{hours}} h {{minutes}} min",
     "daysHoursShort": "{{days}} d {{hours}} h",
-    "context": "Contexto",
+    "context": "Contexto restante",
     "windowFiveHoursLeft": "5h restantes",
     "windowWeeklyLeft": "Semana restante",
     "resets": "reinicia {{time}}",

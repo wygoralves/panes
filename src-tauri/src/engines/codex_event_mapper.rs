@@ -997,36 +997,65 @@ struct RateLimitWindowInfo {
     window_duration_mins: Option<i64>,
 }
 
+const CONTEXT_WINDOW_BASELINE_TOKENS: u64 = 12_000;
+
+fn extract_context_tokens(token_usage: &Value) -> Option<u64> {
+    token_usage
+        .get("last")
+        .and_then(|last| {
+            extract_any_u64(last, &["totalTokens", "total_tokens"])
+                .or_else(|| extract_any_u64(last, &["inputTokens", "input_tokens"]))
+        })
+        .or_else(|| {
+            token_usage.get("total").and_then(|total| {
+                extract_any_u64(total, &["totalTokens", "total_tokens"])
+                    .or_else(|| extract_any_u64(total, &["inputTokens", "input_tokens"]))
+            })
+        })
+        .or_else(|| extract_any_u64(token_usage, &["totalTokens", "total_tokens"]))
+}
+
+fn calculate_context_window_percent_remaining(
+    current_tokens: u64,
+    max_context_tokens: u64,
+) -> Option<u8> {
+    if max_context_tokens <= CONTEXT_WINDOW_BASELINE_TOKENS {
+        return Some(0);
+    }
+
+    let effective_window = max_context_tokens - CONTEXT_WINDOW_BASELINE_TOKENS;
+    let used_tokens = current_tokens.saturating_sub(CONTEXT_WINDOW_BASELINE_TOKENS);
+    let remaining_tokens = effective_window.saturating_sub(used_tokens);
+    let percent = ((remaining_tokens as f64 / effective_window as f64) * 100.0)
+        .clamp(0.0, 100.0)
+        .round() as i64;
+
+    Some(percent.clamp(0, 100) as u8)
+}
+
 fn extract_context_usage_limits(value: &Value) -> Option<UsageLimitsSnapshot> {
     let token_usage = value
         .get("tokenUsage")
         .or_else(|| value.get("turn").and_then(|turn| turn.get("tokenUsage")))?;
 
-    let total_tokens = token_usage
-        .get("total")
-        .and_then(|total| {
-            extract_any_u64(total, &["totalTokens", "total_tokens"])
-                .or_else(|| extract_any_u64(total, &["inputTokens", "input_tokens"]))
-        })
-        .or_else(|| extract_any_u64(token_usage, &["totalTokens", "total_tokens"]));
+    let current_tokens = extract_context_tokens(token_usage);
 
     let max_context_tokens =
         extract_any_u64(token_usage, &["modelContextWindow", "model_context_window"]);
 
-    let context_window_percent = match (total_tokens, max_context_tokens) {
-        (Some(total), Some(limit)) if limit > 0 => {
-            let percent = ((total as f64 / limit as f64) * 100.0).round() as i64;
-            Some(percent.clamp(0, 100) as u8)
+    let context_window_percent = match (current_tokens, max_context_tokens) {
+        (Some(current), Some(limit)) if limit > 0 => {
+            calculate_context_window_percent_remaining(current, limit)
         }
         _ => None,
     };
 
-    if total_tokens.is_none() && max_context_tokens.is_none() {
+    if current_tokens.is_none() && max_context_tokens.is_none() {
         return None;
     }
 
     Some(UsageLimitsSnapshot {
-        current_tokens: total_tokens,
+        current_tokens,
         max_context_tokens,
         context_window_percent,
         ..UsageLimitsSnapshot::default()
@@ -1588,7 +1617,7 @@ mod tests {
             EngineEvent::UsageLimitsUpdated { usage } => {
                 assert_eq!(usage.current_tokens, Some(50000));
                 assert_eq!(usage.max_context_tokens, Some(200000));
-                assert_eq!(usage.context_window_percent, Some(25));
+                assert_eq!(usage.context_window_percent, Some(80));
             }
             _ => panic!("expected usage limits update"),
         }
@@ -1601,8 +1630,11 @@ mod tests {
             "threadId": "thr_123",
             "turnId": "turn_123",
             "tokenUsage": {
+                "last": {
+                    "totalTokens": 30000
+                },
                 "total": {
-                    "totalTokens": 50000
+                    "totalTokens": 90000
                 },
                 "modelContextWindow": 200000
             }
@@ -1613,9 +1645,9 @@ mod tests {
 
         match &events[0] {
             EngineEvent::UsageLimitsUpdated { usage } => {
-                assert_eq!(usage.current_tokens, Some(50000));
+                assert_eq!(usage.current_tokens, Some(30000));
                 assert_eq!(usage.max_context_tokens, Some(200000));
-                assert_eq!(usage.context_window_percent, Some(25));
+                assert_eq!(usage.context_window_percent, Some(90));
             }
             _ => panic!("expected usage limits update"),
         }
