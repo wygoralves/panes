@@ -1,8 +1,13 @@
 import type { Message, ThreadStatus } from "../../types";
 
-export const PLAN_IMPLEMENTATION_CODING_MESSAGE = "Exit plan mode and implement the plan.";
+export function getPlanImplementationCodingMessage(engineId?: string | null): string {
+  return engineId === "claude"
+    ? "Exit plan mode and implement the plan."
+    : "Implement the plan.";
+}
 
-const STRUCTURED_PLAN_LINE_PATTERN = /(^|\n)- \[(?:pending|in_progress|completed)\] /;
+const STRUCTURED_PLAN_LINE_PATTERN =
+  /(^|\n)- \[(?:pending|in_progress|inProgress|completed)\] /;
 const GENERIC_PLAN_LIST_PATTERN = /(^|\n)(?:[-*]|\d+\.)\s+\S+/g;
 
 export function messageHasStructuredPlan(message: Message | null | undefined): boolean {
@@ -41,6 +46,20 @@ export function latestAssistantMessage(messages: Message[]): Message | undefined
   return undefined;
 }
 
+function trailingAssistantMessages(messages: Message[]): Message[] {
+  const trailing: Message[] = [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "assistant") {
+      trailing.unshift(message);
+      continue;
+    }
+    break;
+  }
+
+  return trailing;
+}
+
 function messageHasExitPlanModeAttempt(message: Message | null | undefined): boolean {
   if (!message || message.role !== "assistant") {
     return false;
@@ -59,14 +78,16 @@ export function shouldPromptToImplementPlan({
   status,
   activeThreadId,
   armedThreadId,
-  latestAssistant,
+  engineId,
+  messages,
 }: {
   wasStreaming: boolean;
   streaming: boolean;
   status: ThreadStatus;
   activeThreadId: string | null;
   armedThreadId: string | null;
-  latestAssistant: Message | null | undefined;
+  engineId?: string | null;
+  messages: Message[];
 }): boolean {
   if (!wasStreaming || streaming) {
     return false;
@@ -80,8 +101,16 @@ export function shouldPromptToImplementPlan({
     return false;
   }
 
+  const assistantMessages = trailingAssistantMessages(messages);
+  if (assistantMessages.length === 0) {
+    return false;
+  }
+
   // Show the prompt if the assistant produced a structured plan, or if it
-  // attempted to call ExitPlanMode (which may fail at the SDK level but
-  // still signals the agent considers planning complete).
-  return messageHasStructuredPlan(latestAssistant) || messageHasExitPlanModeAttempt(latestAssistant);
+  // attempted to call ExitPlanMode in Claude plan mode (which may fail at
+  // the SDK level but still signals the agent considers planning complete).
+  return (
+    assistantMessages.some(messageHasStructuredPlan) ||
+    (engineId === "claude" && assistantMessages.some(messageHasExitPlanModeAttempt))
+  );
 }

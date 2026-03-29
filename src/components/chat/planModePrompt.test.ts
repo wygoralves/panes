@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Message } from "../../types";
 import {
-  PLAN_IMPLEMENTATION_CODING_MESSAGE,
+  getPlanImplementationCodingMessage,
   latestAssistantMessage,
   messageHasStructuredPlan,
   shouldPromptToImplementPlan,
@@ -27,10 +27,11 @@ function buildAssistantMessage(content: string): Message {
 }
 
 describe("planModePrompt", () => {
-  it("uses an explicit handoff instruction that exits plan mode", () => {
-    expect(PLAN_IMPLEMENTATION_CODING_MESSAGE).toBe(
+  it("uses the explicit exit-plan handoff only for Claude", () => {
+    expect(getPlanImplementationCodingMessage("claude")).toBe(
       "Exit plan mode and implement the plan.",
     );
+    expect(getPlanImplementationCodingMessage("codex")).toBe("Implement the plan.");
   });
 
   it("detects structured plan output from assistant messages", () => {
@@ -57,6 +58,18 @@ describe("planModePrompt", () => {
         "Plan:",
         "1. Inspect the current flow",
         "2. Reuse the same inline questionnaire",
+      ].join("\n"),
+    );
+
+    expect(messageHasStructuredPlan(message)).toBe(true);
+  });
+
+  it("detects Codex native plan updates that use camelCase inProgress statuses", () => {
+    const message = buildAssistantMessage(
+      [
+        "Plan update",
+        "- [inProgress] Inspect the current flow",
+        "- [pending] Apply the fix",
       ].join("\n"),
     );
 
@@ -121,9 +134,47 @@ describe("planModePrompt", () => {
         status: "completed",
         activeThreadId: "thread-1",
         armedThreadId: "thread-1",
-        latestAssistant: message,
+        engineId: "claude",
+        messages: [message],
       }),
     ).toBe(true);
+  });
+
+  it("ignores ExitPlanMode tool attempts for non-Claude engines", () => {
+    const message: Message = {
+      id: "assistant-1",
+      threadId: "thread-1",
+      role: "assistant",
+      status: "completed",
+      schemaVersion: 1,
+      blocks: [
+        { type: "text", content: "The plan is ready." },
+        {
+          type: "action",
+          actionId: "a1",
+          actionType: "other",
+          summary: "ExitPlanMode",
+          details: {},
+          outputChunks: [],
+          status: "error",
+        },
+      ],
+      createdAt: new Date().toISOString(),
+      hydration: "full",
+      hasDeferredContent: false,
+    };
+
+    expect(
+      shouldPromptToImplementPlan({
+        wasStreaming: true,
+        streaming: false,
+        status: "completed",
+        activeThreadId: "thread-1",
+        armedThreadId: "thread-1",
+        engineId: "codex",
+        messages: [message],
+      }),
+    ).toBe(false);
   });
 
   it("prompts to implement only after a live plan turn completes", () => {
@@ -138,7 +189,8 @@ describe("planModePrompt", () => {
         status: "completed",
         activeThreadId: "thread-1",
         armedThreadId: "thread-1",
-        latestAssistant,
+        engineId: "codex",
+        messages: [latestAssistant],
       }),
     ).toBe(true);
 
@@ -149,7 +201,8 @@ describe("planModePrompt", () => {
         status: "completed",
         activeThreadId: "thread-1",
         armedThreadId: "thread-2",
-        latestAssistant,
+        engineId: "codex",
+        messages: [latestAssistant],
       }),
     ).toBe(false);
 
@@ -160,8 +213,61 @@ describe("planModePrompt", () => {
         status: "error",
         activeThreadId: "thread-1",
         armedThreadId: "thread-1",
-        latestAssistant,
+        engineId: "codex",
+        messages: [latestAssistant],
       }),
     ).toBe(false);
+  });
+
+  it("prompts when the last turn contains a plan followed by another assistant message", () => {
+    const planAssistant = buildAssistantMessage(
+      "- [completed] Inspect\n- [pending] Implement",
+    );
+    const trailingAssistant: Message = {
+      id: "assistant-2",
+      threadId: "thread-1",
+      role: "assistant",
+      status: "completed",
+      schemaVersion: 1,
+      blocks: [
+        {
+          type: "approval",
+          approvalId: "approval-1",
+          actionType: "other",
+          summary: "What should Panes do next?",
+          details: {},
+          status: "pending",
+        },
+      ],
+      createdAt: new Date().toISOString(),
+      hydration: "full",
+      hasDeferredContent: false,
+    };
+
+    expect(
+      shouldPromptToImplementPlan({
+        wasStreaming: true,
+        streaming: false,
+        status: "completed",
+        activeThreadId: "thread-1",
+        armedThreadId: "thread-1",
+        engineId: "codex",
+        messages: [
+          {
+            id: "user-1",
+            threadId: "thread-1",
+            role: "user",
+            status: "completed",
+            schemaVersion: 1,
+            blocks: [{ type: "text", content: "Plan this", planMode: true }],
+            createdAt: new Date().toISOString(),
+            hydration: "full",
+            hasDeferredContent: false,
+          },
+          planAssistant,
+          trailingAssistant,
+        ],
+      }),
+    ).toBe(true);
   });
 });
