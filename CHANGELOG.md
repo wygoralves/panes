@@ -1,5 +1,14 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.49.0...vnull) (2026-03-29)
+
+### Bug Fixes
+
+* **codex:** align Codex context meter semantics ([64046f9](https://github.com/wygoralves/panes/commit/64046f9537493fc96ef0b44b20785fbe2b26513c))
+* **codex:** fix plan handoff and context calc on codex ([312ba42](https://github.com/wygoralves/panes/commit/312ba4295966c7e36dfe2dac88c77928e0b6ab86))
+* **gitpanel:** properly show fullscreen dialog when discarding git changes ([9908169](https://github.com/wygoralves/panes/commit/99081698878617297ef72d101e15b221c1739910))
+* **sidebar:** properly show compressed groups on startup ([1d4f094](https://github.com/wygoralves/panes/commit/1d4f094b1847c5057429fc29a7274a704bd8aad0))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.48.0...vnull) (2026-03-27)
 
 ### Features
