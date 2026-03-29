@@ -45,6 +45,7 @@ import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag
 import { UpdateDialog } from "../onboarding/UpdateDialog";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { WorkspaceMoreMenu } from "../workspace/WorkspaceMoreMenu";
+import { normalizeSidebarCollapsedState } from "./sidebarCollapseState";
 import type { Thread, Workspace } from "../../types";
 
 interface ProjectGroup {
@@ -127,8 +128,11 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       })),
     [workspaces, threads],
   );
+  const workspaceIds = useMemo(() => workspaces.map((workspace) => workspace.id), [workspaces]);
 
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() =>
+    normalizeSidebarCollapsedState(workspaceIds, activeWorkspaceId, {}, null),
+  );
   const [showAll, setShowAll] = useState<Record<string, boolean>>({});
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
@@ -143,6 +147,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const [terminalAcceleratedRendering, setTerminalAcceleratedRendering] = useState(true);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
+  const previousSyncedActiveWorkspaceIdRef = useRef<string | null>(activeWorkspaceId);
   const activeLocale = normalizeAppLocale(i18n.language);
 
   const closeSettingsMenu = useCallback(() => setSettingsMenuOpen(false), []);
@@ -199,6 +204,18 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
 
   const toggleCollapse = (wsId: string) =>
     setCollapsed((prev) => ({ ...prev, [wsId]: !prev[wsId] }));
+
+  useEffect(() => {
+    setCollapsed((prev) =>
+      normalizeSidebarCollapsedState(
+        workspaceIds,
+        activeWorkspaceId,
+        prev,
+        previousSyncedActiveWorkspaceIdRef.current,
+      ),
+    );
+    previousSyncedActiveWorkspaceIdRef.current = activeWorkspaceId;
+  }, [workspaceIds, activeWorkspaceId]);
 
   useEffect(() => {
     void refreshArchivedWorkspaces();
