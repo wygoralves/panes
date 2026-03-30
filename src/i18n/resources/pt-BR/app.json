@@ -362,6 +362,8 @@
     "emptyHint": "Abra um arquivo pela visualização Files no painel Git",
     "showDiff": "Mostrar visualização de diff",
     "hideDiff": "Ocultar visualização de diff",
+    "showMarkdownPreview": "Mostrar preview de markdown",
+    "hideMarkdownPreview": "Ocultar preview de markdown",
     "unsavedChangesTitle": "Alterações não salvas",
     "unsavedChangesMessage": "\"{{name}}\" tem alterações não salvas. Descartá-las?",
     "discard": "Descartar",

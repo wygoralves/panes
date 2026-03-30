@@ -13,6 +13,7 @@ import { destroyCachedEditor } from "../components/editor/CodeMirrorEditor";
 import type {
   EditorRevealLocation,
   EditorRevealRequest,
+  EditorRenderMode,
   EditorTab,
   GitCompareSource,
   GitFileCompare,
@@ -111,6 +112,16 @@ function toPlainEditorTab(
   };
 }
 
+function toMarkdownPreviewTab(tab: EditorTab): EditorTab {
+  return {
+    ...tab,
+    renderMode: "markdown-preview",
+    gitContext: null,
+    pendingReveal: null,
+    loadError: undefined,
+  };
+}
+
 interface FileStoreState {
   tabs: EditorTab[];
   activeTabId: string | null;
@@ -132,6 +143,7 @@ interface FileStoreState {
   confirmCloseTab: () => void;
   cancelCloseTab: () => void;
   setActiveTab: (tabId: string) => void;
+  setTabRenderMode: (tabId: string, renderMode: EditorRenderMode) => void;
   setTabContent: (tabId: string, content: string) => void;
   clearPendingReveal: (tabId: string, nonce: string) => void;
   saveTab: (tabId: string) => Promise<void>;
@@ -342,6 +354,26 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
 
   setActiveTab: (tabId) => {
     set({ activeTabId: tabId });
+  },
+
+  setTabRenderMode: (tabId, renderMode) => {
+    set((state) => ({
+      tabs: state.tabs.map((tab) => {
+        if (tab.id !== tabId) {
+          return tab;
+        }
+
+        if (renderMode === "plain-editor") {
+          return toPlainEditorTab(tab, null);
+        }
+
+        if (renderMode === "markdown-preview") {
+          return toMarkdownPreviewTab(tab);
+        }
+
+        return tab;
+      }),
+    }));
   },
 
   setTabContent: (tabId, content) => {

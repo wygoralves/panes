@@ -362,6 +362,8 @@
     "emptyHint": "Open a file from the Files view in the Git panel",
     "showDiff": "Show diff view",
     "hideDiff": "Hide diff view",
+    "showMarkdownPreview": "Show markdown preview",
+    "hideMarkdownPreview": "Hide markdown preview",
     "unsavedChangesTitle": "Unsaved changes",
     "unsavedChangesMessage": "\"{{name}}\" has unsaved changes. Discard them?",
     "discard": "Discard",

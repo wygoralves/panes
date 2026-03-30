@@ -278,6 +278,26 @@ describe("fileStore", () => {
     expect(useFileStore.getState().tabs[0]?.pendingReveal).toBeNull();
   });
 
+  it("switches a tab into markdown preview mode and clears git compare state", async () => {
+    mockIpc.getGitFileCompare.mockResolvedValueOnce(
+      makeCompare({
+        modifiedContent: "# Preview\n",
+      }),
+    );
+
+    await useFileStore
+      .getState()
+      .openGitDiffFile("/repo", "README.md", { source: "changes" });
+
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    useFileStore.getState().setTabRenderMode(tabId, "markdown-preview");
+
+    const tab = useFileStore.getState().tabs[0]!;
+    expect(tab.renderMode).toBe("markdown-preview");
+    expect(tab.gitContext).toBeNull();
+    expect(tab.pendingReveal).toBeNull();
+  });
+
   it("reuses the same tab when the file is opened from workspace scope and then promoted to git diff", async () => {
     mockWorkspaceState.activeRepoId = "repo-2";
     mockWorkspaceState.repos = [

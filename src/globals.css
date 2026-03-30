@@ -5430,6 +5430,7 @@ button, input, textarea, select {
 .editor-tabs-actions {
   display: flex;
   align-items: center;
+  gap: 4px;
   padding: 0 8px;
   border-left: 1px solid var(--border);
   flex-shrink: 0;
@@ -5468,6 +5469,32 @@ button, input, textarea, select {
 
 .cm-editor.cm-focused {
   outline: none;
+}
+
+.editor-markdown-preview {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-1);
+}
+
+.editor-markdown-preview-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px 32px 56px;
+}
+
+.editor-markdown-preview-prose {
+  width: min(100%, 880px);
+  margin: 0 auto;
+  color: var(--text-1);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.editor-markdown-preview-prose > :first-child {
+  margin-top: 0;
 }
 
 .git-diff-editor-panel {

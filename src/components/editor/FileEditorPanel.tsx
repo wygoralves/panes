@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { FileDiff, FileText, Loader2, X } from "lucide-react";
+import { Eye, FileDiff, FileText, Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   resolveOwningRepoForAbsolutePath,
@@ -13,6 +13,14 @@ import { isMacDesktop } from "../../lib/windowActions";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { GitDiffEditorPanel } from "./GitDiffEditorPanel";
+import { MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
+
+const MARKDOWN_PREVIEW_EXTENSIONS = new Set(["md", "mdx", "markdown"]);
+
+function isMarkdownPreviewFile(filePath: string): boolean {
+  const extension = filePath.split(".").pop()?.toLowerCase();
+  return extension ? MARKDOWN_PREVIEW_EXTENSIONS.has(extension) : false;
+}
 
 export function FileEditorPanel() {
   const { t } = useTranslation("app");
@@ -26,6 +34,7 @@ export function FileEditorPanel() {
   const confirmCloseTab = useFileStore((s) => s.confirmCloseTab);
   const cancelCloseTab = useFileStore((s) => s.cancelCloseTab);
   const clearPendingReveal = useFileStore((s) => s.clearPendingReveal);
+  const setTabRenderMode = useFileStore((s) => s.setTabRenderMode);
   const focusMode = useUiStore((s) => s.focusMode);
   const showSidebar = useUiStore((s) => s.showSidebar);
   const repos = useWorkspaceStore((s) => s.repos);
@@ -62,9 +71,19 @@ export function FileEditorPanel() {
       && !activeTab.loadError
       && (activeTab.renderMode === "git-diff-editor" || !activeTab.isBinary),
   );
+  const canToggleMarkdownPreview = Boolean(
+    activeTab
+      && !activeTab.isLoading
+      && !activeTab.loadError
+      && !activeTab.isBinary
+      && isMarkdownPreviewFile(activeTab.filePath),
+  );
   const diffToggleLabel = activeTab?.renderMode === "git-diff-editor"
     ? t("editor.hideDiff")
     : t("editor.showDiff");
+  const markdownPreviewToggleLabel = activeTab?.renderMode === "markdown-preview"
+    ? t("editor.hideMarkdownPreview")
+    : t("editor.showMarkdownPreview");
 
   function handleToggleDiffView() {
     if (!activeTab || !activeTabOwnership) {
@@ -84,6 +103,17 @@ export function FileEditorPanel() {
     }
 
     void openGitDiffFile(repoPath, gitFilePath, { source: "changes" });
+  }
+
+  function handleToggleMarkdownPreview() {
+    if (!activeTab) {
+      return;
+    }
+
+    setTabRenderMode(
+      activeTab.id,
+      activeTab.renderMode === "markdown-preview" ? "plain-editor" : "markdown-preview",
+    );
   }
 
   // Cmd+S to save — Cmd+W is handled via native menu "close-window" action.
@@ -139,17 +169,30 @@ export function FileEditorPanel() {
               </div>
             ))}
           </div>
-          {canToggleDiffView ? (
+          {canToggleDiffView || canToggleMarkdownPreview ? (
             <div className="editor-tabs-actions">
-              <button
-                type="button"
-                className={`editor-tab-action${activeTab?.renderMode === "git-diff-editor" ? " active" : ""}`}
-                onClick={handleToggleDiffView}
-                title={diffToggleLabel}
-                aria-label={diffToggleLabel}
-              >
-                <FileDiff size={12} />
-              </button>
+              {canToggleMarkdownPreview ? (
+                <button
+                  type="button"
+                  className={`editor-tab-action${activeTab?.renderMode === "markdown-preview" ? " active" : ""}`}
+                  onClick={handleToggleMarkdownPreview}
+                  title={markdownPreviewToggleLabel}
+                  aria-label={markdownPreviewToggleLabel}
+                >
+                  <Eye size={12} />
+                </button>
+              ) : null}
+              {canToggleDiffView ? (
+                <button
+                  type="button"
+                  className={`editor-tab-action${activeTab?.renderMode === "git-diff-editor" ? " active" : ""}`}
+                  onClick={handleToggleDiffView}
+                  title={diffToggleLabel}
+                  aria-label={diffToggleLabel}
+                >
+                  <FileDiff size={12} />
+                </button>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -193,6 +236,8 @@ export function FileEditorPanel() {
               tab={activeTab}
               onChange={(content) => setTabContent(activeTab.id, content)}
             />
+          ) : activeTab.renderMode === "markdown-preview" ? (
+            <MarkdownPreviewPanel content={activeTab.content} />
           ) : activeTab.isBinary ? (
             <div
               style={{

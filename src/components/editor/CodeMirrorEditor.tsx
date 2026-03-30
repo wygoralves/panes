@@ -222,6 +222,7 @@ function getLanguageExtension(filePath: string): Extension | null {
       return json();
     case "md":
     case "mdx":
+    case "markdown":
       return markdown();
     case "sql":
       return sql();

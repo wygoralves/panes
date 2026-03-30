@@ -791,7 +791,7 @@ export interface ReadFileResult {
   isBinary: boolean;
 }
 
-export type EditorRenderMode = "plain-editor" | "git-diff-editor";
+export type EditorRenderMode = "plain-editor" | "markdown-preview" | "git-diff-editor";
 
 export interface GitEditorContext extends GitFileCompare {}
 
