@@ -5094,40 +5094,62 @@ export function ChatPanel() {
 
               {/* Engine + Model + Effort selector */}
               {!showSpecialInputComposer && (
-                <ModelPicker
-                  engines={engines}
-                  health={health}
-                  selectedEngineId={selectedEngineId}
-                  selectedModelId={selectedModelId ?? selectedModel?.id ?? ""}
-                  selectedEffort={selectedEffort}
-                  serviceTier={
-                    selectedEngineId === "codex" && selectedServiceTier !== "inherit"
-                      ? selectedServiceTier
-                      : null
-                  }
-                  onEngineModelChange={(engineId, modelId) => {
-                    manuallyOverrodeThreadSelectionRef.current = true;
-                    setHasExplicitComposerRuntime(true);
-                    selectedEngineIdRef.current = engineId;
-                    if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
-                    const nextEngine =
-                      engines.find((engine) => engine.id === engineId) ?? null;
-                    const nextModel =
-                      nextEngine?.models.find((model) => model.id === modelId) ?? null;
-                    const nextEffort = resolveReasoningEffortForModel(
-                      nextModel,
-                      selectedEffortRef.current,
-                    );
-                    selectedModelIdRef.current = modelId;
-                    setSelectedModelId(modelId);
-                    if (nextEffort && nextEffort !== selectedEffort) {
-                      selectedEffortRef.current = nextEffort;
-                      setSelectedEffort(nextEffort);
-                    }
-                  }}
-                  onEffortChange={(effort) => void onReasoningEffortChange(effort)}
-                  disabled={availableModels.length === 0}
-                />
+                <>
+                  <ModelPicker
+                    engines={engines}
+                    health={health}
+                    selectedEngineId={selectedEngineId}
+                    selectedModelId={selectedModelId ?? selectedModel?.id ?? ""}
+                    selectedEffort={selectedEffort}
+                    onEngineModelChange={(engineId, modelId) => {
+                      manuallyOverrodeThreadSelectionRef.current = true;
+                      setHasExplicitComposerRuntime(true);
+                      selectedEngineIdRef.current = engineId;
+                      if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
+                      const nextEngine =
+                        engines.find((engine) => engine.id === engineId) ?? null;
+                      const nextModel =
+                        nextEngine?.models.find((model) => model.id === modelId) ?? null;
+                      const nextEffort = resolveReasoningEffortForModel(
+                        nextModel,
+                        selectedEffortRef.current,
+                      );
+                      selectedModelIdRef.current = modelId;
+                      setSelectedModelId(modelId);
+                      if (nextEffort && nextEffort !== selectedEffort) {
+                        selectedEffortRef.current = nextEffort;
+                        setSelectedEffort(nextEffort);
+                      }
+                    }}
+                    onEffortChange={(effort) => void onReasoningEffortChange(effort)}
+                    disabled={availableModels.length === 0}
+                  />
+                  {selectedEngineId === "codex" && (
+                    <button
+                      type="button"
+                      className={`chat-toolbar-btn chat-toolbar-btn-bordered chat-toolbar-btn-fast ${selectedServiceTier === "fast" ? "chat-toolbar-btn-fast-active" : ""}`}
+                      onClick={() => {
+                        void onCodexConfigSave({
+                          updatePersonality: false,
+                          personality: null,
+                          updateServiceTier: true,
+                          serviceTier:
+                            selectedServiceTier === "fast" ? null : "fast",
+                          updateOutputSchema: false,
+                          outputSchema: null,
+                          updateApprovalPolicy: false,
+                          approvalPolicy: null,
+                        }).catch((error) => {
+                          toast.error(String(error));
+                        });
+                      }}
+                      title={t("configPicker.serviceTierDescription")}
+                    >
+                      <Zap size={11} />
+                      <span style={{ fontSize: 11 }}>{t("modelPicker.fastOn")}</span>
+                    </button>
+                  )}
+                </>
               )}
 
               {/* Codex Runtime + Config removed from toolbar — accessed via /slash commands */}

@@ -15,7 +15,6 @@ interface ModelPickerProps {
   selectedEngineId: string;
   selectedModelId: string | null;
   selectedEffort: string;
-  serviceTier?: string | null;
   onEngineModelChange: (engineId: string, modelId: string) => void;
   onEffortChange: (effort: string) => void;
   disabled?: boolean;
@@ -70,47 +69,6 @@ function effortDisplayLabel(t: TFunction<"chat">, effort: string): string {
   }
 }
 
-function resolveUpgradeName(
-  upgradeId: string | undefined,
-  models: EngineModel[],
-): string | null {
-  if (!upgradeId) return null;
-  const target = models.find((m) => m.id === upgradeId);
-  return formatModelName(target?.displayName ?? upgradeId);
-}
-
-function firstMeaningfulLine(value?: string | null): string | null {
-  if (!value) {
-    return null;
-  }
-  const line = value
-    .split(/\r?\n/)
-    .map((entry) => entry.trim())
-    .find((entry) => entry.length > 0);
-  return line && line.length > 0 ? line : null;
-}
-
-function resolveModelUpgradeHint(
-  t: TFunction<"chat">,
-  model: EngineModel,
-  models: EngineModel[],
-): string | null {
-  const explicitHint =
-    model.upgradeInfo?.upgradeCopy?.trim() ||
-    firstMeaningfulLine(model.upgradeInfo?.migrationMarkdown) ||
-    null;
-  if (explicitHint) {
-    return explicitHint;
-  }
-
-  const upgradeTarget = model.upgradeInfo?.model ?? model.upgrade;
-  const upgradeName = resolveUpgradeName(upgradeTarget, models);
-  if (!upgradeName) {
-    return null;
-  }
-  return t("modelPicker.upgradeAvailable", { model: upgradeName });
-}
-
 /* ── Component ── */
 
 export function ModelPicker({
@@ -119,7 +77,6 @@ export function ModelPicker({
   selectedEngineId,
   selectedModelId,
   selectedEffort,
-  serviceTier,
   onEngineModelChange,
   onEffortChange,
   disabled = false,
@@ -249,9 +206,6 @@ export function ModelPicker({
       {selectedEffort && currentModel?.supportedReasoningEfforts?.length ? (
         <span className="mp-trigger-effort">{shortEffortLabel(t, selectedEffort)}</span>
       ) : null}
-      {serviceTier === "fast" ? (
-        <span className="mp-trigger-fast">{t("modelPicker.fastOn")}</span>
-      ) : null}
       <ChevronDown
         size={10}
         className={`mp-trigger-chevron${open ? " mp-trigger-chevron-open" : ""}`}
@@ -310,7 +264,6 @@ export function ModelPicker({
                   key={model.id}
                   model={model}
                   engineId={activeEngineId}
-                  allModels={browsingModels}
                   isSelected={
                     selectedEngineId === activeEngineId &&
                     model.id === (selectedModelId ?? currentModel?.id)
@@ -342,7 +295,6 @@ export function ModelPicker({
                         key={model.id}
                         model={model}
                         engineId={activeEngineId}
-                        allModels={browsingModels}
                         isSelected={
                           selectedEngineId === activeEngineId &&
                           model.id === (selectedModelId ?? currentModel?.id)
@@ -374,7 +326,6 @@ export function ModelPicker({
 function ModelRow({
   model,
   engineId,
-  allModels,
   isSelected,
   selectedEffort,
   onSelect,
@@ -382,19 +333,14 @@ function ModelRow({
 }: {
   model: EngineModel;
   engineId: string;
-  allModels: EngineModel[];
   isSelected: boolean;
   selectedEffort: string;
   onSelect: (engineId: string, modelId: string) => void;
   onEffortChange: (effort: string) => void;
 }) {
   const { t } = useTranslation("chat");
-  const upgradeName = resolveUpgradeName(model.upgrade, allModels);
-  const upgradeHint = resolveModelUpgradeHint(t, model, allModels);
-  const availabilityHint = model.availabilityNux?.message?.trim() || null;
   const efforts = model.supportedReasoningEfforts ?? [];
-  const supportsImages = model.inputModalities?.includes("image") ?? false;
-  const supportsPersonality = model.supportsPersonality === true;
+  const showControls = efforts.length > 0;
 
   return (
     <div className={`mp-model${isSelected ? " mp-model-selected" : ""}`}>
@@ -415,52 +361,32 @@ function ModelRow({
           {model.description && (
             <span className="mp-model-desc">{model.description}</span>
           )}
-          <div className="mp-model-badges">
-            {supportsImages ? (
-              <span className="mp-model-badge">{t("modelPicker.modalities.image")}</span>
-            ) : (
-              <span className="mp-model-badge">{t("modelPicker.modalities.textOnly")}</span>
-            )}
-            {supportsPersonality && (
-              <span className="mp-model-badge">{t("modelPicker.supportsPersonality")}</span>
-            )}
-            {upgradeName && !upgradeHint && (
-              <span className="mp-model-badge">
-                {t("modelPicker.upgradeAvailable", { model: upgradeName })}
-              </span>
-            )}
-          </div>
-          {upgradeHint && (
-            <span className="mp-model-upgrade">{upgradeHint}</span>
-          )}
-          {availabilityHint && (
-            <span className="mp-model-upgrade">{availabilityHint}</span>
-          )}
         </div>
         {isSelected && (
           <Check size={13} className="mp-model-check" />
         )}
       </button>
 
-      {/* Inline effort selector — only on selected model */}
-      {isSelected && efforts.length > 0 && (
-        <div className="mp-effort">
-          <span className="mp-effort-label">{t("modelPicker.thinking")}</span>
-          <div className="mp-effort-pills">
+      {isSelected && showControls && (
+        <div className="mp-model-controls">
+          {efforts.length > 0 ? (
+            <span className="mp-model-controls-label">{t("modelPicker.thinking")}</span>
+          ) : null}
+          <div className="mp-model-option-pills">
             {efforts.map((opt) => {
               const active = opt.reasoningEffort === selectedEffort;
               return (
                 <button
                   key={opt.reasoningEffort}
                   type="button"
-                  className={`mp-effort-pill${active ? " mp-effort-pill-active" : ""}`}
+                  className={`mp-model-option-pill${active ? " mp-model-option-pill-active" : ""}`}
                   onClick={() => onEffortChange(opt.reasoningEffort)}
                   title={opt.description}
                 >
                   {effortDisplayLabel(t, opt.reasoningEffort)}
                 </button>
-              );
-            })}
+                );
+              })}
           </div>
         </div>
       )}
