@@ -1,5 +1,6 @@
+#[cfg(any(not(target_os = "macos"), test))]
+use std::ffi::OsString;
 use std::{
-    ffi::OsString,
     fs, io,
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
@@ -174,6 +175,7 @@ struct TokioKeepAwakeChild {
 }
 
 const KEEP_AWAKE_SPAWN_GRACE_PERIOD: Duration = Duration::from_millis(150);
+#[cfg(any(not(target_os = "macos"), test))]
 const WINDOWS_KEEP_AWAKE_MARKER: &str = "PANES_KEEP_AWAKE_WINDOWS";
 
 #[cfg(any(target_os = "linux", test))]
@@ -541,7 +543,6 @@ impl KeepAwakeManager {
                             runtime.closed_display_sleep_disabled = false;
                             drop(runtime);
                             try_allow_closed_display_sleep().await;
-                            runtime = self.runtime.lock().await;
                         }
                         let _ = clear_helper_state(&self.state_path());
                     } else if runtime.paused_due_to_battery {
@@ -1122,6 +1123,7 @@ fn helper_command_matches(command_line: &str, helper: &KeepAwakeHelperState) -> 
         .all(|arg| command_line.contains(arg))
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 fn helper_command_args_fingerprint(program: &Path, args: &[OsString]) -> Vec<String> {
     if is_powershell_program(program)
         && args
@@ -1142,6 +1144,7 @@ fn helper_command_args_fingerprint(program: &Path, args: &[OsString]) -> Vec<Str
         .collect()
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 fn is_powershell_program(program: &Path) -> bool {
     let program_name = program
         .to_string_lossy()
@@ -1356,6 +1359,7 @@ fn exit_status_message(status: ExitStatus) -> String {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn exit_status_from_code(code: i32) -> ExitStatus {
     #[cfg(unix)]
     {
@@ -1388,69 +1392,62 @@ async fn closed_display_diagnostics(
     ClosedDisplayDiagnostics::default()
 }
 
-#[cfg(not(target_os = "macos"))]
-fn resolve_backend_spec(profile: &PowerProfile) -> Result<BackendSpec, String> {
-    #[cfg(target_os = "linux")]
-    {
-        let owner_pid = std::process::id();
-        let tail = crate::runtime_env::resolve_executable("tail");
+#[cfg(target_os = "linux")]
+fn resolve_backend_spec(_profile: &PowerProfile) -> Result<BackendSpec, String> {
+    let owner_pid = std::process::id();
+    let tail = crate::runtime_env::resolve_executable("tail");
 
-        // Try systemd-inhibit first (covers most Linux distributions).
-        if let Some(systemd_inhibit) = crate::runtime_env::resolve_executable("systemd-inhibit") {
-            let tail = tail
-                .clone()
-                .ok_or_else(|| "Linux keep awake requires the `tail` utility".to_string())?;
+    // Try systemd-inhibit first (covers most Linux distributions).
+    if let Some(systemd_inhibit) = crate::runtime_env::resolve_executable("systemd-inhibit") {
+        let tail = tail
+            .clone()
+            .ok_or_else(|| "Linux keep awake requires the `tail` utility".to_string())?;
 
-            // Build --what= argument — always inhibit handle-lid-switch when active
-            let what_arg = "--what=idle:sleep:handle-lid-switch";
+        // Build --what= argument — always inhibit handle-lid-switch when active
+        let what_arg = "--what=idle:sleep:handle-lid-switch";
 
-            return Ok(BackendSpec {
-                program: systemd_inhibit,
-                args: vec![
-                    OsString::from(what_arg),
-                    OsString::from("--mode=block"),
-                    OsString::from("--who=Panes"),
-                    OsString::from("--why=Keep system awake while Panes is open"),
-                    tail.into_os_string(),
-                    OsString::from(format!("--pid={owner_pid}")),
-                    OsString::from("-f"),
-                    OsString::from("/dev/null"),
-                ],
-            });
-        }
-
-        // Fallback for non-systemd distros: try gnome-session-inhibit.
-        if let Some(gnome_inhibit) = crate::runtime_env::resolve_executable("gnome-session-inhibit")
-        {
-            let tail =
-                tail.ok_or_else(|| "Linux keep awake requires the `tail` utility".to_string())?;
-            return Ok(BackendSpec {
-                program: gnome_inhibit,
-                args: build_linux_gnome_inhibit_args(owner_pid, &tail),
-            });
-        }
-
-        return Err(
-            "Linux keep awake requires `systemd-inhibit` or `gnome-session-inhibit`".to_string(),
-        );
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let owner_pid = std::process::id();
-        let powershell = resolve_windows_powershell()
-            .ok_or_else(|| "Windows keep awake requires PowerShell".to_string())?;
         return Ok(BackendSpec {
-            program: powershell,
-            args: build_windows_keep_awake_args(owner_pid, profile),
+            program: systemd_inhibit,
+            args: vec![
+                OsString::from(what_arg),
+                OsString::from("--mode=block"),
+                OsString::from("--who=Panes"),
+                OsString::from("--why=Keep system awake while Panes is open"),
+                tail.into_os_string(),
+                OsString::from(format!("--pid={owner_pid}")),
+                OsString::from("-f"),
+                OsString::from("/dev/null"),
+            ],
         });
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    {
-        let _ = profile;
-        Err("keep awake is not supported on this platform".to_string())
+    // Fallback for non-systemd distros: try gnome-session-inhibit.
+    if let Some(gnome_inhibit) = crate::runtime_env::resolve_executable("gnome-session-inhibit") {
+        let tail =
+            tail.ok_or_else(|| "Linux keep awake requires the `tail` utility".to_string())?;
+        return Ok(BackendSpec {
+            program: gnome_inhibit,
+            args: build_linux_gnome_inhibit_args(owner_pid, &tail),
+        });
     }
+
+    Err("Linux keep awake requires `systemd-inhibit` or `gnome-session-inhibit`".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_backend_spec(profile: &PowerProfile) -> Result<BackendSpec, String> {
+    let owner_pid = std::process::id();
+    let powershell = resolve_windows_powershell()
+        .ok_or_else(|| "Windows keep awake requires PowerShell".to_string())?;
+    Ok(BackendSpec {
+        program: powershell,
+        args: build_windows_keep_awake_args(owner_pid, profile),
+    })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+fn resolve_backend_spec(_profile: &PowerProfile) -> Result<BackendSpec, String> {
+    Err("keep awake is not supported on this platform".to_string())
 }
 
 #[cfg(target_os = "linux")]

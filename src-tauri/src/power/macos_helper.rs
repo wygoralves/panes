@@ -65,6 +65,7 @@ struct HelperResponse {
     ok: Option<bool>,
     #[serde(default)]
     error: Option<String>,
+    #[cfg_attr(not(test), allow(dead_code))]
     #[serde(default, rename = "sleepDisabled")]
     sleep_disabled: Option<bool>,
 }
@@ -156,6 +157,7 @@ pub fn register_helper() -> Result<RegisterHelperResult, String> {
 }
 
 /// Unregister the helper daemon.
+#[allow(dead_code)]
 pub(super) fn unregister_helper() -> Result<HelperStatus, String> {
     let output = run_registrar(&["--unregister"])?;
     if let Some(error) = output.error {
@@ -196,6 +198,7 @@ impl HelperConnection {
     }
 
     /// Read the current `SleepDisabled` value via the helper.
+    #[allow(dead_code)]
     pub async fn is_sleep_disabled(&mut self) -> Result<bool, String> {
         let response = self.send_raw("{\"action\":\"status\"}\n").await?;
         Ok(response.sleep_disabled.unwrap_or(false))
@@ -242,6 +245,7 @@ impl HelperConnection {
 
 /// Try to connect to the helper, with up to `attempts` retries and exponential
 /// backoff (500ms, 1s, 2s).
+#[allow(dead_code)]
 pub(super) async fn connect_with_retry(attempts: u32) -> Result<HelperConnection, String> {
     let delays = [
         Duration::from_millis(500),

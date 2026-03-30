@@ -61,6 +61,7 @@ const ACCOUNT_READ_METHODS: &[&str] = &["account/read"];
 const TURN_START_METHODS: &[&str] = &["turn/start"];
 const TURN_STEER_METHODS: &[&str] = &["turn/steer"];
 const TURN_INTERRUPT_METHODS: &[&str] = &["turn/interrupt"];
+#[cfg(target_os = "macos")]
 const COMMAND_EXEC_METHODS: &[&str] = &["command/exec"];
 const MODEL_LIST_METHODS: &[&str] = &["model/list", "models/list"];
 const ACCOUNT_RATE_LIMITS_READ_METHODS: &[&str] = &["account/rateLimits/read"];
@@ -3972,6 +3973,7 @@ fn is_auth_related_error(error: &str) -> bool {
         || value.contains("expired token")
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn workspace_probe_result_indicates_failure(result: &serde_json::Value) -> bool {
     if result.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
         return true;
@@ -4020,6 +4022,7 @@ fn workspace_probe_result_indicates_failure(result: &serde_json::Value) -> bool 
     false
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn is_opaque_workspace_probe_failure(error: &str) -> bool {
     let value = error.to_lowercase();
     if value.trim().is_empty() {
@@ -4029,6 +4032,7 @@ fn is_opaque_workspace_probe_failure(error: &str) -> bool {
     !is_transport_or_protocol_error(&value)
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn is_transport_or_protocol_error(value: &str) -> bool {
     value.contains("timed out")
         || value.contains("timeout")
