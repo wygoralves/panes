@@ -1,5 +1,15 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.49.1...vnull) (2026-03-30)
+
+### Features
+
+* **chat:** improve fast mode and model pickers ([43a4a37](https://github.com/wygoralves/panes/commit/43a4a37b919c6c4bf20abe1d92794414f5a676ae))
+
+### Bug Fixes
+
+* **claude:** fix bundling on prod build to restore claude sdk functionality ([f82540a](https://github.com/wygoralves/panes/commit/f82540ad5a307550a59141659d793dfddba9001c))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.49.0...vnull) (2026-03-29)
 
 ### Bug Fixes
