@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.50.0...vnull) (2026-03-31)
+
+### Features
+
+* **fileeditor:** add markdown preview to file editor ([33cd052](https://github.com/wygoralves/panes/commit/33cd0526e25407592a09c5635500c9b950afd7c1))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.49.1...vnull) (2026-03-30)
 
 ### Features
