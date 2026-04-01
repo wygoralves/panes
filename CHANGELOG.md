@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.51.2...vnull) (2026-04-01)
+
+### Bug Fixes
+
+* **ci:** harden release bundles across platforms ([65f050a](https://github.com/wygoralves/panes/commit/65f050a0f893b0dca3d899f0355279b8e322e344))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.51.1...vnull) (2026-04-01)
 
 ### Bug Fixes
