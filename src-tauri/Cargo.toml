@@ -42,6 +42,8 @@ thiserror = "1"
 log = "0.4"
 env_logger = "0.11"
 which = "6"
+flate2 = "1"
+tar = "0.4"
 
 git2 = { version = "0.19", features = ["vendored-openssl"] }
 notify = "6"

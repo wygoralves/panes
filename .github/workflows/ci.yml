@@ -442,8 +442,17 @@ jobs:
           file "$APP_BINARY" | grep -Eq 'arm64|aarch64'
           file "$APP_BINARY" | grep -q 'x86_64'
 
-      - name: Build Tauri bundles
-        if: matrix.platform != 'macos-15'
+      - name: Build Linux Tauri bundles
+        if: matrix.platform == 'ubuntu-22.04'
+        run: pnpm tauri:build
+        env:
+          NO_STRIP: "true"
+          PANES_SKIP_DESKTOP_PREBUILD: "1"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Build Windows Tauri bundles
+        if: matrix.platform == 'windows-latest'
         run: pnpm tauri:build
         env:
           PANES_SKIP_DESKTOP_PREBUILD: "1"

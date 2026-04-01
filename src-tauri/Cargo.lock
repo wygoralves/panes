@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "Panes"
-version = "0.51.0"
+version = "0.51.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -12,6 +12,7 @@ dependencies = [
  "chrono",
  "core-foundation 0.10.1",
  "env_logger",
+ "flate2",
  "futures",
  "git2",
  "libc",
@@ -23,6 +24,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sys-locale",
+ "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

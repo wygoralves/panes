@@ -1,6 +1,7 @@
 import { cp, mkdir, readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
@@ -26,6 +27,7 @@ const sdkDistPackageDir = path.join(
   "claude-agent-sdk",
 );
 const ripgrepVendorDir = path.join(sdkDistPackageDir, "vendor", "ripgrep");
+const linuxSdkArchiveFile = path.join(outDir, "claude-sdk-node_modules.tar.gz");
 
 function resolveRipgrepTargets() {
   const targetPlatform = process.env.PANES_CLAUDE_SDK_PLATFORM ?? process.platform;
@@ -47,6 +49,32 @@ function resolveRipgrepTargets() {
   throw new Error(
     `Unsupported Claude SDK staging target for ripgrep vendor assets: ${targetPlatform}/${targetArch}`,
   );
+}
+
+function run(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: repoRoot,
+      stdio: "inherit",
+      ...options,
+    });
+
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      reject(
+        new Error(
+          signal
+            ? `${command} ${args.join(" ")} exited with signal ${signal}`
+            : `${command} ${args.join(" ")} exited with code ${code}`,
+        ),
+      );
+    });
+  });
 }
 
 async function pruneUnusedRipgrepVendors() {
@@ -71,6 +99,23 @@ async function pruneUnusedRipgrepVendors() {
   );
 }
 
+async function archiveLinuxSdkNodeModules() {
+  const targetPlatform = process.env.PANES_CLAUDE_SDK_PLATFORM ?? process.platform;
+  if (targetPlatform !== "linux") {
+    return;
+  }
+
+  await rm(linuxSdkArchiveFile, { force: true });
+  await run("tar", ["-czf", path.basename(linuxSdkArchiveFile), "node_modules"], {
+    cwd: outDir,
+  });
+  await rm(path.join(outDir, "node_modules"), {
+    recursive: true,
+    force: true,
+  });
+  console.log("Archived Claude SDK node_modules for Linux runtime staging.");
+}
+
 await rm(outDir, { recursive: true, force: true });
 await mkdir(outDir, { recursive: true });
 
@@ -85,6 +130,7 @@ await cp(sdkPackageDir, sdkDistNodeModulesDir, {
 });
 
 await pruneUnusedRipgrepVendors();
+await archiveLinuxSdkNodeModules();
 
 const output = await readFile(outFile, "utf8");
 if (!output.includes('import("@anthropic-ai/claude-agent-sdk")')) {
