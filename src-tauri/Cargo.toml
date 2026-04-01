@@ -1,6 +1,6 @@
 [package]
 name = "Panes"
-version = "0.51.1"
+version = "0.51.2"
 edition = "2021"
 authors = ["Panes contributors"]
 license = "MIT"

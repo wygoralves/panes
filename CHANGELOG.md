@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.51.1...vnull) (2026-04-01)
+
+### Bug Fixes
+
+* **notifications:** fix stale ui state on notifications ([4fe75dc](https://github.com/wygoralves/panes/commit/4fe75dc71291a49dec2efd6301af0780ab919f45))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.51.0...vnull) (2026-04-01)
 
 ### Bug Fixes
