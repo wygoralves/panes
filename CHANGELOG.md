@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.51.0...vnull) (2026-04-01)
+
+### Bug Fixes
+
+* **ubuntu:** fix regression caused by changes on claude sidecar bundling ([c125f0a](https://github.com/wygoralves/panes/commit/c125f0ab935d6105b1e50d2d5e055f25493b0e27))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.50.0...vnull) (2026-03-31)
 
 ### Features
