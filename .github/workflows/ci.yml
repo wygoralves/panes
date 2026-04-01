@@ -377,7 +377,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: release-desktop-assets
-          path: .
+          path: dist
 
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
