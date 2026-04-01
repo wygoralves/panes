@@ -352,7 +352,6 @@ jobs:
           if-no-files-found: error
           path: |
             dist
-            src-tauri/sidecar-dist
 
   release_bundles:
     name: Build Release Bundles (${{ matrix.platform }})
@@ -417,6 +416,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build platform Claude sidecar assets
+        run: pnpm run build:claude-sidecar
 
       - name: Build universal macOS bundles
         if: matrix.platform == 'macos-15'
