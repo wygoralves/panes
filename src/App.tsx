@@ -100,6 +100,7 @@ export function App() {
   const loadEngines = useEngineStore((s) => s.load);
   const applyEngineRuntimeUpdate = useEngineStore((s) => s.applyRuntimeUpdate);
   const loadKeepAwake = useKeepAwakeStore((s) => s.load);
+  const loadTerminalNotificationSettings = useTerminalNotificationSettingsStore((s) => s.load);
   const refreshKeepAwake = useKeepAwakeStore((s) => s.refresh);
   const keepAwakeEnabled = useKeepAwakeStore((s) => s.state?.enabled ?? false);
   const keepAwakeSessionTimer = useKeepAwakeStore((s) => s.state?.sessionRemainingSecs);
@@ -117,7 +118,8 @@ export function App() {
     void loadWorkspaces();
     void loadEngines();
     void loadKeepAwake();
-  }, [loadWorkspaces, loadEngines, loadKeepAwake]);
+    void loadTerminalNotificationSettings();
+  }, [loadWorkspaces, loadEngines, loadKeepAwake, loadTerminalNotificationSettings]);
 
   useEffect(() => {
     void refreshAllThreads(workspaces.map((workspace) => workspace.id));
