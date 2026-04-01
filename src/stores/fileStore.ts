@@ -463,6 +463,15 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
       destroyCachedEditor(`${tab.id}:git-modified`);
     }
     set({ tabs: [], activeTabId: null, pendingCloseTabId: null });
+
+    // Auto-exit editor mode (mirrors the behavior in closeTab)
+    const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+    if (wsId) {
+      const ws = useTerminalStore.getState().workspaces[wsId];
+      if (ws?.layoutMode === "editor") {
+        void useTerminalStore.getState().setLayoutMode(wsId, ws.preEditorLayoutMode ?? "chat");
+      }
+    }
   },
 
   snapshotTabs: (contextRootPath) => {
@@ -473,8 +482,11 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
       tabs: tabs.map((tab) => {
         // Store path relative to the context root
         let filePath = tab.filePath;
-        if (tab.absolutePath.startsWith(contextRootPath)) {
-          filePath = tab.absolutePath.slice(contextRootPath.length).replace(/^\//, "");
+        const rootWithSep = contextRootPath.endsWith("/") ? contextRootPath : contextRootPath + "/";
+        if (tab.absolutePath.startsWith(rootWithSep)) {
+          filePath = tab.absolutePath.slice(rootWithSep.length);
+        } else if (tab.absolutePath === contextRootPath) {
+          filePath = "";
         }
         return {
           filePath,

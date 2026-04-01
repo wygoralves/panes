@@ -449,6 +449,7 @@ interface TerminalState {
   cycleLayoutMode: (workspaceId: string) => Promise<void>;
   runCommandInTerminal: (workspaceId: string, command: string) => Promise<boolean>;
   createSession: (workspaceId: string, cols?: number, rows?: number, harnessId?: string, harnessName?: string) => Promise<string | null>;
+  createSessionForContext: (workspaceId: string, cwd: string, contextId: string, harnessId?: string | null) => Promise<{ sessionId: string; groupId: string } | null>;
   materializeWorkspaceStartupPreset: (
     workspaceId: string,
     preset: WorkspaceStartupPreset,
@@ -1431,6 +1432,60 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         };
       });
       return created.id;
+    } catch (error) {
+      set((state) => ({
+        workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+          loading: false,
+          error: String(error),
+        }),
+      }));
+      return null;
+    }
+  },
+
+  createSessionForContext: async (workspaceId, cwd, contextId, harnessId) => {
+    set((state) => ({
+      workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+        isOpen: true,
+        loading: true,
+        error: undefined,
+      }),
+    }));
+
+    try {
+      const created = await ipc.terminalCreateSession(workspaceId, DEFAULT_COLS, DEFAULT_ROWS, cwd);
+      let groupId = "";
+      set((state) => {
+        const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
+        const groupName = `Terminal ${nextTerminalNumber(current.groups)}`;
+        const newGroup = makeLeafGroup(created.id, groupName, {
+          harnessId: harnessId ?? null,
+          harnessName: null,
+          autoDetectedHarness: false,
+          launchHarnessOnCreate: Boolean(harnessId),
+          contextId,
+        });
+        groupId = newGroup.id;
+        const sessions = [
+          ...current.sessions.filter((session) => session.id !== created.id),
+          created,
+        ];
+        const groups = [...current.groups, newGroup];
+        return {
+          workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+            isOpen: true,
+            sessions,
+            activeSessionId: created.id,
+            groups,
+            activeGroupId: newGroup.id,
+            focusedSessionId: created.id,
+            pendingStartupPreset: null,
+            loading: false,
+            error: undefined,
+          }),
+        };
+      });
+      return { sessionId: created.id, groupId };
     } catch (error) {
       set((state) => ({
         workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {

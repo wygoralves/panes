@@ -142,28 +142,11 @@ export const useContextStore = create<ContextState>((set, get) => ({
         }],
       };
 
-      // 4. Create terminal session with CWD in worktree
-      let terminalGroupId: string | null = null;
-      try {
-        const session = await ipc.terminalCreateSession(
-          opts.workspaceId,
-          120, // DEFAULT_COLS
-          30,  // DEFAULT_ROWS
-          worktreePath,
-        );
-        // The session was added to a group by terminalStore — find it
-        const ws = useTerminalStore.getState().workspaces[opts.workspaceId];
-        if (ws) {
-          terminalGroupId = ws.activeGroupId;
-        }
-      } catch {
-        // Terminal creation is non-fatal — context still works without it
-      }
-
-      // 5. Persist context to DB
+      // 4. Persist context to DB (before terminal, so we have the context ID)
       const now = new Date().toISOString();
+      const contextId = crypto.randomUUID();
       const contextData: Context = {
-        id: crypto.randomUUID(),
+        id: contextId,
         workspaceId: opts.workspaceId,
         repoId: opts.repoId,
         worktreePath,
@@ -182,20 +165,16 @@ export const useContextStore = create<ContextState>((set, get) => ({
 
       const created = await ipc.createContext(contextData);
 
-      // Tag the terminal group with the context ID
-      if (terminalGroupId) {
-        const ws = useTerminalStore.getState().workspaces[opts.workspaceId];
-        if (ws) {
-          const group = ws.groups.find((g) => g.id === terminalGroupId);
-          if (group?.sessionMeta) {
-            for (const sessionId of Object.keys(group.sessionMeta)) {
-              group.sessionMeta[sessionId] = {
-                ...group.sessionMeta[sessionId],
-                contextId: created.id,
-              };
-            }
-          }
-        }
+      // 5. Create terminal session via the store (proper state management + contextId tagging)
+      try {
+        await useTerminalStore.getState().createSessionForContext(
+          opts.workspaceId,
+          worktreePath,
+          created.id,
+          opts.harnessId,
+        );
+      } catch {
+        // Terminal creation is non-fatal — context still works without it
       }
 
       set((state) => ({
