@@ -556,6 +556,11 @@
       "engine": "Motor",
       "harness": "Harness",
       "harnessNone": "Nenhum",
+      "fetch": "Buscar",
+      "fetching": "Buscando...",
+      "prBranch": "Branch: {{branch}}",
+      "prReviewCount": "{{count}} comentário de revisão",
+      "prReviewCount_other": "{{count}} comentários de revisão",
       "cancel": "Cancelar",
       "create": "Criar Contexto",
       "creating": "Criando..."

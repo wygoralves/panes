@@ -556,6 +556,11 @@
       "engine": "Engine",
       "harness": "Harness",
       "harnessNone": "None",
+      "fetch": "Fetch",
+      "fetching": "Fetching...",
+      "prBranch": "Branch: {{branch}}",
+      "prReviewCount": "{{count}} review comment",
+      "prReviewCount_other": "{{count}} review comments",
       "cancel": "Cancel",
       "create": "Create Context",
       "creating": "Creating..."

@@ -63,6 +63,7 @@ import type {
   Workspace,
   Context,
   ContextUpdate,
+  PrMetadata,
 } from "../types";
 
 export const ipc = {
@@ -524,6 +525,7 @@ export const ipc = {
   getContextForThread: (threadId: string) =>
     invoke<Context | null>("get_context_for_thread", { threadId }),
   archiveContext: (id: string) => invoke<void>("archive_context", { id }),
+  fetchPrMetadata: (prUrl: string) => invoke<PrMetadata>("fetch_pr_metadata", { prUrl }),
 };
 
 export async function listenThreadEvents(

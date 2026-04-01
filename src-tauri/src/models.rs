@@ -904,6 +904,35 @@ pub struct ContextUpdateDto {
     pub archived_at: Option<String>,
 }
 
+// ── PR Metadata ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrMetadataDto {
+    pub number: i64,
+    pub title: String,
+    pub body: String,
+    pub head_ref_name: String,
+    pub review_comments: Vec<PrReviewCommentDto>,
+    pub comments: Vec<PrCommentDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrReviewCommentDto {
+    pub author: String,
+    pub body: String,
+    pub path: Option<String>,
+    pub line: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrCommentDto {
+    pub author: String,
+    pub body: String,
+}
+
 // ── Git Remotes ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

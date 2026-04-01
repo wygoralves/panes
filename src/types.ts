@@ -134,6 +134,23 @@ export interface ContextTerminalRecipe {
   broadcastOnStart?: boolean;
 }
 
+export interface PrMetadata {
+  number: number;
+  title: string;
+  body: string;
+  headRefName: string;
+  reviewComments: Array<{
+    author: string;
+    body: string;
+    path?: string | null;
+    line?: number | null;
+  }>;
+  comments: Array<{
+    author: string;
+    body: string;
+  }>;
+}
+
 export type WorkspaceStartupPresetFormat = "json" | "toml";
 export type WorkspaceDefaultView = "chat" | "split" | "terminal" | "editor";
 export type WorkspacePathBase = "workspace" | "worktree" | "absolute";
