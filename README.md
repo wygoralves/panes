@@ -192,6 +192,8 @@ pnpm build:claude-sidecar   # bundle the runtime Claude sidecar
 pnpm build:desktop          # build frontend + bundled sidecar assets, not native app bundles
 pnpm prune:artifacts:check  # inspect generated artifacts that are safe to remove
 pnpm prune:artifacts        # remove repo-local generated artifacts like src-tauri/target
+pnpm prune:artifacts:stale:check  # inspect stale Rust/Tauri artifacts older than 7 days
+pnpm prune:artifacts:stale        # remove stale Rust/Tauri artifacts older than 7 days
 pnpm release:check          # evaluate whether a release should be cut
 pnpm release                # run release-it
 ```
@@ -205,7 +207,7 @@ cargo fmt
 cargo clippy
 ```
 
-Generated build artifacts can grow quickly during Tauri/Rust development. `pnpm prune:artifacts` only removes repo-local generated output and is safe to regenerate on the next build.
+Generated build artifacts can grow quickly during Tauri/Rust development. `pnpm prune:artifacts` removes all repo-local generated output, while `pnpm prune:artifacts:stale` trims only Rust/Tauri artifacts older than 7 days. Both are safe to regenerate on the next build, and the stale mode also accepts `--older-than-days=<n>` if you want a different window.
 
 ### Runtime Paths
 

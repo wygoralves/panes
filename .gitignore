@@ -11,6 +11,8 @@ src-tauri/helper/build/
 
 # Claude Code
 .claude/
+.codex/
+.gemini/
 
 # Generated icon PNGs (regenerate from app-icon.svg)
 app-icon.png
@@ -26,6 +28,13 @@ plans-and-docs/
 
 # Agent reference docs (local, not versioned)
 agents_docs/
+
+# OpenSpec local workspace artifacts
+openspec/
+
+# GitHub prompt/skill artifacts for local agent workflows
+.github/prompts/
+.github/skills/
 
 # Nested repos
 remotion/

@@ -11,6 +11,8 @@
     "generate:homebrew-cask": "node scripts/generate-homebrew-cask.mjs",
     "prune:artifacts:check": "node scripts/prune-local-artifacts.mjs --check",
     "prune:artifacts": "node scripts/prune-local-artifacts.mjs --apply",
+    "prune:artifacts:stale:check": "node scripts/prune-local-artifacts.mjs --check --stale",
+    "prune:artifacts:stale": "node scripts/prune-local-artifacts.mjs --apply --stale",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "test": "vitest run",
