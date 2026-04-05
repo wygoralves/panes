@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo, useLayoutEffect } from "react";
+import { useContext, useEffect, useState, useRef, useCallback, useMemo, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -12,6 +12,7 @@ import {
   ExternalLink,
   Scissors,
 } from "lucide-react";
+import { closeGitFlyoutIfFocusLeft, GitFlyoutContext } from "../../lib/gitFlyoutRegion";
 import { getActionMenuPosition } from "./actionMenuPosition";
 import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
@@ -69,6 +70,7 @@ export function GitWorktreesView({ repo, onError }: Props) {
   const createBranchInputRef = useRef<HTMLInputElement>(null);
   const actionMenuRef = useRef<HTMLDivElement>(null);
   const actionTriggerRef = useRef<HTMLButtonElement>(null);
+  const gitFlyoutContext = useContext(GitFlyoutContext);
 
   useEffect(() => {
     void loadWorktrees(repo.path);
@@ -255,11 +257,18 @@ export function GitWorktreesView({ repo, onError }: Props) {
           <div
             ref={actionMenuRef}
             className="git-action-menu"
+            data-git-flyout-region={gitFlyoutContext ? "true" : undefined}
             style={{
               position: "fixed",
               top: actionMenu.top,
               left: actionMenu.left,
             }}
+            onMouseEnter={() => gitFlyoutContext?.openFlyout()}
+            onMouseLeave={() => gitFlyoutContext?.scheduleClose(150)}
+            onFocusCapture={() => gitFlyoutContext?.openFlyout()}
+            onBlurCapture={(event) =>
+              closeGitFlyoutIfFocusLeft(gitFlyoutContext, event.relatedTarget)
+            }
           >
             <button
               type="button"

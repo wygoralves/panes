@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -24,6 +24,10 @@ import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag
 import { toast } from "../../stores/toastStore";
 import { Dropdown } from "../shared/Dropdown";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
+import {
+  closeGitFlyoutIfFocusLeft,
+  GitFlyoutContext,
+} from "../../lib/gitFlyoutRegion";
 import type { GitInitRepoStatus } from "../../types";
 import { GitChangesView } from "./GitChangesView";
 import { GitBranchesView } from "./GitBranchesView";
@@ -87,6 +91,7 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
   const watcherRefreshTimerRef = useRef<number | null>(null);
   const watcherRefreshInFlightRef = useRef(false);
   const watcherRefreshQueuedRef = useRef(false);
+  const gitFlyoutContext = useContext(GitFlyoutContext);
   const moreMenuWidth = 220;
   const viewOptions = useMemo(
     () => [
@@ -683,11 +688,18 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
           <div
             ref={moreMenuRef}
             className="git-action-menu"
+            data-git-flyout-region={gitFlyoutContext ? "true" : undefined}
             style={{
               position: "fixed",
               top: moreMenuPos.top,
               left: moreMenuPos.left,
             }}
+            onMouseEnter={() => gitFlyoutContext?.openFlyout()}
+            onMouseLeave={() => gitFlyoutContext?.scheduleClose(150)}
+            onFocusCapture={() => gitFlyoutContext?.openFlyout()}
+            onBlurCapture={(event) =>
+              closeGitFlyoutIfFocusLeft(gitFlyoutContext, event.relatedTarget)
+            }
           >
             <button
               type="button"

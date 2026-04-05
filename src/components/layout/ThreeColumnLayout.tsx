@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { Sidebar } from "../sidebar/Sidebar";
@@ -9,6 +9,10 @@ import { GitPanel } from "../git/GitPanel";
 import { usesCustomWindowFrame } from "../../lib/windowActions";
 import { useUiStore } from "../../stores/uiStore";
 import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
+import {
+  GitFlyoutContext,
+  isTargetWithinGitFlyoutRegion,
+} from "../../lib/gitFlyoutRegion";
 
 const SIDEBAR_WIDTH_KEY = "panes:sidebar-width";
 const GIT_PANEL_SIZE_KEY = "panes:git-panel-size";
@@ -166,10 +170,7 @@ export function ThreeColumnLayout() {
 
   const handleGitTriggerBlur = useCallback((event: React.FocusEvent<HTMLButtonElement>) => {
     const nextTarget = event.relatedTarget;
-    if (
-      nextTarget instanceof Node &&
-      gitFlyoutRef.current?.contains(nextTarget)
-    ) {
+    if (isTargetWithinGitFlyoutRegion(nextTarget, [gitFlyoutRef.current, gitTriggerRef.current])) {
       return;
     }
     closeGitFlyout();
@@ -177,14 +178,21 @@ export function ThreeColumnLayout() {
 
   const handleGitFlyoutBlurCapture = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
     const nextTarget = event.relatedTarget;
-    if (
-      nextTarget instanceof Node &&
-      (gitFlyoutRef.current?.contains(nextTarget) || gitTriggerRef.current?.contains(nextTarget))
-    ) {
+    if (isTargetWithinGitFlyoutRegion(nextTarget, [gitFlyoutRef.current, gitTriggerRef.current])) {
       return;
     }
     closeGitFlyout();
   }, [closeGitFlyout]);
+
+  const gitFlyoutContextValue = useMemo(
+    () => ({
+      openFlyout: openGitFlyout,
+      scheduleClose: closeGitFlyout,
+      isTargetWithinRegion: (target: EventTarget | null) =>
+        isTargetWithinGitFlyoutRegion(target, [gitFlyoutRef.current, gitTriggerRef.current]),
+    }),
+    [closeGitFlyout, openGitFlyout],
+  );
 
   const floatingGitWidth = Math.min(
     MAX_GIT_FLYOUT_WIDTH,
@@ -285,7 +293,7 @@ export function ThreeColumnLayout() {
         )}
 
         {showGitPanel && !gitPanelPinned ? (
-          <>
+          <GitFlyoutContext.Provider value={gitFlyoutContextValue}>
             <button
               ref={gitTriggerRef}
               type="button"
@@ -334,7 +342,7 @@ export function ThreeColumnLayout() {
                 />
               </div>
             </div>
-          </>
+          </GitFlyoutContext.Provider>
         ) : null}
       </div>
     </div>
