@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.51.3...vnull) (2026-04-05)
+
+### Bug Fixes
+
+* **gitpanel:** fix git panel collapsing incorrectly in some scenarios ([03d6ec1](https://github.com/wygoralves/panes/commit/03d6ec16330d135627e0bfc410f29dd5b495e352))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.51.2...vnull) (2026-04-01)
 
 ### Bug Fixes
