@@ -9,10 +9,52 @@ interface HarnessStore {
   harnesses: HarnessInfo[];
   npmAvailable: boolean;
   error: string | null;
+  loadedOnce: boolean;
 
   scan: () => Promise<void>;
+  ensureScanned: () => Promise<void>;
   launch: (harnessId: string) => Promise<string | null>;
   getInstalledHarnesses: () => HarnessInfo[];
+}
+
+let pendingHarnessScan: Promise<void> | null = null;
+
+function requestHarnessScan(
+  set: (partial: Partial<HarnessStore>) => void,
+  get: () => HarnessStore,
+) {
+  if (pendingHarnessScan) {
+    return pendingHarnessScan;
+  }
+
+  if (get().phase === "scanning") {
+    return Promise.resolve();
+  }
+
+  set({ phase: "scanning", error: null });
+  const request = (async () => {
+    try {
+      const report = await ipc.checkHarnesses();
+      set({
+        harnesses: report.harnesses,
+        npmAvailable: report.npmAvailable,
+        phase: "idle",
+        error: null,
+        loadedOnce: true,
+      });
+    } catch (err) {
+      set({
+        phase: "error",
+        error: err instanceof Error ? err.message : String(err),
+        loadedOnce: true,
+      });
+    } finally {
+      pendingHarnessScan = null;
+    }
+  })();
+
+  pendingHarnessScan = request;
+  return request;
 }
 
 export const useHarnessStore = create<HarnessStore>((set, get) => ({
@@ -20,24 +62,15 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
   harnesses: [],
   npmAvailable: false,
   error: null,
+  loadedOnce: false,
 
-  scan: async () => {
-    // Skip if already scanning
-    if (get().phase === "scanning") return;
-    set({ phase: "scanning", error: null });
-    try {
-      const report = await ipc.checkHarnesses();
-      set({
-        harnesses: report.harnesses,
-        npmAvailable: report.npmAvailable,
-        phase: "idle",
-      });
-    } catch (err) {
-      set({
-        phase: "error",
-        error: err instanceof Error ? err.message : String(err),
-      });
+  scan: async () => requestHarnessScan(set, get),
+
+  ensureScanned: async () => {
+    if (get().loadedOnce) {
+      return;
     }
+    await requestHarnessScan(set, get);
   },
 
   launch: async (harnessId: string) => {

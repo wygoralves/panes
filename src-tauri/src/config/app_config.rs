@@ -28,6 +28,12 @@ pub struct GeneralConfig {
     pub locale: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_accelerated_rendering: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_notifications: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_notifications: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notification_sound: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +55,14 @@ pub struct DebugConfig {
 #[serde(default)]
 pub struct PowerConfig {
     pub keep_awake_enabled: bool,
+    pub prevent_display_sleep: bool,
+    pub prevent_screen_saver: bool,
+    pub ac_only_mode: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub battery_threshold: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_duration_secs: Option<u64>,
+    pub prevent_closed_display_sleep: bool,
 }
 
 impl Default for GeneralConfig {
@@ -56,9 +70,25 @@ impl Default for GeneralConfig {
         Self {
             theme: "dark".to_string(),
             default_engine: "codex".to_string(),
-            default_model: "gpt-5.3-codex".to_string(),
+            default_model: "gpt-5.4".to_string(),
             locale: None,
             terminal_accelerated_rendering: None,
+            chat_notifications: None,
+            terminal_notifications: None,
+            notification_sound: None,
+        }
+    }
+}
+
+impl AppConfig {
+    /// Resolve the configured notification sound name.
+    /// Returns `None` if explicitly set to `"none"`, the stored value if set,
+    /// or the platform default (`"Glass"` on macOS) otherwise.
+    pub fn notification_sound(&self) -> Option<&str> {
+        match self.general.notification_sound.as_deref() {
+            Some("none") => None,
+            Some(name) => Some(name),
+            None => default_notification_sound(),
         }
     }
 }
@@ -86,6 +116,12 @@ impl Default for PowerConfig {
     fn default() -> Self {
         Self {
             keep_awake_enabled: false,
+            prevent_display_sleep: false,
+            prevent_screen_saver: false,
+            ac_only_mode: false,
+            battery_threshold: None,
+            session_duration_secs: None,
+            prevent_closed_display_sleep: false,
         }
     }
 }
@@ -104,6 +140,14 @@ impl Default for AppConfig {
 impl AppConfig {
     pub fn terminal_accelerated_rendering_enabled(&self) -> bool {
         self.general.terminal_accelerated_rendering.unwrap_or(true)
+    }
+
+    pub fn chat_notifications_enabled(&self) -> bool {
+        self.general.chat_notifications.unwrap_or(false)
+    }
+
+    pub fn terminal_notifications_enabled(&self) -> bool {
+        self.general.terminal_notifications.unwrap_or(false)
     }
 
     pub fn load_or_create() -> anyhow::Result<Self> {
@@ -159,6 +203,18 @@ impl AppConfig {
     }
 }
 
+fn default_notification_sound() -> Option<&'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        return Some("Glass");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
 fn config_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -168,6 +224,12 @@ fn lock_config() -> anyhow::Result<MutexGuard<'static, ()>> {
     config_lock()
         .lock()
         .map_err(|_| anyhow::anyhow!("config lock poisoned"))
+}
+
+#[cfg(test)]
+pub(crate) fn app_data_env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 fn replace_file(temp_path: &std::path::Path, path: &std::path::Path) -> std::io::Result<()> {
@@ -204,23 +266,17 @@ fn replace_file(temp_path: &std::path::Path, path: &std::path::Path) -> std::io:
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        sync::{Mutex, OnceLock},
-    };
+    use std::fs;
 
     use super::AppConfig;
     use uuid::Uuid;
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
     const APP_DATA_ENV_VARS: [&str; 4] = ["HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA"];
 
     fn with_temp_app_data_env<T>(f: impl FnOnce() -> T) -> T {
-        let _guard = env_lock().lock().expect("env lock poisoned");
+        let _guard = super::app_data_env_lock()
+            .lock()
+            .expect("env lock poisoned");
         let previous: Vec<(&str, Option<std::ffi::OsString>)> = APP_DATA_ENV_VARS
             .into_iter()
             .map(|key| (key, std::env::var_os(key)))
@@ -251,7 +307,7 @@ mod tests {
 [general]
 theme = "dark"
 default_engine = "codex"
-default_model = "gpt-5.3-codex"
+default_model = "gpt-5.4"
 
 [ui]
 sidebar_width = 260
@@ -268,7 +324,13 @@ max_action_output_chars = 20000
         assert_eq!(config.general.locale, None);
         assert!(!config.power.keep_awake_enabled);
         assert_eq!(config.general.terminal_accelerated_rendering, None);
-        assert!(!config.power.keep_awake_enabled);
+        assert_eq!(config.general.terminal_notifications, None);
+        assert!(!config.power.prevent_display_sleep);
+        assert!(!config.power.prevent_screen_saver);
+        assert!(!config.power.ac_only_mode);
+        assert_eq!(config.power.battery_threshold, None);
+        assert_eq!(config.power.session_duration_secs, None);
+        assert!(!config.power.prevent_closed_display_sleep);
     }
 
     #[test]
@@ -279,6 +341,7 @@ max_action_output_chars = 20000
         assert!(raw.contains("[power]"));
         assert!(raw.contains("keep_awake_enabled = false"));
         assert!(!raw.contains("terminal_accelerated_rendering"));
+        assert!(!raw.contains("terminal_notifications"));
     }
 
     #[test]
@@ -305,7 +368,7 @@ max_action_output_chars = 20000
 [general]
 theme = "dark"
 default_engine = "codex"
-default_model = "gpt-5.3-codex"
+default_model = "gpt-5.4"
 native_window_decorations = false
 
 [ui]
@@ -322,6 +385,7 @@ max_action_output_chars = 20000
 
         assert_eq!(config.general.locale, None);
         assert_eq!(config.general.terminal_accelerated_rendering, None);
+        assert_eq!(config.general.terminal_notifications, None);
     }
 
     #[test]
@@ -329,5 +393,65 @@ max_action_output_chars = 20000
         let config = AppConfig::default();
 
         assert!(config.terminal_accelerated_rendering_enabled());
+    }
+
+    #[test]
+    fn terminal_notifications_default_to_disabled() {
+        let config = AppConfig::default();
+
+        assert!(!config.terminal_notifications_enabled());
+    }
+
+    #[test]
+    fn new_power_fields_serialize_roundtrip() {
+        let mut config = AppConfig::default();
+        config.power.prevent_display_sleep = true;
+        config.power.prevent_screen_saver = true;
+        config.power.ac_only_mode = true;
+        config.power.battery_threshold = Some(20);
+        config.power.session_duration_secs = Some(3600);
+        config.power.prevent_closed_display_sleep = true;
+
+        let raw = toml::to_string_pretty(&config).expect("config should serialize");
+        let loaded = toml::from_str::<AppConfig>(&raw).expect("config should deserialize");
+
+        assert!(loaded.power.prevent_display_sleep);
+        assert!(loaded.power.prevent_screen_saver);
+        assert!(loaded.power.ac_only_mode);
+        assert_eq!(loaded.power.battery_threshold, Some(20));
+        assert_eq!(loaded.power.session_duration_secs, Some(3600));
+        assert!(loaded.power.prevent_closed_display_sleep);
+    }
+
+    #[test]
+    fn old_config_without_new_power_fields_loads() {
+        let raw = r#"
+[general]
+theme = "dark"
+default_engine = "codex"
+default_model = "gpt-5.4"
+
+[ui]
+sidebar_width = 260
+git_panel_width = 380
+font_size = 13
+
+[debug]
+persist_engine_event_logs = false
+max_action_output_chars = 20000
+
+[power]
+keep_awake_enabled = true
+"#;
+
+        let config = toml::from_str::<AppConfig>(raw).expect("old config should deserialize");
+
+        assert!(config.power.keep_awake_enabled);
+        assert!(!config.power.prevent_display_sleep);
+        assert!(!config.power.prevent_screen_saver);
+        assert!(!config.power.ac_only_mode);
+        assert_eq!(config.power.battery_threshold, None);
+        assert_eq!(config.power.session_duration_secs, None);
+        assert!(!config.power.prevent_closed_display_sleep);
     }
 }

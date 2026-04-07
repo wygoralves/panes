@@ -1,4 +1,14 @@
 {
+  "thinkingVariants": {
+    "thinking": "Pensando",
+    "reasoning": "Raciocinando",
+    "analyzing": "Analisando",
+    "exploring": "Explorando",
+    "researching": "Pesquisando",
+    "generating": "Gerando",
+    "reading": "Lendo",
+    "considering": "Considerando"
+  },
   "modelPicker": {
     "selectModel": "Selecionar modelo",
     "engine": "Engine",
@@ -94,9 +104,9 @@
     "shortTitle": "Runtime",
     "subtitle": "Capacidades e estado do Codex app-server em tempo real a partir do transporte ativo.",
     "notLoaded": "Nenhum diagnóstico de runtime foi capturado ainda.",
-    "planModePromptGuided": "Este runtime do Codex anuncia modo de colaboração de plano. O Panes vai usar o modo de plano nativo nos turns em modo de plano.",
-    "planModePromptGuidedFallback": "Este runtime do Codex não anuncia modo de colaboração nativo de plano. O Panes vai cair para planejamento guiado por prompt.",
-    "planModePromptGuidedUnknown": "O Panes vai preferir o modo de colaboração nativo de plano do Codex quando disponível e, caso contrário, cair para planejamento guiado por prompt.",
+    "planModePromptGuided": "O modo de plano mantém o Codex apenas no planejamento.",
+    "planModePromptGuidedFallback": "O modo de plano mantém o Codex apenas no planejamento.",
+    "planModePromptGuidedUnknown": "O modo de plano mantém o Codex apenas no planejamento.",
     "status": "Status",
     "statusCurrent": "Atual",
     "statusStale": "Defasado",
@@ -291,12 +301,17 @@
     "disablePlanMode": "Desativar modo de plano (Shift+Tab)",
     "enablePlanModeCodex": "Ativar modo de plano para Codex (Shift+Tab)",
     "disablePlanModeCodex": "Desativar modo de plano para Codex (Shift+Tab)",
-    "planMode": "Plano",
+    "planMode": "Modo de plano",
     "planShort": "Plano",
-    "planModeBanner": "Modo de plano: o agente vai planejar antes de executar.",
-    "planModeBannerCodex": "Modo de plano: o Panes pede que o Codex use seu modo de colaboração nativo de plano antes de agir.",
-    "planModeBannerCodexFallback": "Modo de plano guiado por prompt: o Panes pede que o Codex planeje antes de agir porque este runtime não anuncia atualmente um modo de colaboração nativo de plano.",
-    "planModeBannerCodexUnknown": "Modo de plano: o Panes vai preferir o modo de colaboração nativo de plano do Codex quando disponível e, caso contrário, cair para planejamento guiado por prompt.",
+    "planModeBanner": "Modo de plano: apenas planejamento, sem edições nem comandos.",
+    "planModeBannerCodex": "Modo de plano: apenas planejamento, sem edições nem comandos.",
+    "planModeBannerCodexFallback": "Modo de plano: apenas planejamento, sem edições nem comandos.",
+    "planModeBannerCodexUnknown": "Modo de plano: apenas planejamento, sem edições nem comandos.",
+    "planImplementationQuestion": "O plano está pronto. O que o Panes deve fazer agora?",
+    "planImplementationOptionImplement": "Implementar o plano",
+    "planImplementationOptionImplementDescription": "Sair do modo de plano e pedir ao Codex que comece a executar este plano na thread atual.",
+    "planImplementationOptionStay": "Continuar no modo de plano",
+    "planImplementationOptionStayDescription": "Manter o modo de plano ativo para que a próxima mensagem continue em planejamento.",
     "placeholders": {
       "plan": "Descreva o que você quer planejar...",
       "chat": "Peça alterações de continuação"
@@ -361,6 +376,7 @@
       "fullAccessNetworkWarning": "O modo acesso total habilita temporariamente o acesso à rede.",
       "updateExecutionPolicyFailed": "Falha ao atualizar a política de execução da thread: {{error}}",
       "updateCodexConfigFailed": "Falha ao atualizar a configuração de turno do Codex: {{error}}",
+      "planImplementationThreadUnavailable": "A thread original de planejamento não está mais disponível. Reabra a thread e tente novamente.",
       "invalidOutputSchema": "O schema de saída deve ser um objeto ou booleano JSON Schema válido: {{error}}",
       "invalidCustomApprovalPolicy": "A política de aprovação estruturada deve ser um objeto JSON.",
       "invalidCustomApprovalPolicyWithError": "A política de aprovação estruturada contém JSON inválido: {{error}}"
@@ -372,6 +388,7 @@
     "parsingDiff": "Analisando diff...",
     "noChanges": "Sem alterações",
     "thinking": "Raciocínio",
+    "thinkingDone": "Pensou por {{seconds}}s",
     "actionStatus": {
       "done": "Concluído",
       "running": "Em andamento",
@@ -385,6 +402,22 @@
       "retry": "Tentar novamente"
     },
     "outputTruncated": "Mostrando apenas a saída mais recente da ação (blocos anteriores truncados por desempenho).",
+    "actionGroup": {
+      "summary_one": "{{count}} ação concluída",
+      "summary_other": "{{count}} ações concluídas",
+      "summaryWithError_one": "{{count}} ação concluída, {{errorCount}} erro",
+      "summaryWithError_other": "{{count}} ações concluídas, {{errorCount}} erros",
+      "types": {
+        "command": "cmd",
+        "file_read": "leitura",
+        "file_write": "escrita",
+        "file_edit": "edição",
+        "file_delete": "excl.",
+        "git": "git",
+        "search": "busca",
+        "other": "outro"
+      }
+    },
     "approval": {
       "decision": {
         "answered": "Respondido",
@@ -403,6 +436,8 @@
       "hideDetails": "Ocultar detalhes",
       "pendingQuestions_one": "{{count}} pergunta aguardando resposta.",
       "pendingQuestions_other": "{{count}} perguntas aguardando resposta.",
+      "answeredQuestions_one": "{{count}} pergunta respondida.",
+      "answeredQuestions_other": "{{count}} perguntas respondidas.",
       "dynamicToolPrompt": "Responda à chamada da ferramenta dinâmica sem escrever JSON manualmente.",
       "dynamicToolSuccess": "Sucesso",
       "dynamicToolFailure": "Falha",
@@ -432,7 +467,7 @@
     "minutesShort": "{{count}} min",
     "hoursMinutesShort": "{{hours}} h {{minutes}} min",
     "daysHoursShort": "{{days}} d {{hours}} h",
-    "context": "Contexto",
+    "context": "Contexto restante",
     "windowFiveHoursLeft": "5h restantes",
     "windowWeeklyLeft": "Semana restante",
     "resets": "reinicia {{time}}",

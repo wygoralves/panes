@@ -10,14 +10,17 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod osc_notifications;
+
 use anyhow::Context;
 use chrono::Utc;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+use self::osc_notifications::{TerminalOscNotification, TerminalOscNotificationParser};
 use crate::models::{
     TerminalEnvSnapshotDto, TerminalIoCountersDto, TerminalLatencySnapshotDto,
     TerminalOutputThrottleSnapshotDto, TerminalRendererDiagnosticsDto, TerminalReplayChunkDto,
@@ -26,6 +29,8 @@ use crate::models::{
 #[cfg(target_os = "windows")]
 use crate::process_utils;
 use crate::runtime_env;
+use crate::state::AppState;
+use crate::terminal_notifications::{TerminalNotificationManager, TerminalNotificationSessionEnv};
 
 const TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS: u64 = 16;
 const TERMINAL_OUTPUT_MAX_EMIT_BYTES: usize = 256 * 1024;
@@ -295,15 +300,25 @@ impl TerminalManager {
     pub async fn create_session(
         self: &Arc<Self>,
         app: AppHandle,
+        notifications: Arc<TerminalNotificationManager>,
         workspace_id: String,
         cwd: String,
         cols: u16,
         rows: u16,
     ) -> anyhow::Result<TerminalSessionDto> {
+        let session_id = Uuid::new_v4().to_string();
+        let notification_env = notifications.session_env(&workspace_id, &session_id).await;
         let workspace_for_spawn = workspace_id.clone();
         let cwd_for_spawn = cwd.clone();
         let spawned = tokio::task::spawn_blocking(move || {
-            spawn_session(workspace_for_spawn, cwd_for_spawn, cols, rows)
+            spawn_session(
+                session_id,
+                workspace_for_spawn,
+                cwd_for_spawn,
+                cols,
+                rows,
+                notification_env,
+            )
         })
         .await
         .context("terminal spawn task failed")??;
@@ -618,6 +633,7 @@ impl TerminalManager {
 
             let mut buf = [0_u8; 64 * 1024];
             let mut decode_buffer = Vec::new();
+            let mut osc_notifications = TerminalOscNotificationParser::default();
             let mut pending = String::new();
             loop {
                 match reader.read(&mut buf) {
@@ -639,7 +655,18 @@ impl TerminalManager {
                                 .store(now_ms as u64, Ordering::Relaxed);
                         }
 
-                        decode_buffer.extend_from_slice(&buf[..n]);
+                        let parsed = osc_notifications.consume(&buf[..n]);
+                        if !parsed.notifications.is_empty() {
+                            emit_terminal_osc_notifications(
+                                &runtime,
+                                &app,
+                                &workspace_id,
+                                &session_id,
+                                parsed.notifications,
+                            );
+                        }
+
+                        decode_buffer.extend_from_slice(&parsed.passthrough);
                         while let Some(chunk) = take_next_utf8_chunk(&mut decode_buffer) {
                             if pending.is_empty() {
                                 pending = chunk;
@@ -679,6 +706,18 @@ impl TerminalManager {
                     }
                 }
             }
+
+            let parsed = osc_notifications.finish();
+            if !parsed.notifications.is_empty() {
+                emit_terminal_osc_notifications(
+                    &runtime,
+                    &app,
+                    &workspace_id,
+                    &session_id,
+                    parsed.notifications,
+                );
+            }
+            decode_buffer.extend_from_slice(&parsed.passthrough);
 
             if !pending.is_empty() {
                 let (trimmed, total_bytes) = shared.push_chunk(std::mem::take(&mut pending));
@@ -767,6 +806,36 @@ impl TerminalManager {
             }
         };
         emit_exit(&app, &workspace_id, &event_session_id, exit);
+        let notifications = app.state::<AppState>().notifications.clone();
+        notifications
+            .clear_for_session(&app, &workspace_id, &event_session_id)
+            .await;
+    }
+}
+
+fn emit_terminal_osc_notifications(
+    runtime: &tokio::runtime::Handle,
+    app: &AppHandle,
+    workspace_id: &str,
+    session_id: &str,
+    notifications: Vec<TerminalOscNotification>,
+) {
+    if notifications.is_empty() {
+        return;
+    }
+
+    let manager = app.state::<AppState>().notifications.clone();
+    for notification in notifications {
+        if let Err(error) = runtime.block_on(manager.publish_for_session(
+            app,
+            workspace_id,
+            session_id,
+            notification.title,
+            notification.body,
+            notification.source,
+        )) {
+            log::warn!("failed to publish terminal OSC notification: {error}");
+        }
     }
 }
 
@@ -1129,10 +1198,12 @@ impl TerminalSessionHandle {
 }
 
 fn spawn_session(
+    session_id: String,
     workspace_id: String,
     cwd: String,
     cols: u16,
     rows: u16,
+    notification_env: Option<TerminalNotificationSessionEnv>,
 ) -> anyhow::Result<SpawnedSession> {
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -1147,7 +1218,7 @@ fn spawn_session(
     let shell = default_shell();
     let mut cmd = CommandBuilder::new(shell.clone());
     cmd.cwd(PathBuf::from(&cwd));
-    let env_snapshot = configure_terminal_env(&mut cmd);
+    let env_snapshot = configure_terminal_env(&mut cmd, notification_env.as_ref());
     #[cfg(not(target_os = "windows"))]
     {
         for arg in runtime_env::terminal_shell_args(Path::new(&shell)) {
@@ -1174,7 +1245,7 @@ fn spawn_session(
 
     let session = Arc::new(TerminalSessionHandle {
         meta: TerminalSessionDto {
-            id: Uuid::new_v4().to_string(),
+            id: session_id,
             workspace_id,
             shell,
             cwd,
@@ -1248,14 +1319,22 @@ struct TerminalEnvConfig {
     tmp: Option<String>,
 }
 
-fn configure_terminal_env(cmd: &mut CommandBuilder) -> TerminalEnvSnapshotDto {
-    let config = build_terminal_env_config();
+fn configure_terminal_env(
+    cmd: &mut CommandBuilder,
+    notification_env: Option<&TerminalNotificationSessionEnv>,
+) -> TerminalEnvSnapshotDto {
+    let config = build_terminal_env_config(notification_env);
     apply_terminal_env(cmd, &config);
+    apply_notification_env(cmd, notification_env);
     config.snapshot
 }
 
-fn build_terminal_path(_home: Option<&str>) -> Option<String> {
-    let joined = runtime_env::augmented_path()?;
+fn build_terminal_path(_home: Option<&str>, prepend: &[PathBuf]) -> Option<String> {
+    let joined = if prepend.is_empty() {
+        runtime_env::augmented_path()?
+    } else {
+        runtime_env::augmented_path_with_prepend(prepend.iter().cloned())?
+    };
     let rendered = joined.to_string_lossy().to_string();
     if rendered.trim().is_empty() {
         None
@@ -1279,7 +1358,7 @@ fn read_terminal_env_inputs() -> TerminalEnvInputs {
         lang: read_non_empty_env("LANG"),
         lc_all: read_non_empty_env("LC_ALL"),
         lc_ctype: read_non_empty_env("LC_CTYPE"),
-        path: build_terminal_path(None).or_else(|| read_non_empty_env("PATH")),
+        path: build_terminal_path(None, &[]).or_else(|| read_non_empty_env("PATH")),
         user_profile: read_non_empty_env("USERPROFILE"),
         local_app_data: read_non_empty_env("LOCALAPPDATA"),
         roaming_app_data: read_non_empty_env("APPDATA"),
@@ -1292,7 +1371,9 @@ fn read_terminal_env_inputs() -> TerminalEnvInputs {
     }
 }
 
-fn build_terminal_env_config() -> TerminalEnvConfig {
+fn build_terminal_env_config(
+    _notification_env: Option<&TerminalNotificationSessionEnv>,
+) -> TerminalEnvConfig {
     build_terminal_env_config_for(cfg!(target_os = "windows"), read_terminal_env_inputs())
 }
 
@@ -1510,6 +1591,20 @@ fn apply_terminal_env(cmd: &mut CommandBuilder, config: &TerminalEnvConfig) {
     ensure_dir_exists("XDG_DATA_HOME", config.snapshot.xdg_data_home.as_deref());
     ensure_dir_exists("XDG_CACHE_HOME", config.snapshot.xdg_cache_home.as_deref());
     ensure_dir_exists("XDG_STATE_HOME", config.snapshot.xdg_state_home.as_deref());
+}
+
+fn apply_notification_env(
+    cmd: &mut CommandBuilder,
+    notification_env: Option<&TerminalNotificationSessionEnv>,
+) {
+    let Some(notification_env) = notification_env else {
+        return;
+    };
+
+    cmd.env("PANES_WORKSPACE_ID", &notification_env.workspace_id);
+    cmd.env("PANES_SESSION_ID", &notification_env.session_id);
+    cmd.env("PANES_NOTIFY_ADDR", &notification_env.ingress_addr);
+    cmd.env("PANES_NOTIFY_TOKEN", &notification_env.ingress_token);
 }
 
 fn ensure_dir_exists(label: &str, path: Option<&str>) {

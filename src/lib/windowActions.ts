@@ -12,10 +12,20 @@ export function isLinuxDesktop(): boolean {
     && isTauri();
 }
 
+export function isWindowsDesktop(): boolean {
+  return typeof navigator !== "undefined"
+    && navigator.platform.toLowerCase().startsWith("win")
+    && isTauri();
+}
+
 export function isMacDesktop(): boolean {
   return typeof navigator !== "undefined"
     && navigator.platform.startsWith("Mac")
     && isTauri();
+}
+
+export function usesCustomWindowFrame(): boolean {
+  return isLinuxDesktop() || isWindowsDesktop();
 }
 
 export function isTerminalInputFocused(doc: Document | undefined = globalThis.document): boolean {

@@ -431,11 +431,11 @@
       getValue(nextLocale, "common.terminal"),
       getValue(nextLocale, "common.editor"),
     ]);
-    setTextAll("#product .story-scene:nth-of-type(5) .v-startup-badges .v-startup-badge", [
+    setTextAll("#product .story-scene:nth-of-type(5) .v-startup-group-badges .v-startup-badge:not(.v-startup-badge-accent)", [
       getValue(nextLocale, "mock.twoPanes"),
-      getValue(nextLocale, "mock.broadcast"),
       getValue(nextLocale, "mock.onePane"),
     ]);
+    setText("#product .story-scene:nth-of-type(5) .v-startup-badge-accent span", getValue(nextLocale, "mock.broadcast"));
 
     setAttr(".manifesto", "aria-label", getValue(nextLocale, "manifesto.ariaLabel"));
     setHtml(".manifesto-text", getValue(nextLocale, "manifesto.textHtml"));

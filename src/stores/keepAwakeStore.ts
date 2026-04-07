@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { ipc } from "../lib/ipc";
-import type { KeepAwakeState } from "../types";
+import type { HelperStatus, KeepAwakeState, PowerSettings, PowerSettingsInput } from "../types";
 import { t } from "../i18n";
 import { toast } from "./toastStore";
 
@@ -11,15 +11,32 @@ const KEEP_AWAKE_TOAST_KEYS = {
   unsupported: "app:commandPalette.toasts.keepAwakeUnsupported",
   enableFailed: "app:commandPalette.toasts.keepAwakeEnableFailed",
   disableFailed: "app:commandPalette.toasts.keepAwakeDisableFailed",
+  settingsSaved: "app:commandPalette.toasts.powerSettingsSaved",
+  settingsSaveFailed: "app:commandPalette.toasts.powerSettingsSaveFailed",
+  helperInstallSuccess: "app:commandPalette.toasts.helperInstallSuccess",
+  helperInstallFailed: "app:commandPalette.toasts.helperInstallFailed",
+  helperApprovalRequired: "app:commandPalette.toasts.helperApprovalRequired",
 } as const;
 
 interface KeepAwakeStoreState {
   state: KeepAwakeState | null;
   loading: boolean;
   loadedOnce: boolean;
+  powerSettingsLoading: boolean;
+  powerSettingsLoaded: boolean;
   load: () => Promise<KeepAwakeState | null>;
   refresh: () => Promise<KeepAwakeState | null>;
   toggle: () => Promise<KeepAwakeState | null>;
+  powerSettings: PowerSettings | null;
+  powerSettingsOpen: boolean;
+  loadPowerSettings: () => Promise<PowerSettings | null>;
+  savePowerSettings: (input: PowerSettingsInput) => Promise<KeepAwakeState | null>;
+  openPowerSettings: () => void;
+  closePowerSettings: () => void;
+  helperStatus: HelperStatus | null;
+  helperLoading: boolean;
+  loadHelperStatus: () => Promise<HelperStatus | null>;
+  registerHelper: () => Promise<HelperStatus | null>;
 }
 
 export function canToggleKeepAwake(state: KeepAwakeState | null | undefined) {
@@ -62,6 +79,9 @@ let pendingKeepAwakeState: Promise<KeepAwakeState | null> | null = null;
 let keepAwakeRequestId = 0;
 let keepAwakeLastAppliedRequestId = 0;
 let keepAwakePendingRequests = 0;
+let keepAwakeMutationId = 0;
+let keepAwakePendingMutations = 0;
+let powerSettingsLoadRequestId = 0;
 
 function beginKeepAwakeRequest(set: (partial: Partial<KeepAwakeStoreState>) => void) {
   keepAwakePendingRequests += 1;
@@ -75,16 +95,53 @@ function finishKeepAwakeRequest(set: (partial: Partial<KeepAwakeStoreState>) => 
   set({ loading: keepAwakePendingRequests > 0 });
 }
 
-function applyKeepAwakeState(
+function beginKeepAwakeMutation(set: (partial: Partial<KeepAwakeStoreState>) => void) {
+  keepAwakeMutationId += 1;
+  keepAwakePendingMutations += 1;
+  return {
+    requestId: beginKeepAwakeRequest(set),
+    mutationId: keepAwakeMutationId,
+  };
+}
+
+function finishKeepAwakeMutation(set: (partial: Partial<KeepAwakeStoreState>) => void) {
+  keepAwakePendingMutations = Math.max(0, keepAwakePendingMutations - 1);
+  finishKeepAwakeRequest(set);
+}
+
+function applyKeepAwakeReadState(
   requestId: number,
   set: (partial: Partial<KeepAwakeStoreState>) => void,
+  readMutationId: number,
   state: KeepAwakeState,
 ) {
+  if (keepAwakePendingMutations > 0 || readMutationId !== keepAwakeMutationId) {
+    return false;
+  }
+
   if (requestId < keepAwakeLastAppliedRequestId) {
     return false;
   }
 
   keepAwakeLastAppliedRequestId = requestId;
+  set({
+    state,
+    loadedOnce: true,
+  });
+  return true;
+}
+
+function applyKeepAwakeMutationState(
+  requestId: number,
+  set: (partial: Partial<KeepAwakeStoreState>) => void,
+  mutationId: number,
+  state: KeepAwakeState,
+) {
+  if (mutationId !== keepAwakeMutationId) {
+    return false;
+  }
+
+  keepAwakeLastAppliedRequestId = Math.max(keepAwakeLastAppliedRequestId, requestId);
   set({
     state,
     loadedOnce: true,
@@ -101,11 +158,13 @@ function requestKeepAwakeState(
   }
 
   const requestId = beginKeepAwakeRequest(set);
+  const readMutationId = keepAwakeMutationId;
   const request = (async () => {
     try {
       const state = await fetchKeepAwakeState();
-      applyKeepAwakeState(requestId, set, state);
-      return state;
+      return applyKeepAwakeReadState(requestId, set, readMutationId, state)
+        ? state
+        : get().state;
     } catch (error) {
       console.warn("[keepAwakeStore] Failed to load keep awake state", error);
       set({ loadedOnce: true });
@@ -128,6 +187,10 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
   state: null,
   loading: false,
   loadedOnce: false,
+  powerSettingsLoading: false,
+  powerSettingsLoaded: false,
+  powerSettings: null,
+  powerSettingsOpen: false,
 
   load: async () => requestKeepAwakeState(set, get),
 
@@ -145,10 +208,10 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
     }
 
     const targetEnabled = !current.enabled;
-    const requestId = beginKeepAwakeRequest(set);
+    const { requestId, mutationId } = beginKeepAwakeMutation(set);
     try {
       const nextState = await ipc.setKeepAwakeEnabled(targetEnabled);
-      applyKeepAwakeState(requestId, set, nextState);
+      applyKeepAwakeMutationState(requestId, set, mutationId, nextState);
       showKeepAwakeToast(nextState, targetEnabled);
       return nextState;
     } catch (error) {
@@ -156,7 +219,98 @@ export const useKeepAwakeStore = create<KeepAwakeStoreState>((set, get) => ({
       toast.error(t(targetEnabled ? KEEP_AWAKE_TOAST_KEYS.enableFailed : KEEP_AWAKE_TOAST_KEYS.disableFailed));
       return get().state;
     } finally {
-      finishKeepAwakeRequest(set);
+      finishKeepAwakeMutation(set);
+    }
+  },
+
+  loadPowerSettings: async () => {
+    powerSettingsLoadRequestId += 1;
+    const requestId = powerSettingsLoadRequestId;
+    set({
+      powerSettingsLoading: true,
+      powerSettingsLoaded: false,
+      powerSettings: null,
+    });
+    try {
+      const settings = await ipc.getPowerSettings();
+      if (requestId !== powerSettingsLoadRequestId) {
+        return settings;
+      }
+      set({
+        powerSettings: settings,
+        powerSettingsLoading: false,
+        powerSettingsLoaded: true,
+      });
+      return settings;
+    } catch (error) {
+      console.warn("[keepAwakeStore] Failed to load power settings", error);
+      if (requestId !== powerSettingsLoadRequestId) {
+        return null;
+      }
+      set({
+        powerSettings: null,
+        powerSettingsLoading: false,
+        powerSettingsLoaded: false,
+      });
+      return null;
+    }
+  },
+
+  savePowerSettings: async (input: PowerSettingsInput) => {
+    const { requestId, mutationId } = beginKeepAwakeMutation(set);
+    try {
+      const nextState = await ipc.setPowerSettings(input);
+      applyKeepAwakeMutationState(requestId, set, mutationId, nextState);
+      set({
+        powerSettings: { ...input },
+        powerSettingsLoaded: true,
+      });
+      toast.success(t(KEEP_AWAKE_TOAST_KEYS.settingsSaved));
+      return nextState;
+    } catch (error) {
+      console.warn("[keepAwakeStore] Failed to save power settings", error);
+      toast.error(t(KEEP_AWAKE_TOAST_KEYS.settingsSaveFailed));
+      return null;
+    } finally {
+      finishKeepAwakeMutation(set);
+    }
+  },
+
+  openPowerSettings: () => set({ powerSettingsOpen: true }),
+  closePowerSettings: () => set({ powerSettingsOpen: false }),
+
+  helperStatus: null,
+  helperLoading: false,
+
+  loadHelperStatus: async () => {
+    set({ helperLoading: true });
+    try {
+      const status = await ipc.getHelperStatus();
+      set({ helperStatus: status, helperLoading: false });
+      return status;
+    } catch (error) {
+      console.warn("[keepAwakeStore] Failed to load helper status", error);
+      set({ helperLoading: false });
+      return null;
+    }
+  },
+
+  registerHelper: async () => {
+    set({ helperLoading: true });
+    try {
+      const status = await ipc.registerKeepAwakeHelper();
+      set({ helperStatus: status, helperLoading: false });
+      if (status.status === "registered") {
+        toast.success(t(KEEP_AWAKE_TOAST_KEYS.helperInstallSuccess));
+      } else if (status.status === "requiresApproval") {
+        toast.warning(t(KEEP_AWAKE_TOAST_KEYS.helperApprovalRequired));
+      }
+      return status;
+    } catch (error) {
+      console.warn("[keepAwakeStore] Failed to register helper", error);
+      toast.error(t(KEEP_AWAKE_TOAST_KEYS.helperInstallFailed));
+      set({ helperLoading: false });
+      return null;
     }
   },
 }));

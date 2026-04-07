@@ -18,20 +18,20 @@ import {
   Rocket,
   RefreshCw,
   PillBottle,
+  BellRing,
   Globe,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
-import { useEngineStore } from "../../stores/engineStore";
 import { useThreadStore } from "../../stores/threadStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useOnboardingStore } from "../../stores/onboardingStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import { canToggleKeepAwake, useKeepAwakeStore } from "../../stores/keepAwakeStore";
+import { useTerminalNotificationSettingsStore } from "../../stores/terminalNotificationSettingsStore";
 import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { formatRelativeTime } from "../../lib/formatters";
-import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
 import {
   emitTerminalAcceleratedRenderingChanged,
   getTerminalAcceleratedRenderingPreferenceVersion,
@@ -45,6 +45,7 @@ import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag
 import { UpdateDialog } from "../onboarding/UpdateDialog";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { WorkspaceMoreMenu } from "../workspace/WorkspaceMoreMenu";
+import { normalizeSidebarCollapsedState } from "./sidebarCollapseState";
 import type { Thread, Workspace } from "../../types";
 
 interface ProjectGroup {
@@ -97,25 +98,27 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     refreshArchivedThreads,
   } = useThreadStore();
   const openOnboarding = useOnboardingStore((state) => state.openOnboarding);
-  const selectedChatEngines = useOnboardingStore((state) => state.selectedChatEngines);
   const sidebarPinned = useUiStore((state) => state.sidebarPinned);
   const toggleSidebarPin = useUiStore((state) => state.toggleSidebarPin);
   const activeView = useUiStore((state) => state.activeView);
   const setActiveView = useUiStore((state) => state.setActiveView);
   const openWorkspaceSettings = useUiStore((state) => state.openWorkspaceSettings);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
-  const engines = useEngineStore((s) => s.engines);
   const updateStatus = useUpdateStore((s) => s.status);
   const updateSnoozed = useUpdateStore((s) => s.snoozed);
   const keepAwakeState = useKeepAwakeStore((s) => s.state);
   const keepAwakeLoading = useKeepAwakeStore((s) => s.loading);
   const toggleKeepAwake = useKeepAwakeStore((s) => s.toggle);
+  const openPowerSettings = useKeepAwakeStore((s) => s.openPowerSettings);
+  const terminalNotificationSettings = useTerminalNotificationSettingsStore((s) => s.settings);
+  const terminalNotificationLoading = useTerminalNotificationSettingsStore((s) => s.loading);
+  const terminalNotificationLoadedOnce = useTerminalNotificationSettingsStore((s) => s.loadedOnce);
+  const terminalNotificationUpdatingChatEnabled = useTerminalNotificationSettingsStore((s) => s.updatingChatEnabled);
+  const terminalNotificationUpdatingTerminalEnabled = useTerminalNotificationSettingsStore((s) => s.updatingTerminalEnabled);
+  const toggleTerminalNotifications = useTerminalNotificationSettingsStore((s) => s.toggle);
+  const openTerminalNotificationSettings = useTerminalNotificationSettingsStore((s) => s.openModal);
   const hasUpdate = updateStatus === "available" && !updateSnoozed;
   const keepAwakeAvailable = canToggleKeepAwake(keepAwakeState);
-  const preferredOnboardingChatSelection = useMemo(
-    () => resolvePreferredOnboardingChatSelection(selectedChatEngines, engines),
-    [engines, selectedChatEngines],
-  );
 
   const projects = useMemo<ProjectGroup[]>(
     () =>
@@ -125,8 +128,11 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       })),
     [workspaces, threads],
   );
+  const workspaceIds = useMemo(() => workspaces.map((workspace) => workspace.id), [workspaces]);
 
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() =>
+    normalizeSidebarCollapsedState(workspaceIds, activeWorkspaceId, {}, null),
+  );
   const [showAll, setShowAll] = useState<Record<string, boolean>>({});
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
@@ -141,6 +147,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const [terminalAcceleratedRendering, setTerminalAcceleratedRendering] = useState(true);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
+  const previousSyncedActiveWorkspaceIdRef = useRef<string | null>(activeWorkspaceId);
   const activeLocale = normalizeAppLocale(i18n.language);
 
   const closeSettingsMenu = useCallback(() => setSettingsMenuOpen(false), []);
@@ -199,6 +206,18 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     setCollapsed((prev) => ({ ...prev, [wsId]: !prev[wsId] }));
 
   useEffect(() => {
+    setCollapsed((prev) =>
+      normalizeSidebarCollapsedState(
+        workspaceIds,
+        activeWorkspaceId,
+        prev,
+        previousSyncedActiveWorkspaceIdRef.current,
+      ),
+    );
+    previousSyncedActiveWorkspaceIdRef.current = activeWorkspaceId;
+  }, [workspaceIds, activeWorkspaceId]);
+
+  useEffect(() => {
     void refreshArchivedWorkspaces();
   }, [refreshArchivedWorkspaces]);
 
@@ -243,8 +262,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     const createdThreadId = await createThread({
       workspaceId: project.id,
       repoId: null,
-      engineId: preferredOnboardingChatSelection?.engineId,
-      modelId: preferredOnboardingChatSelection?.modelId,
       title: t("app:sidebar.newThreadTitle"),
     });
     if (!createdThreadId) return;
@@ -340,6 +357,32 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     }
     return t("app:sidebar.keepAwakeDescription");
   }, [keepAwakeState, t]);
+  const terminalNotificationDescription = useMemo(() => {
+    if (!terminalNotificationLoadedOnce || !terminalNotificationSettings) {
+      return t("app:sidebar.terminalNotificationsDescription");
+    }
+    if (terminalNotificationSettings.chatEnabled && terminalNotificationSettings.terminalEnabled) {
+      return t("app:sidebar.terminalNotificationsEnabledAll");
+    }
+    if (terminalNotificationSettings.chatEnabled) {
+      return t("app:sidebar.terminalNotificationsEnabledChat");
+    }
+    if (terminalNotificationSettings.terminalEnabled) {
+      return t("app:sidebar.terminalNotificationsEnabledTerminal");
+    }
+    if (terminalNotificationSettings.terminalSetupComplete) {
+      return t("app:sidebar.terminalNotificationsReady");
+    }
+    return t("app:sidebar.terminalNotificationsDescription");
+  }, [terminalNotificationLoadedOnce, terminalNotificationSettings, t]);
+
+  const terminalNotificationAnyEnabled =
+    (terminalNotificationSettings?.chatEnabled ?? false)
+    || (terminalNotificationSettings?.terminalEnabled ?? false);
+  const terminalNotificationBusy =
+    (terminalNotificationLoading && !terminalNotificationLoadedOnce)
+    || terminalNotificationUpdatingChatEnabled
+    || terminalNotificationUpdatingTerminalEnabled;
 
   return (
     <div
@@ -384,9 +427,10 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             </span>
             <button
               type="button"
-              className={`sb-pin-btn ${sidebarPinned ? "sb-pin-btn-active" : ""}`}
+              className={`shell-pin-btn ${sidebarPinned ? "shell-pin-btn-active" : ""}`}
               onClick={onPin ?? toggleSidebarPin}
               title={sidebarPinned ? t("app:sidebar.unpin") : t("app:sidebar.pin")}
+              aria-label={sidebarPinned ? t("app:sidebar.unpin") : t("app:sidebar.pin")}
             >
               {sidebarPinned ? <Pin size={13} /> : <PinOff size={13} />}
             </button>
@@ -697,49 +741,100 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             >
               {t("app:sidebar.preferences")}
             </div>
-            <button
-              type="button"
+            <div
               className="git-action-menu-item"
-              disabled={keepAwakeLoading || !keepAwakeAvailable}
-              title={keepAwakeDescription}
               style={{
                 justifyContent: "space-between",
                 opacity: keepAwakeLoading || !keepAwakeAvailable ? 0.5 : 1,
               }}
-              onClick={() => {
-                void toggleKeepAwake();
-              }}
             >
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <PillBottle size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
-                {t("app:sidebar.keepAwake")}
-              </span>
-              <span
+              <button
+                type="button"
+                title={keepAwakeDescription}
+                onClick={() => openPowerSettings()}
                 style={{
-                  width: 28,
-                  height: 16,
-                  borderRadius: 8,
-                  background: keepAwakeState?.enabled ? "var(--accent)" : "rgba(255,255,255,0.12)",
                   display: "flex",
                   alignItems: "center",
-                  padding: "0 2px",
-                  flexShrink: 0,
-                  transition: "background 0.2s",
+                  gap: 8,
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "inherit",
+                  padding: 0,
+                  flex: 1,
+                  minWidth: 0,
                 }}
               >
-                <span
-                  style={{
-                    width: 12,
-                    height: 12,
-                    borderRadius: "50%",
-                    background: "white",
-                    transform: keepAwakeState?.enabled ? "translateX(12px)" : "translateX(0)",
-                    transition: "transform 0.2s",
-                    opacity: keepAwakeState?.enabled ? 1 : 0.6,
-                  }}
+                <PillBottle size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+                {t("app:sidebar.keepAwake")}
+              </button>
+              <label
+                className="ws-toggle"
+                title={keepAwakeDescription}
+                onClick={(e) => e.stopPropagation()}
+                style={{ cursor: keepAwakeLoading || !keepAwakeAvailable ? "not-allowed" : undefined }}
+              >
+                <input
+                  type="checkbox"
+                  checked={keepAwakeState?.enabled ?? false}
+                  disabled={keepAwakeLoading || !keepAwakeAvailable}
+                  onChange={() => void toggleKeepAwake()}
                 />
-              </span>
-            </button>
+                <span className="ws-toggle-track" />
+                <span className="ws-toggle-thumb" />
+              </label>
+            </div>
+            <div
+              className="git-action-menu-item"
+              style={{
+                justifyContent: "space-between",
+                opacity:
+                  terminalNotificationBusy
+                    ? 0.75
+                    : 1,
+              }}
+            >
+              <button
+                type="button"
+                title={terminalNotificationDescription}
+                onClick={() => openTerminalNotificationSettings()}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "inherit",
+                  padding: 0,
+                  flex: 1,
+                  minWidth: 0,
+                }}
+              >
+                <BellRing size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+                {t("app:sidebar.terminalNotifications")}
+              </button>
+              <label
+                className="ws-toggle"
+                title={terminalNotificationDescription}
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  cursor:
+                    terminalNotificationBusy
+                      ? "wait"
+                      : undefined,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={terminalNotificationAnyEnabled}
+                  disabled={terminalNotificationBusy}
+                  onChange={() => { void toggleTerminalNotifications(); }}
+                />
+                <span className="ws-toggle-track" />
+                <span className="ws-toggle-thumb" />
+              </label>
+            </div>
             <div className="git-action-menu-item" style={{ justifyContent: "space-between", cursor: "default" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <Globe size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
@@ -925,15 +1020,9 @@ function CollapsedRail({
   const setActiveRepo = useWorkspaceStore((s) => s.setActiveRepo);
   const createThread = useThreadStore((s) => s.createThread);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
-  const engines = useEngineStore((s) => s.engines);
-  const selectedChatEngines = useOnboardingStore((s) => s.selectedChatEngines);
   const hasUpdate = useUpdateStore((s) => s.status === "available" && !s.snoozed);
   const activeView = useUiStore((s) => s.activeView);
   const setActiveView = useUiStore((s) => s.setActiveView);
-  const preferredOnboardingChatSelection = useMemo(
-    () => resolvePreferredOnboardingChatSelection(selectedChatEngines, engines),
-    [engines, selectedChatEngines],
-  );
 
   async function onNewThread() {
     const activeProject = projects.find((p) => p.id === activeWorkspaceId);
@@ -942,8 +1031,6 @@ function CollapsedRail({
     const createdThreadId = await createThread({
       workspaceId: activeProject.id,
       repoId: null,
-      engineId: preferredOnboardingChatSelection?.engineId,
-      modelId: preferredOnboardingChatSelection?.modelId,
       title: t("sidebar.newThreadTitle"),
     });
     if (!createdThreadId) return;
@@ -1100,7 +1187,7 @@ export function Sidebar() {
         >
           <div
             ref={flyoutRef}
-            className={`sb-flyout ${hovered ? "sb-flyout-visible" : ""}`}
+            className={`shell-flyout shell-flyout-left ${hovered ? "shell-flyout-visible" : ""}`}
           >
             <SidebarContent
               onPin={() => {

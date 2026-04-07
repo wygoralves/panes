@@ -115,6 +115,27 @@ Download the latest `*-setup.exe` installer from [GitHub Releases](https://githu
 
 For this Windows release, the validated scope is installer, updater, startup, and bundled-runtime compatibility. It does not guarantee that Codex and Claude are fully validated end to end through the in-app chat flow yet, so expect some rough edges there.
 
+### Install on Linux
+
+Download the latest `.AppImage` or `.deb` from [GitHub Releases](https://github.com/wygoralves/panes/releases/latest).
+
+For AppImage:
+
+```bash
+chmod +x Panes*.AppImage
+./Panes*.AppImage
+```
+
+For Debian-family systems:
+
+```bash
+sudo apt install ./Panes*_amd64.deb
+```
+
+Both direct-download Linux install paths receive later versions through the in-app updater. AppImage updates replace the app bundle directly. `.deb` updates reinstall the signed Debian package and may request administrator privileges during install.
+
+Panes does not currently publish an APT repository, so the supported Debian-family install path is the direct `.deb` download above.
+
 ### Install and Run from Source
 
 ```bash
@@ -123,6 +144,28 @@ cd panes
 pnpm install
 pnpm tauri:dev
 ```
+
+### Codex Terminal Notifications
+
+Panes can surface Codex terminal notifications after a one-time install from `Agent notifications` in the app settings. That writes a `notify = [...]` command into your Codex user config that points back to Panes.
+
+Codex currently passes a single JSON payload to the configured `notify` program. `panes codex-notify` handles the current `agent-turn-complete` payload, extracts the last assistant message, and routes it back to the owning Panes terminal session so Panes can show both desktop and in-app terminal notifications.
+
+This only works inside terminals launched by Panes, because the installed command relies on `PANES_NOTIFY_ADDR`, `PANES_NOTIFY_TOKEN`, `PANES_WORKSPACE_ID`, and `PANES_SESSION_ID`.
+
+### Claude Terminal Notifications
+
+Panes can surface Claude terminal notifications after a one-time install from `Agent notifications` in the app settings. That merges Panes-managed hook commands into your Claude user settings without removing existing hooks.
+
+That hook bridge currently handles Claude `Notification`, `Stop`, `StopFailure`, `SessionStart`, and `SessionEnd` events, routing them back to the owning Panes terminal session so Panes can show desktop and in-app notifications and clear stale state when a Claude session starts or ends.
+
+This only works inside terminals launched by Panes, because the installed hook command depends on the Panes terminal session environment.
+
+### Generic OSC Terminal Notifications
+
+Panes also listens for common desktop-notification OSC sequences emitted directly by programs running inside a Panes terminal session. These work without any Claude or Codex setup. The backend currently recognizes `OSC 9`, `OSC 777;notify;...`, and `OSC 99` notification payloads before terminal replay is recorded, so live notifications do not fire again when a terminal session is resumed.
+
+`OSC 9;4` progress reports are intentionally left alone and are not treated as notifications.
 
 ### Production Build
 
@@ -149,6 +192,8 @@ pnpm build:claude-sidecar   # bundle the runtime Claude sidecar
 pnpm build:desktop          # build frontend + bundled sidecar assets, not native app bundles
 pnpm prune:artifacts:check  # inspect generated artifacts that are safe to remove
 pnpm prune:artifacts        # remove repo-local generated artifacts like src-tauri/target
+pnpm prune:artifacts:stale:check  # inspect stale Rust/Tauri artifacts older than 7 days
+pnpm prune:artifacts:stale        # remove stale Rust/Tauri artifacts older than 7 days
 pnpm release:check          # evaluate whether a release should be cut
 pnpm release                # run release-it
 ```
@@ -162,7 +207,7 @@ cargo fmt
 cargo clippy
 ```
 
-Generated build artifacts can grow quickly during Tauri/Rust development. `pnpm prune:artifacts` only removes repo-local generated output and is safe to regenerate on the next build.
+Generated build artifacts can grow quickly during Tauri/Rust development. `pnpm prune:artifacts` removes all repo-local generated output, while `pnpm prune:artifacts:stale` trims only Rust/Tauri artifacts older than 7 days. Both are safe to regenerate on the next build, and the stale mode also accepts `--older-than-days=<n>` if you want a different window.
 
 ### Runtime Paths
 

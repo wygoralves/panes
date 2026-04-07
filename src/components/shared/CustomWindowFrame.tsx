@@ -6,26 +6,25 @@ import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useTranslation } from "react-i18next";
 import {
-  canLinuxWindowResize,
-  shouldShowLinuxWindowChrome,
-  type LinuxWindowFrameState,
-} from "../../lib/linuxWindowFrame";
+  canCustomWindowResize,
+  shouldShowCustomWindowChrome,
+  type CustomWindowFrameState,
+} from "../../lib/customWindowFrame";
 import {
   closeCurrentWindow,
   minimizeCurrentWindow,
-  requestWindowClose,
   toggleCurrentWindowMaximize,
   toggleWindowFullscreen,
 } from "../../lib/windowActions";
 import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
-import { LinuxWindowResizeHandles } from "./LinuxWindowResizeHandles";
+import { CustomWindowResizeHandles } from "./CustomWindowResizeHandles";
 
-interface LinuxWindowFrameProps {
-  frameState: LinuxWindowFrameState;
+interface CustomWindowFrameProps {
+  frameState: CustomWindowFrameState;
 }
 
-const MENU_SENTINEL = "__linux-window-menu__";
-const LINUX_MENU_TRIGGER_STYLE = {
+const MENU_SENTINEL = "__custom-window-menu__";
+const MENU_TRIGGER_STYLE = {
   height: 28,
   padding: "0 8px",
   borderRadius: 6,
@@ -37,9 +36,9 @@ const LINUX_MENU_TRIGGER_STYLE = {
   gap: 6,
 } as const;
 
-export function LinuxWindowFrame({ frameState }: LinuxWindowFrameProps) {
+export function CustomWindowFrame({ frameState }: CustomWindowFrameProps) {
   const { t } = useTranslation(["app", "native"]);
-  const showChrome = shouldShowLinuxWindowChrome(frameState);
+  const showChrome = shouldShowCustomWindowChrome(frameState);
 
   const panesMenuOptions = [
     { value: "open-setup", label: t("app:sidebar.engineSetup") },
@@ -128,21 +127,21 @@ export function LinuxWindowFrame({ frameState }: LinuxWindowFrameProps) {
               value={MENU_SENTINEL}
               onChange={handleAppMenuAction}
               selectedLabel={t("native:app.submenu")}
-              triggerStyle={LINUX_MENU_TRIGGER_STYLE}
+              triggerStyle={MENU_TRIGGER_STYLE}
             />
             <Dropdown
               options={editMenuOptions}
               value={MENU_SENTINEL}
               onChange={handleEditAction}
               selectedLabel={t("native:menu.edit")}
-              triggerStyle={LINUX_MENU_TRIGGER_STYLE}
+              triggerStyle={MENU_TRIGGER_STYLE}
             />
             <Dropdown
               options={viewMenuOptions}
               value={MENU_SENTINEL}
               onChange={handleViewAction}
               selectedLabel={t("native:menu.view")}
-              triggerStyle={LINUX_MENU_TRIGGER_STYLE}
+              triggerStyle={MENU_TRIGGER_STYLE}
             />
           </div>
           <div className="linux-window-chrome-drag-region" />
@@ -189,7 +188,7 @@ export function LinuxWindowFrame({ frameState }: LinuxWindowFrameProps) {
           </div>
         </div>
       )}
-      <LinuxWindowResizeHandles canResize={canLinuxWindowResize(frameState)} />
+      <CustomWindowResizeHandles canResize={canCustomWindowResize(frameState)} />
     </>
   );
 }

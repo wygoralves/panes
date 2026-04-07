@@ -307,6 +307,44 @@ describe("chatStore send", () => {
     vi.useRealTimers();
   });
 
+  it("derives context usage from current context tokens instead of cumulative totals", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    expect(streamHandler).not.toBeNull();
+    streamHandler!({
+      type: "UsageLimitsUpdated",
+      usage: {
+        current_tokens: 30000,
+        max_context_tokens: 200000,
+        context_window_percent: 45,
+        five_hour_percent: 17,
+        weekly_percent: 42,
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(useChatStore.getState().usageLimits).toEqual({
+      currentTokens: 30000,
+      maxContextTokens: 200000,
+      contextPercent: 90,
+      windowFiveHourPercent: 83,
+      windowWeeklyPercent: 58,
+      windowFiveHourResetsAt: null,
+      windowWeeklyResetsAt: null,
+    });
+
+    vi.useRealTimers();
+  });
+
   it("preserves stdin action output chunks from streamed events", async () => {
     vi.useFakeTimers();
 
@@ -556,7 +594,7 @@ describe("chatStore send", () => {
       },
       scope: "session",
     });
-    expect(useChatStore.getState().messages[0]?.blocks).toEqual([
+    expect(useChatStore.getState().messages[0]?.blocks).toMatchObject([
       {
         type: "approval",
         approvalId: "approval-1",
@@ -613,7 +651,7 @@ describe("chatStore send", () => {
       scope: "turn",
     });
 
-    expect(useChatStore.getState().messages[0]?.blocks).toEqual([
+    expect(useChatStore.getState().messages[0]?.blocks).toMatchObject([
       {
         type: "approval",
         approvalId: "approval-none",
@@ -667,7 +705,7 @@ describe("chatStore send", () => {
       action: "decline",
     });
 
-    expect(useChatStore.getState().messages[0]?.blocks).toEqual([
+    expect(useChatStore.getState().messages[0]?.blocks).toMatchObject([
       {
         type: "approval",
         approvalId: "approval-2",
@@ -880,13 +918,13 @@ describe("chatStore send", () => {
       status: "completed",
       blocks: [
         {
+          type: "text",
+          content: "Working on it",
+        },
+        {
           type: "steer",
           steerId: "steer-user-1",
           content: "focus on the failing test",
-        },
-        {
-          type: "text",
-          content: "Working on it",
         },
       ],
     });
@@ -1114,7 +1152,7 @@ describe("chatStore send", () => {
     expect(mockIpc.respondApproval).toHaveBeenCalledWith("thread-1", "approval-1", {
       decision: "deny",
     });
-    expect(useChatStore.getState().messages[0]?.blocks).toEqual([
+    expect(useChatStore.getState().messages[0]?.blocks).toMatchObject([
       {
         type: "approval",
         approvalId: "approval-1",

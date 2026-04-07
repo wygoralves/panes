@@ -112,6 +112,28 @@ pnpm install
 pnpm tauri:dev
 ```
 
+### Notificações de Terminal do Codex
+
+O Panes pode mostrar notificações de terminal do Codex depois de uma instalação única em `Notificações de agentes` nas configurações do app. Isso grava um comando `notify = [...]` na configuração de usuário do Codex apontando de volta para o Panes.
+
+Hoje o Codex envia um único payload JSON para o programa configurado em `notify`. `panes codex-notify` entende o payload atual `agent-turn-complete`, extrai a última mensagem do assistant e a roteia de volta para a sessão de terminal dona do evento para que o Panes mostre notificações no desktop e dentro do app.
+
+Isso só funciona dentro de terminais abertos pelo Panes, porque o comando instalado depende de `PANES_NOTIFY_ADDR`, `PANES_NOTIFY_TOKEN`, `PANES_WORKSPACE_ID` e `PANES_SESSION_ID`.
+
+### Notificações de Terminal do Claude
+
+O Panes pode mostrar notificações de terminal do Claude depois de uma instalação única em `Notificações de agentes` nas configurações do app. Isso mescla comandos de hook gerenciados pelo Panes na configuração de usuário do Claude sem remover hooks existentes.
+
+Hoje essa ponte de hooks trata os eventos `Notification`, `Stop`, `StopFailure`, `SessionStart` e `SessionEnd` do Claude, roteando tudo de volta para a sessão de terminal dona do evento para que o Panes mostre notificações no desktop e dentro do app e limpe estado antigo quando uma sessão do Claude começa ou termina.
+
+Isso só funciona dentro de terminais abertos pelo Panes, porque o comando de hook instalado depende do ambiente da sessão de terminal do Panes.
+
+### Notificações Genéricas de Terminal via OSC
+
+O Panes também escuta sequências OSC comuns de notificação de desktop emitidas diretamente por programas rodando dentro de uma sessão de terminal do Panes. Elas funcionam sem nenhuma configuração de Claude ou Codex. Hoje o backend reconhece payloads de notificação `OSC 9`, `OSC 777;notify;...` e `OSC 99` antes de o replay do terminal ser gravado, então notificações ao vivo não disparam de novo quando a sessão do terminal é retomada.
+
+Relatórios de progresso `OSC 9;4` são deixados intactos de propósito e não são tratados como notificações.
+
 ### Build de Produção
 
 ```bash
@@ -137,6 +159,8 @@ pnpm build:claude-sidecar   # bundle the runtime Claude sidecar
 pnpm build:desktop          # build frontend + bundled sidecar assets, not native app bundles
 pnpm prune:artifacts:check  # inspeciona artefatos gerados que podem ser removidos com segurança
 pnpm prune:artifacts        # remove artefatos locais gerados como src-tauri/target
+pnpm prune:artifacts:stale:check  # inspeciona artefatos Rust/Tauri obsoletos com mais de 7 dias
+pnpm prune:artifacts:stale        # remove artefatos Rust/Tauri obsoletos com mais de 7 dias
 pnpm release:check          # evaluate whether a release should be cut
 pnpm release                # run release-it
 ```
@@ -150,7 +174,7 @@ cargo fmt
 cargo clippy
 ```
 
-Artefatos de build podem crescer rápido durante o desenvolvimento com Tauri/Rust. `pnpm prune:artifacts` remove apenas saída gerada localmente no repo e tudo é recriado com segurança no próximo build.
+Artefatos de build podem crescer rápido durante o desenvolvimento com Tauri/Rust. `pnpm prune:artifacts` remove toda a saída gerada localmente no repo, enquanto `pnpm prune:artifacts:stale` limpa apenas artefatos Rust/Tauri com mais de 7 dias. Ambos podem ser recriados com segurança no próximo build, e o modo obsoleto também aceita `--older-than-days=<n>` para ajustar a janela.
 
 ### Caminhos de Runtime
 

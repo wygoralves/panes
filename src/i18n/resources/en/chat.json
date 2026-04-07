@@ -1,4 +1,14 @@
 {
+  "thinkingVariants": {
+    "thinking": "Thinking",
+    "reasoning": "Reasoning",
+    "analyzing": "Analyzing",
+    "exploring": "Exploring",
+    "researching": "Researching",
+    "generating": "Generating",
+    "reading": "Reading",
+    "considering": "Considering"
+  },
   "modelPicker": {
     "selectModel": "Select model",
     "engine": "Engine",
@@ -94,9 +104,9 @@
     "shortTitle": "Runtime",
     "subtitle": "Live Codex app-server capabilities and state from the active transport.",
     "notLoaded": "No runtime diagnostics have been captured yet.",
-    "planModePromptGuided": "This Codex runtime advertises plan collaboration mode. Panes will use native plan mode for plan turns.",
-    "planModePromptGuidedFallback": "This Codex runtime does not advertise native plan collaboration mode. Panes will fall back to prompt-guided planning.",
-    "planModePromptGuidedUnknown": "Panes will prefer Codex native plan collaboration mode when available and otherwise fall back to prompt-guided planning.",
+    "planModePromptGuided": "Plan mode keeps Codex in planning-only mode.",
+    "planModePromptGuidedFallback": "Plan mode keeps Codex in planning-only mode.",
+    "planModePromptGuidedUnknown": "Plan mode keeps Codex in planning-only mode.",
     "status": "Status",
     "statusCurrent": "Current",
     "statusStale": "Stale",
@@ -291,12 +301,17 @@
     "disablePlanMode": "Disable plan mode (Shift+Tab)",
     "enablePlanModeCodex": "Enable plan mode for Codex (Shift+Tab)",
     "disablePlanModeCodex": "Disable plan mode for Codex (Shift+Tab)",
-    "planMode": "Plan",
+    "planMode": "Plan Mode",
     "planShort": "Plan",
-    "planModeBanner": "Plan mode: the agent will plan before executing.",
-    "planModeBannerCodex": "Plan mode: Panes asks Codex to use its native plan collaboration mode before acting.",
-    "planModeBannerCodexFallback": "Prompt-guided plan mode: Panes asks Codex to plan before acting because this runtime does not currently advertise native plan collaboration mode.",
-    "planModeBannerCodexUnknown": "Plan mode: Panes will prefer Codex native plan collaboration mode when available and otherwise fall back to prompt-guided planning.",
+    "planModeBanner": "Plan mode: planning only, no edits or commands.",
+    "planModeBannerCodex": "Plan mode: planning only, no edits or commands.",
+    "planModeBannerCodexFallback": "Plan mode: planning only, no edits or commands.",
+    "planModeBannerCodexUnknown": "Plan mode: planning only, no edits or commands.",
+    "planImplementationQuestion": "The plan is ready. What should Panes do next?",
+    "planImplementationOptionImplement": "Implement the plan",
+    "planImplementationOptionImplementDescription": "Leave plan mode and ask Codex to start executing this plan in the current thread.",
+    "planImplementationOptionStay": "Stay in plan mode",
+    "planImplementationOptionStayDescription": "Keep plan mode enabled so the next message stays in planning mode.",
     "placeholders": {
       "plan": "Describe what you want to plan...",
       "chat": "Ask for follow-up changes"
@@ -361,6 +376,7 @@
       "fullAccessNetworkWarning": "Full access sandbox temporarily enables network access.",
       "updateExecutionPolicyFailed": "Failed to update thread execution policy: {{error}}",
       "updateCodexConfigFailed": "Failed to update Codex turn config: {{error}}",
+      "planImplementationThreadUnavailable": "The original planning thread is no longer available. Reopen the thread and try again.",
       "invalidOutputSchema": "Output schema must be valid JSON Schema object or boolean: {{error}}",
       "invalidCustomApprovalPolicy": "Structured approval policy must be a JSON object.",
       "invalidCustomApprovalPolicyWithError": "Structured approval policy is invalid JSON: {{error}}"
@@ -372,6 +388,7 @@
     "parsingDiff": "Parsing diff...",
     "noChanges": "No changes",
     "thinking": "Thinking",
+    "thinkingDone": "Thought for {{seconds}}s",
     "actionStatus": {
       "done": "Done",
       "running": "Running",
@@ -385,6 +402,22 @@
       "retry": "Retry"
     },
     "outputTruncated": "Showing latest action output only (older chunks truncated for performance).",
+    "actionGroup": {
+      "summary_one": "{{count}} action completed",
+      "summary_other": "{{count}} actions completed",
+      "summaryWithError_one": "{{count}} action completed, {{errorCount}} error",
+      "summaryWithError_other": "{{count}} actions completed, {{errorCount}} errors",
+      "types": {
+        "command": "cmd",
+        "file_read": "read",
+        "file_write": "write",
+        "file_edit": "edit",
+        "file_delete": "del",
+        "git": "git",
+        "search": "search",
+        "other": "other"
+      }
+    },
     "approval": {
       "decision": {
         "answered": "Answered",
@@ -403,6 +436,8 @@
       "hideDetails": "Hide details",
       "pendingQuestions_one": "{{count}} question pending input.",
       "pendingQuestions_other": "{{count}} questions pending input.",
+      "answeredQuestions_one": "{{count}} question answered.",
+      "answeredQuestions_other": "{{count}} questions answered.",
       "dynamicToolPrompt": "Respond to the dynamic tool call without hand-writing JSON.",
       "dynamicToolSuccess": "Success",
       "dynamicToolFailure": "Failure",
@@ -432,7 +467,7 @@
     "minutesShort": "{{count}} min",
     "hoursMinutesShort": "{{hours}} h {{minutes}} min",
     "daysHoursShort": "{{days}} d {{hours}} h",
-    "context": "Context",
+    "context": "Context left",
     "windowFiveHoursLeft": "5h left",
     "windowWeeklyLeft": "Weekly left",
     "resets": "resets {{time}}",

@@ -1,6 +1,10 @@
 import { useEffect } from "react";
-import { X, FileText, Loader2 } from "lucide-react";
+import { Eye, FileDiff, FileText, Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import {
+  resolveOwningRepoForAbsolutePath,
+  resolveRelativePathWithinRoot,
+} from "../../lib/fileRootUtils";
 import { useFileStore } from "../../stores/fileStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useUiStore } from "../../stores/uiStore";
@@ -9,6 +13,14 @@ import { isMacDesktop } from "../../lib/windowActions";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { GitDiffEditorPanel } from "./GitDiffEditorPanel";
+import { MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
+
+const MARKDOWN_PREVIEW_EXTENSIONS = new Set(["md", "mdx", "markdown"]);
+
+function isMarkdownPreviewFile(filePath: string): boolean {
+  const extension = filePath.split(".").pop()?.toLowerCase();
+  return extension ? MARKDOWN_PREVIEW_EXTENSIONS.has(extension) : false;
+}
 
 export function FileEditorPanel() {
   const { t } = useTranslation("app");
@@ -21,12 +33,88 @@ export function FileEditorPanel() {
   const requestCloseTab = useFileStore((s) => s.requestCloseTab);
   const confirmCloseTab = useFileStore((s) => s.confirmCloseTab);
   const cancelCloseTab = useFileStore((s) => s.cancelCloseTab);
+  const clearPendingReveal = useFileStore((s) => s.clearPendingReveal);
+  const setTabRenderMode = useFileStore((s) => s.setTabRenderMode);
   const focusMode = useUiStore((s) => s.focusMode);
   const showSidebar = useUiStore((s) => s.showSidebar);
+  const repos = useWorkspaceStore((s) => s.repos);
+  const activeRepoId = useWorkspaceStore((s) => s.activeRepoId);
+  const openFile = useFileStore((s) => s.openFile);
+  const openGitDiffFile = useFileStore((s) => s.openGitDiffFile);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const isMac = isMacDesktop();
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar;
+  const activeTabOwnership = activeTab
+    ? (
+        (activeTab.gitRepoPath && activeTab.gitFilePath)
+          ? {
+              repoPath: activeTab.gitRepoPath,
+              filePath: activeTab.gitFilePath,
+            }
+          : (() => {
+              const ownership = resolveOwningRepoForAbsolutePath(
+                activeTab.absolutePath,
+                repos,
+                activeRepoId,
+              );
+              return ownership
+                ? { repoPath: ownership.repo.path, filePath: ownership.filePath }
+                : null;
+            })()
+      )
+    : null;
+  const canToggleDiffView = Boolean(
+    activeTab
+      && activeTabOwnership
+      && !activeTab.isLoading
+      && !activeTab.loadError
+      && (activeTab.renderMode === "git-diff-editor" || !activeTab.isBinary),
+  );
+  const canToggleMarkdownPreview = Boolean(
+    activeTab
+      && !activeTab.isLoading
+      && !activeTab.loadError
+      && !activeTab.isBinary
+      && isMarkdownPreviewFile(activeTab.filePath),
+  );
+  const diffToggleLabel = activeTab?.renderMode === "git-diff-editor"
+    ? t("editor.hideDiff")
+    : t("editor.showDiff");
+  const markdownPreviewToggleLabel = activeTab?.renderMode === "markdown-preview"
+    ? t("editor.hideMarkdownPreview")
+    : t("editor.showMarkdownPreview");
+
+  function handleToggleDiffView() {
+    if (!activeTab || !activeTabOwnership) {
+      return;
+    }
+
+    if (activeTab.renderMode === "git-diff-editor") {
+      void openFile(activeTab.rootPath, activeTab.filePath);
+      return;
+    }
+
+    const repoPath = activeTabOwnership.repoPath;
+    const gitFilePath = activeTab.gitFilePath
+      ?? resolveRelativePathWithinRoot(activeTab.absolutePath, repoPath);
+    if (!gitFilePath) {
+      return;
+    }
+
+    void openGitDiffFile(repoPath, gitFilePath, { source: "changes" });
+  }
+
+  function handleToggleMarkdownPreview() {
+    if (!activeTab) {
+      return;
+    }
+
+    setTabRenderMode(
+      activeTab.id,
+      activeTab.renderMode === "markdown-preview" ? "plain-editor" : "markdown-preview",
+    );
+  }
 
   // Cmd+S to save — Cmd+W is handled via native menu "close-window" action.
   // Note: e.preventDefault() for Cmd+S is handled at the app level (App.tsx)
@@ -51,34 +139,62 @@ export function FileEditorPanel() {
       {/* Tab bar */}
       {tabs.length > 0 && (
         <div className={`editor-tabs-bar${useTitlebarSafeInset ? " editor-tabs-bar-titlebar-safe" : ""}`}>
-          {tabs.map((tab) => (
-            <div
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`editor-tab ${tab.id === activeTabId ? "active" : ""}`}
-            >
-              <FileText
-                size={12}
-                style={{
-                  flexShrink: 0,
-                  color: tab.id === activeTabId ? "var(--text-2)" : "var(--text-3)",
-                }}
-              />
-              <span className="editor-tab-name">{tab.fileName}</span>
-              {tab.isDirty && <span className="editor-tab-dirty">&bull;</span>}
-              <button
-                type="button"
-                className="editor-tab-close"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  requestCloseTab(tab.id);
-                }}
-                title={t("editor.closeTab")}
+          <div className="editor-tabs-bar-scroll">
+            {tabs.map((tab) => (
+              <div
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`editor-tab ${tab.id === activeTabId ? "active" : ""}`}
               >
-                <X size={10} />
-              </button>
+                <FileText
+                  size={12}
+                  style={{
+                    flexShrink: 0,
+                    color: tab.id === activeTabId ? "var(--text-2)" : "var(--text-3)",
+                  }}
+                />
+                <span className="editor-tab-name">{tab.fileName}</span>
+                {tab.isDirty && <span className="editor-tab-dirty">&bull;</span>}
+                <button
+                  type="button"
+                  className="editor-tab-close"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    requestCloseTab(tab.id);
+                  }}
+                  title={t("editor.closeTab")}
+                >
+                  <X size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
+          {canToggleDiffView || canToggleMarkdownPreview ? (
+            <div className="editor-tabs-actions">
+              {canToggleMarkdownPreview ? (
+                <button
+                  type="button"
+                  className={`editor-tab-action${activeTab?.renderMode === "markdown-preview" ? " active" : ""}`}
+                  onClick={handleToggleMarkdownPreview}
+                  title={markdownPreviewToggleLabel}
+                  aria-label={markdownPreviewToggleLabel}
+                >
+                  <Eye size={12} />
+                </button>
+              ) : null}
+              {canToggleDiffView ? (
+                <button
+                  type="button"
+                  className={`editor-tab-action${activeTab?.renderMode === "git-diff-editor" ? " active" : ""}`}
+                  onClick={handleToggleDiffView}
+                  title={diffToggleLabel}
+                  aria-label={diffToggleLabel}
+                >
+                  <FileDiff size={12} />
+                </button>
+              ) : null}
             </div>
-          ))}
+          ) : null}
         </div>
       )}
 
@@ -120,6 +236,8 @@ export function FileEditorPanel() {
               tab={activeTab}
               onChange={(content) => setTabContent(activeTab.id, content)}
             />
+          ) : activeTab.renderMode === "markdown-preview" ? (
+            <MarkdownPreviewPanel content={activeTab.content} />
           ) : activeTab.isBinary ? (
             <div
               style={{
@@ -142,6 +260,8 @@ export function FileEditorPanel() {
               content={activeTab.content}
               filePath={activeTab.filePath}
               onChange={(content) => setTabContent(activeTab.id, content)}
+              pendingReveal={activeTab.pendingReveal}
+              onRevealHandled={(nonce) => clearPendingReveal(activeTab.id, nonce)}
             />
           )
         ) : (

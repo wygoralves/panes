@@ -5,6 +5,7 @@ use sys_locale::get_locale as get_system_locale;
 pub const DEFAULT_APP_LOCALE: &str = "en";
 pub const PT_BR_APP_LOCALE: &str = "pt-BR";
 
+#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Clone, Copy)]
 pub struct NativeStrings {
     pub app_menu: &'static str,
@@ -83,6 +84,7 @@ fn resolve_app_locale_with_system(
         .unwrap_or(DEFAULT_APP_LOCALE)
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub fn native_strings(locale: &str) -> NativeStrings {
     match normalize_app_locale(locale).unwrap_or(DEFAULT_APP_LOCALE) {
         PT_BR_APP_LOCALE => NativeStrings {

@@ -4,9 +4,12 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::{
-    ActionResult, ActionType, DiffScope, EngineEvent, OutputStream, TokenUsage,
-    TurnCompletionStatus, UsageLimitsSnapshot,
+    ActionResult, ActionType, ApprovalRequestRoute, DiffScope, EngineEvent, OutputStream,
+    TokenUsage, TurnCompletionStatus, UsageLimitsSnapshot,
 };
+
+pub const APPROVAL_DETAIL_SERVER_METHOD_KEY: &str = "_serverMethod";
+pub const APPROVAL_DETAIL_RAW_REQUEST_ID_KEY: &str = "_rawRequestId";
 
 #[derive(Default)]
 pub struct TurnEventMapper {
@@ -251,6 +254,7 @@ impl TurnEventMapper {
     pub fn map_server_request(
         &mut self,
         request_id: &str,
+        raw_request_id: &Value,
         method: &str,
         params: &Value,
     ) -> Option<ApprovalRequest> {
@@ -304,8 +308,12 @@ impl TurnEventMapper {
         let mut details = params.clone();
         if let Some(object) = details.as_object_mut() {
             object.insert(
-                "_serverMethod".to_string(),
+                APPROVAL_DETAIL_SERVER_METHOD_KEY.to_string(),
                 Value::String(method.to_string()),
+            );
+            object.insert(
+                APPROVAL_DETAIL_RAW_REQUEST_ID_KEY.to_string(),
+                raw_request_id.clone(),
             );
         }
 
@@ -662,6 +670,21 @@ impl TurnEventMapper {
     }
 }
 
+pub fn extract_persisted_approval_route(details: &Value) -> Option<ApprovalRequestRoute> {
+    let object = details.as_object()?;
+    let server_method = object
+        .get(APPROVAL_DETAIL_SERVER_METHOD_KEY)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let raw_request_id = object.get(APPROVAL_DETAIL_RAW_REQUEST_ID_KEY)?.clone();
+
+    Some(ApprovalRequestRoute {
+        server_method: server_method.to_string(),
+        raw_request_id,
+    })
+}
+
 fn extract_item_error(item: &Value) -> Option<String> {
     if let Some(message) = extract_nested_string(item, &["error", "message"])
         .or_else(|| extract_nested_string(item, &["error", "reason"]))
@@ -707,13 +730,29 @@ fn render_plan_update(params: &Value) -> String {
             let Some(step) = extract_any_string(entry, &["step"]) else {
                 continue;
             };
-            let status =
-                extract_any_string(entry, &["status"]).unwrap_or_else(|| "pending".to_string());
+            let status = extract_any_string(entry, &["status"])
+                .map(|status| normalize_plan_step_status_for_display(&status))
+                .unwrap_or_else(|| "pending".to_string());
             lines.push(format!("- [{status}] {step}"));
         }
     }
 
     lines.join("\n")
+}
+
+fn normalize_plan_step_status_for_display(status: &str) -> String {
+    let normalized = status.trim();
+    if normalized.eq_ignore_ascii_case("inprogress")
+        || normalized.eq_ignore_ascii_case("in_progress")
+    {
+        "in_progress".to_string()
+    } else if normalized.eq_ignore_ascii_case("completed") {
+        "completed".to_string()
+    } else if normalized.eq_ignore_ascii_case("pending") {
+        "pending".to_string()
+    } else {
+        normalized.to_string()
+    }
 }
 
 fn parse_turn_completion_status(status: &str) -> TurnCompletionStatus {
@@ -974,36 +1013,65 @@ struct RateLimitWindowInfo {
     window_duration_mins: Option<i64>,
 }
 
+const CONTEXT_WINDOW_BASELINE_TOKENS: u64 = 12_000;
+
+fn extract_context_tokens(token_usage: &Value) -> Option<u64> {
+    token_usage
+        .get("last")
+        .and_then(|last| {
+            extract_any_u64(last, &["totalTokens", "total_tokens"])
+                .or_else(|| extract_any_u64(last, &["inputTokens", "input_tokens"]))
+        })
+        .or_else(|| {
+            token_usage.get("total").and_then(|total| {
+                extract_any_u64(total, &["totalTokens", "total_tokens"])
+                    .or_else(|| extract_any_u64(total, &["inputTokens", "input_tokens"]))
+            })
+        })
+        .or_else(|| extract_any_u64(token_usage, &["totalTokens", "total_tokens"]))
+}
+
+fn calculate_context_window_percent_remaining(
+    current_tokens: u64,
+    max_context_tokens: u64,
+) -> Option<u8> {
+    if max_context_tokens <= CONTEXT_WINDOW_BASELINE_TOKENS {
+        return Some(0);
+    }
+
+    let effective_window = max_context_tokens - CONTEXT_WINDOW_BASELINE_TOKENS;
+    let used_tokens = current_tokens.saturating_sub(CONTEXT_WINDOW_BASELINE_TOKENS);
+    let remaining_tokens = effective_window.saturating_sub(used_tokens);
+    let percent = ((remaining_tokens as f64 / effective_window as f64) * 100.0)
+        .clamp(0.0, 100.0)
+        .round() as i64;
+
+    Some(percent.clamp(0, 100) as u8)
+}
+
 fn extract_context_usage_limits(value: &Value) -> Option<UsageLimitsSnapshot> {
     let token_usage = value
         .get("tokenUsage")
         .or_else(|| value.get("turn").and_then(|turn| turn.get("tokenUsage")))?;
 
-    let total_tokens = token_usage
-        .get("total")
-        .and_then(|total| {
-            extract_any_u64(total, &["totalTokens", "total_tokens"])
-                .or_else(|| extract_any_u64(total, &["inputTokens", "input_tokens"]))
-        })
-        .or_else(|| extract_any_u64(token_usage, &["totalTokens", "total_tokens"]));
+    let current_tokens = extract_context_tokens(token_usage);
 
     let max_context_tokens =
         extract_any_u64(token_usage, &["modelContextWindow", "model_context_window"]);
 
-    let context_window_percent = match (total_tokens, max_context_tokens) {
-        (Some(total), Some(limit)) if limit > 0 => {
-            let percent = ((total as f64 / limit as f64) * 100.0).round() as i64;
-            Some(percent.clamp(0, 100) as u8)
+    let context_window_percent = match (current_tokens, max_context_tokens) {
+        (Some(current), Some(limit)) if limit > 0 => {
+            calculate_context_window_percent_remaining(current, limit)
         }
         _ => None,
     };
 
-    if total_tokens.is_none() && max_context_tokens.is_none() {
+    if current_tokens.is_none() && max_context_tokens.is_none() {
         return None;
     }
 
     Some(UsageLimitsSnapshot {
-        current_tokens: total_tokens,
+        current_tokens,
         max_context_tokens,
         context_window_percent,
         ..UsageLimitsSnapshot::default()
@@ -1327,7 +1395,7 @@ mod tests {
         });
 
         let approval = mapper
-            .map_server_request("request-1", "item/tool/call", &params)
+            .map_server_request("request-1", &json!(42), "item/tool/call", &params)
             .expect("expected approval request");
 
         assert_eq!(approval.approval_id, "call_abc");
@@ -1344,8 +1412,14 @@ mod tests {
                 assert!(matches!(action_type, ActionType::Other));
                 assert_eq!(summary, "Codex requested dynamic tool call: my_tool");
                 assert_eq!(
-                    details.get("_serverMethod").and_then(Value::as_str),
+                    details
+                        .get(APPROVAL_DETAIL_SERVER_METHOD_KEY)
+                        .and_then(Value::as_str),
                     Some("item/tool/call")
+                );
+                assert_eq!(
+                    details.get(APPROVAL_DETAIL_RAW_REQUEST_ID_KEY),
+                    Some(&json!(42))
                 );
             }
             _ => panic!("expected approval request event"),
@@ -1369,7 +1443,12 @@ mod tests {
         });
 
         let approval = mapper
-            .map_server_request("request-2", "tool/requestUserInput", &params)
+            .map_server_request(
+                "request-2",
+                &json!("req-2"),
+                "tool/requestUserInput",
+                &params,
+            )
             .expect("expected approval request");
 
         assert_eq!(approval.approval_id, "item_42");
@@ -1405,11 +1484,48 @@ mod tests {
         });
 
         let approval = mapper
-            .map_server_request("request-3", "item/tool/request_user_input", &params)
+            .map_server_request(
+                "request-3",
+                &json!("req-3"),
+                "item/tool/request_user_input",
+                &params,
+            )
             .expect("expected approval request");
 
         assert_eq!(approval.approval_id, "item_84");
         assert_eq!(approval.server_method, "item/tool/requestuserinput");
+    }
+
+    #[test]
+    fn map_notification_normalizes_turn_plan_status_for_frontend_detection() {
+        let mut mapper = TurnEventMapper::default();
+
+        let events = mapper.map_notification(
+            "turn/plan/updated",
+            &json!({
+                "threadId": "thr_123",
+                "turnId": "turn_123",
+                "plan": [
+                    {
+                        "step": "Inspect the repo",
+                        "status": "inProgress"
+                    },
+                    {
+                        "step": "Apply the fix",
+                        "status": "pending"
+                    }
+                ]
+            }),
+        );
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            EngineEvent::ThinkingDelta { content } => {
+                assert!(content.contains("- [in_progress] Inspect the repo"));
+                assert!(content.contains("- [pending] Apply the fix"));
+            }
+            other => panic!("expected thinking delta event, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1428,7 +1544,12 @@ mod tests {
         });
 
         let approval = mapper
-            .map_server_request("request-4", "item/permissions/requestApproval", &params)
+            .map_server_request(
+                "request-4",
+                &json!("req-4"),
+                "item/permissions/requestApproval",
+                &params,
+            )
             .expect("expected approval request");
 
         assert_eq!(approval.approval_id, "perm_42");
@@ -1444,8 +1565,14 @@ mod tests {
                 assert!(matches!(action_type, ActionType::Other));
                 assert_eq!(summary, "Need write access to apply the requested patch");
                 assert_eq!(
-                    details.get("_serverMethod").and_then(Value::as_str),
+                    details
+                        .get(APPROVAL_DETAIL_SERVER_METHOD_KEY)
+                        .and_then(Value::as_str),
                     Some("item/permissions/requestApproval")
+                );
+                assert_eq!(
+                    details.get(APPROVAL_DETAIL_RAW_REQUEST_ID_KEY),
+                    Some(&json!("req-4"))
                 );
             }
             _ => panic!("expected approval request event"),
@@ -1472,7 +1599,12 @@ mod tests {
         });
 
         let approval = mapper
-            .map_server_request("request-5", "mcpServer/elicitation/request", &params)
+            .map_server_request(
+                "request-5",
+                &json!("req-5"),
+                "mcpServer/elicitation/request",
+                &params,
+            )
             .expect("expected approval request");
 
         assert_eq!(approval.approval_id, "request-5");
@@ -1489,6 +1621,30 @@ mod tests {
             }
             _ => panic!("expected approval request event"),
         }
+    }
+
+    #[test]
+    fn extract_persisted_approval_route_reads_hidden_transport_fields() {
+        assert_eq!(
+            extract_persisted_approval_route(&json!({
+                "_serverMethod": "item/fileChange/requestApproval",
+                "_rawRequestId": 42
+            })),
+            Some(ApprovalRequestRoute {
+                server_method: "item/fileChange/requestApproval".to_string(),
+                raw_request_id: json!(42),
+            })
+        );
+    }
+
+    #[test]
+    fn extract_persisted_approval_route_rejects_legacy_rows_without_raw_request_id() {
+        assert_eq!(
+            extract_persisted_approval_route(&json!({
+                "_serverMethod": "item/fileChange/requestApproval"
+            })),
+            None
+        );
     }
 
     #[test]
@@ -1509,7 +1665,7 @@ mod tests {
             EngineEvent::UsageLimitsUpdated { usage } => {
                 assert_eq!(usage.current_tokens, Some(50000));
                 assert_eq!(usage.max_context_tokens, Some(200000));
-                assert_eq!(usage.context_window_percent, Some(25));
+                assert_eq!(usage.context_window_percent, Some(80));
             }
             _ => panic!("expected usage limits update"),
         }
@@ -1522,8 +1678,11 @@ mod tests {
             "threadId": "thr_123",
             "turnId": "turn_123",
             "tokenUsage": {
+                "last": {
+                    "totalTokens": 30000
+                },
                 "total": {
-                    "totalTokens": 50000
+                    "totalTokens": 90000
                 },
                 "modelContextWindow": 200000
             }
@@ -1534,9 +1693,9 @@ mod tests {
 
         match &events[0] {
             EngineEvent::UsageLimitsUpdated { usage } => {
-                assert_eq!(usage.current_tokens, Some(50000));
+                assert_eq!(usage.current_tokens, Some(30000));
                 assert_eq!(usage.max_context_tokens, Some(200000));
-                assert_eq!(usage.context_window_percent, Some(25));
+                assert_eq!(usage.context_window_percent, Some(90));
             }
             _ => panic!("expected usage limits update"),
         }

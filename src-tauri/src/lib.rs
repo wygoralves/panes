@@ -15,6 +15,7 @@ mod process_utils;
 mod runtime_env;
 mod state;
 mod terminal;
+mod terminal_notifications;
 mod workspace_startup;
 
 use std::sync::Arc;
@@ -27,16 +28,20 @@ use db::Database;
 use engines::{CodexRuntimeEvent, EngineManager};
 use git::repo::FileTreeCache;
 use git::watcher::GitWatcherManager;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 use locale::native_strings;
 use locale::resolve_app_locale;
 use models::{EngineRuntimeUpdatedDto, ThreadDto, ThreadStatusDto};
 use power::KeepAwakeManager;
 use state::{AppState, TurnManager};
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 use tauri::menu::{AboutMetadata, MenuItem, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{image::Image, menu::Menu, Emitter, Manager, RunEvent, WebviewWindowBuilder};
 use terminal::TerminalManager;
+
+pub fn maybe_handle_cli_subcommand() -> anyhow::Result<bool> {
+    terminal_notifications::maybe_handle_cli_subcommand()
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -65,7 +70,9 @@ pub fn run() {
         log::warn!("failed to reclaim stale keep awake helper: {error}");
     }
     if app_config.power.keep_awake_enabled {
-        if let Err(error) = tauri::async_runtime::block_on(keep_awake.enable()) {
+        if let Err(error) =
+            tauri::async_runtime::block_on(keep_awake.enable_with_config(&app_config.power))
+        {
             log::warn!("failed to reapply keep awake on startup: {error}");
         }
     }
@@ -80,6 +87,7 @@ pub fn run() {
         engines: Arc::new(EngineManager::new()),
         git_watchers: Arc::new(GitWatcherManager::default()),
         terminals: Arc::new(TerminalManager::default()),
+        notifications: Arc::new(terminal_notifications::TerminalNotificationManager::default()),
         keep_awake,
         turns: Arc::new(TurnManager::default()),
         file_tree_cache: Arc::new(FileTreeCache::new()),
@@ -105,7 +113,7 @@ pub fn run() {
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("main window config not found"))?;
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             let main_window_config = {
                 let mut main_window_config = main_window_config;
                 main_window_config.decorations = false;
@@ -147,6 +155,11 @@ pub fn run() {
             let handle = app.handle().clone();
             let resource_dir = app.path().resource_dir().ok();
             let state = app.state::<AppState>().inner().clone();
+            if let Err(error) =
+                tauri::async_runtime::block_on(state.notifications.start(handle.clone()))
+            {
+                log::warn!("failed to start terminal notification ingress: {error}");
+            }
             state.engines.set_resource_dir(resource_dir);
             tauri::async_runtime::spawn(run_codex_runtime_bridge(handle.clone(), state.clone()));
             app.on_menu_event(move |_app, event| {
@@ -168,6 +181,10 @@ pub fn run() {
             commands::app::set_app_locale,
             commands::power::get_keep_awake_state,
             commands::power::set_keep_awake_enabled,
+            commands::power::get_power_settings,
+            commands::power::set_power_settings,
+            commands::power::get_helper_status,
+            commands::power::register_keep_awake_helper,
             commands::chat::send_message,
             commands::chat::start_codex_review,
             commands::chat::steer_message,
@@ -198,6 +215,7 @@ pub fn run() {
             commands::workspace::clear_workspace_startup_preset,
             commands::workspace::export_workspace_startup_preset,
             commands::workspace::list_workspace_dirs,
+            commands::workspace::get_workspace_file_tree_page,
             commands::git::get_git_status,
             commands::git::get_file_diff,
             commands::git::get_git_file_compare,
@@ -233,6 +251,13 @@ pub fn run() {
             commands::git::rename_git_remote,
             commands::app::get_terminal_accelerated_rendering,
             commands::app::set_terminal_accelerated_rendering,
+            commands::app::get_agent_notification_settings,
+            commands::app::set_chat_notifications_enabled,
+            commands::app::set_terminal_notifications_enabled,
+            commands::app::install_terminal_notification_integration_command,
+            commands::app::set_notification_sound,
+            commands::app::preview_notification_sound,
+            commands::app::show_agent_notification,
             commands::files::list_dir,
             commands::files::read_file,
             commands::files::write_file,
@@ -270,6 +295,9 @@ pub fn run() {
             commands::terminal::terminal_list_sessions,
             commands::terminal::terminal_get_renderer_diagnostics,
             commands::terminal::terminal_resume_session,
+            commands::terminal::terminal_list_notifications,
+            commands::terminal::terminal_clear_notification,
+            commands::terminal::terminal_set_notification_focus,
             commands::setup::check_dependencies,
             commands::setup::install_dependency,
             commands::harness::check_harnesses,
@@ -822,111 +850,45 @@ where
 }
 
 fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu<tauri::Wry>> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     {
         let _ = locale;
-        Menu::with_items(handle, &[])
+        return Menu::with_items(handle, &[]);
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     {
         let strings = native_strings(locale);
 
-        let app_menu = {
-            #[cfg(target_os = "macos")]
-            {
-                SubmenuBuilder::new(handle, strings.app_menu)
-                    .about(Some(AboutMetadata {
-                        name: Some("Panes".to_string()),
-                        version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                        authors: Some(vec!["Wygor Alves".to_string()]),
-                        comments: Some(strings.about_comments.to_string()),
-                        copyright: Some("Copyright © 2026 Wygor Alves".to_string()),
-                        license: Some("MIT".to_string()),
-                        website: Some("https://github.com/wygoralves/panes".to_string()),
-                        website_label: Some("GitHub".to_string()),
-                        icon: match Image::from_bytes(include_bytes!("../icons/128x128@2x.png")) {
-                            Ok(img) => Some(img),
-                            Err(e) => {
-                                log::warn!("failed to load about icon: {e}");
-                                None
-                            }
-                        },
-                        ..Default::default()
-                    }))
-                    .separator()
-                    .item(&PredefinedMenuItem::services(handle, None)?)
-                    .separator()
-                    .hide()
-                    .hide_others()
-                    .show_all()
-                    .separator()
-                    .quit()
-                    .build()?
-            }
+        let app_menu = SubmenuBuilder::new(handle, strings.app_menu)
+            .about(Some(AboutMetadata {
+                name: Some("Panes".to_string()),
+                version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                authors: Some(vec!["Wygor Alves".to_string()]),
+                comments: Some(strings.about_comments.to_string()),
+                copyright: Some("Copyright © 2026 Wygor Alves".to_string()),
+                license: Some("MIT".to_string()),
+                website: Some("https://github.com/wygoralves/panes".to_string()),
+                website_label: Some("GitHub".to_string()),
+                icon: match Image::from_bytes(include_bytes!("../icons/128x128@2x.png")) {
+                    Ok(img) => Some(img),
+                    Err(e) => {
+                        log::warn!("failed to load about icon: {e}");
+                        None
+                    }
+                },
+                ..Default::default()
+            }))
+            .separator()
+            .item(&PredefinedMenuItem::services(handle, None)?)
+            .separator()
+            .hide()
+            .hide_others()
+            .show_all()
+            .separator()
+            .quit()
+            .build()?;
 
-            #[cfg(target_os = "windows")]
-            {
-                SubmenuBuilder::new(handle, strings.app_menu)
-                    .about(Some(AboutMetadata {
-                        name: Some("Panes".to_string()),
-                        version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                        authors: Some(vec!["Wygor Alves".to_string()]),
-                        comments: Some(strings.about_comments.to_string()),
-                        copyright: Some("Copyright © 2026 Wygor Alves".to_string()),
-                        license: Some("MIT".to_string()),
-                        website: Some("https://github.com/wygoralves/panes".to_string()),
-                        website_label: Some("GitHub".to_string()),
-                        icon: match Image::from_bytes(include_bytes!("../icons/128x128@2x.png")) {
-                            Ok(img) => Some(img),
-                            Err(e) => {
-                                log::warn!("failed to load about icon: {e}");
-                                None
-                            }
-                        },
-                        ..Default::default()
-                    }))
-                    .separator()
-                    .quit()
-                    .build()?
-            }
-        };
-
-        #[cfg(target_os = "windows")]
-        let edit_menu = {
-            // Windows terminals rely on Ctrl-based control sequences, so avoid
-            // wiring those chords to native edit accelerators. DOM text inputs
-            // still keep their standard shortcuts through the webview, and the
-            // menu items remain clickable.
-            let edit_undo =
-                MenuItem::with_id(handle, "edit-undo", strings.undo, true, None::<&str>)?;
-            let edit_redo =
-                MenuItem::with_id(handle, "edit-redo", strings.redo, true, None::<&str>)?;
-            let edit_cut = MenuItem::with_id(handle, "edit-cut", strings.cut, true, None::<&str>)?;
-            let edit_copy =
-                MenuItem::with_id(handle, "edit-copy", strings.copy, true, None::<&str>)?;
-            let edit_paste =
-                MenuItem::with_id(handle, "edit-paste", strings.paste, true, None::<&str>)?;
-            let edit_select_all = MenuItem::with_id(
-                handle,
-                "edit-select-all",
-                strings.select_all,
-                true,
-                None::<&str>,
-            )?;
-
-            SubmenuBuilder::new(handle, strings.edit_menu)
-                .item(&edit_undo)
-                .item(&edit_redo)
-                .separator()
-                .item(&edit_cut)
-                .item(&edit_copy)
-                .item(&edit_paste)
-                .item(&edit_select_all)
-                .build()?
-        };
-
-        #[cfg(target_os = "macos")]
         let edit_menu = SubmenuBuilder::new(handle, strings.edit_menu)
             .undo()
             .redo()
@@ -1004,6 +966,9 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
             .item(&close_window)
             .build()?;
 
-        Menu::with_items(handle, &[&app_menu, &edit_menu, &view_menu, &window_menu])
+        return Menu::with_items(handle, &[&app_menu, &edit_menu, &view_menu, &window_menu]);
     }
+
+    #[allow(unreachable_code)]
+    Menu::with_items(handle, &[])
 }

@@ -1,7 +1,11 @@
-import { useEffect, useRef, useState, useCallback, useLayoutEffect } from "react";
+import { useEffect, useRef, useState, useCallback, useContext, useLayoutEffect } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, ChevronRight } from "lucide-react";
+import {
+  closeGitFlyoutIfFocusLeft,
+  GitFlyoutContext,
+} from "../../lib/gitFlyoutRegion";
 
 export interface DropdownOption {
   value: string;
@@ -57,6 +61,7 @@ export function Dropdown({
   const [activeGroup, setActiveGroup] = useState<number | null>(null);
   const [submenuPos, setSubmenuPos] = useState<SubmenuPosition>({ top: 0, left: 0 });
   const groupLeaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gitFlyoutContext = useContext(GitFlyoutContext);
 
   const allOptions = [
     ...options,
@@ -189,6 +194,7 @@ export function Dropdown({
         <div
           ref={menuRef}
           className="dropdown-menu"
+          data-git-flyout-region={gitFlyoutContext ? "true" : undefined}
           style={{
             position: "fixed",
             left: pos.left,
@@ -196,6 +202,12 @@ export function Dropdown({
               ? { top: pos.top }
               : { bottom: window.innerHeight - pos.top }),
           }}
+          onMouseEnter={() => gitFlyoutContext?.openFlyout()}
+          onMouseLeave={() => gitFlyoutContext?.scheduleClose(150)}
+          onFocusCapture={() => gitFlyoutContext?.openFlyout()}
+          onBlurCapture={(event) =>
+            closeGitFlyoutIfFocusLeft(gitFlyoutContext, event.relatedTarget)
+          }
         >
           {options.map((option) => {
             const isSelected = option.value === value;
@@ -249,13 +261,24 @@ export function Dropdown({
           <div
             ref={submenuRef}
             className="dropdown-menu"
+            data-git-flyout-region={gitFlyoutContext ? "true" : undefined}
             style={{
               position: "fixed",
               top: submenuPos.top,
               left: submenuPos.left,
             }}
-            onMouseEnter={handleSubmenuEnter}
-            onMouseLeave={handleSubmenuLeave}
+            onMouseEnter={() => {
+              gitFlyoutContext?.openFlyout();
+              handleSubmenuEnter();
+            }}
+            onMouseLeave={() => {
+              gitFlyoutContext?.scheduleClose(150);
+              handleSubmenuLeave();
+            }}
+            onFocusCapture={() => gitFlyoutContext?.openFlyout()}
+            onBlurCapture={(event) =>
+              closeGitFlyoutIfFocusLeft(gitFlyoutContext, event.relatedTarget)
+            }
           >
             {groups[activeGroup].options.map((option) => {
               const isSelected = option.value === value;

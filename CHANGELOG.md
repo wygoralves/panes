@@ -1,5 +1,209 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.51.3...vnull) (2026-04-05)
+
+### Bug Fixes
+
+* **gitpanel:** fix git panel collapsing incorrectly in some scenarios ([03d6ec1](https://github.com/wygoralves/panes/commit/03d6ec16330d135627e0bfc410f29dd5b495e352))
+
+## [](https://github.com/wygoralves/panes/compare/v0.51.2...vnull) (2026-04-01)
+
+### Bug Fixes
+
+* **ci:** harden release bundles across platforms ([65f050a](https://github.com/wygoralves/panes/commit/65f050a0f893b0dca3d899f0355279b8e322e344))
+
+## [](https://github.com/wygoralves/panes/compare/v0.51.1...vnull) (2026-04-01)
+
+### Bug Fixes
+
+* **notifications:** fix stale ui state on notifications ([4fe75dc](https://github.com/wygoralves/panes/commit/4fe75dc71291a49dec2efd6301af0780ab919f45))
+
+## [](https://github.com/wygoralves/panes/compare/v0.51.0...vnull) (2026-04-01)
+
+### Bug Fixes
+
+* **ubuntu:** fix regression caused by changes on claude sidecar bundling ([c125f0a](https://github.com/wygoralves/panes/commit/c125f0ab935d6105b1e50d2d5e055f25493b0e27))
+
+## [](https://github.com/wygoralves/panes/compare/v0.50.0...vnull) (2026-03-31)
+
+### Features
+
+* **fileeditor:** add markdown preview to file editor ([33cd052](https://github.com/wygoralves/panes/commit/33cd0526e25407592a09c5635500c9b950afd7c1))
+
+## [](https://github.com/wygoralves/panes/compare/v0.49.1...vnull) (2026-03-30)
+
+### Features
+
+* **chat:** improve fast mode and model pickers ([43a4a37](https://github.com/wygoralves/panes/commit/43a4a37b919c6c4bf20abe1d92794414f5a676ae))
+
+### Bug Fixes
+
+* **claude:** fix bundling on prod build to restore claude sdk functionality ([f82540a](https://github.com/wygoralves/panes/commit/f82540ad5a307550a59141659d793dfddba9001c))
+
+## [](https://github.com/wygoralves/panes/compare/v0.49.0...vnull) (2026-03-29)
+
+### Bug Fixes
+
+* **codex:** align Codex context meter semantics ([64046f9](https://github.com/wygoralves/panes/commit/64046f9537493fc96ef0b44b20785fbe2b26513c))
+* **codex:** fix plan handoff and context calc on codex ([312ba42](https://github.com/wygoralves/panes/commit/312ba4295966c7e36dfe2dac88c77928e0b6ab86))
+* **gitpanel:** properly show fullscreen dialog when discarding git changes ([9908169](https://github.com/wygoralves/panes/commit/99081698878617297ef72d101e15b221c1739910))
+* **sidebar:** properly show compressed groups on startup ([1d4f094](https://github.com/wygoralves/panes/commit/1d4f094b1847c5057429fc29a7274a704bd8aad0))
+
+## [](https://github.com/wygoralves/panes/compare/v0.48.0...vnull) (2026-03-27)
+
+### Features
+
+* **nav:** improve file management and opening in the file editor ([b900ed2](https://github.com/wygoralves/panes/commit/b900ed26c78e50b8b5489d753f4ff4f053e20fc9))
+
+## [](https://github.com/wygoralves/panes/compare/v0.47.0...vnull) (2026-03-27)
+
+### Features
+
+* **nav:** add smart compress expand for git and nav panels ([503bc7d](https://github.com/wygoralves/panes/commit/503bc7d9b7b57f564967eca13875a226b92285f9))
+
+## [](https://github.com/wygoralves/panes/compare/v0.46.4...vnull) (2026-03-27)
+
+### Features
+
+* **chat:** add cycle between last messages with option + arrow ([a95951f](https://github.com/wygoralves/panes/commit/a95951f1da34d6cc2763bdad6725b5ea99535ef6))
+* **chat:** add file link opening to file editor ([98c6618](https://github.com/wygoralves/panes/commit/98c6618d82a1640569fa3763d037db5ac131d5f3))
+* **chat:** add markdown rendering when streaming and fix some broken md renders ([3a2ac55](https://github.com/wygoralves/panes/commit/3a2ac55c2ef2ca5de51779a15bc238bdcb9626a9))
+* **chat:** add question details for answer blocks ([59b86a2](https://github.com/wygoralves/panes/commit/59b86a2d05861b8f52e72fe1c57f5774680710d3))
+* **chat:** add switch to toggle diff view on file editor ([1e496ae](https://github.com/wygoralves/panes/commit/1e496ae27a8cc0e9b645c1d0f7296309dbe058a2))
+* **chat:** adjust notification dot color ([91e7d4c](https://github.com/wygoralves/panes/commit/91e7d4cbe6a895cb61abba2a124f83b0799e7f8d))
+* **chat:** improve answered questions UI ([8b26ac7](https://github.com/wygoralves/panes/commit/8b26ac73ad89435379c3bc38bc064578d737fc28))
+* **chat:** improve default model heritage between threads ([9444a8e](https://github.com/wygoralves/panes/commit/9444a8e1a6b0d5b64f1160832dffcb9c149077e9))
+* **chat:** improve markdown rendering ([6bf3345](https://github.com/wygoralves/panes/commit/6bf334542afafde8e83feb66126de722999e0968))
+* **chat:** improve styling on text and icons ([bd08469](https://github.com/wygoralves/panes/commit/bd084695dfd9102505471145bd572b657c4a8b61))
+* **chat:** improve thinking blocks handling ([91ec192](https://github.com/wygoralves/panes/commit/91ec192941cc1fbe213f0e0da1b96e47f06e8e3a))
+* **chat:** improve UI for steering and add copy messages ([5d6446f](https://github.com/wygoralves/panes/commit/5d6446f5caf5d2efbadda5c1e95899b8f3bdb168))
+* **chat:** improve UI on the chatarea ([56786b1](https://github.com/wygoralves/panes/commit/56786b19259cf9773b4700fd015f4597c98f1750))
+* **chat:** improve usability for claude code planning mode ([f4ae9c7](https://github.com/wygoralves/panes/commit/f4ae9c7f957ec4ad8192dff1916966a191ed9132))
+* **chat:** improve visibility of commands ([5c807b0](https://github.com/wygoralves/panes/commit/5c807b04f8262d4dc08c5a6c9950250623da3235))
+* **chat:** make code blocks readability better ([a346578](https://github.com/wygoralves/panes/commit/a346578d1570698173dada427b695464286b5b80))
+* **chat:** make expandable blocks appear compressed by default ([74620a0](https://github.com/wygoralves/panes/commit/74620a087eef6df07a8f5db43971453ef6b5204c))
+* **chat:** reduce clutter on chat UI and add thinking duration ([fef6e6e](https://github.com/wygoralves/panes/commit/fef6e6e6c42909c27bb736e68c9e0e9cc05ad844))
+* **chat:** remove orphaned empty messages when stopping turns and improve ui for tool call results ([2299fa8](https://github.com/wygoralves/panes/commit/2299fa80206114af38d950206fe556ecf81b019a))
+* **chat:** smoothen md renderer worker visibility ([19041c5](https://github.com/wygoralves/panes/commit/19041c5aec1fac99a9c59e3ced1fb97c1eb3e12e))
+* **chat:** smoothen UI components on the chat area to make it more scannable ([c3f6f51](https://github.com/wygoralves/panes/commit/c3f6f5153d64034f73e421ef59a48fee67d96c89))
+
+### Bug Fixes
+
+* **chat:** better handle malformed percent encoding in file links ([591c74e](https://github.com/wygoralves/panes/commit/591c74e5aa13e2facc30ec3ae174dd5a1ec3db71))
+* **chat:** fix exitplanmode command for claude code ([35236a0](https://github.com/wygoralves/panes/commit/35236a048d14d482fcf399765662d0615ff9f04b))
+* **chat:** fix frontend losing track of active chats when switching between threads ([9812f33](https://github.com/wygoralves/panes/commit/9812f33510ed09dfcb4f8484306b60dfac3fc638))
+
+## [](https://github.com/wygoralves/panes/compare/v0.46.3...vnull) (2026-03-26)
+
+### Bug Fixes
+
+* **startup:** harden lazy startup without stale engine state ([22db45c](https://github.com/wygoralves/panes/commit/22db45c0f5ceeb6a24e992247e1a15c549bd6bca))
+
+## [](https://github.com/wygoralves/panes/compare/v0.46.2...vnull) (2026-03-25)
+
+### Bug Fixes
+
+* **chat:** address more edge cases on planning handoff ([4680279](https://github.com/wygoralves/panes/commit/4680279cf114068a3e485c3c109838d39de2f463))
+* **chat:** fix frontend race on codex plan execution ([1f3508d](https://github.com/wygoralves/panes/commit/1f3508d4bf326fff56b5d10b408271549a18a79d))
+* **chat:** some more adjustments to the plan handoff to execution mode ([2b52f52](https://github.com/wygoralves/panes/commit/2b52f52a8586e417d9f2712333bdc69395e43344))
+
+## [](https://github.com/wygoralves/panes/compare/v0.46.1...vnull) (2026-03-25)
+
+### Bug Fixes
+
+* **chat:** adjust and fix plan-mode handoff flow ([2e3ca87](https://github.com/wygoralves/panes/commit/2e3ca8764a0d60a17eb0b8f08a174d92f9158941))
+
+## [](https://github.com/wygoralves/panes/compare/v0.46.0...vnull) (2026-03-24)
+
+### Bug Fixes
+
+* **notifications:** play macOS preview sounds directly ([11360bd](https://github.com/wygoralves/panes/commit/11360bded91687c4e95524546319906a3efcc21a))
+
+## [](https://github.com/wygoralves/panes/compare/v0.45.2...vnull) (2026-03-24)
+
+### Features
+
+* **notifications:** add chat notifications ([a4ca990](https://github.com/wygoralves/panes/commit/a4ca9900355868bc1d268647bc9a9ac3f2b3a781))
+* **notifications:** add interface and configs for notifications on terminal ([c5fcedd](https://github.com/wygoralves/panes/commit/c5fcedd620c2c1ae0b691ed9c1c185df9ab0acb0))
+* **notifications:** add sound settings for notifications ([2f65897](https://github.com/wygoralves/panes/commit/2f6589723af421dc52ac6d62efc2d1eec2e08d01))
+* **notifications:** improve ui for notifications ([0f15fa4](https://github.com/wygoralves/panes/commit/0f15fa47fb540e7b72852b47eba5cb2b05a511e5))
+* **terminal:** add Claude notification hooks ([64dae9c](https://github.com/wygoralves/panes/commit/64dae9c38d72187f4230fc7f14c77ec150bdf9c0))
+* **terminal:** add Codex notification bridge ([8bab1b3](https://github.com/wygoralves/panes/commit/8bab1b3c3593c548df6c6bcbce54592ab24d1a69))
+* **terminal:** add notification ingress foundation ([42d9126](https://github.com/wygoralves/panes/commit/42d9126aa28d21b33295a6097ece84c3554bedea))
+* **terminal:** add OSC notification fallback ([0da172b](https://github.com/wygoralves/panes/commit/0da172b383fcf2fd303f74545a621a92aaa8fc8a))
+* **terminal:** wire notification state into terminal UI ([b43065b](https://github.com/wygoralves/panes/commit/b43065ba044bd0084dcf9d237bffd641ff2b6f32))
+
+### Bug Fixes
+
+* address code review findings on notifications ([c4d06b8](https://github.com/wygoralves/panes/commit/c4d06b84bd81443c0d517467375596fa4e807bb7))
+* **notifications:** decouple agent notifications from terminal startup ([b94715f](https://github.com/wygoralves/panes/commit/b94715f316272496c99b53c80b9b5fd61e1ce5aa))
+* **terminal:** preserve notification hydration ordering ([ea14f40](https://github.com/wygoralves/panes/commit/ea14f40d01a799cb9bc2560e280453a40c132c01))
+
+## [](https://github.com/wygoralves/panes/compare/v0.45.1...vnull) (2026-03-22)
+
+### Bug Fixes
+
+* **codex:** harden Codex reconnect recovery ([36476fd](https://github.com/wygoralves/panes/commit/36476fd18752898b4009512313b62a22db106875))
+
+## [](https://github.com/wygoralves/panes/compare/v0.45.0...vnull) (2026-03-16)
+
+### Bug Fixes
+
+* **codex:** harden Codex turn completion handling ([f1df9fa](https://github.com/wygoralves/panes/commit/f1df9fafbbd7ded7d040c9b8425972f365084fa1))
+
+## [](https://github.com/wygoralves/panes/compare/v0.44.0...vnull) (2026-03-15)
+
+### Features
+
+* **windows:** unify custom window chrome on Windows ([b51da26](https://github.com/wygoralves/panes/commit/b51da268ccedcc108d16e51d4dda5adfcb9eee4f))
+
+## [](https://github.com/wygoralves/panes/compare/v0.43.0...vnull) (2026-03-15)
+
+### Features
+
+* **linux:** add Debian updater target and Linux CI smoke test ([90db0ae](https://github.com/wygoralves/panes/commit/90db0ae274fcfeb6e291f4d011e24051f8457bd3))
+
+## [](https://github.com/wygoralves/panes/compare/v0.42.0...vnull) (2026-03-15)
+
+### Features
+
+* **power:** add clamshell lid-close sleep prevention via privileged helper ([cddbe8a](https://github.com/wygoralves/panes/commit/cddbe8afe2ad6be31d62df7016e29debb45cec9f))
+* **power:** adjust time picker for session duration ([63203f3](https://github.com/wygoralves/panes/commit/63203f3c91841f579d31a05addcc074bff1a2874))
+* **power:** harden macOS keep-awake backend ([e1cac2e](https://github.com/wygoralves/panes/commit/e1cac2e940c5818fd06ffeec580cbb32405fecf1))
+* **power:** implement advanced power management settings ([269ba74](https://github.com/wygoralves/panes/commit/269ba74198a7e0ec7a7ef12693878b1913880e5e))
+* **power:** replace caffeinate with direct IOKit assertions on macOS ([e53216c](https://github.com/wygoralves/panes/commit/e53216c0d54f46cd9828359d50bdbd23d2aa66fb))
+
+### Bug Fixes
+
+* **linux:** address ui freeze on appimage build ([763bd2e](https://github.com/wygoralves/panes/commit/763bd2ee4d9787db924440117e389ebb9a903bcf))
+* **power:** add pmset fallback for lid-close prevention in dev builds ([0b33195](https://github.com/wygoralves/panes/commit/0b331958c6adebdeeb50de917663674078dbe720))
+* **power:** address code review findings ([8bb308b](https://github.com/wygoralves/panes/commit/8bb308b7299c8003b03a5908edb68bfc5add0327))
+* **power:** address review findings for power management ([422e547](https://github.com/wygoralves/panes/commit/422e5470626bfa70fdcdb7b7f39d767415f05093))
+* **power:** harden keep-awake power settings flow ([8cf85e6](https://github.com/wygoralves/panes/commit/8cf85e61cb00e8e95475e33d93767dac8a7092f6))
+* **power:** include -s flag in default macOS caffeinate args ([a4ddf13](https://github.com/wygoralves/panes/commit/a4ddf13360020a9e6ff6ea93cf7afd50d8f9dcee))
+* **powermgmt:** align power status with runtime transitions ([cf9d8b1](https://github.com/wygoralves/panes/commit/cf9d8b18ac87ccd1ab8c9a2263144bcb82487f9c))
+* **powermgmt:** harden power management state transitions ([db4d941](https://github.com/wygoralves/panes/commit/db4d941c96dddd2a776f2255467d3a80f68f58d9))
+* **power:** preserve platform-specific power settings semantics ([d1c910d](https://github.com/wygoralves/panes/commit/d1c910dfff43e5b8deec1b6ae28a5fb68ca59337))
+* **power:** receive monitor events without holding the runtime mutex ([0b244fd](https://github.com/wygoralves/panes/commit/0b244fd0136ad61e7cfa08c77edca670d632d0a7))
+* **power:** reorder power mgmt menu sections ([11977af](https://github.com/wygoralves/panes/commit/11977afceb8a2890c14d1395be7990230b788d4b))
+* **power:** wire PowerProfile through spawner and add Linux display inhibit ([a12c83c](https://github.com/wygoralves/panes/commit/a12c83cb55ef5473cbc8e4c9cb34847592486f4e))
+
+## [](https://github.com/wygoralves/panes/compare/v0.41.0...vnull) (2026-03-15)
+
+### Features
+
+* **claude:** expand more feature coverage and parity on plan mode and tool use ([1cd5731](https://github.com/wygoralves/panes/commit/1cd57313dadd0f3f0559cfdd3668c1a87e9a2e8e))
+* **gitpanel:** improve logic of dropdown opening of the gitpanel ([55312cc](https://github.com/wygoralves/panes/commit/55312ccee9edb488ee6b682adbcf21fb40a4a01a))
+
+### Bug Fixes
+
+* **claude:** emit stop-reason notice before turn completion ([0bd3ff5](https://github.com/wygoralves/panes/commit/0bd3ff5bfb81c1eb65eaaa6f9333ebb65719f852))
+* close Claude parity gaps ([598ce4a](https://github.com/wygoralves/panes/commit/598ce4a01be88c891a20358558c548d491c955f5))
+* **compatibility:** harden cross-platform tool and power detection ([b15996f](https://github.com/wygoralves/panes/commit/b15996fc008b03607c9dd15242692b400a7c4ae6))
+* **compatibility:** normalize persisted Windows workspace roots ([f8195f2](https://github.com/wygoralves/panes/commit/f8195f24c9c35ef3fb32a793c4a98f7392fdfa0f))
+* **harnesses:** fix install command for opencode ([fc7624a](https://github.com/wygoralves/panes/commit/fc7624a0cdc8ca19361d9a613e77187a2d8914e7))
+* **harnesses:** harden PATH fallback config parsing ([5d84d5e](https://github.com/wygoralves/panes/commit/5d84d5eeb009762c9788771887cb33553c0f7ee5))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.40.0...vnull) (2026-03-13)
 
 ### Features

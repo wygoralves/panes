@@ -335,7 +335,7 @@ pub async fn watch_git_repo(
 ) -> Result<(), String> {
     let cache = state.file_tree_cache.clone();
     let callback = std::sync::Arc::new(move |changed_repo_path: String| {
-        cache.invalidate(&changed_repo_path);
+        cache.invalidate_containing_path(&changed_repo_path);
         let payload = GitRepoChangedEvent {
             repo_path: changed_repo_path,
         };

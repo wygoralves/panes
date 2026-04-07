@@ -31,6 +31,12 @@ pub mod events;
 pub use codex::CodexRuntimeEvent;
 pub use events::*;
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ApprovalRequestRoute {
+    pub server_method: String,
+    pub raw_request_id: Value,
+}
+
 #[derive(Debug, Clone)]
 pub enum ThreadScope {
     Repo {
@@ -196,6 +202,16 @@ pub fn normalize_approval_response_for_engine(
     )
 }
 
+pub fn approval_response_route_for_engine(
+    engine_id: &str,
+    details: &Value,
+) -> Option<ApprovalRequestRoute> {
+    match engine_id {
+        "codex" => codex_event_mapper::extract_persisted_approval_route(details),
+        _ => None,
+    }
+}
+
 pub fn normalize_claude_approval_decision(value: &str) -> Option<&'static str> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -318,6 +334,7 @@ pub trait Engine: Send + Sync {
         &self,
         approval_id: &str,
         response: serde_json::Value,
+        route: Option<ApprovalRequestRoute>,
     ) -> Result<(), anyhow::Error>;
 
     async fn interrupt(&self, engine_thread_id: &str) -> Result<(), anyhow::Error>;
@@ -571,10 +588,19 @@ impl EngineManager {
         thread: &ThreadDto,
         approval_id: &str,
         response: serde_json::Value,
+        route: Option<ApprovalRequestRoute>,
     ) -> anyhow::Result<()> {
         match thread.engine_id.as_str() {
-            "codex" => self.codex.respond_to_approval(approval_id, response).await,
-            "claude" => self.claude.respond_to_approval(approval_id, response).await,
+            "codex" => {
+                self.codex
+                    .respond_to_approval(approval_id, response, route)
+                    .await
+            }
+            "claude" => {
+                self.claude
+                    .respond_to_approval(approval_id, response, route)
+                    .await
+            }
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         }
     }
@@ -784,6 +810,29 @@ mod tests {
                     "question-1": { "answers": ["Use pnpm"] }
                 }
             })
+        );
+    }
+
+    #[test]
+    fn approval_response_route_for_codex_requires_hidden_transport_fields() {
+        assert_eq!(
+            approval_response_route_for_engine(
+                "codex",
+                &json!({
+                    "_serverMethod": "item/fileChange/requestApproval"
+                })
+            ),
+            None
+        );
+        assert_eq!(
+            approval_response_route_for_engine(
+                "claude",
+                &json!({
+                    "_serverMethod": "item/fileChange/requestApproval",
+                    "_rawRequestId": 42
+                })
+            ),
+            None
         );
     }
 }

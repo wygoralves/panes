@@ -16,6 +16,57 @@ export interface KeepAwakeState {
   supportsClosedDisplay?: boolean | null;
   closedDisplayActive?: boolean | null;
   message?: string | null;
+  displaySleepPrevented?: boolean;
+  screenSaverPrevented?: boolean;
+  onAcPower?: boolean | null;
+  batteryPercent?: number | null;
+  sessionRemainingSecs?: number | null;
+  pausedDueToBattery?: boolean;
+  closedDisplaySleepDisabled?: boolean;
+}
+
+export interface PowerSettings {
+  keepAwakeEnabled: boolean;
+  preventDisplaySleep: boolean;
+  preventScreenSaver: boolean;
+  acOnlyMode: boolean;
+  batteryThreshold: number | null;
+  sessionDurationSecs: number | null;
+  preventClosedDisplaySleep: boolean;
+}
+
+export interface PowerSettingsInput {
+  keepAwakeEnabled: boolean;
+  preventDisplaySleep: boolean;
+  preventScreenSaver: boolean;
+  acOnlyMode: boolean;
+  batteryThreshold: number | null;
+  sessionDurationSecs: number | null;
+  preventClosedDisplaySleep: boolean;
+}
+
+export interface HelperStatus {
+  status: "registered" | "requiresApproval" | "notRegistered" | "notFound" | "notSupported" | "unknown";
+  message?: string | null;
+}
+
+export type TerminalNotificationIntegrationId = "claude" | "codex";
+
+export interface TerminalNotificationIntegrationStatus {
+  configured: boolean;
+  configPath?: string | null;
+  configExists: boolean;
+  conflict: boolean;
+  detail?: string | null;
+}
+
+export interface TerminalNotificationSettings {
+  chatEnabled: boolean;
+  terminalEnabled: boolean;
+  terminalSetupComplete: boolean;
+  notificationSound: string | null;
+  claude: TerminalNotificationIntegrationStatus;
+  codex: TerminalNotificationIntegrationStatus;
 }
 
 export interface Repo {
@@ -251,6 +302,7 @@ export interface ApprovalBlock {
     | "decline"
     | "cancel"
     | "custom";
+  responseData?: Record<string, unknown>;
 }
 
 export type ApprovalDecision =
@@ -323,6 +375,8 @@ export type ApprovalResponse =
 export interface ThinkingBlock {
   type: "thinking";
   content: string;
+  startedAt?: number;
+  durationMs?: number;
 }
 
 export interface ErrorBlock {
@@ -737,14 +791,27 @@ export interface ReadFileResult {
   isBinary: boolean;
 }
 
-export type EditorRenderMode = "plain-editor" | "git-diff-editor";
+export type EditorRenderMode = "plain-editor" | "markdown-preview" | "git-diff-editor";
 
 export interface GitEditorContext extends GitFileCompare {}
 
+export interface EditorRevealLocation {
+  line: number;
+  column?: number | null;
+}
+
+export interface EditorRevealRequest extends EditorRevealLocation {
+  nonce: string;
+}
+
 export interface EditorTab {
   id: string;
-  repoPath: string;
+  workspaceId: string | null;
+  rootPath: string;
+  absolutePath: string;
   filePath: string;
+  gitRepoPath: string | null;
+  gitFilePath: string | null;
   fileName: string;
   content: string;
   savedContent: string;
@@ -753,6 +820,7 @@ export interface EditorTab {
   isBinary: boolean;
   renderMode: EditorRenderMode;
   gitContext: GitEditorContext | null;
+  pendingReveal: EditorRevealRequest | null;
   loadError?: string;
 }
 
@@ -762,6 +830,20 @@ export interface TerminalSession {
   shell: string;
   cwd: string;
   createdAt: string;
+}
+
+export interface TerminalNotification {
+  id: string;
+  workspaceId: string;
+  sessionId: string;
+  source: string;
+  title: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface TerminalNotificationClearedEvent {
+  sessionId: string | null;
 }
 
 export interface TerminalOutputEvent {

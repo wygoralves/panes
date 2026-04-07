@@ -2,16 +2,17 @@ use std::{
     collections::HashMap,
     env,
     ffi::OsString,
+    fs::{self, File},
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, UNIX_EPOCH},
 };
 
 use anyhow::Context;
 use async_trait::async_trait;
+use flate2::read::GzDecoder;
 use serde::Deserialize;
-#[cfg(target_os = "windows")]
-use tokio::time::{timeout, Duration as TokioDuration};
+use tokio::time::timeout;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, Command},
@@ -23,10 +24,13 @@ use uuid::Uuid;
 use crate::{process_utils, runtime_env};
 
 use super::{
-    normalize_approval_response_for_engine, ActionResult, ActionType, Engine, EngineEvent,
-    EngineThread, ModelInfo, OutputStream, ReasoningEffortOption, SandboxPolicy, ThreadScope,
-    TurnCompletionStatus, TurnInput,
+    normalize_approval_response_for_engine, ActionResult, ActionType, ApprovalRequestRoute, Engine,
+    EngineEvent, EngineThread, ModelInfo, OutputStream, ReasoningEffortOption, SandboxPolicy,
+    ThreadScope, TurnCompletionStatus, TurnInput,
 };
+
+const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+const ARCHIVED_CLAUDE_SDK_NODE_MODULES: &str = "claude-sdk-node_modules.tar.gz";
 
 // ── Sidecar event protocol ────────────────────────────────────────────
 
@@ -189,11 +193,15 @@ impl ClaudeTransport {
             .parent()
             .map(|path| path.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
+        let sdk_module_specifier = Self::prepare_bundled_sdk_module_specifier(&sidecar_dir).await?;
 
         let mut command = Command::new(&node);
         process_utils::configure_tokio_command(&mut command);
         if let Some(augmented_path) = executable_augmented_path(&node) {
             command.env("PATH", augmented_path);
+        }
+        if let Some(module_specifier) = sdk_module_specifier {
+            command.env("CLAUDE_AGENT_SDK_MODULE", module_specifier);
         }
         let mut child = command
             .arg(&sidecar_path)
@@ -276,6 +284,136 @@ impl ClaudeTransport {
             stdin: Mutex::new(stdin),
             event_tx,
         })
+    }
+
+    async fn prepare_bundled_sdk_module_specifier(
+        sidecar_dir: &Path,
+    ) -> anyhow::Result<Option<String>> {
+        if Self::bundled_sdk_module_path(sidecar_dir).exists() {
+            return Ok(None);
+        }
+
+        let archive_path = Self::archived_sdk_bundle_path(sidecar_dir);
+        if !archive_path.exists() {
+            return Ok(None);
+        }
+
+        let extracted_module = Self::extract_archived_sdk_module(archive_path).await?;
+        Ok(Some(extracted_module.to_string_lossy().into_owned()))
+    }
+
+    fn bundled_sdk_module_path(sidecar_dir: &Path) -> PathBuf {
+        sidecar_dir
+            .join("node_modules")
+            .join("@anthropic-ai")
+            .join("claude-agent-sdk")
+            .join("sdk.mjs")
+    }
+
+    fn archived_sdk_bundle_path(sidecar_dir: &Path) -> PathBuf {
+        sidecar_dir.join(ARCHIVED_CLAUDE_SDK_NODE_MODULES)
+    }
+
+    async fn extract_archived_sdk_module(archive_path: PathBuf) -> anyhow::Result<PathBuf> {
+        let cache_root = runtime_env::app_data_dir().join("claude-sidecar-sdk");
+        tokio::task::spawn_blocking(move || {
+            Self::extract_archived_sdk_module_blocking(&archive_path, &cache_root)
+        })
+        .await
+        .context("failed to join archived Claude SDK extraction task")?
+    }
+
+    fn extract_archived_sdk_module_blocking(
+        archive_path: &Path,
+        cache_root: &Path,
+    ) -> anyhow::Result<PathBuf> {
+        let metadata = fs::metadata(archive_path).with_context(|| {
+            format!(
+                "failed to read archived Claude SDK metadata from {}",
+                archive_path.display()
+            )
+        })?;
+        let modified_secs = metadata
+            .modified()
+            .ok()
+            .and_then(|timestamp| timestamp.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        let extraction_root = cache_root.join(format!("{}-{}", metadata.len(), modified_secs));
+        let extracted_module = Self::bundled_sdk_module_path(&extraction_root);
+        if extracted_module.exists() {
+            return Ok(extracted_module);
+        }
+
+        fs::create_dir_all(cache_root).with_context(|| {
+            format!(
+                "failed to create Claude SDK extraction cache at {}",
+                cache_root.display()
+            )
+        })?;
+
+        let staging_root = cache_root.join(format!(".extract-{}", Uuid::new_v4()));
+        fs::create_dir_all(&staging_root).with_context(|| {
+            format!(
+                "failed to create Claude SDK staging directory at {}",
+                staging_root.display()
+            )
+        })?;
+
+        let unpack_result = (|| -> anyhow::Result<()> {
+            let archive_file = File::open(archive_path).with_context(|| {
+                format!(
+                    "failed to open archived Claude SDK bundle at {}",
+                    archive_path.display()
+                )
+            })?;
+            let decoder = GzDecoder::new(archive_file);
+            let mut archive = tar::Archive::new(decoder);
+            archive.unpack(&staging_root).with_context(|| {
+                format!(
+                    "failed to unpack archived Claude SDK bundle into {}",
+                    staging_root.display()
+                )
+            })?;
+            Ok(())
+        })();
+
+        if let Err(error) = unpack_result {
+            let _ = fs::remove_dir_all(&staging_root);
+            return Err(error);
+        }
+
+        let staged_module = Self::bundled_sdk_module_path(&staging_root);
+        if !staged_module.exists() {
+            let _ = fs::remove_dir_all(&staging_root);
+            anyhow::bail!(
+                "archived Claude SDK bundle is missing {}",
+                staged_module.display()
+            );
+        }
+
+        match fs::rename(&staging_root, &extraction_root) {
+            Ok(()) => {}
+            Err(rename_error) if extraction_root.exists() => {
+                let _ = fs::remove_dir_all(&staging_root);
+                log::debug!(
+                    "claude sidecar: reusing archived SDK extraction at {} after concurrent extract: {}",
+                    extraction_root.display(),
+                    rename_error
+                );
+            }
+            Err(rename_error) => {
+                let _ = fs::remove_dir_all(&staging_root);
+                return Err(rename_error).with_context(|| {
+                    format!(
+                        "failed to finalize archived Claude SDK extraction at {}",
+                        extraction_root.display()
+                    )
+                });
+            }
+        }
+
+        Ok(extracted_module)
     }
 
     fn resolve_sidecar_path(resource_dir: Option<&PathBuf>) -> anyhow::Result<PathBuf> {
@@ -711,7 +849,7 @@ async fn detect_node_via_login_shell() -> Option<PathBuf> {
             ]);
             process_utils::configure_tokio_command(&mut cmd);
 
-            let Ok(Ok(output)) = timeout(TokioDuration::from_secs(10), cmd.output()).await else {
+            let Ok(Ok(output)) = timeout(Duration::from_secs(10), cmd.output()).await else {
                 continue;
             };
             if !output.status.success() {
@@ -734,15 +872,25 @@ async fn detect_node_via_login_shell() -> Option<PathBuf> {
     #[cfg(not(target_os = "windows"))]
     {
         for shell in runtime_env::login_probe_shells() {
-            let output = match Command::new(&shell)
-                .args(runtime_env::login_probe_shell_args(
-                    &shell,
-                    "command -v node",
-                ))
-                .output()
-                .await
+            let output = match timeout(
+                LOGIN_SHELL_PROBE_TIMEOUT,
+                Command::new(&shell)
+                    .args(runtime_env::login_probe_shell_args(
+                        &shell,
+                        "command -v node",
+                    ))
+                    .output(),
+            )
+            .await
             {
-                Ok(output) if output.status.success() => output,
+                Err(_) => {
+                    log::warn!(
+                        "timed out probing Node.js via login shell `{}`",
+                        shell.display()
+                    );
+                    continue;
+                }
+                Ok(Ok(output)) if output.status.success() => output,
                 _ => continue,
             };
 
@@ -1322,6 +1470,7 @@ impl Engine for ClaudeSidecarEngine {
         &self,
         approval_id: &str,
         response: serde_json::Value,
+        _route: Option<ApprovalRequestRoute>,
     ) -> Result<(), anyhow::Error> {
         let normalized_response = normalize_approval_response_for_engine("claude", response)
             .map_err(anyhow::Error::msg)?;

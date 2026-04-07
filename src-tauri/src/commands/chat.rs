@@ -13,9 +13,9 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     db,
     engines::{
-        normalize_approval_response_for_engine, validate_engine_sandbox_mode, EngineEvent,
-        OutputStream, SandboxPolicy, ThreadScope, TurnAttachment, TurnCompletionStatus, TurnInput,
-        TurnInputItem,
+        approval_response_route_for_engine, normalize_approval_response_for_engine,
+        validate_engine_sandbox_mode, ApprovalRequestRoute, EngineEvent, OutputStream,
+        SandboxPolicy, ThreadScope, TurnAttachment, TurnCompletionStatus, TurnInput, TurnInputItem,
     },
     models::{
         ActionOutputDto, EngineInfoDto, EngineModelDto, MessageDto, MessageStatusDto,
@@ -34,6 +34,7 @@ const ACTION_OUTPUT_MAX_CHUNKS: usize = 240;
 const MAX_ATTACHMENTS_PER_TURN: usize = 10;
 const MESSAGE_WINDOW_DEFAULT_LIMIT: usize = 120;
 const MESSAGE_WINDOW_MAX_LIMIT: usize = 400;
+const MAX_CHAT_NOTIFICATION_PREVIEW_CHARS: usize = 240;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -81,7 +82,13 @@ enum ContentBlock {
     },
 
     #[serde(rename = "thinking")]
-    Thinking { content: String },
+    Thinking {
+        content: String,
+        #[serde(rename = "startedAt", skip_serializing_if = "Option::is_none")]
+        started_at: Option<f64>,
+        #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<f64>,
+    },
 
     #[serde(rename = "notice")]
     Notice {
@@ -146,6 +153,18 @@ struct ThreadUpdatedEvent {
     workspace_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     thread: Option<ThreadDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatTurnFinishedEvent {
+    thread_id: String,
+    workspace_id: String,
+    engine_id: String,
+    thread_title: String,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -994,10 +1013,17 @@ async fn respond_to_approval_inner(
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
     let normalized_response =
         normalize_approval_response_for_engine(thread.engine_id.as_str(), response)?;
+    let approval_route =
+        load_approval_response_route(db.clone(), thread.engine_id.as_str(), &approval_id).await?;
 
     state
         .engines
-        .respond_to_approval(&thread, &approval_id, normalized_response.clone())
+        .respond_to_approval(
+            &thread,
+            &approval_id,
+            normalized_response.clone(),
+            approval_route,
+        )
         .await
         .map_err(err_to_string)?;
 
@@ -1023,6 +1049,24 @@ async fn respond_to_approval_inner(
     .await?;
 
     Ok(())
+}
+
+async fn load_approval_response_route(
+    db: crate::db::Database,
+    engine_id: &str,
+    approval_id: &str,
+) -> Result<Option<ApprovalRequestRoute>, String> {
+    if engine_id != "codex" {
+        return Ok(None);
+    }
+
+    let engine_id = engine_id.to_string();
+    let approval_id = approval_id.to_string();
+    run_db(db, move |db| {
+        let details = db::actions::find_approval_details(db, &approval_id)?;
+        Ok(details.and_then(|details| approval_response_route_for_engine(&engine_id, &details)))
+    })
+    .await
 }
 
 fn approval_response_decision_for_persistence(response: &Value) -> &'static str {
@@ -1693,17 +1737,23 @@ async fn run_turn(
         }
     }
 
-    if let Some(updated_thread) =
-        maybe_update_thread_title(&state, &thread, &engine_thread_id, &turn_input.message).await
-    {
-        let _ = app.emit(
-            "thread-updated",
-            ThreadUpdatedEvent {
-                thread_id: thread.id.clone(),
-                workspace_id: thread.workspace_id.clone(),
-                thread: Some(updated_thread),
-            },
-        );
+    let _ =
+        maybe_update_thread_title(&state, &thread, &engine_thread_id, &turn_input.message).await;
+
+    let latest_thread = run_db(state.db.clone(), {
+        let thread_id = thread.id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await
+    .unwrap_or_else(|error| {
+        log::warn!("failed to load thread before final thread-updated emit: {error}");
+        None
+    });
+
+    let (thread_updated_event, final_thread) = build_final_thread_event(latest_thread, &thread);
+    let _ = app.emit("thread-updated", thread_updated_event);
+    if let Some(final_thread) = final_thread.as_ref() {
+        emit_chat_turn_finished(&app, final_thread, &message_status, &blocks);
     }
 
     state.turns.finish(&thread.id).await;
@@ -2240,22 +2290,19 @@ async fn run_codex_review_turn(
 
     let latest_review_thread = run_db(state.db.clone(), {
         let review_thread_id = review_thread.id.clone();
-        move |db| {
-            db::threads::get_thread(db, &review_thread_id)?.ok_or_else(|| {
-                anyhow::anyhow!("review thread not found before final thread-updated emit")
-            })
-        }
+        move |db| db::threads::get_thread(db, &review_thread_id)
     })
     .await
-    .ok();
-    let _ = app.emit(
-        "thread-updated",
-        ThreadUpdatedEvent {
-            thread_id: review_thread.id.clone(),
-            workspace_id: review_thread.workspace_id.clone(),
-            thread: latest_review_thread,
-        },
-    );
+    .unwrap_or_else(|error| {
+        log::warn!("failed to load review thread before final thread-updated emit: {error}");
+        None
+    });
+    let (thread_updated_event, final_review_thread) =
+        build_final_thread_event(latest_review_thread, &review_thread);
+    let _ = app.emit("thread-updated", thread_updated_event);
+    if let Some(final_review_thread) = final_review_thread.as_ref() {
+        emit_chat_turn_finished(&app, final_review_thread, &message_status, &blocks);
+    }
 
     state.turns.finish(&source_thread.id).await;
     state.turns.finish(&review_thread.id).await;
@@ -2763,6 +2810,100 @@ fn truncate_title(value: String, max_chars: usize) -> String {
     output
 }
 
+fn normalize_chat_notification_preview(raw: &str) -> Option<String> {
+    let compact = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let trimmed = compact.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(truncate_title(
+        trimmed.to_string(),
+        MAX_CHAT_NOTIFICATION_PREVIEW_CHARS,
+    ))
+}
+
+fn chat_notification_preview(blocks: &[ContentBlock]) -> Option<String> {
+    for block in blocks {
+        match block {
+            ContentBlock::Text {
+                is_steer: Some(true),
+                ..
+            } => {}
+            ContentBlock::Text { content, .. }
+            | ContentBlock::Thinking { content, .. }
+            | ContentBlock::Error { message: content } => {
+                if let Some(preview) = normalize_chat_notification_preview(content) {
+                    return Some(preview);
+                }
+            }
+            ContentBlock::Notice { message, title, .. } => {
+                if let Some(preview) = normalize_chat_notification_preview(message) {
+                    return Some(preview);
+                }
+                if let Some(preview) = normalize_chat_notification_preview(title) {
+                    return Some(preview);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn emit_chat_turn_finished(
+    app: &tauri::AppHandle,
+    thread: &ThreadDto,
+    status: &MessageStatusDto,
+    blocks: &[ContentBlock],
+) {
+    let event = ChatTurnFinishedEvent {
+        thread_id: thread.id.clone(),
+        workspace_id: thread.workspace_id.clone(),
+        engine_id: thread.engine_id.clone(),
+        thread_title: thread.title.clone(),
+        status: match status {
+            MessageStatusDto::Completed => "completed",
+            MessageStatusDto::Interrupted => "interrupted",
+            MessageStatusDto::Error => "error",
+            MessageStatusDto::Streaming => "completed",
+        }
+        .to_string(),
+        preview: chat_notification_preview(blocks),
+    };
+    let _ = app.emit("chat-turn-finished", event);
+}
+
+fn build_final_thread_event(
+    latest_thread: Option<ThreadDto>,
+    fallback_thread: &ThreadDto,
+) -> (ThreadUpdatedEvent, Option<ThreadDto>) {
+    match latest_thread {
+        Some(latest_thread) => (
+            ThreadUpdatedEvent {
+                thread_id: latest_thread.id.clone(),
+                workspace_id: latest_thread.workspace_id.clone(),
+                thread: Some(latest_thread.clone()),
+            },
+            Some(latest_thread),
+        ),
+        None => (
+            ThreadUpdatedEvent {
+                thread_id: fallback_thread.id.clone(),
+                workspace_id: fallback_thread.workspace_id.clone(),
+                thread: None,
+            },
+            None,
+        ),
+    }
+}
+
 fn apply_event_to_blocks(
     blocks: &mut Vec<ContentBlock>,
     action_index: &mut HashMap<String, usize>,
@@ -3012,13 +3153,18 @@ fn append_thinking_delta(blocks: &mut Vec<ContentBlock>, content: &str) -> bool 
         return false;
     }
 
-    if let Some(ContentBlock::Thinking { content: current }) = blocks.last_mut() {
+    if let Some(ContentBlock::Thinking {
+        content: current, ..
+    }) = blocks.last_mut()
+    {
         current.push_str(content);
         return true;
     }
 
     blocks.push(ContentBlock::Thinking {
         content: content.to_string(),
+        started_at: None,
+        duration_ms: None,
     });
     true
 }
@@ -3603,6 +3749,7 @@ mod tests {
         power::KeepAwakeManager,
         state::{AppState, TurnManager},
         terminal::TerminalManager,
+        terminal_notifications::TerminalNotificationManager,
     };
     use rusqlite::params;
     use uuid::Uuid;
@@ -3619,6 +3766,7 @@ mod tests {
             engines: Arc::new(EngineManager::new()),
             git_watchers: Arc::new(GitWatcherManager::default()),
             terminals: Arc::new(TerminalManager::default()),
+            notifications: Arc::new(TerminalNotificationManager::default()),
             keep_awake: Arc::new(KeepAwakeManager::new()),
             turns: Arc::new(TurnManager::default()),
             file_tree_cache: Arc::new(FileTreeCache::new()),
@@ -3646,7 +3794,12 @@ mod tests {
         .expect("failed to create thread")
     }
 
-    fn insert_pending_approval(state: &AppState, thread: &ThreadDto, approval_id: &str) -> String {
+    fn insert_pending_approval_with_details(
+        state: &AppState,
+        thread: &ThreadDto,
+        approval_id: &str,
+        details: Value,
+    ) -> String {
         let assistant_message = db::messages::insert_assistant_placeholder(
             &state.db,
             &thread.id,
@@ -3662,7 +3815,7 @@ mod tests {
             &assistant_message.id,
             &crate::engines::events::ActionType::Command,
             "Run command",
-            &serde_json::json!({ "command": "touch file.txt" }),
+            &details,
         )
         .expect("failed to insert approval");
         db::threads::update_thread_status(&state.db, &thread.id, ThreadStatusDto::AwaitingApproval)
@@ -3674,7 +3827,7 @@ mod tests {
                 "approvalId": approval_id,
                 "actionType": "command",
                 "summary": "Run command",
-                "details": { "command": "touch file.txt" },
+                "details": details,
                 "status": "pending"
             }
         ]);
@@ -3685,6 +3838,50 @@ mod tests {
         )
         .expect("failed to persist approval block");
         assistant_message.id
+    }
+
+    fn insert_pending_approval(state: &AppState, thread: &ThreadDto, approval_id: &str) -> String {
+        insert_pending_approval_with_details(
+            state,
+            thread,
+            approval_id,
+            serde_json::json!({ "command": "touch file.txt" }),
+        )
+    }
+
+    #[test]
+    fn build_final_thread_event_uses_latest_thread_when_present() {
+        let state = test_app_state();
+        let fallback_thread = test_thread(&state, "codex", "gpt-5.5-codex");
+        let mut latest_thread = fallback_thread.clone();
+        latest_thread.title = "Renamed".to_string();
+
+        let (event, final_thread) =
+            build_final_thread_event(Some(latest_thread.clone()), &fallback_thread);
+
+        assert_eq!(event.thread_id, latest_thread.id);
+        assert_eq!(event.workspace_id, latest_thread.workspace_id);
+        assert_eq!(
+            event.thread.as_ref().map(|thread| thread.title.as_str()),
+            Some("Renamed")
+        );
+        assert_eq!(
+            final_thread.as_ref().map(|thread| thread.title.as_str()),
+            Some("Renamed")
+        );
+    }
+
+    #[test]
+    fn build_final_thread_event_emits_removal_when_thread_is_missing() {
+        let state = test_app_state();
+        let fallback_thread = test_thread(&state, "codex", "gpt-5.5-codex");
+
+        let (event, final_thread) = build_final_thread_event(None, &fallback_thread);
+
+        assert_eq!(event.thread_id, fallback_thread.id);
+        assert_eq!(event.workspace_id, fallback_thread.workspace_id);
+        assert!(event.thread.is_none());
+        assert!(final_thread.is_none());
     }
 
     #[test]
@@ -3739,6 +3936,33 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn chat_notification_preview_ignores_steer_blocks_and_uses_first_text_block() {
+        let preview = chat_notification_preview(&[
+            ContentBlock::Text {
+                content: "hidden steer".to_string(),
+                plan_mode: None,
+                is_steer: Some(true),
+            },
+            ContentBlock::Text {
+                content: "  First line\n\nSecond line  ".to_string(),
+                plan_mode: None,
+                is_steer: None,
+            },
+        ]);
+
+        assert_eq!(preview.as_deref(), Some("First line Second line"));
+    }
+
+    #[test]
+    fn chat_notification_preview_falls_back_to_error_blocks() {
+        let preview = chat_notification_preview(&[ContentBlock::Error {
+            message: "Command failed".to_string(),
+        }]);
+
+        assert_eq!(preview.as_deref(), Some("Command failed"));
     }
 
     #[test]
@@ -4206,6 +4430,105 @@ mod tests {
             .and_then(|items| items.first())
             .and_then(|item| item.get("decision"))
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn missing_live_codex_approval_request_keeps_approval_pending() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "codex", "gpt-5.5-codex");
+        let approval_id = "approval-reset";
+        let message_id = insert_pending_approval_with_details(
+            &state,
+            &thread,
+            approval_id,
+            serde_json::json!({
+                "command": "touch file.txt",
+                "_serverMethod": "item/fileChange/requestApproval",
+                "_rawRequestId": 42
+            }),
+        );
+
+        let error = respond_to_approval_inner(
+            &state,
+            thread.id.clone(),
+            approval_id.to_string(),
+            serde_json::json!({ "decision": "accept" }),
+        )
+        .await
+        .expect_err("expected codex approval without live request to fail");
+
+        assert!(error.contains("runtime connection was reset"));
+
+        let conn = state.db.connect().expect("failed to open db connection");
+        let approval_row = conn
+            .query_row(
+                "SELECT status, decision FROM approvals WHERE id = ?1",
+                params![approval_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .expect("failed to load approval row");
+        assert_eq!(approval_row.0, "pending");
+        assert_eq!(approval_row.1, None);
+
+        let thread_status = conn
+            .query_row(
+                "SELECT status FROM threads WHERE id = ?1",
+                params![thread.id],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("failed to load thread status");
+        assert_eq!(thread_status, "awaiting_approval");
+
+        let raw_blocks = conn
+            .query_row(
+                "SELECT blocks_json FROM messages WHERE id = ?1",
+                params![message_id],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("failed to load message blocks");
+        let blocks: Value =
+            serde_json::from_str(&raw_blocks).expect("message blocks should deserialize");
+        assert_eq!(
+            blocks
+                .as_array()
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("status"))
+                .and_then(Value::as_str),
+            Some("pending")
+        );
+        assert!(blocks
+            .as_array()
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("decision"))
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn load_codex_approval_response_route_reads_persisted_transport_metadata() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "codex", "gpt-5.5-codex");
+        insert_pending_approval_with_details(
+            &state,
+            &thread,
+            "approval-route",
+            serde_json::json!({
+                "command": "touch file.txt",
+                "_serverMethod": "item/fileChange/requestApproval",
+                "_rawRequestId": 42
+            }),
+        );
+
+        let route = load_approval_response_route(state.db.clone(), "codex", "approval-route")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            route,
+            Some(ApprovalRequestRoute {
+                server_method: "item/fileChange/requestApproval".to_string(),
+                raw_request_id: serde_json::json!(42),
+            })
+        );
     }
 
     #[test]

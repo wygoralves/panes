@@ -39,7 +39,7 @@ describe("resolveUpdaterAssetPairs", () => {
     });
   });
 
-  it("keeps Linux updater mapping unchanged", () => {
+  it("maps AppImage to bundle-specific and compatibility Linux targets", () => {
     const resolved = resolveUpdaterAssetPairs([
       {
         name: "Panes.AppImage",
@@ -56,9 +56,37 @@ describe("resolveUpdaterAssetPairs", () => {
         "Panes.AppImage.sig": "linux-signature",
       }),
     ).toEqual({
+      "linux-x86_64-appimage": {
+        signature: "linux-signature",
+        url: "https://example.com/Panes.AppImage",
+      },
       "linux-x86_64": {
         signature: "linux-signature",
         url: "https://example.com/Panes.AppImage",
+      },
+    });
+  });
+
+  it("maps Debian updater bundles to linux-x86_64-deb", () => {
+    const resolved = resolveUpdaterAssetPairs([
+      {
+        name: "Panes_0.42.0_amd64.deb",
+        browser_download_url: "https://example.com/Panes_0.42.0_amd64.deb",
+      },
+      {
+        name: "Panes_0.42.0_amd64.deb.sig",
+        browser_download_url: "https://example.com/Panes_0.42.0_amd64.deb.sig",
+      },
+    ]);
+
+    expect(
+      buildStaticReleasePlatforms(resolved, {
+        "Panes_0.42.0_amd64.deb.sig": "deb-signature",
+      }),
+    ).toEqual({
+      "linux-x86_64-deb": {
+        signature: "deb-signature",
+        url: "https://example.com/Panes_0.42.0_amd64.deb",
       },
     });
   });
@@ -82,6 +110,27 @@ describe("resolveUpdaterAssetPairs", () => {
         },
       ]),
     ).toThrow("Expected exactly one macOS updater bundle signature asset, found none.");
+  });
+
+  it("fails when a Debian updater signature is missing", () => {
+    expect(() =>
+      resolveUpdaterAssetPairs([
+        {
+          name: "Panes_0.42.0_amd64.deb",
+          browser_download_url: "https://example.com/Panes_0.42.0_amd64.deb",
+        },
+      ]),
+    ).toThrow("Expected exactly one Linux Debian updater bundle signature asset, found none.");
+  });
+
+  it("fails when multiple Debian updater bundles are present", () => {
+    expect(() =>
+      resolveUpdaterAssetPairs([
+        { name: "Panes_0.42.0_amd64.deb" },
+        { name: "Panes_0.42.0_amd64_copy.deb" },
+        { name: "Panes_0.42.0_amd64.deb.sig" },
+      ]),
+    ).toThrow("Expected exactly one Linux Debian updater bundle asset");
   });
 
   it("maps one Windows updater asset to windows-x86_64", () => {
@@ -180,6 +229,80 @@ describe("generate-update-manifest", () => {
     );
   });
 
+  it("builds bundle-aware Linux updater targets when AppImage and Debian assets are present", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.endsWith("/releases/tags/v0.42.0")) {
+        return {
+          ok: true,
+          json: async () => ({
+            published_at: "2026-03-12T00:00:00.000Z",
+            body: "Linux release notes",
+            assets: [
+              {
+                name: "Panes.AppImage",
+                browser_download_url: "https://example.com/Panes.AppImage",
+              },
+              {
+                name: "Panes.AppImage.sig",
+                browser_download_url: "https://example.com/Panes.AppImage.sig",
+              },
+              {
+                name: "Panes_0.42.0_amd64.deb",
+                browser_download_url: "https://example.com/Panes_0.42.0_amd64.deb",
+              },
+              {
+                name: "Panes_0.42.0_amd64.deb.sig",
+                browser_download_url: "https://example.com/Panes_0.42.0_amd64.deb.sig",
+              },
+            ],
+          }),
+        };
+      }
+
+      if (url === "https://example.com/Panes.AppImage.sig") {
+        return {
+          ok: true,
+          text: async () => "linux-signature\n",
+        };
+      }
+
+      if (url === "https://example.com/Panes_0.42.0_amd64.deb.sig") {
+        return {
+          ok: true,
+          text: async () => "deb-signature\n",
+        };
+      }
+
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    await expect(
+      generateUpdateManifest({
+        tag: "v0.42.0",
+        repo: "owner/repo",
+        fetchImpl,
+      }),
+    ).resolves.toEqual({
+      version: "0.42.0",
+      notes: "Linux release notes",
+      pub_date: "2026-03-12T00:00:00.000Z",
+      platforms: {
+        "linux-x86_64-appimage": {
+          signature: "linux-signature",
+          url: "https://example.com/Panes.AppImage",
+        },
+        "linux-x86_64": {
+          signature: "linux-signature",
+          url: "https://example.com/Panes.AppImage",
+        },
+        "linux-x86_64-deb": {
+          signature: "deb-signature",
+          url: "https://example.com/Panes_0.42.0_amd64.deb",
+        },
+      },
+    });
+  });
+
   it("writes latest.json using RELEASE_TAG when no CLI tag is provided", async () => {
     const writes: Array<{ path: string; contents: string }> = [];
     const fetchImpl = vi.fn(async (url: string) => {
@@ -226,6 +349,10 @@ describe("generate-update-manifest", () => {
     });
 
     expect(manifest.platforms).toEqual({
+      "linux-x86_64-appimage": {
+        signature: "linux-signature",
+        url: "https://example.com/Panes.AppImage",
+      },
       "linux-x86_64": {
         signature: "linux-signature",
         url: "https://example.com/Panes.AppImage",

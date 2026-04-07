@@ -8,6 +8,7 @@ import type {
   SplitDirection,
   SplitNode,
   TerminalGroup,
+  TerminalNotification,
   TerminalSession,
   TerminalSessionRuntimeMeta,
   WorktreeSessionInfo,
@@ -275,6 +276,140 @@ function isTerminalGroup(value: TerminalGroup | null): value is TerminalGroup {
   return value !== null;
 }
 
+function pruneNotificationsByLiveSessions(
+  notificationsBySessionId: Record<string, TerminalNotification>,
+  liveIds: Set<string>,
+): Record<string, TerminalNotification> {
+  const nextEntries = Object.entries(notificationsBySessionId).filter(([sessionId]) =>
+    liveIds.has(sessionId),
+  );
+  if (nextEntries.length === Object.keys(notificationsBySessionId).length) {
+    return notificationsBySessionId;
+  }
+  return Object.fromEntries(nextEntries);
+}
+
+function clearNotificationRecord(
+  notificationsBySessionId: Record<string, TerminalNotification>,
+  sessionId?: string | null,
+): Record<string, TerminalNotification> {
+  if (!sessionId) {
+    if (Object.keys(notificationsBySessionId).length === 0) {
+      return notificationsBySessionId;
+    }
+    return {};
+  }
+  if (!(sessionId in notificationsBySessionId)) {
+    return notificationsBySessionId;
+  }
+  const { [sessionId]: _removed, ...rest } = notificationsBySessionId;
+  return rest;
+}
+
+function indexNotificationsBySession(
+  notifications: TerminalNotification[],
+  liveIds: Set<string>,
+): Record<string, TerminalNotification> {
+  const indexed: Record<string, TerminalNotification> = {};
+  for (const notification of notifications) {
+    if (!liveIds.has(notification.sessionId)) {
+      continue;
+    }
+    const current = indexed[notification.sessionId];
+    if (!current || notification.createdAt > current.createdAt) {
+      indexed[notification.sessionId] = notification;
+    }
+  }
+  return indexed;
+}
+
+function withNotificationHydrationTouch(
+  workspace: WorkspaceTerminalState,
+  sessionId?: string | null,
+): Pick<
+  WorkspaceTerminalState,
+  "notificationHydrating" | "notificationTouchedAll" | "notificationTouchedSessionIds"
+> {
+  if (!workspace.notificationHydrating) {
+    return {
+      notificationHydrating: false,
+      notificationTouchedAll: false,
+      notificationTouchedSessionIds: {},
+    };
+  }
+  if (!sessionId) {
+    return {
+      notificationHydrating: true,
+      notificationTouchedAll: true,
+      notificationTouchedSessionIds: workspace.notificationTouchedSessionIds ?? {},
+    };
+  }
+  return {
+    notificationHydrating: true,
+    notificationTouchedAll: workspace.notificationTouchedAll ?? false,
+    notificationTouchedSessionIds: {
+      ...(workspace.notificationTouchedSessionIds ?? {}),
+      [sessionId]: true,
+    },
+  };
+}
+
+function hasNotificationHydrationTouchChange(
+  workspace: WorkspaceTerminalState,
+  nextTouch: Pick<
+    WorkspaceTerminalState,
+    "notificationHydrating" | "notificationTouchedAll" | "notificationTouchedSessionIds"
+  >,
+): boolean {
+  if ((workspace.notificationHydrating ?? false) !== nextTouch.notificationHydrating) {
+    return true;
+  }
+  if ((workspace.notificationTouchedAll ?? false) !== nextTouch.notificationTouchedAll) {
+    return true;
+  }
+
+  const currentTouchedSessionIds = workspace.notificationTouchedSessionIds ?? {};
+  const nextTouchedSessionIds = nextTouch.notificationTouchedSessionIds ?? {};
+  const currentKeys = Object.keys(currentTouchedSessionIds);
+  const nextKeys = Object.keys(nextTouchedSessionIds);
+  if (currentKeys.length !== nextKeys.length) {
+    return true;
+  }
+
+  return nextKeys.some((sessionId) => !currentTouchedSessionIds[sessionId]);
+}
+
+function resolveHydratedNotifications(
+  workspace: WorkspaceTerminalState,
+  hydrated: Record<string, TerminalNotification>,
+  liveIds: Set<string>,
+): Record<string, TerminalNotification> {
+  if (workspace.notificationTouchedAll) {
+    return pruneNotificationsByLiveSessions(workspace.notificationsBySessionId, liveIds);
+  }
+
+  const touchedSessionIds = Object.keys(workspace.notificationTouchedSessionIds ?? {});
+  if (touchedSessionIds.length === 0) {
+    return hydrated;
+  }
+
+  const merged = { ...hydrated };
+  for (const sessionId of touchedSessionIds) {
+    if (!liveIds.has(sessionId)) {
+      delete merged[sessionId];
+      continue;
+    }
+    const current = workspace.notificationsBySessionId[sessionId];
+    if (current) {
+      merged[sessionId] = current;
+    } else {
+      delete merged[sessionId];
+    }
+  }
+
+  return merged;
+}
+
 // ── State shape ─────────────────────────────────────────────────────
 
 interface WorkspaceTerminalState {
@@ -283,6 +418,11 @@ interface WorkspaceTerminalState {
   preEditorLayoutMode: LayoutMode;
   panelSize: number;
   sessions: TerminalSession[];
+  notificationsBySessionId: Record<string, TerminalNotification>;
+  notificationHydrating?: boolean;
+  notificationHydrationRequestId?: number;
+  notificationTouchedAll?: boolean;
+  notificationTouchedSessionIds?: Record<string, true>;
   activeSessionId: string | null;
   groups: TerminalGroup[];
   activeGroupId: string | null;
@@ -325,6 +465,15 @@ interface TerminalState {
   setActiveSession: (workspaceId: string, sessionId: string) => void;
   setPanelSize: (workspaceId: string, size: number) => void;
   syncSessions: (workspaceId: string) => Promise<void>;
+  hydrateNotifications: (workspaceId: string) => Promise<void>;
+  applyNotification: (workspaceId: string, notification: TerminalNotification) => void;
+  clearNotificationLocal: (workspaceId: string, sessionId?: string | null) => void;
+  clearNotification: (workspaceId: string, sessionId?: string | null) => Promise<void>;
+  syncNotificationFocus: (
+    workspaceId: string | null,
+    sessionId: string | null,
+    windowFocused: boolean,
+  ) => Promise<void>;
   handleSessionExit: (workspaceId: string, sessionId: string) => void;
   splitSession: (workspaceId: string, sessionId: string, direction: SplitDirection, cols?: number, rows?: number) => Promise<void>;
   setFocusedSession: (workspaceId: string, sessionId: string) => void;
@@ -358,6 +507,11 @@ function defaultWorkspaceState(): WorkspaceTerminalState {
     preEditorLayoutMode: "chat",
     panelSize: DEFAULT_PANEL_SIZE,
     sessions: [],
+    notificationsBySessionId: {},
+    notificationHydrating: false,
+    notificationHydrationRequestId: 0,
+    notificationTouchedAll: false,
+    notificationTouchedSessionIds: {},
     activeSessionId: null,
     groups: [],
     activeGroupId: null,
@@ -697,6 +851,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           isOpen: false,
           layoutMode: "chat",
           sessions: [],
+          notificationsBySessionId: {},
           activeSessionId: null,
           groups: [],
           activeGroupId: null,
@@ -1336,6 +1491,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           : current.layoutMode;
 
         const liveIds = new Set(sessions.map((s) => s.id));
+        const notificationsBySessionId = pruneNotificationsByLiveSessions(
+          current.notificationsBySessionId,
+          liveIds,
+        );
         let groups: TerminalGroup[];
         if (current.groups.length === 0 && hasSessions) {
           groups = [];
@@ -1358,6 +1517,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         return {
           workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
             sessions,
+            notificationsBySessionId,
             activeSessionId: focusedId,
             groups,
             activeGroupId,
@@ -1379,10 +1539,125 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
   },
 
+  hydrateNotifications: async (workspaceId) => {
+    const requestId =
+      (get().workspaces[workspaceId]?.notificationHydrationRequestId ?? 0) + 1;
+    set((state) => ({
+      workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+        notificationHydrating: true,
+        notificationHydrationRequestId: requestId,
+        notificationTouchedAll: false,
+        notificationTouchedSessionIds: {},
+      }),
+    }));
+    try {
+      const notifications = await ipc.terminalListNotifications(workspaceId);
+      set((state) => {
+        const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
+        if (current.notificationHydrationRequestId !== requestId) {
+          return state;
+        }
+        const liveIds = new Set(current.sessions.map((session) => session.id));
+        const hydrated = indexNotificationsBySession(notifications, liveIds);
+        return {
+          workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+            notificationsBySessionId: resolveHydratedNotifications(current, hydrated, liveIds),
+            notificationHydrating: false,
+            notificationHydrationRequestId: requestId,
+            notificationTouchedAll: false,
+            notificationTouchedSessionIds: {},
+          }),
+        };
+      });
+    } catch (error) {
+      console.warn(`Failed to hydrate terminal notifications for ${workspaceId}:`, error);
+      set((state) => ({
+        workspaces:
+          (state.workspaces[workspaceId]?.notificationHydrationRequestId ?? 0) !== requestId
+            ? state.workspaces
+            : mergeWorkspaceState(state.workspaces, workspaceId, {
+                notificationHydrating: false,
+                notificationHydrationRequestId: requestId,
+                notificationTouchedAll: false,
+                notificationTouchedSessionIds: {},
+              }),
+      }));
+    }
+  },
+
+  applyNotification: (workspaceId, notification) => {
+    set((state) => {
+      const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
+      if (!current.sessions.some((session) => session.id === notification.sessionId)) {
+        return state;
+      }
+      return {
+        workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+          notificationsBySessionId: {
+            ...current.notificationsBySessionId,
+            [notification.sessionId]: notification,
+          },
+          ...withNotificationHydrationTouch(current, notification.sessionId),
+        }),
+      };
+    });
+  },
+
+  clearNotificationLocal: (workspaceId, sessionId) => {
+    set((state) => {
+      const current = state.workspaces[workspaceId] ?? defaultWorkspaceState();
+      const notificationsBySessionId = clearNotificationRecord(
+        current.notificationsBySessionId,
+        sessionId ?? null,
+      );
+      const hydrationTouch = withNotificationHydrationTouch(current, sessionId ?? null);
+      if (
+        notificationsBySessionId === current.notificationsBySessionId
+        && !hasNotificationHydrationTouchChange(current, hydrationTouch)
+      ) {
+        return state;
+      }
+      return {
+        workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
+          notificationsBySessionId,
+          ...hydrationTouch,
+        }),
+      };
+    });
+  },
+
+  clearNotification: async (workspaceId, sessionId) => {
+    get().clearNotificationLocal(workspaceId, sessionId ?? null);
+    try {
+      await ipc.terminalClearNotification(workspaceId, sessionId ?? null);
+    } catch (error) {
+      console.warn(`Failed to clear terminal notification for ${workspaceId}:`, error);
+      await get().hydrateNotifications(workspaceId);
+    }
+  },
+
+  syncNotificationFocus: async (workspaceId, sessionId, windowFocused) => {
+    if (windowFocused && workspaceId && sessionId) {
+      get().clearNotificationLocal(workspaceId, sessionId);
+    }
+    try {
+      await ipc.terminalSetNotificationFocus(workspaceId, sessionId, windowFocused);
+    } catch (error) {
+      console.warn("Failed to sync terminal notification focus:", error);
+      if (workspaceId) {
+        await get().hydrateNotifications(workspaceId);
+      }
+    }
+  },
+
   handleSessionExit: (workspaceId, sessionId) => {
     set((state) => {
       const workspace = state.workspaces[workspaceId] ?? defaultWorkspaceState();
       const sessions = workspace.sessions.filter((session) => session.id !== sessionId);
+      const notificationsBySessionId = clearNotificationRecord(
+        workspace.notificationsBySessionId,
+        sessionId,
+      );
 
       const groups = workspace.groups
         .map((group) => pruneSessionFromGroup(group, sessionId))
@@ -1418,6 +1693,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         workspaces: mergeWorkspaceState(state.workspaces, workspaceId, {
           isOpen: noSessionsLeft ? false : workspace.isOpen,
           sessions,
+          notificationsBySessionId,
+          ...withNotificationHydrationTouch(workspace, sessionId),
           activeSessionId: focusedId,
           groups,
           activeGroupId,

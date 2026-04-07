@@ -481,6 +481,8 @@ export function WorkspaceStartupPresetModal({
 }: WorkspaceStartupPresetModalProps) {
   const { t } = useTranslation("workspace");
   const harnesses = useHarnessStore((state) => state.harnesses);
+  const harnessesLoadedOnce = useHarnessStore((state) => state.loadedOnce);
+  const ensureHarnessesScanned = useHarnessStore((state) => state.ensureScanned);
   const isActiveWorkspace = useWorkspaceStore((state) => state.activeWorkspaceId === workspace.id);
   const runtimeWorkspace = useTerminalStore((state) => state.workspaces[workspace.id]);
 
@@ -511,6 +513,14 @@ export function WorkspaceStartupPresetModal({
     (group) => (group.sessionMeta ? Object.values(group.sessionMeta) : []).some((meta) => meta.worktree),
   );
   const controlsDisabled = loading || saving;
+
+  useEffect(() => {
+    if (!open || harnessesLoadedOnce) {
+      return;
+    }
+    void ensureHarnessesScanned();
+  }, [ensureHarnessesScanned, harnessesLoadedOnce, open]);
+
   const viewOptions = useMemo(
     () =>
       VIEW_OPTIONS.map((value) => ({

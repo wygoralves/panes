@@ -733,6 +733,7 @@ export function OnboardingWizard() {
   const loadedOnce = useEngineStore((s) => s.loadedOnce);
   const loadingEngines = useEngineStore((s) => s.loading);
   const loadEngines = useEngineStore((s) => s.load);
+  const mergeEngineHealth = useEngineStore((s) => s.mergeHealth);
 
   const setActiveView = useUiStore((s) => s.setActiveView);
 
@@ -829,6 +830,7 @@ export function OnboardingWizard() {
       });
       if (requestId !== readinessRequestRef.current) return;
       setReadiness({ loading: false, dependencyReport, engineHealth: nextHealth, error: null });
+      mergeEngineHealth(Object.values(nextHealth));
       void loadEngines();
     } catch (error) {
       if (requestId !== readinessRequestRef.current) return;
@@ -842,7 +844,7 @@ export function OnboardingWizard() {
   useEffect(() => {
     if (!open || step !== "chatReadiness" || selectedChatEngines.length === 0) return;
     void refreshReadiness();
-  }, [open, selectedChatEngines, step]);
+  }, [mergeEngineHealth, open, selectedChatEngines, step]);
 
   /* ─── Handlers ─── */
 

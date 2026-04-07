@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -6,6 +6,7 @@ import {
   ArrowDown,
   ArrowUp,
   X,
+  Pin,
   Undo2,
   FileDiff,
   FolderTree,
@@ -20,10 +21,13 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore, type GitPanelView } from "../../stores/gitStore";
 import { ipc, listenGitRepoChanged } from "../../lib/ipc";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
-import { isLinuxDesktop } from "../../lib/windowActions";
 import { toast } from "../../stores/toastStore";
 import { Dropdown } from "../shared/Dropdown";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
+import {
+  closeGitFlyoutIfFocusLeft,
+  GitFlyoutContext,
+} from "../../lib/gitFlyoutRegion";
 import type { GitInitRepoStatus } from "../../types";
 import { GitChangesView } from "./GitChangesView";
 import { GitBranchesView } from "./GitBranchesView";
@@ -35,7 +39,12 @@ import { GitWorktreesView } from "./GitWorktreesView";
 const GIT_WATCHER_REFRESH_DEBOUNCE_MS_CHANGES = 550;
 const GIT_WATCHER_REFRESH_DEBOUNCE_MS_BACKGROUND = 1100;
 
-export function GitPanel() {
+interface Props {
+  mode?: "docked" | "flyout";
+  onPin?: () => void;
+}
+
+export function GitPanel({ mode = "docked", onPin }: Props) {
   const { t } = useTranslation("git");
   const {
     workspaces,
@@ -82,7 +91,7 @@ export function GitPanel() {
   const watcherRefreshTimerRef = useRef<number | null>(null);
   const watcherRefreshInFlightRef = useRef(false);
   const watcherRefreshQueuedRef = useRef(false);
-  const linuxDesktop = isLinuxDesktop();
+  const gitFlyoutContext = useContext(GitFlyoutContext);
   const moreMenuWidth = 220;
   const viewOptions = useMemo(
     () => [
@@ -494,6 +503,18 @@ export function GitPanel() {
           </span>
         )}
 
+        {mode === "flyout" && onPin ? (
+          <button
+            type="button"
+            className="git-toolbar-btn shell-pin-btn no-drag"
+            onClick={onPin}
+            title={t("panel.pin")}
+            aria-label={t("panel.pin")}
+          >
+            <Pin size={13} />
+          </button>
+        ) : null}
+
         <button
           type="button"
           className="git-toolbar-btn no-drag"
@@ -573,7 +594,9 @@ export function GitPanel() {
         </div>
       )}
 
-      {effectiveRepo ? (
+      {(activeView === "files" && activeWorkspaceRootPath) ? (
+        <GitFilesView rootPath={activeWorkspaceRootPath} />
+      ) : effectiveRepo ? (
         <>
           {activeView === "changes" && (
             <GitChangesView
@@ -589,7 +612,6 @@ export function GitPanel() {
           {activeView === "stash" && (
             <GitStashView repo={effectiveRepo} onError={setLocalError} />
           )}
-          {activeView === "files" && <GitFilesView repo={effectiveRepo} />}
           {activeView === "worktrees" && activeRepo && (
             <GitWorktreesView repo={activeRepo} onError={setLocalError} />
           )}
@@ -666,11 +688,18 @@ export function GitPanel() {
           <div
             ref={moreMenuRef}
             className="git-action-menu"
+            data-git-flyout-region={gitFlyoutContext ? "true" : undefined}
             style={{
               position: "fixed",
               top: moreMenuPos.top,
               left: moreMenuPos.left,
             }}
+            onMouseEnter={() => gitFlyoutContext?.openFlyout()}
+            onMouseLeave={() => gitFlyoutContext?.scheduleClose(150)}
+            onFocusCapture={() => gitFlyoutContext?.openFlyout()}
+            onBlurCapture={(event) =>
+              closeGitFlyoutIfFocusLeft(gitFlyoutContext, event.relatedTarget)
+            }
           >
             <button
               type="button"

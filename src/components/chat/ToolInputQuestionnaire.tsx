@@ -12,6 +12,8 @@ interface Props {
   onSubmit: (response: ApprovalResponse) => void;
   onCancel?: () => void;
   onDecline?: () => void;
+  allowCustomAnswer?: boolean;
+  submitLabel?: string;
 }
 
 function buildQuestionSignature(questions: ReturnType<typeof parseToolInputQuestions>): string {
@@ -27,7 +29,14 @@ function formatOptionLabel(label: string): string {
   return label.replace(/\s*\((recommended|recomendado)\)\s*$/i, "").trim();
 }
 
-export function ToolInputQuestionnaire({ details, onSubmit, onCancel, onDecline }: Props) {
+export function ToolInputQuestionnaire({
+  details,
+  onSubmit,
+  onCancel,
+  onDecline,
+  allowCustomAnswer = true,
+  submitLabel,
+}: Props) {
   const { t } = useTranslation("chat");
   const questions = useMemo(() => parseToolInputQuestions(details), [details]);
   const questionSignature = useMemo(() => buildQuestionSignature(questions), [questions]);
@@ -52,7 +61,8 @@ export function ToolInputQuestionnaire({ details, onSubmit, onCancel, onDecline 
   const currentCustomAnswer = customByQuestion[currentQuestion.id] ?? "";
   const isLastQuestion = currentQuestionIndex >= questions.length - 1;
   const canAdvance =
-    currentCustomAnswer.trim().length > 0 || currentSelectedAnswer.trim().length > 0;
+    (allowCustomAnswer && currentCustomAnswer.trim().length > 0) ||
+    currentSelectedAnswer.trim().length > 0;
 
   function handleAdvance() {
     if (!canAdvance) {
@@ -118,30 +128,32 @@ export function ToolInputQuestionnaire({ details, onSubmit, onCancel, onDecline 
         </div>
       )}
 
-      <div className="chat-tool-input-editor">
-        <textarea
-          value={currentCustomAnswer}
-          onChange={(event) =>
-            setCustomByQuestion((current) => ({
-              ...current,
-              [currentQuestion.id]: event.target.value,
-            }))
-          }
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              handleAdvance();
+      {allowCustomAnswer ? (
+        <div className="chat-tool-input-editor">
+          <textarea
+            value={currentCustomAnswer}
+            onChange={(event) =>
+              setCustomByQuestion((current) => ({
+                ...current,
+                [currentQuestion.id]: event.target.value,
+              }))
             }
-          }}
-          placeholder={
-            currentQuestion.options.length > 0
-              ? t("messageBlocks.toolInput.customAnswerPlaceholderOptional")
-              : t("messageBlocks.toolInput.customAnswerPlaceholder")
-          }
-          className="chat-tool-input-textarea"
-          rows={3}
-        />
-      </div>
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                handleAdvance();
+              }
+            }}
+            placeholder={
+              currentQuestion.options.length > 0
+                ? t("messageBlocks.toolInput.customAnswerPlaceholderOptional")
+                : t("messageBlocks.toolInput.customAnswerPlaceholder")
+            }
+            className="chat-tool-input-textarea"
+            rows={3}
+          />
+        </div>
+      ) : null}
 
       <div className="chat-tool-input-actions">
         <div className="chat-tool-input-actions-left">
@@ -181,7 +193,7 @@ export function ToolInputQuestionnaire({ details, onSubmit, onCancel, onDecline 
           disabled={!canAdvance}
         >
           {isLastQuestion
-            ? t("messageBlocks.toolInput.sendAnswers")
+            ? submitLabel ?? t("messageBlocks.toolInput.sendAnswers")
             : t("messageBlocks.toolInput.nextQuestion")}
         </button>
       </div>

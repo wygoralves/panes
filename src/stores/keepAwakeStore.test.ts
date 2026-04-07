@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockIpc = vi.hoisted(() => ({
   getKeepAwakeState: vi.fn(),
   setKeepAwakeEnabled: vi.fn(),
+  getPowerSettings: vi.fn(),
+  setPowerSettings: vi.fn(),
 }));
 
 const mockToast = vi.hoisted(() => ({
@@ -59,6 +61,10 @@ describe("keepAwakeStore", () => {
       state: null,
       loading: false,
       loadedOnce: false,
+      powerSettingsLoading: false,
+      powerSettingsLoaded: false,
+      powerSettings: null,
+      powerSettingsOpen: false,
     });
   });
 
@@ -375,5 +381,221 @@ describe("keepAwakeStore", () => {
       close: () => {},
       openSubFlow: () => {},
     } as never)).toBe(true);
+  });
+
+  it("loadPowerSettings calls IPC and updates store", async () => {
+    const settings = {
+      keepAwakeEnabled: true,
+      preventDisplaySleep: true,
+      preventScreenSaver: false,
+      acOnlyMode: true,
+      batteryThreshold: 20,
+      sessionDurationSecs: 3600,
+      preventClosedDisplaySleep: false,
+    };
+    mockIpc.getPowerSettings.mockResolvedValue(settings);
+
+    const result = await useKeepAwakeStore.getState().loadPowerSettings();
+
+    expect(mockIpc.getPowerSettings).toHaveBeenCalled();
+    expect(result).toEqual(settings);
+    expect(useKeepAwakeStore.getState().powerSettings).toEqual(settings);
+    expect(useKeepAwakeStore.getState().powerSettingsLoaded).toBe(true);
+    expect(useKeepAwakeStore.getState().powerSettingsLoading).toBe(false);
+  });
+
+  it("loadPowerSettings returns null on failure", async () => {
+    mockIpc.getPowerSettings.mockRejectedValue(new Error("ipc error"));
+
+    const result = await useKeepAwakeStore.getState().loadPowerSettings();
+
+    expect(result).toBeNull();
+    expect(useKeepAwakeStore.getState().powerSettings).toBeNull();
+    expect(useKeepAwakeStore.getState().powerSettingsLoaded).toBe(false);
+    expect(useKeepAwakeStore.getState().powerSettingsLoading).toBe(false);
+  });
+
+  it("ignores stale power settings loads while a newer request is pending", async () => {
+    const firstLoad = createDeferred<{
+      keepAwakeEnabled: boolean;
+      preventDisplaySleep: boolean;
+      preventScreenSaver: boolean;
+      acOnlyMode: boolean;
+      batteryThreshold: number | null;
+      sessionDurationSecs: number | null;
+      preventClosedDisplaySleep: boolean;
+    }>();
+    const secondLoad = createDeferred<{
+      keepAwakeEnabled: boolean;
+      preventDisplaySleep: boolean;
+      preventScreenSaver: boolean;
+      acOnlyMode: boolean;
+      batteryThreshold: number | null;
+      sessionDurationSecs: number | null;
+      preventClosedDisplaySleep: boolean;
+    }>();
+    mockIpc.getPowerSettings
+      .mockReturnValueOnce(firstLoad.promise)
+      .mockReturnValueOnce(secondLoad.promise);
+
+    const firstPromise = useKeepAwakeStore.getState().loadPowerSettings();
+    const secondPromise = useKeepAwakeStore.getState().loadPowerSettings();
+
+    firstLoad.resolve({
+      keepAwakeEnabled: false,
+      preventDisplaySleep: false,
+      preventScreenSaver: false,
+      acOnlyMode: false,
+      batteryThreshold: null,
+      sessionDurationSecs: null,
+      preventClosedDisplaySleep: false,
+    });
+    await firstPromise;
+
+    expect(useKeepAwakeStore.getState().powerSettingsLoading).toBe(true);
+    expect(useKeepAwakeStore.getState().powerSettingsLoaded).toBe(false);
+    expect(useKeepAwakeStore.getState().powerSettings).toBeNull();
+
+    const latestSettings = {
+      keepAwakeEnabled: true,
+      preventDisplaySleep: true,
+      preventScreenSaver: false,
+      acOnlyMode: true,
+      batteryThreshold: 25,
+      sessionDurationSecs: 3600,
+      preventClosedDisplaySleep: false,
+    };
+    secondLoad.resolve(latestSettings);
+    const secondResult = await secondPromise;
+
+    expect(secondResult).toEqual(latestSettings);
+    expect(useKeepAwakeStore.getState().powerSettings).toEqual(latestSettings);
+    expect(useKeepAwakeStore.getState().powerSettingsLoaded).toBe(true);
+    expect(useKeepAwakeStore.getState().powerSettingsLoading).toBe(false);
+  });
+
+  it("savePowerSettings calls IPC and updates both state and settings", async () => {
+    const input = {
+      keepAwakeEnabled: true,
+      preventDisplaySleep: true,
+      preventScreenSaver: true,
+      acOnlyMode: false,
+      batteryThreshold: null,
+      sessionDurationSecs: 1800,
+      preventClosedDisplaySleep: false,
+    };
+    mockIpc.setPowerSettings.mockResolvedValue({
+      supported: true,
+      enabled: true,
+      active: true,
+      message: null,
+    });
+
+    const result = await useKeepAwakeStore.getState().savePowerSettings(input);
+
+    expect(mockIpc.setPowerSettings).toHaveBeenCalledWith(input);
+    expect(result).toMatchObject({ enabled: true, active: true });
+    expect(useKeepAwakeStore.getState().powerSettings).toEqual(input);
+    expect(mockToast.success).toHaveBeenCalledWith("app:commandPalette.toasts.powerSettingsSaved");
+  });
+
+  it("does not let an in-flight refresh overwrite a saved power settings result", async () => {
+    useKeepAwakeStore.setState({
+      state: {
+        supported: true,
+        enabled: true,
+        active: true,
+        message: null,
+      },
+      loading: false,
+      loadedOnce: true,
+      powerSettingsLoading: false,
+      powerSettingsLoaded: true,
+      powerSettings: {
+        keepAwakeEnabled: true,
+        preventDisplaySleep: false,
+        preventScreenSaver: false,
+        acOnlyMode: false,
+        batteryThreshold: null,
+        sessionDurationSecs: null,
+        preventClosedDisplaySleep: false,
+      },
+      powerSettingsOpen: false,
+    });
+    const saveDeferred = createDeferred<{
+      supported: boolean;
+      enabled: boolean;
+      active: boolean;
+      message: string | null;
+    }>();
+    const refreshDeferred = createDeferred<{
+      supported: boolean;
+      enabled: boolean;
+      active: boolean;
+      message: string | null;
+    }>();
+    mockIpc.setPowerSettings.mockReturnValue(saveDeferred.promise);
+    mockIpc.getKeepAwakeState.mockReturnValue(refreshDeferred.promise);
+
+    const input = {
+      keepAwakeEnabled: false,
+      preventDisplaySleep: true,
+      preventScreenSaver: false,
+      acOnlyMode: false,
+      batteryThreshold: null,
+      sessionDurationSecs: 1800,
+      preventClosedDisplaySleep: false,
+    };
+
+    const savePromise = useKeepAwakeStore.getState().savePowerSettings(input);
+    const refreshPromise = useKeepAwakeStore.getState().refresh();
+
+    refreshDeferred.resolve({
+      supported: true,
+      enabled: true,
+      active: true,
+      message: null,
+    });
+    await refreshPromise;
+
+    saveDeferred.resolve({
+      supported: true,
+      enabled: false,
+      active: false,
+      message: null,
+    });
+    await savePromise;
+
+    expect(useKeepAwakeStore.getState().state).toMatchObject({
+      enabled: false,
+      active: false,
+    });
+    expect(useKeepAwakeStore.getState().powerSettings).toEqual(input);
+  });
+
+  it("savePowerSettings shows error toast on failure", async () => {
+    mockIpc.setPowerSettings.mockRejectedValue(new Error("save failed"));
+
+    await useKeepAwakeStore.getState().savePowerSettings({
+      keepAwakeEnabled: true,
+      preventDisplaySleep: false,
+      preventScreenSaver: false,
+      acOnlyMode: false,
+      batteryThreshold: null,
+      sessionDurationSecs: null,
+      preventClosedDisplaySleep: false,
+    });
+
+    expect(mockToast.error).toHaveBeenCalledWith("app:commandPalette.toasts.powerSettingsSaveFailed");
+  });
+
+  it("openPowerSettings and closePowerSettings toggle state", () => {
+    expect(useKeepAwakeStore.getState().powerSettingsOpen).toBe(false);
+
+    useKeepAwakeStore.getState().openPowerSettings();
+    expect(useKeepAwakeStore.getState().powerSettingsOpen).toBe(true);
+
+    useKeepAwakeStore.getState().closePowerSettings();
+    expect(useKeepAwakeStore.getState().powerSettingsOpen).toBe(false);
   });
 });

@@ -57,11 +57,13 @@ import {
   closeCurrentWindow,
   isMacDesktop,
   isLinuxDesktop,
+  isWindowsDesktop,
   minimizeCurrentWindow,
   shouldHandleAppShortcutWhileTerminalFocused,
   isTerminalInputFocused,
   requestWindowClose,
   toggleCurrentWindowMaximize,
+  usesCustomWindowFrame,
 } from "./windowActions";
 
 describe("windowActions", () => {
@@ -102,6 +104,30 @@ describe("windowActions", () => {
     }
   });
 
+  it("treats Windows custom chrome as Tauri-only", () => {
+    const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { platform: "Win32" },
+    });
+
+    try {
+      expect(isWindowsDesktop()).toBe(true);
+      expect(usesCustomWindowFrame()).toBe(true);
+
+      mockIsTauri.mockReturnValue(false);
+      expect(isWindowsDesktop()).toBe(false);
+      expect(usesCustomWindowFrame()).toBe(false);
+    } finally {
+      if (originalNavigator) {
+        Object.defineProperty(globalThis, "navigator", originalNavigator);
+      } else {
+        Reflect.deleteProperty(globalThis, "navigator");
+      }
+    }
+  });
+
   it("treats macOS custom chrome as Tauri-only", () => {
     const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
 
@@ -112,6 +138,7 @@ describe("windowActions", () => {
 
     try {
       expect(isMacDesktop()).toBe(true);
+      expect(usesCustomWindowFrame()).toBe(false);
 
       mockIsTauri.mockReturnValue(false);
       expect(isMacDesktop()).toBe(false);

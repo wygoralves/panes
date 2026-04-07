@@ -5,53 +5,36 @@ import { ipc } from "../lib/ipc";
 interface EngineState {
   engines: EngineInfo[];
   health: Record<string, EngineHealth>;
+  healthLoading: Record<string, boolean>;
   loading: boolean;
   loadedOnce: boolean;
   error?: string;
   load: () => Promise<void>;
+  ensureHealth: (
+    engineId: string,
+    options?: { force?: boolean },
+  ) => Promise<EngineHealth | null>;
+  mergeHealth: (reports: EngineHealth[]) => void;
   applyRuntimeUpdate: (event: EngineRuntimeUpdatedEvent) => void;
 }
 
-export const useEngineStore = create<EngineState>((set) => ({
+let pendingHealthRequests: Partial<Record<string, Promise<EngineHealth | null>>> = {};
+
+export const useEngineStore = create<EngineState>((set, get) => ({
   engines: [],
   health: {},
+  healthLoading: {},
   loading: false,
   loadedOnce: false,
   load: async () => {
     set({ loading: true, error: undefined });
     try {
       const engines = await ipc.listEngines();
-      const checkResults = await Promise.allSettled(
-        engines.map((engine) => ipc.engineHealth(engine.id))
-      );
-      const health: Record<string, EngineHealth> = {};
-      const healthErrors: string[] = [];
-
-      checkResults.forEach((result, index) => {
-        const engineId = engines[index]?.id ?? "unknown";
-        if (result.status === "fulfilled") {
-          health[result.value.id] = result.value;
-          return;
-        }
-
-        const message = String(result.reason);
-        health[engineId] = {
-          id: engineId,
-          available: false,
-          details: `Failed to check ${engineId} health: ${message}`,
-          warnings: [],
-          checks: [],
-          fixes: [],
-        };
-        healthErrors.push(`${engineId}: ${message}`);
-      });
-
       set({
         engines,
-        health,
         loading: false,
         loadedOnce: true,
-        error: healthErrors.length > 0 ? healthErrors.join(" | ") : undefined,
+        error: undefined,
       });
     } catch (error) {
       const message = String(error);
@@ -72,6 +55,82 @@ export const useEngineStore = create<EngineState>((set) => ({
       });
     }
   },
+  ensureHealth: async (engineId, options) => {
+    const existing = get().health[engineId];
+    if (existing && !options?.force) {
+      return existing;
+    }
+
+    if (pendingHealthRequests[engineId]) {
+      return pendingHealthRequests[engineId];
+    }
+
+    set((state) => {
+      if (
+        state.healthLoading[engineId] ||
+        (!options?.force && state.health[engineId])
+      ) {
+        return state;
+      }
+
+      return {
+        healthLoading: {
+          ...state.healthLoading,
+          [engineId]: true,
+        },
+      };
+    });
+
+    const request = (async () => {
+      try {
+        const health = await ipc.engineHealth(engineId);
+        set((state) => {
+          const { [engineId]: _ignored, ...rest } = state.healthLoading;
+          return {
+            health: {
+              ...state.health,
+              [health.id]: health,
+            },
+            healthLoading: rest,
+          };
+        });
+        return health;
+      } catch (error) {
+        const message = String(error);
+        set((state) => {
+          const { [engineId]: _ignored, ...rest } = state.healthLoading;
+          return {
+            healthLoading: rest,
+            error: `${engineId}: ${message}`,
+          };
+        });
+        return null;
+      } finally {
+        delete pendingHealthRequests[engineId];
+      }
+    })();
+
+    pendingHealthRequests[engineId] = request;
+    return request;
+  },
+  mergeHealth: (reports) =>
+    set((state) => {
+      if (reports.length === 0) {
+        return state;
+      }
+
+      const nextHealth = { ...state.health };
+      const nextHealthLoading = { ...state.healthLoading };
+      for (const report of reports) {
+        nextHealth[report.id] = report;
+        delete nextHealthLoading[report.id];
+      }
+
+      return {
+        health: nextHealth,
+        healthLoading: nextHealthLoading,
+      };
+    }),
   applyRuntimeUpdate: ({ engineId, protocolDiagnostics }) =>
     set((state) => {
       const current = state.health[engineId];
@@ -91,11 +150,14 @@ export const useEngineStore = create<EngineState>((set) => ({
             protocolDiagnostics,
           };
 
+      const { [engineId]: _ignored, ...rest } = state.healthLoading;
+
       return {
         health: {
           ...state.health,
           [engineId]: nextHealth,
         },
+        healthLoading: rest,
       };
     }),
 }));

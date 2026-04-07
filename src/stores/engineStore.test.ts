@@ -17,10 +17,70 @@ describe("engineStore", () => {
     useEngineStore.setState({
       engines: [],
       health: {},
+      healthLoading: {},
       loading: false,
       loadedOnce: false,
       error: undefined,
     });
+  });
+
+  it("loads engines without eagerly probing health", async () => {
+    mockIpc.listEngines.mockResolvedValue([
+      {
+        id: "codex",
+        name: "Codex",
+        models: [],
+        capabilities: {
+          permissionModes: [],
+          sandboxModes: [],
+          approvalDecisions: [],
+        },
+      },
+    ]);
+
+    await useEngineStore.getState().load();
+
+    expect(mockIpc.listEngines).toHaveBeenCalledTimes(1);
+    expect(mockIpc.engineHealth).not.toHaveBeenCalled();
+    expect(useEngineStore.getState().engines).toHaveLength(1);
+  });
+
+  it("loads engine health on demand", async () => {
+    mockIpc.engineHealth.mockResolvedValue({
+      id: "codex",
+      available: true,
+      details: "ready",
+      warnings: [],
+      checks: [],
+      fixes: [],
+    });
+
+    const health = await useEngineStore.getState().ensureHealth("codex");
+
+    expect(mockIpc.engineHealth).toHaveBeenCalledWith("codex");
+    expect(health?.available).toBe(true);
+    expect(useEngineStore.getState().health.codex?.details).toBe("ready");
+  });
+
+  it("does not cache thrown health errors and allows retries", async () => {
+    mockIpc.engineHealth
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce({
+        id: "codex",
+        available: true,
+        details: "ready",
+        warnings: [],
+        checks: [],
+        fixes: [],
+      });
+
+    const first = await useEngineStore.getState().ensureHealth("codex");
+    const second = await useEngineStore.getState().ensureHealth("codex");
+
+    expect(first).toBeNull();
+    expect(second?.available).toBe(true);
+    expect(mockIpc.engineHealth).toHaveBeenCalledTimes(2);
+    expect(useEngineStore.getState().health.codex?.details).toBe("ready");
   });
 
   it("marks Codex available when a runtime update arrives", () => {

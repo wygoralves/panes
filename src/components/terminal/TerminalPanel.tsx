@@ -19,18 +19,26 @@ import {
   getTerminalAcceleratedRenderingPreferenceVersion,
   listenTerminalAcceleratedRenderingChanged,
 } from "../../lib/terminalRenderingSettings";
+import { extractTextLinkMatches, navigateLinkTarget } from "../../lib/fileLinkNavigation";
 import {
   collectDetachedTerminalEvictionKeys,
   markPaneTerminalDetached,
   markWorkspaceTerminalDetached,
 } from "./terminalCacheLifecycle";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ILink, type ILinkProvider } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { ImageAddon } from "@xterm/addon-image";
-import "@xterm/xterm/css/xterm.css";
-import { ipc, listenTerminalExit, listenTerminalForegroundChanged, listenTerminalOutput, writeCommandToNewSession } from "../../lib/ipc";
+import {
+  ipc,
+  listenTerminalExit,
+  listenTerminalForegroundChanged,
+  listenTerminalNotification,
+  listenTerminalNotificationCleared,
+  listenTerminalOutput,
+  writeCommandToNewSession,
+} from "../../lib/ipc";
 import {
   useTerminalStore,
   collectSessionIds,
@@ -40,6 +48,7 @@ import { useUiStore } from "../../stores/uiStore";
 import type {
   SplitNode,
   SplitContainer as SplitContainerType,
+  TerminalNotification,
   TerminalRendererDiagnostics,
   WorkspaceStartupWorktreeConfig,
 } from "../../types";
@@ -1874,13 +1883,23 @@ function createCachedTerminal(
   container: HTMLElement,
 ): SessionTerminal {
   const cacheKey = terminalCacheKey(workspaceId, sessionId);
-  const terminal = new Terminal({
+  const terminalOptions: ConstructorParameters<typeof Terminal>[0] & {
+    allowNonHttpProtocols?: boolean;
+    linkHandler: {
+      activate(event: MouseEvent | undefined, text: string): void;
+    };
+  } = {
     allowProposedApi: true,
     convertEol: false,
     cursorBlink: true,
     cursorInactiveStyle: "none",
     fontFamily: '"JetBrains Mono", monospace',
     fontSize: 12,
+    linkHandler: {
+      activate(event, text) {
+        void navigateLinkTarget(text, { shiftKey: Boolean(event?.shiftKey) });
+      },
+    },
     lineHeight: 1.3,
     scrollback: TERMINAL_SCROLLBACK_LINES,
     theme: {
@@ -1889,7 +1908,9 @@ function createCachedTerminal(
       selectionBackground: "rgba(255, 107, 107, 0.28)",
       cursor: "#FF6B6B",
     },
-  });
+  };
+  terminalOptions.allowNonHttpProtocols = true;
+  const terminal = new Terminal(terminalOptions);
 
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
@@ -1901,6 +1922,9 @@ function createCachedTerminal(
   const rendererDiagnostics = createRendererDiagnostics();
 
   terminal.open(container);
+  const textLinkProviderDisposable = terminal.registerLinkProvider(
+    createTerminalTextLinkProvider(terminal),
+  );
 
   // xterm.js fires onData for BOTH user keystrokes AND auto-generated
   // terminal protocol responses (DA1/DA2 device attributes, cursor position
@@ -2082,6 +2106,7 @@ function createCachedTerminal(
       entry.imageAddonCleanup = undefined;
       entry.webglCleanup?.();
       entry.webglCleanup = undefined;
+      textLinkProviderDisposable.dispose();
       writeDisposable.dispose();
       binaryDisposable.dispose();
       resizeDisposable.dispose();
@@ -2109,6 +2134,42 @@ function createCachedTerminal(
   return entry;
 }
 
+function createTerminalTextLinkProvider(terminal: Terminal): ILinkProvider {
+  return {
+    provideLinks(bufferLineNumber, callback) {
+      const line = terminal.buffer.active.getLine(bufferLineNumber - 1);
+      const lineText = line?.translateToString(true) ?? "";
+      const matches = extractTextLinkMatches(lineText);
+      if (matches.length === 0) {
+        callback(undefined);
+        return;
+      }
+
+      const links: ILink[] = matches.map((match) => ({
+        text: match.text,
+        range: {
+          start: { x: match.startIndex + 1, y: bufferLineNumber },
+          end: { x: match.endIndex, y: bufferLineNumber },
+        },
+        decorations: {
+          pointerCursor: false,
+          underline: false,
+        },
+        activate(event, text) {
+          void navigateLinkTarget(text, { shiftKey: Boolean(event?.shiftKey) });
+        },
+        hover() {
+          terminal.element?.classList.add("xterm-cursor-pointer");
+        },
+        leave() {
+          terminal.element?.classList.remove("xterm-cursor-pointer");
+        },
+      }));
+      callback(links);
+    },
+  };
+}
+
 // ── Split pane components ───────────────────────────────────────────
 
 interface SplitPaneViewProps {
@@ -2117,6 +2178,7 @@ interface SplitPaneViewProps {
   groupId: string;
   activeIndicatorSessionId: string | null;
   isBroadcasting: boolean;
+  notificationsBySessionId: Record<string, TerminalNotification>;
   containerRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
   onFocus: (sessionId: string) => void;
   onTerminalFocus: (sessionId: string) => void;
@@ -2138,6 +2200,7 @@ function SplitPaneView({
   groupId,
   activeIndicatorSessionId,
   isBroadcasting,
+  notificationsBySessionId,
   containerRefs,
   onFocus,
   onTerminalFocus,
@@ -2151,9 +2214,13 @@ function SplitPaneView({
   const { t } = useTranslation("app");
   if (node.type === "leaf") {
     const isFocused = node.sessionId === activeIndicatorSessionId || isBroadcasting;
+    const notification = notificationsBySessionId[node.sessionId] ?? null;
+    const notificationPreview = notification
+      ? `${notification.title}: ${notification.body}`
+      : undefined;
     return (
       <div
-        className={`terminal-leaf-pane${isFocused ? " terminal-leaf-pane-focused" : ""}${isBroadcasting ? " terminal-leaf-pane-broadcasting" : ""}`}
+        className={`terminal-leaf-pane${isFocused ? " terminal-leaf-pane-focused" : ""}${isBroadcasting ? " terminal-leaf-pane-broadcasting" : ""}${notification ? " terminal-leaf-pane-notified" : ""}`}
         onMouseDown={() => onFocus(node.sessionId)}
         onFocusCapture={(event) => {
           if (!isXtermFocusTarget(event.target)) {
@@ -2186,6 +2253,13 @@ function SplitPaneView({
           style={{ position: "absolute", inset: 0 }}
           onContextMenu={(event) => onPaneContextMenu?.(node.sessionId, event)}
         />
+        {notification && (
+          <span
+            className="terminal-pane-notification-dot"
+            title={notificationPreview}
+            aria-hidden="true"
+          />
+        )}
         {showCloseButton && (
           <button
             type="button"
@@ -2210,6 +2284,7 @@ function SplitPaneView({
       groupId={groupId}
       activeIndicatorSessionId={activeIndicatorSessionId}
       isBroadcasting={isBroadcasting}
+      notificationsBySessionId={notificationsBySessionId}
       containerRefs={containerRefs}
       onFocus={onFocus}
       onTerminalFocus={onTerminalFocus}
@@ -2228,6 +2303,7 @@ interface SplitContainerViewProps {
   groupId: string;
   activeIndicatorSessionId: string | null;
   isBroadcasting: boolean;
+  notificationsBySessionId: Record<string, TerminalNotification>;
   containerRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
   onFocus: (sessionId: string) => void;
   onTerminalFocus: (sessionId: string) => void;
@@ -2273,6 +2349,7 @@ function SplitContainerView({
   groupId,
   activeIndicatorSessionId,
   isBroadcasting,
+  notificationsBySessionId,
   containerRefs,
   onFocus,
   onTerminalFocus,
@@ -2344,6 +2421,7 @@ function SplitContainerView({
           groupId={groupId}
           activeIndicatorSessionId={activeIndicatorSessionId}
           isBroadcasting={isBroadcasting}
+          notificationsBySessionId={notificationsBySessionId}
           containerRefs={containerRefs}
           onFocus={onFocus}
           onTerminalFocus={onTerminalFocus}
@@ -2363,6 +2441,7 @@ function SplitContainerView({
           groupId={groupId}
           activeIndicatorSessionId={activeIndicatorSessionId}
           isBroadcasting={isBroadcasting}
+          notificationsBySessionId={notificationsBySessionId}
           containerRefs={containerRefs}
           onFocus={onFocus}
           onTerminalFocus={onTerminalFocus}
@@ -2645,21 +2724,30 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const focusMode = useUiStore((state) => state.focusMode);
   const showSidebar = useUiStore((state) => state.showSidebar);
   const showGitPanel = useUiStore((state) => state.showGitPanel);
+  const gitPanelPinned = useUiStore((state) => state.gitPanelPinned);
   const isOpen = workspaceState?.isOpen ?? false;
   const layoutMode = workspaceState?.layoutMode ?? "chat";
   const sessions = workspaceState?.sessions ?? [];
   const loading = workspaceState?.loading ?? false;
   const error = workspaceState?.error;
   const groups = workspaceState?.groups ?? [];
+  const notificationsBySessionId = workspaceState?.notificationsBySessionId ?? {};
   const activeGroupId = workspaceState?.activeGroupId ?? null;
   const focusedSessionId = workspaceState?.focusedSessionId ?? null;
   const pendingStartupPreset = workspaceState?.pendingStartupPreset ?? null;
   const isMac = isMacDesktop();
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar && layoutMode === "terminal";
-  const useFocusModeHeaderHeight = focusMode && showGitPanel;
+  const gitPanelDocked = showGitPanel && gitPanelPinned;
+  const useFocusModeHeaderHeight = focusMode && gitPanelDocked;
   const linuxDesktop = isLinuxDesktop();
+  const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
 
   const createSession = useTerminalStore((state) => state.createSession);
+  const hydrateNotifications = useTerminalStore((state) => state.hydrateNotifications);
+  const applyNotification = useTerminalStore((state) => state.applyNotification);
+  const clearNotificationLocal = useTerminalStore((state) => state.clearNotificationLocal);
+  const clearNotification = useTerminalStore((state) => state.clearNotification);
+  const syncNotificationFocus = useTerminalStore((state) => state.syncNotificationFocus);
   const materializeWorkspaceStartupPreset = useTerminalStore(
     (state) => state.materializeWorkspaceStartupPreset,
   );
@@ -2809,27 +2897,20 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     setDomFocusedSessionId(null);
   }, [domFocusedSessionId, sessions]);
 
-  useEffect(() => {
-    const handleWindowBlur = () => {
-      forEachWorkspaceCachedTerminal(workspaceId, (_sessionId, session) => {
-        if (!session.isAttached) {
-          return;
-        }
-        session.terminal.blur();
-        setTerminalFocusState(session, false);
-        refreshTerminalCursor(session);
-      });
-      setDomFocusedSessionId(null);
-    };
-    window.addEventListener("blur", handleWindowBlur);
-    return () => window.removeEventListener("blur", handleWindowBlur);
-  }, [workspaceId]);
-
   useEffect(() => () => clearFocusRetryTimer(), [clearFocusRetryTimer]);
 
   // ── Auto-detect harness in terminal tabs ──────────────────────────
   const updateSessionHarness = useTerminalStore((state) => state.updateSessionHarness);
+  const harnessesLoadedOnce = useHarnessStore((s) => s.loadedOnce);
+  const ensureHarnessesScanned = useHarnessStore((s) => s.ensureScanned);
   const allHarnessesForDetect = useHarnessStore((s) => s.harnesses);
+
+  useEffect(() => {
+    if (harnessesLoadedOnce) {
+      return;
+    }
+    void ensureHarnessesScanned();
+  }, [ensureHarnessesScanned, harnessesLoadedOnce]);
 
   useEffect(() => {
     // Build command → harness mapping from installed harnesses
@@ -3273,17 +3354,82 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
     }
   }, [workspaceId]);
 
+  const shouldSuppressNotificationForSession = useCallback((sessionId: string) => {
+    const state = useTerminalStore.getState().workspaces[workspaceId];
+    const terminalVisible =
+      state?.isOpen && (state.layoutMode === "split" || state.layoutMode === "terminal");
+    if (useWorkspaceStore.getState().activeWorkspaceId !== workspaceId) {
+      return false;
+    }
+    if (!terminalVisible) {
+      return false;
+    }
+    if (!document.hasFocus()) {
+      return false;
+    }
+    return state?.focusedSessionId === sessionId;
+  }, [workspaceId]);
+
+  const syncNotificationFocusState = useCallback((windowFocused: boolean) => {
+    const state = useTerminalStore.getState().workspaces[workspaceId];
+    const terminalVisible =
+      state?.isOpen && (state.layoutMode === "split" || state.layoutMode === "terminal");
+    const isActiveWorkspace =
+      terminalVisible && useWorkspaceStore.getState().activeWorkspaceId === workspaceId;
+    const sessionId = isActiveWorkspace
+      ? state?.focusedSessionId ?? null
+      : null;
+    const targetWorkspaceId = windowFocused && isActiveWorkspace ? workspaceId : null;
+    void syncNotificationFocus(targetWorkspaceId, sessionId, windowFocused);
+  }, [syncNotificationFocus, workspaceId]);
+
+  useEffect(() => {
+    syncNotificationFocusState(document.hasFocus());
+  }, [activeWorkspaceId, focusedSessionId, isOpen, layoutMode, syncNotificationFocusState]);
+
+  useEffect(() => {
+    return () => {
+      void syncNotificationFocus(null, null, false);
+    };
+  }, [syncNotificationFocus]);
+
+  useEffect(() => {
+    const handleWindowFocus = () => {
+      syncNotificationFocusState(true);
+    };
+    const handleWindowBlur = () => {
+      forEachWorkspaceCachedTerminal(workspaceId, (_sessionId, session) => {
+        if (!session.isAttached) {
+          return;
+        }
+        session.terminal.blur();
+        setTerminalFocusState(session, false);
+        refreshTerminalCursor(session);
+      });
+      setDomFocusedSessionId(null);
+      syncNotificationFocusState(false);
+    };
+    window.addEventListener("focus", handleWindowFocus);
+    window.addEventListener("blur", handleWindowBlur);
+    return () => {
+      window.removeEventListener("focus", handleWindowFocus);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
+  }, [syncNotificationFocusState, workspaceId]);
+
   // Register event listeners BEFORE syncing sessions so the initial shell
   // prompt output is never missed (the PTY starts emitting immediately).
   useEffect(() => {
     let unlistenOutput: (() => void) | undefined;
     let unlistenExit: (() => void) | undefined;
+    let unlistenNotification: (() => void) | undefined;
+    let unlistenNotificationCleared: (() => void) | undefined;
     let disposed = false;
     setListenersReadyWorkspaceId(null);
 
     (async () => {
       try {
-        const [outputUn, exitUn] = await Promise.all([
+        const [outputUn, exitUn, notificationUn, notificationClearedUn] = await Promise.all([
           listenTerminalOutput(workspaceId, (event) => {
             queueOutput(workspaceId, event.sessionId, {
               seq: event.seq,
@@ -3295,17 +3441,33 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
             destroyCachedTerminal(workspaceId, event.sessionId);
             handleSessionExit(workspaceId, event.sessionId);
           }),
+          listenTerminalNotification(workspaceId, (event) => {
+            if (shouldSuppressNotificationForSession(event.sessionId)) {
+              void clearNotification(workspaceId, event.sessionId);
+              return;
+            }
+            applyNotification(workspaceId, event);
+          }),
+          listenTerminalNotificationCleared(workspaceId, (event) => {
+            clearNotificationLocal(workspaceId, event.sessionId);
+          }),
         ]);
         if (disposed) {
           outputUn();
           exitUn();
+          notificationUn();
+          notificationClearedUn();
           return;
         }
         unlistenOutput = outputUn;
         unlistenExit = exitUn;
+        unlistenNotification = notificationUn;
+        unlistenNotificationCleared = notificationClearedUn;
 
         // Now that listeners are ready, sync existing sessions.
         await syncSessions(workspaceId);
+        if (disposed) return;
+        await hydrateNotifications(workspaceId);
         if (disposed) return;
         setListenersReadyWorkspaceId(workspaceId);
       } catch (listenerError) {
@@ -3320,8 +3482,20 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       disposed = true;
       unlistenOutput?.();
       unlistenExit?.();
+      unlistenNotification?.();
+      unlistenNotificationCleared?.();
     };
-  }, [handleSessionExit, setWorkspaceStatus, syncSessions, workspaceId]);
+  }, [
+    applyNotification,
+    clearNotification,
+    clearNotificationLocal,
+    handleSessionExit,
+    hydrateNotifications,
+    setWorkspaceStatus,
+    shouldSuppressNotificationForSession,
+    syncSessions,
+    workspaceId,
+  ]);
 
   useEffect(() => {
     const listenersReady = listenersReadyWorkspaceId === workspaceId;
@@ -3664,7 +3838,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       className={`terminal-panel-root${useTitlebarSafeInset ? " terminal-panel-root-titlebar-safe" : ""}${
         useFocusModeHeaderHeight ? " terminal-panel-root-focus-tabs" : ""
       }${
-        !showGitPanel ? " terminal-panel-root-compact-tabs" : ""
+        !gitPanelDocked ? " terminal-panel-root-compact-tabs" : ""
       }`}
     >
       <div className="terminal-tabs-bar">
@@ -3672,13 +3846,30 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
           {groups.map((group) => {
             const isActive = group.id === activeGroupId;
             const groupSessionIds = collectSessionIds(group.root);
+            const groupNotification = groupSessionIds.reduce<TerminalNotification | null>(
+              (latest, sessionId) => {
+                const notification = notificationsBySessionId[sessionId] ?? null;
+                if (!notification) {
+                  return latest;
+                }
+                if (!latest || notification.createdAt > latest.createdAt) {
+                  return notification;
+                }
+                return latest;
+              },
+              null,
+            );
             const displayHarness = getGroupDisplayHarness(group);
             const groupWorktrees = getGroupWorktrees(workspaceId, group.id);
+            const groupNotificationPreview = groupNotification
+              ? `${groupNotification.title}: ${groupNotification.body}`
+              : undefined;
             return (
               <button
                 key={group.id}
                 type="button"
                 className={`terminal-tab${isActive ? " terminal-tab-active" : ""}${draggingGroupId === group.id ? " terminal-tab-dragging" : ""}`}
+                title={groupNotificationPreview}
                 onClick={() => {
                   if (suppressClickRef.current) return;
                   setActiveGroup(workspaceId, group.id);
@@ -3723,6 +3914,9 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                   <span className="terminal-worktree-badge" title={groupWorktrees.map((worktree) => worktree.branch).join(", ")}>
                     <GitBranchIcon size={10} />
                   </span>
+                )}
+                {groupNotification && (
+                  <span className="terminal-tab-notification-dot" aria-hidden="true" />
                 )}
                 {groupSessionIds.length > 1 && (
                   <span className="terminal-tab-badge">{groupSessionIds.length}</span>
@@ -3877,6 +4071,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
                   groupId={group.id}
                   activeIndicatorSessionId={domFocusedSessionId}
                   isBroadcasting={workspaceState?.broadcastGroupId === group.id}
+                  notificationsBySessionId={notificationsBySessionId}
                   containerRefs={containerRefs}
                   onFocus={setTerminalSessionFocus}
                   onTerminalFocus={handleTerminalDomFocus}

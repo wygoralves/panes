@@ -3,10 +3,17 @@ import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
 import { CommandPalette } from "./components/shared/CommandPalette";
 import { OnboardingWizard } from "./components/onboarding/OnboardingWizard";
 import { ToastContainer } from "./components/shared/ToastContainer";
+import { PowerSettingsModal } from "./components/shared/PowerSettingsModal";
+import { TerminalNotificationSettingsModal } from "./components/shared/TerminalNotificationSettingsModal";
 import { t } from "./i18n";
 import { useUpdateStore } from "./stores/updateStore";
-import { useHarnessStore } from "./stores/harnessStore";
-import { ipc, listenEngineRuntimeUpdated, listenMenuAction, listenThreadUpdated } from "./lib/ipc";
+import {
+  ipc,
+  listenChatTurnFinished,
+  listenEngineRuntimeUpdated,
+  listenMenuAction,
+  listenThreadUpdated,
+} from "./lib/ipc";
 import { useWorkspaceStore } from "./stores/workspaceStore";
 import { useEngineStore } from "./stores/engineStore";
 import { useUiStore } from "./stores/uiStore";
@@ -15,14 +22,15 @@ import { useGitStore } from "./stores/gitStore";
 import { useTerminalStore, collectSessionIds } from "./stores/terminalStore";
 import { useFileStore } from "./stores/fileStore";
 import { useKeepAwakeStore } from "./stores/keepAwakeStore";
+import { useTerminalNotificationSettingsStore } from "./stores/terminalNotificationSettingsStore";
 import { toast } from "./stores/toastStore";
 import type { RuntimeToast, Thread } from "./types";
 import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMirrorEditor";
-import { LinuxWindowFrame } from "./components/shared/LinuxWindowFrame";
-import { useLinuxWindowFrameState } from "./lib/linuxWindowFrame";
+import { CustomWindowFrame } from "./components/shared/CustomWindowFrame";
+import { useCustomWindowFrameState } from "./lib/customWindowFrame";
 import { runEditMenuAction } from "./lib/nativeEditActions";
 import {
-  isLinuxDesktop,
+  usesCustomWindowFrame,
   isTerminalInputFocused,
   requestWindowClose,
   shouldHandleAppShortcutWhileTerminalFocused, toggleWindowFullscreen,
@@ -68,15 +76,34 @@ function showRuntimeToast(runtimeToast?: RuntimeToast) {
   }
 }
 
+function resolveAgentDisplayName(engineId: "codex" | "claude"): string {
+  return engineId === "claude" ? "Claude" : "Codex";
+}
+
+function resolveChatNotificationBody(
+  status: "completed" | "interrupted" | "error",
+  preview?: string | null,
+): string {
+  const normalizedPreview = preview?.trim();
+  if (normalizedPreview) {
+    return normalizedPreview;
+  }
+  if (status === "error") {
+    return t("app:notificationSettings.chatNotificationFallbackError");
+  }
+  return t("app:notificationSettings.chatNotificationFallbackComplete");
+}
+
 export function App() {
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces);
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const loadEngines = useEngineStore((s) => s.load);
   const applyEngineRuntimeUpdate = useEngineStore((s) => s.applyRuntimeUpdate);
-  const scanHarnesses = useHarnessStore((s) => s.scan);
   const loadKeepAwake = useKeepAwakeStore((s) => s.load);
+  const loadTerminalNotificationSettings = useTerminalNotificationSettingsStore((s) => s.load);
   const refreshKeepAwake = useKeepAwakeStore((s) => s.refresh);
   const keepAwakeEnabled = useKeepAwakeStore((s) => s.state?.enabled ?? false);
+  const keepAwakeSessionTimer = useKeepAwakeStore((s) => s.state?.sessionRemainingSecs);
   const refreshAllThreads = useThreadStore((s) => s.refreshAllThreads);
   const refreshThreads = useThreadStore((s) => s.refreshThreads);
   const refreshArchivedThreads = useThreadStore((s) => s.refreshArchivedThreads);
@@ -84,33 +111,36 @@ export function App() {
   const commandPaletteOpen = useUiStore((s) => s.commandPaletteOpen);
   const closeCommandPalette = useUiStore((s) => s.closeCommandPalette);
   const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
-  const linuxDesktop = isLinuxDesktop();
-  const linuxWindowFrameState = useLinuxWindowFrameState();
+  const customWindowFrame = usesCustomWindowFrame();
+  const customWindowFrameState = useCustomWindowFrameState();
 
   useEffect(() => {
     void loadWorkspaces();
     void loadEngines();
-    void scanHarnesses();
     void loadKeepAwake();
-  }, [loadWorkspaces, loadEngines, scanHarnesses, loadKeepAwake]);
+    void loadTerminalNotificationSettings();
+  }, [loadWorkspaces, loadEngines, loadKeepAwake, loadTerminalNotificationSettings]);
 
   useEffect(() => {
     void refreshAllThreads(workspaces.map((workspace) => workspace.id));
   }, [workspaces, refreshAllThreads]);
 
   useEffect(() => {
-    if (!keepAwakeEnabled) {
+    const hasSessionTimer = keepAwakeSessionTimer != null;
+    if (!keepAwakeEnabled && !hasSessionTimer) {
       return;
     }
 
+    const pollInterval = hasSessionTimer ? 30_000 : KEEP_AWAKE_REFRESH_MS;
     const intervalId = window.setInterval(() => {
       void refreshKeepAwake();
-    }, KEEP_AWAKE_REFRESH_MS);
+    }, pollInterval);
 
     return () => window.clearInterval(intervalId);
-  }, [keepAwakeEnabled, refreshKeepAwake]);
+  }, [keepAwakeEnabled, keepAwakeSessionTimer, refreshKeepAwake]);
 
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void listenThreadUpdated(async ({ workspaceId, thread }) => {
       if (thread) {
@@ -136,10 +166,15 @@ export function App() {
       void refreshThreads(workspaceId);
       void refreshArchivedThreads(workspaceId);
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
     });
 
     return () => {
+      disposed = true;
       if (unlisten) {
         unlisten();
       }
@@ -147,15 +182,65 @@ export function App() {
   }, [applyThreadUpdateLocal, refreshArchivedThreads, refreshThreads]);
 
   useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listenChatTurnFinished(async (event) => {
+      const notificationStore = useTerminalNotificationSettingsStore.getState();
+      const settings = notificationStore.settings ?? await notificationStore.load();
+      if (!settings?.chatEnabled || event.status === "interrupted") {
+        return;
+      }
+
+      const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+      const activeThreadId = useThreadStore.getState().activeThreadId;
+      if (
+        document.hasFocus()
+        && activeWorkspaceId === event.workspaceId
+        && activeThreadId === event.threadId
+      ) {
+        return;
+      }
+
+      const title = event.threadTitle.trim() || resolveAgentDisplayName(event.engineId);
+      const body = resolveChatNotificationBody(event.status, event.preview);
+
+      try {
+        await ipc.showAgentNotification(title, body);
+      } catch (error) {
+        console.warn(`Failed to show chat notification for thread ${event.threadId}:`, error);
+      }
+    }).then((fn) => {
+      if (disposed) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void listenEngineRuntimeUpdated((event) => {
       applyEngineRuntimeUpdate(event);
       showRuntimeToast(event.toast);
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
     });
 
     return () => {
+      disposed = true;
       if (unlisten) {
         unlisten();
       }
@@ -389,6 +474,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
 
     void listenMenuAction((action) => {
@@ -436,25 +522,32 @@ export function App() {
           break;
       }
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
     });
 
     return () => {
+      disposed = true;
       if (unlisten) unlisten();
     };
   }, []);
 
   return (
     <div
-      className={`app-shell${linuxDesktop ? " app-shell-linux" : ""}${
-        linuxWindowFrameState.isMaximized ? " app-shell-linux-maximized" : ""
-      }${linuxWindowFrameState.isFullscreen ? " app-shell-linux-fullscreen" : ""}`}
+      className={`app-shell${customWindowFrame ? " app-shell-custom-frame" : ""}${
+        customWindowFrameState.isMaximized ? " app-shell-custom-frame-maximized" : ""
+      }${customWindowFrameState.isFullscreen ? " app-shell-custom-frame-fullscreen" : ""}`}
     >
-      {linuxDesktop && <LinuxWindowFrame frameState={linuxWindowFrameState} />}
+      {customWindowFrame && <CustomWindowFrame frameState={customWindowFrameState} />}
       <div className="app-shell-body">
         <ThreeColumnLayout />
       </div>
       <CommandPalette open={commandPaletteOpen} onClose={closeCommandPalette} />
+      <PowerSettingsModal />
+      <TerminalNotificationSettingsModal />
       <OnboardingWizard />
       <ToastContainer />
     </div>

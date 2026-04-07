@@ -1,12 +1,23 @@
 import { create } from "zustand";
 import { ipc } from "../lib/ipc";
+import {
+  NEW_THREAD_FALLBACK_RUNTIME,
+  resolveNewThreadRuntime,
+  type NewThreadServiceTier,
+} from "../lib/newThreadRuntime";
+import { resolvePreferredOnboardingChatSelection } from "../lib/onboarding";
 import type { Thread } from "../types";
+import { useChatComposerStore } from "./chatComposerStore";
+import { useEngineStore } from "./engineStore";
+import { useOnboardingStore } from "./onboardingStore";
 
 interface EnsureThreadInput {
   workspaceId: string;
   repoId: string | null;
   engineId?: string;
   modelId?: string;
+  reasoningEffort?: string | null;
+  serviceTier?: NewThreadServiceTier | null;
   title?: string;
 }
 
@@ -15,6 +26,8 @@ interface CreateThreadInput {
   repoId: string | null;
   engineId?: string;
   modelId?: string;
+  reasoningEffort?: string | null;
+  serviceTier?: NewThreadServiceTier | null;
   title?: string;
 }
 
@@ -47,8 +60,8 @@ interface ThreadState {
   setThreadLastModelLocal: (threadId: string, modelId: string | null) => void;
 }
 
-const DEFAULT_ENGINE = "codex";
-const DEFAULT_MODEL = "gpt-5.3-codex";
+const DEFAULT_ENGINE = NEW_THREAD_FALLBACK_RUNTIME.engineId;
+const DEFAULT_MODEL = NEW_THREAD_FALLBACK_RUNTIME.modelId;
 
 function mergeWorkspaceThreads(
   current: Record<string, Thread[]>,
@@ -116,15 +129,56 @@ function threadMatchesRequestedModel(thread: Thread, modelId: string): boolean {
 
 const LAST_THREAD_KEY = "panes:lastActiveThreadId";
 
+function resolveImplicitNewThreadRuntime(
+  state: Pick<ThreadState, "threads" | "activeThreadId">,
+  workspaceId: string,
+) {
+  const engines = useEngineStore.getState().engines;
+  const onboardingSelection = resolvePreferredOnboardingChatSelection(
+    useOnboardingStore.getState().selectedChatEngines,
+    engines,
+  );
+  const composerRuntime =
+    useChatComposerStore.getState().runtimeByWorkspace[workspaceId] ?? null;
+  const activeThread =
+    state.threads.find(
+      (thread) =>
+        thread.id === state.activeThreadId &&
+        thread.workspaceId === workspaceId,
+    ) ?? null;
+
+  return resolveNewThreadRuntime({
+    engines,
+    composerRuntime,
+    activeThread,
+    onboardingSelection,
+  });
+}
+
 export const useThreadStore = create<ThreadState>((set, get) => ({
   threads: [],
   threadsByWorkspace: {},
   archivedThreadsByWorkspace: {},
   activeThreadId: null,
   loading: false,
-  createThread: async ({ workspaceId, repoId, engineId, modelId, title }) => {
-    const effectiveEngine = engineId ?? DEFAULT_ENGINE;
-    const effectiveModel = modelId ?? DEFAULT_MODEL;
+  createThread: async ({
+    workspaceId,
+    repoId,
+    engineId,
+    modelId,
+    reasoningEffort,
+    serviceTier,
+    title,
+  }) => {
+    const effectiveRuntime =
+      engineId || modelId || reasoningEffort || serviceTier
+        ? {
+            engineId: engineId ?? DEFAULT_ENGINE,
+            modelId: modelId ?? DEFAULT_MODEL,
+            reasoningEffort: reasoningEffort ?? null,
+            serviceTier: serviceTier ?? null,
+          }
+        : resolveImplicitNewThreadRuntime(get(), workspaceId);
 
     set({ loading: true, error: undefined });
 
@@ -132,9 +186,11 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       const created = await ipc.createThread(
         workspaceId,
         repoId,
-        effectiveEngine,
-        effectiveModel,
-        title ?? (repoId ? "Repo Chat" : "Workspace Chat")
+        effectiveRuntime.engineId,
+        effectiveRuntime.modelId,
+        title ?? (repoId ? "Repo Chat" : "Workspace Chat"),
+        effectiveRuntime.reasoningEffort,
+        effectiveRuntime.serviceTier,
       );
 
       const existingWorkspaceThreads = get().threadsByWorkspace[workspaceId] ?? [];
@@ -180,9 +236,21 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       set({ loading: false, error: String(error) });
     }
   },
-  ensureThreadForScope: async ({ workspaceId, repoId, engineId, modelId, title }) => {
-    const effectiveEngine = engineId ?? DEFAULT_ENGINE;
-    const effectiveModel = modelId ?? DEFAULT_MODEL;
+  ensureThreadForScope: async ({
+    workspaceId,
+    repoId,
+    engineId,
+    modelId,
+    reasoningEffort,
+    serviceTier,
+    title,
+  }) => {
+    const fallbackRuntime = resolveImplicitNewThreadRuntime(get(), workspaceId);
+    const effectiveEngine = engineId ?? fallbackRuntime.engineId;
+    const effectiveModel = modelId ?? fallbackRuntime.modelId;
+    const effectiveReasoningEffort =
+      reasoningEffort ?? fallbackRuntime.reasoningEffort;
+    const effectiveServiceTier = serviceTier ?? fallbackRuntime.serviceTier;
 
     set({ loading: true, error: undefined });
 
@@ -209,7 +277,9 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           repoId,
           effectiveEngine,
           effectiveModel,
-          title ?? (repoId ? "Repo Chat" : "General")
+          title ?? (repoId ? "Repo Chat" : "General"),
+          effectiveReasoningEffort,
+          effectiveServiceTier,
         );
       }
 

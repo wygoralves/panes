@@ -17,6 +17,8 @@ import {
   Image,
   File,
   ListChecks,
+  Copy,
+  Check,
   Clock,
   Zap,
   RotateCcw,
@@ -27,10 +29,15 @@ import {
   Server,
   FlaskConical,
   UserCircle,
+  Lightbulb,
+  Eye,
+  Compass,
+  BookOpen,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import { useChatStore } from "../../stores/chatStore";
+import { useChatComposerStore } from "../../stores/chatComposerStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useOnboardingStore } from "../../stores/onboardingStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -42,10 +49,15 @@ import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
-import { isLinuxDesktop, isMacDesktop } from "../../lib/windowActions";
+import { isMacDesktop, usesCustomWindowFrame } from "../../lib/windowActions";
 import { MessageBlocks, shouldShowClaudeUnsupportedApproval } from "./MessageBlocks";
 import { resolveEngineCapabilities } from "./engineCapabilities";
 import { buildCodexInputItems } from "./codexInputItems";
+import {
+  getPlanImplementationCodingMessage,
+  shouldPromptToImplementPlan,
+} from "./planModePrompt";
+import { buildComposerRuntimeSnapshot } from "./composerRuntime";
 import { resolveReasoningEffortForModel } from "./reasoningEffort";
 import { ToolInputQuestionnaire } from "./ToolInputQuestionnaire";
 import {
@@ -74,7 +86,6 @@ import { ChatSlashMenu, type SlashCommand } from "./ChatSlashMenu";
 import { ChatCommandPanel, type ActiveSlashCommand } from "./ChatCommandPanel";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
-import { getHarnessIcon } from "../shared/HarnessLogos";
 import { shouldSubmitChatInput } from "./chatInputShortcuts";
 import type {
   ApprovalBlock,
@@ -92,7 +103,7 @@ import type {
 
 const MESSAGE_VIRTUALIZATION_THRESHOLD = 40;
 const MESSAGE_ESTIMATED_ROW_HEIGHT = 220;
-const MESSAGE_ROW_GAP = 16;
+const MESSAGE_ROW_GAP = 12;
 const MESSAGE_OVERSCAN_PX = 700;
 const LazyTerminalPanel = lazy(() =>
   import("../terminal/TerminalPanel").then((module) => ({
@@ -966,6 +977,76 @@ interface MessageRowProps {
   onLoadActionOutput: (messageId: string, actionId: string) => Promise<void>;
 }
 
+const THINKING_VARIANTS = [
+  { icon: Brain, key: "thinkingVariants.thinking" },
+  { icon: Lightbulb, key: "thinkingVariants.reasoning" },
+  { icon: Eye, key: "thinkingVariants.analyzing" },
+  { icon: Compass, key: "thinkingVariants.exploring" },
+  { icon: Search, key: "thinkingVariants.researching" },
+  { icon: Sparkles, key: "thinkingVariants.generating" },
+  { icon: BookOpen, key: "thinkingVariants.reading" },
+  { icon: Brain, key: "thinkingVariants.considering" },
+] as const;
+
+function useThinkingVariant(active: boolean) {
+  const [index, setIndex] = useState(() => Math.floor(Math.random() * THINKING_VARIANTS.length));
+  useEffect(() => {
+    if (!active) return;
+    const interval = setInterval(() => {
+      setIndex((i) => (i + 1) % THINKING_VARIANTS.length);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [active]);
+  return THINKING_VARIANTS[index];
+}
+
+function extractMessageCopyText(message: Message): string {
+  if (message.role === "user") {
+    if (message.content) return message.content;
+    return (message.blocks ?? [])
+      .filter((b) => b.type === "text")
+      .map((b) => String(b.content ?? ""))
+      .join("\n");
+  }
+  return (message.blocks ?? [])
+    .filter((b) => b.type === "text" || b.type === "code")
+    .map((b) => {
+      if (b.type === "code") return `\`\`\`${b.language ?? ""}\n${b.content ?? ""}\n\`\`\``;
+      return String(b.content ?? "");
+    })
+    .join("\n\n");
+}
+
+function MessageCopyButton({ message }: { message: Message }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    const text = extractMessageCopyText(message);
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [message]);
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      style={{
+        cursor: "pointer",
+        background: "none",
+        border: "none",
+        padding: "2px 4px",
+        display: "inline-flex",
+        alignItems: "center",
+        color: copied ? "var(--success)" : "var(--text-3)",
+      }}
+      aria-label="Copy message"
+    >
+      {copied ? <Check size={11} /> : <Copy size={11} />}
+    </button>
+  );
+}
+
 function MessageRowView({
   message,
   index,
@@ -1009,11 +1090,13 @@ function MessageRowView({
   );
   const hasAssistantContent = !isUser && hasVisibleContent(message.blocks);
   const showAssistantShell = !isUser && (hasAssistantContent || message.status === "streaming");
+  const showThinkingPlaceholder = showAssistantShell && !hasAssistantContent;
+  const thinkingVariant = useThinkingVariant(showThinkingPlaceholder);
 
   return (
     <div
       data-message-id={message.id}
-      className="animate-slide-up"
+      className="animate-slide-up msg-row"
       style={{
         animationDelay: `${Math.min(index * 20, 200)}ms`,
         display: "flex",
@@ -1036,8 +1119,8 @@ function MessageRowView({
               maxWidth: "75%",
               padding: "10px 14px",
               borderRadius: "var(--radius-md)",
-              background: "rgba(255, 107, 107, 0.06)",
-              border: "1px solid rgba(255, 107, 107, 0.10)",
+              background: "rgba(255, 107, 107, 0.09)",
+              border: "1px solid rgba(255, 107, 107, 0.16)",
               fontSize: 13,
               lineHeight: 1.6,
               whiteSpace: "pre-wrap",
@@ -1087,18 +1170,10 @@ function MessageRowView({
             )}
             {userContent}
           </div>
-          {messageTimestamp && (
-            <span
-              style={{
-                fontSize: 10,
-                color: "var(--text-3)",
-                paddingRight: 4,
-                marginTop: 4,
-              }}
-            >
-              {messageTimestamp}
-            </span>
-          )}
+          <div className="msg-row-timestamp" style={{ display: "flex", alignItems: "center", gap: 2, justifyContent: "flex-end", marginTop: 4, paddingRight: 4 }}>
+            <MessageCopyButton message={message} />
+            {messageTimestamp && <span>{messageTimestamp}</span>}
+          </div>
         </>
       ) : showAssistantShell ? (
         <>
@@ -1106,27 +1181,9 @@ function MessageRowView({
             style={{
               width: "100%",
               maxWidth: "100%",
-              padding: "8px 4px",
-              borderRadius: "var(--radius-md)",
-              background: "var(--bg-2)",
-              border: "1px solid var(--border)",
-              overflow: "hidden",
+              padding: "4px 0",
             }}
           >
-            <div
-              style={{
-                padding: "2px 14px 6px",
-                fontSize: 11,
-                fontWeight: 600,
-                color: "var(--text-3)",
-                letterSpacing: "0.02em",
-              }}
-            >
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                {assistantEngineId && getHarnessIcon(assistantEngineId, 11)}
-                <span>{assistantLabel}</span>
-              </span>
-            </div>
             {hasAssistantContent ? (
               <MessageBlocks
                 blocks={message.blocks}
@@ -1138,7 +1195,7 @@ function MessageRowView({
             ) : (
               <div
                 style={{
-                  padding: "8px 14px 12px",
+                  padding: "4px 14px 8px",
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 8,
@@ -1146,12 +1203,11 @@ function MessageRowView({
                   fontSize: 12,
                 }}
               >
-                <Brain
-                  size={12}
-                  className="thinking-icon-active"
-                  style={{ color: "var(--info)" }}
-                />
-                <span>{t("modelPicker.thinking")}</span>
+                {(() => {
+                  const ThinkIcon = thinkingVariant.icon;
+                  return <ThinkIcon size={12} className="thinking-icon-active" style={{ color: "var(--info)" }} />;
+                })()}
+                <span>{t(thinkingVariant.key)}</span>
                 <span className="chat-streaming-dots">
                   <span />
                   <span />
@@ -1160,18 +1216,10 @@ function MessageRowView({
               </div>
             )}
           </div>
-          {messageTimestamp && (
-            <span
-              style={{
-                fontSize: 10,
-                color: "var(--text-3)",
-                marginTop: 4,
-                paddingLeft: 4,
-              }}
-            >
-              {messageTimestamp}
-            </span>
-          )}
+          <div className="msg-row-timestamp" style={{ display: "flex", alignItems: "center", gap: 2, marginTop: 2, paddingLeft: 14 }}>
+            <MessageCopyButton message={message} />
+            {messageTimestamp && <span>{messageTimestamp}</span>}
+          </div>
         </>
       ) : null}
     </div>
@@ -1271,6 +1319,9 @@ export function ChatPanel() {
   renderStartedAtRef.current = performance.now();
 
   const [input, setInput] = useState("");
+  const inputHistoryRef = useRef<string[]>([]);
+  const inputHistCursorRef = useRef(-1);
+  const inputLiveDraftRef = useRef("");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [isFileDropOver, setIsFileDropOver] = useState(false);
   const [planMode, setPlanMode] = useState(false);
@@ -1306,6 +1357,7 @@ export function ChatPanel() {
   );
   const {
     messages,
+    status,
     hasOlderMessages,
     loadingOlderMessages,
     loadOlderMessages,
@@ -1322,6 +1374,7 @@ export function ChatPanel() {
   } = useChatStore(
     useShallow((state) => ({
       messages: state.messages,
+      status: state.status,
       hasOlderMessages: state.hasOlderMessages,
       loadingOlderMessages: state.loadingOlderMessages,
       loadOlderMessages: state.loadOlderMessages,
@@ -1342,10 +1395,11 @@ export function ChatPanel() {
   const focusMode = useUiStore((s) => s.focusMode);
   const showSidebar = useUiStore((s) => s.showSidebar);
   const isMac = isMacDesktop();
-  const isLinux = isLinuxDesktop();
+  const customWindowFrame = usesCustomWindowFrame();
   const useTitlebarSafeInset = isMac && focusMode && !showSidebar;
   const engines = useEngineStore((s) => s.engines);
   const health = useEngineStore((s) => s.health);
+  const ensureEngineHealth = useEngineStore((s) => s.ensureHealth);
   const onboardingOpen = useOnboardingStore((s) => s.open);
   const onboardingSelectedChatEngines = useOnboardingStore((s) => s.selectedChatEngines);
   const codexExternalSandboxActive = useMemo(
@@ -1353,28 +1407,6 @@ export function ChatPanel() {
     [health],
   );
   const codexProtocolDiagnostics = health.codex?.protocolDiagnostics;
-  const codexPlanModeAdvertisement = useMemo<
-    "advertised" | "notAdvertised" | "unknown"
-  >(() => {
-    if (!codexProtocolDiagnostics) {
-      return "unknown";
-    }
-
-    const collaborationModeStatus = codexProtocolDiagnostics.methodAvailability.find(
-      (entry) => entry.method === "collaborationMode/list",
-    )?.status;
-    if (collaborationModeStatus && collaborationModeStatus !== "available") {
-      return "unknown";
-    }
-
-    return codexProtocolDiagnostics.collaborationModes.includes("plan")
-      ? "advertised"
-      : "notAdvertised";
-  }, [
-    codexProtocolDiagnostics,
-    codexProtocolDiagnostics?.collaborationModes,
-    codexProtocolDiagnostics?.methodAvailability,
-  ]);
   const preferredOnboardingChatSelection = useMemo(
     () => resolvePreferredOnboardingChatSelection(onboardingSelectedChatEngines, engines),
     [engines, onboardingSelectedChatEngines],
@@ -1427,6 +1459,8 @@ export function ChatPanel() {
     })),
   );
   const gitStatus = useGitStore((s) => s.status);
+  const setComposerRuntime = useChatComposerStore((state) => state.setWorkspaceRuntime);
+  const clearComposerRuntime = useChatComposerStore((state) => state.clearWorkspaceRuntime);
   const terminalWorkspaceState = useTerminalStore((s) =>
     activeWorkspaceId ? s.workspaces[activeWorkspaceId] : undefined,
   );
@@ -1451,6 +1485,7 @@ export function ChatPanel() {
   const [viewportScrollTop, setViewportScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [autoScrollLocked, setAutoScrollLocked] = useState(false);
+  const [hasExplicitComposerRuntime, setHasExplicitComposerRuntime] = useState(false);
   const [workspaceOptInPrompt, setWorkspaceOptInPrompt] = useState<{
     repoNames: string;
     workspaceId: string;
@@ -1460,6 +1495,17 @@ export function ChatPanel() {
     attachments: ChatAttachment[];
     inputItems: ChatInputItem[] | null;
     planMode: boolean;
+    engineId: string;
+    modelId: string;
+    effort: string | null;
+    personality: CodexPersonalityValue;
+    serviceTier: CodexServiceTierValue;
+    outputSchemaText: string;
+    customApprovalPolicyText: string;
+    restorePlanModeOnCancel: boolean;
+  } | null>(null);
+  const [planImplementationPrompt, setPlanImplementationPrompt] = useState<{
+    threadId: string;
     engineId: string;
     modelId: string;
     effort: string | null;
@@ -1694,6 +1740,8 @@ export function ChatPanel() {
     typeof activeThread?.engineMetadata?.reasoningEffort === "string"
       ? activeThread.engineMetadata.reasoningEffort
       : undefined;
+  const activeThreadInCurrentWorkspace =
+    activeThread?.workspaceId === activeWorkspaceId;
   const modelPickerLabel = useMemo(() => {
     return formatEngineModelLabel(t, selectedEngine?.name, selectedModel?.displayName);
   }, [t, selectedEngine?.name, selectedModel?.displayName]);
@@ -1876,6 +1924,8 @@ export function ChatPanel() {
       ),
     [activeThread?.engineId, pendingApprovals, selectedPendingToolInputApprovalId],
   );
+  const pendingPlanImplementationThreadIdRef = useRef<string | null>(null);
+  const previousStreamingRef = useRef(false);
 
   useEffect(() => {
     if (!selectedPendingToolInputApprovalId) {
@@ -1889,6 +1939,83 @@ export function ChatPanel() {
       setSelectedPendingToolInputApprovalId(null);
     }
   }, [pendingApprovals, selectedPendingToolInputApprovalId]);
+
+  useEffect(() => {
+    if (planImplementationPrompt && planImplementationPrompt.threadId !== threadId) {
+      setPlanImplementationPrompt(null);
+    }
+
+    if (
+      pendingPlanImplementationThreadIdRef.current &&
+      pendingPlanImplementationThreadIdRef.current !== threadId &&
+      !streaming
+    ) {
+      pendingPlanImplementationThreadIdRef.current = null;
+    }
+  }, [planImplementationPrompt, streaming, threadId]);
+
+  useEffect(() => {
+    const wasStreaming = previousStreamingRef.current;
+    previousStreamingRef.current = streaming;
+
+    const armedThreadId = pendingPlanImplementationThreadIdRef.current;
+    if (
+      shouldPromptToImplementPlan({
+        wasStreaming,
+        streaming,
+        status,
+        activeThreadId: threadId,
+        armedThreadId,
+        engineId: activeThread?.engineId,
+        messages,
+      })
+    ) {
+      const promptThreadId = threadId ?? armedThreadId;
+      if (!promptThreadId) {
+        pendingPlanImplementationThreadIdRef.current = null;
+        return;
+      }
+      const promptThread =
+        useThreadStore
+          .getState()
+          .threads.find((thread) => thread.id === promptThreadId) ??
+        (activeThread?.id === promptThreadId ? activeThread : null);
+      if (!promptThread) {
+        pendingPlanImplementationThreadIdRef.current = null;
+        return;
+      }
+      pendingPlanImplementationThreadIdRef.current = null;
+      setPlanImplementationPrompt({
+        threadId: promptThreadId,
+        engineId: promptThread.engineId,
+        modelId: readThreadLastModelId(promptThread) ?? promptThread.modelId,
+        effort:
+          typeof promptThread.engineMetadata?.reasoningEffort === "string"
+            ? promptThread.engineMetadata.reasoningEffort
+            : activeThreadReasoningEffort ?? null,
+        personality: selectedPersonality,
+        serviceTier: selectedServiceTier,
+        outputSchemaText,
+        customApprovalPolicyText,
+      });
+      return;
+    }
+
+    if (wasStreaming && !streaming && armedThreadId === threadId && status !== "completed") {
+      pendingPlanImplementationThreadIdRef.current = null;
+    }
+  }, [
+    activeThread,
+    activeThreadReasoningEffort,
+    customApprovalPolicyText,
+    messages,
+    outputSchemaText,
+    selectedPersonality,
+    selectedServiceTier,
+    status,
+    streaming,
+    threadId,
+  ]);
 
   const pendingApprovalBannerRows = useMemo(
     () =>
@@ -1911,6 +2038,45 @@ export function ChatPanel() {
   const showPendingToolInputComposer = Boolean(
     pendingToolInputApproval && pendingToolInputQuestions.length > 0,
   );
+  const planImplementationQuestionChoiceImplement = useMemo(
+    () => t("panel.planImplementationOptionImplement"),
+    [t],
+  );
+  const planImplementationQuestionChoiceStay = useMemo(
+    () => t("panel.planImplementationOptionStay"),
+    [t],
+  );
+  const planImplementationQuestionDetails = useMemo(
+    () => ({
+      questions: [
+        {
+          id: "plan_implementation_decision",
+          question: t("panel.planImplementationQuestion"),
+          options: [
+            {
+              label: planImplementationQuestionChoiceImplement,
+              description: t("panel.planImplementationOptionImplementDescription"),
+              recommended: true,
+            },
+            {
+              label: planImplementationQuestionChoiceStay,
+              description: t("panel.planImplementationOptionStayDescription"),
+            },
+          ],
+        },
+      ],
+    }),
+    [
+      planImplementationQuestionChoiceImplement,
+      planImplementationQuestionChoiceStay,
+      t,
+    ],
+  );
+  const showPlanImplementationComposer = Boolean(
+    planImplementationPrompt && !showPendingToolInputComposer,
+  );
+  const showSpecialInputComposer =
+    showPendingToolInputComposer || showPlanImplementationComposer;
   const pendingToolInputSupportsDecline =
     activeThreadApprovalDecisionCapabilities.includes("decline");
   const pendingToolInputSupportsCancel =
@@ -2174,6 +2340,7 @@ export function ChatPanel() {
       return;
     }
 
+    setHasExplicitComposerRuntime(false);
     setSelectedEngineId((current) =>
       current === preferredOnboardingChatSelection.engineId
         ? current
@@ -2195,6 +2362,34 @@ export function ChatPanel() {
       setSelectedModelId(selectedModel.id);
     }
   }, [selectedModel, selectedModelId]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId || engines.length === 0) {
+      return;
+    }
+
+    const engineIds = new Set<string>();
+    if (selectedEngineId) {
+      engineIds.add(selectedEngineId);
+    }
+    if (activeThread?.engineId) {
+      engineIds.add(activeThread.engineId);
+    }
+
+    for (const engineId of engineIds) {
+      if (!engines.some((engine) => engine.id === engineId) || health[engineId]) {
+        continue;
+      }
+      void ensureEngineHealth(engineId);
+    }
+  }, [
+    activeWorkspaceId,
+    activeThread?.engineId,
+    engines,
+    ensureEngineHealth,
+    health,
+    selectedEngineId,
+  ]);
 
   useEffect(() => {
     if (!activeWorkspaceId || engines.length === 0) {
@@ -2335,6 +2530,54 @@ export function ChatPanel() {
     supportedEfforts,
   ]);
 
+  const composerRuntimeSnapshot = useMemo(
+    () =>
+      buildComposerRuntimeSnapshot({
+        hasActiveThread: activeThreadInCurrentWorkspace,
+        hasExplicitOverride: hasExplicitComposerRuntime,
+        selectedEngineId,
+        selectedModel,
+        selectedEffort,
+        selectedServiceTier,
+      }),
+    [
+      activeThreadInCurrentWorkspace,
+      hasExplicitComposerRuntime,
+      selectedEffort,
+      selectedEngineId,
+      selectedModel,
+      selectedServiceTier,
+    ],
+  );
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      return;
+    }
+
+    if (!composerRuntimeSnapshot) {
+      clearComposerRuntime(activeWorkspaceId);
+      return;
+    }
+
+    setComposerRuntime(activeWorkspaceId, composerRuntimeSnapshot);
+  }, [
+    activeWorkspaceId,
+    clearComposerRuntime,
+    composerRuntimeSnapshot,
+    setComposerRuntime,
+  ]);
+
+  useEffect(() => {
+    if (
+      activeThreadInCurrentWorkspace &&
+      activeThread?.engineId !== "codex" &&
+      selectedServiceTier !== "inherit"
+    ) {
+      setSelectedServiceTier("inherit");
+    }
+  }, [activeThread?.engineId, activeThreadInCurrentWorkspace, selectedServiceTier]);
+
   useEffect(() => {
     if (activeThread?.engineId !== "codex") {
       return;
@@ -2358,6 +2601,7 @@ export function ChatPanel() {
     }
     lastSyncedThreadIdRef.current = activeThread.id;
     manuallyOverrodeThreadSelectionRef.current = false;
+    setHasExplicitComposerRuntime(false);
     if (activeThread.engineId !== selectedEngineId) {
       setSelectedEngineId(activeThread.engineId);
     }
@@ -2665,6 +2909,9 @@ export function ChatPanel() {
       ? serializePrettyJson(patch.approvalPolicy)
       : customApprovalPolicyText;
     const applyLocalState = () => {
+      if (patch.updateServiceTier) {
+        setHasExplicitComposerRuntime(true);
+      }
       setSelectedPersonality(nextPersonality);
       setSelectedServiceTier(nextServiceTier);
       setOutputSchemaText(nextOutputSchemaText);
@@ -3102,6 +3349,15 @@ export function ChatPanel() {
         planMode,
       });
       if (steered) {
+        const trimmed = input.trim();
+        if (trimmed) {
+          const hist = inputHistoryRef.current;
+          if (hist[0] !== trimmed) {
+            inputHistoryRef.current = [trimmed, ...hist].slice(0, 50);
+          }
+        }
+        inputHistCursorRef.current = -1;
+        inputLiveDraftRef.current = "";
         setInput("");
         setAttachments([]);
       }
@@ -3144,6 +3400,11 @@ export function ChatPanel() {
         repoId: activeScopeRepoId,
         engineId: submitEngineId,
         modelId: submitModelId,
+        reasoningEffort: submitReasoningEffort,
+        serviceTier:
+          submitEngineId === "codex" && selectedServiceTier !== "inherit"
+            ? selectedServiceTier
+            : null,
         title: activeRepo
           ? t("panel.repoChatTitle", { name: activeRepo.name })
           : t("panel.workspaceChatTitle"),
@@ -3191,6 +3452,7 @@ export function ChatPanel() {
           serviceTier: selectedServiceTier,
           outputSchemaText,
           customApprovalPolicyText,
+          restorePlanModeOnCancel: false,
         });
         return;
       }
@@ -3217,6 +3479,16 @@ export function ChatPanel() {
       planMode,
     });
     if (sent) {
+      pendingPlanImplementationThreadIdRef.current = planMode ? targetThreadId : null;
+      const trimmed = input.trim();
+      if (trimmed) {
+        const hist = inputHistoryRef.current;
+        if (hist[0] !== trimmed) {
+          inputHistoryRef.current = [trimmed, ...hist].slice(0, 50);
+        }
+      }
+      inputHistCursorRef.current = -1;
+      inputLiveDraftRef.current = "";
       setInput("");
       setAttachments([]);
     }
@@ -3260,6 +3532,7 @@ export function ChatPanel() {
         return;
       }
 
+      pendingPlanImplementationThreadIdRef.current = prompt.planMode ? prompt.threadId : null;
       setInput("");
       setAttachments([]);
 
@@ -3270,7 +3543,123 @@ export function ChatPanel() {
     }
   }
 
+  async function executePlanImplementation() {
+    const prompt = planImplementationPrompt;
+    if (!prompt || !activeWorkspaceId) {
+      return;
+    }
+    const implementationMessage = getPlanImplementationCodingMessage(prompt.engineId);
+
+    const currentThread =
+      useThreadStore.getState().threads.find((thread) => thread.id === prompt.threadId) ??
+      (activeThread?.id === prompt.threadId ? activeThread : null);
+    if (!currentThread) {
+      toast.error(t("panel.toasts.planImplementationThreadUnavailable"));
+      return;
+    }
+
+    if (
+      currentThread.repoId === null &&
+      repos.length > 1 &&
+      readThreadSandboxModeValue(currentThread) !== "read-only"
+    ) {
+      const availableRepoPaths = repos.map((repo) => repo.path);
+      const optIn = Boolean(currentThread.engineMetadata?.workspaceWriteOptIn);
+      const confirmedWritableRoots = readThreadWorkspaceWritableRoots(currentThread);
+      const hasValidConfirmedRoots = confirmedWritableRoots.some((root) =>
+        availableRepoPaths.includes(root),
+      );
+      if (!optIn || !hasValidConfirmedRoots) {
+        const repoNames = repos.map((repo) => repo.name).join(", ");
+        setPlanImplementationPrompt(null);
+        setPlanMode(false);
+        setWorkspaceOptInPrompt({
+          repoNames,
+          workspaceId: activeWorkspaceId,
+          threadId: currentThread.id,
+          threadPaths: availableRepoPaths,
+          text: implementationMessage,
+          attachments: [],
+          inputItems: null,
+          planMode: false,
+          engineId: prompt.engineId,
+          modelId: prompt.modelId,
+          effort: prompt.effort,
+          personality: prompt.personality,
+          serviceTier: prompt.serviceTier,
+          outputSchemaText: prompt.outputSchemaText,
+          customApprovalPolicyText: prompt.customApprovalPolicyText,
+          restorePlanModeOnCancel: true,
+        });
+        return;
+      }
+    }
+
+    setPlanImplementationPrompt(null);
+    setPlanMode(false);
+    try {
+      await ipc.setThreadReasoningEffort(currentThread.id, prompt.effort, prompt.modelId);
+      setThreadReasoningEffortLocal(currentThread.id, prompt.effort);
+      if (
+        !(await applyCodexConfigToThread(currentThread.id, {
+          engineId: prompt.engineId,
+          personality: prompt.personality,
+          serviceTier: prompt.serviceTier,
+          outputSchemaText: prompt.outputSchemaText,
+          customApprovalPolicyText: prompt.customApprovalPolicyText,
+        }))
+      ) {
+        setPlanMode(true);
+        setPlanImplementationPrompt(prompt);
+        return;
+      }
+      setThreadLastModelLocal(currentThread.id, prompt.modelId);
+
+      const sent = await send(implementationMessage, {
+        threadIdOverride: currentThread.id,
+        engineId: prompt.engineId,
+        modelId: prompt.modelId,
+        reasoningEffort: prompt.effort,
+        planMode: false,
+      });
+      if (!sent) {
+        setPlanMode(true);
+        setPlanImplementationPrompt(prompt);
+      }
+    } catch {
+      setPlanMode(true);
+      setPlanImplementationPrompt(prompt);
+    }
+  }
+
+  function handlePlanImplementationQuestionnaireSubmit(response: ApprovalResponse) {
+    const answerMap =
+      "answers" in response &&
+      response.answers &&
+      typeof response.answers === "object" &&
+      !Array.isArray(response.answers) &&
+      "plan_implementation_decision" in response.answers
+        ? (response.answers as Record<string, { answers?: string[] }>)
+        : null;
+    const selectedAnswer = answerMap?.plan_implementation_decision?.answers?.[0]?.trim();
+    if (selectedAnswer === planImplementationQuestionChoiceStay) {
+      setPlanImplementationPrompt(null);
+      setPlanMode(true);
+      return;
+    }
+
+    void executePlanImplementation();
+  }
+
+  function dismissWorkspaceOptInPrompt() {
+    if (workspaceOptInPrompt?.restorePlanModeOnCancel) {
+      setPlanMode(true);
+    }
+    setWorkspaceOptInPrompt(null);
+  }
+
   async function onReasoningEffortChange(nextEffort: string) {
+    setHasExplicitComposerRuntime(true);
     selectedEffortRef.current = nextEffort;
     setSelectedEffort(nextEffort);
     const targetThreadId = threadId ?? activeThread?.id ?? null;
@@ -3670,7 +4059,7 @@ export function ChatPanel() {
           style={{
             height: "var(--panel-header-height)",
             padding: "0 16px",
-            paddingLeft: showSidebar ? 16 : (isLinux ? 16 : 80),
+            paddingLeft: showSidebar ? 16 : (customWindowFrame ? 16 : 80),
             display: "flex",
             alignItems: "center",
             gap: 8,
@@ -4434,7 +4823,7 @@ export function ChatPanel() {
 
           {/* Input container */}
           <div
-            className={`chat-input-box ${planMode && !showPendingToolInputComposer ? "chat-input-box-plan" : ""} ${showPendingToolInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
+            className={`chat-input-box ${planMode && !showSpecialInputComposer ? "chat-input-box-plan" : ""} ${showSpecialInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
           >
             {showPendingToolInputComposer && pendingToolInputApproval ? (
               <ToolInputQuestionnaire
@@ -4459,21 +4848,20 @@ export function ChatPanel() {
                   void respondApproval(pendingToolInputApproval.approvalId, response);
                 }}
               />
+            ) : showPlanImplementationComposer ? (
+              <ToolInputQuestionnaire
+                details={planImplementationQuestionDetails}
+                allowCustomAnswer={false}
+                submitLabel={t("panel.continue")}
+                onSubmit={handlePlanImplementationQuestionnaireSubmit}
+              />
             ) : (
               <>
                 {/* Plan mode indicator banner */}
                 {planMode && (
                   <div className="chat-plan-mode-banner">
                     <ListChecks size={12} />
-                    <span>
-                      {selectedEngineId === "codex"
-                        ? codexPlanModeAdvertisement === "advertised"
-                          ? t("panel.planModeBannerCodex")
-                          : codexPlanModeAdvertisement === "notAdvertised"
-                            ? t("panel.planModeBannerCodexFallback")
-                            : t("panel.planModeBannerCodexUnknown")
-                        : t("panel.planModeBanner")}
-                    </span>
+                    <span>{t("panel.planMode")}</span>
                   </div>
                 )}
 
@@ -4539,6 +4927,7 @@ export function ChatPanel() {
                   rows={3}
                   value={input}
                   onChange={(e) => {
+                    inputHistCursorRef.current = -1;
                     setInput(e.target.value);
                     handleSlashDetection(
                       e.target.value,
@@ -4577,6 +4966,29 @@ export function ChatPanel() {
                       e.preventDefault();
                       setActiveCommandPanel(null);
                       setCommandPanelError(null);
+                      return;
+                    }
+                    /* ── Input history cycling (Option+Up / Option+Down) ── */
+                    if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+                      const history = inputHistoryRef.current;
+                      if (history.length === 0) return;
+                      e.preventDefault();
+                      if (e.key === "ArrowUp") {
+                        if (inputHistCursorRef.current === -1) {
+                          inputLiveDraftRef.current = input;
+                        }
+                        const next = Math.min(inputHistCursorRef.current + 1, history.length - 1);
+                        inputHistCursorRef.current = next;
+                        setInput(history[next]);
+                      } else {
+                        const next = inputHistCursorRef.current - 1;
+                        inputHistCursorRef.current = next;
+                        if (next < 0) {
+                          setInput(inputLiveDraftRef.current);
+                        } else {
+                          setInput(history[next]);
+                        }
+                      }
                       return;
                     }
                     if (shouldSubmitChatInput({
@@ -4642,7 +5054,7 @@ export function ChatPanel() {
               }}
             >
               {/* Attach file button */}
-              {!showPendingToolInputComposer && (
+              {!showSpecialInputComposer && (
                 <button
                   type="button"
                   className="chat-toolbar-btn"
@@ -4657,7 +5069,7 @@ export function ChatPanel() {
                 </button>
               )}
 
-              {!showPendingToolInputComposer && (
+              {!showSpecialInputComposer && (
                 <button
                   type="button"
                   className={`chat-toolbar-btn chat-toolbar-btn-bordered ${planMode ? "chat-toolbar-btn-active" : ""}`}
@@ -4678,44 +5090,71 @@ export function ChatPanel() {
                 </button>
               )}
 
-              {!showPendingToolInputComposer && <div className="chat-toolbar-divider" />}
+              {!showSpecialInputComposer && <div className="chat-toolbar-divider" />}
 
               {/* Engine + Model + Effort selector */}
-              {!showPendingToolInputComposer && (
-                <ModelPicker
-                  engines={engines}
-                  health={health}
-                  selectedEngineId={selectedEngineId}
-                  selectedModelId={selectedModelId ?? selectedModel?.id ?? ""}
-                  selectedEffort={selectedEffort}
-                  serviceTier={selectedServiceTier !== "inherit" ? selectedServiceTier : null}
-                  onEngineModelChange={(engineId, modelId) => {
-                    manuallyOverrodeThreadSelectionRef.current = true;
-                    selectedEngineIdRef.current = engineId;
-                    if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
-                    const nextEngine =
-                      engines.find((engine) => engine.id === engineId) ?? null;
-                    const nextModel =
-                      nextEngine?.models.find((model) => model.id === modelId) ?? null;
-                    const nextEffort = resolveReasoningEffortForModel(
-                      nextModel,
-                      selectedEffortRef.current,
-                    );
-                    selectedModelIdRef.current = modelId;
-                    setSelectedModelId(modelId);
-                    if (nextEffort && nextEffort !== selectedEffort) {
-                      selectedEffortRef.current = nextEffort;
-                      setSelectedEffort(nextEffort);
-                    }
-                  }}
-                  onEffortChange={(effort) => void onReasoningEffortChange(effort)}
-                  disabled={availableModels.length === 0}
-                />
+              {!showSpecialInputComposer && (
+                <>
+                  <ModelPicker
+                    engines={engines}
+                    health={health}
+                    selectedEngineId={selectedEngineId}
+                    selectedModelId={selectedModelId ?? selectedModel?.id ?? ""}
+                    selectedEffort={selectedEffort}
+                    onEngineModelChange={(engineId, modelId) => {
+                      manuallyOverrodeThreadSelectionRef.current = true;
+                      setHasExplicitComposerRuntime(true);
+                      selectedEngineIdRef.current = engineId;
+                      if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
+                      const nextEngine =
+                        engines.find((engine) => engine.id === engineId) ?? null;
+                      const nextModel =
+                        nextEngine?.models.find((model) => model.id === modelId) ?? null;
+                      const nextEffort = resolveReasoningEffortForModel(
+                        nextModel,
+                        selectedEffortRef.current,
+                      );
+                      selectedModelIdRef.current = modelId;
+                      setSelectedModelId(modelId);
+                      if (nextEffort && nextEffort !== selectedEffort) {
+                        selectedEffortRef.current = nextEffort;
+                        setSelectedEffort(nextEffort);
+                      }
+                    }}
+                    onEffortChange={(effort) => void onReasoningEffortChange(effort)}
+                    disabled={availableModels.length === 0}
+                  />
+                  {selectedEngineId === "codex" && (
+                    <button
+                      type="button"
+                      className={`chat-toolbar-btn chat-toolbar-btn-bordered chat-toolbar-btn-fast ${selectedServiceTier === "fast" ? "chat-toolbar-btn-fast-active" : ""}`}
+                      onClick={() => {
+                        void onCodexConfigSave({
+                          updatePersonality: false,
+                          personality: null,
+                          updateServiceTier: true,
+                          serviceTier:
+                            selectedServiceTier === "fast" ? null : "fast",
+                          updateOutputSchema: false,
+                          outputSchema: null,
+                          updateApprovalPolicy: false,
+                          approvalPolicy: null,
+                        }).catch((error) => {
+                          toast.error(String(error));
+                        });
+                      }}
+                      title={t("configPicker.serviceTierDescription")}
+                    >
+                      <Zap size={11} />
+                      <span style={{ fontSize: 11 }}>{t("modelPicker.fastOn")}</span>
+                    </button>
+                  )}
+                </>
               )}
 
               {/* Codex Runtime + Config removed from toolbar — accessed via /slash commands */}
 
-              {!showPendingToolInputComposer &&
+              {!showSpecialInputComposer &&
                 (activeRepo ||
                   repos.length > 0 ||
                   activeThread?.engineId === "codex" ||
@@ -4827,7 +5266,7 @@ export function ChatPanel() {
               <div style={{ flex: 1 }} />
 
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {streaming && !showPendingToolInputComposer && (
+                {streaming && !showSpecialInputComposer && (
                   <button
                     type="button"
                     onClick={() => void cancel()}
@@ -4850,7 +5289,7 @@ export function ChatPanel() {
                   </button>
                 )}
 
-                {(!streaming || canSteerActiveTurn) && !showPendingToolInputComposer && (
+                {(!streaming || canSteerActiveTurn) && !showSpecialInputComposer && (
                 <button
                   type="submit"
                   disabled={!activeWorkspaceId || !input.trim()}
@@ -5073,7 +5512,7 @@ export function ChatPanel() {
         }
         confirmLabel={t("panel.continue")}
         onConfirm={() => void executeWorkspaceOptInSend()}
-        onCancel={() => setWorkspaceOptInPrompt(null)}
+        onCancel={dismissWorkspaceOptInPrompt}
       />
     </div>
   );

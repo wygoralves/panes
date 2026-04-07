@@ -18,11 +18,38 @@ interface IndentInfo {
   nextIndex: number;
 }
 
-function escapeNonFenceHtml(input: string): string {
+const SAFE_HTML_TAG_RE = /<(br|hr)\s*\/?>/gi;
+const RAW_HTML_FRAGMENT_RE =
+  /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<![a-z][^>]*>|<\?[\s\S]*?\?>|<\/[a-z][a-z0-9-]*\s*>|<[a-z][a-z0-9-]*(?:\s+(?:"[^"]*"|'[^']*'|[^"'<>])*)?\s*\/?>/gi;
+
+function escapeHtmlFragment(input: string): string {
   return input
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function escapeNonFenceHtml(input: string): string {
+  // Preserve known safe self-closing HTML tags (<br>, <hr>) by replacing them
+  // with placeholders before escaping, then restoring after.
+  const placeholders: { placeholder: string; tag: string }[] = [];
+  let idx = 0;
+  const withPlaceholders = input.replace(SAFE_HTML_TAG_RE, (match) => {
+    const placeholder = `\x00SAFE_TAG_${idx++}\x00`;
+    placeholders.push({ placeholder, tag: match });
+    return placeholder;
+  });
+
+  let escaped = withPlaceholders.replace(
+    RAW_HTML_FRAGMENT_RE,
+    (match) => escapeHtmlFragment(match),
+  );
+
+  for (const { placeholder, tag } of placeholders) {
+    escaped = escaped.replace(placeholder, tag);
+  }
+
+  return escaped;
 }
 
 function sanitizeUrl(url: string): string {
@@ -273,4 +300,3 @@ export const markdownParserCoreInternals = {
   splitLinesWithEndings,
   tokenizeFences,
 };
-

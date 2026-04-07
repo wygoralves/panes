@@ -1,6 +1,6 @@
 import { isValidElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LinuxWindowFrame } from "./LinuxWindowFrame";
+import { CustomWindowFrame } from "./CustomWindowFrame";
 
 const mockCloseCurrentWindow = vi.hoisted(() => vi.fn());
 const mockMinimizeCurrentWindow = vi.hoisted(() => vi.fn());
@@ -20,7 +20,7 @@ vi.mock("../../lib/windowActions", () => ({
   toggleWindowFullscreen: vi.fn(),
 }));
 
-describe("LinuxWindowFrame", () => {
+describe("CustomWindowFrame", () => {
   function findElement(
     node: ReactNode,
     predicate: (props: Record<string, unknown>) => boolean,
@@ -59,7 +59,7 @@ describe("LinuxWindowFrame", () => {
   });
 
   it("uses the native close action for the close control", async () => {
-    const tree = LinuxWindowFrame({ frameState: { isFullscreen: false, isMaximized: false } });
+    const tree = CustomWindowFrame({ frameState: { isFullscreen: false, isMaximized: false } });
     const closeButtonProps = findElement(
       tree,
       (props) => props["aria-label"] === "windowControls.close",
@@ -72,7 +72,7 @@ describe("LinuxWindowFrame", () => {
   });
 
   it("renders the restore label while maximized", () => {
-    const tree = LinuxWindowFrame({ frameState: { isFullscreen: false, isMaximized: true } });
+    const tree = CustomWindowFrame({ frameState: { isFullscreen: false, isMaximized: true } });
     const maximizeButtonProps = findElement(
       tree,
       (props) => props["aria-label"] === "windowControls.restore",

@@ -1,7 +1,7 @@
 {
   "name": "panes",
   "private": true,
-  "version": "0.41.0",
+  "version": "0.51.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,6 +11,8 @@
     "generate:homebrew-cask": "node scripts/generate-homebrew-cask.mjs",
     "prune:artifacts:check": "node scripts/prune-local-artifacts.mjs --check",
     "prune:artifacts": "node scripts/prune-local-artifacts.mjs --apply",
+    "prune:artifacts:stale:check": "node scripts/prune-local-artifacts.mjs --check --stale",
+    "prune:artifacts:stale": "node scripts/prune-local-artifacts.mjs --apply --stale",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "test": "vitest run",
@@ -63,6 +65,7 @@
     "react-markdown": "^9.0.0",
     "react-resizable-panels": "^2.1.4",
     "rehype-highlight": "^7.0.2",
+    "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.0",
     "zustand": "^5.0.0"
   },
