@@ -50,7 +50,7 @@ const HARNESSES: &[HarnessDef] = &[
         version_flag: "--version",
         install_command: Some("npm"),
         install_args: &["install", "-g", "@anthropic-ai/claude-code"],
-        install_script: Some("curl -fsSL https://claude.ai/install.sh | bash"),
+        install_script: None,
         website: "https://docs.anthropic.com/en/docs/claude-code",
         native: false,
     },
