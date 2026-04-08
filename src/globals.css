@@ -1498,10 +1498,12 @@ button, input, textarea, select {
 .multi-repo-branch-icon {
   color: var(--text-3);
   flex-shrink: 0;
+  width: 9px;
+  height: 9px;
 }
 .multi-repo-branch {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9px;
   color: var(--text-3);
 }
 .multi-repo-sync {
