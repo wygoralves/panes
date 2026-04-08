@@ -24,7 +24,7 @@ import {
   getStatusClass,
 } from "./gitChangesUtils";
 import type { ChangeSection, TreeRow } from "./gitChangesUtils";
-import type { Repo, GitStatus, GitFileStatus } from "../../types";
+import type { GitFileStatus, GitStatus, Repo } from "../../types";
 
 interface Props {
   repos: Repo[];
@@ -42,21 +42,7 @@ interface RepoStatusEntry {
  */
 export function MultiRepoChangesView({ repos, onError }: Props) {
   const { t } = useTranslation("git");
-  const {
-    getStatusForRepo,
-    stage,
-    stageMany,
-    unstage,
-    unstageMany,
-    discardFiles,
-    commit,
-    drafts,
-    setCommitMessageDraft,
-    pushCommitHistory,
-  } = useGitStore();
-  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-  const openGitDiffFile = useFileStore((s) => s.openGitDiffFile);
-  const setLayoutMode = useTerminalStore((s) => s.setLayoutMode);
+  const { getStatusForRepo } = useGitStore();
 
   // ── Per-repo status ──
   const [repoStatuses, setRepoStatuses] = useState<
@@ -183,6 +169,12 @@ export function MultiRepoChangesView({ repos, onError }: Props) {
           expanded={expandedRepos[repo.path] ?? false}
           onToggle={() => toggleRepo(repo.path)}
           onError={onError}
+          onStatusRefresh={(repoPath, freshStatus) => {
+            setRepoStatuses((prev) => ({
+              ...prev,
+              [repoPath]: { status: freshStatus, loading: false },
+            }));
+          }}
         />
       ))}
     </div>
@@ -197,6 +189,7 @@ interface SectionProps {
   expanded: boolean;
   onToggle: () => void;
   onError: (error: string | undefined) => void;
+  onStatusRefresh: (repoPath: string, status: GitStatus) => void;
 }
 
 function RepoAccordionSection({
@@ -205,17 +198,17 @@ function RepoAccordionSection({
   expanded,
   onToggle,
   onError,
+  onStatusRefresh,
 }: SectionProps) {
   const { t } = useTranslation("git");
   const {
+    getStatusForRepo,
     stage,
     stageMany,
     unstage,
     unstageMany,
     discardFiles,
     commit,
-    drafts,
-    setCommitMessageDraft,
     pushCommitHistory,
   } = useGitStore();
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
@@ -247,13 +240,18 @@ function RepoAccordionSection({
     files: string[];
   } | null>(null);
 
-  const commitMessage = drafts.commitMessage;
-  const setCommitMessage = useCallback(
-    (value: string) => {
-      if (activeWorkspaceId) setCommitMessageDraft(activeWorkspaceId, value);
-    },
-    [activeWorkspaceId, setCommitMessageDraft],
-  );
+  // Per-repo commit message (not global draft — avoids cross-repo overwrite)
+  const [commitMessage, setCommitMessage] = useState("");
+
+  // Re-fetch status for THIS repo after any mutation
+  const refreshThisRepo = useCallback(async () => {
+    try {
+      const fresh = await getStatusForRepo(repo.path);
+      onStatusRefresh(repo.path, fresh);
+    } catch {
+      // silently keep previous status
+    }
+  }, [repo.path, getStatusForRepo, onStatusRefresh]);
 
   // ── Memos ──
   const unstagedRows = useMemo(
@@ -274,7 +272,7 @@ function RepoAccordionSection({
   );
   const hasStagedFiles = stagedFiles.length > 0;
 
-  // ── Actions ──
+  // ── Actions (all call refreshThisRepo after mutation) ──
   async function onCommit() {
     if (!commitMessage.trim() || loadingKey !== null) return;
     const msg = commitMessage.trim();
@@ -283,9 +281,11 @@ function RepoAccordionSection({
       onError(undefined);
       await commit(repo.path, msg);
       if (activeWorkspaceId) pushCommitHistory(activeWorkspaceId, msg);
+      setCommitMessage("");
       toast.success(
         t("changes.toasts.committed", { message: msg.split("\n")[0] }),
       );
+      await refreshThisRepo();
     } catch (e) {
       onError(String(e));
     } finally {
@@ -299,6 +299,7 @@ function RepoAccordionSection({
     try {
       onError(undefined);
       await stageMany(repo.path, unstagedFiles.map((f) => f.path));
+      await refreshThisRepo();
     } catch (e) {
       onError(String(e));
     } finally {
@@ -312,6 +313,7 @@ function RepoAccordionSection({
     try {
       onError(undefined);
       await unstageMany(repo.path, stagedFiles.map((f) => f.path));
+      await refreshThisRepo();
     } catch (e) {
       onError(String(e));
     } finally {
@@ -325,6 +327,7 @@ function RepoAccordionSection({
     try {
       onError(undefined);
       await stage(repo.path, filePath);
+      await refreshThisRepo();
     } catch (e) {
       onError(String(e));
     } finally {
@@ -338,6 +341,7 @@ function RepoAccordionSection({
     try {
       onError(undefined);
       await unstage(repo.path, filePath);
+      await refreshThisRepo();
     } catch (e) {
       onError(String(e));
     } finally {
@@ -352,6 +356,20 @@ function RepoAccordionSection({
       title: t("changes.discardChanges"),
       message: t("changes.discardPrompts.fileMessage", { name: fileName }),
       files: [filePath],
+    });
+  }
+
+  function onDiscardDirectory(dirPath: string) {
+    const directoryFiles = unstagedDirectoryFiles.get(dirPath) ?? [];
+    if (directoryFiles.length === 0 || loadingKey !== null) return;
+    const dirName = dirPath.split("/").pop() ?? dirPath;
+    setDiscardPrompt({
+      title: t("changes.discardChanges"),
+      message: t("changes.discardPrompts.directoryMessage", {
+        name: dirName,
+        count: directoryFiles.length,
+      }),
+      files: directoryFiles,
     });
   }
 
@@ -372,6 +390,7 @@ function RepoAccordionSection({
     try {
       onError(undefined);
       await discardFiles(repo.path, files);
+      await refreshThisRepo();
     } catch (e) {
       onError(String(e));
     } finally {
@@ -423,7 +442,7 @@ function RepoAccordionSection({
               className="git-stage-btn git-discard-btn"
               onClick={(e) => {
                 e.stopPropagation();
-                void onDiscardFile(row.path);
+                void onDiscardDirectory(row.path);
               }}
               disabled={directoryFileCount === 0 || loadingKey !== null}
               title={t("changes.discardFolderTitle")}
