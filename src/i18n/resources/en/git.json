@@ -33,7 +33,13 @@
     "undoLastCommitMessage": "This will undo the latest commit and keep all its changes staged. This cannot be undone from Panes.",
     "softReset": "Soft reset",
     "pull": "Pull",
-    "push": "Push"
+    "push": "Push",
+    "fetchAll": "Fetch all repos",
+    "pullAll": "Pull all repos",
+    "fetchedAllRepos": "Fetched all {{count}} repos",
+    "fetchAllPartialError": "Fetch failed for {{count}} repo(s)",
+    "pulledAllRepos": "Pulled all {{count}} repos",
+    "pullAllPartialError": "Pull failed for {{count}} repo(s)"
   },
   "branches": {
     "scope": {

@@ -1460,6 +1460,134 @@ button, input, textarea, select {
 }
 .git-commit-input::placeholder { color: var(--text-3); }
 
+/* Multi-repo accordion */
+.multi-repo-changes {
+  display: flex;
+  flex-direction: column;
+}
+.multi-repo-header {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  padding: 0 14px;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.025);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
+  user-select: none;
+  flex-shrink: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.multi-repo-header:first-child { border-top: none; }
+.multi-repo-header:hover { background: rgba(255, 255, 255, 0.045); }
+.multi-repo-header-clean { opacity: 0.4; }
+.multi-repo-header-clean:hover { opacity: 0.6; }
+.multi-repo-chevron {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.multi-repo-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e8e8e8;
+}
+.multi-repo-header-clean .multi-repo-name {
+  font-weight: 500;
+  color: var(--text-2);
+}
+.multi-repo-branch-icon {
+  color: var(--text-3);
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+}
+.multi-repo-branch {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-3);
+}
+.multi-repo-sync {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.multi-repo-behind { color: var(--warning); }
+.multi-repo-ahead { color: var(--success); }
+.multi-repo-clean-icon { color: var(--success); flex-shrink: 0; }
+.multi-repo-more-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  border: none;
+  background: none;
+  flex-shrink: 0;
+  opacity: 0;
+  width: 0;
+  overflow: hidden;
+  padding: 0;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+.multi-repo-header:hover .multi-repo-more-btn {
+  opacity: 1;
+  width: auto;
+  padding: 4px;
+}
+.multi-repo-header:hover .multi-repo-badge { display: none; }
+.multi-repo-more-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-1);
+}
+.multi-repo-body {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.multi-repo-commit-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.multi-repo-commit-area .git-commit-input {
+  flex: 1;
+  padding: 7px 10px;
+  resize: none;
+}
+.multi-repo-commit-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 7px 14px !important;
+}
+
+/* Multi-repo scoped overrides — subordinate hierarchy */
+.multi-repo-body .git-section-header {
+  font-size: 9px;
+  font-weight: 500;
+  padding-top: 6px;
+  padding-bottom: 3px;
+}
+.multi-repo-body .git-section-count {
+  font-size: 9px;
+}
+.multi-repo-body .git-section-actions .btn {
+  font-size: 9px;
+  padding: 2px 6px;
+}
+.multi-repo-body .git-file-name {
+  font-size: 11px;
+}
+.multi-repo-body .git-dir-row {
+  font-size: 11px;
+}
+.multi-repo-body .git-status {
+  font-size: 9px;
+}
+
+/* Modified count chip (reuses existing .chip pattern in the accordion header) */
+.chip-modified { color: var(--warning); background: rgba(251, 191, 36, 0.08); }
+
 /* Empty state */
 .git-empty {
   padding: 32px 16px;
