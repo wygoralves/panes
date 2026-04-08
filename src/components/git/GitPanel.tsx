@@ -451,10 +451,14 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
     return options;
   }, [controlledRepos, activeRepo?.id, worktrees]);
 
+  const isMultiRepoChanges =
+    controlledRepos.length > 1 && activeView === "changes";
+
   const showRepoPicker =
-    controlledRepos.length > 1 ||
-    worktrees.some((wt) => !wt.isMain) ||
-    Boolean(mainRepoPath);
+    !isMultiRepoChanges &&
+    (controlledRepos.length > 1 ||
+      worktrees.some((wt) => !wt.isMain) ||
+      Boolean(mainRepoPath));
 
   return (
     <div className="git-panel">
@@ -487,7 +491,7 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
 
         <div style={{ flex: 1 }} />
 
-        {effectiveRepo && (
+        {effectiveRepo && !isMultiRepoChanges && (
           <span className="git-branch-meta" title={effectiveRepo.path}>
             <GitBranchIcon size={11} />
             <span>{status?.branch ?? t("panel.detached")}</span>
