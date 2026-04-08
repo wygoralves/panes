@@ -30,6 +30,7 @@ import {
 } from "../../lib/gitFlyoutRegion";
 import type { GitInitRepoStatus } from "../../types";
 import { GitChangesView } from "./GitChangesView";
+import { MultiRepoChangesView } from "./MultiRepoChangesView";
 import { GitBranchesView } from "./GitBranchesView";
 import { GitCommitsView } from "./GitCommitsView";
 import { GitStashView } from "./GitStashView";
@@ -599,11 +600,18 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
       ) : effectiveRepo ? (
         <>
           {activeView === "changes" && (
-            <GitChangesView
-              repo={effectiveRepo}
-              showDiff
-              onError={setLocalError}
-            />
+            controlledRepos.length > 1 ? (
+              <MultiRepoChangesView
+                repos={controlledRepos}
+                onError={setLocalError}
+              />
+            ) : (
+              <GitChangesView
+                repo={effectiveRepo}
+                showDiff
+                onError={setLocalError}
+              />
+            )
           )}
           {activeView === "branches" && (
             <GitBranchesView repo={effectiveRepo} onError={setLocalError} />
