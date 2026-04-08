@@ -85,6 +85,7 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
   const [softResetConfirmOpen, setSoftResetConfirmOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [multiRepoSyncing, setMultiRepoSyncing] = useState(false);
+  const [multiRepoRefreshTick, setMultiRepoRefreshTick] = useState(0);
   const [initLoading, setInitLoading] = useState(false);
   const [initRepoStatus, setInitRepoStatus] = useState<GitInitRepoStatus | null>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -231,6 +232,7 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
         toast.success(t("panel.fetchedAllRepos", { count: controlledRepos.length }));
       }
     } finally {
+      setMultiRepoRefreshTick((tick) => tick + 1);
       setMultiRepoSyncing(false);
     }
   }, [controlledRepos, syncDisabled, multiRepoSyncing, fetchRemote, t]);
@@ -250,6 +252,7 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
         toast.success(t("panel.pulledAllRepos", { count: controlledRepos.length }));
       }
     } finally {
+      setMultiRepoRefreshTick((tick) => tick + 1);
       setMultiRepoSyncing(false);
     }
   }, [controlledRepos, syncDisabled, multiRepoSyncing, pullRemote, t]);
@@ -651,6 +654,7 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
               <MultiRepoChangesView
                 repos={controlledRepos}
                 onError={setLocalError}
+                refreshTick={multiRepoRefreshTick}
               />
             ) : (
               <GitChangesView

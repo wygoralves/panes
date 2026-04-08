@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -20,6 +20,11 @@ import { useGitStore } from "../../stores/gitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useFileStore } from "../../stores/fileStore";
 import { useTerminalStore } from "../../stores/terminalStore";
+import { ipc, listenGitRepoChanged } from "../../lib/ipc";
+import {
+  closeGitFlyoutIfFocusLeft,
+  GitFlyoutContext,
+} from "../../lib/gitFlyoutRegion";
 import {
   buildDirectoryFileMap,
   buildTreeRows,
@@ -32,6 +37,7 @@ import type { GitFileStatus, GitStatus, Repo } from "../../types";
 interface Props {
   repos: Repo[];
   onError: (error: string | undefined) => void;
+  refreshTick?: number;
 }
 
 interface RepoStatusEntry {
@@ -43,16 +49,39 @@ interface RepoStatusEntry {
  * Multi-repo accordion view for the Changes tab.
  * Renders when controlledRepos.length > 1.
  */
-export function MultiRepoChangesView({ repos, onError }: Props) {
+const MULTI_REPO_WATCHER_REFRESH_DEBOUNCE_MS = 550;
+
+export function MultiRepoChangesView({ repos, onError, refreshTick = 0 }: Props) {
   const { t } = useTranslation("git");
-  const { getStatusForRepo } = useGitStore();
+  const { getStatusForRepo, invalidateRepoCache } = useGitStore();
 
   // ── Per-repo status ──
   const [repoStatuses, setRepoStatuses] = useState<
     Record<string, RepoStatusEntry>
   >({});
 
-  const fetchStatusForAll = useCallback(async () => {
+  const refreshRepoStatus = useCallback(async (repoPath: string, force = false) => {
+    if (force) {
+      invalidateRepoCache(repoPath);
+    }
+
+    try {
+      const status = await getStatusForRepo(repoPath);
+      setRepoStatuses((prev) => ({
+        ...prev,
+        [repoPath]: { status, loading: false },
+      }));
+      return status;
+    } catch {
+      setRepoStatuses((prev) => ({
+        ...prev,
+        [repoPath]: { status: prev[repoPath]?.status ?? null, loading: false },
+      }));
+      return null;
+    }
+  }, [getStatusForRepo, invalidateRepoCache]);
+
+  const fetchStatusForAll = useCallback(async (force = false) => {
     const paths = repos.map((r) => r.path);
     // Mark all as loading
     setRepoStatuses((prev) => {
@@ -64,7 +93,12 @@ export function MultiRepoChangesView({ repos, onError }: Props) {
     });
 
     const results = await Promise.allSettled(
-      paths.map((p) => getStatusForRepo(p)),
+      paths.map(async (p) => {
+        if (force) {
+          invalidateRepoCache(p);
+        }
+        return getStatusForRepo(p);
+      }),
     );
 
     setRepoStatuses((prev) => {
@@ -81,7 +115,7 @@ export function MultiRepoChangesView({ repos, onError }: Props) {
       }
       return next;
     });
-  }, [repos, getStatusForRepo]);
+  }, [repos, getStatusForRepo, invalidateRepoCache]);
 
   // Initial fetch + re-fetch when repos change
   const prevRepoPathsRef = useRef<string>("");
@@ -92,6 +126,15 @@ export function MultiRepoChangesView({ repos, onError }: Props) {
       void fetchStatusForAll();
     }
   }, [repos, fetchStatusForAll]);
+
+  const prevRefreshTickRef = useRef(refreshTick);
+  useEffect(() => {
+    if (refreshTick === prevRefreshTickRef.current) {
+      return;
+    }
+    prevRefreshTickRef.current = refreshTick;
+    void fetchStatusForAll(true);
+  }, [fetchStatusForAll, refreshTick]);
 
   // Re-fetch on gitStore status updates (file watcher triggers)
   const storeStatus = useGitStore((s) => s.status);
@@ -104,6 +147,69 @@ export function MultiRepoChangesView({ repos, onError }: Props) {
       }));
     }
   }, [storeStatus, storeActiveRepoPath]);
+
+  useEffect(() => {
+    const repoPaths = repos.map((repo) => repo.path);
+    if (repoPaths.length === 0) {
+      return;
+    }
+
+    const visibleRepoPaths = new Set(repoPaths);
+    const refreshTimers = new Map<string, number>();
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    const scheduleRefresh = (repoPath: string) => {
+      if (refreshTimers.has(repoPath)) {
+        return;
+      }
+
+      const timerId = window.setTimeout(() => {
+        refreshTimers.delete(repoPath);
+        if (disposed) {
+          return;
+        }
+        void refreshRepoStatus(repoPath, true);
+      }, MULTI_REPO_WATCHER_REFRESH_DEBOUNCE_MS);
+
+      refreshTimers.set(repoPath, timerId);
+    };
+
+    const attach = async () => {
+      await Promise.all(repoPaths.map(async (repoPath) => {
+        try {
+          await ipc.watchGitRepo(repoPath);
+        } catch {
+          // Ignore watch failures for individual repos.
+        }
+      }));
+
+      const stop = await listenGitRepoChanged((event) => {
+        if (!visibleRepoPaths.has(event.repoPath)) {
+          return;
+        }
+        scheduleRefresh(event.repoPath);
+      });
+
+      if (disposed) {
+        stop();
+        return;
+      }
+
+      unlisten = stop;
+    };
+
+    void attach();
+
+    return () => {
+      disposed = true;
+      for (const timerId of refreshTimers.values()) {
+        window.clearTimeout(timerId);
+      }
+      refreshTimers.clear();
+      unlisten?.();
+    };
+  }, [refreshRepoStatus, repos]);
 
   // ── Accordion state ──
   const [expandedRepos, setExpandedRepos] = useState<Record<string, boolean>>(
@@ -204,6 +310,7 @@ function RepoAccordionSection({
   onStatusRefresh,
 }: SectionProps) {
   const { t } = useTranslation("git");
+  const gitFlyoutContext = useContext(GitFlyoutContext);
   const {
     getStatusForRepo,
     stage,
@@ -212,6 +319,7 @@ function RepoAccordionSection({
     unstageMany,
     discardFiles,
     commit,
+    drafts,
     pushCommitHistory,
     pullRemote,
     pushRemote,
@@ -271,10 +379,15 @@ function RepoAccordionSection({
 
   // Per-repo commit message (not global draft — avoids cross-repo overwrite)
   const [commitMessage, setCommitMessage] = useState("");
+  const histCursorRef = useRef<number>(-1);
+  const liveDraftRef = useRef<string>("");
 
   // Re-fetch status for THIS repo after any mutation
-  const refreshThisRepo = useCallback(async () => {
+  const refreshThisRepo = useCallback(async (force = false) => {
     try {
+      if (force) {
+        useGitStore.getState().invalidateRepoCache(repo.path);
+      }
       const fresh = await getStatusForRepo(repo.path);
       onStatusRefresh(repo.path, fresh);
     } catch {
@@ -311,6 +424,8 @@ function RepoAccordionSection({
       await commit(repo.path, msg);
       if (activeWorkspaceId) pushCommitHistory(activeWorkspaceId, msg);
       setCommitMessage("");
+      histCursorRef.current = -1;
+      liveDraftRef.current = "";
       toast.success(
         t("changes.toasts.committed", { message: msg.split("\n")[0] }),
       );
@@ -434,7 +549,7 @@ function RepoAccordionSection({
       onError(undefined);
       await pullRemote(repo.path);
       toast.success(t("panel.pulledFromRemote"));
-      await refreshThisRepo();
+      await refreshThisRepo(true);
     } catch (e) {
       onError(String(e));
     } finally {
@@ -449,7 +564,7 @@ function RepoAccordionSection({
       onError(undefined);
       await pushRemote(repo.path);
       toast.success(t("panel.pushedToRemote"));
-      await refreshThisRepo();
+      await refreshThisRepo(true);
     } catch (e) {
       onError(String(e));
     } finally {
@@ -464,6 +579,30 @@ function RepoAccordionSection({
       onError(undefined);
       await softResetLastCommit(repo.path);
       toast.success(t("panel.softResetCompleted"));
+      await refreshThisRepo(true);
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setLoadingKey(null);
+    }
+  }
+
+  async function onToggleDirectoryStage(dirPath: string, staged: boolean) {
+    const filesByDirectory = staged ? stagedDirectoryFiles : unstagedDirectoryFiles;
+    const files = filesByDirectory.get(dirPath) ?? [];
+    if (files.length === 0 || loadingKey !== null) {
+      return;
+    }
+
+    const opKey = `${staged ? "unstage" : "stage"}-dir:${dirPath}`;
+    setLoadingKey(opKey);
+    try {
+      onError(undefined);
+      if (staged) {
+        await unstageMany(repo.path, files);
+      } else {
+        await stageMany(repo.path, files);
+      }
       await refreshThisRepo();
     } catch (e) {
       onError(String(e));
@@ -532,9 +671,7 @@ function RepoAccordionSection({
             className="git-stage-btn git-dir-stage-btn"
             onClick={(e) => {
               e.stopPropagation();
-              void (staged
-                ? unstageMany(repo.path, filesByDirectory.get(row.path) ?? [])
-                : stageMany(repo.path, filesByDirectory.get(row.path) ?? []));
+              void onToggleDirectoryStage(row.path, staged);
             }}
             disabled={directoryFileCount === 0 || loadingKey !== null}
             title={staged ? t("changes.unstageFolderTitle") : t("changes.stageFolderTitle")}
@@ -542,7 +679,13 @@ function RepoAccordionSection({
               opacity: directoryFileCount === 0 || loadingKey !== null ? 0.35 : undefined,
             }}
           >
-            {staged ? <Minus size={13} /> : <Plus size={13} />}
+            {loadingKey === `${staged ? "unstage" : "stage"}-dir:${row.path}` ? (
+              <Loader2 size={13} className="git-spin" />
+            ) : staged ? (
+              <Minus size={13} />
+            ) : (
+              <Plus size={13} />
+            )}
           </button>
         </div>
       );
@@ -736,7 +879,7 @@ function RepoAccordionSection({
         {loading && !status && (
           <Loader2 size={12} className="git-spin" style={{ color: "var(--text-3)" }} />
         )}
-        {!isClean && (
+        {status && (
           <button
             ref={repoMenuTriggerRef}
             type="button"
@@ -765,12 +908,19 @@ function RepoAccordionSection({
           <div
             ref={repoMenuRef}
             className="git-action-menu"
+            data-git-flyout-region={gitFlyoutContext ? "true" : undefined}
             style={{
               position: "fixed",
               top: repoMenuPos.top,
               left: repoMenuPos.left,
               minWidth: 180,
             }}
+            onMouseEnter={() => gitFlyoutContext?.openFlyout()}
+            onMouseLeave={() => gitFlyoutContext?.scheduleClose(150)}
+            onFocusCapture={() => gitFlyoutContext?.openFlyout()}
+            onBlurCapture={(event) =>
+              closeGitFlyoutIfFocusLeft(gitFlyoutContext, event.relatedTarget)
+            }
           >
             <button
               type="button"
@@ -847,11 +997,32 @@ function RepoAccordionSection({
                 type="text"
                 className="git-commit-input"
                 value={commitMessage}
-                onChange={(e) => setCommitMessage(e.target.value)}
+                onChange={(e) => {
+                  setCommitMessage(e.target.value);
+                  histCursorRef.current = -1;
+                }}
                 placeholder={t("changes.commitMessagePlaceholder")}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                     void onCommit();
+                    return;
+                  }
+                  const history = drafts.commitHistory;
+                  if (e.key === "ArrowUp" && history.length > 0) {
+                    e.preventDefault();
+                    if (histCursorRef.current === -1) {
+                      liveDraftRef.current = commitMessage;
+                    }
+                    const next = Math.min(histCursorRef.current + 1, history.length - 1);
+                    histCursorRef.current = next;
+                    setCommitMessage(history[next]);
+                    return;
+                  }
+                  if (e.key === "ArrowDown" && histCursorRef.current >= 0) {
+                    e.preventDefault();
+                    const next = histCursorRef.current - 1;
+                    histCursorRef.current = next;
+                    setCommitMessage(next === -1 ? liveDraftRef.current : history[next]);
                   }
                 }}
               />
