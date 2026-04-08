@@ -719,23 +719,6 @@ function RepoAccordionSection({
         <span className="multi-repo-name">{repo.name}</span>
         <span className="multi-repo-branch">{status?.branch ?? "…"}</span>
         <div style={{ flex: 1 }} />
-        {status && status.behind > 0 && (
-          <span className="multi-repo-sync multi-repo-behind">↓{status.behind}</span>
-        )}
-        {status && status.ahead > 0 && (
-          <span className="multi-repo-sync multi-repo-ahead">↑{status.ahead}</span>
-        )}
-        {modifiedCount > 0 && (
-          <span className="chip chip-modified" style={{ fontFamily: "var(--font-mono)", fontSize: 9 }}>
-            {modifiedCount}M
-          </span>
-        )}
-        {isClean && (
-          <Check size={12} className="multi-repo-clean-icon" />
-        )}
-        {loading && !status && (
-          <Loader2 size={12} className="git-spin" style={{ color: "var(--text-3)" }} />
-        )}
         {!isClean && (
           <button
             ref={repoMenuTriggerRef}
@@ -756,6 +739,23 @@ function RepoAccordionSection({
           >
             <MoreHorizontal size={13} />
           </button>
+        )}
+        {status && status.behind > 0 && (
+          <span className="multi-repo-sync multi-repo-behind">↓{status.behind}</span>
+        )}
+        {status && status.ahead > 0 && (
+          <span className="multi-repo-sync multi-repo-ahead">↑{status.ahead}</span>
+        )}
+        {modifiedCount > 0 && (
+          <span className="chip chip-modified" style={{ fontFamily: "var(--font-mono)", fontSize: 9 }}>
+            {modifiedCount}M
+          </span>
+        )}
+        {isClean && (
+          <Check size={12} className="multi-repo-clean-icon" />
+        )}
+        {loading && !status && (
+          <Loader2 size={12} className="git-spin" style={{ color: "var(--text-3)" }} />
         )}
       </div>
 
