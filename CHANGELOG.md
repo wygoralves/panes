@@ -1,5 +1,22 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.51.4...vnull) (2026-04-08)
+
+### Features
+
+* **commandpalette:** improve multi repo handling in git operations ([272a24b](https://github.com/wygoralves/panes/commit/272a24b3405d5acb3ffd0c58c436983c7d499efb))
+* **git:** add Fetch All and Pull All for multi-repo mode ([36223a2](https://github.com/wygoralves/panes/commit/36223a2d97bd3eb11cb1dde595782bb2e83ed8d8))
+* **git:** add MultiRepoChangesView with accordion pattern ([612e17e](https://github.com/wygoralves/panes/commit/612e17ec01dc30b053cd08c0305797103a796f21))
+* **git:** add per-repo more menu with pull, push, undo last commit ([d420a0d](https://github.com/wygoralves/panes/commit/d420a0dec458358fed04dfa7d86b98842ffdbfd9))
+
+### Bug Fixes
+
+* **git:** address Codex review — stale status, directory discard, per-repo commit ([b7dd34b](https://github.com/wygoralves/panes/commit/b7dd34b7ea3e583aae7f0b2888e261d6f229c298))
+* **git:** align more menu in multi-repo mode and spin RefreshCw during fetch all ([6a19871](https://github.com/wygoralves/panes/commit/6a1987150216569ec40d94c50c9983c509adab3e))
+* **git:** hide branch meta and repo picker in multi-repo changes mode ([9356bd7](https://github.com/wygoralves/panes/commit/9356bd7a97919b0d960a8f7962957f7ce671e203))
+* **git:** keep multi-repo changes view in sync ([54e6539](https://github.com/wygoralves/panes/commit/54e65391fd4f366a1218170813e3ebb033cf9bad))
+* **gitpanel:** restrict repo-scoped git picker to active repos only ([d189e9d](https://github.com/wygoralves/panes/commit/d189e9d105a3d5d9fd7c23e6390635b76ebcd57a))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.51.3...vnull) (2026-04-05)
 
 ### Bug Fixes
