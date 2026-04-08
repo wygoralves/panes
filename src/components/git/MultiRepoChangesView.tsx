@@ -643,7 +643,6 @@ function RepoAccordionSection({
           <ChevronRight size={10} className="multi-repo-chevron" />
         )}
         <span className="multi-repo-name">{repo.name}</span>
-        <GitBranch size={9} className="multi-repo-branch-icon" />
         <span className="multi-repo-branch">{status?.branch ?? "…"}</span>
         <div style={{ flex: 1 }} />
         {status && status.behind > 0 && (
