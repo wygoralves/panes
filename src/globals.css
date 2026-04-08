@@ -1513,6 +1513,25 @@ button, input, textarea, select {
 .multi-repo-behind { color: var(--warning); }
 .multi-repo-ahead { color: var(--success); }
 .multi-repo-clean-icon { color: var(--success); flex-shrink: 0; }
+.multi-repo-more-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  border: none;
+  background: none;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+.multi-repo-header:hover .multi-repo-more-btn { opacity: 1; }
+.multi-repo-more-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-1);
+}
 .multi-repo-body {
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }

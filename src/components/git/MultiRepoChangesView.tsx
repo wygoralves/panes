@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
   ChevronDown,
@@ -9,7 +10,9 @@ import {
   Undo2,
   Loader2,
   RotateCcw,
-  GitBranch,
+  MoreHorizontal,
+  ArrowDown,
+  ArrowUp,
 } from "lucide-react";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { toast } from "../../stores/toastStore";
@@ -210,6 +213,9 @@ function RepoAccordionSection({
     discardFiles,
     commit,
     pushCommitHistory,
+    pullRemote,
+    pushRemote,
+    softResetLastCommit,
   } = useGitStore();
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const openGitDiffFile = useFileStore((s) => s.openGitDiffFile);
@@ -239,6 +245,29 @@ function RepoAccordionSection({
     message: string;
     files: string[];
   } | null>(null);
+
+  // Per-repo more menu
+  const [repoMenuOpen, setRepoMenuOpen] = useState(false);
+  const repoMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const repoMenuRef = useRef<HTMLDivElement>(null);
+  const [repoMenuPos, setRepoMenuPos] = useState({ top: 0, left: 0 });
+  const [softResetConfirmOpen, setSoftResetConfirmOpen] = useState(false);
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!repoMenuOpen) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (
+        repoMenuRef.current &&
+        !repoMenuRef.current.contains(e.target as Node) &&
+        !repoMenuTriggerRef.current?.contains(e.target as Node)
+      ) {
+        setRepoMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [repoMenuOpen]);
 
   // Per-repo commit message (not global draft — avoids cross-repo overwrite)
   const [commitMessage, setCommitMessage] = useState("");
@@ -390,6 +419,51 @@ function RepoAccordionSection({
     try {
       onError(undefined);
       await discardFiles(repo.path, files);
+      await refreshThisRepo();
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setLoadingKey(null);
+    }
+  }
+
+  async function onRepoPull() {
+    setRepoMenuOpen(false);
+    setLoadingKey("pull");
+    try {
+      onError(undefined);
+      await pullRemote(repo.path);
+      toast.success(t("panel.pulledFromRemote"));
+      await refreshThisRepo();
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setLoadingKey(null);
+    }
+  }
+
+  async function onRepoPush() {
+    setRepoMenuOpen(false);
+    setLoadingKey("push");
+    try {
+      onError(undefined);
+      await pushRemote(repo.path);
+      toast.success(t("panel.pushedToRemote"));
+      await refreshThisRepo();
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setLoadingKey(null);
+    }
+  }
+
+  async function onRepoSoftReset() {
+    setSoftResetConfirmOpen(false);
+    setLoadingKey("soft-reset");
+    try {
+      onError(undefined);
+      await softResetLastCommit(repo.path);
+      toast.success(t("panel.softResetCompleted"));
       await refreshThisRepo();
     } catch (e) {
       onError(String(e));
@@ -662,7 +736,82 @@ function RepoAccordionSection({
         {loading && !status && (
           <Loader2 size={12} className="git-spin" style={{ color: "var(--text-3)" }} />
         )}
+        {!isClean && (
+          <button
+            ref={repoMenuTriggerRef}
+            type="button"
+            className="multi-repo-more-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (repoMenuOpen) {
+                setRepoMenuOpen(false);
+                return;
+              }
+              const rect = repoMenuTriggerRef.current?.getBoundingClientRect();
+              if (rect) {
+                setRepoMenuPos({ top: rect.bottom + 4, left: rect.right - 180 });
+              }
+              setRepoMenuOpen(true);
+            }}
+          >
+            <MoreHorizontal size={13} />
+          </button>
+        )}
       </div>
+
+      {/* Per-repo more menu */}
+      {repoMenuOpen &&
+        createPortal(
+          <div
+            ref={repoMenuRef}
+            className="git-action-menu"
+            style={{
+              position: "fixed",
+              top: repoMenuPos.top,
+              left: repoMenuPos.left,
+              minWidth: 180,
+            }}
+          >
+            <button
+              type="button"
+              className="git-action-menu-item"
+              onClick={() => void onRepoPull()}
+              disabled={loadingKey !== null}
+            >
+              <ArrowDown size={13} />
+              <span style={{ flex: 1 }}>{t("panel.pull")}</span>
+              {status && status.behind > 0 && (
+                <span className="git-sync-counter">↓{status.behind}</span>
+              )}
+            </button>
+            <button
+              type="button"
+              className="git-action-menu-item"
+              onClick={() => void onRepoPush()}
+              disabled={loadingKey !== null}
+            >
+              <ArrowUp size={13} />
+              <span style={{ flex: 1 }}>{t("panel.push")}</span>
+              {status && status.ahead > 0 && (
+                <span className="git-sync-counter">↑{status.ahead}</span>
+              )}
+            </button>
+            <div className="git-action-menu-divider" />
+            <button
+              type="button"
+              className="git-action-menu-item git-action-menu-item-danger-hover"
+              onClick={() => {
+                setRepoMenuOpen(false);
+                setSoftResetConfirmOpen(true);
+              }}
+              disabled={loadingKey !== null}
+            >
+              <Undo2 size={13} />
+              <span style={{ flex: 1 }}>{t("panel.undoLastCommit")}</span>
+            </button>
+          </div>,
+          document.body,
+        )}
 
       {/* Expanded content */}
       {expanded && status && (
@@ -737,6 +886,15 @@ function RepoAccordionSection({
           if (discardPrompt) void executeDiscard(discardPrompt.files);
         }}
         onCancel={() => setDiscardPrompt(null)}
+      />
+
+      <ConfirmDialog
+        open={softResetConfirmOpen}
+        title={t("panel.undoLastCommit")}
+        message={t("panel.undoLastCommitMessage")}
+        confirmLabel={t("panel.softReset")}
+        onConfirm={() => void onRepoSoftReset()}
+        onCancel={() => setSoftResetConfirmOpen(false)}
       />
     </>
   );
