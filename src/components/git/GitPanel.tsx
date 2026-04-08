@@ -84,11 +84,12 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
   const [localError, setLocalError] = useState<string | undefined>();
   const [softResetConfirmOpen, setSoftResetConfirmOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [multiRepoSyncing, setMultiRepoSyncing] = useState(false);
   const [initLoading, setInitLoading] = useState(false);
   const [initRepoStatus, setInitRepoStatus] = useState<GitInitRepoStatus | null>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const moreTriggerRef = useRef<HTMLButtonElement>(null);
-  const [moreMenuPos, setMoreMenuPos] = useState({ top: 0, left: 0 });
+  const [moreMenuPos, setMoreMenuPos] = useState({ top: 0, left: 0, right: 0 });
   const watcherRefreshTimerRef = useRef<number | null>(null);
   const watcherRefreshInFlightRef = useRef(false);
   const watcherRefreshQueuedRef = useRef(false);
@@ -216,32 +217,42 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
   }, [effectiveRepoPath, syncDisabled, fetchRemote, t]);
 
   const onFetchAll = useCallback(async () => {
-    if (syncDisabled) return;
+    if (syncDisabled || multiRepoSyncing) return;
+    setMultiRepoSyncing(true);
     setLocalError(undefined);
-    const results = await Promise.allSettled(
-      controlledRepos.map((r) => fetchRemote(r.path)),
-    );
-    const failed = results.filter((r) => r.status === "rejected").length;
-    if (failed > 0) {
-      setLocalError(t("panel.fetchAllPartialError", { count: failed }));
-    } else {
-      toast.success(t("panel.fetchedAllRepos", { count: controlledRepos.length }));
+    try {
+      const results = await Promise.allSettled(
+        controlledRepos.map((r) => fetchRemote(r.path)),
+      );
+      const failed = results.filter((r) => r.status === "rejected").length;
+      if (failed > 0) {
+        setLocalError(t("panel.fetchAllPartialError", { count: failed }));
+      } else {
+        toast.success(t("panel.fetchedAllRepos", { count: controlledRepos.length }));
+      }
+    } finally {
+      setMultiRepoSyncing(false);
     }
-  }, [controlledRepos, syncDisabled, fetchRemote, t]);
+  }, [controlledRepos, syncDisabled, multiRepoSyncing, fetchRemote, t]);
 
   const onPullAll = useCallback(async () => {
-    if (syncDisabled) return;
+    if (syncDisabled || multiRepoSyncing) return;
+    setMultiRepoSyncing(true);
     setLocalError(undefined);
-    const results = await Promise.allSettled(
-      controlledRepos.map((r) => pullRemote(r.path)),
-    );
-    const failed = results.filter((r) => r.status === "rejected").length;
-    if (failed > 0) {
-      setLocalError(t("panel.pullAllPartialError", { count: failed }));
-    } else {
-      toast.success(t("panel.pulledAllRepos", { count: controlledRepos.length }));
+    try {
+      const results = await Promise.allSettled(
+        controlledRepos.map((r) => pullRemote(r.path)),
+      );
+      const failed = results.filter((r) => r.status === "rejected").length;
+      if (failed > 0) {
+        setLocalError(t("panel.pullAllPartialError", { count: failed }));
+      } else {
+        toast.success(t("panel.pulledAllRepos", { count: controlledRepos.length }));
+      }
+    } finally {
+      setMultiRepoSyncing(false);
     }
-  }, [controlledRepos, syncDisabled, pullRemote, t]);
+  }, [controlledRepos, syncDisabled, multiRepoSyncing, pullRemote, t]);
 
   const onSoftResetLastCommit = useCallback(async () => {
     if (!effectiveRepoPath || syncDisabled) {
@@ -552,10 +563,10 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
           type="button"
           className="git-toolbar-btn no-drag"
           disabled={syncDisabled}
-          title={isActiveRepoSyncing ? t("panel.syncing") : isMultiRepoChanges ? t("panel.fetchAll") : t("panel.refreshAndFetch")}
+          title={isActiveRepoSyncing || multiRepoSyncing ? t("panel.syncing") : isMultiRepoChanges ? t("panel.fetchAll") : t("panel.refreshAndFetch")}
           onClick={() => void (isMultiRepoChanges ? onFetchAll() : onSyncClick())}
         >
-          <RefreshCw size={14} className={isActiveRepoSyncing ? "git-spin" : ""} />
+          <RefreshCw size={14} className={isActiveRepoSyncing || multiRepoSyncing ? "git-spin" : ""} />
         </button>
 
         <button
@@ -569,7 +580,11 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
             }
             const rect = moreTriggerRef.current?.getBoundingClientRect();
             if (rect) {
-              setMoreMenuPos({ top: rect.bottom + 4, left: rect.right - moreMenuWidth });
+              setMoreMenuPos({
+                top: rect.bottom + 4,
+                left: rect.right - moreMenuWidth,
+                right: window.innerWidth - rect.right,
+              });
             }
             setMoreMenuOpen(true);
           }}
@@ -732,7 +747,9 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
             style={{
               position: "fixed",
               top: moreMenuPos.top,
-              left: moreMenuPos.left,
+              ...(isMultiRepoChanges
+                ? { right: moreMenuPos.right }
+                : { left: moreMenuPos.left }),
             }}
             onMouseEnter={() => gitFlyoutContext?.openFlyout()}
             onMouseLeave={() => gitFlyoutContext?.scheduleClose(150)}
