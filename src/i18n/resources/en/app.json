@@ -145,7 +145,8 @@
       "launchAgent": "Launch Agent",
       "recentThreads": "Recent Threads",
       "views": "Views",
-      "switchRepo": "Switch Repo"
+      "switchRepo": "Switch Repo",
+      "pickRepo": "Repository"
     },
     "status": {
       "loadingBranches": "Loading branches...",
@@ -178,7 +179,8 @@
       "applyStash": "apply stash",
       "popStash": "pop stash",
       "switchRepo": "repo",
-      "codexRollback": "rollback"
+      "codexRollback": "rollback",
+      "pickRepo": "pick repo"
     },
     "preview": {
       "createBranchReady": "Create branch \"{{name}}\"",
@@ -204,6 +206,7 @@
       "applyStash": "Search stashes...",
       "popStash": "Search stashes...",
       "switchRepo": "Search repos...",
+      "pickRepo": "Pick a repo...",
       "codexRollback": "Number of turns to roll back...",
       "search": "Search messages, files, or threads...",
       "fileMode": "Search files...",
