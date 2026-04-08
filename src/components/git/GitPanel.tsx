@@ -9,7 +9,6 @@ import {
   Pin,
   Undo2,
   FileDiff,
-  FolderTree,
   GitBranch as GitBranchIcon,
   GitCommitHorizontal,
   GitFork,
@@ -34,7 +33,6 @@ import { MultiRepoChangesView } from "./MultiRepoChangesView";
 import { GitBranchesView } from "./GitBranchesView";
 import { GitCommitsView } from "./GitCommitsView";
 import { GitStashView } from "./GitStashView";
-import { GitFilesView } from "./GitFilesView";
 import { GitWorktreesView } from "./GitWorktreesView";
 
 const GIT_WATCHER_REFRESH_DEBOUNCE_MS_CHANGES = 550;
@@ -102,7 +100,6 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
       { value: "branches", label: t("panel.tabs.branches"), icon: <GitBranchIcon size={13} /> },
       { value: "commits", label: t("panel.tabs.commits"), icon: <GitCommitHorizontal size={13} /> },
       { value: "stash", label: t("panel.tabs.stash"), icon: <Archive size={13} /> },
-      { value: "files", label: t("panel.tabs.files"), icon: <FolderTree size={13} /> },
       { value: "worktrees", label: t("panel.tabs.worktrees"), icon: <GitFork size={13} /> },
     ],
     [t],
@@ -645,9 +642,7 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
         </div>
       )}
 
-      {(activeView === "files" && activeWorkspaceRootPath) ? (
-        <GitFilesView rootPath={activeWorkspaceRootPath} />
-      ) : effectiveRepo ? (
+      {effectiveRepo ? (
         <>
           {activeView === "changes" && (
             controlledRepos.length > 1 ? (

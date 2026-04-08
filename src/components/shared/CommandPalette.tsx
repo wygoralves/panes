@@ -639,14 +639,17 @@ export function getStaticCommands(
   },
   {
     id: "view-files",
-    label: t("commandPalette.commands.viewFiles"),
+    label: t("commandPalette.commands.toggleExplorer"),
     icon: File,
     group: "view",
     keywords: ["files", "tree", "explorer", "arquivos", "explorador"],
-    isAvailable: (ctx) => !!ctx.activeRepoPath,
+    isAvailable: (ctx) => !!ctx.activeWorkspaceId,
     action: ({ close }) => {
-      useGitStore.getState().setActiveView("files");
-      if (!useUiStore.getState().showGitPanel) useUiStore.getState().toggleGitPanel();
+      useUiStore.getState().toggleExplorer();
+      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (wsId) {
+        void useTerminalStore.getState().setLayoutMode(wsId, "editor");
+      }
       close();
     },
   },

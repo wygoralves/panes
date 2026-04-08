@@ -86,6 +86,7 @@
       "layoutEditor": "Switch to File Editor",
       "toggleSidebar": "Toggle Sidebar",
       "toggleGitPanel": "Toggle Git Panel",
+      "toggleExplorer": "Toggle File Explorer",
       "toggleFocusMode": "Toggle Focus Mode",
       "toggleKeepAwake": "Toggle Keep Awake",
       "powerSettings": "Power Settings",
@@ -113,6 +114,7 @@
       "viewCommits": "Open History",
       "viewStash": "Open Stash",
       "viewFiles": "Open Files",
+      "toggleExplorer": "Toggle File Explorer",
       "viewWorktrees": "Open Worktrees",
       "viewHarnesses": "Open Agent Harnesses",
       "codexFork": "Fork Codex Thread",
@@ -362,7 +364,7 @@
     "loadingFile": "Loading file...",
     "binaryFile": "Binary file - cannot display",
     "emptyTitle": "No files open",
-    "emptyHint": "Open a file from the Files view in the Git panel",
+    "emptyHint": "Open a file from the explorer or click a file in the chat",
     "showDiff": "Show diff view",
     "hideDiff": "Hide diff view",
     "showMarkdownPreview": "Show markdown preview",
@@ -403,6 +405,17 @@
       "saved": "Saved {{name}}",
       "saveFailed": "Failed to save: {{error}}"
     }
+  },
+  "explorer": {
+    "title": "Explorer",
+    "collapse": "Collapse explorer",
+    "expand": "Show explorer",
+    "filterPlaceholder": "Filter files...",
+    "filterCount": "{{count}} files",
+    "filterCountTitle": "Only expanded folders are searched",
+    "loading": "Loading files...",
+    "emptyFiltered": "No files match filter",
+    "empty": "No files found"
   },
   "notificationSettings": {
     "title": "Agent notifications",

@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Eye, FileDiff, FileText, Loader2, X } from "lucide-react";
+import { Eye, FileDiff, FileText, Loader2, PanelLeftOpen, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   resolveOwningRepoForAbsolutePath,
@@ -37,6 +37,8 @@ export function FileEditorPanel() {
   const setTabRenderMode = useFileStore((s) => s.setTabRenderMode);
   const focusMode = useUiStore((s) => s.focusMode);
   const showSidebar = useUiStore((s) => s.showSidebar);
+  const showExplorer = useUiStore((s) => s.showExplorer);
+  const toggleExplorer = useUiStore((s) => s.toggleExplorer);
   const repos = useWorkspaceStore((s) => s.repos);
   const activeRepoId = useWorkspaceStore((s) => s.activeRepoId);
   const openFile = useFileStore((s) => s.openFile);
@@ -169,32 +171,41 @@ export function FileEditorPanel() {
               </div>
             ))}
           </div>
-          {canToggleDiffView || canToggleMarkdownPreview ? (
-            <div className="editor-tabs-actions">
-              {canToggleMarkdownPreview ? (
-                <button
-                  type="button"
-                  className={`editor-tab-action${activeTab?.renderMode === "markdown-preview" ? " active" : ""}`}
-                  onClick={handleToggleMarkdownPreview}
-                  title={markdownPreviewToggleLabel}
-                  aria-label={markdownPreviewToggleLabel}
-                >
-                  <Eye size={12} />
-                </button>
-              ) : null}
-              {canToggleDiffView ? (
-                <button
-                  type="button"
-                  className={`editor-tab-action${activeTab?.renderMode === "git-diff-editor" ? " active" : ""}`}
-                  onClick={handleToggleDiffView}
-                  title={diffToggleLabel}
-                  aria-label={diffToggleLabel}
-                >
-                  <FileDiff size={12} />
-                </button>
-              ) : null}
-            </div>
-          ) : null}
+          <div className="editor-tabs-actions">
+            {!showExplorer && (
+              <button
+                type="button"
+                className="editor-tab-action"
+                onClick={toggleExplorer}
+                title={t("explorer.expand")}
+                aria-label={t("explorer.expand")}
+              >
+                <PanelLeftOpen size={13} />
+              </button>
+            )}
+            {canToggleMarkdownPreview ? (
+              <button
+                type="button"
+                className={`editor-tab-action${activeTab?.renderMode === "markdown-preview" ? " active" : ""}`}
+                onClick={handleToggleMarkdownPreview}
+                title={markdownPreviewToggleLabel}
+                aria-label={markdownPreviewToggleLabel}
+              >
+                <Eye size={12} />
+              </button>
+            ) : null}
+            {canToggleDiffView ? (
+              <button
+                type="button"
+                className={`editor-tab-action${activeTab?.renderMode === "git-diff-editor" ? " active" : ""}`}
+                onClick={handleToggleDiffView}
+                title={diffToggleLabel}
+                aria-label={diffToggleLabel}
+              >
+                <FileDiff size={12} />
+              </button>
+            ) : null}
+          </div>
         </div>
       )}
 

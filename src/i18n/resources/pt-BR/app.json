@@ -86,6 +86,7 @@
       "layoutEditor": "Ir para Editor de arquivos",
       "toggleSidebar": "Alternar Sidebar",
       "toggleGitPanel": "Alternar painel Git",
+      "toggleExplorer": "Alternar Explorer de Arquivos",
       "toggleFocusMode": "Alternar modo foco",
       "toggleKeepAwake": "Alternar manter acordado",
       "powerSettings": "Configurações de energia",
@@ -113,6 +114,7 @@
       "viewCommits": "Abrir History",
       "viewStash": "Abrir Stash",
       "viewFiles": "Abrir Files",
+      "toggleExplorer": "Alternar Explorer de Arquivos",
       "viewWorktrees": "Abrir Worktrees",
       "viewHarnesses": "Abrir Agent Harnesses",
       "codexFork": "Criar fork da thread Codex",
@@ -362,7 +364,7 @@
     "loadingFile": "Carregando arquivo...",
     "binaryFile": "Arquivo binário - não é possível exibir",
     "emptyTitle": "Nenhum arquivo aberto",
-    "emptyHint": "Abra um arquivo pela visualização Files no painel Git",
+    "emptyHint": "Abra um arquivo pelo explorer ou clique em um arquivo no chat",
     "showDiff": "Mostrar visualização de diff",
     "hideDiff": "Ocultar visualização de diff",
     "showMarkdownPreview": "Mostrar preview de markdown",
@@ -403,6 +405,17 @@
       "saved": "{{name}} salvo",
       "saveFailed": "Falha ao salvar: {{error}}"
     }
+  },
+  "explorer": {
+    "title": "Explorer",
+    "collapse": "Recolher explorer",
+    "expand": "Mostrar explorer",
+    "filterPlaceholder": "Filtrar arquivos...",
+    "filterCount": "{{count}} arquivos",
+    "filterCountTitle": "Apenas pastas expandidas são pesquisadas",
+    "loading": "Carregando arquivos...",
+    "emptyFiltered": "Nenhum arquivo corresponde ao filtro",
+    "empty": "Nenhum arquivo encontrado"
   },
   "notificationSettings": {
     "title": "Notificações de agentes",
