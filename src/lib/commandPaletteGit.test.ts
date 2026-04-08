@@ -1,19 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GitStatus, Repo } from "../types";
 import {
+  getActiveGitRepos,
   isRepoScopedGitCommandAvailable,
   resolveCommandPaletteGitStatus,
   shouldPersistPickedRepoSelection,
 } from "./commandPaletteGit";
 
-function createRepo(id: string): Repo {
+function createRepo(id: string, isActive = true): Repo {
   return {
     id,
     workspaceId: "ws-1",
     name: id,
     path: `/repos/${id}`,
     defaultBranch: "main",
-    isActive: true,
+    isActive,
     trustLevel: "trusted",
   };
 }
@@ -40,6 +41,27 @@ describe("isRepoScopedGitCommandAvailable", () => {
 
   it("keeps repo-scoped git commands hidden when no repo is active in a single-repo workspace", () => {
     expect(isRepoScopedGitCommandAvailable(null, [createRepo("repo-a")])).toBe(false);
+  });
+
+  it("keeps repo-scoped git commands hidden when extra repos are inactive", () => {
+    expect(
+      isRepoScopedGitCommandAvailable(null, [
+        createRepo("repo-a"),
+        createRepo("repo-b", false),
+      ]),
+    ).toBe(false);
+  });
+});
+
+describe("getActiveGitRepos", () => {
+  it("returns only repos marked active for git-scoped picker flows", () => {
+    expect(
+      getActiveGitRepos([
+        createRepo("repo-a"),
+        createRepo("repo-b", false),
+        createRepo("repo-c"),
+      ]).map((repo) => repo.id),
+    ).toEqual(["repo-a", "repo-c"]);
   });
 });
 

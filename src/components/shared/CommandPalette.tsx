@@ -48,6 +48,8 @@ import {
   type CommandPaletteSearchScope,
 } from "../../lib/commandPalette";
 import {
+  getActiveGitRepos,
+  hasMultipleActiveGitRepos,
   isRepoScopedGitCommandAvailable,
   resolveCommandPaletteGitStatus,
   shouldPersistPickedRepoSelection,
@@ -534,7 +536,7 @@ export function getStaticCommands(
     icon: FolderGit2,
     group: "git",
     keywords: ["repo", "repository", "switch", "multi", "repositório", "trocar"],
-    isAvailable: (ctx) => ctx.repos.length > 1,
+    isAvailable: (ctx) => hasMultipleActiveGitRepos(ctx.repos),
     action: ({ openSubFlow }) => {
       openSubFlow({ type: "switch-repo", query: "" });
     },
@@ -1031,9 +1033,13 @@ export function CommandPalette({ open, onClose }: Props) {
   const bindChatThread = useChatStore((s) => s.setActiveThread);
   const setMessageFocusTarget = useUiStore((s) => s.setMessageFocusTarget);
   const commandPaletteLaunch = useUiStore((s) => s.commandPaletteLaunch);
+  const activeGitRepos = useMemo(() => getActiveGitRepos(repos), [repos]);
 
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
-  const activeRepo = repos.find((r) => r.id === activeRepoId);
+  const activeRepo = useMemo(
+    () => activeGitRepos.find((repo) => repo.id === activeRepoId) ?? activeGitRepos[0] ?? null,
+    [activeGitRepos, activeRepoId],
+  );
   const activeRepoPath = activeRepo?.path ?? null;
   const effectiveRepoPath = scopedRepo?.path ?? activeRepoPath;
   const activeWorkspaceRootPath = activeWorkspace?.rootPath ?? null;
@@ -1076,11 +1082,11 @@ export function CommandPalette({ open, onClose }: Props) {
     () => ({
       activeWorkspaceId,
       activeRepoPath,
-      repos,
+      repos: activeGitRepos,
       close: onClose,
       openSubFlow: setSubFlow,
     }),
-    [activeWorkspaceId, activeRepoPath, repos, onClose],
+    [activeWorkspaceId, activeRepoPath, activeGitRepos, onClose],
   );
 
   // Available commands filtered by context
@@ -1516,8 +1522,8 @@ export function CommandPalette({ open, onClose }: Props) {
       }
       if (subFlow.type === "switch-repo") {
         const filtered = subFlow.query
-          ? repos.filter((r) => r.name.toLowerCase().includes(subFlow.query.toLowerCase()))
-          : repos;
+          ? activeGitRepos.filter((r) => r.name.toLowerCase().includes(subFlow.query.toLowerCase()))
+          : activeGitRepos;
         const items: ResultItem[] = filtered.map((r) => ({
           type: "repo" as const,
           entry: r,
@@ -1532,8 +1538,8 @@ export function CommandPalette({ open, onClose }: Props) {
       }
       if (subFlow.type === "pick-repo") {
         const filtered = subFlow.query
-          ? repos.filter((r) => r.name.toLowerCase().includes(subFlow.query.toLowerCase()))
-          : repos;
+          ? activeGitRepos.filter((r) => r.name.toLowerCase().includes(subFlow.query.toLowerCase()))
+          : activeGitRepos;
         const items: ResultItem[] = filtered.map((r) => ({
           type: "repo" as const,
           entry: r,
@@ -1938,7 +1944,7 @@ export function CommandPalette({ open, onClose }: Props) {
             return;
           }
           // Multi-repo: git commands (except switch-repo) go through repo picker first
-          if (cmd.group === "git" && repos.length > 1 && cmd.id !== "git-switch-repo") {
+          if (cmd.group === "git" && activeGitRepos.length > 1 && cmd.id !== "git-switch-repo") {
             setPendingCommandId(cmd.id);
             setScopedRepo(null);
             setSubFlow({ type: "pick-repo", query: "", nextAction: cmd.id });
@@ -2071,7 +2077,7 @@ export function CommandPalette({ open, onClose }: Props) {
           break;
       }
     },
-    [commandCtx, activeWorkspaceRootPath, activeWorkspaceId, activeThreadId, onClose, launchHarness, openMessageResult, subFlow, t, pendingCommandId, availableCommands, repos, resolveRepoStatus],
+    [commandCtx, activeWorkspaceRootPath, activeWorkspaceId, activeThreadId, onClose, launchHarness, openMessageResult, subFlow, t, pendingCommandId, availableCommands, activeGitRepos.length, resolveRepoStatus],
   );
 
   const executeSubFlow = useCallback(async () => {
@@ -2341,7 +2347,7 @@ export function CommandPalette({ open, onClose }: Props) {
     switch (item.type) {
       case "command": {
         const Icon = item.entry.icon;
-        const showRepoBadge = item.entry.group === "git" && repos.length > 1 && activeRepo;
+        const showRepoBadge = item.entry.group === "git" && activeGitRepos.length > 1 && activeRepo;
         return (
           <button
             key={key}
@@ -2500,7 +2506,7 @@ export function CommandPalette({ open, onClose }: Props) {
         );
       }
       case "repo": {
-        const isCurrent = item.entry.id === activeRepoId;
+        const isCurrent = item.entry.id === activeRepo?.id;
         return (
           <button
             key={key}

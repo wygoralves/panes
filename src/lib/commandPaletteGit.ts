@@ -11,7 +11,15 @@ export function isRepoScopedGitCommandAvailable(
   activeRepoPath: string | null,
   repos: Repo[],
 ): boolean {
-  return Boolean(activeRepoPath) || repos.length > 1;
+  return Boolean(activeRepoPath) || hasMultipleActiveGitRepos(repos);
+}
+
+export function getActiveGitRepos(repos: Repo[]): Repo[] {
+  return repos.filter((repo) => repo.isActive);
+}
+
+export function hasMultipleActiveGitRepos(repos: Repo[]): boolean {
+  return getActiveGitRepos(repos).length > 1;
 }
 
 export async function resolveCommandPaletteGitStatus({
