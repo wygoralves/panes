@@ -1525,9 +1525,17 @@ button, input, textarea, select {
   background: none;
   flex-shrink: 0;
   opacity: 0;
+  width: 0;
+  overflow: hidden;
+  padding: 0;
   transition: all var(--duration-fast) var(--ease-out);
 }
-.multi-repo-header:hover .multi-repo-more-btn { opacity: 1; }
+.multi-repo-header:hover .multi-repo-more-btn {
+  opacity: 1;
+  width: auto;
+  padding: 4px;
+}
+.multi-repo-header:hover .multi-repo-badge { display: none; }
 .multi-repo-more-btn:hover {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text-1);
