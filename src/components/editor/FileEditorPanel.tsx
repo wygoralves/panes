@@ -171,41 +171,43 @@ export function FileEditorPanel() {
               </div>
             ))}
           </div>
-          <div className="editor-tabs-actions">
-            {!showExplorer && (
-              <button
-                type="button"
-                className="editor-tab-action"
-                onClick={() => setExplorerOpen(true)}
-                title={t("explorer.expand")}
-                aria-label={t("explorer.expand")}
-              >
-                <PanelLeftOpen size={13} />
-              </button>
-            )}
-            {canToggleMarkdownPreview ? (
-              <button
-                type="button"
-                className={`editor-tab-action${activeTab?.renderMode === "markdown-preview" ? " active" : ""}`}
-                onClick={handleToggleMarkdownPreview}
-                title={markdownPreviewToggleLabel}
-                aria-label={markdownPreviewToggleLabel}
-              >
-                <Eye size={12} />
-              </button>
-            ) : null}
-            {canToggleDiffView ? (
-              <button
-                type="button"
-                className={`editor-tab-action${activeTab?.renderMode === "git-diff-editor" ? " active" : ""}`}
-                onClick={handleToggleDiffView}
-                title={diffToggleLabel}
-                aria-label={diffToggleLabel}
-              >
-                <FileDiff size={12} />
-              </button>
-            ) : null}
-          </div>
+          {(!showExplorer || canToggleMarkdownPreview || canToggleDiffView) ? (
+            <div className="editor-tabs-actions">
+              {!showExplorer && (
+                <button
+                  type="button"
+                  className="editor-tab-action"
+                  onClick={() => setExplorerOpen(true)}
+                  title={t("explorer.expand")}
+                  aria-label={t("explorer.expand")}
+                >
+                  <PanelLeftOpen size={13} />
+                </button>
+              )}
+              {canToggleMarkdownPreview ? (
+                <button
+                  type="button"
+                  className={`editor-tab-action${activeTab?.renderMode === "markdown-preview" ? " active" : ""}`}
+                  onClick={handleToggleMarkdownPreview}
+                  title={markdownPreviewToggleLabel}
+                  aria-label={markdownPreviewToggleLabel}
+                >
+                  <Eye size={12} />
+                </button>
+              ) : null}
+              {canToggleDiffView ? (
+                <button
+                  type="button"
+                  className={`editor-tab-action${activeTab?.renderMode === "git-diff-editor" ? " active" : ""}`}
+                  onClick={handleToggleDiffView}
+                  title={diffToggleLabel}
+                  aria-label={diffToggleLabel}
+                >
+                  <FileDiff size={12} />
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       )}
 
