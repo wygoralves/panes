@@ -236,6 +236,19 @@ describe("fileStore", () => {
     });
   });
 
+  it("keeps the editor layout active after closing the last tab", async () => {
+    await useFileStore.getState().openFile("/repo", "src/app.ts");
+
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    useFileStore.getState().closeTab(tabId);
+
+    expect(useFileStore.getState()).toMatchObject({
+      tabs: [],
+      activeTabId: null,
+    });
+    expect(mockSetLayoutMode).not.toHaveBeenCalled();
+  });
+
   it("refreshes git state and compare metadata after saving a git diff tab", async () => {
     mockIpc.getGitFileCompare
       .mockResolvedValueOnce(makeCompare({ modifiedContent: "after\n" }))

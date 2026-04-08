@@ -639,13 +639,15 @@ export function getStaticCommands(
   },
   {
     id: "view-files",
-    label: t("commandPalette.commands.toggleExplorer"),
+    label: t("commandPalette.commands.viewFiles"),
     icon: File,
     group: "view",
     keywords: ["files", "tree", "explorer", "arquivos", "explorador"],
     isAvailable: (ctx) => !!ctx.activeWorkspaceId,
     action: ({ close }) => {
-      useUiStore.getState().toggleExplorer();
+      const uiState = useUiStore.getState();
+      uiState.setActiveView("chat");
+      uiState.setExplorerOpen(true);
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (wsId) {
         void useTerminalStore.getState().setLayoutMode(wsId, "editor");

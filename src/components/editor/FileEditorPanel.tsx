@@ -38,7 +38,7 @@ export function FileEditorPanel() {
   const focusMode = useUiStore((s) => s.focusMode);
   const showSidebar = useUiStore((s) => s.showSidebar);
   const showExplorer = useUiStore((s) => s.showExplorer);
-  const toggleExplorer = useUiStore((s) => s.toggleExplorer);
+  const setExplorerOpen = useUiStore((s) => s.setExplorerOpen);
   const repos = useWorkspaceStore((s) => s.repos);
   const activeRepoId = useWorkspaceStore((s) => s.activeRepoId);
   const openFile = useFileStore((s) => s.openFile);
@@ -176,7 +176,7 @@ export function FileEditorPanel() {
               <button
                 type="button"
                 className="editor-tab-action"
-                onClick={toggleExplorer}
+                onClick={() => setExplorerOpen(true)}
                 title={t("explorer.expand")}
                 aria-label={t("explorer.expand")}
               >
@@ -292,6 +292,17 @@ export function FileEditorPanel() {
             <p style={{ fontSize: 11, opacity: 0.6 }}>
               {t("editor.emptyHint")}
             </p>
+            {!showExplorer ? (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setExplorerOpen(true)}
+                style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
+              >
+                <PanelLeftOpen size={14} />
+                {t("explorer.expand")}
+              </button>
+            ) : null}
           </div>
         )}
       </div>

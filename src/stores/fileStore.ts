@@ -7,7 +7,6 @@ import {
 import { t } from "../i18n";
 import { toast } from "./toastStore";
 import { useWorkspaceStore } from "./workspaceStore";
-import { useTerminalStore } from "./terminalStore";
 import { useGitStore } from "./gitStore";
 import { destroyCachedEditor } from "../components/editor/CodeMirrorEditor";
 import type {
@@ -317,18 +316,6 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
 
       return { tabs: newTabs, activeTabId: newActiveId, pendingCloseTabId: null };
     });
-
-    // Auto-exit editor mode when all tabs are closed.
-    // Safe to read here: Zustand's set() is synchronous, so get() reflects the updated state.
-    if (get().tabs.length === 0) {
-      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
-      if (wsId) {
-        const ws = useTerminalStore.getState().workspaces[wsId];
-        if (ws?.layoutMode === "editor") {
-          void useTerminalStore.getState().setLayoutMode(wsId, ws.preEditorLayoutMode ?? "chat");
-        }
-      }
-    }
   },
 
   requestCloseTab: (tabId) => {
