@@ -33,7 +33,13 @@
     "undoLastCommitMessage": "Isso desfaz o commit mais recente e mantém todas as alterações dele staged. Esta ação não pode ser desfeita pelo Panes.",
     "softReset": "Soft reset",
     "pull": "Pull",
-    "push": "Push"
+    "push": "Push",
+    "fetchAll": "Fetch em todos os repos",
+    "pullAll": "Pull em todos os repos",
+    "fetchedAllRepos": "Fetch concluído em {{count}} repos",
+    "fetchAllPartialError": "Fetch falhou em {{count}} repo(s)",
+    "pulledAllRepos": "Pull concluído em {{count}} repos",
+    "pullAllPartialError": "Pull falhou em {{count}} repo(s)"
   },
   "branches": {
     "scope": {

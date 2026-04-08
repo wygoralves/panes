@@ -215,6 +215,34 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
     }
   }, [effectiveRepoPath, syncDisabled, fetchRemote, t]);
 
+  const onFetchAll = useCallback(async () => {
+    if (syncDisabled) return;
+    setLocalError(undefined);
+    const results = await Promise.allSettled(
+      controlledRepos.map((r) => fetchRemote(r.path)),
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) {
+      setLocalError(t("panel.fetchAllPartialError", { count: failed }));
+    } else {
+      toast.success(t("panel.fetchedAllRepos", { count: controlledRepos.length }));
+    }
+  }, [controlledRepos, syncDisabled, fetchRemote, t]);
+
+  const onPullAll = useCallback(async () => {
+    if (syncDisabled) return;
+    setLocalError(undefined);
+    const results = await Promise.allSettled(
+      controlledRepos.map((r) => pullRemote(r.path)),
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) {
+      setLocalError(t("panel.pullAllPartialError", { count: failed }));
+    } else {
+      toast.success(t("panel.pulledAllRepos", { count: controlledRepos.length }));
+    }
+  }, [controlledRepos, syncDisabled, pullRemote, t]);
+
   const onSoftResetLastCommit = useCallback(async () => {
     if (!effectiveRepoPath || syncDisabled) {
       setSoftResetConfirmOpen(false);
@@ -524,8 +552,8 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
           type="button"
           className="git-toolbar-btn no-drag"
           disabled={syncDisabled}
-          title={isActiveRepoSyncing ? t("panel.syncing") : t("panel.refreshAndFetch")}
-          onClick={() => void onSyncClick()}
+          title={isActiveRepoSyncing ? t("panel.syncing") : isMultiRepoChanges ? t("panel.fetchAll") : t("panel.refreshAndFetch")}
+          onClick={() => void (isMultiRepoChanges ? onFetchAll() : onSyncClick())}
         >
           <RefreshCw size={14} className={isActiveRepoSyncing ? "git-spin" : ""} />
         </button>
@@ -713,39 +741,55 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
               closeGitFlyoutIfFocusLeft(gitFlyoutContext, event.relatedTarget)
             }
           >
-            <button
-              type="button"
-              className="git-action-menu-item"
-              onClick={() => runSyncActionFromMore("pull")}
-              disabled={syncDisabled}
-            >
-              <ArrowDown size={13} className={isActiveRepoSyncing && remoteSyncAction === "pull" ? "git-spin" : ""} />
-              <span style={{ flex: 1 }}>{t("panel.pull")}</span>
-              <span className="git-sync-counter">↓{pullCount}</span>
-            </button>
-            <button
-              type="button"
-              className="git-action-menu-item"
-              onClick={() => runSyncActionFromMore("push")}
-              disabled={syncDisabled}
-            >
-              <ArrowUp size={13} className={isActiveRepoSyncing && remoteSyncAction === "push" ? "git-spin" : ""} />
-              <span style={{ flex: 1 }}>{t("panel.push")}</span>
-              <span className="git-sync-counter">↑{pushCount}</span>
-            </button>
-            <div className="git-action-menu-divider" />
-            <button
-              type="button"
-              className="git-action-menu-item git-action-menu-item-danger-hover"
-              onClick={() => {
-                closeMoreMenu();
-                setSoftResetConfirmOpen(true);
-              }}
-              disabled={syncDisabled}
-            >
-              <Undo2 size={13} />
-              <span style={{ flex: 1 }}>{t("panel.undoLastCommit")}</span>
-            </button>
+            {isMultiRepoChanges ? (
+              <>
+                <button
+                  type="button"
+                  className="git-action-menu-item"
+                  onClick={() => { closeMoreMenu(); void onPullAll(); }}
+                  disabled={syncDisabled}
+                >
+                  <ArrowDown size={13} />
+                  <span style={{ flex: 1 }}>{t("panel.pullAll")}</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="git-action-menu-item"
+                  onClick={() => runSyncActionFromMore("pull")}
+                  disabled={syncDisabled}
+                >
+                  <ArrowDown size={13} className={isActiveRepoSyncing && remoteSyncAction === "pull" ? "git-spin" : ""} />
+                  <span style={{ flex: 1 }}>{t("panel.pull")}</span>
+                  <span className="git-sync-counter">↓{pullCount}</span>
+                </button>
+                <button
+                  type="button"
+                  className="git-action-menu-item"
+                  onClick={() => runSyncActionFromMore("push")}
+                  disabled={syncDisabled}
+                >
+                  <ArrowUp size={13} className={isActiveRepoSyncing && remoteSyncAction === "push" ? "git-spin" : ""} />
+                  <span style={{ flex: 1 }}>{t("panel.push")}</span>
+                  <span className="git-sync-counter">↑{pushCount}</span>
+                </button>
+                <div className="git-action-menu-divider" />
+                <button
+                  type="button"
+                  className="git-action-menu-item git-action-menu-item-danger-hover"
+                  onClick={() => {
+                    closeMoreMenu();
+                    setSoftResetConfirmOpen(true);
+                  }}
+                  disabled={syncDisabled}
+                >
+                  <Undo2 size={13} />
+                  <span style={{ flex: 1 }}>{t("panel.undoLastCommit")}</span>
+                </button>
+              </>
+            )}
           </div>,
           document.body,
         )}
