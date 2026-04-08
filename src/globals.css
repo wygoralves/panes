@@ -1553,6 +1553,30 @@ button, input, textarea, select {
   padding: 7px 14px !important;
 }
 
+/* Multi-repo scoped overrides — subordinate hierarchy */
+.multi-repo-body .git-section-header {
+  font-size: 9px;
+  font-weight: 500;
+  padding-top: 6px;
+  padding-bottom: 3px;
+}
+.multi-repo-body .git-section-count {
+  font-size: 9px;
+}
+.multi-repo-body .git-section-actions .btn {
+  font-size: 9px;
+  padding: 2px 6px;
+}
+.multi-repo-body .git-file-name {
+  font-size: 11px;
+}
+.multi-repo-body .git-dir-row {
+  font-size: 11px;
+}
+.multi-repo-body .git-status {
+  font-size: 9px;
+}
+
 /* Modified count chip (reuses existing .chip pattern in the accordion header) */
 .chip-modified { color: var(--warning); background: rgba(251, 191, 36, 0.08); }
 
