@@ -16,6 +16,7 @@ import { useTerminalStore } from "../../stores/terminalStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import type { FileTreeEntry } from "../../types";
+import { isCurrentExplorerLoad } from "./fileExplorerState";
 
 interface DirRow {
   type: "dir";
@@ -88,9 +89,10 @@ export function FileExplorer() {
 
   const openFile = useFileStore((s) => s.openFile);
   const setLayoutMode = useTerminalStore((s) => s.setLayoutMode);
-  const toggleExplorer = useUiStore((s) => s.toggleExplorer);
+  const setExplorerOpen = useUiStore((s) => s.setExplorerOpen);
 
   const prevRootPath = useRef(rootPath);
+  const loadSignatureRef = useRef({ generation: 0, rootPath });
   const dirContentsRef = useRef(dirContents);
   const treeViewportRef = useRef<HTMLDivElement>(null);
   dirContentsRef.current = dirContents;
@@ -101,19 +103,32 @@ export function FileExplorer() {
     async (dirPath: string) => {
       if (!rootPath) return;
       const isRoot = dirPath === "";
+      const requestSignature = {
+        generation: loadSignatureRef.current.generation,
+        rootPath,
+      };
       if (isRoot) setRootLoading(true);
       else setLoadingDirs((prev) => new Set(prev).add(dirPath));
 
       try {
-        const entries = await ipc.listDir(rootPath, dirPath);
+        const entries = await ipc.listDir(requestSignature.rootPath, dirPath);
+        if (!isCurrentExplorerLoad(requestSignature, loadSignatureRef.current)) {
+          return;
+        }
         setDirContents((prev) => {
           const next = new Map(prev);
           next.set(dirPath, entries);
           return next;
         });
       } catch (err) {
+        if (!isCurrentExplorerLoad(requestSignature, loadSignatureRef.current)) {
+          return;
+        }
         console.warn(`[FileExplorer] failed to list directory "${dirPath}":`, err);
       } finally {
+        if (!isCurrentExplorerLoad(requestSignature, loadSignatureRef.current)) {
+          return;
+        }
         if (isRoot) setRootLoading(false);
         else setLoadingDirs((prev) => {
           const next = new Set(prev);
@@ -126,14 +141,20 @@ export function FileExplorer() {
   );
 
   useEffect(() => {
-    if (!rootPath) return;
     if (prevRootPath.current !== rootPath) {
+      loadSignatureRef.current = {
+        generation: loadSignatureRef.current.generation + 1,
+        rootPath,
+      };
       setDirContents(new Map());
       setExpandedDirs(new Set());
       setLoadingDirs(new Set());
+      setRootLoading(false);
       setFilter("");
+      setScrollTop(0);
       prevRootPath.current = rootPath;
     }
+    if (!rootPath) return;
     void loadDir("");
   }, [loadDir, rootPath]);
 
@@ -294,7 +315,7 @@ export function FileExplorer() {
           type="button"
           className="file-explorer-collapse-btn"
           title={t("explorer.collapse")}
-          onClick={toggleExplorer}
+          onClick={() => setExplorerOpen(false)}
         >
           <PanelLeftClose size={14} />
         </button>

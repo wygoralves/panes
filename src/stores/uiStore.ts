@@ -43,6 +43,7 @@ interface UiState {
   toggleGitPanelPin: () => void;
   setGitPanelPinned: (pinned: boolean) => void;
   toggleExplorer: () => void;
+  setExplorerOpen: (open: boolean) => void;
   setFocusMode: (enabled: boolean) => void;
   toggleFocusMode: () => void;
   setActiveView: (view: ActiveView) => void;
@@ -149,6 +150,14 @@ export const useUiStore = create<UiState>((set) => ({
       }
       return { showExplorer: next };
     }),
+  setExplorerOpen: (open) => {
+    try {
+      localStorage.setItem(EXPLORER_OPEN_KEY, String(open));
+    } catch {
+      // Ignore storage failures in non-browser/test environments.
+    }
+    set({ showExplorer: open });
+  },
   setFocusMode: (enabled) =>
     set((state) => {
       if (enabled) {

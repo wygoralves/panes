@@ -1,5 +1,4 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
-import { useFileStore } from "../../stores/fileStore";
 import { useUiStore } from "../../stores/uiStore";
 
 const LazyFileExplorer = lazy(() =>
@@ -32,9 +31,8 @@ function loadExplorerWidth(): number {
 
 export function EditorWithExplorer() {
   const showExplorerSetting = useUiStore((s) => s.showExplorer);
-  const toggleExplorer = useUiStore((s) => s.toggleExplorer);
-  const hasOpenTabs = useFileStore((s) => s.tabs.length > 0);
-  const explorerVisible = hasOpenTabs ? showExplorerSetting : true;
+  const setExplorerOpen = useUiStore((s) => s.setExplorerOpen);
+  const explorerVisible = showExplorerSetting;
   const [explorerWidth, setExplorerWidth] = useState(loadExplorerWidth);
   const handleRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -70,13 +68,13 @@ export function EditorWithExplorer() {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
       if (!isDragging && Math.abs(ev.clientX - startX) < RESIZE_CLICK_THRESHOLD) {
-        toggleExplorer();
+        setExplorerOpen(false);
       }
     }
 
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
-  }, [explorerWidth, toggleExplorer]);
+  }, [explorerWidth, setExplorerOpen]);
 
   return (
     <div className="editor-layout-wrapper">
