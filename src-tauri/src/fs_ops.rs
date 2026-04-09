@@ -10,6 +10,19 @@ use crate::models::{FileTreeEntryDto, ReadFileResultDto};
 const READ_FILE_MAX_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
 const BINARY_DETECT_SCAN_SIZE: usize = 8192;
 
+pub fn validate_repo_relative_path(path: &str) -> anyhow::Result<&Path> {
+    let mut has_component = false;
+    for component in Path::new(path).components() {
+        match component {
+            Component::Normal(_) => has_component = true,
+            _ => anyhow::bail!("invalid file or directory path"),
+        }
+    }
+
+    anyhow::ensure!(has_component, "invalid file or directory path");
+    Ok(Path::new(path))
+}
+
 pub fn list_dir(repo_path: &str, dir_path: &str) -> anyhow::Result<Vec<FileTreeEntryDto>> {
     let repo_root = PathBuf::from(repo_path)
         .canonicalize()
@@ -108,7 +121,7 @@ pub fn create_file(repo_path: &str, file_path: &str) -> anyhow::Result<()> {
     let repo_root = PathBuf::from(repo_path)
         .canonicalize()
         .context("failed to canonicalize repo path")?;
-    let target = repo_root.join(file_path);
+    let target = repo_root.join(validate_repo_relative_path(file_path)?);
 
     let parent = target.parent().context("invalid file path")?;
     if parent.exists() {
@@ -144,7 +157,7 @@ pub fn create_dir(repo_path: &str, dir_path: &str) -> anyhow::Result<()> {
     let repo_root = PathBuf::from(repo_path)
         .canonicalize()
         .context("failed to canonicalize repo path")?;
-    let target = repo_root.join(dir_path);
+    let target = repo_root.join(validate_repo_relative_path(dir_path)?);
 
     let mut ancestor = target.as_path();
     while !ancestor.exists() {
@@ -251,7 +264,7 @@ pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> anyhow::Re
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use super::{create_file, rename_path};
+    use super::{create_dir, create_file, rename_path};
     use uuid::Uuid;
 
     fn with_temp_repo<T>(f: impl FnOnce(PathBuf) -> T) -> T {
@@ -272,6 +285,38 @@ mod tests {
             .expect("nested file create should succeed");
 
             assert!(root.join("src/components/FileExplorer.tsx").is_file());
+        });
+    }
+
+    #[test]
+    fn create_file_rejects_parent_dir_components_before_touching_the_filesystem() {
+        with_temp_repo(|sandbox| {
+            let repo = sandbox.join("repo");
+            let escaped = sandbox.join("outside.txt");
+            fs::create_dir_all(&repo).expect("repo should exist");
+
+            let error = create_file(repo.to_string_lossy().as_ref(), "missing/../../outside.txt")
+                .expect_err("parent traversal should be rejected");
+
+            assert!(error.to_string().contains("invalid file or directory path"));
+            assert!(!repo.join("missing").exists());
+            assert!(!escaped.exists());
+        });
+    }
+
+    #[test]
+    fn create_dir_rejects_parent_dir_components_before_touching_the_filesystem() {
+        with_temp_repo(|sandbox| {
+            let repo = sandbox.join("repo");
+            let escaped = sandbox.join("outside");
+            fs::create_dir_all(&repo).expect("repo should exist");
+
+            let error = create_dir(repo.to_string_lossy().as_ref(), "missing/../../outside")
+                .expect_err("parent traversal should be rejected");
+
+            assert!(error.to_string().contains("invalid file or directory path"));
+            assert!(!repo.join("missing").exists());
+            assert!(!escaped.exists());
         });
     }
 

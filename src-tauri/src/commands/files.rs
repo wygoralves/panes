@@ -454,7 +454,7 @@ fn resolve_target_path_for_repo_lookup(
     access_root: &Path,
     file_path: &str,
 ) -> anyhow::Result<PathBuf> {
-    let target = access_root.join(file_path);
+    let target = access_root.join(fs_ops::validate_repo_relative_path(file_path)?);
 
     if target.exists() {
         let canonical = target
@@ -694,7 +694,22 @@ mod tests {
                 resolve_target_path_for_repo_lookup(&canonical_root, "../outside/FileExplorer.tsx")
                     .expect_err("path traversal should fail");
 
-            assert!(error.to_string().contains("path traversal not allowed"));
+            assert!(error.to_string().contains("invalid file or directory path"));
+        });
+    }
+
+    #[test]
+    fn resolve_target_path_for_repo_lookup_rejects_parent_dir_components_inside_missing_ancestors()
+    {
+        with_temp_path(|dir, _file| {
+            let root = dir.parent().expect("root should exist").to_path_buf();
+            let canonical_root = root.canonicalize().expect("root should resolve");
+
+            let error =
+                resolve_target_path_for_repo_lookup(&canonical_root, "missing/../nested/file.txt")
+                    .expect_err("unresolved parent segments should be rejected");
+
+            assert!(error.to_string().contains("invalid file or directory path"));
         });
     }
 }
