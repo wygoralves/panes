@@ -18,6 +18,7 @@ import { useWorkspaceStore } from "./stores/workspaceStore";
 import { useEngineStore } from "./stores/engineStore";
 import { useUiStore } from "./stores/uiStore";
 import { useThreadStore } from "./stores/threadStore";
+import { useChatStore } from "./stores/chatStore";
 import { useGitStore } from "./stores/gitStore";
 import { useTerminalStore, collectSessionIds } from "./stores/terminalStore";
 import { useFileStore } from "./stores/fileStore";
@@ -29,6 +30,7 @@ import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMi
 import { CustomWindowFrame } from "./components/shared/CustomWindowFrame";
 import { useCustomWindowFrameState } from "./lib/customWindowFrame";
 import { runEditMenuAction } from "./lib/nativeEditActions";
+import { createAndActivateWorkspaceThread } from "./lib/newThreadActions";
 import {
   usesCustomWindowFrame,
   isTerminalInputFocused,
@@ -48,6 +50,11 @@ function fireShortcut(id: string, action: () => void) {
   if (now - last < SHORTCUT_DEBOUNCE_MS) return;
   shortcutLastFired.set(id, now);
   action();
+}
+
+async function createNewWorkspaceThread() {
+  const { activeWorkspaceId } = useWorkspaceStore.getState();
+  await createAndActivateWorkspaceThread(activeWorkspaceId);
 }
 
 function isCodexSyncRequired(thread: Thread | null | undefined): boolean {
@@ -279,7 +286,7 @@ export function App() {
   //
   // Cmd+Alt+F (focus mode) is intercepted before Cmd+F so it wins even in editors.
   // F11 toggles native window fullscreen independently from focus mode.
-  // Cmd+E (editor toggle) has no native menu item — JS-only.
+  // Cmd+Shift+N (new thread) and Cmd+E (editor toggle) are JS-only.
   // Cmd+S always prevents the browser save-page dialog.
   // Cmd+W is debounced like the native menu path so Linux can use the same
   // close behavior even without a native menubar.
@@ -316,6 +323,13 @@ export function App() {
       }
 
       switch (key) {
+        case "n":
+          if (!e.shiftKey) return;
+          e.preventDefault();
+          fireShortcut("new-thread", () => {
+            void createNewWorkspaceThread();
+          });
+          break;
         case "e":
           if (e.shiftKey) return;
           e.preventDefault();

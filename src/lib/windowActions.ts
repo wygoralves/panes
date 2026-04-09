@@ -50,6 +50,10 @@ export function shouldHandleAppShortcutWhileTerminalFocused(key: string, shiftKe
     return true;
   }
 
+  if (normalizedKey === "n" && shiftKey) {
+    return true;
+  }
+
   return APP_SHORTCUTS_ALLOWED_WHILE_TERMINAL_FOCUSED.has(normalizedKey);
 }
 

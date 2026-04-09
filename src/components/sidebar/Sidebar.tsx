@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import {
+  Command,
   Plus,
   FolderGit2,
   MessageSquare,
@@ -11,8 +12,9 @@ import {
   Archive,
   RotateCcw,
   Settings,
-  Pin,
-  PinOff,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
   Terminal,
   Check,
   Rocket,
@@ -42,6 +44,7 @@ import {
   type AppLocale,
 } from "../../lib/locale";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
+import { createAndActivateWorkspaceThread } from "../../lib/newThreadActions";
 import { UpdateDialog } from "../onboarding/UpdateDialog";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { WorkspaceMoreMenu } from "../workspace/WorkspaceMoreMenu";
@@ -94,7 +97,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     setActiveThread,
     removeThread,
     restoreThread,
-    createThread,
     refreshArchivedThreads,
   } = useThreadStore();
   const openOnboarding = useOnboardingStore((state) => state.openOnboarding);
@@ -103,6 +105,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const activeView = useUiStore((state) => state.activeView);
   const setActiveView = useUiStore((state) => state.setActiveView);
   const openWorkspaceSettings = useUiStore((state) => state.openWorkspaceSettings);
+  const openCommandPalette = useUiStore((state) => state.openCommandPalette);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
   const updateStatus = useUpdateStore((s) => s.status);
   const updateSnoozed = useUpdateStore((s) => s.snoozed);
@@ -255,18 +258,9 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   }
 
   async function onCreateProjectThread(project: Workspace) {
-    if (project.id !== activeWorkspaceId) {
-      await setActiveWorkspace(project.id);
-    }
-    setActiveRepo(null, { remember: false });
-    const createdThreadId = await createThread({
-      workspaceId: project.id,
-      repoId: null,
-      title: t("app:sidebar.newThreadTitle"),
-    });
+    const createdThreadId = await createAndActivateWorkspaceThread(project.id);
     if (!createdThreadId) return;
     setCollapsed((prev) => ({ ...prev, [project.id]: false }));
-    await bindChatThread(createdThreadId);
   }
 
   function onDeleteWorkspace(project: Workspace) {
@@ -392,55 +386,24 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
         flexDirection: "column",
         background: "inherit",
         minWidth: 0,
+        minHeight: 0,
+        overflow: "hidden",
       }}
     >
-      {/* ── Header — drag region + actions ── */}
+      {/* ── Drag region ── */}
       <div
         onMouseDown={handleDragMouseDown}
         onDoubleClick={handleDragDoubleClick}
-        style={{
-          padding: "42px 12px 10px",
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-        }}
-      >
-        <div className="no-drag" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {/* Top row: Pin button */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginBottom: 2,
-            }}
-          >
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                letterSpacing: "0.06em",
-                textTransform: "uppercase",
-                color: "var(--text-3)",
-              }}
-            >
-              Panes
-            </span>
-            <button
-              type="button"
-              className={`shell-pin-btn ${sidebarPinned ? "shell-pin-btn-active" : ""}`}
-              onClick={onPin ?? toggleSidebarPin}
-              title={sidebarPinned ? t("app:sidebar.unpin") : t("app:sidebar.pin")}
-              aria-label={sidebarPinned ? t("app:sidebar.unpin") : t("app:sidebar.pin")}
-            >
-              {sidebarPinned ? <Pin size={13} /> : <PinOff size={13} />}
-            </button>
-          </div>
+        style={{ height: 34, flexShrink: 0 }}
+      />
 
+      {/* ── Nav items ── */}
+      <div style={{ padding: "0 8px 4px", flexShrink: 0 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {/* New thread */}
           <button
             type="button"
-            className="sb-new-thread-btn"
-            style={{ margin: 0 }}
+            className="sb-nav-item"
             onClick={() => {
               const activeProject = projects.find(
                 (p) => p.workspace.id === activeWorkspaceId,
@@ -450,31 +413,53 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               }
             }}
           >
-            <Plus size={14} strokeWidth={2.2} />
+            <Plus size={16} strokeWidth={1.5} style={{ flexShrink: 0 }} />
             {t("app:sidebar.newThread")}
+            <span className="sb-nav-item-shortcut">⌘⇧N</span>
+          </button>
+
+          {/* Commands — general command palette */}
+          <button
+            type="button"
+            className="sb-nav-item"
+            onClick={() => openCommandPalette()}
+          >
+            <Command size={16} strokeWidth={1.5} style={{ flexShrink: 0 }} />
+            {t("app:commandPalette.group.commands")}
+            <span className="sb-nav-item-shortcut">⌘K</span>
+          </button>
+
+          {/* Search workspace */}
+          <button
+            type="button"
+            className="sb-nav-item"
+            onClick={() => openCommandPalette({ variant: "search", initialQuery: "?" })}
+          >
+            <Search size={16} strokeWidth={1.5} style={{ flexShrink: 0 }} />
+            {t("app:sidebar.search")}
+            <span className="sb-nav-item-shortcut">⌘⇧F</span>
           </button>
 
           {/* Agents */}
           <button
             type="button"
-            className={`sb-open-project-btn${activeView === "harnesses" ? " sb-btn-active" : ""}`}
-            style={{ margin: 0 }}
+            className={`sb-nav-item${activeView === "harnesses" ? " sb-nav-item-active" : ""}`}
             onClick={() => setActiveView(activeView === "harnesses" ? "chat" : "harnesses")}
           >
-            <Terminal size={13} strokeWidth={2} />
+            <Terminal size={16} strokeWidth={1.5} style={{ flexShrink: 0 }} />
             {t("app:sidebar.agents")}
           </button>
         </div>
       </div>
 
       {/* ── Scrollable content ── */}
-      <div style={{ flex: 1, overflow: "auto", paddingBottom: 4 }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto", paddingBottom: 4 }}>
         <div className="sb-section-label">
-          <span>{t("app:sidebar.projects")}</span>
+          <span>{t("app:sidebar.workspaces")}</span>
           <button
             type="button"
             className="sb-add-project-btn"
-            title={t("app:sidebar.openProject")}
+            title={t("app:sidebar.openWorkspace")}
             onClick={() => {
               if (activeView !== "chat") setActiveView("chat");
               void onOpenFolder();
@@ -486,7 +471,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
 
         {projects.length === 0 ? (
           <div className="sb-empty">
-            {t("app:sidebar.noProjects")}
+            {t("app:sidebar.noWorkspaces")}
             <br />
             {t("app:sidebar.openFolder")}
           </div>
@@ -500,10 +485,11 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               ? project.threads
               : project.threads.slice(0, MAX_VISIBLE_THREADS);
             const hasMore = project.threads.length > MAX_VISIBLE_THREADS;
+            const constrainExpandedThreads = isShowingAll && hasMore;
 
             return (
               <div key={project.workspace.id} style={{ marginBottom: 2 }}>
-                {/* Project header */}
+                {/* Workspace header */}
                 <button
                   type="button"
                   className={`sb-project ${isActiveProject ? "sb-project-active" : ""}`}
@@ -529,22 +515,25 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                   />
                   <span className="sb-project-name">{projectName}</span>
 
-                  {project.threads.length > 0 && (
-                    <span className="sb-project-count">
-                      {project.threads.length}
-                    </span>
-                  )}
-
-                  <WorkspaceMoreMenu
-                    workspace={project.workspace}
-                    onOpenSettings={() => openWorkspaceSettings(project.workspace.id)}
-                    onArchive={() => onDeleteWorkspace(project.workspace)}
-                  />
+                  <span className="sb-project-trailing">
+                    {project.threads.length > 0 && (
+                      <span className="sb-project-count">
+                        {project.threads.length}
+                      </span>
+                    )}
+                    <WorkspaceMoreMenu
+                      workspace={project.workspace}
+                      onOpenSettings={() => openWorkspaceSettings(project.workspace.id)}
+                      onArchive={() => onDeleteWorkspace(project.workspace)}
+                    />
+                  </span>
                 </button>
 
-                {/* Threads */}
+                {/* Threads — tree-line indented */}
                 {!isCollapsed && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 1, marginTop: 1 }}>
+                  <div
+                    className={`sb-thread-tree${constrainExpandedThreads ? " sb-thread-tree-scrollable" : ""}`}
+                  >
                     {project.threads.length === 0 ? (
                       <div className="sb-no-threads">{t("app:sidebar.noThreads")}</div>
                     ) : (
@@ -552,34 +541,44 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                         {visibleThreads.map((thread, i) => {
                           const isActive = thread.id === activeThreadId;
                           return (
-                            <button
+                            <div
                               key={thread.id}
-                              type="button"
+                              role="button"
+                              tabIndex={0}
                               className={`sb-thread sb-thread-animate ${isActive ? "sb-thread-active" : ""}`}
                               style={{ animationDelay: `${i * 20}ms` }}
                               onClick={() => void onSelectThread(thread)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  void onSelectThread(thread);
+                                }
+                              }}
                             >
                               <span className="sb-thread-title">
                                 {getThreadLabel(thread)}
                               </span>
-                              <span className="sb-thread-time">
-                                {thread.lastActivityAt
-                                  ? formatRelativeTime(thread.lastActivityAt, i18n.language)
-                                  : ""}
+                              <span className="sb-thread-trailing">
+                                <span className="sb-thread-time">
+                                  {thread.lastActivityAt
+                                    ? formatRelativeTime(thread.lastActivityAt, i18n.language)
+                                    : ""}
+                                </span>
+                                <button
+                                  type="button"
+                                  title={t("app:sidebar.archiveThread")}
+                                  aria-label={t("app:sidebar.archiveThread")}
+                                  className="sb-thread-archive"
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void onDeleteThread(thread);
+                                  }}
+                                >
+                                  <Archive size={11} />
+                                </button>
                               </span>
-                              <span
-                                role="button"
-                                title={t("app:sidebar.archiveThread")}
-                                className="sb-thread-archive"
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void onDeleteThread(thread);
-                                }}
-                              >
-                                <Archive size={11} />
-                              </span>
-                            </button>
+                            </div>
                           );
                         })}
 
@@ -713,7 +712,15 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
           </span>
           {t("app:sidebar.settings")}
         </button>
-
+        <button
+          type="button"
+          className="shell-pin-btn"
+          onClick={onPin ?? toggleSidebarPin}
+          title={sidebarPinned ? t("app:sidebar.unpin") : t("app:sidebar.pin")}
+          aria-label={sidebarPinned ? t("app:sidebar.unpin") : t("app:sidebar.pin")}
+        >
+          {sidebarPinned ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+        </button>
       </div>
 
       {/* Settings portal menu */}
@@ -1017,9 +1024,6 @@ function CollapsedRail({
   const projects = useWorkspaceStore((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
-  const setActiveRepo = useWorkspaceStore((s) => s.setActiveRepo);
-  const createThread = useThreadStore((s) => s.createThread);
-  const bindChatThread = useChatStore((s) => s.setActiveThread);
   const hasUpdate = useUpdateStore((s) => s.status === "available" && !s.snoozed);
   const activeView = useUiStore((s) => s.activeView);
   const setActiveView = useUiStore((s) => s.setActiveView);
@@ -1027,14 +1031,7 @@ function CollapsedRail({
   async function onNewThread() {
     const activeProject = projects.find((p) => p.id === activeWorkspaceId);
     if (!activeProject) return;
-    setActiveRepo(null, { remember: false });
-    const createdThreadId = await createThread({
-      workspaceId: activeProject.id,
-      repoId: null,
-      title: t("sidebar.newThreadTitle"),
-    });
-    if (!createdThreadId) return;
-    await bindChatThread(createdThreadId);
+    await createAndActivateWorkspaceThread(activeProject.id);
   }
 
   return (

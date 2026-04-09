@@ -6,7 +6,7 @@ import {
   ArrowDown,
   ArrowUp,
   X,
-  Pin,
+  PanelRightOpen,
   Undo2,
   FileDiff,
   GitBranch as GitBranchIcon,
@@ -555,7 +555,7 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
             title={t("panel.pin")}
             aria-label={t("panel.pin")}
           >
-            <Pin size={13} />
+            <PanelRightOpen size={13} />
           </button>
         ) : null}
 
