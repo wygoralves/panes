@@ -1,5 +1,22 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.53.0...vnull) (2026-04-09)
+
+### Features
+
+* **sidebar:** add shortcut actions and hints ([ca73839](https://github.com/wygoralves/panes/commit/ca738390c08e6e7a743edc018932291c1dc0154d))
+* **sidebar:** refresh workspace navigation ([e698847](https://github.com/wygoralves/panes/commit/e698847b3fd3b52de8c6d20d63d085083ccb57a3))
+
+### Bug Fixes
+
+* **chat:** preserve layout on new thread ([2aad6ec](https://github.com/wygoralves/panes/commit/2aad6ec946aa33e4427af88fabb8f4fde21859bc))
+* **explorer:** cancel stale scheduled refreshes ([cdd5a6e](https://github.com/wygoralves/panes/commit/cdd5a6e6d14fba0e837fe6c67ece7cbfe19fa8da))
+* **explorer:** refresh stale directory state ([4cda120](https://github.com/wygoralves/panes/commit/4cda120f469afa2bdd830392c7c8792b8d853d55))
+* **git:** align panel pin icon ([8df1334](https://github.com/wygoralves/panes/commit/8df133432acbf9721a5be9ccf31e92ce96f5e056))
+* **sidebar:** constrain expanded thread lists ([f9e9219](https://github.com/wygoralves/panes/commit/f9e9219cf2f0bb212fd647aa33cae061ab19e3d2))
+* **sidebar:** open search palette from nav ([9f0abe4](https://github.com/wygoralves/panes/commit/9f0abe4aefbd65f4d1b156853752987a68d7bc58))
+* **ui:** refine sidebar thread actions ([9ca2acc](https://github.com/wygoralves/panes/commit/9ca2acc84993261d122ab3d5871065237aa68e74))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.52.0...vnull) (2026-04-09)
 
 ### Features
