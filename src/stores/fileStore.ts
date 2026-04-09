@@ -423,27 +423,45 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
           return tab;
         }
 
+        const nextRootPath =
+          remapAbsolutePathForRename(tab.rootPath, oldAbsolutePath, newAbsolutePath) ??
+          tab.rootPath;
+        const nextGitRepoPath = tab.gitRepoPath
+          ? remapAbsolutePathForRename(tab.gitRepoPath, oldAbsolutePath, newAbsolutePath) ??
+            tab.gitRepoPath
+          : null;
         const nextFilePath = resolveRelativePathWithinRoot(
           nextAbsolutePath,
-          tab.rootPath,
+          nextRootPath,
         );
         if (nextFilePath === null) {
           return tab;
         }
 
-        const ownership = resolveOwningRepoForAbsolutePath(
-          nextAbsolutePath,
-          workspaceState.repos,
-          workspaceState.activeRepoId,
-        );
+        const ownership =
+          !nextGitRepoPath || nextGitRepoPath === tab.gitRepoPath
+            ? resolveOwningRepoForAbsolutePath(
+                nextAbsolutePath,
+                workspaceState.repos,
+                workspaceState.activeRepoId,
+              )
+            : null;
+        const resolvedGitRepoPath = nextGitRepoPath ?? ownership?.repo.path ?? null;
+        const resolvedGitFilePath = resolvedGitRepoPath
+          ? resolveRelativePathWithinRoot(nextAbsolutePath, resolvedGitRepoPath)
+          : ownership?.filePath ?? null;
 
         return {
           ...tab,
+          rootPath: nextRootPath,
           absolutePath: nextAbsolutePath,
           filePath: nextFilePath,
           fileName: nextFilePath.split("/").pop() ?? nextFilePath,
-          gitRepoPath: ownership?.repo.path ?? null,
-          gitFilePath: ownership?.filePath ?? null,
+          gitRepoPath: resolvedGitRepoPath,
+          gitFilePath:
+            resolvedGitFilePath && resolvedGitFilePath.length > 0
+              ? resolvedGitFilePath
+              : null,
         };
       }),
     }));

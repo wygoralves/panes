@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   isCurrentExplorerLoad,
+  isKnownDirectoryPath,
+  pruneDeletedMapKeys,
+  pruneDeletedSetPaths,
   pruneContainedPaths,
   remapDescendantPath,
 } from "./fileExplorerState";
@@ -73,5 +76,46 @@ describe("remapDescendantPath", () => {
 
   it("returns null for unaffected paths", () => {
     expect(remapDescendantPath("README.md", "src/components", "src/ui")).toBeNull();
+  });
+});
+
+describe("pruneDeletedSetPaths", () => {
+  it("removes deleted folders and their expanded descendants", () => {
+    expect(
+      pruneDeletedSetPaths(
+        new Set(["src/components", "src/components/editor", "README.md"]),
+        ["src/components"],
+      ),
+    ).toEqual(new Set(["README.md"]));
+  });
+});
+
+describe("pruneDeletedMapKeys", () => {
+  it("removes cached directory contents for deleted subtrees", () => {
+    const dirContents = new Map([
+      ["", [{ path: "src/components", isDir: true }]],
+      ["src/components", [{ path: "src/components/editor", isDir: true }]],
+      ["src/components/editor", [{ path: "src/components/editor/FileExplorer.tsx", isDir: false }]],
+      ["docs", [{ path: "docs/guide.md", isDir: false }]],
+    ]);
+
+    expect(pruneDeletedMapKeys(dirContents, ["src/components"])).toEqual(
+      new Map([
+        ["", [{ path: "src/components", isDir: true }]],
+        ["docs", [{ path: "docs/guide.md", isDir: false }]],
+      ]),
+    );
+  });
+});
+
+describe("isKnownDirectoryPath", () => {
+  it("recognizes collapsed directories from their parent listing", () => {
+    const dirContents = new Map([
+      ["", [{ path: "src", isDir: true }]],
+      ["docs", [{ path: "docs/guide.md", isDir: false }]],
+    ]);
+
+    expect(isKnownDirectoryPath(dirContents, "src")).toBe(true);
+    expect(isKnownDirectoryPath(dirContents, "docs/guide.md")).toBe(false);
   });
 });
