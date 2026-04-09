@@ -415,7 +415,56 @@
     "filterCountTitle": "Only expanded folders are searched",
     "loading": "Loading files...",
     "emptyFiltered": "No files match filter",
-    "empty": "No files found"
+    "empty": "No files found",
+    "contextMenu": {
+      "open": "Open in Editor",
+      "copyPath": "Copy Path",
+      "copyRelativePath": "Copy Relative Path",
+      "revealInFinder": "Reveal in Finder",
+      "rename": "Rename",
+      "delete": "Delete",
+      "newFile": "New File...",
+      "newFolder": "New Folder...",
+      "copyPaths": "Copy Paths",
+      "copyRelativePaths": "Copy Relative Paths",
+      "deleteItems": "Delete {{count}} Items",
+      "itemsSelected": "{{count}} items selected"
+    },
+    "rename": {
+      "errorExists": "A file or folder with that name already exists",
+      "errorInvalid": "Enter a valid file or folder name"
+    },
+    "create": {
+      "filePlaceholder": "filename",
+      "folderPlaceholder": "folder name"
+    },
+    "delete": {
+      "fileTitle": "Delete file?",
+      "fileMessage": "\"{{name}}\" will be permanently deleted. This cannot be undone.",
+      "folderTitle": "Delete folder?",
+      "folderMessage": "\"{{name}}\" and all its contents will be permanently deleted. This cannot be undone.",
+      "bulkTitle": "Delete {{count}} items?",
+      "bulkMessage": "The following will be permanently deleted:",
+      "unsavedChanges_one": "This will also discard unsaved changes in {{count}} open tab.",
+      "unsavedChanges_other": "This will also discard unsaved changes in {{count}} open tabs.",
+      "andMore": "...and {{count}} more",
+      "confirm": "Delete",
+      "confirmBulk": "Delete {{count}} Items",
+      "cancel": "Cancel"
+    },
+    "multiSelect": {
+      "selected": "{{count}} selected",
+      "copy": "Copy",
+      "delete": "Delete"
+    },
+    "toasts": {
+      "renamed": "Renamed to {{name}}",
+      "deleted": "Deleted {{name}}",
+      "deletedItems": "Deleted {{count}} items",
+      "created": "Created {{name}}",
+      "pathCopied": "Path copied",
+      "pathsCopied": "{{count}} paths copied"
+    }
   },
   "notificationSettings": {
     "title": "Agent notifications",

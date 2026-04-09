@@ -78,6 +78,147 @@ pub async fn write_file(
 }
 
 #[tauri::command]
+pub async fn create_file(
+    state: State<'_, AppState>,
+    repo_path: String,
+    file_path: String,
+    workspace_id: Option<String>,
+) -> Result<(), String> {
+    let db = state.db.clone();
+    let cache = state.file_tree_cache.clone();
+    tokio::task::spawn_blocking(move || {
+        let access_root = PathBuf::from(&repo_path)
+            .canonicalize()
+            .map_err(err_to_string)?;
+        let target_for_repo_lookup =
+            resolve_target_path_for_repo_lookup(&access_root, &file_path).map_err(err_to_string)?;
+
+        if let Some(repo) = db::repos::find_deepest_repo_containing_path(
+            &db,
+            target_for_repo_lookup.to_string_lossy().as_ref(),
+            workspace_id.as_deref(),
+        )
+        .map_err(err_to_string)?
+        {
+            if matches!(repo.trust_level, TrustLevelDto::Restricted) {
+                return Err("cannot modify a restricted repository".to_string());
+            }
+        }
+        fs_ops::create_file(&repo_path, &file_path).map_err(err_to_string)?;
+        cache.invalidate_containing_path(target_for_repo_lookup.to_string_lossy().as_ref());
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn create_dir(
+    state: State<'_, AppState>,
+    repo_path: String,
+    dir_path: String,
+    workspace_id: Option<String>,
+) -> Result<(), String> {
+    let db = state.db.clone();
+    let cache = state.file_tree_cache.clone();
+    tokio::task::spawn_blocking(move || {
+        let access_root = PathBuf::from(&repo_path)
+            .canonicalize()
+            .map_err(err_to_string)?;
+        let target_for_repo_lookup =
+            resolve_target_path_for_repo_lookup(&access_root, &dir_path).map_err(err_to_string)?;
+
+        if let Some(repo) = db::repos::find_deepest_repo_containing_path(
+            &db,
+            target_for_repo_lookup.to_string_lossy().as_ref(),
+            workspace_id.as_deref(),
+        )
+        .map_err(err_to_string)?
+        {
+            if matches!(repo.trust_level, TrustLevelDto::Restricted) {
+                return Err("cannot modify a restricted repository".to_string());
+            }
+        }
+        fs_ops::create_dir(&repo_path, &dir_path).map_err(err_to_string)?;
+        cache.invalidate_containing_path(target_for_repo_lookup.to_string_lossy().as_ref());
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn rename_path(
+    state: State<'_, AppState>,
+    repo_path: String,
+    old_path: String,
+    new_name: String,
+    workspace_id: Option<String>,
+) -> Result<(), String> {
+    let db = state.db.clone();
+    let cache = state.file_tree_cache.clone();
+    tokio::task::spawn_blocking(move || {
+        let access_root = PathBuf::from(&repo_path)
+            .canonicalize()
+            .map_err(err_to_string)?;
+        let target_for_repo_lookup =
+            resolve_target_path_for_repo_lookup(&access_root, &old_path).map_err(err_to_string)?;
+
+        if let Some(repo) = db::repos::find_deepest_repo_containing_path(
+            &db,
+            target_for_repo_lookup.to_string_lossy().as_ref(),
+            workspace_id.as_deref(),
+        )
+        .map_err(err_to_string)?
+        {
+            if matches!(repo.trust_level, TrustLevelDto::Restricted) {
+                return Err("cannot modify a restricted repository".to_string());
+            }
+        }
+        fs_ops::rename_path(&repo_path, &old_path, &new_name).map_err(err_to_string)?;
+        cache.invalidate_containing_path(target_for_repo_lookup.to_string_lossy().as_ref());
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_path(
+    state: State<'_, AppState>,
+    repo_path: String,
+    file_path: String,
+    workspace_id: Option<String>,
+) -> Result<(), String> {
+    let db = state.db.clone();
+    let cache = state.file_tree_cache.clone();
+    tokio::task::spawn_blocking(move || {
+        let access_root = PathBuf::from(&repo_path)
+            .canonicalize()
+            .map_err(err_to_string)?;
+        let target_for_repo_lookup =
+            resolve_target_path_for_repo_lookup(&access_root, &file_path).map_err(err_to_string)?;
+
+        if let Some(repo) = db::repos::find_deepest_repo_containing_path(
+            &db,
+            target_for_repo_lookup.to_string_lossy().as_ref(),
+            workspace_id.as_deref(),
+        )
+        .map_err(err_to_string)?
+        {
+            if matches!(repo.trust_level, TrustLevelDto::Restricted) {
+                return Err("cannot modify a restricted repository".to_string());
+            }
+        }
+        fs_ops::delete_path(&repo_path, &file_path).map_err(err_to_string)?;
+        cache.invalidate_containing_path(target_for_repo_lookup.to_string_lossy().as_ref());
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub async fn reveal_path(path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         reveal_path_impl(PathBuf::from(path)).map_err(err_to_string)
@@ -242,17 +383,23 @@ fn resolve_target_path_for_repo_lookup(
         return Ok(canonical);
     }
 
-    let parent = target.parent().context("invalid file path")?;
-    let parent_canonical = parent
+    let mut ancestor = target.parent().context("invalid file path")?;
+    while !ancestor.exists() {
+        ancestor = ancestor.parent().context("invalid file path")?;
+    }
+
+    let ancestor_canonical = ancestor
         .canonicalize()
-        .context("parent directory not found")?;
+        .context("ancestor directory not found")?;
     anyhow::ensure!(
-        parent_canonical.starts_with(access_root),
+        ancestor_canonical.starts_with(access_root),
         "path traversal not allowed"
     );
 
-    let file_name = target.file_name().context("invalid file path")?;
-    Ok(parent_canonical.join(file_name))
+    let remainder = target
+        .strip_prefix(ancestor)
+        .context("failed to resolve target path")?;
+    Ok(ancestor_canonical.join(remainder))
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {
@@ -263,7 +410,7 @@ fn err_to_string(error: impl std::fmt::Display) -> String {
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use super::{build_reveal_command_plan, RevealPlatform};
+    use super::{build_reveal_command_plan, resolve_target_path_for_repo_lookup, RevealPlatform};
     use uuid::Uuid;
 
     fn with_temp_path<T>(f: impl FnOnce(PathBuf, PathBuf) -> T) -> T {
@@ -376,6 +523,39 @@ mod tests {
             assert!(error
                 .to_string()
                 .contains("neither xdg-open nor gio open is available"));
+        });
+    }
+
+    #[test]
+    fn resolve_target_path_for_repo_lookup_allows_nested_missing_parents() {
+        with_temp_path(|dir, _file| {
+            let root = dir.parent().expect("root should exist").to_path_buf();
+            let canonical_root = root.canonicalize().expect("root should resolve");
+
+            let resolved = resolve_target_path_for_repo_lookup(
+                &canonical_root,
+                "src/components/FileExplorer.tsx",
+            )
+            .expect("nested path should resolve");
+
+            assert_eq!(
+                resolved,
+                canonical_root.join("src/components/FileExplorer.tsx")
+            );
+        });
+    }
+
+    #[test]
+    fn resolve_target_path_for_repo_lookup_rejects_missing_parent_traversal() {
+        with_temp_path(|dir, _file| {
+            let root = dir.parent().expect("root should exist").to_path_buf();
+            let canonical_root = root.canonicalize().expect("root should resolve");
+
+            let error =
+                resolve_target_path_for_repo_lookup(&canonical_root, "../outside/FileExplorer.tsx")
+                    .expect_err("path traversal should fail");
+
+            assert!(error.to_string().contains("path traversal not allowed"));
         });
     }
 }

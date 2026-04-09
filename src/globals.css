@@ -2121,6 +2121,112 @@ button, input, textarea, select {
   white-space: nowrap;
 }
 
+.file-explorer-row.selected {
+  background: rgba(255, 107, 107, 0.08);
+}
+
+.file-explorer-row.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+}
+
+.file-explorer-row.context-active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Inline rename / create input */
+.file-explorer-inline-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  padding: 0 10px;
+}
+
+.file-explorer-inline-input input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-1);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  outline: none;
+  font-size: 12px;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  padding: 1px 4px;
+  height: 20px;
+  box-shadow: 0 0 0 1px rgba(255, 107, 107, 0.2);
+}
+
+.file-explorer-inline-input input.error {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.3);
+}
+
+/* Multi-select action bar */
+.file-explorer-select-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-3);
+  border-top: 1px solid var(--content-border);
+  font-size: 11px;
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.file-explorer-select-bar .select-count {
+  font-family: var(--font-mono);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.file-explorer-select-bar .select-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.file-explorer-select-bar .select-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  cursor: pointer;
+  font-family: var(--font-body);
+  transition: all var(--duration-fast) ease;
+}
+
+.file-explorer-select-bar .select-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-1);
+  border-color: var(--border-active);
+}
+
+.file-explorer-select-bar .select-btn-danger {
+  color: var(--danger);
+  border-color: rgba(248, 113, 113, 0.2);
+}
+
+.file-explorer-select-bar .select-btn-danger:hover {
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
 /* Editor layout with collapsible explorer */
 .editor-layout-wrapper {
   display: flex;

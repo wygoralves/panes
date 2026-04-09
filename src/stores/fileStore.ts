@@ -1,8 +1,10 @@
 import { create } from "zustand";
 import { ipc } from "../lib/ipc";
 import {
+  isWithinRoot,
   resolveAbsoluteFilePath,
   resolveOwningRepoForAbsolutePath,
+  resolveRelativePathWithinRoot,
 } from "../lib/fileRootUtils";
 import { t } from "../i18n";
 import { toast } from "./toastStore";
@@ -22,6 +24,23 @@ interface ResolvedFileContext {
   absolutePath: string;
   gitRepoPath: string | null;
   gitFilePath: string | null;
+}
+
+function remapAbsolutePathForRename(
+  absolutePath: string,
+  oldAbsolutePath: string,
+  newAbsolutePath: string,
+): string | null {
+  if (!isWithinRoot(absolutePath, oldAbsolutePath)) {
+    return null;
+  }
+
+  if (absolutePath === oldAbsolutePath) {
+    return newAbsolutePath;
+  }
+
+  const suffix = absolutePath.slice(oldAbsolutePath.length).replace(/^\/+/, "");
+  return suffix ? resolveAbsoluteFilePath(newAbsolutePath, suffix) : newAbsolutePath;
 }
 
 function resolveFileContext(rootPath: string, filePath: string): ResolvedFileContext {
@@ -145,6 +164,11 @@ interface FileStoreState {
   setTabRenderMode: (tabId: string, renderMode: EditorRenderMode) => void;
   setTabContent: (tabId: string, content: string) => void;
   clearPendingReveal: (tabId: string, nonce: string) => void;
+  retargetTabsAfterRename: (
+    rootPath: string,
+    oldPath: string,
+    newPath: string,
+  ) => void;
   saveTab: (tabId: string) => Promise<void>;
 }
 
@@ -380,6 +404,48 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
           ? { ...tab, pendingReveal: null }
           : tab,
       ),
+    }));
+  },
+
+  retargetTabsAfterRename: (rootPath, oldPath, newPath) => {
+    const oldAbsolutePath = resolveAbsoluteFilePath(rootPath, oldPath);
+    const newAbsolutePath = resolveAbsoluteFilePath(rootPath, newPath);
+    const workspaceState = useWorkspaceStore.getState();
+
+    set((state) => ({
+      tabs: state.tabs.map((tab) => {
+        const nextAbsolutePath = remapAbsolutePathForRename(
+          tab.absolutePath,
+          oldAbsolutePath,
+          newAbsolutePath,
+        );
+        if (!nextAbsolutePath) {
+          return tab;
+        }
+
+        const nextFilePath = resolveRelativePathWithinRoot(
+          nextAbsolutePath,
+          tab.rootPath,
+        );
+        if (nextFilePath === null) {
+          return tab;
+        }
+
+        const ownership = resolveOwningRepoForAbsolutePath(
+          nextAbsolutePath,
+          workspaceState.repos,
+          workspaceState.activeRepoId,
+        );
+
+        return {
+          ...tab,
+          absolutePath: nextAbsolutePath,
+          filePath: nextFilePath,
+          fileName: nextFilePath.split("/").pop() ?? nextFilePath,
+          gitRepoPath: ownership?.repo.path ?? null,
+          gitFilePath: ownership?.filePath ?? null,
+        };
+      }),
     }));
   },
 
