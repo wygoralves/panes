@@ -98,11 +98,14 @@ impl FileTreeCache {
         let normalized_path = path_utils::normalize_windows_path_string(path);
         let mut map = self.inner.lock().unwrap();
         map.retain(|key, _| {
-            if let Some(workspace_root) = workspace_root_from_cache_key(key) {
-                !path_utils::is_path_within_root(&normalized_path, workspace_root)
+            let cache_root = if let Some(workspace_root) = workspace_root_from_cache_key(key) {
+                workspace_root
             } else {
-                !path_utils::is_path_within_root(&normalized_path, key)
-            }
+                key.as_str()
+            };
+
+            !path_utils::is_path_within_root(&normalized_path, cache_root)
+                && !path_utils::is_path_within_root(cache_root, &normalized_path)
         });
     }
 }
@@ -1615,5 +1618,40 @@ mod tests {
         assert!(cache.get("/workspace/apps/app").is_none());
         assert!(cache.get("workspace::/workspace").is_none());
         assert!(cache.get("workspace::/other-workspace").is_some());
+    }
+
+    #[test]
+    fn invalidating_a_parent_path_clears_nested_repo_cache_entries() {
+        let cache = FileTreeCache::new();
+        cache.insert(
+            "/workspace/apps/app",
+            vec![FileTreeEntryDto {
+                path: "src/main.ts".to_string(),
+                is_dir: false,
+            }],
+            false,
+        );
+        cache.insert(
+            "workspace::/workspace",
+            vec![FileTreeEntryDto {
+                path: "apps/app/src/main.ts".to_string(),
+                is_dir: false,
+            }],
+            false,
+        );
+        cache.insert(
+            "/workspace/other",
+            vec![FileTreeEntryDto {
+                path: "README.md".to_string(),
+                is_dir: false,
+            }],
+            false,
+        );
+
+        cache.invalidate_containing_path("/workspace/apps");
+
+        assert!(cache.get("/workspace/apps/app").is_none());
+        assert!(cache.get("workspace::/workspace").is_none());
+        assert!(cache.get("/workspace/other").is_some());
     }
 }

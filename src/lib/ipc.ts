@@ -362,10 +362,20 @@ export const ipc = {
     invoke<FileTreePage>("get_file_tree_page", { repoPath, offset: offset ?? null, limit: limit ?? null }),
   listDir: (repoPath: string, dirPath: string) =>
     invoke<FileTreeEntry[]>("list_dir", { repoPath, dirPath }),
+  createFile: (repoPath: string, filePath: string, workspaceId?: string | null) =>
+    invoke<void>("create_file", { repoPath, filePath, workspaceId: workspaceId ?? null }),
+  createDir: (repoPath: string, dirPath: string, workspaceId?: string | null) =>
+    invoke<void>("create_dir", { repoPath, dirPath, workspaceId: workspaceId ?? null }),
+  renamePath: (repoPath: string, oldPath: string, newName: string, workspaceId?: string | null) =>
+    invoke<void>("rename_path", { repoPath, oldPath, newName, workspaceId: workspaceId ?? null }),
+  deletePath: (repoPath: string, filePath: string, workspaceId?: string | null) =>
+    invoke<void>("delete_path", { repoPath, filePath, workspaceId: workspaceId ?? null }),
   stageFiles: (repoPath: string, files: string[]) => invoke<void>("stage_files", { repoPath, files }),
   unstageFiles: (repoPath: string, files: string[]) =>
     invoke<void>("unstage_files", { repoPath, files }),
   revealPath: (path: string) => invoke<void>("reveal_path", { path }),
+  openPathWithDefaultApp: (path: string) =>
+    invoke<void>("open_path_with_default_app", { path }),
   discardFiles: (repoPath: string, files: string[]) =>
     invoke<void>("discard_files", { repoPath, files }),
   commit: (repoPath: string, message: string) => invoke<string>("commit", { repoPath, message }),

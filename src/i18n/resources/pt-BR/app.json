@@ -86,6 +86,7 @@
       "layoutEditor": "Ir para Editor de arquivos",
       "toggleSidebar": "Alternar Sidebar",
       "toggleGitPanel": "Alternar painel Git",
+      "toggleExplorer": "Alternar Explorer de Arquivos",
       "toggleFocusMode": "Alternar modo foco",
       "toggleKeepAwake": "Alternar manter acordado",
       "powerSettings": "Configurações de energia",
@@ -113,6 +114,7 @@
       "viewCommits": "Abrir History",
       "viewStash": "Abrir Stash",
       "viewFiles": "Abrir Files",
+      "toggleExplorer": "Alternar Explorer de Arquivos",
       "viewWorktrees": "Abrir Worktrees",
       "viewHarnesses": "Abrir Agent Harnesses",
       "codexFork": "Criar fork da thread Codex",
@@ -362,11 +364,12 @@
     "loadingFile": "Carregando arquivo...",
     "binaryFile": "Arquivo binário - não é possível exibir",
     "emptyTitle": "Nenhum arquivo aberto",
-    "emptyHint": "Abra um arquivo pela visualização Files no painel Git",
+    "emptyHint": "Abra um arquivo pelo explorer ou clique em um arquivo no chat",
     "showDiff": "Mostrar visualização de diff",
     "hideDiff": "Ocultar visualização de diff",
     "showMarkdownPreview": "Mostrar preview de markdown",
     "hideMarkdownPreview": "Ocultar preview de markdown",
+    "openInDefaultApp": "Abrir no app padrão",
     "unsavedChangesTitle": "Alterações não salvas",
     "unsavedChangesMessage": "\"{{name}}\" tem alterações não salvas. Descartá-las?",
     "discard": "Descartar",
@@ -401,7 +404,70 @@
     "toasts": {
       "modifiedExternally": "{{name}} foi modificado externamente. Salve novamente para sobrescrever.",
       "saved": "{{name}} salvo",
-      "saveFailed": "Falha ao salvar: {{error}}"
+      "saveFailed": "Falha ao salvar: {{error}}",
+      "openExternalFailed": "Falha ao abrir o arquivo no app padrão"
+    }
+  },
+  "explorer": {
+    "title": "Explorer",
+    "collapse": "Recolher explorer",
+    "expand": "Mostrar explorer",
+    "filterPlaceholder": "Filtrar arquivos...",
+    "filterCount": "{{count}} arquivos",
+    "filterCountTitle": "Apenas pastas expandidas são pesquisadas",
+    "loading": "Carregando arquivos...",
+    "emptyFiltered": "Nenhum arquivo corresponde ao filtro",
+    "empty": "Nenhum arquivo encontrado",
+    "contextMenu": {
+      "open": "Abrir no Editor",
+      "openInDefaultApp": "Abrir no app padrão",
+      "copyPath": "Copiar Caminho",
+      "copyRelativePath": "Copiar Caminho Relativo",
+      "revealInFinder": "Revelar no Finder",
+      "rename": "Renomear",
+      "delete": "Excluir",
+      "newFile": "Novo Arquivo...",
+      "newFolder": "Nova Pasta...",
+      "copyPaths": "Copiar Caminhos",
+      "copyRelativePaths": "Copiar Caminhos Relativos",
+      "deleteItems": "Excluir {{count}} Itens",
+      "itemsSelected": "{{count}} itens selecionados"
+    },
+    "rename": {
+      "errorExists": "Um arquivo ou pasta com esse nome já existe",
+      "errorInvalid": "Digite um nome de arquivo ou pasta válido"
+    },
+    "create": {
+      "filePlaceholder": "nome do arquivo",
+      "folderPlaceholder": "nome da pasta"
+    },
+    "delete": {
+      "fileTitle": "Excluir arquivo?",
+      "fileMessage": "\"{{name}}\" será excluído permanentemente. Isso não pode ser desfeito.",
+      "folderTitle": "Excluir pasta?",
+      "folderMessage": "\"{{name}}\" e todo o seu conteúdo serão excluídos permanentemente. Isso não pode ser desfeito.",
+      "bulkTitle": "Excluir {{count}} itens?",
+      "bulkMessage": "Os seguintes itens serão excluídos permanentemente:",
+      "unsavedChanges_one": "Isso também descartará alterações não salvas em {{count}} aba aberta.",
+      "unsavedChanges_other": "Isso também descartará alterações não salvas em {{count}} abas abertas.",
+      "andMore": "...e mais {{count}}",
+      "confirm": "Excluir",
+      "confirmBulk": "Excluir {{count}} Itens",
+      "cancel": "Cancelar"
+    },
+    "multiSelect": {
+      "selected": "{{count}} selecionados",
+      "copy": "Copiar",
+      "delete": "Excluir"
+    },
+    "toasts": {
+      "renamed": "Renomeado para {{name}}",
+      "deleted": "{{name}} excluído",
+      "deletedItems": "{{count}} itens excluídos",
+      "created": "{{name}} criado",
+      "pathCopied": "Caminho copiado",
+      "pathsCopied": "{{count}} caminhos copiados",
+      "openExternalFailed": "Falha ao abrir o arquivo no app padrão"
     }
   },
   "notificationSettings": {

@@ -6,6 +6,7 @@ import {
 
 const SIDEBAR_PINNED_KEY = "panes:sidebarPinned";
 const GIT_PANEL_PINNED_KEY = "panes:gitPanelPinned";
+const EXPLORER_OPEN_KEY = "panes:explorerOpen";
 
 interface MessageFocusTarget {
   threadId: string;
@@ -25,6 +26,7 @@ interface UiState {
   sidebarPinned: boolean;
   showGitPanel: boolean;
   gitPanelPinned: boolean;
+  showExplorer: boolean;
   focusMode: boolean;
   focusModeSnapshot: FocusModeSnapshot | null;
   activeView: ActiveView;
@@ -40,6 +42,8 @@ interface UiState {
   toggleGitPanel: () => void;
   toggleGitPanelPin: () => void;
   setGitPanelPinned: (pinned: boolean) => void;
+  toggleExplorer: () => void;
+  setExplorerOpen: (open: boolean) => void;
   setFocusMode: (enabled: boolean) => void;
   toggleFocusMode: () => void;
   setActiveView: (view: ActiveView) => void;
@@ -64,11 +68,20 @@ const savedGitPanelPinned = (() => {
   }
 })();
 
+const savedExplorerOpen = (() => {
+  try {
+    return localStorage.getItem(EXPLORER_OPEN_KEY);
+  } catch {
+    return null;
+  }
+})();
+
 export const useUiStore = create<UiState>((set) => ({
   showSidebar: true,
   sidebarPinned: savedPinned !== null ? savedPinned === "true" : true,
   showGitPanel: true,
   gitPanelPinned: savedGitPanelPinned !== null ? savedGitPanelPinned === "true" : true,
+  showExplorer: savedExplorerOpen !== null ? savedExplorerOpen === "true" : true,
   focusMode: false,
   focusModeSnapshot: null,
   commandPaletteOpen: false,
@@ -126,6 +139,24 @@ export const useUiStore = create<UiState>((set) => ({
       // Ignore storage failures in non-browser/test environments.
     }
     set({ gitPanelPinned: pinned, showGitPanel: true });
+  },
+  toggleExplorer: () =>
+    set((state) => {
+      const next = !state.showExplorer;
+      try {
+        localStorage.setItem(EXPLORER_OPEN_KEY, String(next));
+      } catch {
+        // Ignore storage failures in non-browser/test environments.
+      }
+      return { showExplorer: next };
+    }),
+  setExplorerOpen: (open) => {
+    try {
+      localStorage.setItem(EXPLORER_OPEN_KEY, String(open));
+    } catch {
+      // Ignore storage failures in non-browser/test environments.
+    }
+    set({ showExplorer: open });
   },
   setFocusMode: (enabled) =>
     set((state) => {

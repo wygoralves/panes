@@ -76,7 +76,7 @@ function addToHistory(history: string[], entry: string): string[] {
   return [trimmed, ...deduped].slice(0, DRAFT_HISTORY_MAX);
 }
 
-export type GitPanelView = "changes" | "branches" | "commits" | "stash" | "files" | "worktrees";
+export type GitPanelView = "changes" | "branches" | "commits" | "stash" | "worktrees";
 export type GitRemoteSyncAction = "fetch" | "pull" | "push";
 
 interface GitStatusCacheEntry {

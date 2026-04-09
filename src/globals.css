@@ -2009,6 +2009,293 @@ button, input, textarea, select {
   background: var(--accent);
 }
 
+/* File explorer panel */
+.file-explorer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-2);
+  border-right: 1px solid var(--content-border);
+}
+
+.file-explorer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--content-border);
+  flex-shrink: 0;
+}
+
+.file-explorer-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.file-explorer-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--duration-fast) ease,
+              color var(--duration-fast) ease;
+}
+
+.file-explorer-collapse-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-2);
+}
+
+.file-explorer-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-1);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+}
+
+.file-explorer-search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 12px;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+}
+
+.file-explorer-search input::placeholder {
+  color: var(--text-3);
+}
+
+.file-explorer-tree {
+  flex: 1;
+  overflow: auto;
+}
+
+.file-explorer-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.file-explorer-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-1);
+  padding: 0 10px;
+  transition: background var(--duration-fast) ease;
+}
+
+.file-explorer-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.file-explorer-row-dir {
+  color: var(--text-2);
+}
+
+.file-explorer-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-explorer-row.selected {
+  background: rgba(255, 107, 107, 0.08);
+}
+
+.file-explorer-row.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+}
+
+.file-explorer-row.context-active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Inline rename / create input */
+.file-explorer-inline-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  padding: 0 10px;
+}
+
+.file-explorer-inline-input input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-1);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  outline: none;
+  font-size: 12px;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  padding: 1px 4px;
+  height: 20px;
+  box-shadow: 0 0 0 1px rgba(255, 107, 107, 0.2);
+}
+
+.file-explorer-inline-input input.error {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.3);
+}
+
+/* Multi-select action bar */
+.file-explorer-select-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-3);
+  border-top: 1px solid var(--content-border);
+  font-size: 11px;
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.file-explorer-select-bar .select-count {
+  font-family: var(--font-mono);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.file-explorer-select-bar .select-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.file-explorer-select-bar .select-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  cursor: pointer;
+  font-family: var(--font-body);
+  transition: all var(--duration-fast) ease;
+}
+
+.file-explorer-select-bar .select-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-1);
+  border-color: var(--border-active);
+}
+
+.file-explorer-select-bar .select-btn-danger {
+  color: var(--danger);
+  border-color: rgba(248, 113, 113, 0.2);
+}
+
+.file-explorer-select-bar .select-btn-danger:hover {
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+/* Editor layout with collapsible explorer */
+.editor-layout-wrapper {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+.editor-explorer-panel {
+  width: 220px;
+  min-width: 0;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: width var(--duration-normal) var(--ease-out);
+}
+
+.editor-explorer-panel.collapsed {
+  width: 0;
+}
+
+.editor-explorer-panel.resizing {
+  transition: none;
+}
+
+.editor-explorer-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--duration-fast) ease,
+              color var(--duration-fast) ease;
+}
+
+.editor-explorer-toggle:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-2);
+}
+
+.editor-explorer-toggle.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.editor-explorer-resize-handle {
+  width: 1px;
+  background: var(--content-border);
+  cursor: col-resize;
+  flex-shrink: 0;
+  position: relative;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.editor-explorer-resize-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0 -3px;
+}
+
+.editor-explorer-resize-handle:hover,
+.editor-explorer-resize-handle:active {
+  width: 2px;
+  background: var(--accent);
+}
+
 /* Terminal panel */
 .terminal-split-panel {
   height: 100%;

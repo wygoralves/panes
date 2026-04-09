@@ -31,6 +31,7 @@ describe("uiStore focus mode", () => {
       sidebarPinned: true,
       showGitPanel: true,
       gitPanelPinned: true,
+      showExplorer: true,
       focusMode: false,
       focusModeSnapshot: null,
       activeView: "chat",
@@ -145,6 +146,15 @@ describe("uiStore focus mode", () => {
       showGitPanel: true,
       gitPanelPinned: false,
     });
+  });
+
+  it("persists explicit explorer visibility changes", () => {
+    const storage = globalThis.localStorage as unknown as ReturnType<typeof createStorageStub>;
+
+    useUiStore.getState().setExplorerOpen(false);
+
+    expect(storage.setItem).toHaveBeenCalledWith("panes:explorerOpen", "false");
+    expect(useUiStore.getState().showExplorer).toBe(false);
   });
 
   it("opens the command palette with structured launch defaults", () => {

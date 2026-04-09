@@ -1,13 +1,14 @@
 import { create } from "zustand";
 import { ipc } from "../lib/ipc";
 import {
+  isWithinRoot,
   resolveAbsoluteFilePath,
   resolveOwningRepoForAbsolutePath,
+  resolveRelativePathWithinRoot,
 } from "../lib/fileRootUtils";
 import { t } from "../i18n";
 import { toast } from "./toastStore";
 import { useWorkspaceStore } from "./workspaceStore";
-import { useTerminalStore } from "./terminalStore";
 import { useGitStore } from "./gitStore";
 import { destroyCachedEditor } from "../components/editor/CodeMirrorEditor";
 import type {
@@ -23,6 +24,23 @@ interface ResolvedFileContext {
   absolutePath: string;
   gitRepoPath: string | null;
   gitFilePath: string | null;
+}
+
+function remapAbsolutePathForRename(
+  absolutePath: string,
+  oldAbsolutePath: string,
+  newAbsolutePath: string,
+): string | null {
+  if (!isWithinRoot(absolutePath, oldAbsolutePath)) {
+    return null;
+  }
+
+  if (absolutePath === oldAbsolutePath) {
+    return newAbsolutePath;
+  }
+
+  const suffix = absolutePath.slice(oldAbsolutePath.length).replace(/^\/+/, "");
+  return suffix ? resolveAbsoluteFilePath(newAbsolutePath, suffix) : newAbsolutePath;
 }
 
 function resolveFileContext(rootPath: string, filePath: string): ResolvedFileContext {
@@ -146,6 +164,11 @@ interface FileStoreState {
   setTabRenderMode: (tabId: string, renderMode: EditorRenderMode) => void;
   setTabContent: (tabId: string, content: string) => void;
   clearPendingReveal: (tabId: string, nonce: string) => void;
+  retargetTabsAfterRename: (
+    rootPath: string,
+    oldPath: string,
+    newPath: string,
+  ) => void;
   saveTab: (tabId: string) => Promise<void>;
 }
 
@@ -317,18 +340,6 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
 
       return { tabs: newTabs, activeTabId: newActiveId, pendingCloseTabId: null };
     });
-
-    // Auto-exit editor mode when all tabs are closed.
-    // Safe to read here: Zustand's set() is synchronous, so get() reflects the updated state.
-    if (get().tabs.length === 0) {
-      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
-      if (wsId) {
-        const ws = useTerminalStore.getState().workspaces[wsId];
-        if (ws?.layoutMode === "editor") {
-          void useTerminalStore.getState().setLayoutMode(wsId, ws.preEditorLayoutMode ?? "chat");
-        }
-      }
-    }
   },
 
   requestCloseTab: (tabId) => {
@@ -393,6 +404,66 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
           ? { ...tab, pendingReveal: null }
           : tab,
       ),
+    }));
+  },
+
+  retargetTabsAfterRename: (rootPath, oldPath, newPath) => {
+    const oldAbsolutePath = resolveAbsoluteFilePath(rootPath, oldPath);
+    const newAbsolutePath = resolveAbsoluteFilePath(rootPath, newPath);
+    const workspaceState = useWorkspaceStore.getState();
+
+    set((state) => ({
+      tabs: state.tabs.map((tab) => {
+        const nextAbsolutePath = remapAbsolutePathForRename(
+          tab.absolutePath,
+          oldAbsolutePath,
+          newAbsolutePath,
+        );
+        if (!nextAbsolutePath) {
+          return tab;
+        }
+
+        const nextRootPath =
+          remapAbsolutePathForRename(tab.rootPath, oldAbsolutePath, newAbsolutePath) ??
+          tab.rootPath;
+        const nextGitRepoPath = tab.gitRepoPath
+          ? remapAbsolutePathForRename(tab.gitRepoPath, oldAbsolutePath, newAbsolutePath) ??
+            tab.gitRepoPath
+          : null;
+        const nextFilePath = resolveRelativePathWithinRoot(
+          nextAbsolutePath,
+          nextRootPath,
+        );
+        if (nextFilePath === null) {
+          return tab;
+        }
+
+        const ownership =
+          !nextGitRepoPath || nextGitRepoPath === tab.gitRepoPath
+            ? resolveOwningRepoForAbsolutePath(
+                nextAbsolutePath,
+                workspaceState.repos,
+                workspaceState.activeRepoId,
+              )
+            : null;
+        const resolvedGitRepoPath = nextGitRepoPath ?? ownership?.repo.path ?? null;
+        const resolvedGitFilePath = resolvedGitRepoPath
+          ? resolveRelativePathWithinRoot(nextAbsolutePath, resolvedGitRepoPath)
+          : ownership?.filePath ?? null;
+
+        return {
+          ...tab,
+          rootPath: nextRootPath,
+          absolutePath: nextAbsolutePath,
+          filePath: nextFilePath,
+          fileName: nextFilePath.split("/").pop() ?? nextFilePath,
+          gitRepoPath: resolvedGitRepoPath,
+          gitFilePath:
+            resolvedGitFilePath && resolvedGitFilePath.length > 0
+              ? resolvedGitFilePath
+              : null,
+        };
+      }),
     }));
   },
 

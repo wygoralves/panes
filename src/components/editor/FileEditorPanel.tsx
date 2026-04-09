@@ -1,12 +1,14 @@
 import { useEffect } from "react";
-import { Eye, FileDiff, FileText, Loader2, X } from "lucide-react";
+import { ExternalLink, Eye, FileDiff, FileText, Loader2, PanelLeftOpen, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   resolveOwningRepoForAbsolutePath,
   resolveRelativePathWithinRoot,
 } from "../../lib/fileRootUtils";
+import { ipc } from "../../lib/ipc";
 import { useFileStore } from "../../stores/fileStore";
 import { useTerminalStore } from "../../stores/terminalStore";
+import { toast } from "../../stores/toastStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { isMacDesktop } from "../../lib/windowActions";
@@ -37,6 +39,8 @@ export function FileEditorPanel() {
   const setTabRenderMode = useFileStore((s) => s.setTabRenderMode);
   const focusMode = useUiStore((s) => s.focusMode);
   const showSidebar = useUiStore((s) => s.showSidebar);
+  const showExplorer = useUiStore((s) => s.showExplorer);
+  const setExplorerOpen = useUiStore((s) => s.setExplorerOpen);
   const repos = useWorkspaceStore((s) => s.repos);
   const activeRepoId = useWorkspaceStore((s) => s.activeRepoId);
   const openFile = useFileStore((s) => s.openFile);
@@ -78,12 +82,18 @@ export function FileEditorPanel() {
       && !activeTab.isBinary
       && isMarkdownPreviewFile(activeTab.filePath),
   );
+  const canOpenInDefaultApp = Boolean(
+    activeTab
+      && !activeTab.isLoading
+      && !activeTab.loadError,
+  );
   const diffToggleLabel = activeTab?.renderMode === "git-diff-editor"
     ? t("editor.hideDiff")
     : t("editor.showDiff");
   const markdownPreviewToggleLabel = activeTab?.renderMode === "markdown-preview"
     ? t("editor.hideMarkdownPreview")
     : t("editor.showMarkdownPreview");
+  const openInDefaultAppLabel = t("editor.openInDefaultApp");
 
   function handleToggleDiffView() {
     if (!activeTab || !activeTabOwnership) {
@@ -114,6 +124,18 @@ export function FileEditorPanel() {
       activeTab.id,
       activeTab.renderMode === "markdown-preview" ? "plain-editor" : "markdown-preview",
     );
+  }
+
+  async function handleOpenInDefaultApp() {
+    if (!activeTab) {
+      return;
+    }
+
+    try {
+      await ipc.openPathWithDefaultApp(activeTab.absolutePath);
+    } catch {
+      toast.error(t("editor.toasts.openExternalFailed"));
+    }
   }
 
   // Cmd+S to save — Cmd+W is handled via native menu "close-window" action.
@@ -169,8 +191,19 @@ export function FileEditorPanel() {
               </div>
             ))}
           </div>
-          {canToggleDiffView || canToggleMarkdownPreview ? (
+          {(!showExplorer || canToggleMarkdownPreview || canOpenInDefaultApp || canToggleDiffView) ? (
             <div className="editor-tabs-actions">
+              {!showExplorer && (
+                <button
+                  type="button"
+                  className="editor-tab-action"
+                  onClick={() => setExplorerOpen(true)}
+                  title={t("explorer.expand")}
+                  aria-label={t("explorer.expand")}
+                >
+                  <PanelLeftOpen size={13} />
+                </button>
+              )}
               {canToggleMarkdownPreview ? (
                 <button
                   type="button"
@@ -180,6 +213,17 @@ export function FileEditorPanel() {
                   aria-label={markdownPreviewToggleLabel}
                 >
                   <Eye size={12} />
+                </button>
+              ) : null}
+              {canOpenInDefaultApp ? (
+                <button
+                  type="button"
+                  className="editor-tab-action"
+                  onClick={() => void handleOpenInDefaultApp()}
+                  title={openInDefaultAppLabel}
+                  aria-label={openInDefaultAppLabel}
+                >
+                  <ExternalLink size={12} />
                 </button>
               ) : null}
               {canToggleDiffView ? (
@@ -281,6 +325,17 @@ export function FileEditorPanel() {
             <p style={{ fontSize: 11, opacity: 0.6 }}>
               {t("editor.emptyHint")}
             </p>
+            {!showExplorer ? (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setExplorerOpen(true)}
+                style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
+              >
+                <PanelLeftOpen size={14} />
+                {t("explorer.expand")}
+              </button>
+            ) : null}
           </div>
         )}
       </div>

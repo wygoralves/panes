@@ -236,6 +236,98 @@ describe("fileStore", () => {
     });
   });
 
+  it("keeps the editor layout active after closing the last tab", async () => {
+    await useFileStore.getState().openFile("/repo", "src/app.ts");
+
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    useFileStore.getState().closeTab(tabId);
+
+    expect(useFileStore.getState()).toMatchObject({
+      tabs: [],
+      activeTabId: null,
+    });
+    expect(mockSetLayoutMode).not.toHaveBeenCalled();
+  });
+
+  it("retargets open tabs after a directory rename so saves use the new path", async () => {
+    mockWorkspaceState.activeRepoId = "repo-1";
+    mockWorkspaceState.repos = [
+      {
+        id: "repo-1",
+        workspaceId: "ws-1",
+        name: "repo",
+        path: "/workspace/apps/app",
+        defaultBranch: "main",
+        isActive: true,
+        trustLevel: "trusted",
+      },
+    ];
+
+    await useFileStore
+      .getState()
+      .openFile("/workspace", "apps/app/src/page.tsx");
+
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    useFileStore.getState().setTabContent(tabId, "updated\n");
+    mockIpc.readFile.mockResolvedValueOnce(makeReadFileResult("plain\n"));
+
+    useFileStore
+      .getState()
+      .retargetTabsAfterRename("/workspace", "apps/app/src", "apps/app/source");
+
+    const tab = useFileStore.getState().tabs[0]!;
+    expect(tab).toMatchObject({
+      absolutePath: "/workspace/apps/app/source/page.tsx",
+      filePath: "apps/app/source/page.tsx",
+      fileName: "page.tsx",
+      gitRepoPath: "/workspace/apps/app",
+      gitFilePath: "source/page.tsx",
+    });
+
+    await useFileStore.getState().saveTab(tabId);
+
+    expect(mockIpc.writeFile).toHaveBeenCalledWith(
+      "/workspace",
+      "apps/app/source/page.tsx",
+      "updated\n",
+      "ws-1",
+    );
+  });
+
+  it("retargets git diff tabs when their repo root is renamed", async () => {
+    mockWorkspaceState.activeRepoId = "repo-1";
+    mockWorkspaceState.repos = [
+      {
+        id: "repo-1",
+        workspaceId: "ws-1",
+        name: "app",
+        path: "/workspace/apps/app",
+        defaultBranch: "main",
+        isActive: true,
+        trustLevel: "trusted",
+      },
+    ];
+
+    mockIpc.getGitFileCompare.mockResolvedValueOnce(makeCompare({ modifiedContent: "before\n" }));
+
+    await useFileStore
+      .getState()
+      .openGitDiffFile("/workspace/apps/app", "src/app.ts", { source: "changes" });
+
+    useFileStore
+      .getState()
+      .retargetTabsAfterRename("/workspace", "apps/app", "apps/renamed-app");
+
+    const tab = useFileStore.getState().tabs[0]!;
+    expect(tab).toMatchObject({
+      rootPath: "/workspace/apps/renamed-app",
+      absolutePath: "/workspace/apps/renamed-app/src/app.ts",
+      filePath: "src/app.ts",
+      gitRepoPath: "/workspace/apps/renamed-app",
+      gitFilePath: "src/app.ts",
+    });
+  });
+
   it("refreshes git state and compare metadata after saving a git diff tab", async () => {
     mockIpc.getGitFileCompare
       .mockResolvedValueOnce(makeCompare({ modifiedContent: "after\n" }))

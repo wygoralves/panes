@@ -643,10 +643,15 @@ export function getStaticCommands(
     icon: File,
     group: "view",
     keywords: ["files", "tree", "explorer", "arquivos", "explorador"],
-    isAvailable: (ctx) => !!ctx.activeRepoPath,
+    isAvailable: (ctx) => !!ctx.activeWorkspaceId,
     action: ({ close }) => {
-      useGitStore.getState().setActiveView("files");
-      if (!useUiStore.getState().showGitPanel) useUiStore.getState().toggleGitPanel();
+      const uiState = useUiStore.getState();
+      uiState.setActiveView("chat");
+      uiState.setExplorerOpen(true);
+      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (wsId) {
+        void useTerminalStore.getState().setLayoutMode(wsId, "editor");
+      }
       close();
     },
   },
