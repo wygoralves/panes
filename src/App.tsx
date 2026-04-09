@@ -30,6 +30,7 @@ import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMi
 import { CustomWindowFrame } from "./components/shared/CustomWindowFrame";
 import { useCustomWindowFrameState } from "./lib/customWindowFrame";
 import { runEditMenuAction } from "./lib/nativeEditActions";
+import { createAndActivateWorkspaceThread } from "./lib/newThreadActions";
 import {
   usesCustomWindowFrame,
   isTerminalInputFocused,
@@ -52,21 +53,8 @@ function fireShortcut(id: string, action: () => void) {
 }
 
 async function createNewWorkspaceThread() {
-  const { activeWorkspaceId, setActiveRepo } = useWorkspaceStore.getState();
-  if (!activeWorkspaceId) return;
-
-  useUiStore.getState().setActiveView("chat");
-  setActiveRepo(null, { remember: false });
-
-  const threadId = await useThreadStore.getState().createThread({
-    workspaceId: activeWorkspaceId,
-    repoId: null,
-    title: t("app:sidebar.newThreadTitle"),
-  });
-
-  if (threadId) {
-    await useChatStore.getState().setActiveThread(threadId);
-  }
+  const { activeWorkspaceId } = useWorkspaceStore.getState();
+  await createAndActivateWorkspaceThread(activeWorkspaceId);
 }
 
 function isCodexSyncRequired(thread: Thread | null | undefined): boolean {

@@ -55,6 +55,7 @@ import {
   shouldPersistPickedRepoSelection,
 } from "../../lib/commandPaletteGit";
 import { formatRelativeTime } from "../../lib/formatters";
+import { createAndActivateWorkspaceThread } from "../../lib/newThreadActions";
 import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -550,16 +551,7 @@ export function getStaticCommands(
     keywords: ["new", "thread", "conversation", "chat", "nova", "conversa"],
     action: async ({ activeWorkspaceId, close }) => {
       close();
-      if (!activeWorkspaceId) return;
-      const threadId = await useThreadStore.getState().createThread({
-        workspaceId: activeWorkspaceId,
-        repoId: null,
-        title: t("sidebar.newThreadTitle"),
-      });
-      if (threadId) {
-        useThreadStore.getState().setActiveThread(threadId);
-        await useChatStore.getState().setActiveThread(threadId);
-      }
+      await createAndActivateWorkspaceThread(activeWorkspaceId);
     },
   },
   {

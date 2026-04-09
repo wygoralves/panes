@@ -44,6 +44,7 @@ import {
   type AppLocale,
 } from "../../lib/locale";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
+import { createAndActivateWorkspaceThread } from "../../lib/newThreadActions";
 import { UpdateDialog } from "../onboarding/UpdateDialog";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { WorkspaceMoreMenu } from "../workspace/WorkspaceMoreMenu";
@@ -96,7 +97,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     setActiveThread,
     removeThread,
     restoreThread,
-    createThread,
     refreshArchivedThreads,
   } = useThreadStore();
   const openOnboarding = useOnboardingStore((state) => state.openOnboarding);
@@ -258,18 +258,9 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   }
 
   async function onCreateProjectThread(project: Workspace) {
-    if (project.id !== activeWorkspaceId) {
-      await setActiveWorkspace(project.id);
-    }
-    setActiveRepo(null, { remember: false });
-    const createdThreadId = await createThread({
-      workspaceId: project.id,
-      repoId: null,
-      title: t("app:sidebar.newThreadTitle"),
-    });
+    const createdThreadId = await createAndActivateWorkspaceThread(project.id);
     if (!createdThreadId) return;
     setCollapsed((prev) => ({ ...prev, [project.id]: false }));
-    await bindChatThread(createdThreadId);
   }
 
   function onDeleteWorkspace(project: Workspace) {
@@ -1033,9 +1024,6 @@ function CollapsedRail({
   const projects = useWorkspaceStore((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
-  const setActiveRepo = useWorkspaceStore((s) => s.setActiveRepo);
-  const createThread = useThreadStore((s) => s.createThread);
-  const bindChatThread = useChatStore((s) => s.setActiveThread);
   const hasUpdate = useUpdateStore((s) => s.status === "available" && !s.snoozed);
   const activeView = useUiStore((s) => s.activeView);
   const setActiveView = useUiStore((s) => s.setActiveView);
@@ -1043,14 +1031,7 @@ function CollapsedRail({
   async function onNewThread() {
     const activeProject = projects.find((p) => p.id === activeWorkspaceId);
     if (!activeProject) return;
-    setActiveRepo(null, { remember: false });
-    const createdThreadId = await createThread({
-      workspaceId: activeProject.id,
-      repoId: null,
-      title: t("sidebar.newThreadTitle"),
-    });
-    if (!createdThreadId) return;
-    await bindChatThread(createdThreadId);
+    await createAndActivateWorkspaceThread(activeProject.id);
   }
 
   return (
