@@ -230,6 +230,13 @@ export function FileExplorer() {
   // -- Delete confirmation --
   const [deletePending, setDeletePending] = useState<DeletePending | null>(null);
 
+  const cancelScheduledRefresh = useCallback(() => {
+    if (refreshTimerRef.current !== null) {
+      window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+  }, []);
+
   // ---------------------------------------------------------------------------
   // Load directory
   // ---------------------------------------------------------------------------
@@ -276,6 +283,7 @@ export function FileExplorer() {
 
   useEffect(() => {
     if (prevRootPath.current !== rootPath) {
+      cancelScheduledRefresh();
       loadSignatureRef.current = {
         generation: loadSignatureRef.current.generation + 1,
         rootPath,
@@ -296,7 +304,7 @@ export function FileExplorer() {
     }
     if (!rootPath) return;
     void loadDir("");
-  }, [loadDir, rootPath]);
+  }, [cancelScheduledRefresh, loadDir, rootPath]);
 
   const refreshVisibleDirs = useCallback(async () => {
     if (!rootPath) return;
@@ -328,23 +336,18 @@ export function FileExplorer() {
 
   const scheduleRefreshVisibleDirs = useCallback(() => {
     if (!rootPath) return;
-    if (refreshTimerRef.current !== null) {
-      window.clearTimeout(refreshTimerRef.current);
-    }
+    cancelScheduledRefresh();
     refreshTimerRef.current = window.setTimeout(() => {
       refreshTimerRef.current = null;
       void refreshVisibleDirs();
     }, 250);
-  }, [refreshVisibleDirs, rootPath]);
+  }, [cancelScheduledRefresh, refreshVisibleDirs, rootPath]);
 
   useEffect(() => {
     return () => {
-      if (refreshTimerRef.current !== null) {
-        window.clearTimeout(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
+      cancelScheduledRefresh();
     };
-  }, []);
+  }, [cancelScheduledRefresh]);
 
   useEffect(() => {
     if (!activeWorkspaceId || !rootPath) return;
