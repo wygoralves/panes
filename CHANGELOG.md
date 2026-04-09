@@ -1,5 +1,22 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.52.0...vnull) (2026-04-09)
+
+### Features
+
+* **editor:** add collapsible file explorer ([4521fda](https://github.com/wygoralves/panes/commit/4521fdad8faf15dadd1efabce0519d73b379c3bf))
+* **editor:** add contextual menu for actions and bulk actions in file explorer ([4358fc4](https://github.com/wygoralves/panes/commit/4358fc47a6615e5a6796a6311a4d9e98c9beb4f0))
+* **editor:** adjust plus button positioning on the file explorer ([e36601c](https://github.com/wygoralves/panes/commit/e36601c914bcffb10ee9d2fcd731471d5e37e56e))
+* **editor:** open files in the default app ([b37cd82](https://github.com/wygoralves/panes/commit/b37cd823876e73f2da166f13f534ab9f2943c7ba))
+
+### Bug Fixes
+
+* **editor:** hide empty button container ([df4787a](https://github.com/wygoralves/panes/commit/df4787af985b0dec25c451e2bdcd8503c76bdff0))
+* **editor:** show external open action for all files ([9940e1e](https://github.com/wygoralves/panes/commit/9940e1e46764ab85bd033d141489da3074413c0e))
+* **editor:** stabilize explorer routing and state ([696bd42](https://github.com/wygoralves/panes/commit/696bd4226f4e1e87fc006a2ddd10f5d07f664c45))
+* **explorer:** address final review findings ([9d38ddb](https://github.com/wygoralves/panes/commit/9d38ddb8b5ad04c021ba8f9fbea477731f99ea0b))
+* **filesystem:** reject unresolved create paths ([f079d2e](https://github.com/wygoralves/panes/commit/f079d2e5b97a5ba8479aeb987261832dcd81c779))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.51.4...vnull) (2026-04-08)
 
 ### Features
