@@ -17,9 +17,14 @@ import {
   FolderOpen,
   Loader2,
   PanelLeftClose,
+  RefreshCw,
   Search,
 } from "lucide-react";
-import { ipc } from "../../lib/ipc";
+import {
+  ipc,
+  listenChatTurnFinished,
+  listenGitRepoChanged,
+} from "../../lib/ipc";
 import {
   isWithinRoot,
   resolveAbsoluteFilePath,
@@ -167,6 +172,7 @@ export function FileExplorer() {
   const activeWorkspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === activeWorkspaceId),
   );
+  const workspaceRepos = useWorkspaceStore((s) => s.repos);
   const rootPath = activeWorkspace?.rootPath ?? "";
 
   // -- Directory contents & loading --
@@ -185,11 +191,16 @@ export function FileExplorer() {
   // -- Scroll / virtualization --
   const prevRootPath = useRef(rootPath);
   const loadSignatureRef = useRef({ generation: 0, rootPath });
+  const refreshRequestIdRef = useRef(0);
   const dirContentsRef = useRef(dirContents);
+  const expandedDirsRef = useRef(expandedDirs);
+  const refreshTimerRef = useRef<number | null>(null);
   const treeViewportRef = useRef<HTMLDivElement>(null);
   dirContentsRef.current = dirContents;
+  expandedDirsRef.current = expandedDirs;
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   // -- Explorer container (for keyboard shortcut capture) --
   const explorerRef = useRef<HTMLDivElement>(null);
@@ -286,6 +297,155 @@ export function FileExplorer() {
     if (!rootPath) return;
     void loadDir("");
   }, [loadDir, rootPath]);
+
+  const refreshVisibleDirs = useCallback(async () => {
+    if (!rootPath) return;
+
+    const requestId = refreshRequestIdRef.current + 1;
+    refreshRequestIdRef.current = requestId;
+    setRefreshing(true);
+    setLoadingDirs(new Set());
+    setRootLoading(false);
+    loadSignatureRef.current = {
+      generation: loadSignatureRef.current.generation + 1,
+      rootPath,
+    };
+
+    const dirsToRefresh = [...new Set(["", ...expandedDirsRef.current])]
+      .sort((left, right) => {
+        const depthDelta = left.split("/").length - right.split("/").length;
+        return depthDelta !== 0 ? depthDelta : left.localeCompare(right);
+      });
+
+    try {
+      await Promise.all(dirsToRefresh.map((dirPath) => loadDir(dirPath)));
+    } finally {
+      if (refreshRequestIdRef.current === requestId) {
+        setRefreshing(false);
+      }
+    }
+  }, [loadDir, rootPath]);
+
+  const scheduleRefreshVisibleDirs = useCallback(() => {
+    if (!rootPath) return;
+    if (refreshTimerRef.current !== null) {
+      window.clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null;
+      void refreshVisibleDirs();
+    }, 250);
+  }, [refreshVisibleDirs, rootPath]);
+
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current !== null) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeWorkspaceId || !rootPath) return;
+
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    const attach = async () => {
+      const stop = await listenChatTurnFinished((event) => {
+        if (event.workspaceId !== activeWorkspaceId) {
+          return;
+        }
+        scheduleRefreshVisibleDirs();
+      });
+
+      if (disposed) {
+        stop();
+        return;
+      }
+
+      unlisten = stop;
+    };
+
+    void attach();
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [activeWorkspaceId, rootPath, scheduleRefreshVisibleDirs]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId || !rootPath) return;
+
+    const repoPaths = workspaceRepos
+      .filter((repo) => repo.workspaceId === activeWorkspaceId)
+      .map((repo) => repo.path);
+
+    if (repoPaths.length === 0) {
+      return;
+    }
+
+    const visibleRepoPaths = new Set(repoPaths);
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    const attach = async () => {
+      await Promise.all(
+        repoPaths.map(async (repoPath) => {
+          try {
+            await ipc.watchGitRepo(repoPath);
+          } catch {
+            // Ignore watch failures for individual repos.
+          }
+        }),
+      );
+
+      const stop = await listenGitRepoChanged((event) => {
+        if (!visibleRepoPaths.has(event.repoPath)) {
+          return;
+        }
+        scheduleRefreshVisibleDirs();
+      });
+
+      if (disposed) {
+        stop();
+        return;
+      }
+
+      unlisten = stop;
+    };
+
+    void attach();
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [activeWorkspaceId, rootPath, scheduleRefreshVisibleDirs, workspaceRepos]);
+
+  useEffect(() => {
+    if (!rootPath) return;
+
+    const handleFocus = () => {
+      scheduleRefreshVisibleDirs();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        scheduleRefreshVisibleDirs();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [rootPath, scheduleRefreshVisibleDirs]);
 
   // ---------------------------------------------------------------------------
   // Toggle directory expand/collapse
@@ -1080,6 +1240,15 @@ export function FileExplorer() {
       <div className="file-explorer-header">
         <span className="file-explorer-title">{t("explorer.title")}</span>
         <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <button
+            type="button"
+            className="file-explorer-collapse-btn"
+            title={refreshing ? t("explorer.refreshing") : t("explorer.refresh")}
+            aria-label={refreshing ? t("explorer.refreshing") : t("explorer.refresh")}
+            onClick={() => void refreshVisibleDirs()}
+          >
+            {refreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          </button>
           <button
             type="button"
             className="file-explorer-collapse-btn"

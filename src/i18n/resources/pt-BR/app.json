@@ -413,6 +413,8 @@
     "title": "Explorer",
     "collapse": "Recolher explorer",
     "expand": "Mostrar explorer",
+    "refresh": "Atualizar explorer",
+    "refreshing": "Atualizando explorer...",
     "filterPlaceholder": "Filtrar arquivos...",
     "filterCount": "{{count}} arquivos",
     "filterCountTitle": "Apenas pastas expandidas são pesquisadas",

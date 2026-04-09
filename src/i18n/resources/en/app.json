@@ -413,6 +413,8 @@
     "title": "Explorer",
     "collapse": "Collapse explorer",
     "expand": "Show explorer",
+    "refresh": "Refresh explorer",
+    "refreshing": "Refreshing explorer...",
     "filterPlaceholder": "Filter files...",
     "filterCount": "{{count}} files",
     "filterCountTitle": "Only expanded folders are searched",
