@@ -453,7 +453,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       </div>
 
       {/* ── Scrollable content ── */}
-      <div style={{ flex: 1, minHeight: 0, overflow: "auto", paddingBottom: 4 }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto", paddingBottom: 4, borderTop: "1px solid rgba(255,255,255,0.06)", marginTop: 4 }}>
         <div className="sb-section-label">
           <span>{t("app:sidebar.workspaces")}</span>
           <button
