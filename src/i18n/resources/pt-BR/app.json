@@ -369,6 +369,7 @@
     "hideDiff": "Ocultar visualização de diff",
     "showMarkdownPreview": "Mostrar preview de markdown",
     "hideMarkdownPreview": "Ocultar preview de markdown",
+    "openInDefaultApp": "Abrir no app padrão",
     "unsavedChangesTitle": "Alterações não salvas",
     "unsavedChangesMessage": "\"{{name}}\" tem alterações não salvas. Descartá-las?",
     "discard": "Descartar",
@@ -403,7 +404,8 @@
     "toasts": {
       "modifiedExternally": "{{name}} foi modificado externamente. Salve novamente para sobrescrever.",
       "saved": "{{name}} salvo",
-      "saveFailed": "Falha ao salvar: {{error}}"
+      "saveFailed": "Falha ao salvar: {{error}}",
+      "openExternalFailed": "Falha ao abrir o arquivo no app padrão"
     }
   },
   "explorer": {
@@ -418,6 +420,7 @@
     "empty": "Nenhum arquivo encontrado",
     "contextMenu": {
       "open": "Abrir no Editor",
+      "openInDefaultApp": "Abrir no app padrão",
       "copyPath": "Copiar Caminho",
       "copyRelativePath": "Copiar Caminho Relativo",
       "revealInFinder": "Revelar no Finder",
@@ -463,7 +466,8 @@
       "deletedItems": "{{count}} itens excluídos",
       "created": "{{name}} criado",
       "pathCopied": "Caminho copiado",
-      "pathsCopied": "{{count}} caminhos copiados"
+      "pathsCopied": "{{count}} caminhos copiados",
+      "openExternalFailed": "Falha ao abrir o arquivo no app padrão"
     }
   },
   "notificationSettings": {

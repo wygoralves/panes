@@ -585,6 +585,18 @@ export function FileExplorer() {
     [rootPath],
   );
 
+  const handleOpenInDefaultApp = useCallback(
+    async (path: string) => {
+      if (!rootPath) return;
+      try {
+        await ipc.openPathWithDefaultApp(resolveAbsoluteFilePath(rootPath, path));
+      } catch {
+        toast.error(t("explorer.toasts.openExternalFailed"));
+      }
+    },
+    [rootPath, t],
+  );
+
   const handleCopyPath = useCallback(
     (path: string) => {
       if (!rootPath) return;
@@ -1360,6 +1372,17 @@ export function FileExplorer() {
                   }}
                 >
                   {t("explorer.contextMenu.open")}
+                </button>
+                <button
+                  type="button"
+                  className="git-action-menu-item"
+                  onClick={() => {
+                    const { path } = contextMenu.variant as Extract<ContextMenuVariant, { kind: "file" }>;
+                    closeContextMenu();
+                    void handleOpenInDefaultApp(path);
+                  }}
+                >
+                  {t("explorer.contextMenu.openInDefaultApp")}
                 </button>
                 <div className="git-action-menu-divider" />
                 <button

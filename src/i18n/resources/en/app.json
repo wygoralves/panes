@@ -369,6 +369,7 @@
     "hideDiff": "Hide diff view",
     "showMarkdownPreview": "Show markdown preview",
     "hideMarkdownPreview": "Hide markdown preview",
+    "openInDefaultApp": "Open in default app",
     "unsavedChangesTitle": "Unsaved changes",
     "unsavedChangesMessage": "\"{{name}}\" has unsaved changes. Discard them?",
     "discard": "Discard",
@@ -403,7 +404,8 @@
     "toasts": {
       "modifiedExternally": "{{name}} was modified externally. Save again to overwrite.",
       "saved": "Saved {{name}}",
-      "saveFailed": "Failed to save: {{error}}"
+      "saveFailed": "Failed to save: {{error}}",
+      "openExternalFailed": "Failed to open file in the default app"
     }
   },
   "explorer": {
@@ -418,6 +420,7 @@
     "empty": "No files found",
     "contextMenu": {
       "open": "Open in Editor",
+      "openInDefaultApp": "Open in Default App",
       "copyPath": "Copy Path",
       "copyRelativePath": "Copy Relative Path",
       "revealInFinder": "Reveal in Finder",
@@ -463,7 +466,8 @@
       "deletedItems": "Deleted {{count}} items",
       "created": "Created {{name}}",
       "pathCopied": "Path copied",
-      "pathsCopied": "{{count}} paths copied"
+      "pathsCopied": "{{count}} paths copied",
+      "openExternalFailed": "Failed to open file in the default app"
     }
   },
   "notificationSettings": {

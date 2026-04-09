@@ -227,6 +227,15 @@ pub async fn reveal_path(path: String) -> Result<(), String> {
     .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+pub async fn open_path_with_default_app(path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        open_path_with_default_app_impl(PathBuf::from(path)).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RevealCommandPlan {
     program: OsString,
@@ -249,14 +258,7 @@ fn reveal_path_impl(path: PathBuf) -> anyhow::Result<()> {
     }
 
     let platform = reveal_platform();
-    let (xdg_open, gio) = if platform == RevealPlatform::Linux {
-        (
-            crate::runtime_env::resolve_executable("xdg-open"),
-            crate::runtime_env::resolve_executable("gio"),
-        )
-    } else {
-        (None, None)
-    };
+    let (xdg_open, gio) = resolve_linux_openers(platform);
 
     let Some(plan) = build_reveal_command_plan(&path, platform, xdg_open, gio)? else {
         return Ok(());
@@ -264,7 +266,24 @@ fn reveal_path_impl(path: PathBuf) -> anyhow::Result<()> {
 
     let mut command = Command::new(&plan.program);
     command.args(&plan.args);
-    spawn_command(command, &plan.display_target)
+    spawn_path_command(command, &plan.display_target, "reveal")
+}
+
+fn open_path_with_default_app_impl(path: PathBuf) -> anyhow::Result<()> {
+    if !path.exists() {
+        anyhow::bail!("path does not exist: {}", path.display());
+    }
+
+    let platform = reveal_platform();
+    let (xdg_open, gio) = resolve_linux_openers(platform);
+
+    let Some(plan) = build_open_command_plan(&path, platform, xdg_open, gio)? else {
+        return Ok(());
+    };
+
+    let mut command = Command::new(&plan.program);
+    command.args(&plan.args);
+    spawn_path_command(command, &plan.display_target, "open")
 }
 
 fn reveal_platform() -> RevealPlatform {
@@ -286,6 +305,17 @@ fn reveal_platform() -> RevealPlatform {
     #[cfg(not(any(target_os = "macos", target_os = "windows", unix)))]
     {
         RevealPlatform::Unsupported
+    }
+}
+
+fn resolve_linux_openers(platform: RevealPlatform) -> (Option<PathBuf>, Option<PathBuf>) {
+    if platform == RevealPlatform::Linux {
+        (
+            crate::runtime_env::resolve_executable("xdg-open"),
+            crate::runtime_env::resolve_executable("gio"),
+        )
+    } else {
+        (None, None)
     }
 }
 
@@ -359,11 +389,65 @@ fn build_reveal_command_plan(
     }
 }
 
-fn spawn_command(mut command: Command, path: &std::path::Path) -> anyhow::Result<()> {
+fn build_open_command_plan(
+    path: &Path,
+    platform: RevealPlatform,
+    xdg_open: Option<PathBuf>,
+    gio: Option<PathBuf>,
+) -> anyhow::Result<Option<RevealCommandPlan>> {
+    let path_arg = path.as_os_str().to_os_string();
+
+    match platform {
+        RevealPlatform::Macos => Ok(Some(RevealCommandPlan {
+            program: OsString::from("open"),
+            args: vec![path_arg],
+            display_target: path.to_path_buf(),
+        })),
+        RevealPlatform::Windows => Ok(Some(RevealCommandPlan {
+            program: OsString::from("cmd"),
+            args: vec![
+                OsString::from("/C"),
+                OsString::from("start"),
+                OsString::from(""),
+                path_arg,
+            ],
+            display_target: path.to_path_buf(),
+        })),
+        RevealPlatform::Linux => {
+            if let Some(program) = xdg_open {
+                return Ok(Some(RevealCommandPlan {
+                    program: program.into_os_string(),
+                    args: vec![path.as_os_str().to_os_string()],
+                    display_target: path.to_path_buf(),
+                }));
+            }
+
+            if let Some(program) = gio {
+                return Ok(Some(RevealCommandPlan {
+                    program: program.into_os_string(),
+                    args: vec![OsString::from("open"), path.as_os_str().to_os_string()],
+                    display_target: path.to_path_buf(),
+                }));
+            }
+
+            anyhow::bail!(
+                "failed to open {}: neither xdg-open nor gio open is available",
+                path.display()
+            );
+        }
+        RevealPlatform::Unsupported => Ok(None),
+    }
+}
+
+fn spawn_path_command(
+    mut command: Command,
+    path: &std::path::Path,
+    action: &str,
+) -> anyhow::Result<()> {
     command
         .spawn()
         .map(|_| ())
-        .map_err(|error| anyhow::anyhow!("failed to reveal {}: {error}", path.display()))
+        .map_err(|error| anyhow::anyhow!("failed to {action} {}: {error}", path.display()))
 }
 
 fn resolve_target_path_for_repo_lookup(
@@ -410,7 +494,10 @@ fn err_to_string(error: impl std::fmt::Display) -> String {
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use super::{build_reveal_command_plan, resolve_target_path_for_repo_lookup, RevealPlatform};
+    use super::{
+        build_open_command_plan, build_reveal_command_plan, resolve_target_path_for_repo_lookup,
+        RevealPlatform,
+    };
     use uuid::Uuid;
 
     fn with_temp_path<T>(f: impl FnOnce(PathBuf, PathBuf) -> T) -> T {
@@ -523,6 +610,58 @@ mod tests {
             assert!(error
                 .to_string()
                 .contains("neither xdg-open nor gio open is available"));
+        });
+    }
+
+    #[test]
+    fn mac_files_use_open_for_default_app() {
+        with_temp_path(|_dir, file| {
+            let plan = build_open_command_plan(&file, RevealPlatform::Macos, None, None)
+                .expect("plan should build")
+                .expect("plan should exist");
+
+            assert_eq!(plan.program.to_string_lossy(), "open");
+            assert_eq!(plan.args, vec![file.as_os_str().to_os_string()]);
+            assert_eq!(plan.display_target, file);
+        });
+    }
+
+    #[test]
+    fn windows_files_use_cmd_start_for_default_app() {
+        with_temp_path(|_dir, file| {
+            let plan = build_open_command_plan(&file, RevealPlatform::Windows, None, None)
+                .expect("plan should build")
+                .expect("plan should exist");
+
+            assert_eq!(plan.program.to_string_lossy(), "cmd");
+            assert_eq!(
+                plan.args,
+                vec![
+                    std::ffi::OsString::from("/C"),
+                    std::ffi::OsString::from("start"),
+                    std::ffi::OsString::from(""),
+                    file.as_os_str().to_os_string(),
+                ]
+            );
+            assert_eq!(plan.display_target, file);
+        });
+    }
+
+    #[test]
+    fn linux_prefers_xdg_open_for_default_app() {
+        with_temp_path(|_dir, file| {
+            let plan = build_open_command_plan(
+                &file,
+                RevealPlatform::Linux,
+                Some(PathBuf::from("/usr/bin/xdg-open")),
+                Some(PathBuf::from("/usr/bin/gio")),
+            )
+            .expect("plan should build")
+            .expect("plan should exist");
+
+            assert_eq!(plan.program.to_string_lossy(), "/usr/bin/xdg-open");
+            assert_eq!(plan.args, vec![file.as_os_str().to_os_string()]);
+            assert_eq!(plan.display_target, file);
         });
     }
 

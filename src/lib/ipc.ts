@@ -374,6 +374,8 @@ export const ipc = {
   unstageFiles: (repoPath: string, files: string[]) =>
     invoke<void>("unstage_files", { repoPath, files }),
   revealPath: (path: string) => invoke<void>("reveal_path", { path }),
+  openPathWithDefaultApp: (path: string) =>
+    invoke<void>("open_path_with_default_app", { path }),
   discardFiles: (repoPath: string, files: string[]) =>
     invoke<void>("discard_files", { repoPath, files }),
   commit: (repoPath: string, message: string) => invoke<string>("commit", { repoPath, message }),

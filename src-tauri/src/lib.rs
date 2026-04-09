@@ -266,6 +266,7 @@ pub fn run() {
             commands::files::rename_path,
             commands::files::delete_path,
             commands::files::reveal_path,
+            commands::files::open_path_with_default_app,
             commands::git::watch_git_repo,
             commands::engines::list_engines,
             commands::engines::engine_health,

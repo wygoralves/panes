@@ -1,12 +1,14 @@
 import { useEffect } from "react";
-import { Eye, FileDiff, FileText, Loader2, PanelLeftOpen, X } from "lucide-react";
+import { ExternalLink, Eye, FileDiff, FileText, Loader2, PanelLeftOpen, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   resolveOwningRepoForAbsolutePath,
   resolveRelativePathWithinRoot,
 } from "../../lib/fileRootUtils";
+import { ipc } from "../../lib/ipc";
 import { useFileStore } from "../../stores/fileStore";
 import { useTerminalStore } from "../../stores/terminalStore";
+import { toast } from "../../stores/toastStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { isMacDesktop } from "../../lib/windowActions";
@@ -80,12 +82,14 @@ export function FileEditorPanel() {
       && !activeTab.isBinary
       && isMarkdownPreviewFile(activeTab.filePath),
   );
+  const canOpenInDefaultApp = canToggleMarkdownPreview;
   const diffToggleLabel = activeTab?.renderMode === "git-diff-editor"
     ? t("editor.hideDiff")
     : t("editor.showDiff");
   const markdownPreviewToggleLabel = activeTab?.renderMode === "markdown-preview"
     ? t("editor.hideMarkdownPreview")
     : t("editor.showMarkdownPreview");
+  const openInDefaultAppLabel = t("editor.openInDefaultApp");
 
   function handleToggleDiffView() {
     if (!activeTab || !activeTabOwnership) {
@@ -116,6 +120,18 @@ export function FileEditorPanel() {
       activeTab.id,
       activeTab.renderMode === "markdown-preview" ? "plain-editor" : "markdown-preview",
     );
+  }
+
+  async function handleOpenInDefaultApp() {
+    if (!activeTab) {
+      return;
+    }
+
+    try {
+      await ipc.openPathWithDefaultApp(activeTab.absolutePath);
+    } catch {
+      toast.error(t("editor.toasts.openExternalFailed"));
+    }
   }
 
   // Cmd+S to save — Cmd+W is handled via native menu "close-window" action.
@@ -171,7 +187,7 @@ export function FileEditorPanel() {
               </div>
             ))}
           </div>
-          {(!showExplorer || canToggleMarkdownPreview || canToggleDiffView) ? (
+          {(!showExplorer || canToggleMarkdownPreview || canOpenInDefaultApp || canToggleDiffView) ? (
             <div className="editor-tabs-actions">
               {!showExplorer && (
                 <button
@@ -193,6 +209,17 @@ export function FileEditorPanel() {
                   aria-label={markdownPreviewToggleLabel}
                 >
                   <Eye size={12} />
+                </button>
+              ) : null}
+              {canOpenInDefaultApp ? (
+                <button
+                  type="button"
+                  className="editor-tab-action"
+                  onClick={() => void handleOpenInDefaultApp()}
+                  title={openInDefaultAppLabel}
+                  aria-label={openInDefaultAppLabel}
+                >
+                  <ExternalLink size={12} />
                 </button>
               ) : null}
               {canToggleDiffView ? (
