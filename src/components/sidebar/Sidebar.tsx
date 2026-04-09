@@ -1027,6 +1027,7 @@ function CollapsedRail({
   const hasUpdate = useUpdateStore((s) => s.status === "available" && !s.snoozed);
   const activeView = useUiStore((s) => s.activeView);
   const setActiveView = useUiStore((s) => s.setActiveView);
+  const openCommandPalette = useUiStore((s) => s.openCommandPalette);
 
   async function onNewThread() {
     const activeProject = projects.find((p) => p.id === activeWorkspaceId);
@@ -1071,12 +1072,45 @@ function CollapsedRail({
             background: "transparent",
           }}
         >
-          <svg viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+          <svg viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg" width="20" height="20">
             <rect x="10" y="36" width="94" height="94" stroke="white" strokeWidth="6"/>
             <rect x="36" y="10" width="94" height="94" stroke="white" strokeWidth="6"/>
             <rect x="23" y="23" width="94" height="94" stroke="white" strokeWidth="6"/>
             <rect x="50" y="50" width="40" height="40" fill="#FF6B6B"/>
           </svg>
+        </button>
+      </div>
+
+      <div className="sb-rail-divider" />
+
+      {/* Nav icons — Commands, Search, Agents */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
+        <button
+          type="button"
+          className="sb-rail-btn no-drag"
+          onClick={() => openCommandPalette()}
+          title={t("sidebar.commands", "Commands")}
+          style={{ border: "none", background: "transparent" }}
+        >
+          <Command size={16} strokeWidth={1.5} />
+        </button>
+        <button
+          type="button"
+          className="sb-rail-btn no-drag"
+          onClick={() => openCommandPalette({ variant: "search", initialQuery: "?" })}
+          title={t("sidebar.search")}
+          style={{ border: "none", background: "transparent" }}
+        >
+          <Search size={16} strokeWidth={1.5} />
+        </button>
+        <button
+          type="button"
+          className={`sb-rail-btn no-drag ${activeView === "harnesses" ? "sb-rail-btn-active" : ""}`}
+          onClick={() => setActiveView(activeView === "harnesses" ? "chat" : "harnesses")}
+          title={t("sidebar.agents")}
+          style={{ border: "none", background: "transparent" }}
+        >
+          <Terminal size={16} strokeWidth={1.5} />
         </button>
       </div>
 
@@ -1107,7 +1141,7 @@ function CollapsedRail({
             >
               <span
                 style={{
-                  fontSize: 12,
+                  fontSize: 11,
                   fontWeight: 600,
                   letterSpacing: "-0.02em",
                 }}
