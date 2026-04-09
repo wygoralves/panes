@@ -176,6 +176,57 @@ pub fn create_dir(repo_path: &str, dir_path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn resolve_existing_repo_entry(
+    repo_root: &Path,
+    relative_path: &str,
+    missing_message: &str,
+) -> anyhow::Result<PathBuf> {
+    let target = repo_root.join(validate_repo_relative_path(relative_path)?);
+    fs::symlink_metadata(&target).with_context(|| missing_message.to_string())?;
+
+    let parent = target.parent().context("invalid path")?;
+    let parent_canonical = parent
+        .canonicalize()
+        .context("parent directory not found")?;
+    anyhow::ensure!(
+        parent_canonical.starts_with(repo_root),
+        "path traversal not allowed"
+    );
+
+    Ok(target)
+}
+
+fn delete_existing_entry(target: &Path) -> anyhow::Result<()> {
+    let metadata = fs::symlink_metadata(target).context("path not found")?;
+    let file_type = metadata.file_type();
+
+    if file_type.is_symlink() {
+        #[cfg(target_os = "windows")]
+        {
+            if target.is_dir() {
+                fs::remove_dir(target).context("failed to delete directory symlink")?;
+            } else {
+                fs::remove_file(target).context("failed to delete file symlink")?;
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            fs::remove_file(target).context("failed to delete symlink")?;
+        }
+
+        return Ok(());
+    }
+
+    if file_type.is_dir() {
+        fs::remove_dir_all(target).context("failed to delete directory")?;
+    } else {
+        fs::remove_file(target).context("failed to delete file")?;
+    }
+
+    Ok(())
+}
+
 fn validate_rename_name(new_name: &str) -> anyhow::Result<&Path> {
     let mut components = Path::new(new_name).components();
     let Some(Component::Normal(name)) = components.next() else {
@@ -189,11 +240,7 @@ pub fn rename_path(repo_path: &str, old_path: &str, new_name: &str) -> anyhow::R
     let repo_root = PathBuf::from(repo_path)
         .canonicalize()
         .context("failed to canonicalize repo path")?;
-    let source = repo_root
-        .join(old_path)
-        .canonicalize()
-        .context("source not found")?;
-    anyhow::ensure!(source.starts_with(&repo_root), "path traversal not allowed");
+    let source = resolve_existing_repo_entry(&repo_root, old_path, "source not found")?;
 
     let parent = source.parent().context("invalid path")?;
     let dest = parent.join(validate_rename_name(new_name)?);
@@ -214,19 +261,9 @@ pub fn delete_path(repo_path: &str, file_path: &str) -> anyhow::Result<()> {
     let repo_root = PathBuf::from(repo_path)
         .canonicalize()
         .context("failed to canonicalize repo path")?;
-    let target = repo_root
-        .join(file_path)
-        .canonicalize()
-        .context("path not found")?;
-    anyhow::ensure!(target.starts_with(&repo_root), "path traversal not allowed");
+    let target = resolve_existing_repo_entry(&repo_root, file_path, "path not found")?;
     anyhow::ensure!(target != repo_root, "cannot delete the repository root");
-
-    if target.is_dir() {
-        fs::remove_dir_all(&target).context("failed to delete directory")?;
-    } else {
-        fs::remove_file(&target).context("failed to delete file")?;
-    }
-    Ok(())
+    delete_existing_entry(&target)
 }
 
 pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> anyhow::Result<()> {
@@ -264,8 +301,11 @@ pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> anyhow::Re
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use super::{create_dir, create_file, rename_path};
+    use super::{create_dir, create_file, delete_path, rename_path};
     use uuid::Uuid;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
 
     fn with_temp_repo<T>(f: impl FnOnce(PathBuf) -> T) -> T {
         let root = std::env::temp_dir().join(format!("panes-fs-ops-{}", Uuid::new_v4()));
@@ -357,6 +397,44 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert!(names.iter().any(|name| name == "File.txt"));
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rename_path_renames_symlink_entry_instead_of_target() {
+        with_temp_repo(|root| {
+            fs::write(root.join("target.txt"), "hello").expect("target should exist");
+            symlink("target.txt", root.join("link.txt")).expect("symlink should exist");
+
+            rename_path(
+                root.to_string_lossy().as_ref(),
+                "link.txt",
+                "renamed-link.txt",
+            )
+            .expect("symlink rename should succeed");
+
+            assert!(root.join("target.txt").is_file());
+            assert!(fs::symlink_metadata(root.join("link.txt")).is_err());
+            assert_eq!(
+                fs::read_link(root.join("renamed-link.txt")).expect("renamed symlink should exist"),
+                PathBuf::from("target.txt"),
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_path_deletes_symlink_entry_instead_of_target() {
+        with_temp_repo(|root| {
+            fs::write(root.join("target.txt"), "hello").expect("target should exist");
+            symlink("target.txt", root.join("link.txt")).expect("symlink should exist");
+
+            delete_path(root.to_string_lossy().as_ref(), "link.txt")
+                .expect("symlink delete should succeed");
+
+            assert!(root.join("target.txt").is_file());
+            assert!(fs::symlink_metadata(root.join("link.txt")).is_err());
         });
     }
 }

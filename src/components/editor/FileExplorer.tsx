@@ -35,7 +35,10 @@ import { getActionMenuPosition } from "../git/actionMenuPosition";
 import type { FileTreeEntry } from "../../types";
 import {
   isCurrentExplorerLoad,
+  isKnownDirectoryPath,
   isPathEqualOrDescendant,
+  pruneDeletedMapKeys,
+  pruneDeletedSetPaths,
   pruneContainedPaths,
   remapDescendantPath,
 } from "./fileExplorerState";
@@ -688,22 +691,10 @@ export function FileExplorer() {
         return next;
       });
       setExpandedDirs((prev) => {
-        const next = new Set(prev);
-        for (const path of prev) {
-          if (isPathEqualOrDescendant(path, renamingPath)) {
-            next.delete(path);
-          }
-        }
-        return next;
+        return pruneDeletedSetPaths(prev, [renamingPath]);
       });
       setDirContents((prev) => {
-        const next = new Map(prev);
-        for (const dirPath of prev.keys()) {
-          if (isPathEqualOrDescendant(dirPath, renamingPath)) {
-            next.delete(dirPath);
-          }
-        }
-        return next;
+        return pruneDeletedMapKeys(prev, [renamingPath]);
       });
       setRenamingPath(null);
       setRenameErrorMessage(null);
@@ -840,6 +831,9 @@ export function FileExplorer() {
         fileStore.closeTab(tabId);
       }
 
+      setExpandedDirs((prev) => pruneDeletedSetPaths(prev, successfulPaths));
+      setDirContents((prev) => pruneDeletedMapKeys(prev, successfulPaths));
+
       const affectedDirs = new Set(successfulPaths.map(parentPath));
       for (const dir of affectedDirs) {
         await loadDir(dir);
@@ -876,10 +870,7 @@ export function FileExplorer() {
       : "";
 
     if (requestedPaths.length === 1) {
-      // Determine if it's a dir by checking dirContents
-      const isDir =
-        dirContents.has(requestedPaths[0]) ||
-        [...dirContents.keys()].some((k) => k === requestedPaths[0]);
+      const isDir = isKnownDirectoryPath(dirContents, requestedPaths[0]);
       const name = baseName(requestedPaths[0]);
       if (isDir) {
         return {
@@ -914,6 +905,7 @@ export function FileExplorer() {
   const handleRowClick = useCallback(
     (row: TreeRow, absoluteIndex: number, e: React.MouseEvent) => {
       if (row.type === "create") return;
+      explorerRef.current?.focus();
 
       const modKey = isMac ? e.metaKey : e.ctrlKey;
 
@@ -1080,7 +1072,7 @@ export function FileExplorer() {
     <div
       ref={explorerRef}
       className="file-explorer"
-      tabIndex={-1}
+      tabIndex={0}
       onKeyDown={handleKeyDown}
       onContextMenu={(e) => handleContextMenu(e)}
     >

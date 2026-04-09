@@ -1,5 +1,6 @@
 use std::{
     ffi::OsString,
+    fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -457,6 +458,20 @@ fn resolve_target_path_for_repo_lookup(
     let target = access_root.join(fs_ops::validate_repo_relative_path(file_path)?);
 
     if target.exists() {
+        let metadata = fs::symlink_metadata(&target).context("failed to resolve file path")?;
+        let parent = target.parent().context("invalid file path")?;
+        let parent_canonical = parent
+            .canonicalize()
+            .context("failed to resolve file path")?;
+        anyhow::ensure!(
+            parent_canonical.starts_with(access_root),
+            "path traversal not allowed"
+        );
+
+        if metadata.file_type().is_symlink() {
+            return Ok(target);
+        }
+
         let canonical = target
             .canonicalize()
             .context("failed to resolve file path")?;
@@ -499,6 +514,9 @@ mod tests {
         RevealPlatform,
     };
     use uuid::Uuid;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
 
     fn with_temp_path<T>(f: impl FnOnce(PathBuf, PathBuf) -> T) -> T {
         let root = std::env::temp_dir().join(format!("panes-reveal-path-{}", Uuid::new_v4()));
@@ -710,6 +728,21 @@ mod tests {
                     .expect_err("unresolved parent segments should be rejected");
 
             assert!(error.to_string().contains("invalid file or directory path"));
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_target_path_for_repo_lookup_preserves_symlink_entries() {
+        with_temp_path(|dir, _file| {
+            let root = dir.parent().expect("root should exist").to_path_buf();
+            let canonical_root = root.canonicalize().expect("root should resolve");
+            symlink("nested/file.txt", root.join("link.txt")).expect("symlink should exist");
+
+            let resolved = resolve_target_path_for_repo_lookup(&canonical_root, "link.txt")
+                .expect("symlink path should resolve");
+
+            assert_eq!(resolved, canonical_root.join("link.txt"));
         });
     }
 }
