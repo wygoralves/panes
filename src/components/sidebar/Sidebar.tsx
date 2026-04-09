@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import {
+  Command,
   Plus,
   FolderGit2,
   MessageSquare,
@@ -421,9 +422,10 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
           >
             <Plus size={16} strokeWidth={1.5} style={{ flexShrink: 0 }} />
             {t("app:sidebar.newThread")}
+            <span className="sb-nav-item-shortcut">⌘⇧N</span>
           </button>
 
-          {/* Search — opens Command Palette */}
+          {/* Search workspace */}
           <button
             type="button"
             className="sb-nav-item"
@@ -432,6 +434,17 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             <Search size={16} strokeWidth={1.5} style={{ flexShrink: 0 }} />
             {t("app:sidebar.search")}
             <span className="sb-nav-item-shortcut">⌘⇧F</span>
+          </button>
+
+          {/* Commands — general command palette */}
+          <button
+            type="button"
+            className="sb-nav-item"
+            onClick={() => openCommandPalette()}
+          >
+            <Command size={16} strokeWidth={1.5} style={{ flexShrink: 0 }} />
+            {t("app:commandPalette.group.commands")}
+            <span className="sb-nav-item-shortcut">⌘K</span>
           </button>
 
           {/* Agents */}

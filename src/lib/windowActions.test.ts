@@ -169,6 +169,7 @@ describe("windowActions", () => {
     expect(shouldHandleAppShortcutWhileTerminalFocused("d", false)).toBe(true);
     expect(shouldHandleAppShortcutWhileTerminalFocused("t", true)).toBe(true);
     expect(shouldHandleAppShortcutWhileTerminalFocused("k", false)).toBe(true);
+    expect(shouldHandleAppShortcutWhileTerminalFocused("n", true)).toBe(true);
     expect(shouldHandleAppShortcutWhileTerminalFocused("b", false)).toBe(false);
     expect(shouldHandleAppShortcutWhileTerminalFocused("f", false)).toBe(false);
   });
