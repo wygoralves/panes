@@ -3203,6 +3203,40 @@ button, input, textarea, select {
   color: var(--accent);
 }
 
+/* Sidebar nav items (top action rows) */
+.sb-nav-item {
+  width: 100%;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+  text-align: left;
+}
+
+.sb-nav-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-1);
+}
+
+.sb-nav-item.sb-nav-item-active {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-1);
+}
+
+.sb-nav-item-shortcut {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
 /* Section headers */
 .sb-section-label {
   font-size: 10px;
@@ -3210,7 +3244,7 @@ button, input, textarea, select {
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--text-3);
-  padding: 12px 16px 6px;
+  padding: 8px 16px 6px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3240,7 +3274,7 @@ button, input, textarea, select {
 /* Project row */
 .sb-project {
   width: 100%;
-  padding: 7px 12px 7px 16px;
+  padding: 7px 12px 7px 12px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3261,14 +3295,7 @@ button, input, textarea, select {
 }
 
 .sb-project-active::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 6px;
-  bottom: 6px;
-  width: 2px;
-  background: var(--accent);
-  border-radius: 0 1px 1px 0;
+  content: none;
 }
 
 .sb-project-name {
@@ -3282,8 +3309,18 @@ button, input, textarea, select {
   text-align: left;
 }
 
-.sb-project-count {
+/* Trailing slot — count and more button share the same cell */
+.sb-project-trailing {
+  display: grid;
+  place-items: center;
   flex-shrink: 0;
+}
+
+.sb-project-trailing > * {
+  grid-area: 1 / 1;
+}
+
+.sb-project-count {
   font-size: 10px;
   font-weight: 500;
   min-width: 18px;
@@ -3311,6 +3348,10 @@ button, input, textarea, select {
   flex-shrink: 0;
 }
 
+.sb-project:hover .sb-project-count {
+  visibility: hidden;
+}
+
 .sb-project:hover .sb-project-archive {
   opacity: 0.6;
 }
@@ -3321,14 +3362,24 @@ button, input, textarea, select {
   opacity: 1 !important;
 }
 
+/* Thread tree container */
+.sb-thread-tree {
+  margin-top: 1px;
+  padding-left: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
 /* Thread row */
 .sb-thread {
   width: 100%;
-  padding: 6px 12px 6px 40px;
+  padding: 5px 8px;
   display: flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
+  border-radius: var(--radius-sm);
   transition: all var(--duration-fast) var(--ease-out);
   color: var(--text-2);
   position: relative;
@@ -3340,17 +3391,12 @@ button, input, textarea, select {
 }
 
 .sb-thread-active {
-  color: var(--text-1);
-  background: rgba(255, 107, 107, 0.04);
+  color: var(--accent);
+  background: rgba(255, 107, 107, 0.06);
 }
 
 .sb-thread-active::before {
-  content: "";
-  position: absolute;
-  left: 28px;
-  top: 50%;
-  width: 4px;
-  height: 4px;
+  content: none;
   transform: translateY(-50%);
   background: var(--accent);
   border-radius: 50%;
@@ -3368,13 +3414,20 @@ button, input, textarea, select {
 
 .sb-thread-active .sb-thread-title {
   font-weight: 500;
+  color: var(--accent);
 }
 
 .sb-thread-time {
   flex-shrink: 0;
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.sb-thread:hover .sb-thread-time {
+  opacity: 1;
 }
 
 .sb-thread-archive {
@@ -3504,8 +3557,8 @@ button, input, textarea, select {
   padding: 8px 12px;
   border-top: 1px solid var(--border);
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .sb-settings-btn {
@@ -3607,7 +3660,7 @@ button, input, textarea, select {
 
 /* Show more link */
 .sb-show-more {
-  padding: 4px 12px 4px 44px;
+  padding: 4px 8px;
   font-size: 11px;
   color: var(--text-3);
   cursor: pointer;
@@ -3645,7 +3698,7 @@ button, input, textarea, select {
 }
 
 .sb-no-threads {
-  padding: 4px 12px 4px 44px;
+  padding: 4px 8px;
   font-size: 11.5px;
   color: var(--text-3);
   font-style: italic;
