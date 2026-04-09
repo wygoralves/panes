@@ -395,6 +395,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
         flexDirection: "column",
         background: "inherit",
         minWidth: 0,
+        minHeight: 0,
+        overflow: "hidden",
       }}
     >
       {/* ── Drag region ── */}
@@ -460,7 +462,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       </div>
 
       {/* ── Scrollable content ── */}
-      <div style={{ flex: 1, overflow: "auto", paddingBottom: 4 }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto", paddingBottom: 4 }}>
         <div className="sb-section-label">
           <span>{t("app:sidebar.workspaces")}</span>
           <button
@@ -492,6 +494,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               ? project.threads
               : project.threads.slice(0, MAX_VISIBLE_THREADS);
             const hasMore = project.threads.length > MAX_VISIBLE_THREADS;
+            const constrainExpandedThreads = isShowingAll && hasMore;
 
             return (
               <div key={project.workspace.id} style={{ marginBottom: 2 }}>
@@ -537,7 +540,9 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
 
                 {/* Threads — tree-line indented */}
                 {!isCollapsed && (
-                  <div className="sb-thread-tree">
+                  <div
+                    className={`sb-thread-tree${constrainExpandedThreads ? " sb-thread-tree-scrollable" : ""}`}
+                  >
                     {project.threads.length === 0 ? (
                       <div className="sb-no-threads">{t("app:sidebar.noThreads")}</div>
                     ) : (
