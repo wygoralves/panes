@@ -427,11 +427,11 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
           <button
             type="button"
             className="sb-nav-item"
-            onClick={() => openCommandPalette()}
+            onClick={() => openCommandPalette({ variant: "search", initialQuery: "?" })}
           >
             <Search size={16} strokeWidth={1.5} style={{ flexShrink: 0 }} />
             {t("app:sidebar.search")}
-            <span className="sb-nav-item-shortcut">⌘K</span>
+            <span className="sb-nav-item-shortcut">⌘⇧F</span>
           </button>
 
           {/* Agents */}
