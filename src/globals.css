@@ -3388,7 +3388,7 @@ button, input, textarea, select {
   padding: 5px 8px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   cursor: pointer;
   border-radius: var(--radius-sm);
   transition: all var(--duration-fast) var(--ease-out);
@@ -3428,35 +3428,55 @@ button, input, textarea, select {
   color: var(--accent);
 }
 
-.sb-thread-time {
+.sb-thread-trailing {
+  display: grid;
+  justify-items: end;
+  align-items: center;
   flex-shrink: 0;
+  min-width: 4.5ch;
+  padding-right: 6px;
+}
+
+.sb-thread-trailing > * {
+  grid-area: 1 / 1;
+}
+
+.sb-thread-time {
   font-size: 10px;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
-  opacity: 0;
+  opacity: 1;
   transition: opacity var(--duration-fast) var(--ease-out);
+  text-align: right;
 }
 
-.sb-thread:hover .sb-thread-time {
-  opacity: 1;
+.sb-thread:hover .sb-thread-time,
+.sb-thread:focus-within .sb-thread-time {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .sb-thread-archive {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: var(--radius-sm);
   color: var(--text-3);
   cursor: pointer;
   opacity: 0;
-  transition: all var(--duration-fast) var(--ease-out);
-  flex-shrink: 0;
+  visibility: hidden;
+  transition: opacity var(--duration-fast) var(--ease-out),
+              background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+  padding: 0;
 }
 
-.sb-thread:hover .sb-thread-archive {
+.sb-thread:hover .sb-thread-archive,
+.sb-thread:focus-within .sb-thread-archive {
   opacity: 0.5;
+  visibility: visible;
 }
 
 .sb-thread-archive:hover {

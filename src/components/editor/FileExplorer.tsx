@@ -1243,19 +1243,20 @@ export function FileExplorer() {
           <button
             type="button"
             className="file-explorer-collapse-btn"
+            title={t("explorer.collapse")}
+            aria-label={t("explorer.collapse")}
+            onClick={() => setExplorerOpen(false)}
+          >
+            <PanelLeftClose size={14} />
+          </button>
+          <button
+            type="button"
+            className="file-explorer-collapse-btn"
             title={refreshing ? t("explorer.refreshing") : t("explorer.refresh")}
             aria-label={refreshing ? t("explorer.refreshing") : t("explorer.refresh")}
             onClick={() => void refreshVisibleDirs()}
           >
             {refreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-          </button>
-          <button
-            type="button"
-            className="file-explorer-collapse-btn"
-            title={t("explorer.collapse")}
-            onClick={() => setExplorerOpen(false)}
-          >
-            <PanelLeftClose size={14} />
           </button>
           <button
             type="button"

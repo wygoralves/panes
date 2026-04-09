@@ -427,17 +427,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             <span className="sb-nav-item-shortcut">⌘⇧N</span>
           </button>
 
-          {/* Search workspace */}
-          <button
-            type="button"
-            className="sb-nav-item"
-            onClick={() => openCommandPalette({ variant: "search", initialQuery: "?" })}
-          >
-            <Search size={16} strokeWidth={1.5} style={{ flexShrink: 0 }} />
-            {t("app:sidebar.search")}
-            <span className="sb-nav-item-shortcut">⌘⇧F</span>
-          </button>
-
           {/* Commands — general command palette */}
           <button
             type="button"
@@ -447,6 +436,17 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             <Command size={16} strokeWidth={1.5} style={{ flexShrink: 0 }} />
             {t("app:commandPalette.group.commands")}
             <span className="sb-nav-item-shortcut">⌘K</span>
+          </button>
+
+          {/* Search workspace */}
+          <button
+            type="button"
+            className="sb-nav-item"
+            onClick={() => openCommandPalette({ variant: "search", initialQuery: "?" })}
+          >
+            <Search size={16} strokeWidth={1.5} style={{ flexShrink: 0 }} />
+            {t("app:sidebar.search")}
+            <span className="sb-nav-item-shortcut">⌘⇧F</span>
           </button>
 
           {/* Agents */}
@@ -550,34 +550,44 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                         {visibleThreads.map((thread, i) => {
                           const isActive = thread.id === activeThreadId;
                           return (
-                            <button
+                            <div
                               key={thread.id}
-                              type="button"
+                              role="button"
+                              tabIndex={0}
                               className={`sb-thread sb-thread-animate ${isActive ? "sb-thread-active" : ""}`}
                               style={{ animationDelay: `${i * 20}ms` }}
                               onClick={() => void onSelectThread(thread)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  void onSelectThread(thread);
+                                }
+                              }}
                             >
                               <span className="sb-thread-title">
                                 {getThreadLabel(thread)}
                               </span>
-                              <span className="sb-thread-time">
-                                {thread.lastActivityAt
-                                  ? formatRelativeTime(thread.lastActivityAt, i18n.language)
-                                  : ""}
+                              <span className="sb-thread-trailing">
+                                <span className="sb-thread-time">
+                                  {thread.lastActivityAt
+                                    ? formatRelativeTime(thread.lastActivityAt, i18n.language)
+                                    : ""}
+                                </span>
+                                <button
+                                  type="button"
+                                  title={t("app:sidebar.archiveThread")}
+                                  aria-label={t("app:sidebar.archiveThread")}
+                                  className="sb-thread-archive"
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void onDeleteThread(thread);
+                                  }}
+                                >
+                                  <Archive size={11} />
+                                </button>
                               </span>
-                              <span
-                                role="button"
-                                title={t("app:sidebar.archiveThread")}
-                                className="sb-thread-archive"
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void onDeleteThread(thread);
-                                }}
-                              >
-                                <Archive size={11} />
-                              </span>
-                            </button>
+                            </div>
                           );
                         })}
 
