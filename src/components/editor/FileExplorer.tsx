@@ -1079,18 +1079,18 @@ export function FileExplorer() {
           <button
             type="button"
             className="file-explorer-collapse-btn"
-            title={t("explorer.contextMenu.newFile")}
-            onClick={() => startCreate("", "file")}
-          >
-            <Plus size={14} />
-          </button>
-          <button
-            type="button"
-            className="file-explorer-collapse-btn"
             title={t("explorer.collapse")}
             onClick={() => setExplorerOpen(false)}
           >
             <PanelLeftClose size={14} />
+          </button>
+          <button
+            type="button"
+            className="file-explorer-collapse-btn"
+            title={t("explorer.contextMenu.newFile")}
+            onClick={() => startCreate("", "file")}
+          >
+            <Plus size={14} />
           </button>
         </div>
       </div>
