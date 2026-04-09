@@ -1,5 +1,12 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.54.0...vnull) (2026-04-09)
+
+### Bug Fixes
+
+* **sidebar:** fix missing separator between actions and workspaces ([9a25f16](https://github.com/wygoralves/panes/commit/9a25f164548393b12f57b8a15fb4f981e2bf893e))
+* **sidebar:** fix visuals of the rail sidebar ([589ccc6](https://github.com/wygoralves/panes/commit/589ccc6647035e187800445088afd9fe3b227b7b))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.53.0...vnull) (2026-04-09)
 
 ### Features
