@@ -82,7 +82,11 @@ export function FileEditorPanel() {
       && !activeTab.isBinary
       && isMarkdownPreviewFile(activeTab.filePath),
   );
-  const canOpenInDefaultApp = canToggleMarkdownPreview;
+  const canOpenInDefaultApp = Boolean(
+    activeTab
+      && !activeTab.isLoading
+      && !activeTab.loadError,
+  );
   const diffToggleLabel = activeTab?.renderMode === "git-diff-editor"
     ? t("editor.hideDiff")
     : t("editor.showDiff");
