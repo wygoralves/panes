@@ -3,6 +3,13 @@ import { useTranslation } from "react-i18next";
 import { AudioLines, Plus } from "lucide-react";
 import { ipc, type Meeting } from "../../lib/ipc";
 import { formatRelativeTime } from "../../lib/formatters";
+import { useFileStore } from "../../stores/fileStore";
+import { useUiStore } from "../../stores/uiStore";
+
+function dirnameOf(filePath: string): string {
+  const i = filePath.lastIndexOf("/");
+  return i >= 0 ? filePath.substring(0, i) : filePath;
+}
 
 export function MeetingsPanel() {
   const { t } = useTranslation(["app"]);
@@ -10,6 +17,8 @@ export function MeetingsPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const openFile = useFileStore((s) => s.openFile);
+  const setActiveView = useUiStore((s) => s.setActiveView);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -27,12 +36,26 @@ export function MeetingsPanel() {
     void refresh();
   }, [refresh]);
 
+  const openMeeting = useCallback(
+    async (meeting: Meeting) => {
+      const dir = dirnameOf(meeting.path);
+      try {
+        await openFile(dir, meeting.path);
+        setActiveView("chat");
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [openFile, setActiveView],
+  );
+
   async function onNewMeeting() {
     if (creating) return;
     setCreating(true);
     try {
-      await ipc.createMeeting(null);
+      const created = await ipc.createMeeting(null);
       await refresh();
+      await openMeeting(created);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -106,7 +129,7 @@ export function MeetingsPanel() {
         ) : meetings.length === 0 ? (
           <EmptyState t={t} />
         ) : (
-          <MeetingList meetings={meetings} />
+          <MeetingList meetings={meetings} onOpen={openMeeting} />
         )}
       </div>
     </div>
@@ -137,7 +160,13 @@ function EmptyState({ t }: { t: ReturnType<typeof useTranslation>["t"] }) {
   );
 }
 
-function MeetingList({ meetings }: { meetings: Meeting[] }) {
+function MeetingList({
+  meetings,
+  onOpen,
+}: {
+  meetings: Meeting[];
+  onOpen: (meeting: Meeting) => void | Promise<void>;
+}) {
   return (
     <ul
       style={{
@@ -154,6 +183,7 @@ function MeetingList({ meetings }: { meetings: Meeting[] }) {
           <button
             type="button"
             className="sb-nav-item"
+            onClick={() => void onOpen(m)}
             style={{
               width: "100%",
               textAlign: "left",
