@@ -1,16 +1,30 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AudioLines, Circle, Globe, Loader2, Square } from "lucide-react";
+import {
+  AudioLines,
+  Circle,
+  FileText,
+  Globe,
+  Loader2,
+  Pause,
+  Play,
+  Square,
+} from "lucide-react";
 import type { WhisperModel } from "../../lib/ipc";
 
 export type MeetingLanguage = "en" | "pt";
-export type MeetingRecorderState = "idle" | "recording" | "transcribing";
+export type MeetingRecorderState = "idle" | "recording" | "paused";
+export type MeetingTranscribeState = "idle" | "transcribing";
+export type MeetingRecordAction = "start" | "pause" | "resume" | "stop";
 
 interface Props {
   language?: MeetingLanguage;
   onLanguageChange?: (v: MeetingLanguage) => void;
   recorderState?: MeetingRecorderState;
-  onRecord?: () => void;
+  transcribeState?: MeetingTranscribeState;
+  onRecordAction?: (action: MeetingRecordAction) => void;
+  onTranscribe?: () => void;
+  hasAudio?: boolean;
   title?: string;
   onTitleChange?: (v: string) => void;
   isSaving?: boolean;
@@ -30,7 +44,10 @@ export function MeetingEditorHeader({
   language,
   onLanguageChange,
   recorderState = "idle",
-  onRecord,
+  transcribeState = "idle",
+  onRecordAction,
+  onTranscribe,
+  hasAudio = false,
   title,
   onTitleChange,
   isSaving = false,
@@ -43,10 +60,13 @@ export function MeetingEditorHeader({
   const [fallbackLanguage, setFallbackLanguage] = useState<MeetingLanguage>("en");
   const effectiveLanguage = language ?? fallbackLanguage;
   const setLanguage = onLanguageChange ?? setFallbackLanguage;
-  const recordable = typeof onRecord === "function";
+
   const isRecording = recorderState === "recording";
-  const isTranscribing = recorderState === "transcribing";
-  const busy = isRecording || isTranscribing;
+  const isPaused = recorderState === "paused";
+  const isActiveCapture = isRecording || isPaused;
+  const isTranscribing = transcribeState === "transcribing";
+  const recordable = typeof onRecordAction === "function";
+  const canTranscribe = hasAudio && typeof onTranscribe === "function" && !isActiveCapture;
 
   return (
     <div
@@ -75,7 +95,7 @@ export function MeetingEditorHeader({
           value={title ?? ""}
           onChange={onTitleChange ? (e) => onTitleChange(e.target.value) : undefined}
           placeholder={t("meetings.titlePlaceholder")}
-          disabled={busy || !onTitleChange}
+          disabled={isActiveCapture || isTranscribing || !onTitleChange}
           style={{
             minWidth: 0,
             flex: 1,
@@ -120,66 +140,84 @@ export function MeetingEditorHeader({
             models={availableModels}
             selected={selectedModel ?? null}
             onChange={onModelChange ?? (() => {})}
-            disabled={busy}
+            disabled={isActiveCapture || isTranscribing}
             autoLabel={t("meetings.modelAuto")}
           />
         ) : null}
         <LanguageToggle
           value={effectiveLanguage}
           onChange={setLanguage}
-          disabled={busy}
+          disabled={isActiveCapture || isTranscribing}
         />
-        <button
-          type="button"
-          onClick={recordable && !isTranscribing ? onRecord : undefined}
-          disabled={!recordable || isTranscribing}
-          title={
-            !recordable
-              ? t("meetings.recordingComingSoon")
-              : isTranscribing
-                ? t("meetings.transcribingHint")
-                : isRecording
-                  ? t("meetings.stopHint")
-                  : t("meetings.recordHint")
-          }
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "4px 12px",
-            minWidth: 88,
-            justifyContent: "center",
-            background: isRecording
-              ? "rgba(220, 60, 60, 0.18)"
-              : isTranscribing
-                ? "rgba(255,255,255,0.04)"
-                : "transparent",
-            border: "1px solid rgba(255,255,255,0.12)",
-            borderRadius: 4,
-            color: isRecording ? "var(--text-1)" : "var(--text-2)",
-            cursor: recordable && !isTranscribing ? "pointer" : "not-allowed",
-            fontSize: 12,
-            opacity: recordable || isRecording ? 1 : 0.6,
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          {isTranscribing ? (
-            <>
-              <Loader2 size={10} className="animate-spin" />
-              {t("meetings.transcribing")}
-            </>
-          ) : isRecording ? (
-            <>
-              <Square size={9} fill="currentColor" color="#dc3c3c" />
-              {t("meetings.stop")} · {formatElapsed(elapsedSeconds)}
-            </>
-          ) : (
-            <>
-              <Circle size={10} fill="currentColor" color={recordable ? "#dc3c3c" : "currentColor"} />
-              {t("meetings.record")}
-            </>
-          )}
-        </button>
+
+        {/* Record / Pause / Resume / Stop cluster */}
+        {isRecording ? (
+          <>
+            <ActionButton
+              tone="neutral"
+              onClick={recordable ? () => onRecordAction("pause") : undefined}
+              title={t("meetings.pauseHint")}
+              icon={<Pause size={11} fill="currentColor" />}
+              label={t("meetings.pause")}
+            />
+            <ActionButton
+              tone="stop"
+              onClick={recordable ? () => onRecordAction("stop") : undefined}
+              title={t("meetings.stopHint")}
+              icon={<Square size={9} fill="currentColor" color="#dc3c3c" />}
+              label={`${t("meetings.stop")} · ${formatElapsed(elapsedSeconds)}`}
+            />
+          </>
+        ) : isPaused ? (
+          <>
+            <ActionButton
+              tone="resume"
+              onClick={recordable ? () => onRecordAction("resume") : undefined}
+              title={t("meetings.resumeHint")}
+              icon={<Play size={11} fill="currentColor" />}
+              label={t("meetings.resume")}
+            />
+            <ActionButton
+              tone="stop"
+              onClick={recordable ? () => onRecordAction("stop") : undefined}
+              title={t("meetings.stopHint")}
+              icon={<Square size={9} fill="currentColor" color="#dc3c3c" />}
+              label={`${t("meetings.stop")} · ${formatElapsed(elapsedSeconds)}`}
+            />
+          </>
+        ) : (
+          <>
+            <ActionButton
+              tone="record"
+              onClick={recordable && !isTranscribing ? () => onRecordAction("start") : undefined}
+              title={hasAudio ? t("meetings.reRecordHint") : t("meetings.recordHint")}
+              icon={<Circle size={10} fill="currentColor" color="#dc3c3c" />}
+              label={hasAudio ? t("meetings.reRecord") : t("meetings.record")}
+              disabled={!recordable || isTranscribing}
+            />
+            {isTranscribing ? (
+              <ActionButton
+                tone="neutral"
+                disabled
+                icon={<Loader2 size={10} className="animate-spin" />}
+                label={t("meetings.transcribing")}
+              />
+            ) : (
+              <ActionButton
+                tone="transcribe"
+                onClick={canTranscribe ? onTranscribe : undefined}
+                title={
+                  !hasAudio
+                    ? t("meetings.transcribeNoAudio")
+                    : t("meetings.transcribeHint")
+                }
+                icon={<FileText size={11} />}
+                label={t("meetings.transcribe")}
+                disabled={!canTranscribe}
+              />
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -268,6 +306,67 @@ function ModelDropdown({
         </option>
       ))}
     </select>
+  );
+}
+
+type ActionTone = "record" | "stop" | "neutral" | "resume" | "transcribe";
+
+function ActionButton({
+  tone,
+  onClick,
+  title,
+  icon,
+  label,
+  disabled,
+}: {
+  tone: ActionTone;
+  onClick?: () => void;
+  title?: string;
+  icon: React.ReactNode;
+  label: string;
+  disabled?: boolean;
+}) {
+  const effectivelyDisabled = disabled || !onClick;
+  const background =
+    tone === "stop"
+      ? "rgba(220, 60, 60, 0.18)"
+      : tone === "resume"
+        ? "rgba(76, 175, 80, 0.14)"
+        : tone === "transcribe"
+          ? "rgba(96, 145, 220, 0.14)"
+          : tone === "record"
+            ? "transparent"
+            : "transparent";
+  const color =
+    tone === "stop" || tone === "resume" || tone === "transcribe"
+      ? "var(--text-1)"
+      : "var(--text-2)";
+  return (
+    <button
+      type="button"
+      onClick={effectivelyDisabled ? undefined : onClick}
+      disabled={effectivelyDisabled}
+      title={title}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "4px 12px",
+        minWidth: 88,
+        justifyContent: "center",
+        background,
+        border: "1px solid rgba(255,255,255,0.12)",
+        borderRadius: 4,
+        color,
+        cursor: effectivelyDisabled ? "not-allowed" : "pointer",
+        fontSize: 12,
+        opacity: effectivelyDisabled ? 0.5 : 1,
+        fontVariantNumeric: "tabular-nums",
+      }}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }
 

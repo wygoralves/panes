@@ -529,12 +529,18 @@ export const ipc = {
     invoke<Meeting>("set_meeting_frontmatter", { meetingPath, updates }),
   startMeetingRecording: (meetingPath: string) =>
     invoke<void>("start_meeting_recording", { meetingPath }),
-  stopMeetingRecording: (
+  pauseMeetingRecording: (meetingPath: string) =>
+    invoke<void>("pause_meeting_recording", { meetingPath }),
+  resumeMeetingRecording: (meetingPath: string) =>
+    invoke<void>("resume_meeting_recording", { meetingPath }),
+  stopMeetingRecording: (meetingPath: string) =>
+    invoke<void>("stop_meeting_recording", { meetingPath }),
+  transcribeMeeting: (
     meetingPath: string,
     language: string | null,
     modelFilename: string,
   ) =>
-    invoke<MeetingTranscript>("stop_meeting_recording", {
+    invoke<MeetingTranscript>("transcribe_meeting", {
       meetingPath,
       language,
       modelFilename,

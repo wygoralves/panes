@@ -12,13 +12,14 @@ import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import {
   MeetingEditorHeader,
   type MeetingLanguage,
+  type MeetingRecordAction,
 } from "../editor/MeetingEditorHeader";
 
 const AUTOSAVE_DELAY_MS = 1200;
 
-// Model priority used when auto-selecting which downloaded Whisper model to
-// feed the transcriber with. Order from best → worst so larger/better models
-// win when present. Keep in sync with the catalog in commands/meetings.rs.
+// Fallback priority when no per-meeting model override is set. Order from
+// best → worst so the auto-pick grabs the largest downloaded model. Keep in
+// sync with the catalog in commands/meetings.rs.
 const MODEL_PRIORITY = [
   "ggml-large-v3-turbo.bin",
   "ggml-medium.bin",
@@ -27,7 +28,8 @@ const MODEL_PRIORITY = [
   "ggml-tiny.bin",
 ];
 
-type RecorderState = "idle" | "recording" | "transcribing";
+type RecorderState = "idle" | "recording" | "paused";
+type TranscribeState = "idle" | "transcribing";
 
 function dirnameOf(filePath: string): string {
   const i = filePath.lastIndexOf("/");
@@ -42,11 +44,11 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [recorderState, setRecorderState] = useState<RecorderState>("idle");
+  const [transcribeState, setTranscribeState] = useState<TranscribeState>("idle");
   const [recordError, setRecordError] = useState<string | null>(null);
   const [language, setLanguage] = useState<MeetingLanguage>("en");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [availableModels, setAvailableModels] = useState<WhisperModel[]>([]);
-  const recordStartedAtRef = useRef<number>(0);
   const modelsListenerRef = useRef<UnlistenFn | null>(null);
 
   const dir = dirnameOf(meeting.path);
@@ -57,6 +59,10 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
   );
   const selectedModel = useMemo(
     () => parseFrontmatterValue(content, "model"),
+    [content],
+  );
+  const hasAudio = useMemo(
+    () => !!parseFrontmatterValue(content, "audio"),
     [content],
   );
 
@@ -82,13 +88,11 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
     void loadFile();
   }, [loadFile]);
 
-  // Seed the language toggle from the meeting's frontmatter on load, so
-  // reopening a meeting restores its last-used language.
+  // Seed the language toggle from the meeting's frontmatter on load.
   useEffect(() => {
     if (isLoading) return;
     const fmLang = parseFrontmatterValue(content, "language");
     if (fmLang === "en" || fmLang === "pt") setLanguage(fmLang);
-    // Only run once per meeting load — not on every content change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading]);
 
@@ -131,49 +135,72 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
     return () => window.clearTimeout(handle);
   }, [content, savedContent, isLoading, dir, meeting.path]);
 
-  // Recording timer.
+  // Recording timer. Increments once per second only while "recording"; paused
+  // state keeps the displayed elapsed time frozen. Reset when we return to idle.
   useEffect(() => {
     if (recorderState !== "recording") return;
-    recordStartedAtRef.current = Date.now();
-    setElapsedSeconds(0);
     const handle = window.setInterval(() => {
-      setElapsedSeconds(
-        Math.floor((Date.now() - recordStartedAtRef.current) / 1000),
-      );
+      setElapsedSeconds((s) => s + 1);
     }, 1000);
     return () => window.clearInterval(handle);
   }, [recorderState]);
+  useEffect(() => {
+    if (recorderState === "idle") setElapsedSeconds(0);
+  }, [recorderState]);
 
-  const startRecording = useCallback(async () => {
-    setRecordError(null);
-    try {
-      await ipc.startMeetingRecording(meeting.path);
-      setRecorderState("recording");
-    } catch (e) {
-      setRecordError(String(e));
+  const onRecordAction = useCallback(
+    async (action: MeetingRecordAction) => {
+      setRecordError(null);
+      try {
+        switch (action) {
+          case "start":
+            await ipc.startMeetingRecording(meeting.path);
+            setRecorderState("recording");
+            break;
+          case "pause":
+            await ipc.pauseMeetingRecording(meeting.path);
+            setRecorderState("paused");
+            break;
+          case "resume":
+            await ipc.resumeMeetingRecording(meeting.path);
+            setRecorderState("recording");
+            break;
+          case "stop":
+            await ipc.stopMeetingRecording(meeting.path);
+            setRecorderState("idle");
+            await loadFile();
+            break;
+        }
+      } catch (e) {
+        setRecordError(String(e));
+      }
+    },
+    [meeting.path, loadFile],
+  );
+
+  const pickTranscribeModel = useCallback(() => {
+    const preferred = parseFrontmatterValue(content, "model");
+    if (preferred) {
+      const found = availableModels.find((m) => m.name === preferred);
+      if (found) return found.name;
     }
-  }, [meeting.path]);
+    return (
+      MODEL_PRIORITY.find((n) => availableModels.some((m) => m.name === n)) ??
+      null
+    );
+  }, [availableModels, content]);
 
-  const stopRecording = useCallback(async () => {
-    setRecorderState("transcribing");
+  const onTranscribe = useCallback(async () => {
+    setRecordError(null);
+    setTranscribeState("transcribing");
     try {
-      const models = await ipc.listWhisperModels();
-      const preferred = parseFrontmatterValue(content, "model");
-      const chosen =
-        (preferred && models.find((m) => m.name === preferred && m.downloaded)?.name) ||
-        MODEL_PRIORITY.find((n) =>
-          models.some((m) => m.name === n && m.downloaded),
-        );
+      const chosen = pickTranscribeModel();
       if (!chosen) {
         throw new Error(
           "No Whisper model is downloaded. Open the model catalog from the Meetings sidebar.",
         );
       }
-      const transcript = await ipc.stopMeetingRecording(
-        meeting.path,
-        language,
-        chosen,
-      );
+      const transcript = await ipc.transcribeMeeting(meeting.path, language, chosen);
       await loadFile();
       for (const warning of transcript.warnings) {
         toast.warning(warning, 10_000);
@@ -181,9 +208,9 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
     } catch (e) {
       setRecordError(String(e));
     } finally {
-      setRecorderState("idle");
+      setTranscribeState("idle");
     }
-  }, [meeting.path, language, loadFile, content]);
+  }, [language, loadFile, meeting.path, pickTranscribeModel]);
 
   const onTitleChange = useCallback((next: string) => {
     setContent((prev) => updateFrontmatterValue(prev, "title", next));
@@ -197,12 +224,6 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
     setLanguage(next);
     setContent((prev) => updateFrontmatterValue(prev, "language", next));
   }, []);
-
-  const onRecordToggle = useCallback(() => {
-    if (recorderState === "idle") void startRecording();
-    else if (recorderState === "recording") void stopRecording();
-    // "transcribing" ignores clicks
-  }, [recorderState, startRecording, stopRecording]);
 
   if (isLoading) {
     return (
@@ -244,7 +265,10 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
         language={language}
         onLanguageChange={onLanguageChangeWrapped}
         recorderState={recorderState}
-        onRecord={onRecordToggle}
+        transcribeState={transcribeState}
+        onRecordAction={onRecordAction}
+        onTranscribe={onTranscribe}
+        hasAudio={hasAudio}
         title={title || meeting.title}
         onTitleChange={onTitleChange}
         isSaving={isSaving}

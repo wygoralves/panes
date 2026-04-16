@@ -361,12 +361,80 @@ pub async fn start_meeting_recording(meeting_path: String) -> Result<(), String>
     Ok(())
 }
 
-/// Terminate the recording started by `start_meeting_recording`, wait briefly
-/// for the sidecar to flush, then read the captured audio, mix mic + system,
-/// transcribe with whisper.cpp, and rewrite the meeting's `## Transcript`
-/// section.
+/// Pause the sidecar by sending SIGSTOP so the kernel suspends it.
+/// AVAudioEngine + Core Audio tap threads stop receiving time; no samples
+/// are written while paused, so the on-disk audio has no gap after resume.
 #[tauri::command]
-pub async fn stop_meeting_recording(
+pub async fn pause_meeting_recording(meeting_path: String) -> Result<(), String> {
+    let pid = read_recording_pid(&meeting_path)?;
+    std::process::Command::new("kill")
+        .arg("-STOP")
+        .arg(pid.to_string())
+        .status()
+        .map_err(|e| format!("SIGSTOP failed: {e}"))?;
+    Ok(())
+}
+
+/// Resume a paused recording via SIGCONT.
+#[tauri::command]
+pub async fn resume_meeting_recording(meeting_path: String) -> Result<(), String> {
+    let pid = read_recording_pid(&meeting_path)?;
+    std::process::Command::new("kill")
+        .arg("-CONT")
+        .arg(pid.to_string())
+        .status()
+        .map_err(|e| format!("SIGCONT failed: {e}"))?;
+    Ok(())
+}
+
+/// Terminate the recording started by `start_meeting_recording`, wait briefly
+/// for the sidecar to flush, and update the meeting's frontmatter to reflect
+/// the captured audio. Does NOT transcribe — call `transcribe_meeting`
+/// separately when the user is ready.
+#[tauri::command]
+pub async fn stop_meeting_recording(meeting_path: String) -> Result<(), String> {
+    let meeting_path = PathBuf::from(&meeting_path);
+    if !meeting_path.exists() {
+        return Err(format!("meeting file not found: {}", meeting_path.display()));
+    }
+
+    let pid_path = recording_pid_path(&meeting_path)?;
+    let pid_contents = std::fs::read_to_string(&pid_path).map_err(|e| {
+        format!("no active recording for this meeting (missing pid file: {e})")
+    })?;
+    let pid: u32 = pid_contents
+        .trim()
+        .parse()
+        .map_err(|e| format!("invalid pid in {}: {e}", pid_path.display()))?;
+
+    // Make sure a paused sidecar is running again before SIGTERM so its
+    // signal handler actually runs and flushes. (SIGTERM to a SIGSTOP'd
+    // process queues the signal; it won't run until SIGCONT.)
+    let _ = std::process::Command::new("kill")
+        .arg("-CONT")
+        .arg(pid.to_string())
+        .status();
+    let _ = std::process::Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status();
+
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    let _ = std::fs::remove_file(&pid_path);
+
+    let audio_path = meeting_audio_path(&meeting_path)?;
+    update_meeting_audio_metadata(&meeting_path, &audio_path)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Transcribe an already-captured recording. The meeting must have been
+/// stopped first (the audio .bin file exists) — this command does not touch
+/// the sidecar, it just reads the file, mixes mic + system, runs whisper,
+/// and writes the transcript into the meeting's `## Transcript` section.
+#[tauri::command]
+pub async fn transcribe_meeting(
     meeting_path: String,
     language: Option<String>,
     model_filename: String,
@@ -386,26 +454,13 @@ pub async fn stop_meeting_recording(
         ));
     }
 
-    let pid_path = recording_pid_path(&meeting_path)?;
-    let pid_contents = std::fs::read_to_string(&pid_path).map_err(|e| {
-        format!("no active recording for this meeting (missing pid file: {e})")
-    })?;
-    let pid: u32 = pid_contents
-        .trim()
-        .parse()
-        .map_err(|e| format!("invalid pid in {}: {e}", pid_path.display()))?;
-
-    // SIGTERM triggers the sidecar's signal handler which closes the file and exits.
-    let _ = std::process::Command::new("kill")
-        .arg("-TERM")
-        .arg(pid.to_string())
-        .status();
-
-    // Give the sidecar time to flush and exit before we read the file.
-    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-    let _ = std::fs::remove_file(&pid_path);
-
     let audio_path = meeting_audio_path(&meeting_path)?;
+    if !audio_path.exists() {
+        return Err(format!(
+            "no recorded audio for this meeting at {}",
+            audio_path.display()
+        ));
+    }
     let audio_bytes = tokio::task::spawn_blocking({
         let audio_path = audio_path.clone();
         move || std::fs::read(&audio_path)
@@ -415,7 +470,7 @@ pub async fn stop_meeting_recording(
     .map_err(|e| format!("failed to read captured audio at {}: {e}", audio_path.display()))?;
 
     if audio_bytes.is_empty() {
-        return Err("sidecar produced no data — check mic and system audio permissions".to_string());
+        return Err("captured audio file is empty".to_string());
     }
 
     let (mic, system) = parse_framed_pcm(&audio_bytes).map_err(|e| e.to_string())?;
@@ -464,6 +519,31 @@ pub async fn stop_meeting_recording(
         duration_ms,
         warnings,
     })
+}
+
+fn read_recording_pid(meeting_path: &str) -> Result<u32, String> {
+    let path = recording_pid_path(&PathBuf::from(meeting_path))?;
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|e| format!("no active recording: {e}"))?;
+    contents
+        .trim()
+        .parse::<u32>()
+        .map_err(|e| format!("invalid pid in {}: {e}", path.display()))
+}
+
+fn update_meeting_audio_metadata(meeting_path: &Path, audio_path: &Path) -> anyhow::Result<()> {
+    let existing = std::fs::read_to_string(meeting_path)?;
+    let (frontmatter, body) = split_frontmatter(&existing);
+    let frontmatter = update_frontmatter(
+        frontmatter,
+        [
+            ("recording", "false".to_string()),
+            ("audio", audio_path.to_string_lossy().to_string()),
+        ],
+    );
+    let new_contents = format!("---\n{}---\n{}", frontmatter, body);
+    std::fs::write(meeting_path, new_contents)?;
+    Ok(())
 }
 
 /// Heuristic for the "silent system tap" failure mode called out in the spec.
