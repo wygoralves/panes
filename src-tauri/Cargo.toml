@@ -50,6 +50,8 @@ notify = "6"
 portable-pty = "0.8"
 sys-locale = "0.3"
 
+panes-transcription = { path = "crates/transcription" }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
 
