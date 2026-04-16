@@ -3,7 +3,7 @@ import CoreAudio
 import Foundation
 
 final class SystemAudioTap: Capturer {
-    private let sink: OutputSink
+    private let writer: FrameWriter
     private let ioQueue = DispatchQueue(
         label: "dev.panes.audio-capture.tap-io",
         qos: .userInteractive
@@ -12,9 +12,11 @@ final class SystemAudioTap: Capturer {
     private var tapID: AudioObjectID = kAudioObjectUnknown
     private var aggregateID: AudioDeviceID = 0
     private var ioProcID: AudioDeviceIOProcID?
+    private var sampleRate: UInt32 = 0
+    private var channels: UInt8 = 0
 
-    init(sink: OutputSink) {
-        self.sink = sink
+    init(writer: @escaping FrameWriter) {
+        self.writer = writer
     }
 
     func start() throws {
@@ -69,6 +71,11 @@ final class SystemAudioTap: Capturer {
         }
         aggregateID = newAggregateID
         Logger.info("aggregate device created ID=\(newAggregateID)")
+
+        let (rate, channelCount) = try Self.describeInputFormat(aggregateID: newAggregateID)
+        sampleRate = rate
+        channels = channelCount
+        Logger.info("aggregate input format: sampleRate=\(rate) channels=\(channelCount)")
 
         var newIoProcID: AudioDeviceIOProcID?
         err = AudioDeviceCreateIOProcIDWithBlock(
@@ -125,7 +132,8 @@ final class SystemAudioTap: Capturer {
             guard let bytes = buffer.mData else { continue }
             let byteCount = Int(buffer.mDataByteSize)
             guard byteCount > 0 else { continue }
-            sink.write(Data(bytes: bytes, count: byteCount))
+            let samples = Data(bytes: bytes, count: byteCount)
+            writer(.system, sampleRate, channels, samples)
         }
     }
 
@@ -164,5 +172,28 @@ final class SystemAudioTap: Capturer {
         let err = AudioObjectGetPropertyData(objectID, &address, 0, nil, &size, &cfStr)
         guard err == noErr, let str = cfStr else { return nil }
         return str.takeRetainedValue() as String
+    }
+
+    private static func describeInputFormat(aggregateID: AudioDeviceID) throws -> (UInt32, UInt8) {
+        var streamDescription = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamFormat,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let err = AudioObjectGetPropertyData(
+            aggregateID,
+            &address,
+            0, nil,
+            &size,
+            &streamDescription
+        )
+        guard err == noErr else {
+            throw CaptureError.osStatus("read aggregate input stream format", err)
+        }
+        let rate = UInt32(streamDescription.mSampleRate.rounded())
+        let channelCount = UInt8(min(Int(streamDescription.mChannelsPerFrame), 255))
+        return (rate, channelCount)
     }
 }

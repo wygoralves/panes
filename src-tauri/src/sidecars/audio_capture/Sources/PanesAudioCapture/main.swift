@@ -3,6 +3,7 @@ import Foundation
 enum CaptureMode: String {
     case mic
     case system
+    case both
 }
 
 struct Options {
@@ -13,22 +14,35 @@ struct Options {
 
 func printUsage() {
     let text = """
-    panes-audio-capture — capture audio and emit raw PCM samples
+    panes-audio-capture — capture audio and emit PCM samples
 
     Usage:
-      panes-audio-capture [--mode <mic|system>] [--output-file <path>] [--duration <seconds>]
+      panes-audio-capture [--mode <mic|system|both>] [--output-file <path>] [--duration <seconds>]
 
     Options:
-      --mode <mic|system>    Capture source. Default: mic.
-                             mic    = microphone via AVAudioEngine (mono or stereo float32).
-                             system = system output via Core Audio process tap
-                                      (stereo float32 at the default output device's rate).
-      --output-file <path>   Write PCM to <path> instead of stdout.
-      --duration <seconds>   Exit after N seconds. 0 (default) = run until SIGINT/SIGTERM.
-      --help, -h             Show this help.
+      --mode <mic|system|both>
+          mic    = microphone via AVAudioEngine; output = raw interleaved float32 at mic rate.
+          system = system output via Core Audio process tap; output = raw interleaved float32
+                   at the aggregate device's sample rate.
+          both   = mic + system captured concurrently; output = length-prefixed frames, each
+                   tagged with its source. Frame layout:
+                     u8  sourceId   (0 = mic, 1 = system)
+                     u32 sampleRate (little-endian, Hz)
+                     u8  channels
+                     u32 sampleCount (little-endian, float32 count including channels)
+                     f32[sampleCount] interleaved samples
+          Default: mic.
 
-    Output format details are logged to stderr at startup.
-    Logs go to stderr. stdout is reserved for raw PCM when --output-file is not set.
+      --output-file <path>
+          Write to <path> instead of stdout.
+
+      --duration <seconds>
+          Exit after N seconds. 0 (default) = run until SIGINT/SIGTERM.
+
+      --help, -h
+          Show this help.
+
+    Logs go to stderr. stdout (or the output file) contains only PCM bytes.
     """
     FileHandle.standardError.write((text + "\n").data(using: .utf8)!)
 }
@@ -40,7 +54,7 @@ func parseArgs() -> Options {
         switch arg {
         case "--mode":
             guard let value = iter.next(), let mode = CaptureMode(rawValue: value) else {
-                Logger.error("invalid or missing value for --mode (expected mic or system)")
+                Logger.error("invalid or missing value for --mode (expected mic, system, or both)")
                 exit(2)
             }
             opts.mode = mode
@@ -84,12 +98,23 @@ if let path = options.outputPath {
     Logger.info("writing PCM to stdout")
 }
 
-let capturer: Capturer
+let writer: FrameWriter
+switch options.mode {
+case .mic, .system:
+    writer = FrameWriterFactory.raw(sink: sink)
+case .both:
+    writer = FrameWriterFactory.framed(sink: sink)
+}
+
+var capturers: [Capturer] = []
 switch options.mode {
 case .mic:
-    capturer = MicCapture(sink: sink)
+    capturers.append(MicCapture(writer: writer))
 case .system:
-    capturer = SystemAudioTap(sink: sink)
+    capturers.append(SystemAudioTap(writer: writer))
+case .both:
+    capturers.append(MicCapture(writer: writer))
+    capturers.append(SystemAudioTap(writer: writer))
 }
 Logger.info("capture mode: \(options.mode.rawValue)")
 
@@ -100,7 +125,7 @@ for sig in [SIGTERM, SIGINT] {
     let source = DispatchSource.makeSignalSource(signal: sig, queue: signalQueue)
     source.setEventHandler {
         Logger.info("signal \(sig) received; stopping")
-        capturer.stop()
+        for c in capturers { c.stop() }
         sink.close()
         exit(0)
     }
@@ -108,16 +133,22 @@ for sig in [SIGTERM, SIGINT] {
     signalSources.append(source)
 }
 
-do {
-    try capturer.start()
-} catch {
-    Logger.error("capture start failed: \(error)")
-    exit(3)
+for capturer in capturers {
+    do {
+        try capturer.start()
+    } catch {
+        Logger.error("capture start failed: \(error)")
+        for c in capturers { c.stop() }
+        sink.close()
+        exit(3)
+    }
 }
 
 if options.durationSeconds > 0 {
     RunLoop.current.run(until: Date(timeIntervalSinceNow: options.durationSeconds))
-    capturer.stop()
+    for capturer in capturers {
+        capturer.stop()
+    }
     sink.close()
     Logger.info("duration complete; exiting")
     exit(0)
