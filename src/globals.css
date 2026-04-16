@@ -1188,6 +1188,7 @@ button, input, textarea, select {
   to { transform: rotate(360deg); }
 }
 .git-spin { animation: spin 1.2s linear infinite; }
+.animate-spin { animation: spin 1.2s linear infinite; }
 
 /* Tabs */
 .git-tabs {
