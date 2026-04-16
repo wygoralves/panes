@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AudioLines, Plus, Settings } from "lucide-react";
-import { ipc, type Meeting } from "../../lib/ipc";
+import { AudioLines, Download, Plus, Settings } from "lucide-react";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { ipc, listenWhisperModelDownload, type Meeting } from "../../lib/ipc";
 import { formatRelativeTime } from "../../lib/formatters";
 import { MeetingDocumentEditor } from "./MeetingDocumentEditor";
 import { ModelCatalogModal } from "./ModelCatalogModal";
@@ -14,6 +15,8 @@ export function MeetingsPanel() {
   const [creating, setCreating] = useState(false);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [showModelCatalog, setShowModelCatalog] = useState(false);
+  const [hasDownloadedModel, setHasDownloadedModel] = useState<boolean | null>(null);
+  const modelListenerRef = useRef<UnlistenFn | null>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -30,9 +33,30 @@ export function MeetingsPanel() {
     }
   }, []);
 
+  const refreshModelState = useCallback(async () => {
+    try {
+      const list = await ipc.listWhisperModels();
+      setHasDownloadedModel(list.some((m) => m.downloaded));
+    } catch {
+      setHasDownloadedModel(false);
+    }
+  }, []);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    void refreshModelState();
+    void (async () => {
+      modelListenerRef.current = await listenWhisperModelDownload((progress) => {
+        if (progress.done) void refreshModelState();
+      });
+    })();
+    return () => {
+      if (modelListenerRef.current) modelListenerRef.current();
+    };
+  }, [refreshModelState]);
 
   const selected = useMemo(
     () => meetings.find((m) => m.path === selectedPath) ?? null,
@@ -138,6 +162,52 @@ export function MeetingsPanel() {
       </aside>
 
       <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {hasDownloadedModel === false ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              padding: "10px 16px",
+              margin: "8px 12px 0",
+              borderRadius: "var(--radius-md)",
+              background: "rgba(210, 170, 80, 0.08)",
+              border: "1px solid rgba(210, 170, 80, 0.25)",
+              fontSize: 12,
+              color: "var(--text-2)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <Download size={14} style={{ opacity: 0.85, color: "rgba(220, 195, 120, 0.95)" }} />
+              <div>
+                <div style={{ fontWeight: 500, color: "var(--text-1)" }}>
+                  {t("app:meetings.setupBannerTitle")}
+                </div>
+                <div style={{ marginTop: 2, fontSize: 11, color: "var(--text-3)" }}>
+                  {t("app:meetings.setupBannerHint")}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setShowModelCatalog(true)}
+              style={{
+                padding: "5px 12px",
+                fontSize: 12,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                whiteSpace: "nowrap",
+              }}
+            >
+              <Download size={12} />
+              {t("app:meetings.setupBannerAction")}
+            </button>
+          </div>
+        ) : null}
+
         {selected ? (
           <MeetingDocumentEditor key={selected.path} meeting={selected} />
         ) : (

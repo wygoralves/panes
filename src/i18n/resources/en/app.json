@@ -55,7 +55,10 @@
     "modelTier_fast": "Fast",
     "modelTier_balanced": "Balanced",
     "modelTier_high": "High quality",
-    "modelTier_recommended": "Recommended"
+    "modelTier_recommended": "Recommended",
+    "setupBannerTitle": "Download a Whisper model to record meetings",
+    "setupBannerHint": "Recording is disabled until one model is available locally.",
+    "setupBannerAction": "Open model catalog"
   },
   "sidebar": {
     "pin": "Pin sidebar",

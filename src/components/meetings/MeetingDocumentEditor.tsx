@@ -9,7 +9,17 @@ import {
 } from "../editor/MeetingEditorHeader";
 
 const AUTOSAVE_DELAY_MS = 1200;
-const DEFAULT_MODEL = "ggml-base.bin";
+
+// Model priority used when auto-selecting which downloaded Whisper model to
+// feed the transcriber with. Order from best → worst so larger/better models
+// win when present. Keep in sync with the catalog in commands/meetings.rs.
+const MODEL_PRIORITY = [
+  "ggml-large-v3-turbo.bin",
+  "ggml-medium.bin",
+  "ggml-small.bin",
+  "ggml-base.bin",
+  "ggml-tiny.bin",
+];
 
 type RecorderState = "idle" | "recording" | "transcribing";
 
@@ -99,7 +109,16 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
   const stopRecording = useCallback(async () => {
     setRecorderState("transcribing");
     try {
-      await ipc.stopMeetingRecording(meeting.path, language, DEFAULT_MODEL);
+      const models = await ipc.listWhisperModels();
+      const chosen = MODEL_PRIORITY.find((n) =>
+        models.some((m) => m.name === n && m.downloaded),
+      );
+      if (!chosen) {
+        throw new Error(
+          "No Whisper model is downloaded. Open the model catalog from the Meetings sidebar.",
+        );
+      }
+      await ipc.stopMeetingRecording(meeting.path, language, chosen);
       await loadFile();
     } catch (e) {
       setRecordError(String(e));

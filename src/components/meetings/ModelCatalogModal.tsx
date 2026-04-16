@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Check, Download, Loader2, Star, Trash2, X } from "lucide-react";
+import { AudioLines, Check, Download, Loader2, Star, Trash2, X } from "lucide-react";
 import {
   ipc,
   listenWhisperModelDownload,
@@ -25,23 +25,23 @@ function formatBytes(n: number): string {
   return `${(n / 1_073_741_824).toFixed(2)} GB`;
 }
 
-function tierColor(tier: WhisperModelTier): string {
+function tierToken(tier: WhisperModelTier): { bg: string; fg: string } {
   switch (tier) {
     case "recommended":
-      return "rgba(76, 175, 80, 0.85)";
+      return { bg: "rgba(76, 175, 80, 0.18)", fg: "rgba(120, 200, 120, 1)" };
     case "high":
-      return "rgba(96, 145, 220, 0.85)";
+      return { bg: "rgba(96, 145, 220, 0.18)", fg: "rgba(140, 185, 235, 1)" };
     case "balanced":
-      return "rgba(160, 160, 180, 0.85)";
+      return { bg: "rgba(180, 180, 200, 0.12)", fg: "var(--text-2)" };
     case "fast":
-      return "rgba(200, 170, 80, 0.8)";
+      return { bg: "rgba(210, 180, 90, 0.18)", fg: "rgba(225, 200, 120, 1)" };
     default:
-      return "rgba(200, 120, 120, 0.6)";
+      return { bg: "rgba(200, 120, 120, 0.16)", fg: "rgba(220, 160, 160, 1)" };
   }
 }
 
 export function ModelCatalogModal({ onClose }: Props) {
-  const { t } = useTranslation("app");
+  const { t } = useTranslation(["app", "common"]);
   const [models, setModels] = useState<WhisperModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -118,69 +118,55 @@ export function ModelCatalogModal({ onClose }: Props) {
 
   return createPortal(
     <div
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.55)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 1000,
+      className="confirm-dialog-backdrop"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
+        className="ws-modal"
+        onMouseDown={(e) => e.stopPropagation()}
         style={{
-          width: "min(640px, 92vw)",
-          maxHeight: "80vh",
-          background: "var(--surface-1, #1e1e22)",
-          border: "1px solid rgba(255,255,255,0.08)",
-          borderRadius: 10,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          boxShadow: "0 10px 60px rgba(0,0,0,0.45)",
+          width: "min(620px, calc(100vw - 48px))",
+          maxHeight: "calc(100vh - 60px)",
         }}
       >
-        <header
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "14px 18px",
-            borderBottom: "1px solid rgba(255,255,255,0.06)",
-          }}
-        >
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 600 }}>
-              {t("meetings.modelCatalogTitle")}
-            </div>
-            <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>
-              {t("meetings.modelCatalogHint")}
+        <div className="ws-header" style={{ padding: "20px 24px 0" }}>
+          <div
+            className="ws-header-icon"
+            style={{ width: 40, height: 40, borderRadius: 12 }}
+          >
+            <AudioLines size={20} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 className="ws-header-title" style={{ fontSize: 15 }}>
+              {t("app:meetings.modelCatalogTitle")}
+            </h2>
+            <div className="ws-header-path" style={{ marginTop: 2 }}>
+              {t("app:meetings.modelCatalogHint")}
             </div>
           </div>
           <button
             type="button"
+            className="ws-close"
             onClick={onClose}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "var(--text-2)",
-              cursor: "pointer",
-              padding: 4,
-            }}
+            style={{ background: "none", border: "none" }}
             title={t("common:close", { defaultValue: "Close" })}
           >
-            <X size={16} />
+            <X size={15} />
           </button>
-        </header>
+        </div>
+
+        <div className="ws-divider" style={{ margin: "14px 24px 0" }} />
 
         {error ? (
           <div
             style={{
-              padding: "10px 16px",
-              background: "rgba(255, 80, 80, 0.1)",
+              margin: "14px 24px 0",
+              padding: "10px 12px",
+              borderRadius: "var(--radius-md)",
+              background: "rgba(255, 80, 80, 0.08)",
+              border: "1px solid rgba(255, 80, 80, 0.2)",
               color: "var(--text-2)",
               fontSize: 12,
             }}
@@ -189,7 +175,7 @@ export function ModelCatalogModal({ onClose }: Props) {
           </div>
         ) : null}
 
-        <div style={{ overflow: "auto", padding: "8px 0" }}>
+        <div className="ws-body" style={{ padding: "16px 24px 24px" }}>
           {loading ? (
             <div
               style={{
@@ -203,10 +189,10 @@ export function ModelCatalogModal({ onClose }: Props) {
               }}
             >
               <Loader2 size={14} className="animate-spin" />
-              {t("meetings.loading")}
+              {t("app:meetings.loading")}
             </div>
           ) : (
-            <ul style={{ listStyle: "none", margin: 0, padding: "0 10px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {models.map((m) => {
                 const progress = downloads[m.name];
                 const isDownloading = active === m.name;
@@ -214,15 +200,19 @@ export function ModelCatalogModal({ onClose }: Props) {
                   isDownloading && progress && progress.total > 0
                     ? Math.min(100, Math.floor((progress.downloaded / progress.total) * 100))
                     : 0;
+                const { bg, fg } = tierToken(m.tier);
+                const isRecommended = m.tier === "recommended";
                 return (
-                  <li
+                  <div
                     key={m.name}
                     style={{
+                      borderRadius: "var(--radius-md)",
+                      background: "rgba(255, 255, 255, 0.02)",
+                      border: `1px solid ${isRecommended ? "rgba(76, 175, 80, 0.25)" : "rgba(255, 255, 255, 0.06)"}`,
                       padding: "12px 14px",
-                      borderBottom: "1px solid rgba(255,255,255,0.04)",
                       display: "flex",
                       flexDirection: "column",
-                      gap: 6,
+                      gap: 8,
                     }}
                   >
                     <div
@@ -233,48 +223,56 @@ export function ModelCatalogModal({ onClose }: Props) {
                         gap: 12,
                       }}
                     >
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-                        <span style={{ fontSize: 14, fontWeight: 500, color: "var(--text-1)" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          minWidth: 0,
+                          flex: 1,
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 500,
+                            color: "var(--text-1)",
+                          }}
+                        >
                           {m.displayName}
                         </span>
-                        {m.tier === "recommended" ? (
-                          <span
-                            style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              gap: 3,
-                              fontSize: 10,
-                              fontWeight: 500,
-                              padding: "1px 6px",
-                              borderRadius: 3,
-                              background: tierColor(m.tier),
-                              color: "#fff",
-                              textTransform: "uppercase",
-                            }}
-                          >
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 3,
+                            fontSize: 10,
+                            fontWeight: 500,
+                            padding: "2px 7px",
+                            borderRadius: 999,
+                            background: bg,
+                            color: fg,
+                            textTransform: "uppercase",
+                            letterSpacing: 0.3,
+                          }}
+                        >
+                          {isRecommended ? (
                             <Star size={9} fill="currentColor" />
-                            {t("meetings.modelTierRecommended")}
-                          </span>
-                        ) : (
-                          <span
-                            style={{
-                              fontSize: 10,
-                              fontWeight: 500,
-                              padding: "1px 6px",
-                              borderRadius: 3,
-                              background: tierColor(m.tier),
-                              color: "#fff",
-                              textTransform: "uppercase",
-                            }}
-                          >
-                            {t(`meetings.modelTier_${m.tier}`)}
-                          </span>
-                        )}
+                          ) : null}
+                          {t(`app:meetings.modelTier_${m.tier}`)}
+                        </span>
                         <span style={{ fontSize: 11, color: "var(--text-3)" }}>
                           {formatBytes(m.sizeBytes)}
                         </span>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          flexShrink: 0,
+                        }}
+                      >
                         {m.downloaded ? (
                           <>
                             <span
@@ -282,32 +280,29 @@ export function ModelCatalogModal({ onClose }: Props) {
                                 display: "inline-flex",
                                 alignItems: "center",
                                 gap: 4,
-                                color: "rgba(76, 175, 80, 0.95)",
+                                color: "rgba(120, 200, 120, 1)",
                                 fontSize: 12,
+                                fontWeight: 500,
                               }}
                             >
                               <Check size={12} />
-                              {t("meetings.modelReady")}
+                              {t("app:meetings.modelReady")}
                             </span>
                             <button
                               type="button"
+                              className="btn btn-cancel-ghost"
                               onClick={() => void deleteModel(m.name)}
-                              title={t("meetings.modelDelete")}
+                              title={t("app:meetings.modelDelete")}
                               style={{
-                                background: "transparent",
-                                border: "1px solid rgba(255,255,255,0.1)",
-                                color: "var(--text-3)",
-                                borderRadius: 4,
-                                padding: "4px 8px",
-                                cursor: "pointer",
+                                padding: "5px 10px",
+                                fontSize: 11,
                                 display: "inline-flex",
                                 alignItems: "center",
                                 gap: 4,
-                                fontSize: 11,
                               }}
                             >
                               <Trash2 size={11} />
-                              {t("meetings.modelDelete")}
+                              {t("app:meetings.modelDelete")}
                             </button>
                           </>
                         ) : isDownloading ? (
@@ -327,52 +322,50 @@ export function ModelCatalogModal({ onClose }: Props) {
                         ) : (
                           <button
                             type="button"
+                            className="btn btn-primary"
                             onClick={() => void startDownload(m.name)}
                             disabled={!!active}
                             style={{
+                              padding: "5px 12px",
+                              fontSize: 12,
                               display: "inline-flex",
                               alignItems: "center",
-                              gap: 6,
-                              padding: "4px 10px",
-                              background: "rgba(96, 145, 220, 0.15)",
-                              border: "1px solid rgba(96, 145, 220, 0.35)",
-                              borderRadius: 4,
-                              color: "var(--text-1)",
-                              fontSize: 12,
-                              cursor: active ? "not-allowed" : "pointer",
-                              opacity: active ? 0.5 : 1,
+                              gap: 4,
                             }}
                           >
                             <Download size={12} />
-                            {t("meetings.modelDownload")}
+                            {t("app:meetings.modelDownload")}
                           </button>
                         )}
                       </div>
                     </div>
-                    <div style={{ fontSize: 12, color: "var(--text-3)" }}>{m.description}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-3)", lineHeight: 1.45 }}>
+                      {m.description}
+                    </div>
                     {isDownloading ? (
                       <div
                         style={{
-                          height: 4,
+                          height: 3,
                           background: "rgba(255,255,255,0.06)",
                           borderRadius: 2,
                           overflow: "hidden",
+                          marginTop: 2,
                         }}
                       >
                         <div
                           style={{
                             height: "100%",
                             width: `${pct}%`,
-                            background: "rgba(96, 145, 220, 0.85)",
+                            background: "var(--accent)",
                             transition: "width 0.3s ease",
                           }}
                         />
                       </div>
                     ) : null}
-                  </li>
+                  </div>
                 );
               })}
-            </ul>
+            </div>
           )}
         </div>
       </div>

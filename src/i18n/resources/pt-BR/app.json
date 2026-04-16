@@ -55,7 +55,10 @@
     "modelTier_fast": "Rápido",
     "modelTier_balanced": "Equilibrado",
     "modelTier_high": "Alta qualidade",
-    "modelTier_recommended": "Recomendado"
+    "modelTier_recommended": "Recomendado",
+    "setupBannerTitle": "Baixe um modelo Whisper para gravar reuniões",
+    "setupBannerHint": "A gravação fica desativada até que um modelo esteja disponível localmente.",
+    "setupBannerAction": "Abrir catálogo de modelos"
   },
   "sidebar": {
     "pin": "Fixar sidebar",
