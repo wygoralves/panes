@@ -311,6 +311,7 @@ pub fn run() {
             commands::meetings::transcribe_wav_file,
             commands::meetings::list_meetings,
             commands::meetings::create_meeting,
+            commands::meetings::record_meeting,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

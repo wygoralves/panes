@@ -34,7 +34,13 @@
     "emptyHint": "Click New Meeting to create your first one. Recording and transcription arrive in upcoming commits.",
     "editorLabel": "Meeting",
     "record": "Record",
-    "recordingComingSoon": "Recording is not yet wired up — the setup banner and sidecar integration land in upcoming commits."
+    "recording": "Recording…",
+    "recordHint": "Record a short clip and transcribe it",
+    "recordingInProgress": "Recording in progress",
+    "recordingComingSoon": "Recording is not yet wired up here — open the meeting from the Meetings view to record.",
+    "saving": "Saving…",
+    "noSelectionTitle": "No meeting selected",
+    "noSelectionHint": "Pick a meeting on the left, or click New Meeting to create one."
   },
   "sidebar": {
     "pin": "Pin sidebar",

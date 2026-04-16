@@ -34,7 +34,13 @@
     "emptyHint": "Clique em Nova Reunião para criar a primeira. Gravação e transcrição chegam nos próximos commits.",
     "editorLabel": "Reunião",
     "record": "Gravar",
-    "recordingComingSoon": "A gravação ainda não está conectada — o painel de configuração e a integração com o sidecar chegam nos próximos commits."
+    "recording": "Gravando…",
+    "recordHint": "Grave um trecho curto e transcreva",
+    "recordingInProgress": "Gravação em andamento",
+    "recordingComingSoon": "A gravação não está conectada aqui — abra a reunião pela Visão de Reuniões para gravar.",
+    "saving": "Salvando…",
+    "noSelectionTitle": "Nenhuma reunião selecionada",
+    "noSelectionHint": "Escolha uma reunião à esquerda ou clique em Nova Reunião para criar uma."
   },
   "sidebar": {
     "pin": "Fixar sidebar",

@@ -1,15 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AudioLines, Plus } from "lucide-react";
 import { ipc, type Meeting } from "../../lib/ipc";
 import { formatRelativeTime } from "../../lib/formatters";
-import { useFileStore } from "../../stores/fileStore";
-import { useUiStore } from "../../stores/uiStore";
-
-function dirnameOf(filePath: string): string {
-  const i = filePath.lastIndexOf("/");
-  return i >= 0 ? filePath.substring(0, i) : filePath;
-}
+import { MeetingDocumentEditor } from "./MeetingDocumentEditor";
 
 export function MeetingsPanel() {
   const { t } = useTranslation(["app"]);
@@ -17,14 +11,16 @@ export function MeetingsPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const openFile = useFileStore((s) => s.openFile);
-  const setActiveView = useUiStore((s) => s.setActiveView);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
     try {
       const list = await ipc.listMeetings();
       setMeetings(list);
+      // Auto-select the newest meeting on first load so the right pane
+      // is never empty when there's at least one meeting on disk.
+      setSelectedPath((prev) => prev ?? list[0]?.path ?? null);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -36,17 +32,9 @@ export function MeetingsPanel() {
     void refresh();
   }, [refresh]);
 
-  const openMeeting = useCallback(
-    async (meeting: Meeting) => {
-      const dir = dirnameOf(meeting.path);
-      try {
-        await openFile(dir, meeting.path);
-        setActiveView("chat");
-      } catch (e) {
-        setError(String(e));
-      }
-    },
-    [openFile, setActiveView],
+  const selected = useMemo(
+    () => meetings.find((m) => m.path === selectedPath) ?? null,
+    [meetings, selectedPath],
   );
 
   async function onNewMeeting() {
@@ -55,7 +43,7 @@ export function MeetingsPanel() {
     try {
       const created = await ipc.createMeeting(null);
       await refresh();
-      await openMeeting(created);
+      setSelectedPath(created.path);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -64,147 +52,169 @@ export function MeetingsPanel() {
   }
 
   return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-      }}
-    >
-      <div
+    <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+      <aside
         style={{
+          width: 280,
+          flexShrink: 0,
+          borderRight: "1px solid rgba(255,255,255,0.06)",
           display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          padding: "16px 24px",
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          flexDirection: "column",
+          background: "rgba(255,255,255,0.01)",
+          overflow: "hidden",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <AudioLines size={18} strokeWidth={1.5} style={{ opacity: 0.7 }} />
-          <span style={{ fontSize: 15, fontWeight: 500 }}>
-            {t("app:sidebar.meetings")}
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={() => void onNewMeeting()}
-          disabled={creating}
-          className="sb-add-project-btn"
+        <div
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 6,
-            padding: "6px 12px",
-            width: "auto",
-            height: "auto",
-            fontSize: 13,
+            justifyContent: "space-between",
+            padding: "12px 16px",
+            borderBottom: "1px solid rgba(255,255,255,0.06)",
           }}
         >
-          <Plus size={14} strokeWidth={2} />
-          {creating ? t("app:meetings.creating") : t("app:meetings.newMeeting")}
-        </button>
-      </div>
-
-      <div style={{ flex: 1, overflow: "auto", padding: "8px 0" }}>
-        {loading ? (
-          <div style={{ padding: "24px", textAlign: "center", color: "var(--text-3)" }}>
-            {t("app:meetings.loading")}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <AudioLines size={16} strokeWidth={1.5} style={{ opacity: 0.75 }} />
+            <span style={{ fontSize: 13, fontWeight: 500 }}>
+              {t("app:sidebar.meetings")}
+            </span>
           </div>
-        ) : error ? (
+          <button
+            type="button"
+            onClick={() => void onNewMeeting()}
+            disabled={creating}
+            title={t("app:meetings.newMeeting")}
+            className="sb-add-project-btn"
+            style={{ border: "none" }}
+          >
+            <Plus size={12} strokeWidth={2.2} />
+          </button>
+        </div>
+
+        <div style={{ flex: 1, overflow: "auto", padding: "4px 0" }}>
+          {loading ? (
+            <div style={{ padding: 16, textAlign: "center", color: "var(--text-3)", fontSize: 12 }}>
+              {t("app:meetings.loading")}
+            </div>
+          ) : error ? (
+            <div style={{ padding: 16, fontSize: 12, color: "var(--danger)" }}>{error}</div>
+          ) : meetings.length === 0 ? (
+            <div
+              style={{
+                padding: "24px 16px",
+                textAlign: "center",
+                color: "var(--text-3)",
+                fontSize: 12,
+                lineHeight: 1.5,
+              }}
+            >
+              {t("app:meetings.emptyTitle")}
+              <br />
+              <span style={{ fontSize: 11, color: "var(--text-4)" }}>
+                {t("app:meetings.emptyHint")}
+              </span>
+            </div>
+          ) : (
+            <MeetingList
+              meetings={meetings}
+              selectedPath={selectedPath}
+              onSelect={setSelectedPath}
+            />
+          )}
+        </div>
+      </aside>
+
+      <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {selected ? (
+          <MeetingDocumentEditor key={selected.path} meeting={selected} />
+        ) : (
           <div
             style={{
-              padding: "16px 24px",
-              margin: "0 16px",
-              borderRadius: 6,
-              background: "rgba(255, 80, 80, 0.08)",
-              color: "var(--text-2)",
-              fontSize: 13,
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 12,
+              color: "var(--text-3)",
+              padding: 32,
+              textAlign: "center",
             }}
           >
-            {error}
+            <AudioLines size={40} strokeWidth={1.25} style={{ opacity: 0.35 }} />
+            <div style={{ fontWeight: 500, color: "var(--text-2)" }}>
+              {t("app:meetings.noSelectionTitle")}
+            </div>
+            <div style={{ maxWidth: 320, lineHeight: 1.5, fontSize: 13 }}>
+              {t("app:meetings.noSelectionHint")}
+            </div>
           </div>
-        ) : meetings.length === 0 ? (
-          <EmptyState t={t} />
-        ) : (
-          <MeetingList meetings={meetings} onOpen={openMeeting} />
         )}
-      </div>
-    </div>
-  );
-}
-
-function EmptyState({ t }: { t: ReturnType<typeof useTranslation>["t"] }) {
-  return (
-    <div
-      style={{
-        padding: "48px 24px",
-        textAlign: "center",
-        color: "var(--text-3)",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 10,
-      }}
-    >
-      <AudioLines size={40} strokeWidth={1.25} style={{ opacity: 0.35 }} />
-      <div style={{ fontWeight: 500, color: "var(--text-2)" }}>
-        {t("app:meetings.emptyTitle")}
-      </div>
-      <div style={{ maxWidth: 320, lineHeight: 1.5, fontSize: 13 }}>
-        {t("app:meetings.emptyHint")}
-      </div>
+      </main>
     </div>
   );
 }
 
 function MeetingList({
   meetings,
-  onOpen,
+  selectedPath,
+  onSelect,
 }: {
   meetings: Meeting[];
-  onOpen: (meeting: Meeting) => void | Promise<void>;
+  selectedPath: string | null;
+  onSelect: (path: string) => void;
 }) {
   return (
     <ul
       style={{
         listStyle: "none",
         margin: 0,
-        padding: "0 8px",
+        padding: "4px 6px",
         display: "flex",
         flexDirection: "column",
-        gap: 2,
+        gap: 1,
       }}
     >
-      {meetings.map((m) => (
-        <li key={m.path}>
-          <button
-            type="button"
-            className="sb-nav-item"
-            onClick={() => void onOpen(m)}
-            style={{
-              width: "100%",
-              textAlign: "left",
-              padding: "10px 16px",
-              background: "transparent",
-              border: "1px solid transparent",
-              borderRadius: 6,
-              cursor: "pointer",
-              display: "flex",
-              flexDirection: "column",
-              gap: 4,
-            }}
-            title={m.path}
-          >
-            <div style={{ fontSize: 14, color: "var(--text-1)" }}>{m.title}</div>
-            <div style={{ fontSize: 12, color: "var(--text-3)" }}>
-              {formatRelativeTime(new Date(m.updatedAt))}
-            </div>
-          </button>
-        </li>
-      ))}
+      {meetings.map((m) => {
+        const active = m.path === selectedPath;
+        return (
+          <li key={m.path}>
+            <button
+              type="button"
+              onClick={() => onSelect(m.path)}
+              title={m.path}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                padding: "8px 10px",
+                background: active ? "rgba(255,255,255,0.06)" : "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+                color: active ? "var(--text-1)" : "var(--text-2)",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 13,
+                  fontWeight: active ? 500 : 400,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {m.title}
+              </span>
+              <span style={{ fontSize: 11, color: "var(--text-3)" }}>
+                {formatRelativeTime(new Date(m.updatedAt))}
+              </span>
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 }
