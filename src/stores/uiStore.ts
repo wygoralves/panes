@@ -19,7 +19,7 @@ interface FocusModeSnapshot {
   showGitPanel: boolean;
 }
 
-type ActiveView = "chat" | "harnesses" | "workspace-settings";
+type ActiveView = "chat" | "harnesses" | "meetings" | "workspace-settings";
 
 interface UiState {
   showSidebar: boolean;

@@ -22,6 +22,7 @@ import {
   PillBottle,
   BellRing,
   Globe,
+  AudioLines,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -448,6 +449,16 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
           >
             <Terminal size={16} strokeWidth={1.5} style={{ flexShrink: 0 }} />
             {t("app:sidebar.agents")}
+          </button>
+
+          {/* Meetings */}
+          <button
+            type="button"
+            className={`sb-nav-item${activeView === "meetings" ? " sb-nav-item-active" : ""}`}
+            onClick={() => setActiveView(activeView === "meetings" ? "chat" : "meetings")}
+          >
+            <AudioLines size={16} strokeWidth={1.5} style={{ flexShrink: 0 }} />
+            {t("app:sidebar.meetings")}
           </button>
         </div>
       </div>
@@ -1111,6 +1122,15 @@ function CollapsedRail({
           style={{ border: "none", background: "transparent" }}
         >
           <Terminal size={16} strokeWidth={1.5} />
+        </button>
+        <button
+          type="button"
+          className={`sb-rail-btn no-drag ${activeView === "meetings" ? "sb-rail-btn-active" : ""}`}
+          onClick={() => setActiveView(activeView === "meetings" ? "chat" : "meetings")}
+          title={t("sidebar.meetings")}
+          style={{ border: "none", background: "transparent" }}
+        >
+          <AudioLines size={16} strokeWidth={1.5} />
         </button>
       </div>
 

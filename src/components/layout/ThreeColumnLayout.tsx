@@ -4,6 +4,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { Sidebar } from "../sidebar/Sidebar";
 import { ChatPanel } from "../chat/ChatPanel";
 import { HarnessPanel } from "../onboarding/HarnessPanel";
+import { MeetingsPanel } from "../meetings/MeetingsPanel";
 import { WorkspaceSettingsPage } from "../workspace/WorkspaceSettingsPage";
 import { GitPanel } from "../git/GitPanel";
 import { usesCustomWindowFrame } from "../../lib/windowActions";
@@ -205,6 +206,8 @@ export function ThreeColumnLayout() {
   const mainContent = (
     activeView === "harnesses" ? (
       <HarnessPanel />
+    ) : activeView === "meetings" ? (
+      <MeetingsPanel />
     ) : activeView === "workspace-settings" ? (
       <WorkspaceSettingsPage />
     ) : (
