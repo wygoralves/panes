@@ -20,3 +20,7 @@ path = "src/bin/transcribe.rs"
 [[bin]]
 name = "transcribe-pcm"
 path = "src/bin/transcribe-pcm.rs"
+
+[[bin]]
+name = "record-and-transcribe"
+path = "src/bin/record-and-transcribe.rs"
