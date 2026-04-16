@@ -525,7 +525,32 @@ export const ipc = {
   listMeetings: () => invoke<Meeting[]>("list_meetings"),
   createMeeting: (title: string | null) =>
     invoke<Meeting>("create_meeting", { title }),
+  startMeetingRecording: (meetingPath: string) =>
+    invoke<void>("start_meeting_recording", { meetingPath }),
+  stopMeetingRecording: (
+    meetingPath: string,
+    language: string | null,
+    modelFilename: string,
+  ) =>
+    invoke<MeetingTranscript>("stop_meeting_recording", {
+      meetingPath,
+      language,
+      modelFilename,
+    }),
 };
+
+export interface MeetingTranscriptSegment {
+  startMs: number;
+  endMs: number;
+  text: string;
+}
+
+export interface MeetingTranscript {
+  language: string;
+  fullText: string;
+  segments: MeetingTranscriptSegment[];
+  durationMs: number;
+}
 
 export interface Meeting {
   path: string;

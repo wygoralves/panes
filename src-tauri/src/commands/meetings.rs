@@ -13,7 +13,7 @@
 //! macOS / Linux, auto-created on demand. A user-configurable override
 //! ships with the settings UX in a later milestone.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use panes_transcription::{
@@ -208,24 +208,66 @@ fn slugify(s: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
-/// Record a short mic capture through the audio-capture sidecar, transcribe
-/// the result with the bundled whisper.cpp, and append the transcript to the
-/// meeting document.
-///
-/// For v1 this is a single blocking flow: start sidecar → wait `duration_seconds`
-/// → read audio → transcribe → rewrite .md. The UI awaits the whole thing.
-/// Proper Stop button + streaming progress arrive in a later milestone.
+/// Start an unbounded mic + system audio recording for the given meeting.
+/// The audio-capture sidecar is spawned via `open` (so TCC attributes to the
+/// signed bundle) and runs until `stop_meeting_recording` sends it SIGTERM.
+/// The sidecar's PID is saved in a sibling `.pid` file so a later Stop call
+/// knows which process to signal — this survives a Panes relaunch, which
+/// keeps the interrupted-recording crash-recovery story open for later.
 #[tauri::command]
-pub async fn record_meeting(
+pub async fn start_meeting_recording(meeting_path: String) -> Result<(), String> {
+    let meeting_path = PathBuf::from(&meeting_path);
+    if !meeting_path.exists() {
+        return Err(format!("meeting file not found: {}", meeting_path.display()));
+    }
+
+    let bundle_path = audio_capture_bundle_path();
+    if !bundle_path.exists() {
+        return Err(format!(
+            "audio capture bundle not found at {}. Build it with src/sidecars/audio_capture/build.sh",
+            bundle_path.display()
+        ));
+    }
+
+    let audio_path = meeting_audio_path(&meeting_path)?;
+    let pid_path = recording_pid_path(&meeting_path)?;
+    let _ = std::fs::remove_file(&audio_path);
+    let _ = std::fs::remove_file(&pid_path);
+
+    // Launch via LaunchServices so the bundle's Info.plist keys (mic + system
+    // audio usage descriptions) drive the TCC prompt on first run.
+    let status = std::process::Command::new("open")
+        .arg(&bundle_path)
+        .arg("--args")
+        .arg("--mode")
+        .arg("both")
+        .arg("--output-file")
+        .arg(&audio_path)
+        .status()
+        .map_err(|e| format!("failed to spawn audio sidecar: {e}"))?;
+    if !status.success() {
+        return Err(format!("audio sidecar launch exited with {status}"));
+    }
+
+    // `open` returns before the spawned process is necessarily runnable via
+    // pgrep; give the OS a beat, then find the newest PanesAudioCapture PID.
+    let pid = find_sidecar_pid().await.map_err(|e| e.to_string())?;
+    std::fs::write(&pid_path, pid.to_string())
+        .map_err(|e| format!("failed to write pid file: {e}"))?;
+
+    Ok(())
+}
+
+/// Terminate the recording started by `start_meeting_recording`, wait briefly
+/// for the sidecar to flush, then read the captured audio, mix mic + system,
+/// transcribe with whisper.cpp, and rewrite the meeting's `## Transcript`
+/// section.
+#[tauri::command]
+pub async fn stop_meeting_recording(
     meeting_path: String,
-    duration_seconds: u64,
     language: Option<String>,
     model_filename: String,
 ) -> Result<TranscriptDto, String> {
-    if duration_seconds == 0 || duration_seconds > 600 {
-        return Err("duration must be between 1 and 600 seconds".to_string());
-    }
-
     let meeting_path = PathBuf::from(&meeting_path);
     if !meeting_path.exists() {
         return Err(format!("meeting file not found: {}", meeting_path.display()));
@@ -241,48 +283,26 @@ pub async fn record_meeting(
         ));
     }
 
-    let bundle_path = audio_capture_bundle_path();
-    if !bundle_path.exists() {
-        return Err(format!(
-            "audio capture bundle not found at {}. Build it with src/sidecars/audio_capture/build.sh",
-            bundle_path.display()
-        ));
-    }
+    let pid_path = recording_pid_path(&meeting_path)?;
+    let pid_contents = std::fs::read_to_string(&pid_path).map_err(|e| {
+        format!("no active recording for this meeting (missing pid file: {e})")
+    })?;
+    let pid: u32 = pid_contents
+        .trim()
+        .parse()
+        .map_err(|e| format!("invalid pid in {}: {e}", pid_path.display()))?;
 
-    // Audio lives in a sibling audio/ directory next to the meeting markdown.
-    let audio_dir = meeting_path
-        .parent()
-        .ok_or_else(|| "meeting has no parent directory".to_string())?
-        .join("audio");
-    std::fs::create_dir_all(&audio_dir).map_err(|e| e.to_string())?;
-    let audio_stem = meeting_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("recording");
-    // --mode both writes a length-prefixed tagged-frame stream, not raw PCM,
-    // so use a .bin extension to avoid confusing anyone who expects float32 data.
-    let audio_path = audio_dir.join(format!("{}.bin", audio_stem));
-    let _ = std::fs::remove_file(&audio_path);
+    // SIGTERM triggers the sidecar's signal handler which closes the file and exits.
+    let _ = std::process::Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status();
 
-    let status = std::process::Command::new("open")
-        .arg(&bundle_path)
-        .arg("--args")
-        .arg("--mode")
-        .arg("both")
-        .arg("--output-file")
-        .arg(&audio_path)
-        .arg("--duration")
-        .arg(duration_seconds.to_string())
-        .status()
-        .map_err(|e| format!("failed to spawn audio sidecar: {e}"))?;
-    if !status.success() {
-        return Err(format!("audio sidecar launch exited with {status}"));
-    }
+    // Give the sidecar time to flush and exit before we read the file.
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    let _ = std::fs::remove_file(&pid_path);
 
-    // `open` returns immediately; wait for the sidecar's self-timed --duration,
-    // plus a small grace window for file-system flush before we read.
-    tokio::time::sleep(std::time::Duration::from_secs(duration_seconds + 2)).await;
-
+    let audio_path = meeting_audio_path(&meeting_path)?;
     let audio_bytes = tokio::task::spawn_blocking({
         let audio_path = audio_path.clone();
         move || std::fs::read(&audio_path)
@@ -292,14 +312,14 @@ pub async fn record_meeting(
     .map_err(|e| format!("failed to read captured audio at {}: {e}", audio_path.display()))?;
 
     if audio_bytes.is_empty() {
-        return Err("audio sidecar produced no data — check mic and system audio permissions".to_string());
+        return Err("sidecar produced no data — check mic and system audio permissions".to_string());
     }
 
     let (mic, system) = parse_framed_pcm(&audio_bytes).map_err(|e| e.to_string())?;
     let mixed_samples = mix_sources(&mic, &system);
     let common_rate = mic.rate.max(system.rate.max(1));
     if mixed_samples.is_empty() {
-        return Err("no audio samples in captured stream — check permissions".to_string());
+        return Err("no audio samples decoded from captured stream".to_string());
     }
 
     let transcriber = WhisperTranscriber::new(model_path).map_err(|e| e.to_string())?;
@@ -336,6 +356,52 @@ pub async fn record_meeting(
             .collect(),
         duration_ms,
     })
+}
+
+fn meeting_audio_path(meeting_path: &Path) -> Result<PathBuf, String> {
+    let audio_dir = meeting_path
+        .parent()
+        .ok_or_else(|| "meeting has no parent directory".to_string())?
+        .join("audio");
+    std::fs::create_dir_all(&audio_dir).map_err(|e| e.to_string())?;
+    let stem = meeting_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("recording");
+    Ok(audio_dir.join(format!("{}.bin", stem)))
+}
+
+fn recording_pid_path(meeting_path: &Path) -> Result<PathBuf, String> {
+    let audio_dir = meeting_path
+        .parent()
+        .ok_or_else(|| "meeting has no parent directory".to_string())?
+        .join("audio");
+    std::fs::create_dir_all(&audio_dir).map_err(|e| e.to_string())?;
+    let stem = meeting_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("recording");
+    Ok(audio_dir.join(format!("{}.pid", stem)))
+}
+
+async fn find_sidecar_pid() -> Result<u32, String> {
+    // Wait up to ~1.5s for the sidecar to register with the process list.
+    for _ in 0..6 {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let output = std::process::Command::new("pgrep")
+            .arg("-n") // newest
+            .arg("-f")
+            .arg("PanesAudioCapture")
+            .output();
+        if let Ok(out) = output {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let trimmed = text.trim();
+            if let Ok(pid) = trimmed.parse::<u32>() {
+                return Ok(pid);
+            }
+        }
+    }
+    Err("could not locate PanesAudioCapture process after launch".to_string())
 }
 
 fn model_dir() -> Result<PathBuf, std::io::Error> {

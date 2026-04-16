@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
 import { ipc, type Meeting } from "../../lib/ipc";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
-import { MeetingEditorHeader } from "../editor/MeetingEditorHeader";
+import {
+  MeetingEditorHeader,
+  type MeetingLanguage,
+} from "../editor/MeetingEditorHeader";
 
 const AUTOSAVE_DELAY_MS = 1200;
-const RECORDING_DURATION_SECONDS = 10;
 const DEFAULT_MODEL = "ggml-base.bin";
+
+type RecorderState = "idle" | "recording" | "transcribing";
 
 function dirnameOf(filePath: string): string {
   const i = filePath.lastIndexOf("/");
@@ -22,10 +25,11 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
+  const [recorderState, setRecorderState] = useState<RecorderState>("idle");
   const [recordError, setRecordError] = useState<string | null>(null);
-  const [language, setLanguage] = useState<"en" | "pt">("en");
-  const latestContentRef = useRef<string>("");
+  const [language, setLanguage] = useState<MeetingLanguage>("en");
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const recordStartedAtRef = useRef<number>(0);
 
   const dir = dirnameOf(meeting.path);
 
@@ -39,7 +43,6 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
       } else {
         setContent(result.content);
         setSavedContent(result.content);
-        latestContentRef.current = result.content;
       }
     } catch (e) {
       setLoadError(String(e));
@@ -52,11 +55,10 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
     void loadFile();
   }, [loadFile]);
 
-  // Autosave debounced: writes to disk when content diverges from savedContent.
+  // Debounced autosave of editor content back to disk.
   useEffect(() => {
     if (isLoading) return;
     if (content === savedContent) return;
-    latestContentRef.current = content;
     const handle = window.setTimeout(async () => {
       try {
         setIsSaving(true);
@@ -71,24 +73,46 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
     return () => window.clearTimeout(handle);
   }, [content, savedContent, isLoading, dir, meeting.path]);
 
-  async function onRecord() {
-    if (isRecording) return;
-    setIsRecording(true);
+  // Recording timer.
+  useEffect(() => {
+    if (recorderState !== "recording") return;
+    recordStartedAtRef.current = Date.now();
+    setElapsedSeconds(0);
+    const handle = window.setInterval(() => {
+      setElapsedSeconds(
+        Math.floor((Date.now() - recordStartedAtRef.current) / 1000),
+      );
+    }, 1000);
+    return () => window.clearInterval(handle);
+  }, [recorderState]);
+
+  const startRecording = useCallback(async () => {
     setRecordError(null);
     try {
-      await invoke("record_meeting", {
-        meetingPath: meeting.path,
-        durationSeconds: RECORDING_DURATION_SECONDS,
-        language,
-        modelFilename: DEFAULT_MODEL,
-      });
+      await ipc.startMeetingRecording(meeting.path);
+      setRecorderState("recording");
+    } catch (e) {
+      setRecordError(String(e));
+    }
+  }, [meeting.path]);
+
+  const stopRecording = useCallback(async () => {
+    setRecorderState("transcribing");
+    try {
+      await ipc.stopMeetingRecording(meeting.path, language, DEFAULT_MODEL);
       await loadFile();
     } catch (e) {
       setRecordError(String(e));
     } finally {
-      setIsRecording(false);
+      setRecorderState("idle");
     }
-  }
+  }, [meeting.path, language, loadFile]);
+
+  const onRecordToggle = useCallback(() => {
+    if (recorderState === "idle") void startRecording();
+    else if (recorderState === "recording") void stopRecording();
+    // "transcribing" ignores clicks
+  }, [recorderState, startRecording, stopRecording]);
 
   if (isLoading) {
     return (
@@ -129,10 +153,11 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
       <MeetingEditorHeader
         language={language}
         onLanguageChange={setLanguage}
-        isRecording={isRecording}
-        onRecord={() => void onRecord()}
+        recorderState={recorderState}
+        onRecord={onRecordToggle}
         titleHint={meeting.title}
         isSaving={isSaving}
+        elapsedSeconds={elapsedSeconds}
       />
       {recordError ? (
         <div
