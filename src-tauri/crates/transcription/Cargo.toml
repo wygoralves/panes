@@ -16,3 +16,7 @@ hound = "3.5"
 [[bin]]
 name = "transcribe"
 path = "src/bin/transcribe.rs"
+
+[[bin]]
+name = "transcribe-pcm"
+path = "src/bin/transcribe-pcm.rs"

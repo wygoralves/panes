@@ -2,13 +2,14 @@
 //!
 //! Exposes a `Transcriber` trait and a `WhisperTranscriber` implementation
 //! backed by `whisper.cpp` (via the `whisper-rs` crate) with Metal
-//! acceleration on Apple Silicon. Consumers pass a path to a 16 kHz mono
-//! 16-bit WAV file and receive a `Transcript` with per-segment timestamps
-//! and a concatenated full-text string.
+//! acceleration on Apple Silicon. Two entry points:
 //!
-//! Non-16 kHz / non-mono inputs are rejected today. Resampling and channel
-//! conversion belong in the caller (or a later milestone that takes the
-//! meeting sidecar's native-rate PCM directly).
+//! - `transcribe_wav(path, options)` — accepts any WAV the bundled reader
+//!   understands (16 kHz mono, currently).
+//! - `transcribe_pcm_f32(samples, source_rate, channels, options)` — takes
+//!   raw float32 samples at arbitrary rate/channel count, downmixes to mono
+//!   and linear-resamples to 16 kHz internally. This is the path the
+//!   audio-capture sidecar feeds into.
 
 use std::path::{Path, PathBuf};
 
@@ -20,11 +21,8 @@ use whisper_rs::{
 
 #[derive(Debug, Clone, Default)]
 pub struct TranscriptionOptions {
-    /// ISO language code (e.g. `"en"`, `"pt"`). `None` lets Whisper auto-detect.
     pub language: Option<String>,
-    /// Thread count for whisper.cpp. `None` delegates to a sensible default.
     pub n_threads: Option<usize>,
-    /// Translate to English when `true` (Whisper's translate mode).
     pub translate: bool,
 }
 
@@ -37,11 +35,8 @@ pub struct TranscriptSegment {
 
 #[derive(Debug, Clone)]
 pub struct Transcript {
-    /// Requested language, or `"auto"` when auto-detection was used.
     pub language: String,
     pub segments: Vec<TranscriptSegment>,
-    /// Concatenation of every segment's text. Spaces/newlines are preserved
-    /// as produced by whisper.cpp.
     pub full_text: String,
 }
 
@@ -66,6 +61,14 @@ pub trait Transcriber: Send + Sync {
     async fn transcribe_wav(
         &self,
         wav_path: PathBuf,
+        options: TranscriptionOptions,
+    ) -> Result<Transcript, TranscriptionError>;
+
+    async fn transcribe_pcm_f32(
+        &self,
+        samples: Vec<f32>,
+        source_rate: u32,
+        channels: u8,
         options: TranscriptionOptions,
     ) -> Result<Transcript, TranscriptionError>;
 }
@@ -95,16 +98,34 @@ impl Transcriber for WhisperTranscriber {
     ) -> Result<Transcript, TranscriptionError> {
         let model_path = self.model_path.clone();
         tokio::task::spawn_blocking(move || {
-            transcribe_blocking(&model_path, &wav_path, options)
+            let samples = read_wav_as_f32_mono_16k(&wav_path)?;
+            run_whisper(&model_path, &samples, options)
+        })
+        .await
+        .map_err(|e| TranscriptionError::Join(e.to_string()))?
+    }
+
+    async fn transcribe_pcm_f32(
+        &self,
+        samples: Vec<f32>,
+        source_rate: u32,
+        channels: u8,
+        options: TranscriptionOptions,
+    ) -> Result<Transcript, TranscriptionError> {
+        let model_path = self.model_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mono = downmix_to_mono(&samples, channels)?;
+            let resampled = resample_linear(&mono, source_rate, 16_000);
+            run_whisper(&model_path, &resampled, options)
         })
         .await
         .map_err(|e| TranscriptionError::Join(e.to_string()))?
     }
 }
 
-fn transcribe_blocking(
+fn run_whisper(
     model_path: &Path,
-    wav_path: &Path,
+    samples: &[f32],
     options: TranscriptionOptions,
 ) -> Result<Transcript, TranscriptionError> {
     let ctx = WhisperContext::new_with_params(
@@ -112,8 +133,6 @@ fn transcribe_blocking(
         WhisperContextParameters::default(),
     )
     .map_err(|e| TranscriptionError::ModelLoad(format!("{e:?}")))?;
-
-    let samples = read_wav_as_f32_mono_16k(wav_path)?;
 
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
     if let Some(lang) = options.language.as_deref() {
@@ -131,7 +150,7 @@ fn transcribe_blocking(
         .create_state()
         .map_err(|e| TranscriptionError::Transcription(format!("create_state: {e:?}")))?;
     state
-        .full(params, &samples)
+        .full(params, samples)
         .map_err(|e| TranscriptionError::Transcription(format!("full: {e:?}")))?;
 
     let num_segments = state.full_n_segments();
@@ -145,10 +164,8 @@ fn transcribe_blocking(
             .to_str()
             .map_err(|e| TranscriptionError::Transcription(format!("segment text: {e:?}")))?
             .to_string();
-        // whisper.cpp timestamps are in 10ms (centisecond) units.
         let start_ms = segment.start_timestamp().max(0) as u64 * 10;
         let end_ms = segment.end_timestamp().max(0) as u64 * 10;
-
         segments.push(TranscriptSegment {
             start_ms,
             end_ms,
@@ -170,13 +187,13 @@ fn read_wav_as_f32_mono_16k(path: &Path) -> Result<Vec<f32>, TranscriptionError>
 
     if spec.sample_rate != 16_000 {
         return Err(TranscriptionError::UnsupportedFormat(format!(
-            "expected 16000 Hz, got {} Hz (caller must resample)",
+            "expected 16000 Hz, got {} Hz",
             spec.sample_rate
         )));
     }
     if spec.channels != 1 {
         return Err(TranscriptionError::UnsupportedFormat(format!(
-            "expected mono, got {} channels (caller must downmix)",
+            "expected mono, got {} channels",
             spec.channels
         )));
     }
@@ -198,4 +215,87 @@ fn read_wav_as_f32_mono_16k(path: &Path) -> Result<Vec<f32>, TranscriptionError>
     };
 
     Ok(samples)
+}
+
+fn downmix_to_mono(samples: &[f32], channels: u8) -> Result<Vec<f32>, TranscriptionError> {
+    match channels {
+        1 => Ok(samples.to_vec()),
+        n if n >= 2 => {
+            let n = n as usize;
+            let out_len = samples.len() / n;
+            let mut out = Vec::with_capacity(out_len);
+            let scale = 1.0 / n as f32;
+            for frame in samples.chunks_exact(n) {
+                let sum: f32 = frame.iter().sum();
+                out.push(sum * scale);
+            }
+            Ok(out)
+        }
+        _ => Err(TranscriptionError::UnsupportedFormat(format!(
+            "expected channels >= 1, got {}",
+            channels
+        ))),
+    }
+}
+
+/// Linear interpolation resampler. Fast and dependency-free. Adequate for
+/// speech recognition with whisper, which does significant frontend processing
+/// (mel spectrogram) that smooths over minor aliasing. For music or
+/// archival-quality audio this would be replaced with a proper polyphase
+/// resampler like `rubato`.
+fn resample_linear(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate || input.is_empty() {
+        return input.to_vec();
+    }
+    let ratio = from_rate as f64 / to_rate as f64;
+    let out_len = ((input.len() as f64) / ratio).floor() as usize;
+    let mut out = Vec::with_capacity(out_len);
+    for i in 0..out_len {
+        let src_f = i as f64 * ratio;
+        let src_i = src_f.floor() as usize;
+        if src_i >= input.len() {
+            break;
+        }
+        let frac = (src_f - src_f.floor()) as f32;
+        let s0 = input[src_i];
+        let s1 = if src_i + 1 < input.len() {
+            input[src_i + 1]
+        } else {
+            s0
+        };
+        out.push(s0 * (1.0 - frac) + s1 * frac);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resample_identity_when_rates_match() {
+        let input = vec![0.1, 0.2, 0.3, 0.4];
+        assert_eq!(resample_linear(&input, 16_000, 16_000), input);
+    }
+
+    #[test]
+    fn resample_downsample_length() {
+        let input: Vec<f32> = (0..44_100).map(|i| (i as f32) / 44_100.0).collect();
+        let out = resample_linear(&input, 44_100, 16_000);
+        // ~16k samples ± 1 from floor()
+        assert!((out.len() as i64 - 16_000).abs() <= 2, "got {}", out.len());
+    }
+
+    #[test]
+    fn downmix_stereo_to_mono_averages_channels() {
+        let stereo = vec![1.0, -1.0, 0.5, -0.5];
+        let mono = downmix_to_mono(&stereo, 2).unwrap();
+        assert_eq!(mono, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn downmix_mono_pass_through() {
+        let mono = vec![0.1, 0.2, 0.3];
+        assert_eq!(downmix_to_mono(&mono, 1).unwrap(), mono);
+    }
 }
