@@ -259,14 +259,16 @@ pub async fn record_meeting(
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("recording");
-    let audio_path = audio_dir.join(format!("{}.f32", audio_stem));
-    let _ = std::fs::remove_file(&audio_path); // ignore if missing
+    // --mode both writes a length-prefixed tagged-frame stream, not raw PCM,
+    // so use a .bin extension to avoid confusing anyone who expects float32 data.
+    let audio_path = audio_dir.join(format!("{}.bin", audio_stem));
+    let _ = std::fs::remove_file(&audio_path);
 
     let status = std::process::Command::new("open")
         .arg(&bundle_path)
         .arg("--args")
         .arg("--mode")
-        .arg("mic")
+        .arg("both")
         .arg("--output-file")
         .arg(&audio_path)
         .arg("--duration")
@@ -278,7 +280,7 @@ pub async fn record_meeting(
     }
 
     // `open` returns immediately; wait for the sidecar's self-timed --duration,
-    // plus a small grace window for file-system flush before we read the PCM.
+    // plus a small grace window for file-system flush before we read.
     tokio::time::sleep(std::time::Duration::from_secs(duration_seconds + 2)).await;
 
     let audio_bytes = tokio::task::spawn_blocking({
@@ -290,17 +292,14 @@ pub async fn record_meeting(
     .map_err(|e| format!("failed to read captured audio at {}: {e}", audio_path.display()))?;
 
     if audio_bytes.is_empty() {
-        return Err("audio sidecar produced no samples — check mic permission".to_string());
+        return Err("audio sidecar produced no data — check mic and system audio permissions".to_string());
     }
-    if audio_bytes.len() % 4 != 0 {
-        return Err(format!(
-            "captured audio length {} is not a multiple of 4",
-            audio_bytes.len()
-        ));
-    }
-    let mut samples = Vec::with_capacity(audio_bytes.len() / 4);
-    for chunk in audio_bytes.chunks_exact(4) {
-        samples.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+
+    let (mic, system) = parse_framed_pcm(&audio_bytes).map_err(|e| e.to_string())?;
+    let mixed_samples = mix_sources(&mic, &system);
+    let common_rate = mic.rate.max(system.rate.max(1));
+    if mixed_samples.is_empty() {
+        return Err("no audio samples in captured stream — check permissions".to_string());
     }
 
     let transcriber = WhisperTranscriber::new(model_path).map_err(|e| e.to_string())?;
@@ -309,9 +308,8 @@ pub async fn record_meeting(
         n_threads: None,
         translate: false,
     };
-    // Mic mode output: 44.1 kHz, 1 channel.
     let transcript = transcriber
-        .transcribe_pcm_f32(samples, 44_100, 1, options)
+        .transcribe_pcm_f32(mixed_samples, common_rate, 1, options)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -348,6 +346,156 @@ fn model_dir() -> Result<PathBuf, std::io::Error> {
         .join(".agent-workspace")
         .join("models")
         .join("whisper"))
+}
+
+/// One channel's worth of decoded audio at its native sample rate.
+struct SourceAudio {
+    samples: Vec<f32>,
+    rate: u32,
+    channels: u8,
+}
+
+impl SourceAudio {
+    fn empty() -> Self {
+        SourceAudio { samples: Vec::new(), rate: 0, channels: 0 }
+    }
+}
+
+/// Parse the framed output produced by the audio-capture sidecar in
+/// `--mode both`. Frame layout:
+///   u8  sourceId   (0 = mic, 1 = system)
+///   u32 sampleRate (Hz, little-endian)
+///   u8  channels
+///   u32 sampleCount (number of float32 samples, little-endian; includes all channels)
+///   f32[sampleCount] interleaved samples
+fn parse_framed_pcm(bytes: &[u8]) -> Result<(SourceAudio, SourceAudio), String> {
+    let mut mic = SourceAudio::empty();
+    let mut system = SourceAudio::empty();
+    let mut offset = 0usize;
+    while offset + 10 <= bytes.len() {
+        let source_id = bytes[offset];
+        offset += 1;
+        let rate = u32::from_le_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ]);
+        offset += 4;
+        let channels = bytes[offset];
+        offset += 1;
+        let sample_count = u32::from_le_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ]) as usize;
+        offset += 4;
+
+        let payload_bytes = sample_count
+            .checked_mul(4)
+            .ok_or_else(|| "sample count overflow".to_string())?;
+        if offset + payload_bytes > bytes.len() {
+            return Err(format!("truncated frame payload at offset {offset}"));
+        }
+        let target = match source_id {
+            0 => &mut mic,
+            1 => &mut system,
+            other => {
+                return Err(format!("unknown source id {other} at offset {offset}"));
+            }
+        };
+        target.rate = rate;
+        target.channels = channels;
+        target.samples.reserve(sample_count);
+        for i in 0..sample_count {
+            let base = offset + i * 4;
+            target.samples.push(f32::from_le_bytes([
+                bytes[base],
+                bytes[base + 1],
+                bytes[base + 2],
+                bytes[base + 3],
+            ]));
+        }
+        offset += payload_bytes;
+    }
+    if offset != bytes.len() {
+        return Err(format!(
+            "framed stream has {} trailing bytes",
+            bytes.len() - offset
+        ));
+    }
+    Ok((mic, system))
+}
+
+fn downmix_to_mono(samples: &[f32], channels: u8) -> Vec<f32> {
+    if channels <= 1 || samples.is_empty() {
+        return samples.to_vec();
+    }
+    let channels = channels as usize;
+    let mut out = Vec::with_capacity(samples.len() / channels);
+    let scale = 1.0 / channels as f32;
+    for frame in samples.chunks_exact(channels) {
+        out.push(frame.iter().sum::<f32>() * scale);
+    }
+    out
+}
+
+fn resample_linear(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate || input.is_empty() {
+        return input.to_vec();
+    }
+    let ratio = from_rate as f64 / to_rate as f64;
+    let out_len = ((input.len() as f64) / ratio).floor() as usize;
+    let mut out = Vec::with_capacity(out_len);
+    for i in 0..out_len {
+        let src_f = i as f64 * ratio;
+        let src_i = src_f.floor() as usize;
+        if src_i >= input.len() {
+            break;
+        }
+        let frac = (src_f - src_f.floor()) as f32;
+        let s0 = input[src_i];
+        let s1 = if src_i + 1 < input.len() {
+            input[src_i + 1]
+        } else {
+            s0
+        };
+        out.push(s0 * (1.0 - frac) + s1 * frac);
+    }
+    out
+}
+
+/// Additive mix of mic and system streams at a common rate. Each stream is
+/// first downmixed to mono (if multi-channel), then resampled to the higher
+/// of the two native rates. Samples are summed and divided by 2 to keep the
+/// output within [-1, 1] under typical conditions. Longer stream controls
+/// output length; the shorter one is padded with zeros.
+fn mix_sources(mic: &SourceAudio, system: &SourceAudio) -> Vec<f32> {
+    if mic.samples.is_empty() && system.samples.is_empty() {
+        return Vec::new();
+    }
+    let mic_mono = downmix_to_mono(&mic.samples, mic.channels.max(1));
+    let system_mono = downmix_to_mono(&system.samples, system.channels.max(1));
+    let target_rate = mic.rate.max(system.rate);
+    let mic_aligned = if mic.rate == target_rate || mic.rate == 0 {
+        mic_mono
+    } else {
+        resample_linear(&mic_mono, mic.rate, target_rate)
+    };
+    let system_aligned = if system.rate == target_rate || system.rate == 0 {
+        system_mono
+    } else {
+        resample_linear(&system_mono, system.rate, target_rate)
+    };
+    let len = mic_aligned.len().max(system_aligned.len());
+    let mut mixed = Vec::with_capacity(len);
+    for i in 0..len {
+        let a = mic_aligned.get(i).copied().unwrap_or(0.0);
+        let b = system_aligned.get(i).copied().unwrap_or(0.0);
+        mixed.push((a + b) * 0.5);
+    }
+    mixed
 }
 
 fn audio_capture_bundle_path() -> PathBuf {
