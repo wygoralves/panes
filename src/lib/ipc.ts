@@ -555,6 +555,7 @@ export interface MeetingTranscript {
   fullText: string;
   segments: MeetingTranscriptSegment[];
   durationMs: number;
+  warnings: string[];
 }
 
 export type WhisperModelTier =

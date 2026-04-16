@@ -38,6 +38,10 @@ pub struct TranscriptDto {
     pub full_text: String,
     pub segments: Vec<TranscriptSegmentDto>,
     pub duration_ms: u64,
+    /// Non-fatal issues detected during capture — e.g. system-audio permission
+    /// was silently denied, producing a mic-only recording. Frontend surfaces
+    /// these as toasts without blocking the flow.
+    pub warnings: Vec<String>,
 }
 
 /// Transcribe a 16 kHz mono WAV file using a local ggml whisper model.
@@ -85,6 +89,7 @@ pub async fn transcribe_wav_file(
             })
             .collect(),
         duration_ms,
+        warnings: Vec::new(),
     })
 }
 
@@ -99,11 +104,14 @@ pub struct MeetingDto {
 }
 
 /// List meeting documents in the user's meetings directory, newest first.
-/// Creates the directory if it does not yet exist.
+/// Creates the directory if it does not yet exist, and sweeps `audio/*.pid`
+/// files that belong to sidecar processes no longer running (or running but
+/// orphaned from a previous Panes session). Orphaned processes are SIGTERM'd.
 #[tauri::command]
 pub async fn list_meetings() -> Result<Vec<MeetingDto>, String> {
     let dir = meetings_dir().map_err(|e| e.to_string())?;
     tokio::task::spawn_blocking(move || -> Result<Vec<MeetingDto>, String> {
+        cleanup_orphaned_recordings(&dir);
         let mut out = Vec::new();
         for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
@@ -330,6 +338,10 @@ pub async fn stop_meeting_recording(
         n_threads: None,
         translate: false,
     };
+    let mut warnings = Vec::new();
+    if let Some(warning) = detect_silent_tap(&mic, &system) {
+        warnings.push(warning);
+    }
     let transcript = transcriber
         .transcribe_pcm_f32(mixed_samples, common_rate, 1, options)
         .await
@@ -357,7 +369,53 @@ pub async fn stop_meeting_recording(
             })
             .collect(),
         duration_ms,
+        warnings,
     })
+}
+
+/// Heuristic for the "silent system tap" failure mode called out in the spec.
+/// macOS provides no API to query whether a Core Audio tap's permission was
+/// denied — the tap just produces zero-amplitude samples. We check the first
+/// ~3 seconds of captured audio: if the mic channel has real signal but the
+/// system channel is essentially silent, something is wrong. In practice
+/// that almost always means the user declined the System Audio Recording
+/// TCC prompt. Thresholds are intentionally conservative so a meeting with
+/// zero remote audio in its first seconds (everyone muted) doesn't trigger
+/// a false positive.
+fn detect_silent_tap(mic: &SourceAudio, system: &SourceAudio) -> Option<String> {
+    if mic.samples.is_empty() || system.samples.is_empty() {
+        return None;
+    }
+    let mic_channels = mic.channels.max(1) as usize;
+    let system_channels = system.channels.max(1) as usize;
+    if mic.rate == 0 || system.rate == 0 {
+        return None;
+    }
+    let mic_window = (mic.rate as usize * 3 * mic_channels).min(mic.samples.len());
+    let system_window = (system.rate as usize * 3 * system_channels).min(system.samples.len());
+    if mic_window == 0 || system_window == 0 {
+        return None;
+    }
+    let mic_mean = mic.samples[..mic_window]
+        .iter()
+        .map(|x| x.abs())
+        .sum::<f32>()
+        / mic_window as f32;
+    let system_mean = system.samples[..system_window]
+        .iter()
+        .map(|x| x.abs())
+        .sum::<f32>()
+        / system_window as f32;
+
+    if mic_mean > 0.001 && system_mean < 0.00005 {
+        Some(
+            "System audio appears blocked — only your microphone was captured. \
+             Open System Settings → Privacy & Security → System Audio Recording and make sure PanesAudioCapture is allowed."
+                .to_string(),
+        )
+    } else {
+        None
+    }
 }
 
 fn meeting_audio_path(meeting_path: &Path) -> Result<PathBuf, String> {
@@ -384,6 +442,41 @@ fn recording_pid_path(meeting_path: &Path) -> Result<PathBuf, String> {
         .and_then(|s| s.to_str())
         .unwrap_or("recording");
     Ok(audio_dir.join(format!("{}.pid", stem)))
+}
+
+/// Scan `<meetings_dir>/audio/*.pid` for orphaned sidecar recordings from
+/// a previous session and clean them up. If the referenced PID is still
+/// alive, send SIGTERM so the sidecar doesn't keep recording audio for a
+/// session the user can no longer reach. Remove the pid file in either
+/// case.
+fn cleanup_orphaned_recordings(meetings_dir: &Path) {
+    let audio_dir = meetings_dir.join("audio");
+    let Ok(entries) = std::fs::read_dir(&audio_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("pid") {
+            continue;
+        }
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(pid) = content.trim().parse::<u32>() {
+                let alive = std::process::Command::new("kill")
+                    .arg("-0")
+                    .arg(pid.to_string())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if alive {
+                    let _ = std::process::Command::new("kill")
+                        .arg("-TERM")
+                        .arg(pid.to_string())
+                        .status();
+                }
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+    }
 }
 
 async fn find_sidecar_pid() -> Result<u32, String> {

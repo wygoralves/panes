@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { ipc, type Meeting } from "../../lib/ipc";
+import { toast } from "../../stores/toastStore";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import {
   MeetingEditorHeader,
@@ -118,8 +119,15 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
           "No Whisper model is downloaded. Open the model catalog from the Meetings sidebar.",
         );
       }
-      await ipc.stopMeetingRecording(meeting.path, language, chosen);
+      const transcript = await ipc.stopMeetingRecording(
+        meeting.path,
+        language,
+        chosen,
+      );
       await loadFile();
+      for (const warning of transcript.warnings) {
+        toast.warning(warning, 10_000);
+      }
     } catch (e) {
       setRecordError(String(e));
     } finally {
