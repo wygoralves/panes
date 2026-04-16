@@ -525,6 +525,8 @@ export const ipc = {
   listMeetings: () => invoke<Meeting[]>("list_meetings"),
   createMeeting: (title: string | null) =>
     invoke<Meeting>("create_meeting", { title }),
+  setMeetingFrontmatter: (meetingPath: string, updates: Record<string, string>) =>
+    invoke<Meeting>("set_meeting_frontmatter", { meetingPath, updates }),
   startMeetingRecording: (meetingPath: string) =>
     invoke<void>("start_meeting_recording", { meetingPath }),
   stopMeetingRecording: (

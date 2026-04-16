@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AudioLines, Circle, Globe, Loader2, Square } from "lucide-react";
+import type { WhisperModel } from "../../lib/ipc";
 
 export type MeetingLanguage = "en" | "pt";
 export type MeetingRecorderState = "idle" | "recording" | "transcribing";
@@ -10,9 +11,13 @@ interface Props {
   onLanguageChange?: (v: MeetingLanguage) => void;
   recorderState?: MeetingRecorderState;
   onRecord?: () => void;
-  titleHint?: string;
+  title?: string;
+  onTitleChange?: (v: string) => void;
   isSaving?: boolean;
   elapsedSeconds?: number;
+  availableModels?: WhisperModel[];
+  selectedModel?: string | null;
+  onModelChange?: (name: string | null) => void;
 }
 
 function formatElapsed(seconds: number): string {
@@ -26,9 +31,13 @@ export function MeetingEditorHeader({
   onLanguageChange,
   recorderState = "idle",
   onRecord,
-  titleHint,
+  title,
+  onTitleChange,
   isSaving = false,
   elapsedSeconds = 0,
+  availableModels,
+  selectedModel,
+  onModelChange,
 }: Props = {}) {
   const { t } = useTranslation("app");
   const [fallbackLanguage, setFallbackLanguage] = useState<MeetingLanguage>("en");
@@ -37,13 +46,13 @@ export function MeetingEditorHeader({
   const recordable = typeof onRecord === "function";
   const isRecording = recorderState === "recording";
   const isTranscribing = recorderState === "transcribing";
+  const busy = isRecording || isTranscribing;
 
   return (
     <div
       style={{
         display: "flex",
         alignItems: "center",
-        justifyContent: "space-between",
         gap: 12,
         padding: "8px 16px",
         borderBottom: "1px solid rgba(255,255,255,0.06)",
@@ -61,18 +70,33 @@ export function MeetingEditorHeader({
         }}
       >
         <AudioLines size={14} strokeWidth={1.5} style={{ opacity: 0.7, flexShrink: 0 }} />
-        <span
+        <input
+          type="text"
+          value={title ?? ""}
+          onChange={onTitleChange ? (e) => onTitleChange(e.target.value) : undefined}
+          placeholder={t("meetings.titlePlaceholder")}
+          disabled={busy || !onTitleChange}
           style={{
-            fontSize: 12,
-            color: "var(--text-2)",
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
+            minWidth: 0,
+            flex: 1,
+            padding: "2px 4px",
+            fontSize: 13,
+            fontWeight: 500,
+            color: "var(--text-1)",
+            background: "transparent",
+            border: "1px solid transparent",
+            borderRadius: 3,
+            outline: "none",
           }}
-          title={titleHint}
-        >
-          {titleHint ?? t("meetings.editorLabel")}
-        </span>
+          onFocus={(e) => {
+            e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)";
+            e.currentTarget.style.background = "rgba(255,255,255,0.03)";
+          }}
+          onBlur={(e) => {
+            e.currentTarget.style.borderColor = "transparent";
+            e.currentTarget.style.background = "transparent";
+          }}
+        />
         {isSaving ? (
           <span
             style={{
@@ -81,7 +105,7 @@ export function MeetingEditorHeader({
               gap: 4,
               color: "var(--text-3)",
               fontSize: 11,
-              marginLeft: 6,
+              flexShrink: 0,
             }}
           >
             <Loader2 size={10} className="animate-spin" />
@@ -90,11 +114,20 @@ export function MeetingEditorHeader({
         ) : null}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+        {availableModels && availableModels.length > 0 ? (
+          <ModelDropdown
+            models={availableModels}
+            selected={selectedModel ?? null}
+            onChange={onModelChange ?? (() => {})}
+            disabled={busy}
+            autoLabel={t("meetings.modelAuto")}
+          />
+        ) : null}
         <LanguageToggle
           value={effectiveLanguage}
           onChange={setLanguage}
-          disabled={isRecording || isTranscribing}
+          disabled={busy}
         />
         <button
           type="button"
@@ -194,6 +227,47 @@ function LanguageToggle({
         </button>
       ))}
     </div>
+  );
+}
+
+function ModelDropdown({
+  models,
+  selected,
+  onChange,
+  disabled,
+  autoLabel,
+}: {
+  models: WhisperModel[];
+  selected: string | null;
+  onChange: (name: string | null) => void;
+  disabled: boolean;
+  autoLabel: string;
+}) {
+  return (
+    <select
+      value={selected ?? ""}
+      onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+      disabled={disabled}
+      title={autoLabel}
+      style={{
+        padding: "3px 8px",
+        fontSize: 11,
+        border: "1px solid rgba(255,255,255,0.08)",
+        borderRadius: 4,
+        background: "transparent",
+        color: "var(--text-2)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+        maxWidth: 160,
+      }}
+    >
+      <option value="">{autoLabel}</option>
+      {models.map((m) => (
+        <option key={m.name} value={m.name}>
+          {m.displayName}
+        </option>
+      ))}
+    </select>
   );
 }
 

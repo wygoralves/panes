@@ -120,11 +120,12 @@ pub async fn list_meetings() -> Result<Vec<MeetingDto>, String> {
                 continue;
             }
             let metadata = entry.metadata().map_err(|e| e.to_string())?;
-            let title = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("untitled")
-                .to_string();
+            let title = read_frontmatter_title(&path).unwrap_or_else(|| {
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("untitled")
+                    .to_string()
+            });
             out.push(MeetingDto {
                 path: path.to_string_lossy().to_string(),
                 title,
@@ -160,8 +161,10 @@ pub async fn create_meeting(title: Option<String>) -> Result<MeetingDto, String>
     };
     let path = dir.join(filename);
 
+    // The header shows the title from frontmatter, so we don't seed a `#`
+    // heading in the body. Users who want an in-body heading can add one.
     let body = format!(
-        "---\ntitle: {title}\ndate: {date}\nduration: 0\nlanguage: en\nrecording: false\n---\n\n# {title}\n\n## Notes\n\n## Transcript\n",
+        "---\ntitle: {title}\ndate: {date}\nduration: 0\nlanguage: en\nrecording: false\n---\n\n## Notes\n\n## Transcript\n",
         title = display_title,
         date = now.to_rfc3339(),
     );
@@ -182,6 +185,96 @@ pub async fn create_meeting(title: Option<String>) -> Result<MeetingDto, String>
         updated_at: systime_to_iso(metadata.modified().ok()),
         size_bytes: metadata.len(),
     })
+}
+
+/// Update a subset of frontmatter fields on a meeting document and return
+/// the refreshed DTO so callers can re-render list rows. Unknown keys are
+/// written through; empty string values remove a field.
+#[tauri::command]
+pub async fn set_meeting_frontmatter(
+    meeting_path: String,
+    updates: std::collections::HashMap<String, String>,
+) -> Result<MeetingDto, String> {
+    let meeting_path = PathBuf::from(&meeting_path);
+    if !meeting_path.exists() {
+        return Err(format!("meeting file not found: {}", meeting_path.display()));
+    }
+    let updates_clone = updates.clone();
+    let path_clone = meeting_path.clone();
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let existing = std::fs::read_to_string(&path_clone).map_err(|e| e.to_string())?;
+        let (frontmatter, body) = split_frontmatter(&existing);
+        let mut lines: Vec<String> = frontmatter.lines().map(|l| l.to_string()).collect();
+        for (key, value) in updates_clone.iter() {
+            let prefix = format!("{key}:");
+            let new_line = if value.is_empty() {
+                None
+            } else {
+                Some(format!("{key}: {value}"))
+            };
+            let position = lines.iter().position(|l| l.trim_start().starts_with(&prefix));
+            match (position, new_line) {
+                (Some(idx), Some(line)) => lines[idx] = line,
+                (Some(idx), None) => {
+                    lines.remove(idx);
+                }
+                (None, Some(line)) => lines.push(line),
+                (None, None) => {}
+            }
+        }
+        let mut rebuilt = lines.join("\n");
+        if !rebuilt.ends_with('\n') {
+            rebuilt.push('\n');
+        }
+        let new_contents = format!("---\n{rebuilt}---\n{body}");
+        std::fs::write(&path_clone, new_contents).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    let metadata = std::fs::metadata(&meeting_path).map_err(|e| e.to_string())?;
+    let title = updates
+        .get("title")
+        .filter(|t| !t.is_empty())
+        .cloned()
+        .unwrap_or_else(|| {
+            meeting_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Untitled")
+                .to_string()
+        });
+    Ok(MeetingDto {
+        path: meeting_path.to_string_lossy().to_string(),
+        title,
+        created_at: systime_to_iso(metadata.created().ok()),
+        updated_at: systime_to_iso(metadata.modified().ok()),
+        size_bytes: metadata.len(),
+    })
+}
+
+/// Read just the first few KB of a meeting markdown file and return the
+/// `title:` frontmatter value if present. Falls back to `None` for files
+/// without frontmatter or with a non-standard layout.
+fn read_frontmatter_title(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut buf = [0u8; 4096];
+    let n = file.read(&mut buf).ok()?;
+    let text = std::str::from_utf8(&buf[..n]).ok()?;
+    let rest = text.strip_prefix("---\n")?;
+    let end = rest.find("\n---")?;
+    let fm = &rest[..end];
+    for line in fm.lines() {
+        if let Some(value) = line.strip_prefix("title:") {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn meetings_dir() -> Result<PathBuf, std::io::Error> {

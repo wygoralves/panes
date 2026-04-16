@@ -311,6 +311,7 @@ pub fn run() {
             commands::meetings::transcribe_wav_file,
             commands::meetings::list_meetings,
             commands::meetings::create_meeting,
+            commands::meetings::set_meeting_frontmatter,
             commands::meetings::start_meeting_recording,
             commands::meetings::stop_meeting_recording,
             commands::meetings::list_whisper_models,

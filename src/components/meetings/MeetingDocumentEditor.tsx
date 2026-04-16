@@ -1,7 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
-import { ipc, type Meeting } from "../../lib/ipc";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { ipc, listenWhisperModelDownload, type Meeting, type WhisperModel } from "../../lib/ipc";
+import {
+  parseFrontmatterValue,
+  updateFrontmatterValue,
+} from "../../lib/meetingFrontmatter";
 import { toast } from "../../stores/toastStore";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import {
@@ -40,9 +45,20 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
   const [recordError, setRecordError] = useState<string | null>(null);
   const [language, setLanguage] = useState<MeetingLanguage>("en");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [availableModels, setAvailableModels] = useState<WhisperModel[]>([]);
   const recordStartedAtRef = useRef<number>(0);
+  const modelsListenerRef = useRef<UnlistenFn | null>(null);
 
   const dir = dirnameOf(meeting.path);
+
+  const title = useMemo(
+    () => parseFrontmatterValue(content, "title") ?? "",
+    [content],
+  );
+  const selectedModel = useMemo(
+    () => parseFrontmatterValue(content, "model"),
+    [content],
+  );
 
   const loadFile = useCallback(async () => {
     setIsLoading(true);
@@ -65,6 +81,37 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
   useEffect(() => {
     void loadFile();
   }, [loadFile]);
+
+  // Seed the language toggle from the meeting's frontmatter on load, so
+  // reopening a meeting restores its last-used language.
+  useEffect(() => {
+    if (isLoading) return;
+    const fmLang = parseFrontmatterValue(content, "language");
+    if (fmLang === "en" || fmLang === "pt") setLanguage(fmLang);
+    // Only run once per meeting load — not on every content change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading]);
+
+  const refreshModels = useCallback(async () => {
+    try {
+      const list = await ipc.listWhisperModels();
+      setAvailableModels(list.filter((m) => m.downloaded));
+    } catch {
+      setAvailableModels([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshModels();
+    void (async () => {
+      modelsListenerRef.current = await listenWhisperModelDownload((p) => {
+        if (p.done) void refreshModels();
+      });
+    })();
+    return () => {
+      if (modelsListenerRef.current) modelsListenerRef.current();
+    };
+  }, [refreshModels]);
 
   // Debounced autosave of editor content back to disk.
   useEffect(() => {
@@ -111,9 +158,12 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
     setRecorderState("transcribing");
     try {
       const models = await ipc.listWhisperModels();
-      const chosen = MODEL_PRIORITY.find((n) =>
-        models.some((m) => m.name === n && m.downloaded),
-      );
+      const preferred = parseFrontmatterValue(content, "model");
+      const chosen =
+        (preferred && models.find((m) => m.name === preferred && m.downloaded)?.name) ||
+        MODEL_PRIORITY.find((n) =>
+          models.some((m) => m.name === n && m.downloaded),
+        );
       if (!chosen) {
         throw new Error(
           "No Whisper model is downloaded. Open the model catalog from the Meetings sidebar.",
@@ -133,7 +183,20 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
     } finally {
       setRecorderState("idle");
     }
-  }, [meeting.path, language, loadFile]);
+  }, [meeting.path, language, loadFile, content]);
+
+  const onTitleChange = useCallback((next: string) => {
+    setContent((prev) => updateFrontmatterValue(prev, "title", next));
+  }, []);
+
+  const onModelChange = useCallback((next: string | null) => {
+    setContent((prev) => updateFrontmatterValue(prev, "model", next ?? ""));
+  }, []);
+
+  const onLanguageChangeWrapped = useCallback((next: MeetingLanguage) => {
+    setLanguage(next);
+    setContent((prev) => updateFrontmatterValue(prev, "language", next));
+  }, []);
 
   const onRecordToggle = useCallback(() => {
     if (recorderState === "idle") void startRecording();
@@ -179,12 +242,16 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <MeetingEditorHeader
         language={language}
-        onLanguageChange={setLanguage}
+        onLanguageChange={onLanguageChangeWrapped}
         recorderState={recorderState}
         onRecord={onRecordToggle}
-        titleHint={meeting.title}
+        title={title || meeting.title}
+        onTitleChange={onTitleChange}
         isSaving={isSaving}
         elapsedSeconds={elapsedSeconds}
+        availableModels={availableModels}
+        selectedModel={selectedModel}
+        onModelChange={onModelChange}
       />
       {recordError ? (
         <div

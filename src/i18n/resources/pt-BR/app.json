@@ -58,7 +58,9 @@
     "modelTier_recommended": "Recomendado",
     "setupBannerTitle": "Baixe um modelo Whisper para gravar reuniões",
     "setupBannerHint": "A gravação fica desativada até que um modelo esteja disponível localmente.",
-    "setupBannerAction": "Abrir catálogo de modelos"
+    "setupBannerAction": "Abrir catálogo de modelos",
+    "titlePlaceholder": "Reunião sem título",
+    "modelAuto": "Automático (melhor disponível)"
   },
   "sidebar": {
     "pin": "Fixar sidebar",

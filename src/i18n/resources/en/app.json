@@ -58,7 +58,9 @@
     "modelTier_recommended": "Recommended",
     "setupBannerTitle": "Download a Whisper model to record meetings",
     "setupBannerHint": "Recording is disabled until one model is available locally.",
-    "setupBannerAction": "Open model catalog"
+    "setupBannerAction": "Open model catalog",
+    "titlePlaceholder": "Untitled meeting",
+    "modelAuto": "Auto (best available)"
   },
   "sidebar": {
     "pin": "Pin sidebar",
