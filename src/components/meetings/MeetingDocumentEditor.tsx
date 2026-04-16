@@ -46,7 +46,7 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
   const [recorderState, setRecorderState] = useState<RecorderState>("idle");
   const [transcribeState, setTranscribeState] = useState<TranscribeState>("idle");
   const [recordError, setRecordError] = useState<string | null>(null);
-  const [language, setLanguage] = useState<MeetingLanguage>("en");
+  const [language, setLanguage] = useState<MeetingLanguage>("auto");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [availableModels, setAvailableModels] = useState<WhisperModel[]>([]);
   const modelsListenerRef = useRef<UnlistenFn | null>(null);
@@ -92,7 +92,9 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
   useEffect(() => {
     if (isLoading) return;
     const fmLang = parseFrontmatterValue(content, "language");
-    if (fmLang === "en" || fmLang === "pt") setLanguage(fmLang);
+    if (fmLang === "auto" || fmLang === "en" || fmLang === "pt") {
+      setLanguage(fmLang);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading]);
 
@@ -200,7 +202,11 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
           "No Whisper model is downloaded. Open the model catalog from the Meetings sidebar.",
         );
       }
-      const transcript = await ipc.transcribeMeeting(meeting.path, language, chosen);
+      const transcript = await ipc.transcribeMeeting(
+        meeting.path,
+        language === "auto" ? null : language,
+        chosen,
+      );
       await loadFile();
       for (const warning of transcript.warnings) {
         toast.warning(warning, 10_000);

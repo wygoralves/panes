@@ -69,7 +69,8 @@
     "setupBannerHint": "Recording is disabled until one model is available locally.",
     "setupBannerAction": "Open model catalog",
     "titlePlaceholder": "Untitled meeting",
-    "modelAuto": "Auto (best available)"
+    "modelAuto": "Auto (best available)",
+    "languageAuto": "Auto"
   },
   "sidebar": {
     "pin": "Pin sidebar",

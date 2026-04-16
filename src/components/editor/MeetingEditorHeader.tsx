@@ -4,7 +4,6 @@ import {
   AudioLines,
   Circle,
   FileText,
-  Globe,
   Loader2,
   Pause,
   Play,
@@ -12,7 +11,7 @@ import {
 } from "lucide-react";
 import type { WhisperModel } from "../../lib/ipc";
 
-export type MeetingLanguage = "en" | "pt";
+export type MeetingLanguage = "auto" | "en" | "pt";
 export type MeetingRecorderState = "idle" | "recording" | "paused";
 export type MeetingTranscribeState = "idle" | "transcribing";
 export type MeetingRecordAction = "start" | "pause" | "resume" | "stop";
@@ -57,7 +56,7 @@ export function MeetingEditorHeader({
   onModelChange,
 }: Props = {}) {
   const { t } = useTranslation("app");
-  const [fallbackLanguage, setFallbackLanguage] = useState<MeetingLanguage>("en");
+  const [fallbackLanguage, setFallbackLanguage] = useState<MeetingLanguage>("auto");
   const effectiveLanguage = language ?? fallbackLanguage;
   const setLanguage = onLanguageChange ?? setFallbackLanguage;
 
@@ -148,6 +147,7 @@ export function MeetingEditorHeader({
           value={effectiveLanguage}
           onChange={setLanguage}
           disabled={isActiveCapture || isTranscribing}
+          autoLabel={t("meetings.languageAuto")}
         />
 
         {/* Record / Pause / Resume / Stop cluster */}
@@ -227,11 +227,18 @@ function LanguageToggle({
   value,
   onChange,
   disabled = false,
+  autoLabel,
 }: {
   value: MeetingLanguage;
   onChange: (v: MeetingLanguage) => void;
   disabled?: boolean;
+  autoLabel: string;
 }) {
+  const options: { value: MeetingLanguage; label: string }[] = [
+    { value: "auto", label: autoLabel },
+    { value: "en", label: "EN" },
+    { value: "pt", label: "PT" },
+  ];
   return (
     <div
       style={{
@@ -244,24 +251,24 @@ function LanguageToggle({
         opacity: disabled ? 0.5 : 1,
       }}
     >
-      <Globe size={11} style={{ opacity: 0.5, margin: "0 6px" }} />
-      {(["en", "pt"] as MeetingLanguage[]).map((lang) => (
+      {options.map((opt) => (
         <button
-          key={lang}
+          key={opt.value}
           type="button"
-          onClick={disabled ? undefined : () => onChange(lang)}
+          onClick={disabled ? undefined : () => onChange(opt.value)}
           disabled={disabled}
           style={{
             padding: "3px 10px",
             border: "none",
-            background: value === lang ? "rgba(255,255,255,0.08)" : "transparent",
-            color: value === lang ? "var(--text-1)" : "var(--text-3)",
+            background:
+              value === opt.value ? "rgba(255,255,255,0.08)" : "transparent",
+            color: value === opt.value ? "var(--text-1)" : "var(--text-3)",
             cursor: disabled ? "not-allowed" : "pointer",
-            fontWeight: value === lang ? 500 : 400,
-            textTransform: "uppercase",
+            fontWeight: value === opt.value ? 500 : 400,
+            letterSpacing: opt.value === "auto" ? 0 : 0.4,
           }}
         >
-          {lang}
+          {opt.label}
         </button>
       ))}
     </div>
