@@ -26,6 +26,13 @@
     "restore": "Restaurar janela",
     "close": "Fechar janela"
   },
+  "meetings": {
+    "newMeeting": "Nova Reunião",
+    "creating": "Criando…",
+    "loading": "Carregando reuniões…",
+    "emptyTitle": "Nenhuma reunião ainda",
+    "emptyHint": "Clique em Nova Reunião para criar a primeira. Gravação e transcrição chegam nos próximos commits."
+  },
   "sidebar": {
     "pin": "Fixar sidebar",
     "unpin": "Desafixar sidebar",

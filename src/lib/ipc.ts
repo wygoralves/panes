@@ -522,7 +522,18 @@ export const ipc = {
     invoke<InstallResult>("install_harness", { harnessId }),
   launchHarness: (harnessId: string) =>
     invoke<string>("launch_harness", { harnessId }),
+  listMeetings: () => invoke<Meeting[]>("list_meetings"),
+  createMeeting: (title: string | null) =>
+    invoke<Meeting>("create_meeting", { title }),
 };
+
+export interface Meeting {
+  path: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  sizeBytes: number;
+}
 
 export async function listenThreadEvents(
   threadId: string,

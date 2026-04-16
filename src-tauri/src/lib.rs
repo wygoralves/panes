@@ -309,6 +309,8 @@ pub fn run() {
             commands::harness::install_harness,
             commands::harness::launch_harness,
             commands::meetings::transcribe_wav_file,
+            commands::meetings::list_meetings,
+            commands::meetings::create_meeting,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

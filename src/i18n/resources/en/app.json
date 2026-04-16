@@ -26,6 +26,13 @@
     "restore": "Restore window",
     "close": "Close window"
   },
+  "meetings": {
+    "newMeeting": "New Meeting",
+    "creating": "Creating…",
+    "loading": "Loading meetings…",
+    "emptyTitle": "No meetings yet",
+    "emptyHint": "Click New Meeting to create your first one. Recording and transcription arrive in upcoming commits."
+  },
   "sidebar": {
     "pin": "Pin sidebar",
     "unpin": "Unpin sidebar",
