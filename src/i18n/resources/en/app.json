@@ -31,7 +31,10 @@
     "creating": "Creating…",
     "loading": "Loading meetings…",
     "emptyTitle": "No meetings yet",
-    "emptyHint": "Click New Meeting to create your first one. Recording and transcription arrive in upcoming commits."
+    "emptyHint": "Click New Meeting to create your first one. Recording and transcription arrive in upcoming commits.",
+    "editorLabel": "Meeting",
+    "record": "Record",
+    "recordingComingSoon": "Recording is not yet wired up — the setup banner and sidecar integration land in upcoming commits."
   },
   "sidebar": {
     "pin": "Pin sidebar",

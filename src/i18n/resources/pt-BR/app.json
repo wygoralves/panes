@@ -31,7 +31,10 @@
     "creating": "Criando…",
     "loading": "Carregando reuniões…",
     "emptyTitle": "Nenhuma reunião ainda",
-    "emptyHint": "Clique em Nova Reunião para criar a primeira. Gravação e transcrição chegam nos próximos commits."
+    "emptyHint": "Clique em Nova Reunião para criar a primeira. Gravação e transcrição chegam nos próximos commits.",
+    "editorLabel": "Reunião",
+    "record": "Gravar",
+    "recordingComingSoon": "A gravação ainda não está conectada — o painel de configuração e a integração com o sidecar chegam nos próximos commits."
   },
   "sidebar": {
     "pin": "Fixar sidebar",

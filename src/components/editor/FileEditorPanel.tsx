@@ -16,6 +16,7 @@ import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { GitDiffEditorPanel } from "./GitDiffEditorPanel";
 import { MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
+import { MeetingEditorHeader, isMeetingFilePath } from "./MeetingEditorHeader";
 
 const MARKDOWN_PREVIEW_EXTENSIONS = new Set(["md", "mdx", "markdown"]);
 
@@ -297,6 +298,20 @@ export function FileEditorPanel() {
             >
               <FileText size={32} />
               {t("editor.binaryFile")}
+            </div>
+          ) : isMeetingFilePath(activeTab.filePath) ? (
+            <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+              <MeetingEditorHeader />
+              <div style={{ flex: 1, overflow: "hidden" }}>
+                <CodeMirrorEditor
+                  tabId={activeTab.id}
+                  content={activeTab.content}
+                  filePath={activeTab.filePath}
+                  onChange={(content) => setTabContent(activeTab.id, content)}
+                  pendingReveal={activeTab.pendingReveal}
+                  onRevealHandled={(nonce) => clearPendingReveal(activeTab.id, nonce)}
+                />
+              </div>
             </div>
           ) : (
             <CodeMirrorEditor
