@@ -537,6 +537,11 @@ export const ipc = {
       language,
       modelFilename,
     }),
+  listWhisperModels: () => invoke<WhisperModel[]>("list_whisper_models"),
+  downloadWhisperModel: (name: string) =>
+    invoke<void>("download_whisper_model", { name }),
+  deleteWhisperModel: (name: string) =>
+    invoke<void>("delete_whisper_model", { name }),
 };
 
 export interface MeetingTranscriptSegment {
@@ -550,6 +555,40 @@ export interface MeetingTranscript {
   fullText: string;
   segments: MeetingTranscriptSegment[];
   durationMs: number;
+}
+
+export type WhisperModelTier =
+  | "testing"
+  | "fast"
+  | "balanced"
+  | "high"
+  | "recommended";
+
+export interface WhisperModel {
+  name: string;
+  displayName: string;
+  sizeBytes: number;
+  description: string;
+  tier: WhisperModelTier;
+  downloaded: boolean;
+  downloadedBytes: number;
+  inProgressBytes: number;
+}
+
+export interface WhisperModelDownloadProgress {
+  name: string;
+  downloaded: number;
+  total: number;
+  done: boolean;
+}
+
+export async function listenWhisperModelDownload(
+  handler: (progress: WhisperModelDownloadProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<WhisperModelDownloadProgress>(
+    "meetings:model-download-progress",
+    (event) => handler(event.payload),
+  );
 }
 
 export interface Meeting {

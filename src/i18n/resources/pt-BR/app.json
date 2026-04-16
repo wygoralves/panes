@@ -44,7 +44,18 @@
     "recordingComingSoon": "A gravação não está conectada aqui — abra a reunião pela Visão de Reuniões para gravar.",
     "saving": "Salvando…",
     "noSelectionTitle": "Nenhuma reunião selecionada",
-    "noSelectionHint": "Escolha uma reunião à esquerda ou clique em Nova Reunião para criar uma."
+    "noSelectionHint": "Escolha uma reunião à esquerda ou clique em Nova Reunião para criar uma.",
+    "modelCatalogTitle": "Modelos Whisper",
+    "modelCatalogHint": "Os modelos são baixados uma vez de huggingface.co/ggerganov/whisper.cpp e ficam em ~/.agent-workspace/models/whisper/.",
+    "modelDownload": "Baixar",
+    "modelDelete": "Excluir",
+    "modelReady": "Pronto",
+    "modelTierRecommended": "Recomendado",
+    "modelTier_testing": "Teste",
+    "modelTier_fast": "Rápido",
+    "modelTier_balanced": "Equilibrado",
+    "modelTier_high": "Alta qualidade",
+    "modelTier_recommended": "Recomendado"
   },
   "sidebar": {
     "pin": "Fixar sidebar",

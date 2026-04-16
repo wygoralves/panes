@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AudioLines, Plus } from "lucide-react";
+import { AudioLines, Plus, Settings } from "lucide-react";
 import { ipc, type Meeting } from "../../lib/ipc";
 import { formatRelativeTime } from "../../lib/formatters";
 import { MeetingDocumentEditor } from "./MeetingDocumentEditor";
+import { ModelCatalogModal } from "./ModelCatalogModal";
 
 export function MeetingsPanel() {
   const { t } = useTranslation(["app"]);
@@ -12,6 +13,7 @@ export function MeetingsPanel() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [showModelCatalog, setShowModelCatalog] = useState(false);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -79,16 +81,27 @@ export function MeetingsPanel() {
               {t("app:sidebar.meetings")}
             </span>
           </div>
-          <button
-            type="button"
-            onClick={() => void onNewMeeting()}
-            disabled={creating}
-            title={t("app:meetings.newMeeting")}
-            className="sb-add-project-btn"
-            style={{ border: "none" }}
-          >
-            <Plus size={12} strokeWidth={2.2} />
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <button
+              type="button"
+              onClick={() => setShowModelCatalog(true)}
+              title={t("app:meetings.modelCatalogTitle")}
+              className="sb-add-project-btn"
+              style={{ border: "none" }}
+            >
+              <Settings size={12} strokeWidth={2} />
+            </button>
+            <button
+              type="button"
+              onClick={() => void onNewMeeting()}
+              disabled={creating}
+              title={t("app:meetings.newMeeting")}
+              className="sb-add-project-btn"
+              style={{ border: "none" }}
+            >
+              <Plus size={12} strokeWidth={2.2} />
+            </button>
+          </div>
         </div>
 
         <div style={{ flex: 1, overflow: "auto", padding: "4px 0" }}>
@@ -151,6 +164,9 @@ export function MeetingsPanel() {
           </div>
         )}
       </main>
+      {showModelCatalog ? (
+        <ModelCatalogModal onClose={() => setShowModelCatalog(false)} />
+      ) : null}
     </div>
   );
 }

@@ -44,7 +44,18 @@
     "recordingComingSoon": "Recording is not yet wired up here — open the meeting from the Meetings view to record.",
     "saving": "Saving…",
     "noSelectionTitle": "No meeting selected",
-    "noSelectionHint": "Pick a meeting on the left, or click New Meeting to create one."
+    "noSelectionHint": "Pick a meeting on the left, or click New Meeting to create one.",
+    "modelCatalogTitle": "Whisper models",
+    "modelCatalogHint": "Models are downloaded once from huggingface.co/ggerganov/whisper.cpp and stored under ~/.agent-workspace/models/whisper/.",
+    "modelDownload": "Download",
+    "modelDelete": "Delete",
+    "modelReady": "Ready",
+    "modelTierRecommended": "Recommended",
+    "modelTier_testing": "Testing",
+    "modelTier_fast": "Fast",
+    "modelTier_balanced": "Balanced",
+    "modelTier_high": "High quality",
+    "modelTier_recommended": "Recommended"
   },
   "sidebar": {
     "pin": "Pin sidebar",

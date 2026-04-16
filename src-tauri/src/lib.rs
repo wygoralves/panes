@@ -313,6 +313,9 @@ pub fn run() {
             commands::meetings::create_meeting,
             commands::meetings::start_meeting_recording,
             commands::meetings::stop_meeting_recording,
+            commands::meetings::list_whisper_models,
+            commands::meetings::download_whisper_model,
+            commands::meetings::delete_whisper_model,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

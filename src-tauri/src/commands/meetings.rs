@@ -20,6 +20,8 @@ use panes_transcription::{
     Transcriber, TranscriptionOptions, WhisperTranscriber,
 };
 use serde::Serialize;
+use tauri::{AppHandle, Emitter};
+use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -412,6 +414,234 @@ fn model_dir() -> Result<PathBuf, std::io::Error> {
         .join(".agent-workspace")
         .join("models")
         .join("whisper"))
+}
+
+// -- Whisper model catalog ---------------------------------------------------
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WhisperModelTier {
+    Testing,
+    Fast,
+    Balanced,
+    High,
+    Recommended,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WhisperModelDto {
+    pub name: String,
+    pub display_name: String,
+    pub size_bytes: u64,
+    pub description: String,
+    pub tier: WhisperModelTier,
+    pub downloaded: bool,
+    pub downloaded_bytes: u64,
+    pub in_progress_bytes: u64,
+}
+
+struct CatalogEntry {
+    name: &'static str,
+    display_name: &'static str,
+    size_bytes: u64,
+    description: &'static str,
+    tier: WhisperModelTier,
+}
+
+/// Approximate sizes are from the ggerganov/whisper.cpp HuggingFace mirror;
+/// exact bytes may vary ±small with model updates, but the numbers are close
+/// enough to drive progress bars and disk-space warnings.
+const WHISPER_CATALOG: &[CatalogEntry] = &[
+    CatalogEntry {
+        name: "ggml-tiny.bin",
+        display_name: "Tiny",
+        size_bytes: 77_691_713,
+        description: "Testing only — low accuracy, 39M params.",
+        tier: WhisperModelTier::Testing,
+    },
+    CatalogEntry {
+        name: "ggml-base.bin",
+        display_name: "Base",
+        size_bytes: 147_951_465,
+        description: "Basic quality, small download. 74M params.",
+        tier: WhisperModelTier::Fast,
+    },
+    CatalogEntry {
+        name: "ggml-small.bin",
+        display_name: "Small",
+        size_bytes: 487_601_967,
+        description: "Good balance for short clips. 244M params.",
+        tier: WhisperModelTier::Balanced,
+    },
+    CatalogEntry {
+        name: "ggml-medium.bin",
+        display_name: "Medium",
+        size_bytes: 1_533_763_059,
+        description: "High quality, slower downloads. 769M params.",
+        tier: WhisperModelTier::High,
+    },
+    CatalogEntry {
+        name: "ggml-large-v3-turbo.bin",
+        display_name: "Large v3 Turbo",
+        size_bytes: 1_624_555_275,
+        description: "Best accuracy/speed for full meetings. 809M params.",
+        tier: WhisperModelTier::Recommended,
+    },
+];
+
+fn whisper_model_url(name: &str) -> String {
+    format!(
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}",
+        name
+    )
+}
+
+#[tauri::command]
+pub async fn list_whisper_models() -> Result<Vec<WhisperModelDto>, String> {
+    let dir = model_dir().map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || -> Result<Vec<WhisperModelDto>, String> {
+        let _ = std::fs::create_dir_all(&dir);
+        let mut out = Vec::with_capacity(WHISPER_CATALOG.len());
+        for entry in WHISPER_CATALOG {
+            let final_path = dir.join(entry.name);
+            let part_path = dir.join(format!("{}.part", entry.name));
+            let (downloaded, downloaded_bytes) = match std::fs::metadata(&final_path) {
+                Ok(m) => (true, m.len()),
+                Err(_) => (false, 0),
+            };
+            let in_progress_bytes = std::fs::metadata(&part_path).map(|m| m.len()).unwrap_or(0);
+            out.push(WhisperModelDto {
+                name: entry.name.to_string(),
+                display_name: entry.display_name.to_string(),
+                size_bytes: entry.size_bytes,
+                description: entry.description.to_string(),
+                tier: entry.tier,
+                downloaded,
+                downloaded_bytes,
+                in_progress_bytes,
+            });
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadProgress<'a> {
+    name: &'a str,
+    downloaded: u64,
+    total: u64,
+    done: bool,
+}
+
+#[tauri::command]
+pub async fn download_whisper_model(app: AppHandle, name: String) -> Result<(), String> {
+    let entry = WHISPER_CATALOG
+        .iter()
+        .find(|e| e.name == name)
+        .ok_or_else(|| format!("unknown model: {}", name))?;
+
+    let dir = model_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let final_path = dir.join(&name);
+    let part_path = dir.join(format!("{}.part", name));
+
+    if final_path.exists() {
+        // Already present — emit a final "done" event so the UI refreshes cleanly.
+        let _ = app.emit(
+            "meetings:model-download-progress",
+            DownloadProgress {
+                name: &name,
+                downloaded: std::fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0),
+                total: entry.size_bytes,
+                done: true,
+            },
+        );
+        return Ok(());
+    }
+
+    let url = whisper_model_url(&name);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60 * 30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("download failed: HTTP {}", response.status()));
+    }
+    let total = response.content_length().unwrap_or(entry.size_bytes);
+
+    let mut file = tokio::fs::File::create(&part_path)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut downloaded: u64 = 0;
+    let mut last_emit: u64 = 0;
+
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("stream error: {e}"))?
+    {
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as u64;
+        if downloaded - last_emit > 1_048_576 {
+            last_emit = downloaded;
+            let _ = app.emit(
+                "meetings:model-download-progress",
+                DownloadProgress {
+                    name: &name,
+                    downloaded,
+                    total,
+                    done: false,
+                },
+            );
+        }
+    }
+    file.flush().await.map_err(|e| e.to_string())?;
+    drop(file);
+
+    tokio::fs::rename(&part_path, &final_path)
+        .await
+        .map_err(|e| format!("rename failed: {e}"))?;
+
+    let _ = app.emit(
+        "meetings:model-download-progress",
+        DownloadProgress {
+            name: &name,
+            downloaded,
+            total,
+            done: true,
+        },
+    );
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_whisper_model(name: String) -> Result<(), String> {
+    let dir = model_dir().map_err(|e| e.to_string())?;
+    let target = dir.join(&name);
+    let part = dir.join(format!("{}.part", name));
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        if target.exists() {
+            std::fs::remove_file(&target).map_err(|e| e.to_string())?;
+        }
+        if part.exists() {
+            let _ = std::fs::remove_file(&part);
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// One channel's worth of decoded audio at its native sample rate.
