@@ -9,6 +9,7 @@ import {
   Play,
   Square,
 } from "lucide-react";
+import { Dropdown, type DropdownOption } from "../shared/Dropdown";
 import type { WhisperModel } from "../../lib/ipc";
 
 export type MeetingLanguage = "auto" | "en" | "pt";
@@ -150,71 +151,84 @@ export function MeetingEditorHeader({
           autoLabel={t("meetings.languageAuto")}
         />
 
-        {/* Record / Pause / Resume / Stop cluster */}
         {isRecording ? (
           <>
-            <ActionButton
-              tone="neutral"
+            <button
+              type="button"
+              className="btn btn-ghost"
               onClick={recordable ? () => onRecordAction("pause") : undefined}
               title={t("meetings.pauseHint")}
-              icon={<Pause size={11} fill="currentColor" />}
-              label={t("meetings.pause")}
-            />
-            <ActionButton
-              tone="stop"
+            >
+              <Pause size={11} fill="currentColor" />
+              {t("meetings.pause")}
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger-ghost"
               onClick={recordable ? () => onRecordAction("stop") : undefined}
               title={t("meetings.stopHint")}
-              icon={<Square size={9} fill="currentColor" color="#dc3c3c" />}
-              label={`${t("meetings.stop")} · ${formatElapsed(elapsedSeconds)}`}
-            />
+              style={{ fontVariantNumeric: "tabular-nums" }}
+            >
+              <Square size={9} fill="currentColor" />
+              {t("meetings.stop")} · {formatElapsed(elapsedSeconds)}
+            </button>
           </>
         ) : isPaused ? (
           <>
-            <ActionButton
-              tone="resume"
+            <button
+              type="button"
+              className="btn btn-outline"
               onClick={recordable ? () => onRecordAction("resume") : undefined}
               title={t("meetings.resumeHint")}
-              icon={<Play size={11} fill="currentColor" />}
-              label={t("meetings.resume")}
-            />
-            <ActionButton
-              tone="stop"
+            >
+              <Play size={11} fill="currentColor" />
+              {t("meetings.resume")}
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger-ghost"
               onClick={recordable ? () => onRecordAction("stop") : undefined}
               title={t("meetings.stopHint")}
-              icon={<Square size={9} fill="currentColor" color="#dc3c3c" />}
-              label={`${t("meetings.stop")} · ${formatElapsed(elapsedSeconds)}`}
-            />
+              style={{ fontVariantNumeric: "tabular-nums" }}
+            >
+              <Square size={9} fill="currentColor" />
+              {t("meetings.stop")} · {formatElapsed(elapsedSeconds)}
+            </button>
           </>
         ) : (
           <>
-            <ActionButton
-              tone="record"
-              onClick={recordable && !isTranscribing ? () => onRecordAction("start") : undefined}
-              title={hasAudio ? t("meetings.reRecordHint") : t("meetings.recordHint")}
-              icon={<Circle size={10} fill="currentColor" color="#dc3c3c" />}
-              label={hasAudio ? t("meetings.reRecord") : t("meetings.record")}
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={
+                recordable && !isTranscribing ? () => onRecordAction("start") : undefined
+              }
               disabled={!recordable || isTranscribing}
-            />
+              title={hasAudio ? t("meetings.reRecordHint") : t("meetings.recordHint")}
+            >
+              <Circle size={10} fill="#dc3c3c" strokeWidth={0} />
+              {hasAudio ? t("meetings.reRecord") : t("meetings.record")}
+            </button>
             {isTranscribing ? (
-              <ActionButton
-                tone="neutral"
-                disabled
-                icon={<Loader2 size={10} className="animate-spin" />}
-                label={t("meetings.transcribing")}
-              />
+              <button type="button" className="btn btn-ghost" disabled>
+                <Loader2 size={11} className="animate-spin" />
+                {t("meetings.transcribing")}
+              </button>
             ) : (
-              <ActionButton
-                tone="transcribe"
+              <button
+                type="button"
+                className="btn btn-primary"
                 onClick={canTranscribe ? onTranscribe : undefined}
+                disabled={!canTranscribe}
                 title={
                   !hasAudio
                     ? t("meetings.transcribeNoAudio")
                     : t("meetings.transcribeHint")
                 }
-                icon={<FileText size={11} />}
-                label={t("meetings.transcribe")}
-                disabled={!canTranscribe}
-              />
+              >
+                <FileText size={11} />
+                {t("meetings.transcribe")}
+              </button>
             )}
           </>
         )}
@@ -244,8 +258,8 @@ function LanguageToggle({
       style={{
         display: "flex",
         alignItems: "center",
-        border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: 4,
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius-sm)",
         overflow: "hidden",
         fontSize: 11,
         opacity: disabled ? 0.5 : 1,
@@ -288,92 +302,30 @@ function ModelDropdown({
   disabled: boolean;
   autoLabel: string;
 }) {
+  const options: DropdownOption[] = [
+    { value: "", label: autoLabel },
+    ...models.map((m) => ({ value: m.name, label: m.displayName })),
+  ];
+  const selectedLabel =
+    selected === null || selected === ""
+      ? autoLabel
+      : (models.find((m) => m.name === selected)?.displayName ?? selected);
+
   return (
-    <select
+    <Dropdown
+      options={options}
       value={selected ?? ""}
-      onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+      onChange={(v) => onChange(v === "" ? null : v)}
       disabled={disabled}
       title={autoLabel}
-      style={{
+      selectedLabel={selectedLabel}
+      triggerStyle={{
         padding: "3px 8px",
         fontSize: 11,
-        border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: 4,
-        background: "transparent",
-        color: "var(--text-2)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
+        minWidth: 96,
         maxWidth: 160,
       }}
-    >
-      <option value="">{autoLabel}</option>
-      {models.map((m) => (
-        <option key={m.name} value={m.name}>
-          {m.displayName}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-type ActionTone = "record" | "stop" | "neutral" | "resume" | "transcribe";
-
-function ActionButton({
-  tone,
-  onClick,
-  title,
-  icon,
-  label,
-  disabled,
-}: {
-  tone: ActionTone;
-  onClick?: () => void;
-  title?: string;
-  icon: React.ReactNode;
-  label: string;
-  disabled?: boolean;
-}) {
-  const effectivelyDisabled = disabled || !onClick;
-  const background =
-    tone === "stop"
-      ? "rgba(220, 60, 60, 0.18)"
-      : tone === "resume"
-        ? "rgba(76, 175, 80, 0.14)"
-        : tone === "transcribe"
-          ? "rgba(96, 145, 220, 0.14)"
-          : tone === "record"
-            ? "transparent"
-            : "transparent";
-  const color =
-    tone === "stop" || tone === "resume" || tone === "transcribe"
-      ? "var(--text-1)"
-      : "var(--text-2)";
-  return (
-    <button
-      type="button"
-      onClick={effectivelyDisabled ? undefined : onClick}
-      disabled={effectivelyDisabled}
-      title={title}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "4px 12px",
-        minWidth: 88,
-        justifyContent: "center",
-        background,
-        border: "1px solid rgba(255,255,255,0.12)",
-        borderRadius: 4,
-        color,
-        cursor: effectivelyDisabled ? "not-allowed" : "pointer",
-        fontSize: 12,
-        opacity: effectivelyDisabled ? 0.5 : 1,
-        fontVariantNumeric: "tabular-nums",
-      }}
-    >
-      {icon}
-      {label}
-    </button>
+    />
   );
 }
 
