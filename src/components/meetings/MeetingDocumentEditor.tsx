@@ -38,6 +38,10 @@ function dirnameOf(filePath: string): string {
   return i >= 0 ? filePath.substring(0, i) : filePath;
 }
 
+function contentWithoutFrontmatter(content: string): string {
+  return content.replace(/^---\n[\s\S]*?\n---\n?/, "").replace(/^\s+/, "");
+}
+
 export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
   const { t } = useTranslation("app");
   const [content, setContent] = useState("");
@@ -329,7 +333,7 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
       ) : null}
       <div style={{ flex: 1, overflow: "hidden" }}>
         {viewMode === "preview" ? (
-          <MarkdownPreviewPanel content={content} />
+          <MarkdownPreviewPanel content={contentWithoutFrontmatter(content)} />
         ) : (
           <CodeMirrorEditor
             tabId={`meeting:${meeting.path}`}

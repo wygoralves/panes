@@ -156,12 +156,14 @@ export function MeetingEditorHeader({
                 ? t("meetings.viewPreviewHint")
                 : t("meetings.viewEditHint")
             }
-            style={{ padding: "6px 10px" }}
+            aria-label={
+              viewMode === "edit"
+                ? t("meetings.viewPreview")
+                : t("meetings.viewEdit")
+            }
+            style={{ padding: "6px 8px", minWidth: 0 }}
           >
-            {viewMode === "edit" ? <Eye size={12} /> : <Pencil size={12} />}
-            {viewMode === "edit"
-              ? t("meetings.viewPreview")
-              : t("meetings.viewEdit")}
+            {viewMode === "edit" ? <Eye size={13} /> : <Pencil size={13} />}
           </button>
         ) : null}
         <SourcesToggle
@@ -301,14 +303,14 @@ function SourcesToggle({
     display: "inline-flex",
     alignItems: "center",
     gap: 5,
-    padding: "6px 10px",
+    height: 27,
+    padding: "0 10px",
     border: "none",
     background: active ? "rgba(255,255,255,0.08)" : "transparent",
     color: active ? "var(--text-1)" : "var(--text-3)",
     cursor: interactive ? "pointer" : "not-allowed",
     fontSize: 12,
     fontWeight: active ? 500 : 400,
-    lineHeight: 1,
   });
 
   return (
@@ -406,10 +408,12 @@ function LanguageToggle({
           onClick={disabled ? undefined : () => onChange(opt.value)}
           disabled={disabled}
           style={{
-            padding: "6px 10px",
+            height: 27,
+            padding: "0 10px",
             border: "none",
             fontSize: 12,
-            lineHeight: 1,
+            display: "inline-flex",
+            alignItems: "center",
             background:
               value === opt.value ? "rgba(255,255,255,0.08)" : "transparent",
             color: value === opt.value ? "var(--text-1)" : "var(--text-3)",
