@@ -545,6 +545,10 @@ export const ipc = {
       language,
       modelFilename,
     }),
+  getRecordingLevels: (meetingPath: string) =>
+    invoke<{ mic: number; system: number }>("get_recording_levels", {
+      meetingPath,
+    }),
   listWhisperModels: () => invoke<WhisperModel[]>("list_whisper_models"),
   downloadWhisperModel: (name: string) =>
     invoke<void>("download_whisper_model", { name }),

@@ -371,6 +371,114 @@ pub async fn start_meeting_recording(
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingLevelsDto {
+    pub mic: f32,
+    pub system: f32,
+}
+
+/// Peek at the tail of the active recording's framed output and compute a
+/// quick mean-absolute amplitude per source. Used by the frontend to show
+/// a live "is this source picking up audio?" indicator while recording.
+/// Tolerant of reading mid-frame — scans forward until a plausible header
+/// is found.
+#[tauri::command]
+pub async fn get_recording_levels(meeting_path: String) -> Result<RecordingLevelsDto, String> {
+    let meeting_path = PathBuf::from(&meeting_path);
+    let audio_path = meeting_audio_path(&meeting_path)?;
+    tokio::task::spawn_blocking(move || -> Result<RecordingLevelsDto, String> {
+        let Ok(metadata) = std::fs::metadata(&audio_path) else {
+            return Ok(RecordingLevelsDto { mic: 0.0, system: 0.0 });
+        };
+        let size = metadata.len();
+        if size < 10 {
+            return Ok(RecordingLevelsDto { mic: 0.0, system: 0.0 });
+        }
+        let tail = 128 * 1024u64;
+        let offset = size.saturating_sub(tail);
+        use std::io::{Read, Seek, SeekFrom};
+        let mut file = std::fs::File::open(&audio_path).map_err(|e| e.to_string())?;
+        file.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
+        let mut buf = Vec::with_capacity(tail as usize);
+        file.take(tail).read_to_end(&mut buf).map_err(|e| e.to_string())?;
+
+        let mut mic_sum: f64 = 0.0;
+        let mut mic_count: usize = 0;
+        let mut system_sum: f64 = 0.0;
+        let mut system_count: usize = 0;
+
+        let mut cursor = 0;
+        while cursor + 10 <= buf.len() {
+            let source_id = buf[cursor];
+            if source_id > 1 {
+                cursor += 1;
+                continue;
+            }
+            let rate = u32::from_le_bytes([
+                buf[cursor + 1],
+                buf[cursor + 2],
+                buf[cursor + 3],
+                buf[cursor + 4],
+            ]);
+            if !(8_000..=192_000).contains(&rate) {
+                cursor += 1;
+                continue;
+            }
+            let channels = buf[cursor + 5];
+            if channels == 0 || channels > 8 {
+                cursor += 1;
+                continue;
+            }
+            let sample_count = u32::from_le_bytes([
+                buf[cursor + 6],
+                buf[cursor + 7],
+                buf[cursor + 8],
+                buf[cursor + 9],
+            ]) as usize;
+            if sample_count == 0 || sample_count > 1_000_000 {
+                cursor += 1;
+                continue;
+            }
+            let payload_bytes = sample_count * 4;
+            if cursor + 10 + payload_bytes > buf.len() {
+                break;
+            }
+            for i in 0..sample_count {
+                let base = cursor + 10 + i * 4;
+                let sample = f32::from_le_bytes([
+                    buf[base],
+                    buf[base + 1],
+                    buf[base + 2],
+                    buf[base + 3],
+                ]);
+                if source_id == 0 {
+                    mic_sum += sample.abs() as f64;
+                    mic_count += 1;
+                } else {
+                    system_sum += sample.abs() as f64;
+                    system_count += 1;
+                }
+            }
+            cursor += 10 + payload_bytes;
+        }
+
+        let mic = if mic_count > 0 {
+            (mic_sum / mic_count as f64) as f32
+        } else {
+            0.0
+        };
+        let system = if system_count > 0 {
+            (system_sum / system_count as f64) as f32
+        } else {
+            0.0
+        };
+        Ok(RecordingLevelsDto { mic, system })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Pause the sidecar by sending SIGSTOP so the kernel suspends it.
 /// AVAudioEngine + Core Audio tap threads stop receiving time; no samples
 /// are written while paused, so the on-disk audio has no gap after resume.

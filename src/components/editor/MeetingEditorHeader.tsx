@@ -32,6 +32,8 @@ interface Props {
   elapsedSeconds?: number;
   sources?: MeetingSources;
   onSourcesChange?: (s: MeetingSources) => void;
+  micLevel?: number;
+  systemLevel?: number;
 }
 
 function formatElapsed(seconds: number): string {
@@ -54,6 +56,8 @@ export function MeetingEditorHeader({
   elapsedSeconds = 0,
   sources = "both",
   onSourcesChange,
+  micLevel = 0,
+  systemLevel = 0,
 }: Props = {}) {
   const { t } = useTranslation("app");
   const [fallbackLanguage, setFallbackLanguage] = useState<MeetingLanguage>("auto");
@@ -140,6 +144,8 @@ export function MeetingEditorHeader({
           disabled={isActiveCapture || isTranscribing}
           micLabel={t("meetings.sourceMic")}
           systemLabel={t("meetings.sourceSystem")}
+          micLevel={isRecording ? micLevel : -1}
+          systemLevel={isRecording ? systemLevel : -1}
         />
         <LanguageToggle
           value={effectiveLanguage}
@@ -240,12 +246,16 @@ function SourcesToggle({
   disabled = false,
   micLabel,
   systemLabel,
+  micLevel,
+  systemLevel,
 }: {
   value: MeetingSources;
   onChange?: (v: MeetingSources) => void;
   disabled?: boolean;
   micLabel: string;
   systemLabel: string;
+  micLevel: number;
+  systemLevel: number;
 }) {
   const micOn = value === "mic" || value === "both";
   const systemOn = value === "system" || value === "both";
@@ -294,6 +304,7 @@ function SourcesToggle({
       >
         <Mic size={11} />
         {micLabel}
+        <LevelDot level={micLevel} active={micOn} />
       </button>
       <button
         type="button"
@@ -304,8 +315,33 @@ function SourcesToggle({
       >
         <Speaker size={11} />
         {systemLabel}
+        <LevelDot level={systemLevel} active={systemOn} />
       </button>
     </div>
+  );
+}
+
+/// Tiny colored dot showing whether the source is currently picking up
+/// signal. -1 means "not recording"; 0 means "recording but silent"; >0
+/// is mean |amplitude| in [0, 1]. Threshold 0.001 matches the silent-tap
+/// floor used in capture validation, so any plausible voice/music lights
+/// the dot green.
+function LevelDot({ level, active }: { level: number; active: boolean }) {
+  if (level < 0 || !active) return null;
+  const live = level > 0.001;
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        width: 6,
+        height: 6,
+        borderRadius: "50%",
+        marginLeft: 2,
+        background: live ? "#4cc56a" : "rgba(255,255,255,0.18)",
+        boxShadow: live ? "0 0 6px rgba(76,197,106,0.65)" : "none",
+        transition: "background 0.2s ease, box-shadow 0.2s ease",
+      }}
+    />
   );
 }
 

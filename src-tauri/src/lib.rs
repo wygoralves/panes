@@ -317,6 +317,7 @@ pub fn run() {
             commands::meetings::resume_meeting_recording,
             commands::meetings::stop_meeting_recording,
             commands::meetings::transcribe_meeting,
+            commands::meetings::get_recording_levels,
             commands::meetings::list_whisper_models,
             commands::meetings::download_whisper_model,
             commands::meetings::delete_whisper_model,

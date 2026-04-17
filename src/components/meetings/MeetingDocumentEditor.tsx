@@ -50,6 +50,7 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
   const [language, setLanguage] = useState<MeetingLanguage>("auto");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [availableModels, setAvailableModels] = useState<WhisperModel[]>([]);
+  const [levels, setLevels] = useState<{ mic: number; system: number }>({ mic: 0, system: 0 });
   const modelsListenerRef = useRef<UnlistenFn | null>(null);
 
   const dir = dirnameOf(meeting.path);
@@ -150,6 +151,31 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
   useEffect(() => {
     if (recorderState === "idle") setElapsedSeconds(0);
   }, [recorderState]);
+
+  // Poll the tail of the audio file during active capture so the header can
+  // show a live "this source has signal" dot. Resets to zero when idle.
+  useEffect(() => {
+    if (recorderState !== "recording") {
+      setLevels({ mic: 0, system: 0 });
+      return;
+    }
+    let cancelled = false;
+    async function tick() {
+      if (cancelled) return;
+      try {
+        const next = await ipc.getRecordingLevels(meeting.path);
+        if (!cancelled) setLevels(next);
+      } catch {
+        // sidecar may still be warming up; keep previous value
+      }
+    }
+    void tick();
+    const handle = window.setInterval(() => void tick(), 500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(handle);
+    };
+  }, [recorderState, meeting.path]);
 
   const onRecordAction = useCallback(
     async (action: MeetingRecordAction) => {
@@ -282,6 +308,8 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
         elapsedSeconds={elapsedSeconds}
         sources={sources}
         onSourcesChange={onSourcesChange}
+        micLevel={levels.mic}
+        systemLevel={levels.system}
       />
       {recordError ? (
         <div
