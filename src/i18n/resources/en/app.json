@@ -70,7 +70,9 @@
     "setupBannerAction": "Open model catalog",
     "titlePlaceholder": "Untitled meeting",
     "modelAuto": "Auto (best available)",
-    "languageAuto": "Auto"
+    "languageAuto": "Auto",
+    "sourceMic": "Mic",
+    "sourceSystem": "System"
   },
   "sidebar": {
     "pin": "Pin sidebar",

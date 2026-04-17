@@ -13,6 +13,7 @@ import {
   MeetingEditorHeader,
   type MeetingLanguage,
   type MeetingRecordAction,
+  type MeetingSources,
 } from "../editor/MeetingEditorHeader";
 
 const AUTOSAVE_DELAY_MS = 1200;
@@ -57,14 +58,14 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
     () => parseFrontmatterValue(content, "title") ?? "",
     [content],
   );
-  const selectedModel = useMemo(
-    () => parseFrontmatterValue(content, "model"),
-    [content],
-  );
   const hasAudio = useMemo(
     () => !!parseFrontmatterValue(content, "audio"),
     [content],
   );
+  const sources = useMemo<MeetingSources>(() => {
+    const value = parseFrontmatterValue(content, "sources");
+    return value === "mic" || value === "system" || value === "both" ? value : "both";
+  }, [content]);
 
   const loadFile = useCallback(async () => {
     setIsLoading(true);
@@ -156,7 +157,7 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
       try {
         switch (action) {
           case "start":
-            await ipc.startMeetingRecording(meeting.path);
+            await ipc.startMeetingRecording(meeting.path, sources);
             setRecorderState("recording");
             break;
           case "pause":
@@ -177,7 +178,7 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
         setRecordError(String(e));
       }
     },
-    [meeting.path, loadFile],
+    [meeting.path, loadFile, sources],
   );
 
   const pickTranscribeModel = useCallback(() => {
@@ -222,8 +223,8 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
     setContent((prev) => updateFrontmatterValue(prev, "title", next));
   }, []);
 
-  const onModelChange = useCallback((next: string | null) => {
-    setContent((prev) => updateFrontmatterValue(prev, "model", next ?? ""));
+  const onSourcesChange = useCallback((next: MeetingSources) => {
+    setContent((prev) => updateFrontmatterValue(prev, "sources", next));
   }, []);
 
   const onLanguageChangeWrapped = useCallback((next: MeetingLanguage) => {
@@ -279,9 +280,8 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
         onTitleChange={onTitleChange}
         isSaving={isSaving}
         elapsedSeconds={elapsedSeconds}
-        availableModels={availableModels}
-        selectedModel={selectedModel}
-        onModelChange={onModelChange}
+        sources={sources}
+        onSourcesChange={onSourcesChange}
       />
       {recordError ? (
         <div

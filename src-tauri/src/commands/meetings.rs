@@ -311,14 +311,18 @@ fn slugify(s: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
-/// Start an unbounded mic + system audio recording for the given meeting.
+/// Start an unbounded audio recording for the given meeting.
+/// `sources` controls the sidecar's --mode flag: "mic", "system", or "both".
 /// The audio-capture sidecar is spawned via `open` (so TCC attributes to the
 /// signed bundle) and runs until `stop_meeting_recording` sends it SIGTERM.
 /// The sidecar's PID is saved in a sibling `.pid` file so a later Stop call
 /// knows which process to signal — this survives a Panes relaunch, which
 /// keeps the interrupted-recording crash-recovery story open for later.
 #[tauri::command]
-pub async fn start_meeting_recording(meeting_path: String) -> Result<(), String> {
+pub async fn start_meeting_recording(
+    meeting_path: String,
+    sources: Option<String>,
+) -> Result<(), String> {
     let meeting_path = PathBuf::from(&meeting_path);
     if !meeting_path.exists() {
         return Err(format!("meeting file not found: {}", meeting_path.display()));
@@ -337,13 +341,19 @@ pub async fn start_meeting_recording(meeting_path: String) -> Result<(), String>
     let _ = std::fs::remove_file(&audio_path);
     let _ = std::fs::remove_file(&pid_path);
 
+    let mode = match sources.as_deref() {
+        Some("mic") => "mic",
+        Some("system") => "system",
+        _ => "both",
+    };
+
     // Launch via LaunchServices so the bundle's Info.plist keys (mic + system
     // audio usage descriptions) drive the TCC prompt on first run.
     let status = std::process::Command::new("open")
         .arg(&bundle_path)
         .arg("--args")
         .arg("--mode")
-        .arg("both")
+        .arg(mode)
         .arg("--output-file")
         .arg(&audio_path)
         .status()
@@ -486,10 +496,13 @@ pub async fn transcribe_meeting(
         n_threads: None,
         translate: false,
     };
-    let mut warnings = Vec::new();
-    if let Some(warning) = detect_silent_tap(&mic, &system) {
-        warnings.push(warning);
-    }
+    // Silent-tap auto-warning used to fire here, but it produced too many
+    // false positives — a meeting where nothing was playing on the PC
+    // (e.g. the user is the only speaker, or all remote participants
+    // happened to be silent in the first seconds) isn't the same as a
+    // denied permission, and we can't reliably distinguish them from the
+    // captured samples alone. The user can tell from the transcript.
+    let warnings: Vec<String> = Vec::new();
     let transcript = transcriber
         .transcribe_pcm_f32(mixed_samples, common_rate, 1, options)
         .await
@@ -544,51 +557,6 @@ fn update_meeting_audio_metadata(meeting_path: &Path, audio_path: &Path) -> anyh
     let new_contents = format!("---\n{}---\n{}", frontmatter, body);
     std::fs::write(meeting_path, new_contents)?;
     Ok(())
-}
-
-/// Heuristic for the "silent system tap" failure mode called out in the spec.
-/// macOS provides no API to query whether a Core Audio tap's permission was
-/// denied — the tap just produces zero-amplitude samples. We check the first
-/// ~3 seconds of captured audio: if the mic channel has real signal but the
-/// system channel is essentially silent, something is wrong. In practice
-/// that almost always means the user declined the System Audio Recording
-/// TCC prompt. Thresholds are intentionally conservative so a meeting with
-/// zero remote audio in its first seconds (everyone muted) doesn't trigger
-/// a false positive.
-fn detect_silent_tap(mic: &SourceAudio, system: &SourceAudio) -> Option<String> {
-    if mic.samples.is_empty() || system.samples.is_empty() {
-        return None;
-    }
-    let mic_channels = mic.channels.max(1) as usize;
-    let system_channels = system.channels.max(1) as usize;
-    if mic.rate == 0 || system.rate == 0 {
-        return None;
-    }
-    let mic_window = (mic.rate as usize * 3 * mic_channels).min(mic.samples.len());
-    let system_window = (system.rate as usize * 3 * system_channels).min(system.samples.len());
-    if mic_window == 0 || system_window == 0 {
-        return None;
-    }
-    let mic_mean = mic.samples[..mic_window]
-        .iter()
-        .map(|x| x.abs())
-        .sum::<f32>()
-        / mic_window as f32;
-    let system_mean = system.samples[..system_window]
-        .iter()
-        .map(|x| x.abs())
-        .sum::<f32>()
-        / system_window as f32;
-
-    if mic_mean > 0.001 && system_mean < 0.00005 {
-        Some(
-            "System audio appears blocked — only your microphone was captured. \
-             Open System Settings → Privacy & Security → System Audio Recording and make sure PanesAudioCapture is allowed."
-                .to_string(),
-        )
-    } else {
-        None
-    }
 }
 
 fn meeting_audio_path(meeting_path: &Path) -> Result<PathBuf, String> {

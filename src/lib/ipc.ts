@@ -527,8 +527,8 @@ export const ipc = {
     invoke<Meeting>("create_meeting", { title }),
   setMeetingFrontmatter: (meetingPath: string, updates: Record<string, string>) =>
     invoke<Meeting>("set_meeting_frontmatter", { meetingPath, updates }),
-  startMeetingRecording: (meetingPath: string) =>
-    invoke<void>("start_meeting_recording", { meetingPath }),
+  startMeetingRecording: (meetingPath: string, sources: "mic" | "system" | "both") =>
+    invoke<void>("start_meeting_recording", { meetingPath, sources }),
   pauseMeetingRecording: (meetingPath: string) =>
     invoke<void>("pause_meeting_recording", { meetingPath }),
   resumeMeetingRecording: (meetingPath: string) =>

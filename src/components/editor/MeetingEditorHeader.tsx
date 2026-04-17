@@ -5,17 +5,18 @@ import {
   Circle,
   FileText,
   Loader2,
+  Mic,
   Pause,
   Play,
+  Speaker,
   Square,
 } from "lucide-react";
-import { Dropdown, type DropdownOption } from "../shared/Dropdown";
-import type { WhisperModel } from "../../lib/ipc";
 
 export type MeetingLanguage = "auto" | "en" | "pt";
 export type MeetingRecorderState = "idle" | "recording" | "paused";
 export type MeetingTranscribeState = "idle" | "transcribing";
 export type MeetingRecordAction = "start" | "pause" | "resume" | "stop";
+export type MeetingSources = "mic" | "system" | "both";
 
 interface Props {
   language?: MeetingLanguage;
@@ -29,9 +30,8 @@ interface Props {
   onTitleChange?: (v: string) => void;
   isSaving?: boolean;
   elapsedSeconds?: number;
-  availableModels?: WhisperModel[];
-  selectedModel?: string | null;
-  onModelChange?: (name: string | null) => void;
+  sources?: MeetingSources;
+  onSourcesChange?: (s: MeetingSources) => void;
 }
 
 function formatElapsed(seconds: number): string {
@@ -52,9 +52,8 @@ export function MeetingEditorHeader({
   onTitleChange,
   isSaving = false,
   elapsedSeconds = 0,
-  availableModels,
-  selectedModel,
-  onModelChange,
+  sources = "both",
+  onSourcesChange,
 }: Props = {}) {
   const { t } = useTranslation("app");
   const [fallbackLanguage, setFallbackLanguage] = useState<MeetingLanguage>("auto");
@@ -135,15 +134,13 @@ export function MeetingEditorHeader({
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-        {availableModels && availableModels.length > 0 ? (
-          <ModelDropdown
-            models={availableModels}
-            selected={selectedModel ?? null}
-            onChange={onModelChange ?? (() => {})}
-            disabled={isActiveCapture || isTranscribing}
-            autoLabel={t("meetings.modelAuto")}
-          />
-        ) : null}
+        <SourcesToggle
+          value={sources}
+          onChange={onSourcesChange}
+          disabled={isActiveCapture || isTranscribing}
+          micLabel={t("meetings.sourceMic")}
+          systemLabel={t("meetings.sourceSystem")}
+        />
         <LanguageToggle
           value={effectiveLanguage}
           onChange={setLanguage}
@@ -237,6 +234,81 @@ export function MeetingEditorHeader({
   );
 }
 
+function SourcesToggle({
+  value,
+  onChange,
+  disabled = false,
+  micLabel,
+  systemLabel,
+}: {
+  value: MeetingSources;
+  onChange?: (v: MeetingSources) => void;
+  disabled?: boolean;
+  micLabel: string;
+  systemLabel: string;
+}) {
+  const micOn = value === "mic" || value === "both";
+  const systemOn = value === "system" || value === "both";
+
+  function toggleMic() {
+    if (!onChange) return;
+    if (micOn && !systemOn) return; // at least one source required
+    onChange(systemOn ? (micOn ? "system" : "both") : "mic");
+  }
+  function toggleSystem() {
+    if (!onChange) return;
+    if (systemOn && !micOn) return; // at least one source required
+    onChange(micOn ? (systemOn ? "mic" : "both") : "system");
+  }
+
+  const cellStyle = (active: boolean, interactive: boolean): React.CSSProperties => ({
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    padding: "3px 9px",
+    border: "none",
+    background: active ? "rgba(255,255,255,0.08)" : "transparent",
+    color: active ? "var(--text-1)" : "var(--text-3)",
+    cursor: interactive ? "pointer" : "not-allowed",
+    fontSize: 11,
+    fontWeight: active ? 500 : 400,
+  });
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius-sm)",
+        overflow: "hidden",
+        opacity: disabled || !onChange ? 0.5 : 1,
+      }}
+    >
+      <button
+        type="button"
+        onClick={disabled ? undefined : toggleMic}
+        disabled={disabled || !onChange}
+        title={micLabel}
+        style={cellStyle(micOn, !disabled && !!onChange)}
+      >
+        <Mic size={11} />
+        {micLabel}
+      </button>
+      <button
+        type="button"
+        onClick={disabled ? undefined : toggleSystem}
+        disabled={disabled || !onChange}
+        title={systemLabel}
+        style={cellStyle(systemOn, !disabled && !!onChange)}
+      >
+        <Speaker size={11} />
+        {systemLabel}
+      </button>
+    </div>
+  );
+}
+
 function LanguageToggle({
   value,
   onChange,
@@ -286,46 +358,6 @@ function LanguageToggle({
         </button>
       ))}
     </div>
-  );
-}
-
-function ModelDropdown({
-  models,
-  selected,
-  onChange,
-  disabled,
-  autoLabel,
-}: {
-  models: WhisperModel[];
-  selected: string | null;
-  onChange: (name: string | null) => void;
-  disabled: boolean;
-  autoLabel: string;
-}) {
-  const options: DropdownOption[] = [
-    { value: "", label: autoLabel },
-    ...models.map((m) => ({ value: m.name, label: m.displayName })),
-  ];
-  const selectedLabel =
-    selected === null || selected === ""
-      ? autoLabel
-      : (models.find((m) => m.name === selected)?.displayName ?? selected);
-
-  return (
-    <Dropdown
-      options={options}
-      value={selected ?? ""}
-      onChange={(v) => onChange(v === "" ? null : v)}
-      disabled={disabled}
-      title={autoLabel}
-      selectedLabel={selectedLabel}
-      triggerStyle={{
-        padding: "3px 8px",
-        fontSize: 11,
-        minWidth: 96,
-        maxWidth: 160,
-      }}
-    />
   );
 }
 

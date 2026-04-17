@@ -70,7 +70,9 @@
     "setupBannerAction": "Abrir catálogo de modelos",
     "titlePlaceholder": "Reunião sem título",
     "modelAuto": "Automático (melhor disponível)",
-    "languageAuto": "Auto"
+    "languageAuto": "Auto",
+    "sourceMic": "Mic",
+    "sourceSystem": "Sistema"
   },
   "sidebar": {
     "pin": "Fixar sidebar",
