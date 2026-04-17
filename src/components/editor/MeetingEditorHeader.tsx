@@ -147,7 +147,7 @@ export function MeetingEditorHeader({
         {onViewModeChange ? (
           <button
             type="button"
-            className="btn btn-ghost"
+            className="btn btn-outline"
             onClick={() =>
               onViewModeChange(viewMode === "edit" ? "preview" : "edit")
             }
@@ -161,7 +161,7 @@ export function MeetingEditorHeader({
                 ? t("meetings.viewPreview")
                 : t("meetings.viewEdit")
             }
-            style={{ padding: "6px 8px", minWidth: 0 }}
+            style={{ height: 27, padding: "0 8px", minWidth: 0 }}
           >
             {viewMode === "edit" ? <Eye size={13} /> : <Pencil size={13} />}
           </button>
