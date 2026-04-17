@@ -72,7 +72,11 @@
     "modelAuto": "Auto (best available)",
     "languageAuto": "Auto",
     "sourceMic": "Mic",
-    "sourceSystem": "System"
+    "sourceSystem": "System",
+    "viewEdit": "Edit",
+    "viewPreview": "Preview",
+    "viewEditHint": "Switch back to the markdown editor",
+    "viewPreviewHint": "Render the markdown"
   },
   "sidebar": {
     "pin": "Pin sidebar",

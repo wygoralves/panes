@@ -9,6 +9,7 @@ import {
 } from "../../lib/meetingFrontmatter";
 import { toast } from "../../stores/toastStore";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
+import { MarkdownPreviewPanel } from "../editor/MarkdownPreviewPanel";
 import {
   MeetingEditorHeader,
   type MeetingLanguage,
@@ -51,6 +52,7 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [availableModels, setAvailableModels] = useState<WhisperModel[]>([]);
   const [levels, setLevels] = useState<{ mic: number; system: number }>({ mic: 0, system: 0 });
+  const [viewMode, setViewMode] = useState<"edit" | "preview">("edit");
   const modelsListenerRef = useRef<UnlistenFn | null>(null);
 
   const dir = dirnameOf(meeting.path);
@@ -310,6 +312,8 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
         onSourcesChange={onSourcesChange}
         micLevel={levels.mic}
         systemLevel={levels.system}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
       />
       {recordError ? (
         <div
@@ -324,14 +328,18 @@ export function MeetingDocumentEditor({ meeting }: { meeting: Meeting }) {
         </div>
       ) : null}
       <div style={{ flex: 1, overflow: "hidden" }}>
-        <CodeMirrorEditor
-          tabId={`meeting:${meeting.path}`}
-          content={content}
-          filePath={meeting.path}
-          onChange={setContent}
-          pendingReveal={null}
-          onRevealHandled={() => {}}
-        />
+        {viewMode === "preview" ? (
+          <MarkdownPreviewPanel content={content} />
+        ) : (
+          <CodeMirrorEditor
+            tabId={`meeting:${meeting.path}`}
+            content={content}
+            filePath={meeting.path}
+            onChange={setContent}
+            pendingReveal={null}
+            onRevealHandled={() => {}}
+          />
+        )}
       </div>
     </div>
   );

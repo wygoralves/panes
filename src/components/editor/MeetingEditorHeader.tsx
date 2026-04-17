@@ -3,10 +3,12 @@ import { useTranslation } from "react-i18next";
 import {
   AudioLines,
   Circle,
+  Eye,
   FileText,
   Loader2,
   Mic,
   Pause,
+  Pencil,
   Play,
   Speaker,
   Square,
@@ -34,6 +36,8 @@ interface Props {
   onSourcesChange?: (s: MeetingSources) => void;
   micLevel?: number;
   systemLevel?: number;
+  viewMode?: "edit" | "preview";
+  onViewModeChange?: (mode: "edit" | "preview") => void;
 }
 
 function formatElapsed(seconds: number): string {
@@ -58,6 +62,8 @@ export function MeetingEditorHeader({
   onSourcesChange,
   micLevel = 0,
   systemLevel = 0,
+  viewMode = "edit",
+  onViewModeChange,
 }: Props = {}) {
   const { t } = useTranslation("app");
   const [fallbackLanguage, setFallbackLanguage] = useState<MeetingLanguage>("auto");
@@ -138,6 +144,26 @@ export function MeetingEditorHeader({
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+        {onViewModeChange ? (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() =>
+              onViewModeChange(viewMode === "edit" ? "preview" : "edit")
+            }
+            title={
+              viewMode === "edit"
+                ? t("meetings.viewPreviewHint")
+                : t("meetings.viewEditHint")
+            }
+            style={{ padding: "6px 10px" }}
+          >
+            {viewMode === "edit" ? <Eye size={12} /> : <Pencil size={12} />}
+            {viewMode === "edit"
+              ? t("meetings.viewPreview")
+              : t("meetings.viewEdit")}
+          </button>
+        ) : null}
         <SourcesToggle
           value={sources}
           onChange={onSourcesChange}
@@ -274,14 +300,15 @@ function SourcesToggle({
   const cellStyle = (active: boolean, interactive: boolean): React.CSSProperties => ({
     display: "inline-flex",
     alignItems: "center",
-    gap: 4,
-    padding: "3px 9px",
+    gap: 5,
+    padding: "6px 10px",
     border: "none",
     background: active ? "rgba(255,255,255,0.08)" : "transparent",
     color: active ? "var(--text-1)" : "var(--text-3)",
     cursor: interactive ? "pointer" : "not-allowed",
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: active ? 500 : 400,
+    lineHeight: 1,
   });
 
   return (
@@ -369,7 +396,6 @@ function LanguageToggle({
         border: "1px solid var(--border)",
         borderRadius: "var(--radius-sm)",
         overflow: "hidden",
-        fontSize: 11,
         opacity: disabled ? 0.5 : 1,
       }}
     >
@@ -380,8 +406,10 @@ function LanguageToggle({
           onClick={disabled ? undefined : () => onChange(opt.value)}
           disabled={disabled}
           style={{
-            padding: "3px 10px",
+            padding: "6px 10px",
             border: "none",
+            fontSize: 12,
+            lineHeight: 1,
             background:
               value === opt.value ? "rgba(255,255,255,0.08)" : "transparent",
             color: value === opt.value ? "var(--text-1)" : "var(--text-3)",
