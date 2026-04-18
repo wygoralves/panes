@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AudioLines, Download, Plus, Settings } from "lucide-react";
+import { AudioLines, Download } from "lucide-react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { ipc, listenWhisperModelDownload, type Meeting } from "../../lib/ipc";
-import { formatRelativeTime } from "../../lib/formatters";
 import { MeetingDocumentEditor } from "./MeetingDocumentEditor";
+import { MeetingsListPanel } from "./MeetingsListPanel";
 import { ModelCatalogModal } from "./ModelCatalogModal";
+import "./meetings.css";
+
+type RecorderState = "idle" | "recording" | "paused";
 
 export function MeetingsPanel() {
   const { t } = useTranslation(["app"]);
@@ -15,7 +18,9 @@ export function MeetingsPanel() {
   const [creating, setCreating] = useState(false);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [showModelCatalog, setShowModelCatalog] = useState(false);
-  const [hasDownloadedModel, setHasDownloadedModel] = useState<boolean | null>(null);
+  const [hasDownloadedModel, setHasDownloadedModel] =
+    useState<boolean | null>(null);
+  const [recorderState, setRecorderState] = useState<RecorderState>("idle");
   const modelListenerRef = useRef<UnlistenFn | null>(null);
 
   const refresh = useCallback(async () => {
@@ -23,8 +28,6 @@ export function MeetingsPanel() {
     try {
       const list = await ipc.listMeetings();
       setMeetings(list);
-      // Auto-select the newest meeting on first load so the right pane
-      // is never empty when there's at least one meeting on disk.
       setSelectedPath((prev) => prev ?? list[0]?.path ?? null);
     } catch (e) {
       setError(String(e));
@@ -63,7 +66,7 @@ export function MeetingsPanel() {
     [meetings, selectedPath],
   );
 
-  async function onNewMeeting() {
+  const onNewMeeting = useCallback(async () => {
     if (creating) return;
     setCreating(true);
     try {
@@ -75,131 +78,52 @@ export function MeetingsPanel() {
     } finally {
       setCreating(false);
     }
-  }
+  }, [creating, refresh]);
+
+  const liveMeetingPath =
+    recorderState === "idle" ? null : selected?.path ?? null;
 
   return (
-    <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
-      <aside
+    <div className="meetings-redesign">
+      <MeetingsListPanel
+        meetings={meetings}
+        selectedPath={selectedPath}
+        onSelect={setSelectedPath}
+        onOpenCatalog={() => setShowModelCatalog(true)}
+        liveMeetingPath={liveMeetingPath}
+        loading={loading}
+        error={error}
+      />
+
+      <main
         style={{
-          width: 280,
-          flexShrink: 0,
-          borderRight: "1px solid rgba(255,255,255,0.06)",
           display: "flex",
           flexDirection: "column",
-          background: "rgba(255,255,255,0.01)",
+          minWidth: 0,
           overflow: "hidden",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "12px 16px",
-            borderBottom: "1px solid rgba(255,255,255,0.06)",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <AudioLines size={16} strokeWidth={1.5} style={{ opacity: 0.75 }} />
-            <span style={{ fontSize: 13, fontWeight: 500 }}>
-              {t("app:sidebar.meetings")}
-            </span>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <button
-              type="button"
-              onClick={() => setShowModelCatalog(true)}
-              title={t("app:meetings.modelCatalogTitle")}
-              className="sb-add-project-btn"
-              style={{ border: "none" }}
-            >
-              <Settings size={12} strokeWidth={2} />
-            </button>
-            <button
-              type="button"
-              onClick={() => void onNewMeeting()}
-              disabled={creating}
-              title={t("app:meetings.newMeeting")}
-              className="sb-add-project-btn"
-              style={{ border: "none" }}
-            >
-              <Plus size={12} strokeWidth={2.2} />
-            </button>
-          </div>
-        </div>
-
-        <div style={{ flex: 1, overflow: "auto", padding: "4px 0" }}>
-          {loading ? (
-            <div style={{ padding: 16, textAlign: "center", color: "var(--text-3)", fontSize: 12 }}>
-              {t("app:meetings.loading")}
-            </div>
-          ) : error ? (
-            <div style={{ padding: 16, fontSize: 12, color: "var(--danger)" }}>{error}</div>
-          ) : meetings.length === 0 ? (
-            <div
-              style={{
-                padding: "24px 16px",
-                textAlign: "center",
-                color: "var(--text-3)",
-                fontSize: 12,
-                lineHeight: 1.5,
-              }}
-            >
-              {t("app:meetings.emptyTitle")}
-              <br />
-              <span style={{ fontSize: 11, color: "var(--text-4)" }}>
-                {t("app:meetings.emptyHint")}
-              </span>
-            </div>
-          ) : (
-            <MeetingList
-              meetings={meetings}
-              selectedPath={selectedPath}
-              onSelect={setSelectedPath}
-            />
-          )}
-        </div>
-      </aside>
-
-      <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {hasDownloadedModel === false ? (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 12,
-              padding: "10px 16px",
-              margin: "8px 12px 0",
-              borderRadius: "var(--radius-md)",
-              background: "rgba(210, 170, 80, 0.08)",
-              border: "1px solid rgba(210, 170, 80, 0.25)",
-              fontSize: 12,
-              color: "var(--text-2)",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <Download size={14} style={{ opacity: 0.85, color: "rgba(220, 195, 120, 0.95)" }} />
+          <div className="mr-setup-banner">
+            <div className="mr-setup-banner-left">
+              <Download className="mr-setup-banner-icon" size={14} />
               <div>
-                <div style={{ fontWeight: 500, color: "var(--text-1)" }}>
+                <div className="mr-setup-banner-title">
                   {t("app:meetings.setupBannerTitle")}
                 </div>
-                <div style={{ marginTop: 2, fontSize: 11, color: "var(--text-3)" }}>
+                <div className="mr-setup-banner-hint">
                   {t("app:meetings.setupBannerHint")}
                 </div>
               </div>
             </div>
             <button
               type="button"
-              className="btn btn-primary"
+              className="mr-record-secondary"
               onClick={() => setShowModelCatalog(true)}
               style={{
-                padding: "5px 12px",
-                fontSize: 12,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                whiteSpace: "nowrap",
+                height: 30,
+                color: "var(--text-1)",
+                background: "rgba(255,255,255,0.04)",
               }}
             >
               <Download size={12} />
@@ -209,98 +133,41 @@ export function MeetingsPanel() {
         ) : null}
 
         {selected ? (
-          <MeetingDocumentEditor key={selected.path} meeting={selected} />
+          <MeetingDocumentEditor
+            key={selected.path}
+            meeting={selected}
+            onRecorderStateChange={setRecorderState}
+            onNewMeeting={() => void onNewMeeting()}
+            creatingMeeting={creating}
+          />
         ) : (
-          <div
-            style={{
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 12,
-              color: "var(--text-3)",
-              padding: 32,
-              textAlign: "center",
-            }}
-          >
-            <AudioLines size={40} strokeWidth={1.25} style={{ opacity: 0.35 }} />
-            <div style={{ fontWeight: 500, color: "var(--text-2)" }}>
+          <div className="mr-empty">
+            <div className="mr-empty-icon">
+              <AudioLines size={22} strokeWidth={1.4} />
+            </div>
+            <div className="mr-empty-title">
               {t("app:meetings.noSelectionTitle")}
             </div>
-            <div style={{ maxWidth: 320, lineHeight: 1.5, fontSize: 13 }}>
+            <div className="mr-empty-hint">
               {t("app:meetings.noSelectionHint")}
             </div>
+            <button
+              type="button"
+              className="mr-header-record-btn"
+              onClick={() => void onNewMeeting()}
+              disabled={creating}
+              style={{ marginTop: 8 }}
+            >
+              <span className="mr-header-rec-dot" />
+              {t("app:meetings.recordNewMeeting")}
+            </button>
           </div>
         )}
       </main>
+
       {showModelCatalog ? (
         <ModelCatalogModal onClose={() => setShowModelCatalog(false)} />
       ) : null}
     </div>
-  );
-}
-
-function MeetingList({
-  meetings,
-  selectedPath,
-  onSelect,
-}: {
-  meetings: Meeting[];
-  selectedPath: string | null;
-  onSelect: (path: string) => void;
-}) {
-  return (
-    <ul
-      style={{
-        listStyle: "none",
-        margin: 0,
-        padding: "4px 6px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 1,
-      }}
-    >
-      {meetings.map((m) => {
-        const active = m.path === selectedPath;
-        return (
-          <li key={m.path}>
-            <button
-              type="button"
-              onClick={() => onSelect(m.path)}
-              title={m.path}
-              style={{
-                width: "100%",
-                textAlign: "left",
-                padding: "8px 10px",
-                background: active ? "rgba(255,255,255,0.06)" : "transparent",
-                border: "1px solid transparent",
-                borderRadius: 4,
-                cursor: "pointer",
-                display: "flex",
-                flexDirection: "column",
-                gap: 2,
-                color: active ? "var(--text-1)" : "var(--text-2)",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: 13,
-                  fontWeight: active ? 500 : 400,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {m.title}
-              </span>
-              <span style={{ fontSize: 11, color: "var(--text-3)" }}>
-                {formatRelativeTime(new Date(m.updatedAt))}
-              </span>
-            </button>
-          </li>
-        );
-      })}
-    </ul>
   );
 }

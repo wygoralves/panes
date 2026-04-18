@@ -16,9 +16,7 @@
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
-use panes_transcription::{
-    Transcriber, TranscriptionOptions, WhisperTranscriber,
-};
+use panes_transcription::{Transcriber, TranscriptionOptions, WhisperTranscriber};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncWriteExt;
@@ -592,44 +590,82 @@ pub async fn transcribe_meeting(
     }
 
     let (mic, system) = parse_framed_pcm(&audio_bytes).map_err(|e| e.to_string())?;
-    let mixed_samples = mix_sources(&mic, &system);
-    let common_rate = mic.rate.max(system.rate.max(1));
-    if mixed_samples.is_empty() {
+    let has_mic = !mic.samples.is_empty();
+    let has_system = !system.samples.is_empty();
+    if !has_mic && !has_system {
         return Err("no audio samples decoded from captured stream".to_string());
     }
 
     let transcriber = WhisperTranscriber::new(model_path).map_err(|e| e.to_string())?;
-    let options = TranscriptionOptions {
+    let warnings: Vec<String> = Vec::new();
+    let mk_options = || TranscriptionOptions {
         language: language.clone(),
         n_threads: None,
         translate: false,
     };
-    // Silent-tap auto-warning used to fire here, but it produced too many
-    // false positives — a meeting where nothing was playing on the PC
-    // (e.g. the user is the only speaker, or all remote participants
-    // happened to be silent in the first seconds) isn't the same as a
-    // denied permission, and we can't reliably distinguish them from the
-    // captured samples alone. The user can tell from the transcript.
-    let warnings: Vec<String> = Vec::new();
-    let transcript = transcriber
-        .transcribe_pcm_f32(mixed_samples, common_rate, 1, options)
-        .await
+
+    // Transcribe each captured track independently so we can attribute every
+    // segment to its source ("You" for the mic, "Others" for system audio).
+    // Running them serially keeps memory bounded — the Large model is ~1.5 GB
+    // loaded, we don't want two of them resident at once.
+    let mut labeled: Vec<LabeledSegment> = Vec::new();
+    let mut detected_language = language.clone().unwrap_or_else(|| "auto".to_string());
+    let mut full_text = String::new();
+
+    if has_mic {
+        let mono = downmix_to_mono_f32(&mic.samples, mic.channels.max(1));
+        if !mono.is_empty() {
+            let result = transcriber
+                .transcribe_pcm_f32(mono, mic.rate.max(1), 1, mk_options())
+                .await
+                .map_err(|e| e.to_string())?;
+            detected_language = result.language.clone();
+            for seg in &result.segments {
+                full_text.push_str(&seg.text);
+                labeled.push(LabeledSegment {
+                    start_ms: seg.start_ms,
+                    end_ms: seg.end_ms,
+                    text: seg.text.trim().to_string(),
+                    speaker: SpeakerTag::You,
+                });
+            }
+        }
+    }
+    if has_system {
+        let mono = downmix_to_mono_f32(&system.samples, system.channels.max(1));
+        if !mono.is_empty() {
+            let result = transcriber
+                .transcribe_pcm_f32(mono, system.rate.max(1), 1, mk_options())
+                .await
+                .map_err(|e| e.to_string())?;
+            if language.is_none() {
+                detected_language = result.language.clone();
+            }
+            for seg in &result.segments {
+                full_text.push_str(&seg.text);
+                labeled.push(LabeledSegment {
+                    start_ms: seg.start_ms,
+                    end_ms: seg.end_ms,
+                    text: seg.text.trim().to_string(),
+                    speaker: SpeakerTag::Others,
+                });
+            }
+        }
+    }
+
+    labeled.retain(|s| !s.text.is_empty());
+    labeled.sort_by_key(|s| s.start_ms);
+
+    let body_text = format_labeled_segments(&labeled, &full_text);
+    update_meeting_transcript_section(&meeting_path, &body_text, &audio_path, &language)
         .map_err(|e| e.to_string())?;
 
-    update_meeting_transcript_section(&meeting_path, &transcript.full_text, &audio_path, &language)
-        .map_err(|e| e.to_string())?;
-
-    let duration_ms = transcript
-        .segments
-        .last()
-        .map(|s| s.end_ms)
-        .unwrap_or_default();
+    let duration_ms = labeled.last().map(|s| s.end_ms).unwrap_or_default();
 
     Ok(TranscriptDto {
-        language: transcript.language,
-        full_text: transcript.full_text,
-        segments: transcript
-            .segments
+        language: detected_language,
+        full_text,
+        segments: labeled
             .into_iter()
             .map(|s| TranscriptSegmentDto {
                 start_ms: s.start_ms,
@@ -640,6 +676,83 @@ pub async fn transcribe_meeting(
         duration_ms,
         warnings,
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpeakerTag {
+    You,
+    Others,
+}
+
+impl SpeakerTag {
+    fn label(&self) -> &'static str {
+        match self {
+            SpeakerTag::You => "You",
+            SpeakerTag::Others => "Others",
+        }
+    }
+}
+
+struct LabeledSegment {
+    start_ms: u64,
+    end_ms: u64,
+    text: String,
+    speaker: SpeakerTag,
+}
+
+fn format_labeled_segments(segments: &[LabeledSegment], full_text_fallback: &str) -> String {
+    if segments.is_empty() {
+        return full_text_fallback.trim().to_string();
+    }
+    let last_ms = segments.last().map(|s| s.end_ms).unwrap_or(0);
+    let use_hours = last_ms >= 3_600_000;
+    let mut out = String::new();
+    for seg in segments {
+        if seg.text.is_empty() {
+            continue;
+        }
+        let total = seg.start_ms / 1000;
+        if use_hours {
+            let h = total / 3600;
+            let m = (total % 3600) / 60;
+            let s = total % 60;
+            out.push_str(&format!(
+                "[{:02}:{:02}:{:02}] {}: {}\n",
+                h,
+                m,
+                s,
+                seg.speaker.label(),
+                seg.text
+            ));
+        } else {
+            let m = total / 60;
+            let s = total % 60;
+            out.push_str(&format!(
+                "[{:02}:{:02}] {}: {}\n",
+                m,
+                s,
+                seg.speaker.label(),
+                seg.text
+            ));
+        }
+    }
+    if out.is_empty() {
+        return full_text_fallback.trim().to_string();
+    }
+    out
+}
+
+fn downmix_to_mono_f32(samples: &[f32], channels: u8) -> Vec<f32> {
+    if channels <= 1 || samples.is_empty() {
+        return samples.to_vec();
+    }
+    let channels = channels as usize;
+    let mut out = Vec::with_capacity(samples.len() / channels);
+    let scale = 1.0 / channels as f32;
+    for frame in samples.chunks_exact(channels) {
+        out.push(frame.iter().sum::<f32>() * scale);
+    }
+    out
 }
 
 fn read_recording_pid(meeting_path: &str) -> Result<u32, String> {
@@ -1064,76 +1177,6 @@ fn parse_framed_pcm(bytes: &[u8]) -> Result<(SourceAudio, SourceAudio), String> 
         ));
     }
     Ok((mic, system))
-}
-
-fn downmix_to_mono(samples: &[f32], channels: u8) -> Vec<f32> {
-    if channels <= 1 || samples.is_empty() {
-        return samples.to_vec();
-    }
-    let channels = channels as usize;
-    let mut out = Vec::with_capacity(samples.len() / channels);
-    let scale = 1.0 / channels as f32;
-    for frame in samples.chunks_exact(channels) {
-        out.push(frame.iter().sum::<f32>() * scale);
-    }
-    out
-}
-
-fn resample_linear(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
-    if from_rate == to_rate || input.is_empty() {
-        return input.to_vec();
-    }
-    let ratio = from_rate as f64 / to_rate as f64;
-    let out_len = ((input.len() as f64) / ratio).floor() as usize;
-    let mut out = Vec::with_capacity(out_len);
-    for i in 0..out_len {
-        let src_f = i as f64 * ratio;
-        let src_i = src_f.floor() as usize;
-        if src_i >= input.len() {
-            break;
-        }
-        let frac = (src_f - src_f.floor()) as f32;
-        let s0 = input[src_i];
-        let s1 = if src_i + 1 < input.len() {
-            input[src_i + 1]
-        } else {
-            s0
-        };
-        out.push(s0 * (1.0 - frac) + s1 * frac);
-    }
-    out
-}
-
-/// Additive mix of mic and system streams at a common rate. Each stream is
-/// first downmixed to mono (if multi-channel), then resampled to the higher
-/// of the two native rates. Samples are summed and divided by 2 to keep the
-/// output within [-1, 1] under typical conditions. Longer stream controls
-/// output length; the shorter one is padded with zeros.
-fn mix_sources(mic: &SourceAudio, system: &SourceAudio) -> Vec<f32> {
-    if mic.samples.is_empty() && system.samples.is_empty() {
-        return Vec::new();
-    }
-    let mic_mono = downmix_to_mono(&mic.samples, mic.channels.max(1));
-    let system_mono = downmix_to_mono(&system.samples, system.channels.max(1));
-    let target_rate = mic.rate.max(system.rate);
-    let mic_aligned = if mic.rate == target_rate || mic.rate == 0 {
-        mic_mono
-    } else {
-        resample_linear(&mic_mono, mic.rate, target_rate)
-    };
-    let system_aligned = if system.rate == target_rate || system.rate == 0 {
-        system_mono
-    } else {
-        resample_linear(&system_mono, system.rate, target_rate)
-    };
-    let len = mic_aligned.len().max(system_aligned.len());
-    let mut mixed = Vec::with_capacity(len);
-    for i in 0..len {
-        let a = mic_aligned.get(i).copied().unwrap_or(0.0);
-        let b = system_aligned.get(i).copied().unwrap_or(0.0);
-        mixed.push((a + b) * 0.5);
-    }
-    mixed
 }
 
 fn audio_capture_bundle_path() -> PathBuf {
