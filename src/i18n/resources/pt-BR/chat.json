@@ -29,13 +29,15 @@
       "low": "Baixo",
       "medium": "Médio",
       "high": "Alto",
-      "xhigh": "Máximo",
+      "xhigh": "XAlto",
+      "max": "Máximo",
       "noneShort": "Nen",
       "minimalShort": "Min",
       "lowShort": "Bx",
       "mediumShort": "Med",
       "highShort": "Alt",
-      "xhighShort": "Máx"
+      "xhighShort": "XAlt",
+      "maxShort": "Máx"
     }
   },
   "attachments": {

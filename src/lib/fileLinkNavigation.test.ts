@@ -268,20 +268,13 @@ describe("fileLinkNavigation", () => {
     expect(extractTextLinkMatches("relative src/App.tsx should stay plain")).toEqual([]);
   });
 
-  it("opens local links internally on normal click and shift-click", async () => {
+  it("opens local links internally only on shift-click", async () => {
     await expect(
       navigateLinkTarget("/workspace/apps/app/src/main.ts#L12C4", { shiftKey: false }),
-    ).resolves.toBe("internal");
+    ).resolves.toBe("ignored");
 
-    expect(mockOpenFileAtLocation).toHaveBeenCalledWith(
-      "/workspace/apps/app",
-      "src/main.ts",
-      { line: 12, column: 4 },
-    );
-    expect(mockSetLayoutMode).toHaveBeenCalledWith("ws-1", "editor");
-
-    mockOpenFileAtLocation.mockClear();
-    mockSetLayoutMode.mockClear();
+    expect(mockOpenFileAtLocation).not.toHaveBeenCalled();
+    expect(mockSetLayoutMode).not.toHaveBeenCalled();
 
     await expect(
       navigateLinkTarget("/workspace/apps/app/src/main.ts#L12C4", { shiftKey: true }),
@@ -295,9 +288,15 @@ describe("fileLinkNavigation", () => {
     expect(mockSetLayoutMode).toHaveBeenCalledWith("ws-1", "editor");
   });
 
-  it("opens external links through the shell", async () => {
+  it("opens external links through the shell only on shift-click", async () => {
     await expect(
       navigateLinkTarget("https://example.com/docs", { shiftKey: false }),
+    ).resolves.toBe("ignored");
+
+    expect(mockOpenExternal).not.toHaveBeenCalled();
+
+    await expect(
+      navigateLinkTarget("https://example.com/docs", { shiftKey: true }),
     ).resolves.toBe("external");
 
     expect(mockOpenExternal).toHaveBeenCalledWith("https://example.com/docs");
