@@ -247,6 +247,10 @@ export async function navigateLinkTarget(
   rawTarget: string,
   options: { shiftKey: boolean },
 ): Promise<LinkNavigationResult> {
+  if (!options.shiftKey) {
+    return "ignored";
+  }
+
   const workspaceState = useWorkspaceStore.getState();
   const activeWorkspaceId = workspaceState.activeWorkspaceId;
   const activeWorkspace = activeWorkspaceId
