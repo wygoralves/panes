@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.54.1...vnull) (2026-04-20)
+
+### Features
+
+* **chat:** add opus 4.7 to chat model picker and gate hyperlinks through shift+click ([ddde36b](https://github.com/wygoralves/panes/commit/ddde36b949723d8a3f9377cf1817939a77d920a8))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.54.0...vnull) (2026-04-09)
 
 ### Bug Fixes
