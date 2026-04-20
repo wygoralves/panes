@@ -932,12 +932,47 @@ impl Engine for ClaudeSidecarEngine {
     fn models(&self) -> Vec<ModelInfo> {
         vec![
             ModelInfo {
-                id: "claude-opus-4-6".to_string(),
-                display_name: "Claude Opus 4.6".to_string(),
+                id: "claude-opus-4-7".to_string(),
+                display_name: "Claude Opus 4.7".to_string(),
                 description: "Most intelligent model for agents and coding".to_string(),
                 hidden: false,
                 is_default: false,
                 upgrade: None,
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string(), "image".to_string()],
+                supports_personality: false,
+                default_reasoning_effort: "xhigh".to_string(),
+                supported_reasoning_efforts: vec![
+                    ReasoningEffortOption {
+                        reasoning_effort: "low".to_string(),
+                        description: "Quick, efficient responses".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "medium".to_string(),
+                        description: "Balanced reasoning".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "high".to_string(),
+                        description: "Deep, thorough reasoning".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "xhigh".to_string(),
+                        description: "Extended exploration for agentic coding".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: "max".to_string(),
+                        description: "Absolute highest capability, no constraints".to_string(),
+                    },
+                ],
+            },
+            ModelInfo {
+                id: "claude-opus-4-6".to_string(),
+                display_name: "Claude Opus 4.6".to_string(),
+                description: "Previous generation flagship for agents and coding".to_string(),
+                hidden: false,
+                is_default: false,
+                upgrade: Some("claude-opus-4-7".to_string()),
                 availability_nux: None,
                 upgrade_info: None,
                 input_modalities: vec!["text".to_string(), "image".to_string()],
@@ -964,7 +999,7 @@ impl Engine for ClaudeSidecarEngine {
                 description: "Best balance of speed and intelligence".to_string(),
                 hidden: false,
                 is_default: true,
-                upgrade: Some("claude-opus-4-6".to_string()),
+                upgrade: Some("claude-opus-4-7".to_string()),
                 availability_nux: None,
                 upgrade_info: None,
                 input_modalities: vec!["text".to_string(), "image".to_string()],
