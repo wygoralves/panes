@@ -6,6 +6,7 @@ import {
   resolveRelativePathWithinRoot,
 } from "../../lib/fileRootUtils";
 import { ipc } from "../../lib/ipc";
+import { isMarkdownPreviewFile } from "../../lib/editorFileTypes";
 import { useFileStore } from "../../stores/fileStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
@@ -16,13 +17,6 @@ import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { GitDiffEditorPanel } from "./GitDiffEditorPanel";
 import { MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
-
-const MARKDOWN_PREVIEW_EXTENSIONS = new Set(["md", "mdx", "markdown"]);
-
-function isMarkdownPreviewFile(filePath: string): boolean {
-  const extension = filePath.split(".").pop()?.toLowerCase();
-  return extension ? MARKDOWN_PREVIEW_EXTENSIONS.has(extension) : false;
-}
 
 export function FileEditorPanel() {
   const { t } = useTranslation("app");

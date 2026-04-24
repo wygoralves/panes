@@ -197,6 +197,30 @@ describe("fileStore", () => {
     });
   });
 
+  it("opens markdown files in preview mode by default", async () => {
+    mockIpc.readFile.mockResolvedValueOnce(makeReadFileResult("# Readme\n"));
+
+    await useFileStore.getState().openFile("/repo", "README.md");
+
+    const tab = useFileStore.getState().tabs[0]!;
+    expect(tab.renderMode).toBe("markdown-preview");
+    expect(tab.pendingReveal).toBeNull();
+    expect(tab.content).toBe("# Readme\n");
+  });
+
+  it("opens markdown files in plain mode when a line reveal is requested", async () => {
+    await useFileStore
+      .getState()
+      .openFileAtLocation("/repo", "README.md", { line: 12, column: 4 });
+
+    const tab = useFileStore.getState().tabs[0]!;
+    expect(tab.renderMode).toBe("plain-editor");
+    expect(tab.pendingReveal).toMatchObject({
+      line: 12,
+      column: 4,
+    });
+  });
+
   it("reuses an existing tab and updates its pending reveal without reloading the file", async () => {
     await useFileStore.getState().openFile("/repo", "src/app.ts");
     const tabId = useFileStore.getState().tabs[0]!.id;
