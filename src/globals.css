@@ -7617,6 +7617,35 @@ button, input, textarea, select {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.chat-command-panel-list-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+}
+
+.chat-command-panel-list-name {
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-command-panel-list-detail {
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .chat-command-panel-info-name {
   font-weight: 550;
   color: var(--text-1);

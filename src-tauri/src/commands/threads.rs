@@ -6,10 +6,11 @@ use crate::{
     db,
     engines::validate_engine_sandbox_mode,
     engines::CodexRemoteThreadSummary,
+    engines::OpenCodeRemoteSessionSummary,
     engines::SandboxPolicy,
     models::{
-        CodexRemoteThreadDto, CodexRemoteThreadPageDto, RepoDto, ThreadDto, ThreadStatusDto,
-        TrustLevelDto,
+        CodexRemoteThreadDto, CodexRemoteThreadPageDto, OpenCodeRemoteSessionDto,
+        OpenCodeRemoteSessionPageDto, RepoDto, ThreadDto, ThreadStatusDto, TrustLevelDto,
     },
     state::AppState,
 };
@@ -203,6 +204,170 @@ pub async fn attach_codex_remote_thread(
     .await
 }
 
+#[tauri::command]
+pub async fn list_opencode_remote_sessions(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    cursor: Option<String>,
+    limit: Option<u32>,
+    search_term: Option<String>,
+    archived: Option<bool>,
+) -> Result<OpenCodeRemoteSessionPageDto, String> {
+    let db = state.db.clone();
+    let (workspace_root, repos) = run_db(db.clone(), {
+        let workspace_id = workspace_id.clone();
+        move |db| {
+            let workspace = db::workspaces::find_workspace_by_id(db, &workspace_id)?
+                .ok_or_else(|| anyhow::anyhow!("workspace not found: {workspace_id}"))?;
+            let repos = db::repos::get_repos(db, &workspace_id)?;
+            Ok((workspace.root_path, repos))
+        }
+    })
+    .await?;
+
+    let allowed_roots = collect_remote_thread_roots(&workspace_root, &repos);
+    let normalized_search_term = normalize_remote_thread_search_term(search_term);
+    let mut remote_sessions = Vec::new();
+    for cwd in allowed_roots.iter() {
+        let sessions = state
+            .engines
+            .list_opencode_remote_sessions(cwd, normalized_search_term.as_deref(), archived)
+            .await
+            .map_err(err_to_string)?;
+        remote_sessions.extend(sessions);
+    }
+    remote_sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    let mut seen_session_ids = std::collections::HashSet::new();
+    remote_sessions.retain(|session| seen_session_ids.insert(session.engine_thread_id.clone()));
+
+    let offset = parse_codex_remote_thread_cursor(cursor.as_deref())?;
+    let page_size = normalize_codex_remote_thread_limit(limit);
+    let page_end = offset.saturating_add(page_size).min(remote_sessions.len());
+    let page_sessions = if offset >= remote_sessions.len() {
+        Vec::new()
+    } else {
+        remote_sessions[offset..page_end].to_vec()
+    };
+    let next_cursor = (page_end < remote_sessions.len()).then(|| page_end.to_string());
+
+    run_db(db, move |db| {
+        let sessions = page_sessions
+            .into_iter()
+            .map(|session| {
+                let local_thread_id = db::threads::find_thread_by_engine_thread_id(
+                    db,
+                    "opencode",
+                    &session.engine_thread_id,
+                )?
+                .filter(|local| local.workspace_id == workspace_id)
+                .map(|local| local.id);
+                Ok(map_opencode_remote_session_dto(session, local_thread_id))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        Ok(OpenCodeRemoteSessionPageDto {
+            sessions,
+            next_cursor,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn attach_opencode_remote_session(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    engine_thread_id: String,
+    cwd: String,
+    model_id: String,
+) -> Result<ThreadDto, String> {
+    let normalized_model_id =
+        validate_model_for_engine(state.inner(), "opencode", model_id.trim()).await?;
+    let db = state.db.clone();
+    let (workspace_root, repos, existing_local_thread) = run_db(db.clone(), {
+        let workspace_id = workspace_id.clone();
+        let engine_thread_id = engine_thread_id.clone();
+        move |db| {
+            let workspace = db::workspaces::find_workspace_by_id(db, &workspace_id)?
+                .ok_or_else(|| anyhow::anyhow!("workspace not found: {workspace_id}"))?;
+            let repos = db::repos::get_repos(db, &workspace_id)?;
+            let existing =
+                db::threads::find_thread_by_engine_thread_id(db, "opencode", &engine_thread_id)?
+                    .filter(|thread| thread.workspace_id == workspace_id);
+            Ok((workspace.root_path, repos, existing))
+        }
+    })
+    .await?;
+
+    let allowed_roots = collect_remote_thread_roots(&workspace_root, &repos);
+    if !allowed_roots.contains(cwd.as_str()) {
+        return Err(format!(
+            "OpenCode session cwd is outside this workspace: {cwd}"
+        ));
+    }
+
+    let mut remote_session = state
+        .engines
+        .read_opencode_remote_session(&cwd, &engine_thread_id)
+        .await
+        .map_err(err_to_string)?;
+    if remote_session.archived {
+        state
+            .engines
+            .unarchive_opencode_remote_session(&cwd, &engine_thread_id)
+            .await
+            .map_err(err_to_string)?;
+        remote_session.archived = false;
+    }
+    let repo_id =
+        resolve_codex_remote_thread_repo_id(&workspace_root, &repos, &remote_session.cwd)?;
+    let title = build_opencode_remote_session_title(&remote_session);
+
+    if let Some(existing) = existing_local_thread {
+        let metadata = build_opencode_remote_session_metadata(
+            existing.engine_metadata.as_ref(),
+            &remote_session,
+            &normalized_model_id,
+        );
+        return run_db(db, move |db| {
+            let thread = match db::threads::restore_thread(db, &existing.id) {
+                Ok(restored) => restored,
+                Err(_) => existing,
+            };
+            db::threads::update_thread_runtime_snapshot(
+                db,
+                &thread.id,
+                Some(&title),
+                Some(ThreadStatusDto::Idle),
+                Some(&metadata),
+            )
+        })
+        .await;
+    }
+
+    let metadata =
+        build_opencode_remote_session_metadata(None, &remote_session, &normalized_model_id);
+    run_db(db, move |db| {
+        let created = db::threads::create_thread(
+            db,
+            &workspace_id,
+            repo_id.as_deref(),
+            "opencode",
+            &normalized_model_id,
+            &title,
+        )?;
+        db::threads::set_engine_thread_id(db, &created.id, &engine_thread_id)?;
+        db::threads::update_thread_runtime_snapshot(
+            db,
+            &created.id,
+            Some(&title),
+            Some(ThreadStatusDto::Idle),
+            Some(&metadata),
+        )
+    })
+    .await
+}
+
 async fn validate_model_for_engine(
     state: &AppState,
     engine_id: &str,
@@ -236,6 +401,25 @@ async fn validate_model_for_engine(
     }
 
     Ok(normalized_model_id.to_string())
+}
+
+async fn resolve_thread_cwd(state: &AppState, thread: &ThreadDto) -> Result<String, String> {
+    let workspace_id = thread.workspace_id.clone();
+    let repo_id = thread.repo_id.clone();
+    let thread_id = thread.id.clone();
+
+    run_db(state.db.clone(), move |db| {
+        let workspace = db::workspaces::find_workspace_by_id(db, &workspace_id)?
+            .ok_or_else(|| anyhow::anyhow!("workspace not found for thread {thread_id}"))?;
+        if let Some(repo_id) = repo_id.as_deref() {
+            let repo = db::repos::find_repo_by_id(db, repo_id)?
+                .ok_or_else(|| anyhow::anyhow!("repo not found for thread {thread_id}"))?;
+            return Ok(repo.path);
+        }
+
+        Ok(workspace.root_path)
+    })
+    .await
 }
 
 fn collect_remote_thread_roots(
@@ -293,7 +477,13 @@ fn map_codex_remote_thread_dto(
 }
 
 fn codex_remote_thread_timestamp_to_rfc3339(timestamp: i64) -> String {
-    DateTime::<Utc>::from_timestamp(timestamp, 0)
+    let (seconds, nanos) = if timestamp > 10_000_000_000 {
+        (timestamp / 1000, ((timestamp % 1000) as u32) * 1_000_000)
+    } else {
+        (timestamp, 0)
+    };
+
+    DateTime::<Utc>::from_timestamp(seconds, nanos)
         .unwrap_or_else(Utc::now)
         .to_rfc3339()
 }
@@ -385,6 +575,74 @@ fn build_codex_remote_thread_metadata(thread: &CodexRemoteThreadSummary, model_i
             "codexRemoteUpdatedAt".to_string(),
             json!(codex_remote_thread_timestamp_to_rfc3339(thread.updated_at)),
         );
+    }
+
+    metadata
+}
+
+fn map_opencode_remote_session_dto(
+    session: OpenCodeRemoteSessionSummary,
+    local_thread_id: Option<String>,
+) -> OpenCodeRemoteSessionDto {
+    OpenCodeRemoteSessionDto {
+        engine_thread_id: session.engine_thread_id,
+        title: session.title,
+        cwd: session.cwd,
+        created_at: codex_remote_thread_timestamp_to_rfc3339(session.created_at),
+        updated_at: codex_remote_thread_timestamp_to_rfc3339(session.updated_at),
+        archived: session.archived,
+        local_thread_id,
+    }
+}
+
+fn build_opencode_remote_session_title(session: &OpenCodeRemoteSessionSummary) -> String {
+    if let Some(title) = session
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return normalize_thread_title(title).unwrap_or_else(|_| {
+            format!(
+                "OpenCode session {}",
+                short_thread_label(&session.engine_thread_id)
+            )
+        });
+    }
+
+    format!(
+        "OpenCode session {}",
+        short_thread_label(&session.engine_thread_id)
+    )
+}
+
+fn build_opencode_remote_session_metadata(
+    existing: Option<&Value>,
+    session: &OpenCodeRemoteSessionSummary,
+    model_id: &str,
+) -> Value {
+    let mut metadata = existing.cloned().unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        metadata = json!({});
+    }
+
+    if let Some(object) = metadata.as_object_mut() {
+        object.insert("lastModelId".to_string(), json!(model_id));
+        object.insert("opencodeRemoteSessionAttached".to_string(), json!(true));
+        object.insert(
+            "opencodeRemoteArchived".to_string(),
+            json!(session.archived),
+        );
+        object.insert("opencodeRemoteCwd".to_string(), json!(session.cwd));
+        object.insert(
+            "opencodeRemoteCreatedAt".to_string(),
+            json!(codex_remote_thread_timestamp_to_rfc3339(session.created_at)),
+        );
+        object.insert(
+            "opencodeRemoteUpdatedAt".to_string(),
+            json!(codex_remote_thread_timestamp_to_rfc3339(session.updated_at)),
+        );
+        object.insert("opencodeTranscriptImported".to_string(), json!(false));
     }
 
     metadata
@@ -670,6 +928,14 @@ pub async fn delete_thread(state: State<'_, AppState>, thread_id: String) -> Res
         if let Err(error) = state.engines.interrupt(&thread).await {
             log::warn!("failed to interrupt thread before deletion: {error}");
         }
+        if thread.engine_id == "opencode" {
+            if let Some(engine_thread_id) = thread.engine_thread_id.as_deref() {
+                state
+                    .engines
+                    .forget_opencode_session(engine_thread_id)
+                    .await;
+            }
+        }
     } else {
         state.turns.finish(&thread_id).await;
         return Err(format!("thread not found: {thread_id}"));
@@ -701,11 +967,22 @@ pub async fn archive_thread(state: State<'_, AppState>, thread_id: String) -> Re
             log::warn!("failed to interrupt thread before archive: {error}");
         }
 
-        state
-            .engines
-            .archive_thread(&thread)
-            .await
-            .map_err(err_to_string)?;
+        if thread.engine_id == "opencode" {
+            if let Some(engine_thread_id) = thread.engine_thread_id.as_deref() {
+                let cwd = resolve_thread_cwd(state.inner(), &thread).await?;
+                state
+                    .engines
+                    .archive_opencode_remote_session(&cwd, engine_thread_id)
+                    .await
+                    .map_err(err_to_string)?;
+            }
+        } else {
+            state
+                .engines
+                .archive_thread(&thread)
+                .await
+                .map_err(err_to_string)?;
+        }
 
         run_db(db, {
             let thread_id = thread_id.clone();
@@ -734,11 +1011,22 @@ pub async fn restore_thread(
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
-    state
-        .engines
-        .unarchive_thread(&thread)
-        .await
-        .map_err(err_to_string)?;
+    if thread.engine_id == "opencode" {
+        if let Some(engine_thread_id) = thread.engine_thread_id.as_deref() {
+            let cwd = resolve_thread_cwd(state.inner(), &thread).await?;
+            state
+                .engines
+                .unarchive_opencode_remote_session(&cwd, engine_thread_id)
+                .await
+                .map_err(err_to_string)?;
+        }
+    } else {
+        state
+            .engines
+            .unarchive_thread(&thread)
+            .await
+            .map_err(err_to_string)?;
+    }
 
     let restored = run_db(db, move |db| db::threads::restore_thread(db, &thread_id)).await?;
 
@@ -757,6 +1045,40 @@ pub async fn sync_thread_from_engine(
     })
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if thread.engine_id == "opencode" {
+        let Some(engine_thread_id) = thread.engine_thread_id.as_deref() else {
+            return Ok(thread);
+        };
+        let cwd = resolve_thread_cwd(state.inner(), &thread).await?;
+        let session = match state
+            .engines
+            .read_opencode_remote_session(&cwd, engine_thread_id)
+            .await
+        {
+            Ok(session) => session,
+            Err(error) => {
+                log::debug!("failed to sync OpenCode session {engine_thread_id}: {error}");
+                return Ok(thread);
+            }
+        };
+        let title = build_opencode_remote_session_title(&session);
+        let metadata = build_opencode_remote_session_metadata(
+            thread.engine_metadata.as_ref(),
+            &session,
+            &thread.model_id,
+        );
+        return run_db(db, move |db| {
+            db::threads::update_thread_runtime_snapshot(
+                db,
+                &thread_id,
+                Some(&title),
+                Some(ThreadStatusDto::Idle),
+                Some(&metadata),
+            )
+        })
+        .await;
+    }
 
     if thread.engine_id != "codex" {
         return Ok(thread);
@@ -2545,6 +2867,59 @@ mod tests {
             metadata.get("codexSyncReason"),
             Some(&json!("remote_thread_attached"))
         );
+    }
+
+    #[test]
+    fn remote_timestamp_format_accepts_opencode_milliseconds() {
+        assert_eq!(
+            codex_remote_thread_timestamp_to_rfc3339(1_777_155_663_506),
+            "2026-04-25T22:21:03.506+00:00"
+        );
+    }
+
+    #[test]
+    fn build_opencode_remote_session_metadata_sets_remote_fields() {
+        let summary = OpenCodeRemoteSessionSummary {
+            engine_thread_id: "ses_12345678".to_string(),
+            title: Some("OpenCode title".to_string()),
+            cwd: "/workspace".to_string(),
+            created_at: 1_777_155_663_506,
+            updated_at: 1_777_155_663_524,
+            archived: true,
+        };
+
+        let metadata = build_opencode_remote_session_metadata(
+            Some(&json!({
+                "opencodeAgent": "plan",
+                "reasoningEffort": "high"
+            })),
+            &summary,
+            "opencode/big-pickle",
+        );
+
+        assert_eq!(
+            build_opencode_remote_session_title(&summary),
+            "OpenCode title"
+        );
+        assert_eq!(
+            metadata.get("lastModelId"),
+            Some(&json!("opencode/big-pickle"))
+        );
+        assert_eq!(
+            metadata.get("opencodeRemoteSessionAttached"),
+            Some(&json!(true))
+        );
+        assert_eq!(metadata.get("opencodeRemoteArchived"), Some(&json!(true)));
+        assert_eq!(
+            metadata.get("opencodeRemoteCwd"),
+            Some(&json!("/workspace"))
+        );
+        assert_eq!(
+            metadata.get("opencodeTranscriptImported"),
+            Some(&json!(false))
+        );
+        assert_eq!(metadata.get("opencodeAgent"), Some(&json!("plan")));
+        assert_eq!(metadata.get("reasoningEffort"), Some(&json!("high")));
     }
 
     #[test]

@@ -279,6 +279,8 @@ pub fn run() {
             commands::threads::list_archived_threads,
             commands::threads::list_codex_remote_threads,
             commands::threads::attach_codex_remote_thread,
+            commands::threads::list_opencode_remote_sessions,
+            commands::threads::attach_opencode_remote_session,
             commands::threads::create_thread,
             commands::threads::rename_thread,
             commands::threads::confirm_workspace_thread,

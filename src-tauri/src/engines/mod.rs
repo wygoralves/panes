@@ -357,6 +357,16 @@ pub struct CodexRemoteThreadSummary {
 }
 
 #[derive(Debug, Clone)]
+pub struct OpenCodeRemoteSessionSummary {
+    pub engine_thread_id: String,
+    pub title: Option<String>,
+    pub cwd: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub archived: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct TurnAttachment {
     pub file_name: String,
     pub file_path: String,
@@ -610,6 +620,49 @@ impl EngineManager {
         engine_thread_id: &str,
     ) -> anyhow::Result<()> {
         self.codex.unarchive_remote_thread(engine_thread_id).await
+    }
+
+    pub async fn list_opencode_remote_sessions(
+        &self,
+        cwd: &str,
+        search_term: Option<&str>,
+        archived: Option<bool>,
+    ) -> anyhow::Result<Vec<OpenCodeRemoteSessionSummary>> {
+        self.opencode
+            .list_sessions(cwd, search_term, archived)
+            .await
+    }
+
+    pub async fn read_opencode_remote_session(
+        &self,
+        cwd: &str,
+        engine_thread_id: &str,
+    ) -> anyhow::Result<OpenCodeRemoteSessionSummary> {
+        self.opencode.read_session(cwd, engine_thread_id).await
+    }
+
+    pub async fn archive_opencode_remote_session(
+        &self,
+        cwd: &str,
+        engine_thread_id: &str,
+    ) -> anyhow::Result<()> {
+        self.opencode
+            .set_session_archived(cwd, engine_thread_id, true)
+            .await
+    }
+
+    pub async fn unarchive_opencode_remote_session(
+        &self,
+        cwd: &str,
+        engine_thread_id: &str,
+    ) -> anyhow::Result<()> {
+        self.opencode
+            .set_session_archived(cwd, engine_thread_id, false)
+            .await
+    }
+
+    pub async fn forget_opencode_session(&self, engine_thread_id: &str) {
+        self.opencode.forget_session(engine_thread_id).await;
     }
 
     pub async fn start_codex_review(

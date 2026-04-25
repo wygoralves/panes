@@ -42,6 +42,7 @@ import type {
   Message,
   MessageWindow,
   MessageWindowCursor,
+  OpenCodeRemoteSessionPage,
   OpenCodeRuntimeCatalog,
   ReadFileResult,
   Repo,
@@ -192,6 +193,34 @@ export const ipc = {
     invoke<Thread>("attach_codex_remote_thread", {
       workspaceId,
       engineThreadId,
+      modelId,
+    }),
+  listOpenCodeRemoteSessions: (
+    workspaceId: string,
+    options?: {
+      cursor?: string | null;
+      limit?: number | null;
+      searchTerm?: string | null;
+      archived?: boolean | null;
+    },
+  ) =>
+    invoke<OpenCodeRemoteSessionPage>("list_opencode_remote_sessions", {
+      workspaceId,
+      cursor: options?.cursor ?? null,
+      limit: options?.limit ?? null,
+      searchTerm: options?.searchTerm ?? null,
+      archived: options?.archived ?? null,
+    }),
+  attachOpenCodeRemoteSession: (
+    workspaceId: string,
+    engineThreadId: string,
+    cwd: string,
+    modelId: string,
+  ) =>
+    invoke<Thread>("attach_opencode_remote_session", {
+      workspaceId,
+      engineThreadId,
+      cwd,
       modelId,
     }),
   createThread: (

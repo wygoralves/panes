@@ -100,6 +100,7 @@ import type {
   EngineHealth,
   EngineModel,
   Message,
+  OpenCodeRemoteSession,
   OpenCodeRuntimeCatalog,
   Thread,
   TrustLevel,
@@ -1580,6 +1581,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     rollbackCodexThread,
     compactCodexThread,
     attachCodexRemoteThread,
+    attachOpenCodeRemoteSession,
     refreshThreads,
     setActiveThread: setActiveThreadInStore,
     applyThreadUpdateLocal,
@@ -1594,6 +1596,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       rollbackCodexThread: state.rollbackCodexThread,
       compactCodexThread: state.compactCodexThread,
       attachCodexRemoteThread: state.attachCodexRemoteThread,
+      attachOpenCodeRemoteSession: state.attachOpenCodeRemoteSession,
       refreshThreads: state.refreshThreads,
       setActiveThread: state.setActiveThread,
       applyThreadUpdateLocal: state.applyThreadUpdateLocal,
@@ -3393,6 +3396,26 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     toast.success(t("panel.toasts.codexThreadResumed"));
   }
 
+  async function onAttachOpenCodeRemoteSession(session: OpenCodeRemoteSession) {
+    if (!activeWorkspaceId || !selectedModelId) {
+      throw new Error(t("panel.toasts.openCodeSessionResumeUnavailable"));
+    }
+
+    const attachedThread = await attachOpenCodeRemoteSession(
+      activeWorkspaceId,
+      session.engineThreadId,
+      session.cwd,
+      selectedModelId,
+    );
+    if (!attachedThread) {
+      throw new Error(t("panel.toasts.openCodeSessionResumeFailed"));
+    }
+
+    setActiveThreadInStore(attachedThread.id);
+    await bindChatThread(attachedThread.id);
+    toast.success(t("panel.toasts.openCodeSessionResumed"));
+  }
+
   /* ── Slash command system ── */
 
   const canManageActiveCodexThread =
@@ -3494,6 +3517,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           name: "commands",
           description: t("slashCommands.panels.openCodeCommands.description"),
           icon: SquareCode,
+          disabled: !isOpenCodeEngine,
+        },
+        {
+          id: "sessions",
+          name: "sessions",
+          description: t("slashCommands.panels.openCodeSessions.description"),
+          icon: GitBranch,
           disabled: !isOpenCodeEngine,
         },
       ],
@@ -5307,6 +5337,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         ? openCodeCatalog?.mcpServers ?? []
                         : undefined
                     }
+                    workspaceId={activeWorkspaceId}
+                    selectedModelId={selectedModelId}
+                    onAttachOpenCodeSession={onAttachOpenCodeRemoteSession}
                     mcpServers={
                       selectedEngineId === "opencode"
                         ? undefined

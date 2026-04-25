@@ -99,6 +99,25 @@ pub struct CodexRemoteThreadPageDto {
     pub next_cursor: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeRemoteSessionDto {
+    pub engine_thread_id: String,
+    pub title: Option<String>,
+    pub cwd: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub archived: bool,
+    pub local_thread_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeRemoteSessionPageDto {
+    pub sessions: Vec<OpenCodeRemoteSessionDto>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadStatusDto {

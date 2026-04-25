@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import {
+  ArrowRightCircle,
   FlaskConical,
   GitBranch,
   Minimize2,
+  RefreshCw,
   RotateCcw,
   Scissors,
   Search,
@@ -13,6 +15,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { ipc } from "../../lib/ipc";
 import type {
   CodexExperimentalFeature,
   CodexMcpServer,
@@ -22,6 +25,7 @@ import type {
   OpenCodeAgent,
   OpenCodeCommand,
   OpenCodeMcpServer,
+  OpenCodeRemoteSession,
 } from "../../types";
 
 type ReviewTargetMode =
@@ -40,6 +44,7 @@ export type ActiveSlashCommand =
   | { type: "skills" }
   | { type: "agents" }
   | { type: "commands" }
+  | { type: "sessions" }
   | { type: "mcp" }
   | { type: "experimental" };
 
@@ -65,6 +70,9 @@ interface ChatCommandPanelProps {
   openCodeAgents?: OpenCodeAgent[];
   openCodeCommands?: OpenCodeCommand[];
   openCodeMcpServers?: OpenCodeMcpServer[];
+  workspaceId?: string | null;
+  selectedModelId?: string | null;
+  onAttachOpenCodeSession?: (session: OpenCodeRemoteSession) => Promise<void>;
   mcpServers?: CodexMcpServer[];
   experimentalFeatures?: CodexExperimentalFeature[];
   onConfirm: (
@@ -86,6 +94,9 @@ export function ChatCommandPanel({
   openCodeAgents,
   openCodeCommands,
   openCodeMcpServers,
+  workspaceId,
+  selectedModelId,
+  onAttachOpenCodeSession,
   mcpServers,
   experimentalFeatures,
   onConfirm,
@@ -211,6 +222,18 @@ export function ChatCommandPanel({
           onDismiss={onDismiss}
         />
       );
+    case "sessions":
+      return (
+        <OpenCodeSessionsPanel
+          busy={busy}
+          error={error}
+          workspaceId={workspaceId}
+          selectedModelId={selectedModelId}
+          onAttach={onAttachOpenCodeSession}
+          onDismiss={onDismiss}
+          t={t}
+        />
+      );
     case "mcp":
       return (
         <InfoListPanel
@@ -248,6 +271,265 @@ export function ChatCommandPanel({
         />
       );
   }
+}
+
+type OpenCodeSessionFilter = "active" | "archived";
+
+function formatRemoteSessionTimestamp(value: string): string {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(timestamp);
+}
+
+function describeOpenCodeSession(session: OpenCodeRemoteSession): string {
+  const title = session.title?.trim();
+  return title || session.engineThreadId;
+}
+
+function OpenCodeSessionsPanel({
+  busy,
+  error,
+  workspaceId,
+  selectedModelId,
+  onAttach,
+  onDismiss,
+  t,
+}: {
+  busy: boolean;
+  error: string | null;
+  workspaceId?: string | null;
+  selectedModelId?: string | null;
+  onAttach?: (session: OpenCodeRemoteSession) => Promise<void>;
+  onDismiss: () => void;
+  t: ReturnType<typeof useTranslation<"chat">>["t"];
+}) {
+  const [sessions, setSessions] = useState<OpenCodeRemoteSession[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [searchDraft, setSearchDraft] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filter, setFilter] = useState<OpenCodeSessionFilter>("active");
+  const [localBusy, setLocalBusy] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const browsingDisabled = !workspaceId || !selectedModelId || !onAttach;
+  const blocked = busy || localBusy !== null;
+  const displayError = error || localError;
+
+  async function loadSessions(reset: boolean) {
+    if (!workspaceId) {
+      setSessions([]);
+      setNextCursor(null);
+      setLoaded(true);
+      return;
+    }
+
+    const cursor = reset ? null : nextCursor;
+    setLocalBusy(reset ? "refresh" : "more");
+    if (reset) {
+      setLocalError(null);
+      setLoaded(false);
+      setNextCursor(null);
+    }
+
+    try {
+      const page = await ipc.listOpenCodeRemoteSessions(workspaceId, {
+        cursor,
+        limit: 20,
+        searchTerm: searchQuery || null,
+        archived: filter === "archived",
+      });
+      setSessions((current) => {
+        if (reset) {
+          return page.sessions;
+        }
+        const seen = new Set(current.map((session) => session.engineThreadId));
+        return [
+          ...current,
+          ...page.sessions.filter((session) => !seen.has(session.engineThreadId)),
+        ];
+      });
+      setNextCursor(page.nextCursor ?? null);
+      setLoaded(true);
+    } catch (nextError) {
+      setLocalError(nextError instanceof Error ? nextError.message : String(nextError));
+      if (reset) {
+        setSessions([]);
+        setNextCursor(null);
+        setLoaded(true);
+      }
+    } finally {
+      setLocalBusy(null);
+    }
+  }
+
+  useEffect(() => {
+    void loadSessions(true);
+  }, [filter, searchQuery, workspaceId]);
+
+  async function handleAttach(session: OpenCodeRemoteSession) {
+    if (!onAttach) {
+      return;
+    }
+    setLocalBusy(`attach:${session.engineThreadId}`);
+    setLocalError(null);
+    try {
+      await onAttach(session);
+      onDismiss();
+    } catch (nextError) {
+      setLocalError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setLocalBusy(null);
+    }
+  }
+
+  return (
+    <div className="chat-command-panel">
+      <div className="chat-command-panel-header">
+        <div className="chat-command-panel-title">
+          <GitBranch size={12} />
+          <span>{t("slashCommands.panels.openCodeSessions.title")}</span>
+        </div>
+        <button
+          type="button"
+          className="chat-command-panel-close"
+          onClick={onDismiss}
+          disabled={blocked}
+        >
+          <X size={12} />
+        </button>
+      </div>
+      <div className="chat-command-panel-desc">
+        {t("slashCommands.panels.openCodeSessions.description")}
+      </div>
+
+      <div className="chat-command-panel-fields">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8 }}>
+          <input
+            className="chat-command-panel-input"
+            value={searchDraft}
+            onChange={(event) => setSearchDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                setSearchQuery(searchDraft.trim());
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                onDismiss();
+              }
+            }}
+            placeholder={t("slashCommands.panels.openCodeSessions.searchPlaceholder")}
+            disabled={blocked || browsingDisabled}
+            autoFocus
+          />
+          <select
+            className="chat-command-panel-input"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value as OpenCodeSessionFilter)}
+            disabled={blocked || browsingDisabled}
+          >
+            <option value="active">
+              {t("slashCommands.panels.openCodeSessions.filters.active")}
+            </option>
+            <option value="archived">
+              {t("slashCommands.panels.openCodeSessions.filters.archived")}
+            </option>
+          </select>
+          <button
+            type="button"
+            className="chat-command-panel-btn-secondary"
+            onClick={() => setSearchQuery(searchDraft.trim())}
+            disabled={blocked || browsingDisabled}
+          >
+            <Search size={11} />
+            {t("threadPicker.searchAction")}
+          </button>
+        </div>
+
+        <div className="chat-command-panel-desc">
+          {browsingDisabled
+            ? t("slashCommands.panels.openCodeSessions.unavailable")
+            : t("slashCommands.panels.openCodeSessions.historyNote")}
+        </div>
+      </div>
+
+      {displayError && <div className="chat-command-panel-error">{displayError}</div>}
+
+      <div style={{ display: "grid", gap: 8, maxHeight: 280, overflowY: "auto" }}>
+        {!loaded && localBusy === "refresh" ? (
+          <div className="chat-command-panel-desc">
+            {t("slashCommands.panels.openCodeSessions.loading")}
+          </div>
+        ) : null}
+        {loaded && sessions.length === 0 && !browsingDisabled ? (
+          <div className="chat-command-panel-desc">
+            {t("slashCommands.panels.openCodeSessions.empty")}
+          </div>
+        ) : null}
+        {sessions.map((session) => {
+          const label = describeOpenCodeSession(session);
+          const attachBusy = localBusy === `attach:${session.engineThreadId}`;
+          return (
+            <div key={session.engineThreadId} className="chat-command-panel-list-item">
+              <div style={{ minWidth: 0 }}>
+                <div className="chat-command-panel-list-name" title={label}>
+                  {label}
+                </div>
+                <div className="chat-command-panel-list-detail" title={session.cwd}>
+                  {session.cwd}
+                </div>
+                <div className="chat-command-panel-list-detail">
+                  {t("slashCommands.panels.openCodeSessions.meta", {
+                    updatedAt: formatRemoteSessionTimestamp(session.updatedAt),
+                  })}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="chat-command-panel-btn-primary"
+                onClick={() => void handleAttach(session)}
+                disabled={blocked || browsingDisabled}
+              >
+                <ArrowRightCircle size={11} />
+                {attachBusy
+                  ? t("threadPicker.working")
+                  : session.localThreadId
+                    ? t("threadPicker.openAttachedAction")
+                    : t("threadPicker.attachAction")}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="chat-command-panel-actions">
+        <button
+          type="button"
+          className="chat-command-panel-btn-secondary"
+          onClick={() => void loadSessions(true)}
+          disabled={blocked || browsingDisabled}
+        >
+          <RefreshCw size={11} />
+          {localBusy === "refresh" ? t("threadPicker.working") : t("threadPicker.refreshAction")}
+        </button>
+        <button
+          type="button"
+          className="chat-command-panel-btn-secondary"
+          onClick={() => void loadSessions(false)}
+          disabled={blocked || browsingDisabled || !nextCursor}
+        >
+          <RefreshCw size={11} />
+          {localBusy === "more" ? t("threadPicker.working") : t("threadPicker.loadMoreAction")}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /* ── Generic confirm panel (fork / compact) ── */

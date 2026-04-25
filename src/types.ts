@@ -188,6 +188,21 @@ export interface CodexRemoteThreadPage {
   nextCursor?: string | null;
 }
 
+export interface OpenCodeRemoteSession {
+  engineThreadId: string;
+  title?: string | null;
+  cwd: string;
+  createdAt: string;
+  updatedAt: string;
+  archived: boolean;
+  localThreadId?: string | null;
+}
+
+export interface OpenCodeRemoteSessionPage {
+  sessions: OpenCodeRemoteSession[];
+  nextCursor?: string | null;
+}
+
 export type CodexReviewDelivery = "inline" | "detached";
 
 export type CodexReviewTarget =

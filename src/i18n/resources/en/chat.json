@@ -390,11 +390,14 @@
       "codexThreadCompactFailed": "Failed to start Codex thread compaction.",
       "codexThreadResumeUnavailable": "Select a workspace and Codex model before resuming a remote thread.",
       "codexThreadResumeFailed": "Failed to attach the selected Codex thread.",
+      "openCodeSessionResumeUnavailable": "Select a workspace and OpenCode model before resuming a remote session.",
+      "openCodeSessionResumeFailed": "Failed to attach the selected OpenCode session.",
       "codexThreadForked": "Created a new forked Codex thread.",
       "codexThreadRolledBack_one": "Created a new rollback branch with the last {{count}} turn removed.",
       "codexThreadRolledBack_other": "Created a new rollback branch with the last {{count}} turns removed.",
       "codexThreadCompactionStarted": "Started Codex thread compaction.",
       "codexThreadResumed": "Attached the selected remote Codex thread.",
+      "openCodeSessionResumed": "Attached the selected remote OpenCode session.",
       "serviceTierUpdated": "Service tier -> {{value}}",
       "fastToggled": "Fast mode {{state}}",
       "on": "on",
@@ -529,6 +532,20 @@
         "empty": "No OpenCode commands found.",
         "description": "View OpenCode slash commands",
         "insertDescription": "Insert OpenCode command"
+      },
+      "openCodeSessions": {
+        "title": "OpenCode sessions",
+        "empty": "No matching OpenCode sessions were found for this workspace.",
+        "description": "Browse and attach OpenCode sessions",
+        "searchPlaceholder": "Search OpenCode sessions",
+        "unavailable": "Select a workspace and OpenCode model before browsing remote sessions.",
+        "historyNote": "Prior history stays in OpenCode for now. New turns continue on the attached session.",
+        "loading": "Loading OpenCode sessions...",
+        "meta": "Updated {{updatedAt}}.",
+        "filters": {
+          "active": "Active",
+          "archived": "Archived"
+        }
       },
       "info": {
         "badgeOn": "on",

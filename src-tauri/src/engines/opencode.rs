@@ -4,7 +4,7 @@ use std::{
     net::TcpListener,
     path::{Path, PathBuf},
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
@@ -31,8 +31,8 @@ use crate::{process_utils, runtime_env};
 use super::{
     normalize_approval_response_for_engine, trim_action_output_delta_content, ActionResult,
     ActionType, ApprovalRequestRoute, DiffScope, Engine, EngineEvent, EngineThread, ModelInfo,
-    ModelLimits, OutputStream, ReasoningEffortOption, SandboxPolicy, ThreadScope, TokenUsage,
-    TurnCompletionStatus, TurnInput,
+    ModelLimits, OpenCodeRemoteSessionSummary, OutputStream, ReasoningEffortOption, SandboxPolicy,
+    ThreadScope, TokenUsage, TurnCompletionStatus, TurnInput,
 };
 
 const OPENCODE_STARTUP_TIMEOUT: Duration = Duration::from_secs(8);
@@ -111,6 +111,22 @@ struct OpenCodeHealthResponse {
 #[derive(Debug, Clone, Deserialize)]
 struct OpenCodeSessionInfo {
     id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenCodeSessionRecord {
+    id: String,
+    title: Option<String>,
+    directory: String,
+    time: OpenCodeSessionTime,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct OpenCodeSessionTime {
+    created: i64,
+    updated: i64,
+    archived: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -651,6 +667,12 @@ impl Engine for OpenCodeEngine {
     async fn archive_thread(&self, engine_thread_id: &str) -> Result<()> {
         let removed = self.state.lock().await.sessions.remove(engine_thread_id);
         if let Some(session) = removed {
+            self.patch_session_archive(
+                session.server.as_ref(),
+                engine_thread_id,
+                Some(current_unix_time_millis()),
+            )
+            .await?;
             self.stop_server_if_unused(&session.cwd).await;
         }
         Ok(())
@@ -856,6 +878,116 @@ impl OpenCodeEngine {
         result
     }
 
+    pub async fn list_sessions(
+        &self,
+        cwd: &str,
+        search_term: Option<&str>,
+        archived: Option<bool>,
+    ) -> Result<Vec<OpenCodeRemoteSessionSummary>> {
+        let server = self.ensure_server(cwd).await?;
+        let result = async {
+            let mut query = vec![
+                ("directory", cwd.to_string()),
+                ("roots", "true".to_string()),
+                ("limit", "200".to_string()),
+            ];
+            if let Some(search_term) = search_term.map(str::trim).filter(|value| !value.is_empty())
+            {
+                query.push(("search", search_term.to_string()));
+            }
+
+            let sessions = self
+                .request(server.as_ref(), reqwest::Method::GET, "/session")
+                .query(&query)
+                .send()
+                .await?
+                .error_for_status()
+                .context("failed to list OpenCode sessions")?
+                .json::<Vec<OpenCodeSessionRecord>>()
+                .await
+                .context("failed to parse OpenCode sessions")?;
+
+            let mut summaries = sessions
+                .into_iter()
+                .map(map_session_record)
+                .filter(|session| {
+                    archived
+                        .map(|expected| session.archived == expected)
+                        .unwrap_or(true)
+                })
+                .collect::<Vec<_>>();
+            summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            Ok(summaries)
+        }
+        .await;
+        self.stop_server_if_unused(cwd).await;
+        result
+    }
+
+    pub async fn read_session(
+        &self,
+        cwd: &str,
+        session_id: &str,
+    ) -> Result<OpenCodeRemoteSessionSummary> {
+        let server = self.ensure_server(cwd).await?;
+        let result = async {
+            let session = self
+                .request(
+                    server.as_ref(),
+                    reqwest::Method::GET,
+                    &format!("/session/{session_id}"),
+                )
+                .query(&[("directory", cwd)])
+                .send()
+                .await?
+                .error_for_status()
+                .context("failed to read OpenCode session")?
+                .json::<OpenCodeSessionRecord>()
+                .await
+                .context("failed to parse OpenCode session")?;
+            Ok(map_session_record(session))
+        }
+        .await;
+        self.stop_server_if_unused(cwd).await;
+        result
+    }
+
+    pub async fn set_session_archived(
+        &self,
+        cwd: &str,
+        session_id: &str,
+        archived: bool,
+    ) -> Result<()> {
+        let server = self.ensure_server(cwd).await?;
+        let result = self
+            .patch_session_archive(
+                server.as_ref(),
+                session_id,
+                Some(if archived {
+                    current_unix_time_millis()
+                } else {
+                    0
+                }),
+            )
+            .await;
+
+        if result.is_ok() {
+            let removed = self.state.lock().await.sessions.remove(session_id);
+            if let Some(session) = removed {
+                self.stop_server_if_unused(&session.cwd).await;
+            }
+        }
+        self.stop_server_if_unused(cwd).await;
+        result
+    }
+
+    pub async fn forget_session(&self, session_id: &str) {
+        let removed = self.state.lock().await.sessions.remove(session_id);
+        if let Some(session) = removed {
+            self.stop_server_if_unused(&session.cwd).await;
+        }
+    }
+
     async fn resolve_session_reasoning_effort(
         &self,
         model_id: &str,
@@ -997,6 +1129,29 @@ impl OpenCodeEngine {
         .await?
         .error_for_status()
         .context("failed to read OpenCode session")?;
+        Ok(())
+    }
+
+    async fn patch_session_archive(
+        &self,
+        server: &OpenCodeServer,
+        session_id: &str,
+        archived: Option<i64>,
+    ) -> Result<()> {
+        self.request(
+            server,
+            reqwest::Method::PATCH,
+            &format!("/session/{session_id}"),
+        )
+        .json(&json!({
+            "time": {
+                "archived": archived,
+            },
+        }))
+        .send()
+        .await?
+        .error_for_status()
+        .context("failed to update OpenCode session archive state")?;
         Ok(())
     }
 
@@ -1692,6 +1847,27 @@ fn map_runtime_mcp_servers(mcp: HashMap<String, Value>) -> Vec<OpenCodeMcpServer
         .collect::<Vec<_>>();
     servers.sort_by(|a, b| a.name.cmp(&b.name));
     servers
+}
+
+fn map_session_record(session: OpenCodeSessionRecord) -> OpenCodeRemoteSessionSummary {
+    OpenCodeRemoteSessionSummary {
+        engine_thread_id: session.id,
+        title: session.title.and_then(|value| {
+            let trimmed = value.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        }),
+        cwd: session.directory,
+        created_at: session.time.created,
+        updated_at: session.time.updated,
+        archived: session.time.archived.unwrap_or(0) > 0,
+    }
+}
+
+fn current_unix_time_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn default_reasoning_effort(options: &[ReasoningEffortOption]) -> Option<&'static str> {
@@ -2634,6 +2810,25 @@ opencode/gpt-5-nano
         assert_eq!(usage.cache_read, Some(7));
         assert_eq!(usage.cache_write, Some(3));
         assert_eq!(usage.cost_usd, Some(0.0123));
+    }
+
+    #[test]
+    fn session_record_maps_archived_zero_as_active() {
+        let session = map_session_record(OpenCodeSessionRecord {
+            id: "ses_123".to_string(),
+            title: Some("  Existing session  ".to_string()),
+            directory: "/workspace".to_string(),
+            time: OpenCodeSessionTime {
+                created: 1_777_155_663_506,
+                updated: 1_777_155_663_524,
+                archived: Some(0),
+            },
+        });
+
+        assert_eq!(session.engine_thread_id, "ses_123");
+        assert_eq!(session.title.as_deref(), Some("Existing session"));
+        assert_eq!(session.cwd, "/workspace");
+        assert!(!session.archived);
     }
 
     #[test]

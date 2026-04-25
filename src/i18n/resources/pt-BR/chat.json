@@ -390,11 +390,14 @@
       "codexThreadCompactFailed": "Falha ao iniciar a compactação da thread do Codex.",
       "codexThreadResumeUnavailable": "Selecione um workspace e um modelo do Codex antes de retomar uma thread remota.",
       "codexThreadResumeFailed": "Falha ao anexar a thread do Codex selecionada.",
+      "openCodeSessionResumeUnavailable": "Selecione um workspace e um modelo do OpenCode antes de retomar uma sessão remota.",
+      "openCodeSessionResumeFailed": "Falha ao anexar a sessão do OpenCode selecionada.",
       "codexThreadForked": "Uma nova thread ramificada do Codex foi criada.",
       "codexThreadRolledBack_one": "Uma nova ramificação com rollback do último {{count}} turno foi criada.",
       "codexThreadRolledBack_other": "Uma nova ramificação com rollback dos últimos {{count}} turnos foi criada.",
       "codexThreadCompactionStarted": "A compactação da thread do Codex foi iniciada.",
       "codexThreadResumed": "A thread remota do Codex selecionada foi anexada.",
+      "openCodeSessionResumed": "A sessão remota do OpenCode selecionada foi anexada.",
       "serviceTierUpdated": "Camada de serviço -> {{value}}",
       "fastToggled": "Modo fast {{state}}",
       "on": "ligado",
@@ -529,6 +532,20 @@
         "empty": "Nenhum comando OpenCode encontrado.",
         "description": "Ver comandos de barra do OpenCode",
         "insertDescription": "Inserir comando OpenCode"
+      },
+      "openCodeSessions": {
+        "title": "Sessões OpenCode",
+        "empty": "Nenhuma sessão OpenCode correspondente foi encontrada para este workspace.",
+        "description": "Navegar e anexar sessões do OpenCode",
+        "searchPlaceholder": "Buscar sessões OpenCode",
+        "unavailable": "Selecione um workspace e um modelo do OpenCode antes de navegar pelas sessões remotas.",
+        "historyNote": "O histórico anterior continua no OpenCode por enquanto. Novos turnos seguem na sessão anexada.",
+        "loading": "Carregando sessões OpenCode...",
+        "meta": "Atualizada em {{updatedAt}}.",
+        "filters": {
+          "active": "Ativas",
+          "archived": "Arquivadas"
+        }
       },
       "info": {
         "badgeOn": "lig",
