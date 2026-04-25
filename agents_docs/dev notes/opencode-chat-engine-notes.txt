@@ -8,6 +8,7 @@ Adds OpenCode as a native Panes chat engine alongside Codex and Claude. The back
 - Normalized OpenCode permission button responses to OpenCode-native decision payloads so permission approvals do not receive Codex-style permission payloads.
 - Parsed `opencode models --verbose` model variants and sent the selected OpenCode reasoning effort as the OpenCode `variant` field.
 - Added OpenCode usage/cost mapping, richer question answer handling, model attachment metadata, selected-model attachment validation, runtime agent picker, OpenCode slash command/MCP panels, and session browsing/attach lifecycle controls.
+- Treated OpenCode session permission rules as create-time state: if a resumed session has different ask/allow/deny rules than Panes requests, Panes starts a fresh OpenCode session and persists the new engine session id on the next turn.
 - Added tests for OpenCode backend routing/capabilities, model metadata, attachment validation, usage mapping, session metadata, frontend capability fallbacks, onboarding persistence/readiness, and OpenCode question approval action gating.
 ## Validation
 - [x] pnpm typecheck
@@ -27,4 +28,4 @@ OpenCode now has `/agents`, `/commands`, `/mcp`, and `/sessions` panels. No scre
 - [ ] No new user-facing copy
 - [x] Updated both src/i18n/resources/en/ and src/i18n/resources/pt-BR/
 ## Notes for review
-Review OpenCode server lifecycle, approval/question routing, model attachment validation, runtime catalog loading, and remote session attach/archive/restore closely. The frontend intentionally hides sandbox/network controls for OpenCode because OpenCode permissions are not equivalent to Panes/Codex sandboxing. Granular OpenCode permission-rule editing is intentionally deferred.
+Review OpenCode server lifecycle, approval/question routing, model attachment validation, runtime catalog loading, remote session attach/archive/restore, and permission-mode resume behavior closely. The frontend intentionally hides sandbox/network controls for OpenCode because OpenCode permissions are not equivalent to Panes/Codex sandboxing. Granular OpenCode permission-rule editing is intentionally deferred.
