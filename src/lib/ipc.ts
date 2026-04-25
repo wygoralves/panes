@@ -6,6 +6,7 @@ import type {
   ApprovalResponse,
   ActionOutputPayload,
   ChatAttachment,
+  ChatEngineId,
   ChatInputItem,
   CodexReviewDelivery,
   CodexReviewTarget,
@@ -562,7 +563,7 @@ export interface ThreadUpdatedEvent {
 export interface ChatTurnFinishedEvent {
   threadId: string;
   workspaceId: string;
-  engineId: "codex" | "claude";
+  engineId: ChatEngineId;
   threadTitle: string;
   status: "completed" | "interrupted" | "error";
   preview?: string | null;

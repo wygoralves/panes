@@ -45,6 +45,8 @@
     "codexWarning": "Apenas anexos de imagem e texto são suportados em turns do Codex.",
     "claudeTitle": "Anexar arquivos (texto, SVG e imagens suportadas)",
     "claudeWarning": "Apenas arquivos de texto, incluindo SVG, e imagens PNG, JPEG, GIF ou WEBP são suportados em turns do Claude.",
+    "opencodeTitle": "Anexar arquivos (texto)",
+    "opencodeWarning": "Apenas anexos de texto são suportados em turns do OpenCode.",
     "remove": "Remover anexo",
     "filters": {
       "supportedFiles": "Arquivos compatíveis",
@@ -242,6 +244,7 @@
     "trustTitle": "Confiança",
     "approvalTitleCodex": "Aprovação",
     "approvalTitleClaude": "Modo de permissão",
+    "approvalTitleOpenCode": "Permissões do OpenCode",
     "sandboxTitle": "Sandbox",
     "networkTitle": "Rede",
     "customSuffix": "{{count}} personalizado",
@@ -254,6 +257,7 @@
     "auto": "Automático",
     "autoRepoTrust": "Seguir a política de confiança do repositório.",
     "autoClaude": "Seguir os padrões de confiança do repositório para Claude.",
+    "autoOpenCode": "Perguntar antes de ferramentas, exceto se a política do repositório for restrita.",
     "autoSandbox": "Seguir o sandbox padrão da thread.",
     "autoNetwork": "Seguir a política de rede padrão da thread.",
     "untrusted": "Não confiável",
@@ -278,6 +282,12 @@
     "claudeRestrictedDescription": "A maioria das ações exige aprovações mais rigorosas.",
     "claudeStandardDescription": "Permissões equilibradas para o trabalho do dia a dia.",
     "claudeTrustedDescription": "Permissões amplas com menos interrupções.",
+    "openCodeAsk": "Perguntar",
+    "openCodeAskDescription": "Pergunta antes do OpenCode executar ferramentas.",
+    "openCodeAllow": "Permitir",
+    "openCodeAllowDescription": "Permite ferramentas do OpenCode sem perguntar. Isto não é um sandbox do Panes.",
+    "openCodeDeny": "Negar",
+    "openCodeDenyDescription": "Nega permissões de ferramenta do OpenCode para esta thread.",
     "permissionPolicyFallback": "Política de permissão"
   },
   "panel": {

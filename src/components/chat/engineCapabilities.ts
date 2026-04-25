@@ -12,8 +12,29 @@ const CLAUDE_CAPABILITIES: EngineCapabilities = {
   approvalDecisions: ["accept", "decline", "accept_for_session"],
 };
 
+const OPENCODE_CAPABILITIES: EngineCapabilities = {
+  permissionModes: ["ask", "allow", "deny"],
+  sandboxModes: [],
+  approvalDecisions: ["accept", "decline", "cancel", "accept_for_session"],
+};
+
+const EMPTY_CAPABILITIES: EngineCapabilities = {
+  permissionModes: [],
+  sandboxModes: [],
+  approvalDecisions: [],
+};
+
 function fallbackEngineCapabilities(engineId?: string | null): EngineCapabilities {
-  return engineId === "claude" ? CLAUDE_CAPABILITIES : CODEX_CAPABILITIES;
+  switch (engineId) {
+    case "codex":
+      return CODEX_CAPABILITIES;
+    case "claude":
+      return CLAUDE_CAPABILITIES;
+    case "opencode":
+      return OPENCODE_CAPABILITIES;
+    default:
+      return EMPTY_CAPABILITIES;
+  }
 }
 
 export function resolveEngineCapabilities(

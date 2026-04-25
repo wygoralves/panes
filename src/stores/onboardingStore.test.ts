@@ -75,24 +75,26 @@ describe("onboardingStore", () => {
     localStorage.setItem(ONBOARDING_WORKFLOW_KEY, "chat");
     localStorage.setItem(
       ONBOARDING_CHAT_ENGINES_KEY,
-      JSON.stringify(["claude", "invalid", "codex", "claude"]),
+      JSON.stringify(["opencode", "claude", "invalid", "codex", "claude"]),
     );
 
     expect(readStoredOnboardingState()).toEqual({
       completed: false,
       legacyCompleted: false,
       preferredWorkflow: "chat",
-      selectedChatEngines: ["codex", "claude"],
+      selectedChatEngines: ["codex", "claude", "opencode"],
     });
   });
 
   it("persists workflow and chat engine selection in stable order", () => {
     useOnboardingStore.getState().setPreferredWorkflow("chat");
-    useOnboardingStore.getState().setSelectedChatEngines(["claude", "codex", "claude"]);
+    useOnboardingStore
+      .getState()
+      .setSelectedChatEngines(["opencode", "claude", "codex", "claude"]);
 
     expect(localStorage.getItem(ONBOARDING_WORKFLOW_KEY)).toBe("chat");
     expect(localStorage.getItem(ONBOARDING_CHAT_ENGINES_KEY)).toBe(
-      JSON.stringify(["codex", "claude"]),
+      JSON.stringify(["codex", "claude", "opencode"]),
     );
   });
 
@@ -132,6 +134,18 @@ describe("onboardingStore", () => {
 
     expect(ok).toBe(true);
     expect(mockIpc.installHarness).toHaveBeenCalledWith("claude-code");
+  });
+
+  it("uses the direct OpenCode harness install path", async () => {
+    mockIpc.installHarness.mockResolvedValue({
+      success: true,
+      message: "ok",
+    });
+
+    const ok = await useOnboardingStore.getState().installHarness("opencode", "OpenCode");
+
+    expect(ok).toBe(true);
+    expect(mockIpc.installHarness).toHaveBeenCalledWith("opencode");
   });
 
   it("cleans up dependency installs when progress subscription fails", async () => {

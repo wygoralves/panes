@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ApprovalBlock } from "../../types";
 import {
+  canUseApprovalDecisionActions,
   filterPendingApprovalBannerRows,
+  isOpenCodeQuestionApproval,
   resolvePendingToolInputApproval,
 } from "./ChatPanel";
 import { shouldShowClaudeUnsupportedApproval } from "./MessageBlocks";
@@ -149,5 +151,28 @@ describe("Claude tool-input gating", () => {
     expect(
       shouldShowClaudeUnsupportedApproval(mixedApproval.details, true, true),
     ).toBe(true);
+  });
+
+  it("does not expose decision actions for OpenCode question approvals", () => {
+    const openCodeQuestion = makeApprovalBlock("opencode-question", {
+      _serverMethod: "item/tool/requestUserInput",
+      _opencodeRequestKind: "question",
+      questions: [
+        {
+          id: "question-1",
+          question: "Which package manager should OpenCode use?",
+          options: [{ label: "pnpm", description: "Use pnpm" }],
+        },
+      ],
+    });
+    const openCodePermission = makeApprovalBlock("opencode-permission", {
+      _serverMethod: "item/permissions/requestApproval",
+      _opencodeRequestKind: "permission",
+    });
+
+    expect(isOpenCodeQuestionApproval(openCodeQuestion.details)).toBe(true);
+    expect(canUseApprovalDecisionActions("opencode", openCodeQuestion.details)).toBe(false);
+    expect(canUseApprovalDecisionActions("opencode", openCodePermission.details)).toBe(true);
+    expect(canUseApprovalDecisionActions("claude", openCodeQuestion.details)).toBe(true);
   });
 });

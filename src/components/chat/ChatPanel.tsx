@@ -178,6 +178,17 @@ export function filterPendingApprovalBannerRows(
   });
 }
 
+export function isOpenCodeQuestionApproval(details?: Record<string, unknown>): boolean {
+  return details?._opencodeRequestKind === "question";
+}
+
+export function canUseApprovalDecisionActions(
+  engineId?: string,
+  details?: Record<string, unknown>,
+): boolean {
+  return engineId !== "opencode" || !isOpenCodeQuestionApproval(details);
+}
+
 function MeasuredMessageRow({ messageId, onHeightChange, children }: MeasuredMessageRowProps) {
   const rowRef = useRef<HTMLDivElement>(null);
 
@@ -220,9 +231,11 @@ type CodexThreadApprovalPolicyValue =
   | "never"
   | "custom";
 type ClaudeThreadPermissionModeValue = "inherit" | "restricted" | "standard" | "trusted";
+type OpenCodeThreadPermissionModeValue = "inherit" | "ask" | "allow" | "deny";
 type ThreadApprovalPolicyValue =
   | CodexThreadApprovalPolicyValue
-  | ClaudeThreadPermissionModeValue;
+  | ClaudeThreadPermissionModeValue
+  | OpenCodeThreadPermissionModeValue;
 type ThreadApprovalPolicyStateValue =
   | ThreadApprovalPolicyValue
   | Record<string, unknown>;
@@ -327,6 +340,37 @@ function getClaudeThreadPermissionModeOptions(
       value: "trusted",
       label: t("policy.trusted"),
       description: t("policy.claudeTrustedDescription"),
+    },
+  ];
+}
+
+function getOpenCodeThreadPermissionModeOptions(
+  t: TFunction<"chat">,
+): Array<{
+  value: OpenCodeThreadPermissionModeValue;
+  label: string;
+  description: string;
+}> {
+  return [
+    {
+      value: "inherit",
+      label: t("policy.auto"),
+      description: t("policy.autoOpenCode"),
+    },
+    {
+      value: "ask",
+      label: t("policy.openCodeAsk"),
+      description: t("policy.openCodeAskDescription"),
+    },
+    {
+      value: "allow",
+      label: t("policy.openCodeAllow"),
+      description: t("policy.openCodeAllowDescription"),
+    },
+    {
+      value: "deny",
+      label: t("policy.openCodeDeny"),
+      description: t("policy.openCodeDenyDescription"),
     },
   ];
 }
@@ -526,6 +570,17 @@ function getAttachmentFilterConfig(
         imagesLabel: t("attachments.filters.images"),
         textFilesLabel: t("attachments.filters.textFiles"),
       };
+    case "opencode":
+      return {
+        supportedExtensions: [...TEXT_ATTACHMENT_EXTENSIONS],
+        textExtensions: [...TEXT_ATTACHMENT_EXTENSIONS],
+        imageExtensions: [],
+        title: t("attachments.opencodeTitle"),
+        warningMessage: t("attachments.opencodeWarning"),
+        supportedLabel: t("attachments.filters.supportedFiles"),
+        imagesLabel: t("attachments.filters.images"),
+        textFilesLabel: t("attachments.filters.textFiles"),
+      };
     default:
       return null;
   }
@@ -661,9 +716,22 @@ function readClaudeThreadPermissionModeValue(
   return "inherit";
 }
 
+function readOpenCodeThreadPermissionModeValue(
+  thread: Thread | null,
+): OpenCodeThreadPermissionModeValue {
+  const value = thread?.engineMetadata?.opencodePermissionMode;
+  if (value === "ask" || value === "allow" || value === "deny") {
+    return value;
+  }
+  return "inherit";
+}
+
 function readThreadApprovalPolicyValue(thread: Thread | null): ThreadApprovalPolicyValue {
   if (thread?.engineId === "claude") {
     return readClaudeThreadPermissionModeValue(thread);
+  }
+  if (thread?.engineId === "opencode") {
+    return readOpenCodeThreadPermissionModeValue(thread);
   }
 
   return readCodexThreadApprovalPolicyValue(thread);
@@ -752,6 +820,18 @@ function applyThreadExecutionPolicyPatch(
     } else {
       delete metadata.claudePermissionMode;
     }
+  } else if (thread.engineId === "opencode") {
+    if (
+      nextState.approvalPolicy === "ask" ||
+      nextState.approvalPolicy === "allow" ||
+      nextState.approvalPolicy === "deny"
+    ) {
+      metadata.opencodePermissionMode = nextState.approvalPolicy;
+    } else {
+      delete metadata.opencodePermissionMode;
+    }
+    delete metadata.sandboxMode;
+    delete metadata.sandboxAllowNetwork;
   } else {
     if (isCustomCodexApprovalPolicyValue(nextState.approvalPolicy)) {
       metadata.sandboxApprovalPolicy = nextState.approvalPolicy;
@@ -767,16 +847,18 @@ function applyThreadExecutionPolicyPatch(
     }
   }
 
-  if (nextState.sandboxMode === "inherit") {
-    delete metadata.sandboxMode;
-  } else {
-    metadata.sandboxMode = nextState.sandboxMode;
-  }
+  if (thread.engineId !== "opencode") {
+    if (nextState.sandboxMode === "inherit") {
+      delete metadata.sandboxMode;
+    } else {
+      metadata.sandboxMode = nextState.sandboxMode;
+    }
 
-  if (nextState.networkPolicy === "inherit") {
-    delete metadata.sandboxAllowNetwork;
-  } else {
-    metadata.sandboxAllowNetwork = nextState.networkPolicy === "enabled";
+    if (nextState.networkPolicy === "inherit") {
+      delete metadata.sandboxAllowNetwork;
+    } else {
+      metadata.sandboxAllowNetwork = nextState.networkPolicy === "enabled";
+    }
   }
 
   return {
@@ -1529,6 +1611,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     () => getClaudeThreadPermissionModeOptions(t),
     [t],
   );
+  const openCodeThreadPermissionModeOptions = useMemo(
+    () => getOpenCodeThreadPermissionModeOptions(t),
+    [t],
+  );
   const threadSandboxModeOptionsAll = useMemo(
     () => getThreadSandboxModeOptions(t),
     [t],
@@ -1821,10 +1907,14 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const activeThreadApprovalTitle =
     activeThread?.engineId === "claude"
       ? t("policy.approvalTitleClaude")
+      : activeThread?.engineId === "opencode"
+        ? t("policy.approvalTitleOpenCode")
       : t("permissionPicker.approvalPolicy");
   const activeThreadApprovalOptions =
     activeThread?.engineId === "claude"
       ? claudeThreadPermissionModeOptions
+      : activeThread?.engineId === "opencode"
+        ? openCodeThreadPermissionModeOptions
       : codexThreadApprovalPolicyOptions;
   const activeThreadApprovalSelectedLabel =
     activeThread?.engineId === "codex" && activeThreadApprovalPolicy === "custom"
@@ -1877,7 +1967,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       ? `${activeThreadSandboxModeOption.label} ${t("panel.unsupportedSuffix")}`
       : undefined;
   const threadPolicyCustomCount =
-    activeThread?.engineId === "claude"
+    activeThread?.engineId === "opencode"
+      ? activeThreadApprovalPolicy !== "inherit" ? 1 : 0
+      : activeThread?.engineId === "claude"
       ? (activeThreadApprovalPolicy !== "inherit" ? 1 : 0) +
         (activeThreadSandboxMode !== "inherit" ? 1 : 0) +
         (activeThreadNetworkPolicy !== "inherit" ? 1 : 0)
@@ -2082,9 +2174,15 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   );
   const showSpecialInputComposer =
     showPendingToolInputComposer || showPlanImplementationComposer;
+  const pendingToolInputCanUseDecisionActions = canUseApprovalDecisionActions(
+    activeThread?.engineId,
+    pendingToolInputApproval?.details,
+  );
   const pendingToolInputSupportsDecline =
+    pendingToolInputCanUseDecisionActions &&
     activeThreadApprovalDecisionCapabilities.includes("decline");
   const pendingToolInputSupportsCancel =
+    pendingToolInputCanUseDecisionActions &&
     activeThreadApprovalDecisionCapabilities.includes("cancel");
 
   const appendAttachmentsFromPaths = useCallback((paths: string[]) => {
@@ -3693,7 +3791,12 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }
 
   async function onThreadExecutionPolicyChange(patch: ThreadExecutionPolicyPatch) {
-    if (!activeThread || (activeThread.engineId !== "codex" && activeThread.engineId !== "claude")) {
+    if (
+      !activeThread ||
+      (activeThread.engineId !== "codex" &&
+        activeThread.engineId !== "claude" &&
+        activeThread.engineId !== "opencode")
+    ) {
       return;
     }
 
@@ -3701,11 +3804,14 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       useThreadStore.getState().threads.find((thread) => thread.id === activeThread.id) ??
       activeThread;
     const isCodexThread = currentThread.engineId === "codex";
+    const isOpenCodeThread = currentThread.engineId === "opencode";
     const nextState = {
       ...readThreadExecutionPolicyState(currentThread),
       ...patch,
     };
-    const nextPatch: ThreadExecutionPolicyPatch = { ...patch };
+    const nextPatch: ThreadExecutionPolicyPatch = isOpenCodeThread
+      ? { approvalPolicy: patch.approvalPolicy }
+      : { ...patch };
     const currentStoredNetworkPolicy = isCodexThread
       ? readThreadStoredNetworkPolicyValue(currentThread)
       : "inherit";
@@ -3735,6 +3841,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       patch.sandboxMode !== undefined
     ) {
       toast.error(t("panel.toasts.codexOnlySandbox"));
+      return;
+    }
+
+    if (isOpenCodeThread && (patch.sandboxMode !== undefined || patch.networkPolicy !== undefined)) {
       return;
     }
 
@@ -4617,13 +4727,19 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   const isPermissionsRequest = isPermissionsRequestApproval(details);
                   const isToolInputRequest = isRequestUserInputApproval(details);
                   const requiresCustomPayload = requiresCustomApprovalPayload(details);
+                  const canUseDecisionActions = canUseApprovalDecisionActions(
+                    activeThread?.engineId,
+                    details,
+                  );
                   const toolInputQuestionCount = isToolInputRequest
                     ? parseToolInputQuestions(details).length
                     : 0;
                   const isClaudeApproval = activeThread?.engineId === "claude";
                   const supportsDecline =
+                    canUseDecisionActions &&
                     activeThreadApprovalDecisionCapabilities.includes("decline");
                   const supportsCancel =
+                    canUseDecisionActions &&
                     activeThreadApprovalDecisionCapabilities.includes("cancel");
                   const supportsSession =
                     activeThreadApprovalDecisionCapabilities.includes("accept_for_session");
@@ -5170,7 +5286,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 (activeRepo ||
                   repos.length > 0 ||
                   activeThread?.engineId === "codex" ||
-                  activeThread?.engineId === "claude") && (
+                  activeThread?.engineId === "claude" ||
+                  activeThread?.engineId === "opencode") && (
                 <>
                   <div className="chat-toolbar-divider" />
                   <PermissionPicker
@@ -5191,13 +5308,17 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                           : undefined
                     }
                     customPolicyCount={
-                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                      activeThread?.engineId === "codex" ||
+                      activeThread?.engineId === "claude" ||
+                      activeThread?.engineId === "opencode"
                         ? threadPolicyCustomCount
                         : 0
                     }
                     approvalTitle={activeThread?.engineId ? activeThreadApprovalTitle : undefined}
                     approvalValue={
-                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                      activeThread?.engineId === "codex" ||
+                      activeThread?.engineId === "claude" ||
+                      activeThread?.engineId === "opencode"
                         ? activeThreadApprovalPolicy
                         : undefined
                     }
@@ -5207,12 +5328,16 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         : undefined
                     }
                     approvalOptions={
-                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                      activeThread?.engineId === "codex" ||
+                      activeThread?.engineId === "claude" ||
+                      activeThread?.engineId === "opencode"
                         ? activeThreadApprovalOptions
                         : undefined
                     }
                     onApprovalChange={
-                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                      activeThread?.engineId === "codex" ||
+                      activeThread?.engineId === "claude" ||
+                      activeThread?.engineId === "opencode"
                         ? (value) => {
                             if (activeThread?.engineId === "codex") {
                               setCustomApprovalPolicyText("");
