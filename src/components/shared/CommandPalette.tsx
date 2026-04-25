@@ -56,6 +56,10 @@ import {
 } from "../../lib/commandPaletteGit";
 import { formatRelativeTime } from "../../lib/formatters";
 import { createAndActivateWorkspaceThread } from "../../lib/newThreadActions";
+import {
+  applyWorkspaceLayoutMode,
+  showWorkspaceSurface,
+} from "../../lib/workspacePaneNavigation";
 import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -202,7 +206,9 @@ export function getStaticCommands(
     group: "layout",
     keywords: ["chat", "mode", "view", "conversa", "layout"],
     action: ({ activeWorkspaceId, close }) => {
-      if (activeWorkspaceId) void useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "chat");
+      if (activeWorkspaceId) {
+        applyWorkspaceLayoutMode(activeWorkspaceId, "chat");
+      }
       close();
     },
   },
@@ -213,7 +219,9 @@ export function getStaticCommands(
     group: "layout",
     keywords: ["split", "terminal", "half", "dividir", "metade"],
     action: ({ activeWorkspaceId, close }) => {
-      if (activeWorkspaceId) void useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "split");
+      if (activeWorkspaceId) {
+        applyWorkspaceLayoutMode(activeWorkspaceId, "split");
+      }
       close();
     },
   },
@@ -224,7 +232,9 @@ export function getStaticCommands(
     group: "layout",
     keywords: ["terminal", "full", "shell", "inteiro"],
     action: ({ activeWorkspaceId, close }) => {
-      if (activeWorkspaceId) void useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "terminal");
+      if (activeWorkspaceId) {
+        applyWorkspaceLayoutMode(activeWorkspaceId, "terminal");
+      }
       close();
     },
   },
@@ -236,7 +246,9 @@ export function getStaticCommands(
     keywords: ["editor", "code", "file", "arquivo"],
     shortcut: "\u2318E",
     action: ({ activeWorkspaceId, close }) => {
-      if (activeWorkspaceId) void useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "editor");
+      if (activeWorkspaceId) {
+        applyWorkspaceLayoutMode(activeWorkspaceId, "editor");
+      }
       close();
     },
   },
@@ -642,7 +654,7 @@ export function getStaticCommands(
       uiState.setExplorerOpen(true);
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (wsId) {
-        void useTerminalStore.getState().setLayoutMode(wsId, "editor");
+        showWorkspaceSurface(wsId, "editor");
       }
       close();
     },
@@ -1872,10 +1884,7 @@ export function CommandPalette({ open, onClose }: Props) {
       const command = await useHarnessStore.getState().launch(harness.id);
       if (!command) return;
 
-      const ws = useTerminalStore.getState().workspaces[activeWorkspaceId];
-      if (!ws || (ws.layoutMode !== "terminal" && ws.layoutMode !== "split")) {
-        await useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "terminal");
-      }
+      showWorkspaceSurface(activeWorkspaceId, "terminal");
       const sessionId = await useTerminalStore.getState().createSession(activeWorkspaceId);
       if (sessionId) {
         void writeCommandToNewSession(activeWorkspaceId, sessionId, command);
@@ -1899,7 +1908,7 @@ export function CommandPalette({ open, onClose }: Props) {
         return;
       }
 
-      await useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "chat");
+      showWorkspaceSurface(activeWorkspaceId, "chat");
       setMessageFocusTarget({
         threadId: targetThread.id,
         messageId: result.messageId,
@@ -1960,7 +1969,7 @@ export function CommandPalette({ open, onClose }: Props) {
           if (activeWorkspaceRootPath) {
             await useFileStore.getState().openFile(activeWorkspaceRootPath, item.entry.path);
             if (activeWorkspaceId) {
-              void useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "editor");
+              showWorkspaceSurface(activeWorkspaceId, "editor");
             }
           }
           break;
@@ -1970,7 +1979,7 @@ export function CommandPalette({ open, onClose }: Props) {
           if (thread.workspaceId !== activeWorkspaceId) {
             await useWorkspaceStore.getState().setActiveWorkspace(thread.workspaceId);
           }
-          await useTerminalStore.getState().setLayoutMode(thread.workspaceId, "chat");
+          showWorkspaceSurface(thread.workspaceId, "chat");
           useThreadStore.getState().setActiveThread(thread.id);
           await useChatStore.getState().setActiveThread(thread.id);
           useUiStore.getState().setActiveView("chat");

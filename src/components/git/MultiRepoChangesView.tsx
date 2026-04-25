@@ -19,8 +19,8 @@ import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useFileStore } from "../../stores/fileStore";
-import { useTerminalStore } from "../../stores/terminalStore";
 import { ipc, listenGitRepoChanged } from "../../lib/ipc";
+import { showWorkspaceSurface } from "../../lib/workspacePaneNavigation";
 import {
   closeGitFlyoutIfFocusLeft,
   GitFlyoutContext,
@@ -327,7 +327,6 @@ function RepoAccordionSection({
   } = useGitStore();
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const openGitDiffFile = useFileStore((s) => s.openGitDiffFile);
-  const setLayoutMode = useTerminalStore((s) => s.setLayoutMode);
 
   const { status, loading } = entry;
 
@@ -624,10 +623,10 @@ function RepoAccordionSection({
     (filePath: string) => {
       void openGitDiffFile(repo.path, filePath, { source: "changes" });
       if (activeWorkspaceId) {
-        void setLayoutMode(activeWorkspaceId, "editor");
+        showWorkspaceSurface(activeWorkspaceId, "editor");
       }
     },
-    [repo.path, openGitDiffFile, activeWorkspaceId, setLayoutMode],
+    [repo.path, openGitDiffFile, activeWorkspaceId],
   );
 
   // ── Render helpers ──

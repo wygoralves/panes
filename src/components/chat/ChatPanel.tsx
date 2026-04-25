@@ -1313,7 +1313,11 @@ function usagePercentToWidth(percent: number | null): string {
   return `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
 }
 
-export function ChatPanel() {
+interface ChatPanelProps {
+  embedded?: boolean;
+}
+
+export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const { t } = useTranslation("chat");
   const renderStartedAtRef = useRef(performance.now());
   renderStartedAtRef.current = performance.now();
@@ -1397,7 +1401,7 @@ export function ChatPanel() {
 
   const isMac = isMacDesktop();
   const customWindowFrame = usesCustomWindowFrame();
-  const useTitlebarSafeInset = isMac && focusMode && !showSidebar;
+  const useTitlebarSafeInset = !embedded && isMac && focusMode && !showSidebar;
   const engines = useEngineStore((s) => s.engines);
   const health = useEngineStore((s) => s.health);
   const ensureEngineHealth = useEngineStore((s) => s.ensureHealth);
@@ -3980,19 +3984,21 @@ export function ChatPanel() {
     return identityByMessageId;
   }, [renderAssistantIdentity, visibleMessages]);
 
-  const workspaceName = activeWorkspace?.name || activeWorkspace?.rootPath.split("/").pop() || "";
+  const workspaceName = activeWorkspace?.name || activeWorkspace?.rootPath?.split("/").pop() || "";
 
   // Compute total diff stats for header display
   const gitFiles = gitStatus?.files ?? [];
   const totalAdded = gitFiles.length;
-  const layoutMode: LayoutMode = activeWorkspaceId
-    ? (terminalWorkspaceState?.layoutMode ?? "chat")
-    : "chat";
+  const layoutMode: LayoutMode = embedded
+    ? "chat"
+    : activeWorkspaceId
+      ? (terminalWorkspaceState?.layoutMode ?? "chat")
+      : "chat";
   const isChatLayoutActive = layoutMode === "chat";
   const isSplitLayoutActive = layoutMode === "split";
   const isTerminalLayoutActive = layoutMode === "terminal";
   const isEditorLayoutActive = layoutMode === "editor";
-  const showFocusModeHeader = focusMode && !showSidebar && (layoutMode === "chat" || layoutMode === "split");
+  const showFocusModeHeader = !embedded && focusMode && !showSidebar && (layoutMode === "chat" || layoutMode === "split");
   const terminalPanelSize = activeWorkspaceId
     ? terminalWorkspaceState?.panelSize ?? 32
     : 32;
@@ -4003,11 +4009,12 @@ export function ChatPanel() {
   // sees the updated value in the same render pass that triggers it.
   if (
     activeWorkspaceId
+    && !embedded
     && (layoutMode === "split" || layoutMode === "terminal" || terminalWorkspaceState?.isOpen)
   ) {
     hasTerminalMountedRef.current = true;
   }
-  if (layoutMode === "editor" && activeWorkspaceId) {
+  if (!embedded && layoutMode === "editor" && activeWorkspaceId) {
     hasEditorMountedRef.current = true;
   }
 
@@ -4053,7 +4060,7 @@ export function ChatPanel() {
         background: "var(--content-bg)",
       }}
     >
-      {(!focusMode || showSidebar) && (
+      {!embedded && (!focusMode || showSidebar) && (
         <div
           onMouseDown={handleDragMouseDown}
           onDoubleClick={handleDragDoubleClick}
@@ -4172,6 +4179,7 @@ export function ChatPanel() {
           </div>
 
           {/* Right-side action buttons */}
+          {!embedded && (
           <div className="no-drag" style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <div className="layout-mode-switcher">
               <button
@@ -4212,6 +4220,7 @@ export function ChatPanel() {
               </button>
             </div>
           </div>
+          )}
         </div>
       )}
 
@@ -4326,6 +4335,7 @@ export function ChatPanel() {
             )}
           </div>
 
+          {!embedded && (
           <div className="no-drag" style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <div className="layout-mode-switcher">
               <button
@@ -4366,6 +4376,7 @@ export function ChatPanel() {
               </button>
             </div>
           </div>
+          )}
         </div>
       )}
 

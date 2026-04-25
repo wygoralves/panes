@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { Sidebar } from "../sidebar/Sidebar";
-import { ChatPanel } from "../chat/ChatPanel";
+import { ActiveWorkspacePaneShell } from "../workspace/WorkspacePaneShell";
 import { HarnessPanel } from "../onboarding/HarnessPanel";
 import { WorkspaceSettingsPage } from "../workspace/WorkspaceSettingsPage";
 import { GitPanel } from "../git/GitPanel";
@@ -208,7 +208,7 @@ export function ThreeColumnLayout() {
     ) : activeView === "workspace-settings" ? (
       <WorkspaceSettingsPage />
     ) : (
-      <ChatPanel />
+      <ActiveWorkspacePaneShell />
     )
   );
 

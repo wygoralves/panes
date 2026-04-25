@@ -16,6 +16,7 @@ const mockUiState = vi.hoisted(() => {
 });
 
 const mockSetLayoutMode = vi.hoisted(() => vi.fn());
+const mockShowSurface = vi.hoisted(() => vi.fn());
 const mockWorkspaceState = vi.hoisted(() => ({
   activeWorkspaceId: "ws-1" as string | null,
 }));
@@ -92,6 +93,19 @@ vi.mock("../../stores/terminalStore", () => ({
   useTerminalStore: {
     getState: () => ({
       setLayoutMode: mockSetLayoutMode,
+      workspaces: {},
+    }),
+  },
+}));
+
+vi.mock("../../stores/workspacePaneStore", () => ({
+  collectWorkspacePaneLeaves: vi.fn(() => []),
+  getWorkspacePaneActiveTab: vi.fn(() => null),
+  useWorkspacePaneStore: {
+    getState: () => ({
+      showSurface: mockShowSurface,
+      applyLegacyLayoutMode: vi.fn(),
+      workspaces: {},
     }),
   },
 }));
@@ -122,7 +136,8 @@ describe("CommandPalette view-files command", () => {
     expect(command?.label).toBe("commandPalette.commands.viewFiles");
     expect(mockUiState.setActiveView).toHaveBeenCalledWith("chat");
     expect(mockUiState.setExplorerOpen).toHaveBeenCalledWith(true);
-    expect(mockSetLayoutMode).toHaveBeenCalledWith("ws-1", "editor");
+    expect(mockShowSurface).toHaveBeenCalledWith("ws-1", "editor");
+    expect(mockSetLayoutMode).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalled();
   });
 });

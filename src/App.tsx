@@ -32,6 +32,11 @@ import { useCustomWindowFrameState } from "./lib/customWindowFrame";
 import { runEditMenuAction } from "./lib/nativeEditActions";
 import { createAndActivateWorkspaceThread } from "./lib/newThreadActions";
 import {
+  cycleWorkspaceTerminalLayout,
+  isWorkspaceSurfaceVisible,
+  toggleWorkspaceEditorLayout,
+} from "./lib/workspacePaneNavigation";
+import {
   usesCustomWindowFrame,
   isTerminalInputFocused,
   requestWindowClose,
@@ -336,13 +341,7 @@ export function App() {
           {
             const wsId = useWorkspaceStore.getState().activeWorkspaceId;
             if (!wsId) return;
-            const ws = useTerminalStore.getState().workspaces[wsId];
-            const current = ws?.layoutMode ?? "chat";
-            if (current === "editor") {
-              void useTerminalStore.getState().setLayoutMode(wsId, ws?.preEditorLayoutMode ?? "chat");
-            } else {
-              void useTerminalStore.getState().setLayoutMode(wsId, "editor");
-            }
+            toggleWorkspaceEditorLayout(wsId);
           }
           break;
         case "b":
@@ -357,8 +356,7 @@ export function App() {
           if (!e.shiftKey) {
             // Cmd+F — editor find (only in editor mode)
             const wsIdF = useWorkspaceStore.getState().activeWorkspaceId;
-            const wsFState = wsIdF ? useTerminalStore.getState().workspaces[wsIdF] : undefined;
-            if (wsFState?.layoutMode === "editor") {
+            if (wsIdF && isWorkspaceSurfaceVisible(wsIdF, "editor")) {
               e.preventDefault();
               const fileState = useFileStore.getState();
               const activeTabId = fileState.activeTabId;
@@ -385,8 +383,7 @@ export function App() {
           if (e.shiftKey) return;
           // Cmd+H — editor find & replace (only in editor mode)
           const wsIdH = useWorkspaceStore.getState().activeWorkspaceId;
-          const wsHState = wsIdH ? useTerminalStore.getState().workspaces[wsIdH] : undefined;
-          if (wsHState?.layoutMode !== "editor") return;
+          if (!wsIdH || !isWorkspaceSurfaceVisible(wsIdH, "editor")) return;
           e.preventDefault();
           const fileState = useFileStore.getState();
           const activeTabIdH = fileState.activeTabId;
@@ -412,7 +409,7 @@ export function App() {
           if (e.shiftKey) {
             fireShortcut("toggle-terminal", () => {
               const wsId = useWorkspaceStore.getState().activeWorkspaceId;
-              if (wsId) void useTerminalStore.getState().cycleLayoutMode(wsId);
+              if (wsId) cycleWorkspaceTerminalLayout(wsId);
             });
           } else {
             fireShortcut("new-terminal-tab", () => {
@@ -515,7 +512,7 @@ export function App() {
         case "toggle-terminal":
           fireShortcut("toggle-terminal", () => {
             const wsId = useWorkspaceStore.getState().activeWorkspaceId;
-            if (wsId) void useTerminalStore.getState().cycleLayoutMode(wsId);
+            if (wsId) cycleWorkspaceTerminalLayout(wsId);
           });
           break;
         case "close-window": {

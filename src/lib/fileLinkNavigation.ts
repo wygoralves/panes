@@ -15,8 +15,8 @@ import {
   tryParseUrl,
 } from "./localFileLinkPatterns";
 import { useFileStore } from "../stores/fileStore";
-import { useTerminalStore } from "../stores/terminalStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { showWorkspaceSurface } from "./workspacePaneNavigation";
 import type { Repo } from "../types";
 
 const EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:"]);
@@ -211,7 +211,7 @@ export async function navigateLinkTarget(
       .openFileAtLocation(localTarget.rootPath, localTarget.filePath, reveal);
 
     if (activeWorkspaceId) {
-      await useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "editor");
+      showWorkspaceSurface(activeWorkspaceId, "editor");
     }
 
     return "internal";

@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockOpenExternal = vi.hoisted(() => vi.fn());
 const mockOpenFileAtLocation = vi.hoisted(() => vi.fn());
 const mockSetLayoutMode = vi.hoisted(() => vi.fn());
+const mockShowSurface = vi.hoisted(() => vi.fn());
+const mockSetActiveView = vi.hoisted(() => vi.fn());
 const mockWorkspaceState = vi.hoisted(() => ({
   activeWorkspaceId: "ws-1",
   activeRepoId: "repo-1",
@@ -54,6 +56,26 @@ vi.mock("../stores/terminalStore", () => ({
   useTerminalStore: {
     getState: () => ({
       setLayoutMode: mockSetLayoutMode,
+      workspaces: {},
+    }),
+  },
+}));
+
+vi.mock("../stores/workspacePaneStore", () => ({
+  collectWorkspacePaneLeaves: vi.fn(() => []),
+  getWorkspacePaneActiveTab: vi.fn(() => null),
+  useWorkspacePaneStore: {
+    getState: () => ({
+      showSurface: mockShowSurface,
+      workspaces: {},
+    }),
+  },
+}));
+
+vi.mock("../stores/uiStore", () => ({
+  useUiStore: {
+    getState: () => ({
+      setActiveView: mockSetActiveView,
     }),
   },
 }));
@@ -331,6 +353,8 @@ describe("fileLinkNavigation", () => {
 
     expect(mockOpenFileAtLocation).not.toHaveBeenCalled();
     expect(mockSetLayoutMode).not.toHaveBeenCalled();
+    expect(mockShowSurface).not.toHaveBeenCalled();
+    expect(mockSetActiveView).not.toHaveBeenCalled();
 
     await expect(
       navigateLinkTarget("/workspace/apps/app/src/main.ts#L12C4", { shiftKey: true }),
@@ -341,7 +365,9 @@ describe("fileLinkNavigation", () => {
       "src/main.ts",
       { line: 12, column: 4 },
     );
-    expect(mockSetLayoutMode).toHaveBeenCalledWith("ws-1", "editor");
+    expect(mockShowSurface).toHaveBeenCalledWith("ws-1", "editor");
+    expect(mockSetActiveView).toHaveBeenCalledWith("chat");
+    expect(mockSetLayoutMode).not.toHaveBeenCalled();
   });
 
   it("opens repo-relative local links against the active repo on shift-click", async () => {
@@ -354,7 +380,8 @@ describe("fileLinkNavigation", () => {
       "src/main.ts",
       { line: 12, column: 4 },
     );
-    expect(mockSetLayoutMode).toHaveBeenCalledWith("ws-1", "editor");
+    expect(mockShowSurface).toHaveBeenCalledWith("ws-1", "editor");
+    expect(mockSetLayoutMode).not.toHaveBeenCalled();
   });
 
   it("opens external links through the shell only on shift-click", async () => {
