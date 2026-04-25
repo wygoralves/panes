@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockOpenExternal = vi.hoisted(() => vi.fn());
 const mockOpenFileAtLocation = vi.hoisted(() => vi.fn());
 const mockSetLayoutMode = vi.hoisted(() => vi.fn());
+const mockEnsureWorkspace = vi.hoisted(() => vi.fn());
 const mockShowSurface = vi.hoisted(() => vi.fn());
 const mockSetActiveView = vi.hoisted(() => vi.fn());
 const mockWorkspaceState = vi.hoisted(() => ({
@@ -66,6 +67,7 @@ vi.mock("../stores/workspacePaneStore", () => ({
   getWorkspacePaneActiveTab: vi.fn(() => null),
   useWorkspacePaneStore: {
     getState: () => ({
+      ensureWorkspace: mockEnsureWorkspace,
       showSurface: mockShowSurface,
       workspaces: {},
     }),

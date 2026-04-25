@@ -19,7 +19,11 @@ import {
   getTerminalAcceleratedRenderingPreferenceVersion,
   listenTerminalAcceleratedRenderingChanged,
 } from "../../lib/terminalRenderingSettings";
-import { extractTextLinkMatches, navigateLinkTarget } from "../../lib/fileLinkNavigation";
+import {
+  extractTextLinkMatches,
+  getWorkspacePaneLeafIdFromEventTarget,
+  navigateLinkTarget,
+} from "../../lib/fileLinkNavigation";
 import {
   collectDetachedTerminalEvictionKeys,
   markPaneTerminalDetached,
@@ -2092,7 +2096,10 @@ function createCachedTerminal(
     fontSize: 12,
     linkHandler: {
       activate(event, text) {
-        void navigateLinkTarget(text, { shiftKey: Boolean(event?.shiftKey) });
+        void navigateLinkTarget(text, {
+          shiftKey: Boolean(event?.shiftKey),
+          sourceLeafId: getWorkspacePaneLeafIdFromEventTarget(event?.target ?? null),
+        });
       },
     },
     lineHeight: 1.3,
@@ -2355,7 +2362,10 @@ function createTerminalTextLinkProvider(terminal: Terminal): ILinkProvider {
           underline: false,
         },
         activate(event, text) {
-          void navigateLinkTarget(text, { shiftKey: Boolean(event?.shiftKey) });
+          void navigateLinkTarget(text, {
+            shiftKey: Boolean(event?.shiftKey),
+            sourceLeafId: getWorkspacePaneLeafIdFromEventTarget(event?.target ?? null),
+          });
         },
         hover() {
           terminal.element?.classList.add("xterm-cursor-pointer");

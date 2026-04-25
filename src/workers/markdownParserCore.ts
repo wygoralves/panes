@@ -146,7 +146,7 @@ function linkifyLocalFileReferencesInText(text: string): string {
 
 function linkifyLocalFileReferencesInHtml(html: string): string {
   const tagPattern = /<\/?([a-z][a-z0-9-]*)\b[^>]*>/gi;
-  const skipTags = new Set(["a", "code", "pre"]);
+  const skipTags = new Set(["a", "pre"]);
   let result = "";
   let lastIndex = 0;
   let skipDepth = 0;

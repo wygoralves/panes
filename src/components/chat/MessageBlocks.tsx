@@ -1,4 +1,13 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   CheckCircle2,
@@ -66,6 +75,11 @@ import {
   useParsedDiff,
 } from "../shared/DiffViewer";
 import MarkdownContent from "./MarkdownContent";
+import {
+  extractTextLinkMatches,
+  getWorkspacePaneLeafIdFromEventTarget,
+  navigateLinkTarget,
+} from "../../lib/fileLinkNavigation";
 interface Props {
   blocks?: ContentBlock[];
   status?: MessageStatus;
@@ -109,6 +123,59 @@ function handleToggleKeyDown(e: React.KeyboardEvent, toggle: () => void) {
     e.preventDefault();
     toggle();
   }
+}
+
+function handlePlainTextLinkClick(
+  event: ReactMouseEvent<HTMLAnchorElement>,
+  target: string,
+) {
+  if (event.defaultPrevented || event.button !== 0) {
+    return;
+  }
+
+  event.preventDefault();
+  if (!event.shiftKey) {
+    return;
+  }
+
+  event.stopPropagation();
+  void navigateLinkTarget(target, {
+    shiftKey: true,
+    sourceLeafId: getWorkspacePaneLeafIdFromEventTarget(event.currentTarget),
+  });
+}
+
+function LinkifiedPlainText({ text }: { text: string }) {
+  const matches = useMemo(() => extractTextLinkMatches(text), [text]);
+  if (matches.length === 0) {
+    return <>{text}</>;
+  }
+
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  for (const match of matches) {
+    if (match.startIndex > cursor) {
+      nodes.push(text.slice(cursor, match.startIndex));
+    }
+    nodes.push(
+      <a
+        key={`${match.startIndex}:${match.endIndex}:${match.text}`}
+        href={match.text}
+        className="chat-plain-link"
+        rel="noreferrer noopener"
+        onClick={(event) => handlePlainTextLinkClick(event, match.text)}
+      >
+        {match.text}
+      </a>,
+    );
+    cursor = match.endIndex;
+  }
+
+  if (cursor < text.length) {
+    nodes.push(text.slice(cursor));
+  }
+
+  return <>{nodes}</>;
 }
 
 const actionIcons: Record<string, typeof Terminal> = {
@@ -247,7 +314,7 @@ function MessageDiffBlock({ block }: { block: DiffBlock }) {
         />
         <FileDiff size={12} style={{ color: "var(--text-3)", flexShrink: 0 }} />
         <span style={{ fontSize: 11.5, color: "var(--text-2)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {filename ?? t("messageBlocks.diffFallback", { scope: String(block.scope ?? "turn") })}
+          <LinkifiedPlainText text={filename ?? t("messageBlocks.diffFallback", { scope: String(block.scope ?? "turn") })} />
         </span>
         {loadingParse && (
           <span style={{ fontSize: 10, color: "var(--text-3)", flexShrink: 0 }}>
@@ -653,7 +720,7 @@ function ActionBlockView({
 
           {outputChunks.length > 0 && (
             <pre className="action-output-pre" style={{ maxHeight: 260 }}>
-              {outputText}
+              <LinkifiedPlainText text={outputText} />
             </pre>
           )}
 
@@ -676,7 +743,7 @@ function ActionBlockView({
                   ? "1px solid rgba(248, 113, 113, 0.2)" : undefined,
               }}
             >
-              {String(block.result.error)}
+              <LinkifiedPlainText text={String(block.result.error)} />
             </pre>
           )}
         </div>
@@ -1338,7 +1405,9 @@ function renderSingleBlock(
           }}
         >
           <FileCode2 size={12} style={{ opacity: 0.5 }} />
-          <span style={{ flex: 1 }}>{block.filename || lang}</span>
+          <span style={{ flex: 1 }}>
+            <LinkifiedPlainText text={block.filename || lang} />
+          </span>
           <CodeBlockCopyButton content={String(block.content ?? "")} />
         </div>
         <pre

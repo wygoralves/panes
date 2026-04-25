@@ -56,16 +56,18 @@ describe("renderMarkdownToHtml", () => {
     expect(autolink).toContain(">https://example.com</a>");
   });
 
-  it("linkifies bare local file references outside code spans", () => {
+  it("linkifies bare local file references outside fenced code blocks", () => {
     const html = renderMarkdownToHtml(
-      "See src/lib/fileLinkNavigation.ts:12 and README.md.\n\n`src/ignored.ts`",
+      "See src/lib/fileLinkNavigation.ts:12 and README.md.\n\n`src/inline.ts:3`\n\n```ts\nsrc/ignored.ts\n```",
     );
 
     expect(html).toContain('href="src/lib/fileLinkNavigation.ts:12"');
     expect(html).toContain(">src/lib/fileLinkNavigation.ts:12</a>");
     expect(html).toContain('href="README.md"');
     expect(html).toContain(">README.md</a>.");
-    expect(html).toContain("<code>src/ignored.ts</code>");
+    expect(html).toContain('<code><a href="src/inline.ts:3"');
+    expect(html).toContain("<code");
+    expect(html).toContain("hljs language-ts");
     expect(html).not.toContain('href="src/ignored.ts"');
   });
 

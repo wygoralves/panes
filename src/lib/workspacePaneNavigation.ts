@@ -35,6 +35,56 @@ export function showWorkspaceSurface(
   syncTerminalLayoutMode(workspaceId);
 }
 
+export function showWorkspaceEditorForFileLink(
+  workspaceId: string,
+  sourceLeafId?: string | null,
+): void {
+  useUiStore.getState().setActiveView("chat");
+
+  let paneStore = useWorkspacePaneStore.getState();
+  let layout = paneStore.workspaces[workspaceId];
+  if (!layout) {
+    const terminalMode = useTerminalStore.getState().workspaces[workspaceId]?.layoutMode ?? "chat";
+    paneStore.ensureWorkspace(workspaceId, terminalMode);
+    paneStore = useWorkspacePaneStore.getState();
+    layout = paneStore.workspaces[workspaceId];
+    if (!layout) {
+      paneStore.showSurface(workspaceId, "editor");
+      syncTerminalLayoutMode(workspaceId);
+      return;
+    }
+  }
+
+  const leaves = collectWorkspacePaneLeaves(layout.root);
+  const targetLeaf =
+    (sourceLeafId ? leaves.find((leaf) => leaf.id === sourceLeafId) : null) ??
+    leaves.find((leaf) => leaf.id === layout.focusedLeafId) ??
+    leaves[0] ??
+    null;
+  const visibleEditorLeaf = leaves.find(
+    (leaf) => getWorkspacePaneActiveTab(leaf)?.kind === "editor",
+  );
+
+  if (visibleEditorLeaf) {
+    paneStore.focusLeaf(workspaceId, visibleEditorLeaf.id);
+    syncTerminalLayoutMode(workspaceId);
+    return;
+  }
+
+  const targetKind = targetLeaf ? getWorkspacePaneActiveTab(targetLeaf)?.kind ?? null : null;
+  const shouldSplitBesideCurrent =
+    targetLeaf !== null &&
+    (targetKind === "chat" || targetKind === "terminal");
+
+  if (shouldSplitBesideCurrent) {
+    paneStore.splitLeaf(workspaceId, targetLeaf.id, "vertical", "editor", "after");
+  } else {
+    paneStore.showSurface(workspaceId, "editor", targetLeaf?.id ?? null);
+  }
+
+  syncTerminalLayoutMode(workspaceId);
+}
+
 export function applyWorkspaceLayoutMode(workspaceId: string, mode: LayoutMode): void {
   useUiStore.getState().setActiveView("chat");
   useWorkspacePaneStore.getState().applyLegacyLayoutMode(workspaceId, mode);

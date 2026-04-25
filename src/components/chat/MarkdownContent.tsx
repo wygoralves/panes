@@ -7,7 +7,11 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
-import { classifyLinkTarget, navigateLinkTarget } from "../../lib/fileLinkNavigation";
+import {
+  classifyLinkTarget,
+  getWorkspacePaneLeafIdFromEventTarget,
+  navigateLinkTarget,
+} from "../../lib/fileLinkNavigation";
 import { renderMarkdownToHtml } from "../../workers/markdownParserCore";
 import type {
   MarkdownParseWorkerRequest,
@@ -208,7 +212,10 @@ function handleMarkdownLinkClick(event: ReactMouseEvent<HTMLDivElement>): void {
   if (targetKind === "local") {
     event.stopPropagation();
   }
-  void navigateLinkTarget(rawHref, { shiftKey: event.shiftKey });
+  void navigateLinkTarget(rawHref, {
+    shiftKey: event.shiftKey,
+    sourceLeafId: getWorkspacePaneLeafIdFromEventTarget(event.currentTarget),
+  });
 }
 
 export default function MarkdownContent({

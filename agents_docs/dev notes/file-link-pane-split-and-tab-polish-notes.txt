@@ -1,0 +1,30 @@
+## Summary
+This branch improves Panes' file-link and editor workflow end to end. It adds stronger local file-link parsing and markdown linkification, introduces the workspace pane split model, preserves chat/terminal context when opening files, and adds terminal output backpressure to avoid the memory growth seen when terminal output streams through Tauri/WebKit.
+
+The final UX behavior is that Shift-opening a file link from chat or terminal opens the file editor beside the source pane when needed, instead of replacing the current chat or terminal view. The branch also aligns active tab indicators and removes always-reserved pane close-button space.
+## Changes
+- Added shared local file-link parsing for absolute paths, `file://` URLs, repo-relative paths, line/column suffixes, and markdown-rendered local links.
+- Added editor reveal support so file links open or reuse tabs at the requested line/column.
+- Added workspace pane layout state, split surfaces, surface switching, drag/key split behavior, persistence, and legacy layout-mode syncing.
+- Wired file-opening entry points from chat, terminal, git files/changes, command palette, explorer, and harness flows into workspace pane navigation.
+- Added pull-based terminal output draining/backpressure, capped replay, drain retries, and related IPC/types so terminal output is not emitted as large JS payloads for every chunk.
+- Updated chat rendering so inline file paths, action output, action errors, diff filenames, and code block filenames can be Shift-opened like terminal links while fenced code blocks remain plain code.
+- Preserved the source chat/terminal pane on Shift-open by opening the editor in a sibling split when no visible editor exists.
+- Polished tab/pane UI by moving editor active indicators to the bottom edge and showing pane close-button spacing only while hovering the focused pane.
+- Updated English and Portuguese workspace pane localization.
+- Added regression coverage for file-link parsing, markdown linkification, editor reveal behavior, workspace pane state, source-pane file-link navigation, and command palette interactions.
+## Validation
+- [x] pnpm typecheck
+- [x] pnpm test
+- [x] pnpm build
+- [x] cd src-tauri && cargo check
+`git diff --check` also passed.
+## UI / UX impact
+- [ ] No user-facing UI change
+- [ ] Screenshots or screen recording attached
+This branch changes visible pane layout behavior, file-link opening behavior, tab indicators, and pane close-button hover behavior. No screenshots were captured.
+## Localization
+- [ ] No new user-facing copy
+- [x] Updated both src/i18n/resources/en/ and src/i18n/resources/pt-BR/
+## Notes for review
+Review the full branch scope, not just the final frontend polish commit. The highest-risk areas are terminal output backpressure/replay behavior and workspace pane split/navigation state, especially Shift-opening file links from a terminal-only Panes session running Codex CLI.

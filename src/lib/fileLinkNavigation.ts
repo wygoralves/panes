@@ -16,7 +16,7 @@ import {
 } from "./localFileLinkPatterns";
 import { useFileStore } from "../stores/fileStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import { showWorkspaceSurface } from "./workspacePaneNavigation";
+import { showWorkspaceEditorForFileLink } from "./workspacePaneNavigation";
 import type { Repo } from "../types";
 
 const EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:"]);
@@ -175,9 +175,24 @@ export function resolveLocalFileLinkTarget(
   return null;
 }
 
+export interface LinkNavigationOptions {
+  shiftKey: boolean;
+  sourceLeafId?: string | null;
+}
+
+export function getWorkspacePaneLeafIdFromEventTarget(target: EventTarget | null): string | null {
+  const element = target instanceof Element
+    ? target
+    : target instanceof Node
+      ? target.parentElement
+      : null;
+  const leaf = element?.closest("[data-workspace-pane-leaf-id]");
+  return leaf instanceof HTMLElement ? leaf.dataset.workspacePaneLeafId ?? null : null;
+}
+
 export async function navigateLinkTarget(
   rawTarget: string,
-  options: { shiftKey: boolean },
+  options: LinkNavigationOptions,
 ): Promise<LinkNavigationResult> {
   if (!options.shiftKey) {
     return "ignored";
@@ -211,7 +226,7 @@ export async function navigateLinkTarget(
       .openFileAtLocation(localTarget.rootPath, localTarget.filePath, reveal);
 
     if (activeWorkspaceId) {
-      showWorkspaceSurface(activeWorkspaceId, "editor");
+      showWorkspaceEditorForFileLink(activeWorkspaceId, options.sourceLeafId ?? null);
     }
 
     return "internal";
