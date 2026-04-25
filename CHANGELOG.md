@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.56.1...vnull) (2026-04-25)
+
+### Bug Fixes
+
+* **perf:** another targeted perf tweak ([c014c47](https://github.com/wygoralves/panes/commit/c014c476d834cc2c2d3c7ca961291b24f98f1bdd))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.56.0...vnull) (2026-04-25)
 
 ### Bug Fixes
