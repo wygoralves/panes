@@ -9,6 +9,7 @@ const codexModel: EngineModel = {
   hidden: false,
   isDefault: true,
   inputModalities: ["text"],
+  attachmentModalities: ["text"],
   supportsPersonality: true,
   defaultReasoningEffort: "medium",
   supportedReasoningEfforts: [

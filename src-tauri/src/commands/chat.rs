@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::Path,
     time::{Duration, Instant},
 };
@@ -34,6 +34,13 @@ const STREAM_DB_BLOCKS_FLUSH_INTERVAL: Duration = Duration::from_millis(900);
 const ENGINE_EVENT_QUEUE_CAPACITY: usize = 128;
 const ACTION_OUTPUT_MAX_CHUNKS: usize = 240;
 const MAX_ATTACHMENTS_PER_TURN: usize = 10;
+const TEXT_ATTACHMENT_EXTENSIONS: &[&str] = &[
+    "txt", "md", "json", "js", "ts", "tsx", "jsx", "py", "rs", "go", "css", "html", "yaml", "yml",
+    "toml", "xml", "sql", "sh", "csv",
+];
+const IMAGE_ATTACHMENT_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "svg",
+];
 const MESSAGE_WINDOW_DEFAULT_LIMIT: usize = 120;
 const MESSAGE_WINDOW_MAX_LIMIT: usize = 400;
 const MAX_CHAT_NOTIFICATION_PREVIEW_CHARS: usize = 240;
@@ -275,6 +282,19 @@ pub async fn send_message(
     };
     let effective_model_id =
         resolve_turn_model_id(&thread, requested_model_id, validation_catalog.as_deref())?;
+    let attachment_catalog = if attachments.is_empty() {
+        None
+    } else if let Some(catalog) = validation_catalog.as_ref() {
+        Some(catalog.clone())
+    } else {
+        Some(state.engines.list_engines().await.map_err(err_to_string)?)
+    };
+    validate_attachments_for_engine_model(
+        &attachments,
+        &thread.engine_id,
+        &effective_model_id,
+        attachment_catalog.as_deref(),
+    )?;
 
     let (workspace, repos, selected_repo) = run_db(db.clone(), {
         let workspace_id = thread.workspace_id.clone();
@@ -979,6 +999,123 @@ fn normalize_attachments(
     }
 
     Ok(normalized)
+}
+
+fn validate_attachments_for_engine_model(
+    attachments: &[TurnAttachment],
+    engine_id: &str,
+    model_id: &str,
+    catalog: Option<&[EngineInfoDto]>,
+) -> Result<(), String> {
+    if attachments.is_empty() {
+        return Ok(());
+    }
+
+    let Some(model) = catalog
+        .and_then(|engines| engines.iter().find(|engine| engine.id == engine_id))
+        .and_then(|engine| engine.models.iter().find(|model| model.id == model_id))
+    else {
+        return Ok(());
+    };
+
+    let allowed_modalities = if model.attachment_modalities.is_empty() {
+        HashSet::new()
+    } else {
+        model
+            .attachment_modalities
+            .iter()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+            .collect::<HashSet<_>>()
+    };
+
+    if allowed_modalities.is_empty() {
+        return Err(format!(
+            "{} does not support file attachments.",
+            model.display_name
+        ));
+    }
+
+    for attachment in attachments {
+        let Some(modality) = attachment_modality(attachment) else {
+            return Err(format!(
+                "{} is not a supported attachment type for {}.",
+                attachment.file_name, model.display_name
+            ));
+        };
+        if !allowed_modalities.contains(modality) {
+            return Err(format!(
+                "{} attachments are not supported by {}.",
+                attachment_modality_label(modality),
+                model.display_name
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn attachment_modality(attachment: &TurnAttachment) -> Option<&'static str> {
+    let extension = Path::new(&attachment.file_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_lowercase);
+    let mime_type = attachment
+        .mime_type
+        .as_deref()
+        .map(str::trim)
+        .map(str::to_lowercase);
+
+    if extension.as_deref() == Some("pdf") || mime_type.as_deref() == Some("application/pdf") {
+        return Some("pdf");
+    }
+    if extension
+        .as_deref()
+        .map(|value| IMAGE_ATTACHMENT_EXTENSIONS.contains(&value))
+        .unwrap_or(false)
+        || mime_type
+            .as_deref()
+            .map(|value| value.starts_with("image/"))
+            .unwrap_or(false)
+    {
+        return Some("image");
+    }
+    if extension
+        .as_deref()
+        .map(|value| TEXT_ATTACHMENT_EXTENSIONS.contains(&value))
+        .unwrap_or(false)
+        || mime_type
+            .as_deref()
+            .map(is_text_attachment_mime_type)
+            .unwrap_or(false)
+    {
+        return Some("text");
+    }
+
+    None
+}
+
+fn is_text_attachment_mime_type(value: &str) -> bool {
+    value.starts_with("text/")
+        || matches!(
+            value,
+            "application/json"
+                | "application/javascript"
+                | "application/typescript"
+                | "application/xml"
+                | "application/x-sh"
+                | "application/x-yaml"
+                | "application/yaml"
+                | "text/csv"
+        )
+}
+
+fn attachment_modality_label(modality: &str) -> &'static str {
+    match modality {
+        "image" => "Image",
+        "pdf" => "PDF",
+        _ => "Text file",
+    }
 }
 
 #[tauri::command]
@@ -3823,6 +3960,95 @@ mod tests {
         .expect("failed to create thread")
     }
 
+    fn attachment_validation_catalog(attachment_modalities: Vec<&str>) -> Vec<EngineInfoDto> {
+        vec![EngineInfoDto {
+            id: "opencode".to_string(),
+            name: "OpenCode".to_string(),
+            models: vec![EngineModelDto {
+                id: "opencode/test".to_string(),
+                display_name: "OpenCode Test".to_string(),
+                description: String::new(),
+                hidden: false,
+                is_default: true,
+                upgrade: None,
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string(), "image".to_string(), "pdf".to_string()],
+                attachment_modalities: attachment_modalities
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+                limits: None,
+                supports_personality: false,
+                default_reasoning_effort: "medium".to_string(),
+                supported_reasoning_efforts: Vec::new(),
+            }],
+            capabilities: EngineCapabilitiesDto {
+                permission_modes: Vec::new(),
+                sandbox_modes: Vec::new(),
+                approval_decisions: Vec::new(),
+            },
+        }]
+    }
+
+    fn test_attachment(file_name: &str, mime_type: Option<&str>) -> TurnAttachment {
+        TurnAttachment {
+            file_name: file_name.to_string(),
+            file_path: format!("/tmp/{file_name}"),
+            size_bytes: 1,
+            mime_type: mime_type.map(ToOwned::to_owned),
+        }
+    }
+
+    #[test]
+    fn validates_attachments_against_model_attachment_modalities() {
+        let catalog = attachment_validation_catalog(vec!["text", "image"]);
+        let attachments = vec![
+            test_attachment("notes.md", Some("text/markdown")),
+            test_attachment("screenshot.png", Some("image/png")),
+        ];
+
+        assert!(validate_attachments_for_engine_model(
+            &attachments,
+            "opencode",
+            "opencode/test",
+            Some(&catalog),
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn rejects_attachments_when_model_disables_files() {
+        let catalog = attachment_validation_catalog(Vec::new());
+        let attachments = vec![test_attachment("notes.md", Some("text/markdown"))];
+
+        let error = validate_attachments_for_engine_model(
+            &attachments,
+            "opencode",
+            "opencode/test",
+            Some(&catalog),
+        )
+        .expect_err("model without attachment modalities should reject files");
+
+        assert!(error.contains("does not support file attachments"));
+    }
+
+    #[test]
+    fn rejects_attachment_modalities_not_allowed_by_model() {
+        let catalog = attachment_validation_catalog(vec!["text"]);
+        let attachments = vec![test_attachment("diagram.png", Some("image/png"))];
+
+        let error = validate_attachments_for_engine_model(
+            &attachments,
+            "opencode",
+            "opencode/test",
+            Some(&catalog),
+        )
+        .expect_err("image should be blocked for text-only models");
+
+        assert!(error.contains("Image attachments are not supported"));
+    }
+
     fn insert_pending_approval_with_details(
         state: &AppState,
         thread: &ThreadDto,
@@ -4608,6 +4834,8 @@ mod tests {
                 availability_nux: None,
                 upgrade_info: None,
                 input_modalities: vec!["text".to_string()],
+                attachment_modalities: vec!["text".to_string()],
+                limits: None,
                 supports_personality: false,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![
@@ -4654,6 +4882,8 @@ mod tests {
                 availability_nux: None,
                 upgrade_info: None,
                 input_modalities: vec!["text".to_string()],
+                attachment_modalities: vec!["text".to_string()],
+                limits: None,
                 supports_personality: false,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![

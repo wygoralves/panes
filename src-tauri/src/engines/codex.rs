@@ -240,6 +240,8 @@ impl Engine for CodexEngine {
                 availability_nux: None,
                 upgrade_info: None,
                 input_modalities: vec!["text".to_string(), "image".to_string()],
+                attachment_modalities: vec!["text".to_string(), "image".to_string()],
+                limits: None,
                 supports_personality: true,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![
@@ -277,6 +279,8 @@ impl Engine for CodexEngine {
                     migration_markdown: None,
                 }),
                 input_modalities: vec!["text".to_string(), "image".to_string()],
+                attachment_modalities: vec!["text".to_string(), "image".to_string()],
+                limits: None,
                 supports_personality: true,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![
@@ -308,6 +312,8 @@ impl Engine for CodexEngine {
                 availability_nux: None,
                 upgrade_info: None,
                 input_modalities: vec!["text".to_string()],
+                attachment_modalities: vec!["text".to_string()],
+                limits: None,
                 supports_personality: true,
                 default_reasoning_effort: "high".to_string(),
                 supported_reasoning_efforts: vec![
@@ -345,6 +351,8 @@ impl Engine for CodexEngine {
                     migration_markdown: None,
                 }),
                 input_modalities: vec!["text".to_string(), "image".to_string()],
+                attachment_modalities: vec!["text".to_string(), "image".to_string()],
+                limits: None,
                 supports_personality: false,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![
@@ -2904,6 +2912,12 @@ struct CodexModelUpgradeInfo {
 }
 
 fn map_codex_model(value: CodexModel) -> ModelInfo {
+    let input_modalities = if value.input_modalities.is_empty() {
+        vec!["text".to_string(), "image".to_string()]
+    } else {
+        value.input_modalities
+    };
+
     ModelInfo {
         id: value.id.clone(),
         display_name: value.display_name.unwrap_or_else(|| value.id.clone()),
@@ -2920,11 +2934,9 @@ fn map_codex_model(value: CodexModel) -> ModelInfo {
             model_link: info.model_link,
             migration_markdown: info.migration_markdown,
         }),
-        input_modalities: if value.input_modalities.is_empty() {
-            vec!["text".to_string(), "image".to_string()]
-        } else {
-            value.input_modalities
-        },
+        input_modalities: input_modalities.clone(),
+        attachment_modalities: input_modalities,
+        limits: None,
         supports_personality: value.supports_personality.unwrap_or(false),
         default_reasoning_effort: value
             .default_reasoning_effort
@@ -6964,6 +6976,8 @@ mod tests {
             availability_nux: None,
             upgrade_info: None,
             input_modalities: vec!["text".to_string()],
+            attachment_modalities: vec!["text".to_string()],
+            limits: None,
             supports_personality: true,
             default_reasoning_effort: "minimal".to_string(),
             supported_reasoning_efforts: vec![ReasoningEffortOption {

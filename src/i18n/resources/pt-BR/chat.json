@@ -26,6 +26,15 @@
       "image": "Visão",
       "textOnly": "Só texto"
     },
+    "metadata": {
+      "vision": "Visão",
+      "pdf": "PDF",
+      "files": "Arquivos",
+      "noFiles": "Sem arquivos",
+      "contextLimit": "{{tokens}} ctx",
+      "inputLimit": "{{tokens}} ent",
+      "outputLimit": "{{tokens}} saída"
+    },
     "effort": {
       "none": "Nenhum",
       "minimal": "Mínimo",
@@ -48,8 +57,8 @@
     "codexWarning": "Apenas anexos de imagem e texto são suportados em turns do Codex.",
     "claudeTitle": "Anexar arquivos (texto, SVG e imagens suportadas)",
     "claudeWarning": "Apenas arquivos de texto, incluindo SVG, e imagens PNG, JPEG, GIF ou WEBP são suportados em turns do Claude.",
-    "opencodeTitle": "Anexar arquivos (texto)",
-    "opencodeWarning": "Apenas anexos de texto são suportados em turns do OpenCode.",
+    "opencodeTitle": "Anexar arquivos",
+    "opencodeWarning": "O modelo OpenCode selecionado não suporta esse tipo de anexo.",
     "remove": "Remover anexo",
     "filters": {
       "supportedFiles": "Arquivos compatíveis",

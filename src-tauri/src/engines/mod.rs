@@ -73,9 +73,18 @@ pub struct ModelInfo {
     pub availability_nux: Option<ModelAvailabilityNux>,
     pub upgrade_info: Option<ModelUpgradeInfo>,
     pub input_modalities: Vec<String>,
+    pub attachment_modalities: Vec<String>,
+    pub limits: Option<ModelLimits>,
     pub supports_personality: bool,
     pub default_reasoning_effort: String,
     pub supported_reasoning_efforts: Vec<ReasoningEffortOption>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ModelLimits {
+    pub context_tokens: Option<u64>,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -839,6 +848,14 @@ fn map_model_info(model: ModelInfo) -> EngineModelDto {
             migration_markdown: value.migration_markdown,
         }),
         input_modalities: model.input_modalities,
+        attachment_modalities: model.attachment_modalities,
+        limits: model
+            .limits
+            .map(|limits| crate::models::EngineModelLimitsDto {
+                context_tokens: limits.context_tokens,
+                input_tokens: limits.input_tokens,
+                output_tokens: limits.output_tokens,
+            }),
         supports_personality: model.supports_personality,
         default_reasoning_effort: model.default_reasoning_effort,
         supported_reasoning_efforts: model

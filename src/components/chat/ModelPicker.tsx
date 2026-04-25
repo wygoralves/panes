@@ -162,6 +162,68 @@ export function filterOpenCodeModelsForQuery(
   });
 }
 
+export function formatCompactTokenLimit(tokens?: number | null): string | null {
+  if (typeof tokens !== "number" || !Number.isFinite(tokens) || tokens <= 0) {
+    return null;
+  }
+  if (tokens >= 1_000_000) {
+    const value = tokens / 1_000_000;
+    return `${Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}M`;
+  }
+  if (tokens >= 1_000) {
+    const value = tokens / 1_000;
+    return `${value.toFixed(0)}K`;
+  }
+  return tokens.toString();
+}
+
+interface ModelMetadataChip {
+  label: string;
+  title?: string;
+}
+
+export function modelMetadataChips(
+  t: TFunction<"chat">,
+  model: EngineModel,
+): ModelMetadataChip[] {
+  const chips: ModelMetadataChip[] = [];
+  const attachmentModalities = new Set(
+    (model.attachmentModalities ?? []).map((modality) => modality.toLowerCase()),
+  );
+
+  if (attachmentModalities.has("image")) {
+    chips.push({ label: t("modelPicker.metadata.vision") });
+  }
+  if (attachmentModalities.has("pdf")) {
+    chips.push({ label: t("modelPicker.metadata.pdf") });
+  }
+  if (attachmentModalities.has("text")) {
+    chips.push({ label: t("modelPicker.metadata.files") });
+  } else if ((model.attachmentModalities ?? []).length === 0) {
+    chips.push({ label: t("modelPicker.metadata.noFiles") });
+  }
+
+  const contextLimit = formatCompactTokenLimit(model.limits?.contextTokens);
+  const inputLimit = formatCompactTokenLimit(model.limits?.inputTokens);
+  const outputLimit = formatCompactTokenLimit(model.limits?.outputTokens);
+  if (contextLimit) {
+    chips.push({
+      label: t("modelPicker.metadata.contextLimit", { tokens: contextLimit }),
+    });
+  } else if (inputLimit) {
+    chips.push({
+      label: t("modelPicker.metadata.inputLimit", { tokens: inputLimit }),
+    });
+  }
+  if (outputLimit) {
+    chips.push({
+      label: t("modelPicker.metadata.outputLimit", { tokens: outputLimit }),
+    });
+  }
+
+  return chips;
+}
+
 function shortEffortLabel(t: TFunction<"chat">, effort: string): string {
   switch (effort) {
     case "none": return t("modelPicker.effort.noneShort");
@@ -611,6 +673,7 @@ function ModelRow({
   const { t } = useTranslation("chat");
   const efforts = model.supportedReasoningEfforts ?? [];
   const showControls = efforts.length > 0;
+  const metadataChips = modelMetadataChips(t, model);
 
   return (
     <div className={`mp-model${isSelected ? " mp-model-selected" : ""}`}>
@@ -631,6 +694,15 @@ function ModelRow({
           {model.description && (
             <span className="mp-model-desc">{model.description}</span>
           )}
+          {metadataChips.length > 0 ? (
+            <span className="mp-model-meta">
+              {metadataChips.map((chip) => (
+                <span key={chip.label} className="mp-model-meta-chip" title={chip.title}>
+                  {chip.label}
+                </span>
+              ))}
+            </span>
+          ) : null}
         </div>
         {isSelected && (
           <Check size={13} className="mp-model-check" />

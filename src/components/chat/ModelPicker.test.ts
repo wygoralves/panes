@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
+import type { TFunction } from "i18next";
 import type { EngineModel } from "../../types";
 import {
   filterOpenCodeModelsForQuery,
+  formatCompactTokenLimit,
   formatOpenCodeProviderName,
   getOpenCodeProviderId,
   groupOpenCodeModels,
+  modelMetadataChips,
 } from "./ModelPicker";
 
 function makeModel(id: string, hidden = false): EngineModel {
@@ -15,6 +18,7 @@ function makeModel(id: string, hidden = false): EngineModel {
     hidden,
     isDefault: false,
     inputModalities: ["text"],
+    attachmentModalities: ["text"],
     supportsPersonality: false,
     defaultReasoningEffort: "medium",
     supportedReasoningEfforts: [],
@@ -85,5 +89,32 @@ describe("OpenCode model provider grouping", () => {
       "openai/gpt-5",
     ]);
     expect(filterOpenCodeModelsForQuery(models, "   ")).toEqual(models);
+  });
+
+  it("builds compact metadata chips for OpenCode model capabilities", () => {
+    const t = ((key: string, options?: Record<string, string>) => {
+      const labels: Record<string, string> = {
+        "modelPicker.metadata.vision": "Vision",
+        "modelPicker.metadata.pdf": "PDF",
+        "modelPicker.metadata.files": "Files",
+        "modelPicker.metadata.noFiles": "No files",
+        "modelPicker.metadata.contextLimit": `${options?.tokens} ctx`,
+        "modelPicker.metadata.outputLimit": `${options?.tokens} out`,
+      };
+      return labels[key] ?? key;
+    }) as unknown as TFunction<"chat">;
+
+    expect(formatCompactTokenLimit(400000)).toBe("400K");
+    expect(formatCompactTokenLimit(1200000)).toBe("1.2M");
+    expect(
+      modelMetadataChips(t, {
+        ...makeModel("openrouter/openai/gpt-5"),
+        attachmentModalities: ["text", "image", "pdf"],
+        limits: {
+          contextTokens: 400000,
+          outputTokens: 128000,
+        },
+      }).map((chip) => chip.label),
+    ).toEqual(["Vision", "PDF", "Files", "400K ctx", "128K out"]);
   });
 });

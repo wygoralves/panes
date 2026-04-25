@@ -96,6 +96,7 @@ import type {
   CodexSkill,
   ContentBlock,
   EngineHealth,
+  EngineModel,
   Message,
   Thread,
   TrustLevel,
@@ -513,6 +514,7 @@ const CLAUDE_IMAGE_ATTACHMENT_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp"]
 const CLAUDE_ATTACHMENT_EXTENSIONS = Array.from(
   new Set([...CLAUDE_TEXT_ATTACHMENT_EXTENSIONS, ...CLAUDE_IMAGE_ATTACHMENT_EXTENSIONS]),
 );
+const PDF_ATTACHMENT_EXTENSIONS = ["pdf"];
 const ENGINE_PREWARM_THROTTLE_MS = 30_000;
 const lastPrewarmAttemptAtByEngine = new Map<string, number>();
 const inflightPrewarmByEngine = new Map<string, Promise<void>>();
@@ -562,9 +564,29 @@ interface AttachmentFilterConfig {
   textFilesLabel: string;
 }
 
+function attachmentExtensionsForModalities(modalities: string[]): {
+  supportedExtensions: string[];
+  textExtensions: string[];
+  imageExtensions: string[];
+} {
+  const normalized = new Set(modalities.map((modality) => modality.trim().toLowerCase()));
+  const textExtensions = normalized.has("text") ? [...TEXT_ATTACHMENT_EXTENSIONS] : [];
+  const imageExtensions = normalized.has("image") ? [...IMAGE_ATTACHMENT_EXTENSIONS] : [];
+  const pdfExtensions = normalized.has("pdf") ? PDF_ATTACHMENT_EXTENSIONS : [];
+
+  return {
+    supportedExtensions: Array.from(
+      new Set([...textExtensions, ...imageExtensions, ...pdfExtensions]),
+    ),
+    textExtensions,
+    imageExtensions,
+  };
+}
+
 function getAttachmentFilterConfig(
   t: TFunction<"chat">,
   engineId: string,
+  model?: EngineModel | null,
 ): AttachmentFilterConfig | null {
   switch (engineId) {
     case "codex":
@@ -589,17 +611,21 @@ function getAttachmentFilterConfig(
         imagesLabel: t("attachments.filters.images"),
         textFilesLabel: t("attachments.filters.textFiles"),
       };
-    case "opencode":
+    case "opencode": {
+      const openCodeExtensions = attachmentExtensionsForModalities(
+        model?.attachmentModalities ?? [],
+      );
       return {
-        supportedExtensions: [...TEXT_ATTACHMENT_EXTENSIONS],
-        textExtensions: [...TEXT_ATTACHMENT_EXTENSIONS],
-        imageExtensions: [],
+        supportedExtensions: openCodeExtensions.supportedExtensions,
+        textExtensions: openCodeExtensions.textExtensions,
+        imageExtensions: openCodeExtensions.imageExtensions,
         title: t("attachments.opencodeTitle"),
         warningMessage: t("attachments.opencodeWarning"),
         supportedLabel: t("attachments.filters.supportedFiles"),
         imagesLabel: t("attachments.filters.images"),
         textFilesLabel: t("attachments.filters.textFiles"),
       };
+    }
     default:
       return null;
   }
@@ -2228,7 +2254,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       });
     }
 
-    const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId);
+    const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId, selectedModel);
     if (attachmentFilterConfig) {
       const supportedExtensions = new Set(attachmentFilterConfig.supportedExtensions);
       const supportedAttachments = nextAttachments.filter((attachment) =>
@@ -2257,10 +2283,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       }
       return merged;
     });
-  }, [activeWorkspaceId, selectedEngineId, t]);
+  }, [activeWorkspaceId, selectedEngineId, selectedModel, t]);
 
   useEffect(() => {
-    const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId);
+    const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId, selectedModel);
     if (!attachmentFilterConfig) {
       return;
     }
@@ -2276,7 +2302,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       toast.warning(attachmentFilterConfig.warningMessage);
       return supportedAttachments;
     });
-  }, [selectedEngineId, t]);
+  }, [selectedEngineId, selectedModel, t]);
 
   const isDropPositionInsideChatSection = useCallback((x: number, y: number): boolean => {
     const container = chatSectionRef.current;
@@ -3947,7 +3973,11 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   async function handleAddAttachment() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId);
+      const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId, selectedModel);
+      if (attachmentFilterConfig?.supportedExtensions.length === 0) {
+        toast.warning(attachmentFilterConfig.warningMessage);
+        return;
+      }
       const selected = await open({
         multiple: true,
         title: attachmentFilterConfig?.title ?? t("panel.attachFiles"),
@@ -3957,15 +3987,21 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 name: attachmentFilterConfig.supportedLabel,
                 extensions: attachmentFilterConfig.supportedExtensions,
               },
-              {
-                name: attachmentFilterConfig.imagesLabel,
-                extensions: attachmentFilterConfig.imageExtensions,
-              },
-              {
-                name: attachmentFilterConfig.textFilesLabel,
-                extensions: attachmentFilterConfig.textExtensions,
-              },
-            ]
+              attachmentFilterConfig.imageExtensions.length > 0
+                ? {
+                    name: attachmentFilterConfig.imagesLabel,
+                    extensions: attachmentFilterConfig.imageExtensions,
+                  }
+                : null,
+              attachmentFilterConfig.textExtensions.length > 0
+                ? {
+                    name: attachmentFilterConfig.textFilesLabel,
+                    extensions: attachmentFilterConfig.textExtensions,
+                  }
+                : null,
+            ].filter((filter): filter is { name: string; extensions: string[] } =>
+              Boolean(filter),
+            )
           : undefined,
       });
       if (!selected) return;

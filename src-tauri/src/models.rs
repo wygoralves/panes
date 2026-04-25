@@ -261,9 +261,21 @@ pub struct EngineModelDto {
     #[serde(default)]
     pub input_modalities: Vec<String>,
     #[serde(default)]
+    pub attachment_modalities: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limits: Option<EngineModelLimitsDto>,
+    #[serde(default)]
     pub supports_personality: bool,
     pub default_reasoning_effort: String,
     pub supported_reasoning_efforts: Vec<ReasoningEffortOptionDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineModelLimitsDto {
+    pub context_tokens: Option<u64>,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
