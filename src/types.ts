@@ -150,11 +150,13 @@ export type ThreadStatus =
   | "error"
   | "completed";
 
+export type ChatEngineId = "codex" | "claude" | "opencode";
+
 export interface Thread {
   id: string;
   workspaceId: string;
   repoId: string | null;
-  engineId: "codex" | "claude";
+  engineId: ChatEngineId;
   modelId: string;
   engineThreadId: string | null;
   engineMetadata?: Record<string, unknown>;
@@ -986,7 +988,7 @@ export interface TerminalGroup {
 // ── Setup / Onboarding ──────────────────────────────────────────────
 
 export type OnboardingWorkflowPreference = "cli" | "chat";
-export type OnboardingChatEngineId = "codex" | "claude";
+export type OnboardingChatEngineId = ChatEngineId;
 export type OnboardingStep =
   | "greeting"
   | "workflow"

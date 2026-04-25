@@ -45,6 +45,8 @@
     "codexWarning": "Only image and text attachments are supported for Codex turns.",
     "claudeTitle": "Attach files (text, SVG, and supported images)",
     "claudeWarning": "Only text files, including SVG, and PNG, JPEG, GIF, or WEBP images are supported for Claude turns.",
+    "opencodeTitle": "Attach files (text)",
+    "opencodeWarning": "Only text attachments are supported for OpenCode turns.",
     "remove": "Remove attachment",
     "filters": {
       "supportedFiles": "Supported files",
@@ -242,6 +244,7 @@
     "trustTitle": "Trust",
     "approvalTitleCodex": "Approval",
     "approvalTitleClaude": "Permission mode",
+    "approvalTitleOpenCode": "OpenCode permissions",
     "sandboxTitle": "Sandbox",
     "networkTitle": "Network",
     "customSuffix": "{{count}} custom",
@@ -254,6 +257,7 @@
     "auto": "Auto",
     "autoRepoTrust": "Follow the repo trust policy.",
     "autoClaude": "Follow the repo trust defaults for Claude.",
+    "autoOpenCode": "Ask before tools unless the repo trust policy is restricted.",
     "autoSandbox": "Follow the thread default sandbox.",
     "autoNetwork": "Follow the thread default network policy.",
     "untrusted": "Untrusted",
@@ -278,6 +282,12 @@
     "claudeRestrictedDescription": "Most actions require stricter approval handling.",
     "claudeStandardDescription": "Balanced permissions for day-to-day work.",
     "claudeTrustedDescription": "Broad permissions with less interruption.",
+    "openCodeAsk": "Ask",
+    "openCodeAskDescription": "Ask before OpenCode runs tools.",
+    "openCodeAllow": "Allow",
+    "openCodeAllowDescription": "Allow OpenCode tools without asking. This is not a Panes sandbox.",
+    "openCodeDeny": "Deny",
+    "openCodeDenyDescription": "Deny OpenCode tool permissions for this thread.",
     "permissionPolicyFallback": "Permission policy"
   },
   "panel": {

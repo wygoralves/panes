@@ -19,6 +19,22 @@ describe("resolveEngineCapabilities", () => {
     });
   });
 
+  it("falls back to OpenCode defaults when capabilities are unavailable", () => {
+    expect(resolveEngineCapabilities("opencode", null)).toEqual({
+      permissionModes: ["ask", "allow", "deny"],
+      sandboxModes: [],
+      approvalDecisions: ["accept", "decline", "cancel", "accept_for_session"],
+    });
+  });
+
+  it("does not borrow Codex capabilities for unknown engines", () => {
+    expect(resolveEngineCapabilities("custom", undefined)).toEqual({
+      permissionModes: [],
+      sandboxModes: [],
+      approvalDecisions: [],
+    });
+  });
+
   it("fills missing capability arrays from the engine fallback", () => {
     expect(
       resolveEngineCapabilities("claude", {

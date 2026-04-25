@@ -25,7 +25,7 @@ import { useFileStore } from "./stores/fileStore";
 import { useKeepAwakeStore } from "./stores/keepAwakeStore";
 import { useTerminalNotificationSettingsStore } from "./stores/terminalNotificationSettingsStore";
 import { toast } from "./stores/toastStore";
-import type { RuntimeToast, Thread } from "./types";
+import type { ChatEngineId, RuntimeToast, Thread } from "./types";
 import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMirrorEditor";
 import { CustomWindowFrame } from "./components/shared/CustomWindowFrame";
 import { useCustomWindowFrameState } from "./lib/customWindowFrame";
@@ -88,8 +88,16 @@ function showRuntimeToast(runtimeToast?: RuntimeToast) {
   }
 }
 
-function resolveAgentDisplayName(engineId: "codex" | "claude"): string {
-  return engineId === "claude" ? "Claude" : "Codex";
+function resolveAgentDisplayName(engineId: ChatEngineId): string {
+  switch (engineId) {
+    case "claude":
+      return "Claude";
+    case "opencode":
+      return "OpenCode";
+    case "codex":
+    default:
+      return "Codex";
+  }
 }
 
 function resolveChatNotificationBody(
