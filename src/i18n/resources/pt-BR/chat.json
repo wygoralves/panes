@@ -76,6 +76,10 @@
     "sandbox": "Sandbox",
     "network": "Rede"
   },
+  "openCodeAgentPicker": {
+    "title": "Agente OpenCode",
+    "selectAgent": "Agente"
+  },
   "configPicker": {
     "title": "Configuração do turno",
     "shortTitle": "Config",
@@ -400,6 +404,7 @@
       "fullAccessNetworkWarning": "O modo acesso total habilita temporariamente o acesso à rede.",
       "updateExecutionPolicyFailed": "Falha ao atualizar a política de execução da thread: {{error}}",
       "updateCodexConfigFailed": "Falha ao atualizar a configuração de turno do Codex: {{error}}",
+      "updateOpenCodeConfigFailed": "Falha ao atualizar a configuração de turno do OpenCode: {{error}}",
       "planImplementationThreadUnavailable": "A thread original de planejamento não está mais disponível. Reabra a thread e tente novamente.",
       "invalidOutputSchema": "O schema de saída deve ser um objeto ou booleano JSON Schema válido: {{error}}",
       "invalidCustomApprovalPolicy": "A política de aprovação estruturada deve ser um objeto JSON.",
@@ -501,15 +506,29 @@
     "panels": {
       "skills": {
         "title": "Skills",
-        "empty": "Nenhuma skill carregada neste runtime."
+        "empty": "Nenhuma skill carregada neste runtime.",
+        "description": "Ver skills carregadas do Codex"
       },
       "mcp": {
         "title": "Servidores MCP",
-        "empty": "Nenhum servidor MCP conectado."
+        "empty": "Nenhum servidor MCP conectado.",
+        "description": "Ver status dos servidores MCP"
       },
       "experimental": {
         "title": "Recursos experimentais",
-        "empty": "Nenhum recurso experimental disponível."
+        "empty": "Nenhum recurso experimental disponível.",
+        "description": "Ver recursos experimentais"
+      },
+      "openCodeAgents": {
+        "title": "Agentes OpenCode",
+        "empty": "Nenhum agente OpenCode encontrado.",
+        "description": "Ver agentes do OpenCode"
+      },
+      "openCodeCommands": {
+        "title": "Comandos OpenCode",
+        "empty": "Nenhum comando OpenCode encontrado.",
+        "description": "Ver comandos de barra do OpenCode",
+        "insertDescription": "Inserir comando OpenCode"
       },
       "info": {
         "badgeOn": "lig",

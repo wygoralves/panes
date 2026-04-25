@@ -23,6 +23,9 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::models::{
+    OpenCodeAgentDto, OpenCodeCommandDto, OpenCodeMcpServerDto, OpenCodeRuntimeCatalogDto,
+};
 use crate::{process_utils, runtime_env};
 
 use super::{
@@ -57,6 +60,7 @@ struct OpenCodeSession {
     cwd: String,
     model_id: String,
     reasoning_effort: Option<String>,
+    agent: Option<String>,
     permission_mode: OpenCodePermissionMode,
     server: Arc<OpenCodeServer>,
 }
@@ -107,6 +111,38 @@ struct OpenCodeHealthResponse {
 #[derive(Debug, Clone, Deserialize)]
 struct OpenCodeSessionInfo {
     id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct OpenCodeAgentModelRef {
+    #[serde(rename = "providerID")]
+    provider_id: String,
+    #[serde(rename = "modelID")]
+    model_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct OpenCodeRuntimeAgent {
+    name: String,
+    description: Option<String>,
+    mode: String,
+    native: Option<bool>,
+    hidden: Option<bool>,
+    model: Option<OpenCodeAgentModelRef>,
+    variant: Option<String>,
+    steps: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct OpenCodeRuntimeCommand {
+    name: String,
+    description: Option<String>,
+    agent: Option<String>,
+    model: Option<String>,
+    source: Option<String>,
+    subtask: Option<bool>,
+    #[serde(default)]
+    hints: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -192,6 +228,13 @@ struct OpenCodePart {
     message_id: String,
     #[serde(rename = "type")]
     part_type: String,
+    #[serde(rename = "sessionID")]
+    session_id: Option<String>,
+    #[serde(rename = "callID")]
+    call_id: Option<String>,
+    name: Option<String>,
+    source: Option<Value>,
+    metadata: Option<Value>,
     text: Option<String>,
     tool: Option<String>,
     state: Option<OpenCodeToolState>,
@@ -336,6 +379,7 @@ impl Engine for OpenCodeEngine {
         let reasoning_effort = self
             .resolve_session_reasoning_effort(model, sandbox.reasoning_effort.as_deref())
             .await;
+        let agent = normalize_opencode_agent(sandbox.opencode_agent.as_deref());
 
         if let Some(existing_id) = resume_engine_thread_id {
             let mut state = self.state.lock().await;
@@ -345,6 +389,7 @@ impl Engine for OpenCodeEngine {
                     let previous_permission_mode = existing.permission_mode;
                     existing.model_id = model.to_string();
                     existing.reasoning_effort = reasoning_effort.clone();
+                    existing.agent = agent.clone();
                     existing.permission_mode = permission_mode;
                     drop(state);
                     if previous_permission_mode != permission_mode {
@@ -388,6 +433,7 @@ impl Engine for OpenCodeEngine {
                     cwd: cwd.clone(),
                     model_id: model.to_string(),
                     reasoning_effort,
+                    agent,
                     permission_mode,
                     server,
                 },
@@ -766,6 +812,50 @@ impl OpenCodeEngine {
         models
     }
 
+    pub async fn runtime_catalog(&self, cwd: &str) -> Result<OpenCodeRuntimeCatalogDto> {
+        let server = self.ensure_server(cwd).await?;
+        let result = async {
+            let agents = self
+                .request(server.as_ref(), reqwest::Method::GET, "/agent")
+                .send()
+                .await?
+                .error_for_status()
+                .context("failed to list OpenCode agents")?
+                .json::<Vec<OpenCodeRuntimeAgent>>()
+                .await
+                .context("failed to parse OpenCode agents")?;
+
+            let commands = self
+                .request(server.as_ref(), reqwest::Method::GET, "/command")
+                .send()
+                .await?
+                .error_for_status()
+                .context("failed to list OpenCode commands")?
+                .json::<Vec<OpenCodeRuntimeCommand>>()
+                .await
+                .context("failed to parse OpenCode commands")?;
+
+            let mcp = self
+                .request(server.as_ref(), reqwest::Method::GET, "/mcp")
+                .send()
+                .await?
+                .error_for_status()
+                .context("failed to read OpenCode MCP status")?
+                .json::<HashMap<String, Value>>()
+                .await
+                .context("failed to parse OpenCode MCP status")?;
+
+            Ok(OpenCodeRuntimeCatalogDto {
+                agents: map_runtime_agents(agents),
+                commands: map_runtime_commands(commands),
+                mcp_servers: map_runtime_mcp_servers(mcp),
+            })
+        }
+        .await;
+        self.stop_server_if_unused(cwd).await;
+        result
+    }
+
     async fn resolve_session_reasoning_effort(
         &self,
         model_id: &str,
@@ -940,6 +1030,7 @@ impl OpenCodeEngine {
         let body = build_prompt_body(
             &session.model_id,
             session.reasoning_effort.as_deref(),
+            session.agent.as_deref(),
             input,
         )?;
 
@@ -1153,6 +1244,9 @@ impl OpenCodeEngine {
             "tool" => {
                 self.handle_tool_part(part, mapper, event_tx).await;
             }
+            "agent" => {
+                self.handle_agent_part(part, mapper, event_tx).await;
+            }
             "patch" => {
                 event_tx
                     .send(EngineEvent::DiffUpdated {
@@ -1196,8 +1290,10 @@ impl OpenCodeEngine {
                     summary: summary.clone(),
                     details: json!({
                         "tool": tool_name,
+                        "callID": part.call_id.clone(),
                         "state": state.as_ref().and_then(|value| value.input.clone()),
-                        "metadata": state.as_ref().and_then(|value| value.metadata.clone()),
+                        "metadata": part.metadata.clone()
+                            .or_else(|| state.as_ref().and_then(|value| value.metadata.clone())),
                     }),
                 })
                 .await
@@ -1251,6 +1347,51 @@ impl OpenCodeEngine {
                     .ok();
             }
             _ => {}
+        }
+    }
+
+    async fn handle_agent_part(
+        &self,
+        part: &OpenCodePart,
+        mapper: &mut OpenCodeTurnMapper,
+        event_tx: &mpsc::Sender<EngineEvent>,
+    ) {
+        let action_id = part.id.clone();
+        let agent_name = part.name.clone().unwrap_or_else(|| "agent".to_string());
+        let summary = format!("OpenCode agent: {agent_name}");
+
+        if mapper.started_actions.insert(action_id.clone()) {
+            event_tx
+                .send(EngineEvent::ActionStarted {
+                    action_id: action_id.clone(),
+                    engine_action_id: Some(part.message_id.clone()),
+                    action_type: ActionType::Other,
+                    summary,
+                    details: json!({
+                        "agent": agent_name,
+                        "source": part.source.clone(),
+                        "sessionID": part.session_id.clone(),
+                        "messageID": part.message_id.clone(),
+                    }),
+                })
+                .await
+                .ok();
+        }
+
+        if mapper.completed_actions.insert(action_id.clone()) {
+            event_tx
+                .send(EngineEvent::ActionCompleted {
+                    action_id,
+                    result: ActionResult {
+                        success: true,
+                        output: None,
+                        error: None,
+                        diff: None,
+                        duration_ms: 0,
+                    },
+                })
+                .await
+                .ok();
         }
     }
 
@@ -1386,6 +1527,7 @@ fn parse_model_slug(slug: &str) -> Option<ParsedModelSlug> {
 fn build_prompt_body(
     model_id: &str,
     reasoning_effort: Option<&str>,
+    agent: Option<&str>,
     input: TurnInput,
 ) -> Result<Value> {
     let model = parse_model_slug(model_id)
@@ -1422,6 +1564,8 @@ fn build_prompt_body(
     if let Some(object) = body.as_object_mut() {
         if plan_mode {
             object.insert("agent".to_string(), json!("plan"));
+        } else if let Some(agent) = normalize_opencode_agent(agent) {
+            object.insert("agent".to_string(), json!(agent));
         }
         if let Some(variant) = reasoning_effort
             .map(str::trim)
@@ -1432,6 +1576,13 @@ fn build_prompt_body(
     }
 
     Ok(body)
+}
+
+fn normalize_opencode_agent(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "build")
+        .map(ToOwned::to_owned)
 }
 
 fn model_info(
@@ -1482,6 +1633,65 @@ fn model_info_with_metadata(
         default_reasoning_effort: default_reasoning_effort.to_string(),
         supported_reasoning_efforts,
     }
+}
+
+fn map_runtime_agents(agents: Vec<OpenCodeRuntimeAgent>) -> Vec<OpenCodeAgentDto> {
+    agents
+        .into_iter()
+        .map(|agent| OpenCodeAgentDto {
+            name: agent.name,
+            description: agent.description,
+            mode: agent.mode,
+            native: agent.native.unwrap_or(false),
+            hidden: agent.hidden.unwrap_or(false),
+            model_provider_id: agent.model.as_ref().map(|model| model.provider_id.clone()),
+            model_id: agent.model.as_ref().map(|model| model.model_id.clone()),
+            variant: agent.variant,
+            steps: agent.steps,
+        })
+        .collect()
+}
+
+fn map_runtime_commands(commands: Vec<OpenCodeRuntimeCommand>) -> Vec<OpenCodeCommandDto> {
+    commands
+        .into_iter()
+        .map(|command| OpenCodeCommandDto {
+            name: command.name,
+            description: command.description,
+            agent: command.agent,
+            model: command.model,
+            source: command.source,
+            subtask: command.subtask.unwrap_or(false),
+            hints: command.hints,
+        })
+        .collect()
+}
+
+fn map_runtime_mcp_servers(mcp: HashMap<String, Value>) -> Vec<OpenCodeMcpServerDto> {
+    let mut servers = mcp
+        .into_iter()
+        .map(|(name, raw)| {
+            let status = raw
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string();
+            let detail = raw
+                .get("error")
+                .and_then(Value::as_str)
+                .or_else(|| raw.get("message").and_then(Value::as_str))
+                .or_else(|| raw.get("detail").and_then(Value::as_str))
+                .map(ToOwned::to_owned);
+            OpenCodeMcpServerDto {
+                name,
+                status,
+                detail,
+                raw,
+            }
+        })
+        .collect::<Vec<_>>();
+    servers.sort_by(|a, b| a.name.cmp(&b.name));
+    servers
 }
 
 fn default_reasoning_effort(options: &[ReasoningEffortOption]) -> Option<&'static str> {
@@ -1671,7 +1881,6 @@ async fn start_server(cwd: &str) -> Result<OpenCodeServer> {
         .arg(port.to_string())
         .current_dir(cwd)
         .env("OPENCODE_SERVER_PASSWORD", &password)
-        .env("OPENCODE_CONFIG_CONTENT", "{}")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -2231,6 +2440,7 @@ opencode/gpt-5-nano
         let body = build_prompt_body(
             "opencode/big-pickle",
             Some("max"),
+            None,
             TurnInput {
                 message: "hello".to_string(),
                 attachments: Vec::new(),
@@ -2243,6 +2453,42 @@ opencode/gpt-5-nano
         assert_eq!(body.get("variant"), Some(&json!("max")));
         assert_eq!(body["model"]["providerID"], json!("opencode"));
         assert_eq!(body["model"]["modelID"], json!("big-pickle"));
+    }
+
+    #[test]
+    fn prompt_body_includes_selected_opencode_agent() {
+        let body = build_prompt_body(
+            "opencode/big-pickle",
+            None,
+            Some("explore"),
+            TurnInput {
+                message: "hello".to_string(),
+                attachments: Vec::new(),
+                plan_mode: false,
+                input_items: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(body.get("agent"), Some(&json!("explore")));
+    }
+
+    #[test]
+    fn prompt_body_plan_mode_overrides_selected_opencode_agent() {
+        let body = build_prompt_body(
+            "opencode/big-pickle",
+            None,
+            Some("explore"),
+            TurnInput {
+                message: "hello".to_string(),
+                attachments: Vec::new(),
+                plan_mode: true,
+                input_items: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(body.get("agent"), Some(&json!("plan")));
     }
 
     #[test]

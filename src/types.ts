@@ -524,6 +524,41 @@ export interface CodexSkill {
   scope: string;
 }
 
+export interface OpenCodeRuntimeCatalog {
+  agents: OpenCodeAgent[];
+  commands: OpenCodeCommand[];
+  mcpServers: OpenCodeMcpServer[];
+}
+
+export interface OpenCodeAgent {
+  name: string;
+  description?: string | null;
+  mode: string;
+  native: boolean;
+  hidden: boolean;
+  modelProviderId?: string | null;
+  modelId?: string | null;
+  variant?: string | null;
+  steps?: number | null;
+}
+
+export interface OpenCodeCommand {
+  name: string;
+  description?: string | null;
+  agent?: string | null;
+  model?: string | null;
+  source?: string | null;
+  subtask: boolean;
+  hints: string[];
+}
+
+export interface OpenCodeMcpServer {
+  name: string;
+  status: string;
+  detail?: string | null;
+  raw: unknown;
+}
+
 export interface CodexPluginMarketplace {
   name: string;
   path: string;

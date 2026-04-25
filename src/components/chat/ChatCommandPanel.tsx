@@ -7,6 +7,7 @@ import {
   Scissors,
   Search,
   Server,
+  SquareCode,
   UserCircle,
   X,
   Zap,
@@ -18,6 +19,9 @@ import type {
   CodexReviewDelivery,
   CodexReviewTarget,
   CodexSkill,
+  OpenCodeAgent,
+  OpenCodeCommand,
+  OpenCodeMcpServer,
 } from "../../types";
 
 type ReviewTargetMode =
@@ -34,6 +38,8 @@ export type ActiveSlashCommand =
   | { type: "fast" }
   | { type: "personality" }
   | { type: "skills" }
+  | { type: "agents" }
+  | { type: "commands" }
   | { type: "mcp" }
   | { type: "experimental" };
 
@@ -56,6 +62,9 @@ interface ChatCommandPanelProps {
   personalitySupported?: boolean;
   /** Data for info panels */
   skills?: CodexSkill[];
+  openCodeAgents?: OpenCodeAgent[];
+  openCodeCommands?: OpenCodeCommand[];
+  openCodeMcpServers?: OpenCodeMcpServer[];
   mcpServers?: CodexMcpServer[];
   experimentalFeatures?: CodexExperimentalFeature[];
   onConfirm: (
@@ -74,6 +83,9 @@ export function ChatCommandPanel({
   currentPersonality,
   personalitySupported,
   skills,
+  openCodeAgents,
+  openCodeCommands,
+  openCodeMcpServers,
   mcpServers,
   experimentalFeatures,
   onConfirm,
@@ -171,17 +183,53 @@ export function ChatCommandPanel({
           onDismiss={onDismiss}
         />
       );
+    case "agents":
+      return (
+        <InfoListPanel
+          icon={UserCircle}
+          title={t("slashCommands.panels.openCodeAgents.title")}
+          emptyLabel={t("slashCommands.panels.openCodeAgents.empty")}
+          items={(openCodeAgents ?? []).map((agent) => ({
+            name: agent.name,
+            detail: agent.description || agent.mode,
+            badge: agent.mode,
+          }))}
+          onDismiss={onDismiss}
+        />
+      );
+    case "commands":
+      return (
+        <InfoListPanel
+          icon={SquareCode}
+          title={t("slashCommands.panels.openCodeCommands.title")}
+          emptyLabel={t("slashCommands.panels.openCodeCommands.empty")}
+          items={(openCodeCommands ?? []).map((command) => ({
+            name: `/${command.name}`,
+            detail: command.description || command.hints.join(" "),
+            badge: command.source ?? (command.subtask ? "subtask" : undefined),
+          }))}
+          onDismiss={onDismiss}
+        />
+      );
     case "mcp":
       return (
         <InfoListPanel
           icon={Server}
           title={t("slashCommands.panels.mcp.title")}
           emptyLabel={t("slashCommands.panels.mcp.empty")}
-          items={(mcpServers ?? []).map((s) => ({
-            name: s.name,
-            detail: `${s.toolCount} tools, ${s.resourceCount} resources`,
-            badge: s.authStatus,
-          }))}
+          items={
+            openCodeMcpServers
+              ? openCodeMcpServers.map((server) => ({
+                  name: server.name,
+                  detail: server.detail ?? server.status,
+                  badge: server.status,
+                }))
+              : (mcpServers ?? []).map((s) => ({
+                  name: s.name,
+                  detail: `${s.toolCount} tools, ${s.resourceCount} resources`,
+                  badge: s.authStatus,
+                }))
+          }
           onDismiss={onDismiss}
         />
       );

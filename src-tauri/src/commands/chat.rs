@@ -534,6 +534,7 @@ pub async fn send_message(
         service_tier: thread_service_tier(thread.engine_metadata.as_ref()),
         personality,
         output_schema: thread_output_schema(thread.engine_metadata.as_ref()),
+        opencode_agent: thread_opencode_agent(thread.engine_metadata.as_ref()),
     };
 
     let engine_thread_id = state
@@ -3784,6 +3785,15 @@ fn thread_output_schema(metadata: Option<&Value>) -> Option<Value> {
     metadata
         .and_then(|value| value.get("outputSchema"))
         .cloned()
+}
+
+fn thread_opencode_agent(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("opencodeAgent"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn normalize_reasoning_effort_value(value: Option<&str>) -> Option<String> {

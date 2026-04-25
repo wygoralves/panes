@@ -7,7 +7,10 @@ use tokio::process::Command;
 #[cfg(not(target_os = "windows"))]
 use crate::runtime_env;
 use crate::{
-    models::{CodexAppDto, CodexSkillDto, EngineCheckResultDto, EngineHealthDto, EngineInfoDto},
+    models::{
+        CodexAppDto, CodexSkillDto, EngineCheckResultDto, EngineHealthDto, EngineInfoDto,
+        OpenCodeRuntimeCatalogDto,
+    },
     process_utils,
     state::AppState,
 };
@@ -53,6 +56,22 @@ pub async fn list_codex_skills(
 #[tauri::command]
 pub async fn list_codex_apps(state: State<'_, AppState>) -> Result<Vec<CodexAppDto>, String> {
     state.engines.list_codex_apps().await.map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn get_opencode_runtime_catalog(
+    state: State<'_, AppState>,
+    cwd: String,
+) -> Result<OpenCodeRuntimeCatalogDto, String> {
+    let cwd = cwd.trim();
+    if cwd.is_empty() {
+        return Err("cwd is required".to_string());
+    }
+    state
+        .engines
+        .opencode_runtime_catalog(cwd)
+        .await
+        .map_err(err_to_string)
 }
 
 #[tauri::command]
