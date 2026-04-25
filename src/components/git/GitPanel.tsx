@@ -37,6 +37,7 @@ import { GitWorktreesView } from "./GitWorktreesView";
 
 const GIT_WATCHER_REFRESH_DEBOUNCE_MS_CHANGES = 550;
 const GIT_WATCHER_REFRESH_DEBOUNCE_MS_BACKGROUND = 1100;
+const GIT_WORKING_TREE_POLL_INTERVAL_MS = 5000;
 
 interface Props {
   mode?: "docked" | "flyout";
@@ -413,6 +414,50 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
       unlisten?.();
     };
   }, [effectiveRepoPath, invalidateRepoCache, refresh]);
+
+  useEffect(() => {
+    if (!effectiveRepoPath || activeView !== "changes") {
+      return;
+    }
+
+    let disposed = false;
+    const repoPath = effectiveRepoPath;
+
+    const poll = () => {
+      if (disposed) {
+        return;
+      }
+      const syncState = useGitStore.getState();
+      const syncInProgressForRepo =
+        syncState.remoteSyncRepoPath === repoPath &&
+        syncState.remoteSyncAction !== null;
+      if (syncInProgressForRepo || watcherRefreshInFlightRef.current) {
+        watcherRefreshQueuedRef.current = true;
+        return;
+      }
+
+      watcherRefreshInFlightRef.current = true;
+      void (async () => {
+        try {
+          watcherRefreshQueuedRef.current = false;
+          invalidateRepoCache(repoPath);
+          await refresh(repoPath, { force: true });
+        } finally {
+          watcherRefreshInFlightRef.current = false;
+          if (watcherRefreshQueuedRef.current) {
+            watcherRefreshQueuedRef.current = false;
+            poll();
+          }
+        }
+      })();
+    };
+
+    const timer = window.setInterval(poll, GIT_WORKING_TREE_POLL_INTERVAL_MS);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [activeView, effectiveRepoPath, invalidateRepoCache, refresh]);
 
   useEffect(() => {
     if (reposLoading || effectiveRepo || !activeWorkspaceRootPath) {

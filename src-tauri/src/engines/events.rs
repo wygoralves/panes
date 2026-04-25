@@ -1,5 +1,29 @@
 use serde::{Deserialize, Serialize};
 
+pub const ACTION_OUTPUT_DELTA_MAX_CHARS: usize = 16 * 1024;
+const ACTION_OUTPUT_DELTA_TRUNCATED_PREFIX: &str = "... [output truncated; showing tail]\n";
+
+pub fn trim_action_output_delta_content(content: &str) -> String {
+    if content.chars().count() <= ACTION_OUTPUT_DELTA_MAX_CHARS {
+        return content.to_string();
+    }
+
+    let tail_chars =
+        ACTION_OUTPUT_DELTA_MAX_CHARS.saturating_sub(ACTION_OUTPUT_DELTA_TRUNCATED_PREFIX.len());
+    let mut tail = content
+        .chars()
+        .rev()
+        .take(tail_chars.max(1))
+        .collect::<Vec<_>>();
+    tail.reverse();
+
+    format!(
+        "{}{}",
+        ACTION_OUTPUT_DELTA_TRUNCATED_PREFIX,
+        tail.into_iter().collect::<String>()
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum EngineEvent {

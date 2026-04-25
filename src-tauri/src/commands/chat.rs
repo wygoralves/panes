@@ -14,8 +14,9 @@ use crate::{
     db,
     engines::{
         approval_response_route_for_engine, normalize_approval_response_for_engine,
-        validate_engine_sandbox_mode, ApprovalRequestRoute, EngineEvent, OutputStream,
-        SandboxPolicy, ThreadScope, TurnAttachment, TurnCompletionStatus, TurnInput, TurnInputItem,
+        trim_action_output_delta_content, validate_engine_sandbox_mode, ApprovalRequestRoute,
+        EngineEvent, OutputStream, SandboxPolicy, ThreadScope, TurnAttachment,
+        TurnCompletionStatus, TurnInput, TurnInputItem,
     },
     models::{
         ActionOutputDto, EngineInfoDto, EngineModelDto, MessageDto, MessageStatusDto,
@@ -30,6 +31,7 @@ const STREAM_EVENT_COALESCE_MAX_CHARS: usize = 8_192;
 const STREAM_EVENT_COALESCE_IDLE_FLUSH_INTERVAL: Duration = Duration::from_millis(24);
 const STREAM_DB_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 const STREAM_DB_BLOCKS_FLUSH_INTERVAL: Duration = Duration::from_millis(900);
+const ENGINE_EVENT_QUEUE_CAPACITY: usize = 128;
 const ACTION_OUTPUT_MAX_CHUNKS: usize = 240;
 const MAX_ATTACHMENTS_PER_TURN: usize = 10;
 const MESSAGE_WINDOW_DEFAULT_LIMIT: usize = 120;
@@ -1293,7 +1295,7 @@ async fn run_turn(
     cancellation: CancellationToken,
 ) {
     let max_output_chars = state.config.debug.max_action_output_chars;
-    let (event_tx, mut event_rx) = mpsc::channel::<EngineEvent>(128);
+    let (event_tx, mut event_rx) = mpsc::channel::<EngineEvent>(ENGINE_EVENT_QUEUE_CAPACITY);
 
     let engines = state.engines.clone();
     let thread_for_engine = thread.clone();
@@ -1772,7 +1774,7 @@ async fn run_codex_review_turn(
     cancellation: CancellationToken,
 ) {
     let max_output_chars = state.config.debug.max_action_output_chars;
-    let (event_tx, mut event_rx) = mpsc::channel::<EngineEvent>(128);
+    let (event_tx, mut event_rx) = mpsc::channel::<EngineEvent>(ENGINE_EVENT_QUEUE_CAPACITY);
     let (started_tx, started_rx) = oneshot::channel();
 
     let engines = state.engines.clone();
@@ -2427,8 +2429,14 @@ async fn process_stream_event(
     max_output_chars: usize,
 ) -> EventProgress {
     let mut normalized_event = event.clone();
-    if let EngineEvent::ActionCompleted { result, .. } = &mut normalized_event {
-        truncate_action_result_output(result, max_output_chars);
+    match &mut normalized_event {
+        EngineEvent::ActionOutputDelta { content, .. } => {
+            *content = trim_action_output_delta_content(content);
+        }
+        EngineEvent::ActionCompleted { result, .. } => {
+            truncate_action_result_output(result, max_output_chars);
+        }
+        _ => {}
     }
 
     let _ = app.emit(stream_event_topic, &normalized_event);

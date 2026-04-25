@@ -24,13 +24,14 @@ use uuid::Uuid;
 use crate::{process_utils, runtime_env};
 
 use super::{
-    normalize_approval_response_for_engine, ActionResult, ActionType, ApprovalRequestRoute, Engine,
-    EngineEvent, EngineThread, ModelInfo, OutputStream, ReasoningEffortOption, SandboxPolicy,
-    ThreadScope, TurnCompletionStatus, TurnInput,
+    normalize_approval_response_for_engine, trim_action_output_delta_content, ActionResult,
+    ActionType, ApprovalRequestRoute, Engine, EngineEvent, EngineThread, ModelInfo, OutputStream,
+    ReasoningEffortOption, SandboxPolicy, ThreadScope, TurnCompletionStatus, TurnInput,
 };
 
 const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const ARCHIVED_CLAUDE_SDK_NODE_MODULES: &str = "claude-sdk-node_modules.tar.gz";
+const SIDECAR_EVENT_BUFFER_CAPACITY: usize = 1024;
 
 // ── Sidecar event protocol ────────────────────────────────────────────
 
@@ -230,7 +231,7 @@ impl ClaudeTransport {
             .take()
             .context("claude sidecar stderr not available")?;
 
-        let (event_tx, _) = broadcast::channel(1024);
+        let (event_tx, _) = broadcast::channel(SIDECAR_EVENT_BUFFER_CAPACITY);
 
         // Stdout reader: parse JSON lines → broadcast SidecarEvents
         {
@@ -241,7 +242,7 @@ impl ClaudeTransport {
                     match lines.next_line().await {
                         Ok(Some(line)) => match serde_json::from_str::<SidecarEvent>(&line) {
                             Ok(event) => {
-                                let _ = tx.send(event);
+                                let _ = tx.send(trim_sidecar_event_for_buffer(event));
                             }
                             Err(e) => {
                                 log::warn!(
@@ -828,6 +829,13 @@ fn app_path_preview(path: Option<&str>) -> String {
         .to_string()
 }
 
+fn trim_sidecar_event_for_buffer(mut event: SidecarEvent) -> SidecarEvent {
+    if let SidecarEvent::ActionOutputDelta { content, .. } = &mut event {
+        *content = trim_action_output_delta_content(content);
+    }
+    event
+}
+
 fn executable_augmented_path(executable: &Path) -> Option<OsString> {
     runtime_env::augmented_path_with_prepend(
         executable
@@ -1263,7 +1271,7 @@ impl Engine for ClaudeSidecarEngine {
                                         .send(EngineEvent::ActionOutputDelta {
                                             action_id,
                                             stream: Self::parse_output_stream(&stream),
-                                            content,
+                                            content: trim_action_output_delta_content(&content),
                                         })
                                         .await
                                         .ok();
@@ -1442,17 +1450,37 @@ impl Engine for ClaudeSidecarEngine {
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             log::warn!("claude sidecar: event receiver lagged by {n} messages");
+                            let message = format!(
+                                "Claude sidecar event stream skipped {n} messages under load."
+                            );
                             event_tx
                                 .send(EngineEvent::Notice {
                                     kind: "claude_event_lag".to_string(),
                                     level: "warning".to_string(),
                                     title: "Claude event lag".to_string(),
-                                    message: format!(
-                                        "Claude sidecar event stream skipped {n} messages under load."
-                                    ),
+                                    message: message.clone(),
                                 })
                                 .await
                                 .ok();
+                            event_tx
+                                .send(EngineEvent::Error {
+                                    message,
+                                    recoverable: true,
+                                })
+                                .await
+                                .ok();
+                            event_tx
+                                .send(EngineEvent::TurnCompleted {
+                                    token_usage: None,
+                                    status: TurnCompletionStatus::Failed,
+                                })
+                                .await
+                                .ok();
+                            let mut state = state_ref.lock().await;
+                            if let Some(config) = state.threads.get_mut(&engine_thread_id_owned) {
+                                config.active_request_id = None;
+                            }
+                            break;
                         }
                         Err(broadcast::error::RecvError::Closed) => {
                             if !auth_invalidated_transport {

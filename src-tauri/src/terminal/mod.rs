@@ -34,9 +34,9 @@ use crate::terminal_notifications::{TerminalNotificationManager, TerminalNotific
 
 const TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS: u64 = 16;
 const TERMINAL_OUTPUT_MAX_EMIT_BYTES: usize = 256 * 1024;
-const TERMINAL_OUTPUT_BUFFER_MAX_BYTES: usize = 4 * 1024 * 1024;
+const TERMINAL_OUTPUT_BUFFER_MAX_BYTES: usize = 2 * 1024 * 1024;
 const TERMINAL_REPLAY_MAX_CHUNKS: usize = 4096;
-const TERMINAL_REPLAY_MAX_BYTES: usize = 8 * 1024 * 1024;
+const TERMINAL_REPLAY_MAX_BYTES: usize = 4 * 1024 * 1024;
 const TERMINAL_COMPLETED_REPLAY_GRACE_MS: u64 = 60_000;
 
 #[derive(Default)]
