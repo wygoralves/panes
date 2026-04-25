@@ -32,4 +32,16 @@ describe("resolveReasoningEffortForModel", () => {
       ),
     ).toBe("low");
   });
+
+  it("omits reasoning effort when the model does not expose supported options", () => {
+    expect(
+      resolveReasoningEffortForModel(
+        {
+          defaultReasoningEffort: "medium",
+          supportedReasoningEfforts: [],
+        },
+        "medium",
+      ),
+    ).toBeNull();
+  });
 });

@@ -1843,8 +1843,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     return encodeModelOptionValue(selectedEngineId, selectedModelId);
   }, [selectedEngineId, selectedModelId]);
   const resolveComposerRuntimeSelection = useCallback(() => {
-    const engineId = selectedEngineIdRef.current;
-    const modelId = selectedModelIdRef.current;
+    const engineId = selectedEngineId || selectedEngineIdRef.current;
+    const modelId = selectedModelId ?? selectedModel?.id ?? selectedModelIdRef.current;
     if (!engineId || !modelId) {
       return null;
     }
@@ -1857,7 +1857,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       modelId,
       reasoningEffort: resolveReasoningEffortForModel(model, selectedEffortRef.current),
     };
-  }, [engines]);
+  }, [engines, selectedEngineId, selectedModel?.id, selectedModelId]);
 
   const renderAssistantIdentity = useCallback((message: Message) => {
     const messageEngineId =

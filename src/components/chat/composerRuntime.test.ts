@@ -71,4 +71,26 @@ describe("buildComposerRuntimeSnapshot", () => {
       serviceTier: null,
     });
   });
+
+  it("does not send a reasoning effort for engines without effort controls", () => {
+    expect(
+      buildComposerRuntimeSnapshot({
+        hasActiveThread: true,
+        hasExplicitOverride: false,
+        selectedEngineId: "opencode",
+        selectedModel: {
+          id: "opencode/big-pickle",
+          defaultReasoningEffort: "medium",
+          supportedReasoningEfforts: [],
+        },
+        selectedEffort: "medium",
+        selectedServiceTier: "inherit",
+      }),
+    ).toEqual({
+      engineId: "opencode",
+      modelId: "opencode/big-pickle",
+      reasoningEffort: null,
+      serviceTier: null,
+    });
+  });
 });
