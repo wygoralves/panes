@@ -55,6 +55,7 @@ import type {
 
 interface TerminalPanelProps {
   workspaceId: string;
+  embedded?: boolean;
 }
 
 interface TerminalSize {
@@ -2718,7 +2719,7 @@ function NewTabDropdown({
 
 // ── Main component ──────────────────────────────────────────────────
 
-export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
+export function TerminalPanel({ workspaceId, embedded = false }: TerminalPanelProps) {
   const { t } = useTranslation("app");
   const workspaceState = useTerminalStore((state) => state.workspaces[workspaceId]);
   const focusMode = useUiStore((state) => state.focusMode);
@@ -2736,9 +2737,10 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const focusedSessionId = workspaceState?.focusedSessionId ?? null;
   const pendingStartupPreset = workspaceState?.pendingStartupPreset ?? null;
   const isMac = isMacDesktop();
-  const useTitlebarSafeInset = isMac && focusMode && !showSidebar && layoutMode === "terminal";
+  const useTitlebarSafeInset =
+    !embedded && isMac && focusMode && !showSidebar && layoutMode === "terminal";
   const gitPanelDocked = showGitPanel && gitPanelPinned;
-  const useFocusModeHeaderHeight = focusMode && gitPanelDocked;
+  const useFocusModeHeaderHeight = !embedded && focusMode && gitPanelDocked;
   const linuxDesktop = isLinuxDesktop();
   const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
 

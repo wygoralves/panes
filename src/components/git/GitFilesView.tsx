@@ -10,8 +10,8 @@ import {
   Loader2,
 } from "lucide-react";
 import { ipc } from "../../lib/ipc";
+import { showWorkspaceSurface } from "../../lib/workspacePaneNavigation";
 import { useFileStore } from "../../stores/fileStore";
-import { useTerminalStore } from "../../stores/terminalStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import type { FileTreeEntry } from "../../types";
 
@@ -85,7 +85,6 @@ export function GitFilesView({ rootPath }: Props) {
 
   const openFile = useFileStore((s) => s.openFile);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-  const setLayoutMode = useTerminalStore((s) => s.setLayoutMode);
 
   // Track root path to reset on change
   const prevRootPath = useRef(rootPath);
@@ -157,10 +156,10 @@ export function GitFilesView({ rootPath }: Props) {
     (filePath: string) => {
       void openFile(rootPath, filePath);
       if (activeWorkspaceId) {
-        void setLayoutMode(activeWorkspaceId, "editor");
+        showWorkspaceSurface(activeWorkspaceId, "editor");
       }
     },
-    [rootPath, openFile, activeWorkspaceId, setLayoutMode],
+    [rootPath, openFile, activeWorkspaceId],
   );
 
   // Build flat row list from loaded data

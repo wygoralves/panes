@@ -29,7 +29,11 @@ function loadExplorerWidth(): number {
   return DEFAULT_EXPLORER_WIDTH;
 }
 
-export function EditorWithExplorer() {
+interface EditorWithExplorerProps {
+  embedded?: boolean;
+}
+
+export function EditorWithExplorer({ embedded = false }: EditorWithExplorerProps = {}) {
   const showExplorerSetting = useUiStore((s) => s.showExplorer);
   const setExplorerOpen = useUiStore((s) => s.setExplorerOpen);
   const explorerVisible = showExplorerSetting;
@@ -111,7 +115,7 @@ export function EditorWithExplorer() {
         }
       >
         <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
-          <LazyFileEditorPanel />
+          <LazyFileEditorPanel embedded={embedded} />
         </div>
       </Suspense>
     </div>

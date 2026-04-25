@@ -18,7 +18,11 @@ import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { GitDiffEditorPanel } from "./GitDiffEditorPanel";
 import { MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
 
-export function FileEditorPanel() {
+interface FileEditorPanelProps {
+  embedded?: boolean;
+}
+
+export function FileEditorPanel({ embedded = false }: FileEditorPanelProps = {}) {
   const { t } = useTranslation("app");
   const tabs = useFileStore((s) => s.tabs);
   const activeTabId = useFileStore((s) => s.activeTabId);
@@ -42,7 +46,7 @@ export function FileEditorPanel() {
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const isMac = isMacDesktop();
-  const useTitlebarSafeInset = isMac && focusMode && !showSidebar;
+  const useTitlebarSafeInset = !embedded && isMac && focusMode && !showSidebar;
   const activeTabOwnership = activeTab
     ? (
         (activeTab.gitRepoPath && activeTab.gitFilePath)
@@ -140,15 +144,17 @@ export function FileEditorPanel() {
       const meta = e.metaKey || e.ctrlKey;
       if (!meta || e.key !== "s") return;
 
-      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
-      const wsState = wsId ? useTerminalStore.getState().workspaces[wsId] : undefined;
-      if (wsState?.layoutMode !== "editor") return;
+      if (!embedded) {
+        const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+        const wsState = wsId ? useTerminalStore.getState().workspaces[wsId] : undefined;
+        if (wsState?.layoutMode !== "editor") return;
+      }
 
       if (activeTabId) void saveTab(activeTabId);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeTabId, saveTab]);
+  }, [activeTabId, embedded, saveTab]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>

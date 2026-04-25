@@ -18,7 +18,7 @@ import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useFileStore } from "../../stores/fileStore";
-import { useTerminalStore } from "../../stores/terminalStore";
+import { showWorkspaceSurface } from "../../lib/workspacePaneNavigation";
 import {
   buildDirectoryFileMap,
   buildTreeRows,
@@ -121,16 +121,15 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
   } = useGitStore();
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const openGitDiffFile = useFileStore((s) => s.openGitDiffFile);
-  const setLayoutMode = useTerminalStore((s) => s.setLayoutMode);
 
   const handleOpenInEditor = useCallback(
     (filePath: string, source: ChangeSection) => {
       void openGitDiffFile(repo.path, filePath, { source });
       if (activeWorkspaceId) {
-        void setLayoutMode(activeWorkspaceId, "editor");
+        showWorkspaceSurface(activeWorkspaceId, "editor");
       }
     },
-    [repo.path, openGitDiffFile, activeWorkspaceId, setLayoutMode],
+    [repo.path, openGitDiffFile, activeWorkspaceId],
   );
 
   const commitMessage = drafts.commitMessage;

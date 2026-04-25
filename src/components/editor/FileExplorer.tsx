@@ -29,9 +29,9 @@ import {
   isWithinRoot,
   resolveAbsoluteFilePath,
 } from "../../lib/fileRootUtils";
+import { showWorkspaceSurface } from "../../lib/workspacePaneNavigation";
 import { isMacDesktop } from "../../lib/windowActions";
 import { useFileStore } from "../../stores/fileStore";
-import { useTerminalStore } from "../../stores/terminalStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { toast } from "../../stores/toastStore";
@@ -185,7 +185,6 @@ export function FileExplorer() {
   // -- Store bindings --
   const openFile = useFileStore((s) => s.openFile);
   const retargetTabsAfterRename = useFileStore((s) => s.retargetTabsAfterRename);
-  const setLayoutMode = useTerminalStore((s) => s.setLayoutMode);
   const setExplorerOpen = useUiStore((s) => s.setExplorerOpen);
 
   // -- Scroll / virtualization --
@@ -497,10 +496,10 @@ export function FileExplorer() {
       if (!rootPath) return;
       void openFile(rootPath, filePath);
       if (activeWorkspaceId) {
-        void setLayoutMode(activeWorkspaceId, "editor");
+        showWorkspaceSurface(activeWorkspaceId, "editor");
       }
     },
-    [rootPath, openFile, activeWorkspaceId, setLayoutMode],
+    [rootPath, openFile, activeWorkspaceId],
   );
 
   // ---------------------------------------------------------------------------
@@ -921,7 +920,7 @@ export function FileExplorer() {
         await loadDir(creating.parentDir);
         toast.success(t("explorer.toasts.created", { name }));
         void openFile(rootPath, targetPath);
-        if (activeWorkspaceId) void setLayoutMode(activeWorkspaceId, "editor");
+        if (activeWorkspaceId) showWorkspaceSurface(activeWorkspaceId, "editor");
       } else {
         await ipc.createDir(rootPath, targetPath, activeWorkspaceId ?? null);
         await loadDir(creating.parentDir);
@@ -933,7 +932,7 @@ export function FileExplorer() {
       console.warn("[FileExplorer] create failed:", err);
       setCreating(null);
     }
-  }, [creating, createValue, rootPath, activeWorkspaceId, loadDir, openFile, setLayoutMode, t]);
+  }, [creating, createValue, rootPath, activeWorkspaceId, loadDir, openFile, t]);
 
   const cancelCreate = useCallback(() => {
     setCreating(null);

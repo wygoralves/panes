@@ -19,6 +19,7 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { writeCommandToNewSession } from "../../lib/ipc";
 import { copyTextToClipboard } from "../../lib/clipboard";
+import { showWorkspaceSurface } from "../../lib/workspacePaneNavigation";
 import {
   getHarnessInstallCommand,
   getHarnessTileAction,
@@ -123,9 +124,7 @@ export function HarnessPanel() {
   const launch = useHarnessStore((s) => s.launch);
 
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-  const setLayoutMode = useTerminalStore((s) => s.setLayoutMode);
   const createSession = useTerminalStore((s) => s.createSession);
-  const terminalWorkspaces = useTerminalStore((s) => s.workspaces);
   const setActiveView = useUiStore((s) => s.setActiveView);
 
   const installedCount = harnesses.filter((h) => h.found).length;
@@ -142,10 +141,7 @@ export function HarnessPanel() {
     async (command: string) => {
       if (!activeWorkspaceId) return;
 
-      const wsState = terminalWorkspaces[activeWorkspaceId];
-      if (!wsState || (wsState.layoutMode !== "terminal" && wsState.layoutMode !== "split")) {
-        await setLayoutMode(activeWorkspaceId, "terminal");
-      }
+      showWorkspaceSurface(activeWorkspaceId, "terminal");
 
       const sessionId = await createSession(activeWorkspaceId);
       if (sessionId) {
@@ -154,7 +150,7 @@ export function HarnessPanel() {
 
       setActiveView("chat");
     },
-    [activeWorkspaceId, terminalWorkspaces, setLayoutMode, createSession, setActiveView],
+    [activeWorkspaceId, createSession, setActiveView],
   );
 
   async function handleLaunch(harnessId: string) {
