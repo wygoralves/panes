@@ -4,8 +4,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::{
-    ActionResult, ActionType, ApprovalRequestRoute, DiffScope, EngineEvent, OutputStream,
-    TokenUsage, TurnCompletionStatus, UsageLimitsSnapshot,
+    trim_action_output_delta_content, ActionResult, ActionType, ApprovalRequestRoute, DiffScope,
+    EngineEvent, OutputStream, TokenUsage, TurnCompletionStatus, UsageLimitsSnapshot,
 };
 
 pub const APPROVAL_DETAIL_SERVER_METHOD_KEY: &str = "_serverMethod";
@@ -536,7 +536,10 @@ impl TurnEventMapper {
         let item_id = extract_any_string(params, &["itemId", "item_id", "id"])?;
         let action_id = self.resolve_action_for_output(Some(&item_id))?;
 
-        let content = extract_any_string(params, &["delta", "output", "text", "content"])?;
+        let content = trim_action_output_delta_content(&extract_any_string(
+            params,
+            &["delta", "output", "text", "content"],
+        )?);
         let stream_raw = extract_any_string(params, &["stream", "channel", "target"])
             .unwrap_or_else(|| "stdout".to_string());
 
@@ -556,7 +559,7 @@ impl TurnEventMapper {
     fn map_terminal_interaction(&self, params: &Value) -> Option<EngineEvent> {
         let item_id = extract_any_string(params, &["itemId", "item_id", "id"])?;
         let action_id = self.resolve_action_for_output(Some(&item_id))?;
-        let content = extract_any_string(params, &["stdin"])?;
+        let content = trim_action_output_delta_content(&extract_any_string(params, &["stdin"])?);
         if content.is_empty() {
             return None;
         }

@@ -50,6 +50,7 @@ interface RepoStatusEntry {
  * Renders when controlledRepos.length > 1.
  */
 const MULTI_REPO_WATCHER_REFRESH_DEBOUNCE_MS = 550;
+const MULTI_REPO_WORKING_TREE_POLL_INTERVAL_MS = 8000;
 
 export function MultiRepoChangesView({ repos, onError, refreshTick = 0 }: Props) {
   const { t } = useTranslation("git");
@@ -208,6 +209,33 @@ export function MultiRepoChangesView({ repos, onError, refreshTick = 0 }: Props)
       }
       refreshTimers.clear();
       unlisten?.();
+    };
+  }, [refreshRepoStatus, repos]);
+
+  useEffect(() => {
+    const repoPaths = repos.map((repo) => repo.path);
+    if (repoPaths.length === 0) {
+      return;
+    }
+
+    let disposed = false;
+    let inFlight = false;
+
+    const poll = () => {
+      if (disposed || inFlight) {
+        return;
+      }
+      inFlight = true;
+      void Promise.allSettled(repoPaths.map((repoPath) => refreshRepoStatus(repoPath, true)))
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+
+    const timer = window.setInterval(poll, MULTI_REPO_WORKING_TREE_POLL_INTERVAL_MS);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
     };
   }, [refreshRepoStatus, repos]);
 

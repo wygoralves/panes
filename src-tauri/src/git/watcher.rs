@@ -1,7 +1,8 @@
 use std::{
     collections::HashMap,
     ffi::OsStr,
-    path::PathBuf,
+    fs,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex as StdMutex},
     time::{Duration, Instant},
 };
@@ -61,25 +62,28 @@ fn create_repo_watcher(
     last_emit: Arc<StdMutex<HashMap<String, Instant>>>,
     debounce_window: Duration,
 ) -> notify::Result<BoxedWatcher> {
+    let watch_paths = git_watch_paths(path);
     let event_handler = make_event_handler(
         callback_repo_path.clone(),
         callback_repo_root.clone(),
+        watch_paths.clone(),
         Arc::clone(&callback),
         last_emit.clone(),
         debounce_window,
     );
     let mut watcher = recommended_watcher(event_handler)?;
-    match watcher.watch(path, RecursiveMode::Recursive) {
+    match watch_git_paths(&mut watcher, &watch_paths) {
         Ok(()) => Ok(Box::new(watcher)),
         Err(error) if should_fallback_to_polling(&error) => {
             log::warn!(
                 "git watcher hit native limit for {}: {}. Falling back to polling.",
-                path.display(),
+                format_watch_paths(&watch_paths),
                 error
             );
             let poll_handler = make_event_handler(
                 callback_repo_path,
                 callback_repo_root,
+                watch_paths.clone(),
                 callback,
                 last_emit,
                 debounce_window,
@@ -88,16 +92,110 @@ fn create_repo_watcher(
                 poll_handler,
                 Config::default().with_poll_interval(Duration::from_secs(2)),
             )?;
-            poll_watcher.watch(path, RecursiveMode::Recursive)?;
+            watch_git_paths(&mut poll_watcher, &watch_paths)?;
             Ok(Box::new(poll_watcher))
         }
         Err(error) => Err(error),
     }
 }
 
+fn git_watch_paths(repo_path: &PathBuf) -> Vec<PathBuf> {
+    let dot_git = repo_path.join(".git");
+    let paths = if dot_git.is_dir() {
+        vec![canonicalize_existing_path(dot_git)]
+    } else if dot_git.is_file() {
+        match resolve_gitdir_pointer(repo_path, &dot_git) {
+            Some(gitdir) => {
+                let mut paths = vec![gitdir.clone()];
+                if let Some(commondir) = resolve_common_gitdir(&gitdir) {
+                    paths.push(commondir);
+                }
+                paths
+            }
+            None => vec![dot_git],
+        }
+    } else {
+        vec![repo_path.clone()]
+    };
+
+    dedupe_paths(paths)
+}
+
+fn watch_git_paths<W: Watcher>(watcher: &mut W, paths: &[PathBuf]) -> notify::Result<()> {
+    for path in paths {
+        watcher.watch(path, git_watch_recursive_mode(path))?;
+    }
+    Ok(())
+}
+
+fn format_watch_paths(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn resolve_gitdir_pointer(repo_path: &Path, dot_git: &Path) -> Option<PathBuf> {
+    let content = fs::read_to_string(dot_git).ok()?;
+    let gitdir = content.trim().strip_prefix("gitdir:")?.trim();
+    if gitdir.is_empty() {
+        return None;
+    }
+
+    let path = PathBuf::from(gitdir);
+    let resolved = if path.is_absolute() {
+        path
+    } else {
+        repo_path.join(path)
+    };
+
+    Some(canonicalize_existing_path(resolved))
+}
+
+fn resolve_common_gitdir(gitdir: &Path) -> Option<PathBuf> {
+    let content = fs::read_to_string(gitdir.join("commondir")).ok()?;
+    let commondir = content.trim();
+    if commondir.is_empty() {
+        return None;
+    }
+
+    let path = PathBuf::from(commondir);
+    let resolved = if path.is_absolute() {
+        path
+    } else {
+        gitdir.join(path)
+    };
+
+    Some(canonicalize_existing_path(resolved))
+}
+
+fn canonicalize_existing_path(path: PathBuf) -> PathBuf {
+    fs::canonicalize(&path).unwrap_or(path)
+}
+
+fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut deduped = Vec::new();
+    for path in paths {
+        if !deduped.iter().any(|existing| existing == &path) {
+            deduped.push(path);
+        }
+    }
+    deduped
+}
+
+fn git_watch_recursive_mode(path: &PathBuf) -> RecursiveMode {
+    if path.is_dir() {
+        RecursiveMode::Recursive
+    } else {
+        RecursiveMode::NonRecursive
+    }
+}
+
 fn make_event_handler(
     callback_repo_path: String,
     callback_repo_root: PathBuf,
+    git_metadata_roots: Vec<PathBuf>,
     callback: WatchCallback,
     last_emit: Arc<StdMutex<HashMap<String, Instant>>>,
     debounce_window: Duration,
@@ -107,7 +205,7 @@ fn make_event_handler(
             return;
         };
 
-        if !should_emit_repo_change_event(&event, &callback_repo_root) {
+        if !should_emit_repo_change_event(&event, &callback_repo_root, &git_metadata_roots) {
             return;
         }
 
@@ -173,7 +271,15 @@ fn is_allowed_git_internal_path(relative: &std::path::Path) -> bool {
         Err(_) => return false,
     };
 
-    let mut components = inside.components();
+    if inside.components().next().is_none() {
+        return true;
+    }
+
+    is_allowed_git_metadata_path(inside)
+}
+
+fn is_allowed_git_metadata_path(relative: &std::path::Path) -> bool {
+    let mut components = relative.components();
     match components.next() {
         // .git/HEAD (exact)
         Some(std::path::Component::Normal(name)) if name == OsStr::new("HEAD") => {
@@ -211,7 +317,11 @@ fn is_allowed_git_internal_path(relative: &std::path::Path) -> bool {
     }
 }
 
-fn should_emit_repo_change_event(event: &Event, repo_root: &PathBuf) -> bool {
+fn should_emit_repo_change_event(
+    event: &Event,
+    repo_root: &PathBuf,
+    git_metadata_roots: &[PathBuf],
+) -> bool {
     if event.paths.is_empty() {
         return false;
     }
@@ -221,22 +331,42 @@ fn should_emit_repo_change_event(event: &Event, repo_root: &PathBuf) -> bool {
         return false;
     }
 
-    // Emit if any path in this event is relevant: working tree changes always
-    // pass; .git/ internal changes pass only if they match the high-signal allowlist.
+    // Emit only for high-signal git metadata changes. Working tree edits are
+    // picked up by the active Git-panel poller, which avoids recursively
+    // watching large ignored trees like node_modules.
     event.paths.iter().any(|path| {
-        let relative = path.strip_prefix(repo_root).unwrap_or(path.as_path());
-        let mut components = relative.components();
-        match components.next() {
-            Some(std::path::Component::Normal(name)) if name != OsStr::new(".git") => true,
-            None => false,
-            _ => is_allowed_git_internal_path(relative),
+        if let Ok(relative) = path.strip_prefix(repo_root) {
+            let mut components = relative.components();
+            if matches!(
+                components.next(),
+                Some(std::path::Component::Normal(name)) if name == OsStr::new(".git")
+            ) {
+                return is_allowed_git_internal_path(relative);
+            }
         }
+
+        for git_metadata_root in git_metadata_roots {
+            if let Ok(relative) = path.strip_prefix(git_metadata_root) {
+                if relative.components().next().is_none() {
+                    return true;
+                }
+                if is_allowed_git_metadata_path(relative) {
+                    return true;
+                }
+            }
+        }
+
+        false
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn standard_git_metadata_roots() -> Vec<PathBuf> {
+        vec![PathBuf::from("/tmp/repo/.git")]
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
@@ -259,7 +389,8 @@ mod tests {
 
         assert!(!should_emit_repo_change_event(
             &event,
-            &PathBuf::from("/tmp/repo")
+            &PathBuf::from("/tmp/repo"),
+            &standard_git_metadata_roots(),
         ));
     }
 
@@ -273,7 +404,90 @@ mod tests {
 
         assert!(should_emit_repo_change_event(
             &event,
-            &PathBuf::from("/tmp/repo")
+            &PathBuf::from("/tmp/repo"),
+            &standard_git_metadata_roots(),
+        ));
+    }
+
+    #[test]
+    fn ignores_working_tree_events() {
+        let event = Event {
+            kind: EventKind::Modify(notify::event::ModifyKind::Any),
+            paths: vec![PathBuf::from("/tmp/repo/src/main.rs")],
+            attrs: Default::default(),
+        };
+
+        assert!(!should_emit_repo_change_event(
+            &event,
+            &PathBuf::from("/tmp/repo"),
+            &standard_git_metadata_roots(),
+        ));
+    }
+
+    #[test]
+    fn resolves_linked_worktree_gitdir_pointer_and_common_dir() {
+        let root = std::env::temp_dir().join(format!(
+            "panes-git-watcher-{}-{}",
+            std::process::id(),
+            "linked-worktree"
+        ));
+        let worktree = root.join("worktree");
+        let gitdir = root.join("main/.git/worktrees/feature");
+        let dot_git = worktree.join(".git");
+
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&worktree).expect("create worktree dir");
+        fs::create_dir_all(&gitdir).expect("create linked gitdir");
+        fs::write(&dot_git, "gitdir: ../main/.git/worktrees/feature\n").expect("write .git file");
+        fs::write(gitdir.join("commondir"), "../..").expect("write commondir file");
+
+        let resolved = resolve_gitdir_pointer(&worktree, &dot_git).expect("resolve gitdir");
+        let common = fs::canonicalize(root.join("main/.git")).expect("canonicalize common gitdir");
+        assert_eq!(
+            resolved,
+            fs::canonicalize(&gitdir).expect("canonicalize gitdir")
+        );
+        assert_eq!(
+            resolve_common_gitdir(&gitdir).expect("resolve commondir"),
+            common
+        );
+        let watch_paths = git_watch_paths(&worktree);
+        assert!(watch_paths.contains(&resolved));
+        assert!(watch_paths.contains(&common));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn allows_external_gitdir_updates_for_linked_worktrees() {
+        let git_metadata_root = PathBuf::from("/tmp/main/.git/worktrees/feature");
+        let event = Event {
+            kind: EventKind::Modify(notify::event::ModifyKind::Any),
+            paths: vec![git_metadata_root.join("HEAD")],
+            attrs: Default::default(),
+        };
+
+        assert!(should_emit_repo_change_event(
+            &event,
+            &PathBuf::from("/tmp/repo"),
+            &[git_metadata_root],
+        ));
+    }
+
+    #[test]
+    fn allows_common_gitdir_ref_updates_for_linked_worktrees() {
+        let worktree_gitdir = PathBuf::from("/tmp/main/.git/worktrees/feature");
+        let common_gitdir = PathBuf::from("/tmp/main/.git");
+        let event = Event {
+            kind: EventKind::Modify(notify::event::ModifyKind::Any),
+            paths: vec![common_gitdir.join("refs/heads/main")],
+            attrs: Default::default(),
+        };
+
+        assert!(should_emit_repo_change_event(
+            &event,
+            &PathBuf::from("/tmp/repo"),
+            &[worktree_gitdir, common_gitdir],
         ));
     }
 
@@ -292,11 +506,13 @@ mod tests {
 
         assert!(should_emit_repo_change_event(
             &fetch_head,
-            &PathBuf::from("/tmp/repo")
+            &PathBuf::from("/tmp/repo"),
+            &standard_git_metadata_roots(),
         ));
         assert!(should_emit_repo_change_event(
             &packed_refs,
-            &PathBuf::from("/tmp/repo")
+            &PathBuf::from("/tmp/repo"),
+            &standard_git_metadata_roots(),
         ));
     }
 }

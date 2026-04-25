@@ -15,6 +15,9 @@ use super::codex_protocol::{
     notification_payload, parse_incoming, request_payload, response_error_payload,
     response_success_payload, IncomingMessage, RpcResponse,
 };
+use super::trim_action_output_delta_content;
+
+const INCOMING_EVENT_BUFFER_CAPACITY: usize = 1024;
 
 pub struct CodexTransport {
     child: Mutex<Child>,
@@ -57,7 +60,7 @@ impl CodexTransport {
             .take()
             .ok_or_else(|| anyhow::anyhow!("codex app-server stderr not available"))?;
 
-        let (incoming_tx, _) = broadcast::channel(1024);
+        let (incoming_tx, _) = broadcast::channel(INCOMING_EVENT_BUFFER_CAPACITY);
         let pending = Arc::new(Mutex::new(
             HashMap::<String, oneshot::Sender<RpcResponse>>::new(),
         ));
@@ -78,7 +81,7 @@ impl CodexTransport {
                                 }
                             }
                             Ok(other) => {
-                                let _ = incoming_tx.send(other);
+                                let _ = incoming_tx.send(trim_buffered_incoming_message(other));
                             }
                             Err(error) => {
                                 log::warn!("codex stdout parse error: {error}");
@@ -253,6 +256,72 @@ impl CodexTransport {
         }
         Ok(())
     }
+}
+
+fn trim_buffered_incoming_message(message: IncomingMessage) -> IncomingMessage {
+    match message {
+        IncomingMessage::Notification { method, params } => IncomingMessage::Notification {
+            params: trim_large_output_params(&method, params),
+            method,
+        },
+        IncomingMessage::Request {
+            id,
+            raw_id,
+            method,
+            params,
+        } => IncomingMessage::Request {
+            id,
+            raw_id,
+            params: trim_large_output_params(&method, params),
+            method,
+        },
+        IncomingMessage::Response(response) => IncomingMessage::Response(response),
+    }
+}
+
+fn trim_large_output_params(method: &str, mut params: serde_json::Value) -> serde_json::Value {
+    if !is_large_output_event(method) {
+        return params;
+    }
+
+    if method_signature(method).contains("terminalinteraction") {
+        trim_string_field(&mut params, "stdin");
+    } else {
+        for key in ["delta", "output", "text", "content"] {
+            trim_string_field(&mut params, key);
+        }
+    }
+
+    params
+}
+
+fn trim_string_field(value: &mut serde_json::Value, key: &str) {
+    let Some(field) = value.get_mut(key) else {
+        return;
+    };
+    let Some(content) = field.as_str() else {
+        return;
+    };
+
+    *field = serde_json::Value::String(trim_action_output_delta_content(content));
+}
+
+fn is_large_output_event(method: &str) -> bool {
+    matches!(
+        method_signature(method).as_str(),
+        "itemcommandexecutionoutputdelta"
+            | "itemfilechangeoutputdelta"
+            | "itemcommandexecutionterminalinteraction"
+            | "terminalinteraction"
+    )
+}
+
+fn method_signature(method: &str) -> String {
+    method
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect()
 }
 
 fn codex_augmented_path(executable: &str) -> Option<OsString> {

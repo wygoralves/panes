@@ -82,9 +82,9 @@ function cleanupBackgroundListener(threadId: string) {
 const MESSAGE_WINDOW_INITIAL_LIMIT = 80;
 const OLDER_MESSAGES_RETRY_BACKOFF_MS = 2_000;
 const MAX_FULLY_HYDRATED_MESSAGES = 80;
-const ACTION_OUTPUT_MAX_CHARS = 180_000;
-const ACTION_OUTPUT_TRIM_TARGET_CHARS = 120_000;
-const ACTION_OUTPUT_MAX_CHUNKS = 240;
+const ACTION_OUTPUT_MAX_CHARS = 80_000;
+const ACTION_OUTPUT_TRIM_TARGET_CHARS = 48_000;
+const ACTION_OUTPUT_MAX_CHUNKS = 160;
 
 interface PendingTurnMeta {
   turnEngineId?: string | null;
