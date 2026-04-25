@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockOpenExternal = vi.hoisted(() => vi.fn());
 const mockOpenFileAtLocation = vi.hoisted(() => vi.fn());
 const mockSetLayoutMode = vi.hoisted(() => vi.fn());
+const mockEnsureWorkspace = vi.hoisted(() => vi.fn());
+const mockShowSurface = vi.hoisted(() => vi.fn());
+const mockSetActiveView = vi.hoisted(() => vi.fn());
 const mockWorkspaceState = vi.hoisted(() => ({
   activeWorkspaceId: "ws-1",
   activeRepoId: "repo-1",
@@ -54,6 +57,27 @@ vi.mock("../stores/terminalStore", () => ({
   useTerminalStore: {
     getState: () => ({
       setLayoutMode: mockSetLayoutMode,
+      workspaces: {},
+    }),
+  },
+}));
+
+vi.mock("../stores/workspacePaneStore", () => ({
+  collectWorkspacePaneLeaves: vi.fn(() => []),
+  getWorkspacePaneActiveTab: vi.fn(() => null),
+  useWorkspacePaneStore: {
+    getState: () => ({
+      ensureWorkspace: mockEnsureWorkspace,
+      showSurface: mockShowSurface,
+      workspaces: {},
+    }),
+  },
+}));
+
+vi.mock("../stores/uiStore", () => ({
+  useUiStore: {
+    getState: () => ({
+      setActiveView: mockSetActiveView,
     }),
   },
 }));
@@ -223,6 +247,50 @@ describe("fileLinkNavigation", () => {
     });
   });
 
+  it("resolves repo-relative file references against the active repo first", () => {
+    expect(
+      resolveLocalFileLinkTarget("src/main.ts:44:7", {
+        workspaceRoot: "/workspace",
+        repos: [
+          { id: "repo-1", path: "/workspace/apps/app", isActive: true },
+          { id: "repo-2", path: "/workspace/apps/app/packages/web", isActive: true },
+        ],
+        activeRepoId: "repo-1",
+      }),
+    ).toMatchObject({
+      rootPath: "/workspace/apps/app",
+      filePath: "src/main.ts",
+      absolutePath: "/workspace/apps/app/src/main.ts",
+      line: 44,
+      column: 7,
+    });
+
+    expect(
+      resolveLocalFileLinkTarget("./README.md#L12", {
+        workspaceRoot: "/workspace",
+        repos: [{ id: "repo-1", path: "/workspace/apps/app", isActive: true }],
+        activeRepoId: "repo-1",
+      }),
+    ).toMatchObject({
+      rootPath: "/workspace/apps/app",
+      filePath: "README.md",
+      absolutePath: "/workspace/apps/app/README.md",
+      line: 12,
+    });
+
+    expect(
+      resolveLocalFileLinkTarget(".gitignore", {
+        workspaceRoot: "/workspace",
+        repos: [{ id: "repo-1", path: "/workspace/apps/app", isActive: true }],
+        activeRepoId: "repo-1",
+      }),
+    ).toMatchObject({
+      rootPath: "/workspace/apps/app",
+      filePath: ".gitignore",
+      absolutePath: "/workspace/apps/app/.gitignore",
+    });
+  });
+
   it("rejects paths outside the active workspace and classifies external URLs", () => {
     expect(
       resolveLocalFileLinkTarget("/other/place/file.ts#L1", {
@@ -233,10 +301,11 @@ describe("fileLinkNavigation", () => {
 
     expect(classifyLinkTarget("https://example.com")).toBe("external");
     expect(classifyLinkTarget("/workspace/apps/app/src/main.ts#L1")).toBe("local");
+    expect(classifyLinkTarget("src/main.ts#L1")).toBe("local");
     expect(classifyLinkTarget("#heading")).toBe("other");
   });
 
-  it("extracts plain-text terminal links for absolute paths, hashes and URLs", () => {
+  it("extracts plain-text terminal links for absolute paths, relative paths, hashes and URLs", () => {
     expect(
       extractTextLinkMatches("- /workspace/apps/app/src/main.ts:44:7"),
     ).toEqual([
@@ -265,7 +334,18 @@ describe("fileLinkNavigation", () => {
       },
     ]);
 
-    expect(extractTextLinkMatches("relative src/App.tsx should stay plain")).toEqual([]);
+    expect(
+      extractTextLinkMatches("relative src/App.tsx should now link"),
+    ).toEqual([
+      {
+        text: "src/App.tsx",
+        startIndex: 9,
+        endIndex: 20,
+        kind: "local",
+      },
+    ]);
+
+    expect(extractTextLinkMatches("ignore example.com and version 1.2.3")).toEqual([]);
   });
 
   it("opens local links internally only on shift-click", async () => {
@@ -275,6 +355,8 @@ describe("fileLinkNavigation", () => {
 
     expect(mockOpenFileAtLocation).not.toHaveBeenCalled();
     expect(mockSetLayoutMode).not.toHaveBeenCalled();
+    expect(mockShowSurface).not.toHaveBeenCalled();
+    expect(mockSetActiveView).not.toHaveBeenCalled();
 
     await expect(
       navigateLinkTarget("/workspace/apps/app/src/main.ts#L12C4", { shiftKey: true }),
@@ -285,7 +367,23 @@ describe("fileLinkNavigation", () => {
       "src/main.ts",
       { line: 12, column: 4 },
     );
-    expect(mockSetLayoutMode).toHaveBeenCalledWith("ws-1", "editor");
+    expect(mockShowSurface).toHaveBeenCalledWith("ws-1", "editor");
+    expect(mockSetActiveView).toHaveBeenCalledWith("chat");
+    expect(mockSetLayoutMode).not.toHaveBeenCalled();
+  });
+
+  it("opens repo-relative local links against the active repo on shift-click", async () => {
+    await expect(
+      navigateLinkTarget("src/main.ts:12:4", { shiftKey: true }),
+    ).resolves.toBe("internal");
+
+    expect(mockOpenFileAtLocation).toHaveBeenCalledWith(
+      "/workspace/apps/app",
+      "src/main.ts",
+      { line: 12, column: 4 },
+    );
+    expect(mockShowSurface).toHaveBeenCalledWith("ws-1", "editor");
+    expect(mockSetLayoutMode).not.toHaveBeenCalled();
   });
 
   it("opens external links through the shell only on shift-click", async () => {

@@ -291,6 +291,25 @@
       "codexReviewStarted": "Revisão inline do Codex iniciada."
     }
   },
+  "workspacePanes": {
+    "loading": "Carregando painel...",
+    "noWorkspace": "Abra um workspace para começar.",
+    "primarySwitcher": "Visualização principal do workspace",
+    "primarySurfaceTitle": "Ir para {{surface}}",
+    "emptyPane": "Arraste Chat, Terminal ou Editor para cá.",
+    "closePane": "Fechar painel",
+    "dropZones": {
+      "left": "Dividir à esquerda com {{surface}}",
+      "right": "Dividir à direita com {{surface}}",
+      "top": "Dividir acima com {{surface}}",
+      "bottom": "Dividir abaixo com {{surface}}"
+    },
+    "surfaces": {
+      "chat": "Chat",
+      "terminal": "Terminal",
+      "editor": "Editor"
+    }
+  },
   "terminal": {
     "newTerminal": "Novo terminal",
     "terminal": "Terminal",

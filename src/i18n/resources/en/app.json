@@ -291,6 +291,25 @@
       "codexReviewStarted": "Started an inline Codex review."
     }
   },
+  "workspacePanes": {
+    "loading": "Loading pane...",
+    "noWorkspace": "Open a workspace to start.",
+    "primarySwitcher": "Primary workspace view",
+    "primarySurfaceTitle": "Switch to {{surface}}",
+    "emptyPane": "Drag Chat, Terminal, or Editor here.",
+    "closePane": "Close pane",
+    "dropZones": {
+      "left": "Split left with {{surface}}",
+      "right": "Split right with {{surface}}",
+      "top": "Split above with {{surface}}",
+      "bottom": "Split below with {{surface}}"
+    },
+    "surfaces": {
+      "chat": "Chat",
+      "terminal": "Terminal",
+      "editor": "Editor"
+    }
+  },
   "terminal": {
     "newTerminal": "New terminal",
     "terminal": "Terminal",

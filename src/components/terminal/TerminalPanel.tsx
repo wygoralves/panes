@@ -19,7 +19,11 @@ import {
   getTerminalAcceleratedRenderingPreferenceVersion,
   listenTerminalAcceleratedRenderingChanged,
 } from "../../lib/terminalRenderingSettings";
-import { extractTextLinkMatches, navigateLinkTarget } from "../../lib/fileLinkNavigation";
+import {
+  extractTextLinkMatches,
+  getWorkspacePaneLeafIdFromEventTarget,
+  navigateLinkTarget,
+} from "../../lib/fileLinkNavigation";
 import {
   collectDetachedTerminalEvictionKeys,
   markPaneTerminalDetached,
@@ -55,6 +59,7 @@ import type {
 
 interface TerminalPanelProps {
   workspaceId: string;
+  embedded?: boolean;
 }
 
 interface TerminalSize {
@@ -115,6 +120,10 @@ interface FrontendTerminalRuntimeSnapshot {
   flushInFlightMs: number | null;
   outputQueueChunks: number;
   outputQueueChars: number;
+  outputDrainInFlight: boolean;
+  outputDrainTimerActive: boolean;
+  outputDrainRequestedSeq: number;
+  outputDrainRetryAttempts: number;
   flushTimerActive: boolean;
   fitTimerActive: boolean;
   lastResizeSent: TerminalSize | null;
@@ -171,6 +180,10 @@ interface SessionTerminal {
   outputQueue: string[];
   outputQueueChars: number;
   lastAppliedSeq: number;
+  outputDrainInFlight: boolean;
+  outputDrainTimer?: number;
+  outputDrainRequestedSeq: number;
+  outputDrainRetryAttempts: number;
   resumeInFlight: boolean;
   resumeRetryAttempts: number;
   resumeRetryTimer?: number;
@@ -233,6 +246,10 @@ const INPUT_DROP_WARN_COOLDOWN_MS = 5000;
 const OUTPUT_FLUSH_DELAY_MS = 4;
 const OUTPUT_FLUSH_STALL_TIMEOUT_MS = 2500;
 const OUTPUT_BATCH_CHAR_LIMIT = 65536;
+const OUTPUT_PULL_MAX_BYTES = 256 * 1024;
+const OUTPUT_DRAIN_RETRY_BASE_MS = 250;
+const OUTPUT_DRAIN_RETRY_MAX_MS = 2000;
+const OUTPUT_DRAIN_RETRY_MAX_ATTEMPTS = 5;
 const OUTPUT_QUEUE_MAX_CHARS_ATTACHED = 8 * 1024 * 1024;
 const OUTPUT_QUEUE_MAX_CHARS_DETACHED = 512 * 1024;
 const PENDING_OUTPUT_MAX_CHARS = 256 * 1024;
@@ -504,6 +521,10 @@ function snapshotFrontendRuntime(
       : null,
     outputQueueChunks: session.outputQueue.length,
     outputQueueChars: session.outputQueueChars,
+    outputDrainInFlight: session.outputDrainInFlight,
+    outputDrainTimerActive: session.outputDrainTimer !== undefined,
+    outputDrainRequestedSeq: session.outputDrainRequestedSeq,
+    outputDrainRetryAttempts: session.outputDrainRetryAttempts,
     flushTimerActive: session.flushTimer !== undefined,
     fitTimerActive: session.fitTimer !== undefined,
     lastResizeSent: session.lastResizeSent ? { ...session.lastResizeSent } : null,
@@ -859,6 +880,10 @@ function clearSessionTimers(session: SessionTerminal) {
   if (session.resumeRetryTimer !== undefined) {
     window.clearTimeout(session.resumeRetryTimer);
     session.resumeRetryTimer = undefined;
+  }
+  if (session.outputDrainTimer !== undefined) {
+    window.clearTimeout(session.outputDrainTimer);
+    session.outputDrainTimer = undefined;
   }
   if (session.flushWatchdogTimer !== undefined) {
     window.clearTimeout(session.flushWatchdogTimer);
@@ -1437,6 +1462,8 @@ function flushOutputQueue(cacheKey: string) {
     });
     if (latest.outputQueue.length > 0) {
       scheduleOutputFlush(cacheKey, latest, 0);
+    } else {
+      scheduleOutputDrainIfNeeded(cacheKey, latest, 0);
     }
   }, OUTPUT_FLUSH_STALL_TIMEOUT_MS);
   try {
@@ -1453,6 +1480,8 @@ function flushOutputQueue(cacheKey: string) {
       latest.flushStartedAt = undefined;
       if (latest.outputQueue.length > 0) {
         scheduleOutputFlush(cacheKey, latest, 0);
+      } else {
+        scheduleOutputDrainIfNeeded(cacheKey, latest, 0);
       }
     });
   } catch (error) {
@@ -1632,33 +1661,195 @@ async function resumeSessionOutput(
     if (latest.isAttached && latest.outputQueue.length > 0) {
       scheduleOutputFlush(cacheKey, latest, 0);
     }
+    scheduleOutputDrainIfNeeded(cacheKey, latest, 0);
   }
 }
 
-function queueOutput(workspaceId: string, sessionId: string, chunk: SequencedOutputChunk) {
+function scheduleOutputDrainIfNeeded(
+  cacheKey: string,
+  session: SessionTerminal,
+  delayMs: number = 0,
+) {
+  if (session.outputDrainRequestedSeq <= session.lastAppliedSeq) {
+    return;
+  }
+  const parsed = parseTerminalCacheKey(cacheKey);
+  if (!parsed) {
+    return;
+  }
+  scheduleTerminalOutputDrain(
+    parsed.workspaceId,
+    parsed.sessionId,
+    session.outputDrainRequestedSeq,
+    delayMs,
+  );
+}
+
+function scheduleTerminalOutputDrain(
+  workspaceId: string,
+  sessionId: string,
+  latestSeq: number,
+  delayMs: number = 0,
+) {
   const cacheKey = terminalCacheKey(workspaceId, sessionId);
   const session = cachedTerminals.get(cacheKey);
-  if (!session || session.resumeInFlight) {
-    addPendingOutputChunk(cacheKey, chunk);
+  if (!session) {
     return;
   }
 
+  session.outputDrainRequestedSeq = Math.max(
+    session.outputDrainRequestedSeq,
+    latestSeq,
+  );
   scheduleBackendRendererDiagnosticsRefresh(workspaceId, sessionId);
 
-  const result = enqueueOutputChunk(cacheKey, session, chunk);
-  if (result === "duplicate") {
+  if (!session.isAttached) {
+    session.needsResumeOnAttach = true;
     return;
   }
-  if (result === "gap") {
-    addPendingOutputChunk(cacheKey, chunk);
-    if (session.resumeRetryTimer === undefined) {
-      void resumeSessionOutput(workspaceId, sessionId, "live-gap");
-    }
+  if (session.resumeInFlight || session.outputDrainInFlight) {
+    return;
+  }
+  if (session.outputDrainTimer !== undefined) {
+    return;
+  }
+  if (
+    session.outputQueueChars >
+    OUTPUT_QUEUE_MAX_CHARS_ATTACHED - OUTPUT_PULL_MAX_BYTES
+  ) {
     return;
   }
 
-  if (session.isAttached) {
-    scheduleOutputFlush(cacheKey, session);
+  session.outputDrainTimer = window.setTimeout(() => {
+    const latest = cachedTerminals.get(cacheKey);
+    if (!latest) {
+      return;
+    }
+    latest.outputDrainTimer = undefined;
+    void drainTerminalOutput(workspaceId, sessionId);
+  }, delayMs);
+}
+
+async function drainTerminalOutput(workspaceId: string, sessionId: string) {
+  const cacheKey = terminalCacheKey(workspaceId, sessionId);
+  const session = cachedTerminals.get(cacheKey);
+  if (!session || session.outputDrainInFlight) {
+    return;
+  }
+  if (!session.isAttached) {
+    session.needsResumeOnAttach = true;
+    return;
+  }
+  if (session.resumeInFlight) {
+    return;
+  }
+  if (
+    session.outputQueueChars >
+    OUTPUT_QUEUE_MAX_CHARS_ATTACHED - OUTPUT_PULL_MAX_BYTES
+  ) {
+    return;
+  }
+
+  const sessionRef = session;
+  sessionRef.outputDrainInFlight = true;
+  let drainSucceeded = false;
+  let retryDelayMs: number | null = null;
+  try {
+    const fromSeq = sessionRef.lastAppliedSeq > 0 ? sessionRef.lastAppliedSeq : null;
+    const resume = await ipc.terminalDrainOutput(
+      workspaceId,
+      sessionId,
+      fromSeq,
+      OUTPUT_PULL_MAX_BYTES,
+    );
+    const latest = cachedTerminals.get(cacheKey);
+    if (!latest || latest !== sessionRef) {
+      return;
+    }
+    drainSucceeded = true;
+    latest.outputDrainRetryAttempts = 0;
+
+    latest.outputDrainRequestedSeq = Math.max(
+      latest.outputDrainRequestedSeq,
+      resume.latestSeq,
+    );
+
+    if (resume.gap && latest.lastAppliedSeq > 0) {
+      logTerminalWarning("terminal-output-drain-gap", {
+        cacheKey,
+        fromSeq: fromSeq ?? undefined,
+        oldestAvailableSeq: resume.oldestAvailableSeq ?? undefined,
+      });
+      void resumeSessionOutput(workspaceId, sessionId, "live-gap");
+      return;
+    }
+
+    for (const chunk of resume.chunks) {
+      const current = cachedTerminals.get(cacheKey);
+      if (!current || current !== sessionRef) {
+        return;
+      }
+      const result = enqueueOutputChunk(cacheKey, current, chunk);
+      if (result === "duplicate") {
+        continue;
+      }
+      if (result === "gap") {
+        addPendingOutputChunk(cacheKey, chunk);
+        logTerminalWarning("terminal-output-drain-gap-during-apply", {
+          cacheKey,
+          chunkSeq: chunk.seq,
+          lastAppliedSeq: current.lastAppliedSeq,
+        });
+        void resumeSessionOutput(workspaceId, sessionId, "live-gap");
+        break;
+      }
+    }
+
+    if (latest.isAttached && latest.outputQueue.length > 0) {
+      scheduleOutputFlush(cacheKey, latest, 0);
+    }
+  } catch (error) {
+    if (sessionRef.outputDrainRetryAttempts < OUTPUT_DRAIN_RETRY_MAX_ATTEMPTS) {
+      const exponent = Math.min(sessionRef.outputDrainRetryAttempts, 3);
+      retryDelayMs = Math.min(
+        OUTPUT_DRAIN_RETRY_BASE_MS * (2 ** exponent),
+        OUTPUT_DRAIN_RETRY_MAX_MS,
+      );
+      sessionRef.outputDrainRetryAttempts += 1;
+    } else {
+      sessionRef.outputDrainRequestedSeq = sessionRef.lastAppliedSeq;
+      sessionRef.needsResumeOnAttach = true;
+    }
+    logTerminalWarning("terminal-output-drain-failed", {
+      cacheKey,
+      details: errorToMessage(error),
+      retryDelayMs: retryDelayMs ?? undefined,
+      attempt: sessionRef.outputDrainRetryAttempts,
+    });
+  } finally {
+    const latest = cachedTerminals.get(cacheKey);
+    if (!latest || latest !== sessionRef) {
+      return;
+    }
+    latest.outputDrainInFlight = false;
+    if (latest.isAttached && latest.outputQueue.length > 0) {
+      scheduleOutputFlush(cacheKey, latest, 0);
+    }
+    if (
+      drainSucceeded &&
+      latest.outputDrainRequestedSeq > latest.lastAppliedSeq &&
+      latest.outputQueueChars <= OUTPUT_QUEUE_MAX_CHARS_ATTACHED - OUTPUT_PULL_MAX_BYTES
+    ) {
+      scheduleTerminalOutputDrain(workspaceId, sessionId, latest.outputDrainRequestedSeq, 0);
+    }
+    if (!drainSucceeded && retryDelayMs !== null) {
+      scheduleTerminalOutputDrain(
+        workspaceId,
+        sessionId,
+        latest.outputDrainRequestedSeq,
+        retryDelayMs,
+      );
+    }
   }
 }
 
@@ -1813,6 +2004,10 @@ function markWorkspaceTerminalsDetached(workspaceId: string) {
       window.clearTimeout(session.flushTimer);
       session.flushTimer = undefined;
     }
+    if (session.outputDrainTimer !== undefined) {
+      window.clearTimeout(session.outputDrainTimer);
+      session.outputDrainTimer = undefined;
+    }
     capSessionOutputQueue(cacheKey, session);
     const sessionId = cacheKey.slice(workspacePrefix.length);
     scheduleDetachedTerminalEviction(workspaceId, sessionId, session);
@@ -1829,6 +2024,10 @@ function markCachedTerminalDetached(cacheKey: string, session: SessionTerminal) 
   if (session.flushTimer !== undefined) {
     window.clearTimeout(session.flushTimer);
     session.flushTimer = undefined;
+  }
+  if (session.outputDrainTimer !== undefined) {
+    window.clearTimeout(session.outputDrainTimer);
+    session.outputDrainTimer = undefined;
   }
   capSessionOutputQueue(cacheKey, session);
   const parsed = parseTerminalCacheKey(cacheKey);
@@ -1897,7 +2096,10 @@ function createCachedTerminal(
     fontSize: 12,
     linkHandler: {
       activate(event, text) {
-        void navigateLinkTarget(text, { shiftKey: Boolean(event?.shiftKey) });
+        void navigateLinkTarget(text, {
+          shiftKey: Boolean(event?.shiftKey),
+          sourceLeafId: getWorkspacePaneLeafIdFromEventTarget(event?.target ?? null),
+        });
       },
     },
     lineHeight: 1.3,
@@ -2075,6 +2277,10 @@ function createCachedTerminal(
     outputQueue: [],
     outputQueueChars: 0,
     lastAppliedSeq: 0,
+    outputDrainInFlight: false,
+    outputDrainTimer: undefined,
+    outputDrainRequestedSeq: 0,
+    outputDrainRetryAttempts: 0,
     resumeInFlight: false,
     resumeRetryAttempts: 0,
     rendererMode: "canvas",
@@ -2156,7 +2362,10 @@ function createTerminalTextLinkProvider(terminal: Terminal): ILinkProvider {
           underline: false,
         },
         activate(event, text) {
-          void navigateLinkTarget(text, { shiftKey: Boolean(event?.shiftKey) });
+          void navigateLinkTarget(text, {
+            shiftKey: Boolean(event?.shiftKey),
+            sourceLeafId: getWorkspacePaneLeafIdFromEventTarget(event?.target ?? null),
+          });
         },
         hover() {
           terminal.element?.classList.add("xterm-cursor-pointer");
@@ -2718,7 +2927,7 @@ function NewTabDropdown({
 
 // ── Main component ──────────────────────────────────────────────────
 
-export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
+export function TerminalPanel({ workspaceId, embedded = false }: TerminalPanelProps) {
   const { t } = useTranslation("app");
   const workspaceState = useTerminalStore((state) => state.workspaces[workspaceId]);
   const focusMode = useUiStore((state) => state.focusMode);
@@ -2736,9 +2945,10 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
   const focusedSessionId = workspaceState?.focusedSessionId ?? null;
   const pendingStartupPreset = workspaceState?.pendingStartupPreset ?? null;
   const isMac = isMacDesktop();
-  const useTitlebarSafeInset = isMac && focusMode && !showSidebar && layoutMode === "terminal";
+  const useTitlebarSafeInset =
+    !embedded && isMac && focusMode && !showSidebar && layoutMode === "terminal";
   const gitPanelDocked = showGitPanel && gitPanelPinned;
-  const useFocusModeHeaderHeight = focusMode && gitPanelDocked;
+  const useFocusModeHeaderHeight = !embedded && focusMode && gitPanelDocked;
   const linuxDesktop = isLinuxDesktop();
   const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
 
@@ -3330,6 +3540,8 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
         void resumeSessionOutput(workspaceId, sessionId, "attach");
       } else if (cached.outputQueue.length > 0) {
         scheduleOutputFlush(cacheKey, cached, 0);
+      } else {
+        scheduleOutputDrainIfNeeded(cacheKey, cached, 0);
       }
       if (SHOW_TERMINAL_DIAGNOSTICS_UI) {
         void refreshBackendRendererDiagnostics(workspaceId, sessionId);
@@ -3431,11 +3643,7 @@ export function TerminalPanel({ workspaceId }: TerminalPanelProps) {
       try {
         const [outputUn, exitUn, notificationUn, notificationClearedUn] = await Promise.all([
           listenTerminalOutput(workspaceId, (event) => {
-            queueOutput(workspaceId, event.sessionId, {
-              seq: event.seq,
-              ts: event.ts,
-              data: event.data,
-            });
+            scheduleTerminalOutputDrain(workspaceId, event.sessionId, event.latestSeq);
           }),
           listenTerminalExit(workspaceId, (event) => {
             destroyCachedTerminal(workspaceId, event.sessionId);

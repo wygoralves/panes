@@ -1,7 +1,7 @@
 import { Dropdown } from "./Dropdown";
+import { cycleWorkspaceTerminalLayout } from "../../lib/workspacePaneNavigation";
 import { runEditMenuAction } from "../../lib/nativeEditActions";
 import { useOnboardingStore } from "../../stores/onboardingStore";
-import { useTerminalStore } from "../../stores/terminalStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useTranslation } from "react-i18next";
@@ -104,7 +104,7 @@ export function CustomWindowFrame({ frameState }: CustomWindowFrameProps) {
       case "toggle-terminal": {
         const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
         if (workspaceId) {
-          void useTerminalStore.getState().cycleLayoutMode(workspaceId);
+          cycleWorkspaceTerminalLayout(workspaceId);
         }
         return;
       }

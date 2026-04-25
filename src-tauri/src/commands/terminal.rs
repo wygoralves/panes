@@ -196,6 +196,26 @@ pub async fn terminal_resume_session(
 }
 
 #[tauri::command]
+pub async fn terminal_drain_output(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    session_id: String,
+    from_seq: Option<u64>,
+    target_bytes: u64,
+) -> Result<TerminalResumeSessionDto, String> {
+    state
+        .terminals
+        .drain_output(
+            &workspace_id,
+            &session_id,
+            from_seq,
+            target_bytes.clamp(1, 1024 * 1024) as usize,
+        )
+        .await
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
 pub async fn terminal_list_notifications(
     state: State<'_, AppState>,
     workspace_id: String,

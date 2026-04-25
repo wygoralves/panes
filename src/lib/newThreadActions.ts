@@ -5,6 +5,10 @@ import { useThreadStore } from "../stores/threadStore";
 import { useUiStore } from "../stores/uiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { resolveNewThreadTargetLayoutMode } from "./newThreadLayout";
+import {
+  applyWorkspaceLayoutMode,
+  getWorkspacePaneLayoutMode,
+} from "./workspacePaneNavigation";
 
 export async function createAndActivateWorkspaceThread(
   workspaceId: string | null | undefined,
@@ -17,6 +21,7 @@ export async function createAndActivateWorkspaceThread(
   const activeWorkspaceId = workspaceStore.activeWorkspaceId;
   const terminalStore = useTerminalStore.getState();
   const currentLayoutMode =
+    (activeWorkspaceId ? getWorkspacePaneLayoutMode(activeWorkspaceId) : null) ??
     (activeWorkspaceId
       ? terminalStore.workspaces[activeWorkspaceId]?.layoutMode
       : terminalStore.workspaces[workspaceId]?.layoutMode) ?? null;
@@ -28,7 +33,7 @@ export async function createAndActivateWorkspaceThread(
     await workspaceStore.setActiveWorkspace(workspaceId);
   }
 
-  await terminalStore.setLayoutMode(workspaceId, targetLayoutMode);
+  applyWorkspaceLayoutMode(workspaceId, targetLayoutMode);
   useWorkspaceStore.getState().setActiveRepo(null, { remember: false });
 
   const threadId = await useThreadStore.getState().createThread({

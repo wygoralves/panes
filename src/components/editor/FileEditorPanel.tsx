@@ -6,6 +6,7 @@ import {
   resolveRelativePathWithinRoot,
 } from "../../lib/fileRootUtils";
 import { ipc } from "../../lib/ipc";
+import { isMarkdownPreviewFile } from "../../lib/editorFileTypes";
 import { useFileStore } from "../../stores/fileStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
@@ -17,14 +18,11 @@ import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { GitDiffEditorPanel } from "./GitDiffEditorPanel";
 import { MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
 
-const MARKDOWN_PREVIEW_EXTENSIONS = new Set(["md", "mdx", "markdown"]);
-
-function isMarkdownPreviewFile(filePath: string): boolean {
-  const extension = filePath.split(".").pop()?.toLowerCase();
-  return extension ? MARKDOWN_PREVIEW_EXTENSIONS.has(extension) : false;
+interface FileEditorPanelProps {
+  embedded?: boolean;
 }
 
-export function FileEditorPanel() {
+export function FileEditorPanel({ embedded = false }: FileEditorPanelProps = {}) {
   const { t } = useTranslation("app");
   const tabs = useFileStore((s) => s.tabs);
   const activeTabId = useFileStore((s) => s.activeTabId);
@@ -48,7 +46,7 @@ export function FileEditorPanel() {
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const isMac = isMacDesktop();
-  const useTitlebarSafeInset = isMac && focusMode && !showSidebar;
+  const useTitlebarSafeInset = !embedded && isMac && focusMode && !showSidebar;
   const activeTabOwnership = activeTab
     ? (
         (activeTab.gitRepoPath && activeTab.gitFilePath)
@@ -146,15 +144,17 @@ export function FileEditorPanel() {
       const meta = e.metaKey || e.ctrlKey;
       if (!meta || e.key !== "s") return;
 
-      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
-      const wsState = wsId ? useTerminalStore.getState().workspaces[wsId] : undefined;
-      if (wsState?.layoutMode !== "editor") return;
+      if (!embedded) {
+        const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+        const wsState = wsId ? useTerminalStore.getState().workspaces[wsId] : undefined;
+        if (wsState?.layoutMode !== "editor") return;
+      }
 
       if (activeTabId) void saveTab(activeTabId);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeTabId, saveTab]);
+  }, [activeTabId, embedded, saveTab]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>

@@ -1,6 +1,12 @@
 import hljs from "highlight.js/lib/common";
 import { micromark } from "micromark";
 import { gfm, gfmHtml } from "micromark-extension-gfm";
+import {
+  DISALLOWED_LOCAL_PREFIX_CHAR_RE,
+  TEXT_LINK_PATTERN,
+  isLocalFileLinkSyntax,
+  trimLinkText,
+} from "../lib/localFileLinkPatterns";
 
 interface FenceToken {
   placeholder: string;
@@ -52,10 +58,14 @@ function escapeNonFenceHtml(input: string): string {
   return escaped;
 }
 
-function sanitizeUrl(url: string): string {
+function sanitizeUrl(url: string, attrName: string): string {
   const trimmed = url.trim();
   if (!trimmed) {
     return "#";
+  }
+
+  if (attrName.toLowerCase() === "href" && isLocalFileLinkSyntax(trimmed)) {
+    return trimmed;
   }
 
   if (
@@ -97,7 +107,7 @@ function sanitizeRenderedHtml(html: string): string {
     /\s(href|src)\s*=\s*("([^"]*)"|'([^']*)')/gi,
     (_full, attrName: string, _quoted: string, doubleValue: string, singleValue: string) => {
       const rawValue = typeof doubleValue === "string" ? doubleValue : singleValue;
-      const safe = sanitizeUrl(rawValue);
+      const safe = sanitizeUrl(rawValue, attrName);
       return ` ${attrName}="${safe}"`;
     },
   );
@@ -106,6 +116,65 @@ function sanitizeRenderedHtml(html: string): string {
     /<a\b(?![^>]*\brel=)([^>]*)>/gi,
     "<a$1 rel=\"noreferrer noopener\">",
   );
+}
+
+function escapeHtmlAttribute(input: string): string {
+  return input
+    .replaceAll("&", "&amp;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function linkifyLocalFileReferencesInText(text: string): string {
+  return text.replace(TEXT_LINK_PATTERN, (raw, offset: number) => {
+    const trimmed = trimLinkText(raw);
+    if (
+      !trimmed ||
+      !isLocalFileLinkSyntax(trimmed) ||
+      text.slice(Math.max(0, offset - 4), offset) === "&lt;" ||
+      (offset > 0 && DISALLOWED_LOCAL_PREFIX_CHAR_RE.test(text[offset - 1] ?? ""))
+    ) {
+      return raw;
+    }
+
+    const trailing = raw.slice(trimmed.length);
+    const safeHref = escapeHtmlAttribute(trimmed);
+    return `<a href="${safeHref}" rel="noreferrer noopener">${trimmed}</a>${trailing}`;
+  });
+}
+
+function linkifyLocalFileReferencesInHtml(html: string): string {
+  const tagPattern = /<\/?([a-z][a-z0-9-]*)\b[^>]*>/gi;
+  const skipTags = new Set(["a", "pre"]);
+  let result = "";
+  let lastIndex = 0;
+  let skipDepth = 0;
+
+  for (const match of html.matchAll(tagPattern)) {
+    const tag = match[0];
+    const tagName = (match[1] ?? "").toLowerCase();
+    const index = match.index ?? 0;
+    const text = html.slice(lastIndex, index);
+    result += skipDepth > 0 ? text : linkifyLocalFileReferencesInText(text);
+    result += tag;
+
+    if (skipTags.has(tagName)) {
+      const isClosing = tag.startsWith("</");
+      const isSelfClosing = tag.endsWith("/>");
+      if (isClosing) {
+        skipDepth = Math.max(0, skipDepth - 1);
+      } else if (!isSelfClosing) {
+        skipDepth += 1;
+      }
+    }
+
+    lastIndex = index + tag.length;
+  }
+
+  const remaining = html.slice(lastIndex);
+  result += skipDepth > 0 ? remaining : linkifyLocalFileReferencesInText(remaining);
+  return result;
 }
 
 function normalizeFenceLanguage(raw: string): string {
@@ -284,6 +353,7 @@ export function renderMarkdownToHtml(markdown: string): string {
     extensions: [gfm()],
     htmlExtensions: [gfmHtml()],
     allowDangerousHtml: true,
+    allowDangerousProtocol: true,
   });
 
   let finalHtml = html;
@@ -291,7 +361,7 @@ export function renderMarkdownToHtml(markdown: string): string {
     finalHtml = finalHtml.replace(fence.placeholder, fence.html);
   }
 
-  return sanitizeRenderedHtml(finalHtml);
+  return linkifyLocalFileReferencesInHtml(sanitizeRenderedHtml(finalHtml));
 }
 
 export const markdownParserCoreInternals = {

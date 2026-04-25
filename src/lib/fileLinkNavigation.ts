@@ -4,16 +4,27 @@ import {
   isWithinRoot,
   normalizeAbsolutePath,
 } from "./fileRootUtils";
+import {
+  DISALLOWED_LOCAL_PREFIX_CHAR_RE,
+  TEXT_LINK_PATTERN,
+  isLocalFileLinkSyntax,
+  parseLocalAbsolutePathTarget,
+  parseLocalRelativePathTarget,
+  parseLocalUrlTarget,
+  trimLinkText,
+  tryParseUrl,
+} from "./localFileLinkPatterns";
 import { useFileStore } from "../stores/fileStore";
-import { useTerminalStore } from "../stores/terminalStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import type { EditorRevealLocation, Repo } from "../types";
+import { showWorkspaceEditorForFileLink } from "./workspacePaneNavigation";
+import type { Repo } from "../types";
 
 const EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:"]);
+type LinkRepoRoot = Pick<Repo, "id" | "path"> & Partial<Pick<Repo, "isActive">>;
 
 export interface LinkResolutionContext {
   workspaceRoot: string | null;
-  repos: Pick<Repo, "id" | "path">[];
+  repos: LinkRepoRoot[];
   activeRepoId?: string | null;
 }
 
@@ -35,133 +46,8 @@ export interface TextLinkMatch {
 export type LinkTargetKind = "local" | "external" | "other";
 export type LinkNavigationResult = "internal" | "external" | "ignored";
 
-const TEXT_LINK_PATTERN = /file:\/\/\/[^\s<>"'`]+|(?:https?:\/\/|mailto:|tel:)[^\s<>"'`]+|(?:\/(?!\/)|[A-Za-z]:[\\/]|\\\\)[^\s<>"'`]+/g;
-const TRAILING_LINK_PUNCTUATION_RE = /[),.;!?]+$/;
-const DISALLOWED_LOCAL_PREFIX_CHAR_RE = /[A-Za-z0-9._~/-]/;
-
-function hasUrlScheme(value: string): boolean {
-  return /^[A-Za-z][A-Za-z\d+.-]*:/.test(value);
-}
-
-function tryParseUrl(value: string): URL | null {
-  if (!hasUrlScheme(value)) {
-    return null;
-  }
-
-  try {
-    return new URL(value);
-  } catch {
-    return null;
-  }
-}
-
-function isWindowsDrivePath(path: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(path);
-}
-
-function isLocalAbsolutePath(path: string): boolean {
-  return (path.startsWith("/") && !path.startsWith("//")) || isWindowsDrivePath(path) || /^\\\\/.test(path);
-}
-
-function stripLocationSuffix(path: string): {
-  path: string;
-  reveal: EditorRevealLocation | null;
-} {
-  const lastSegmentMatch = /:(\d+)$/.exec(path);
-  if (!lastSegmentMatch) {
-    return { path, reveal: null };
-  }
-
-  const withoutLastSegment = path.slice(0, -lastSegmentMatch[0].length);
-  const lineAndColumnMatch = /:(\d+)$/.exec(withoutLastSegment);
-  if (lineAndColumnMatch) {
-    const candidatePath = withoutLastSegment.slice(0, -lineAndColumnMatch[0].length);
-    if (isLocalAbsolutePath(candidatePath)) {
-      return {
-        path: candidatePath,
-        reveal: {
-          line: Number(lineAndColumnMatch[1]),
-          column: Number(lastSegmentMatch[1]),
-        },
-      };
-    }
-  }
-
-  if (!isLocalAbsolutePath(withoutLastSegment)) {
-    return { path, reveal: null };
-  }
-
-  return {
-    path: withoutLastSegment,
-    reveal: {
-      line: Number(lastSegmentMatch[1]),
-      column: undefined,
-    },
-  };
-}
-
-function parseHashReveal(hash: string): EditorRevealLocation | null {
-  const normalized = hash.replace(/^#/, "");
-  const match = /^L(\d+)(?:C(\d+))?(?:[-:].*)?$/i.exec(normalized);
-  if (!match) {
-    return null;
-  }
-  return {
-    line: Number(match[1]),
-    column: match[2] ? Number(match[2]) : undefined,
-  };
-}
-
-function parseLocalAbsolutePathTarget(rawTarget: string): {
-  absolutePath: string;
-  reveal: EditorRevealLocation | null;
-} | null {
-  if (!isLocalAbsolutePath(rawTarget)) {
-    return null;
-  }
-
-  const hashIndex = rawTarget.indexOf("#");
-  const basePath = hashIndex >= 0 ? rawTarget.slice(0, hashIndex) : rawTarget;
-  const hash = hashIndex >= 0 ? rawTarget.slice(hashIndex) : "";
-  const { path, reveal } = stripLocationSuffix(basePath);
-
-  return {
-    absolutePath: normalizeAbsolutePath(path),
-    reveal: parseHashReveal(hash) ?? reveal,
-  };
-}
-
-function parseLocalUrlTarget(rawTarget: string): {
-  absolutePath: string;
-  reveal: EditorRevealLocation | null;
-} | null {
-  const url = tryParseUrl(rawTarget);
-  if (!url) {
-    return null;
-  }
-
-  if (url.protocol === "file:" || url.hostname === "file") {
-    let decodedPath: string;
-    try {
-      decodedPath = decodeURIComponent(url.pathname);
-    } catch {
-      return null;
-    }
-    const { path, reveal } = stripLocationSuffix(decodedPath);
-    if (!isLocalAbsolutePath(path) && !/^\/[A-Za-z]:\//.test(path)) {
-      return null;
-    }
-    return {
-      absolutePath: normalizeAbsolutePath(path),
-      reveal: parseHashReveal(url.hash) ?? reveal,
-    };
-  }
-
-  return null;
-}
-
 export function classifyLinkTarget(rawTarget: string): LinkTargetKind {
-  if (parseLocalAbsolutePathTarget(rawTarget) || parseLocalUrlTarget(rawTarget)) {
+  if (isLocalFileLinkSyntax(rawTarget)) {
     return "local";
   }
 
@@ -178,7 +64,7 @@ export function extractTextLinkMatches(text: string): TextLinkMatch[] {
   for (const match of text.matchAll(TEXT_LINK_PATTERN)) {
     const rawText = match[0];
     const startIndex = match.index ?? 0;
-    const trimmedText = rawText.replace(TRAILING_LINK_PUNCTUATION_RE, "");
+    const trimmedText = trimLinkText(rawText);
     if (!trimmedText) {
       continue;
     }
@@ -205,47 +91,108 @@ export function extractTextLinkMatches(text: string): TextLinkMatch[] {
   return matches;
 }
 
+function getOrderedRelativeRoots(context: LinkResolutionContext): string[] {
+  const repos = context.repos.slice();
+  const activeRepo = context.activeRepoId
+    ? repos.find((repo) => repo.id === context.activeRepoId) ?? null
+    : null;
+  const activeRepos = repos
+    .filter((repo) => repo.id !== activeRepo?.id && repo.isActive)
+    .sort((left, right) => compareRepoRoots(left, right, null));
+  const remainingRepos = repos
+    .filter((repo) => repo.id !== activeRepo?.id && !repo.isActive)
+    .sort((left, right) => compareRepoRoots(left, right, null));
+  const roots = [
+    ...(activeRepo ? [activeRepo] : []),
+    ...activeRepos,
+    ...remainingRepos,
+  ].map((repo) => normalizeAbsolutePath(repo.path));
+
+  if (context.workspaceRoot) {
+    roots.push(normalizeAbsolutePath(context.workspaceRoot));
+  }
+
+  return [...new Set(roots)];
+}
+
 export function resolveLocalFileLinkTarget(
   rawTarget: string,
   context: LinkResolutionContext,
 ): ResolvedLocalFileLink | null {
-  const localTarget = parseLocalAbsolutePathTarget(rawTarget) ?? parseLocalUrlTarget(rawTarget);
-  if (!localTarget) {
-    return null;
-  }
+  const absoluteTarget = parseLocalAbsolutePathTarget(rawTarget) ?? parseLocalUrlTarget(rawTarget);
 
   const workspaceRoot = context.workspaceRoot ? normalizeAbsolutePath(context.workspaceRoot) : null;
-  const candidateRoots = context.repos
-    .slice()
-    .sort((left, right) => compareRepoRoots(left, right, context.activeRepoId))
-    .map((repo) => normalizeAbsolutePath(repo.path));
+  if (absoluteTarget) {
+    const candidateRoots = context.repos
+      .slice()
+      .sort((left, right) => compareRepoRoots(left, right, context.activeRepoId))
+      .map((repo) => normalizeAbsolutePath(repo.path));
 
-  if (workspaceRoot) {
-    candidateRoots.push(workspaceRoot);
+    if (workspaceRoot) {
+      candidateRoots.push(workspaceRoot);
+    }
+
+    const absolutePath = normalizeAbsolutePath(absoluteTarget.path);
+    const matchedRoot = candidateRoots.find((root) => isWithinRoot(absolutePath, root));
+    if (!matchedRoot) {
+      return null;
+    }
+
+    const relativePath = absolutePath.slice(matchedRoot.length).replace(/^\/+/, "");
+    if (!relativePath) {
+      return null;
+    }
+
+    return {
+      rootPath: matchedRoot,
+      filePath: relativePath,
+      absolutePath,
+      line: absoluteTarget.reveal?.line,
+      column: absoluteTarget.reveal?.column ?? undefined,
+    };
   }
 
-  const matchedRoot = candidateRoots.find((root) => isWithinRoot(localTarget.absolutePath, root));
-  if (!matchedRoot) {
+  const relativeTarget = parseLocalRelativePathTarget(rawTarget);
+  if (!relativeTarget) {
     return null;
   }
 
-  const relativePath = localTarget.absolutePath.slice(matchedRoot.length).replace(/^\/+/, "");
-  if (!relativePath) {
-    return null;
+  for (const root of getOrderedRelativeRoots(context)) {
+    const absolutePath = normalizeAbsolutePath(`${root}/${relativeTarget.path}`);
+    if (!isWithinRoot(absolutePath, root)) {
+      continue;
+    }
+
+    return {
+      rootPath: root,
+      filePath: relativeTarget.path,
+      absolutePath,
+      line: relativeTarget.reveal?.line,
+      column: relativeTarget.reveal?.column ?? undefined,
+    };
   }
 
-  return {
-    rootPath: matchedRoot,
-    filePath: relativePath,
-    absolutePath: localTarget.absolutePath,
-    line: localTarget.reveal?.line,
-    column: localTarget.reveal?.column ?? undefined,
-  };
+  return null;
+}
+
+export interface LinkNavigationOptions {
+  shiftKey: boolean;
+  sourceLeafId?: string | null;
+}
+
+export function getWorkspacePaneLeafIdFromEventTarget(target: EventTarget | null): string | null {
+  const element = target instanceof Element
+    ? target
+    : target instanceof Node
+      ? target.parentElement
+      : null;
+  const leaf = element?.closest("[data-workspace-pane-leaf-id]");
+  return leaf instanceof HTMLElement ? leaf.dataset.workspacePaneLeafId ?? null : null;
 }
 
 export async function navigateLinkTarget(
   rawTarget: string,
-  options: { shiftKey: boolean },
+  options: LinkNavigationOptions,
 ): Promise<LinkNavigationResult> {
   if (!options.shiftKey) {
     return "ignored";
@@ -279,7 +226,7 @@ export async function navigateLinkTarget(
       .openFileAtLocation(localTarget.rootPath, localTarget.filePath, reveal);
 
     if (activeWorkspaceId) {
-      await useTerminalStore.getState().setLayoutMode(activeWorkspaceId, "editor");
+      showWorkspaceEditorForFileLink(activeWorkspaceId, options.sourceLeafId ?? null);
     }
 
     return "internal";

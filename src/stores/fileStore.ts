@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { ipc } from "../lib/ipc";
+import { isMarkdownPreviewFile } from "../lib/editorFileTypes";
 import {
   isWithinRoot,
   resolveAbsoluteFilePath,
@@ -130,6 +131,30 @@ function toPlainEditorTab(
   };
 }
 
+function defaultOpenRenderMode(
+  filePath: string,
+  pendingReveal: EditorRevealRequest | null,
+): EditorRenderMode {
+  if (!pendingReveal && isMarkdownPreviewFile(filePath)) {
+    return "markdown-preview";
+  }
+  return "plain-editor";
+}
+
+function toOpenedFileTab(
+  tab: EditorTab,
+  pendingReveal: EditorRevealRequest | null,
+  renderMode: EditorRenderMode,
+): EditorTab {
+  return {
+    ...tab,
+    renderMode,
+    gitContext: null,
+    pendingReveal: renderMode === "plain-editor" ? pendingReveal : null,
+    loadError: undefined,
+  };
+}
+
 function toMarkdownPreviewTab(tab: EditorTab): EditorTab {
   return {
     ...tab,
@@ -186,15 +211,17 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
     const resolved = resolveFileContext(rootPath, filePath);
     const existing = get().tabs.find((tab) => tab.absolutePath === resolved.absolutePath);
     const pendingReveal = createRevealRequest(reveal);
+    const renderMode = defaultOpenRenderMode(filePath, pendingReveal);
     if (existing) {
       destroyCachedEditor(`${existing.id}:git-base`);
       destroyCachedEditor(`${existing.id}:git-modified`);
+      const nextRenderMode = existing.isBinary ? "plain-editor" : renderMode;
       set((state) => ({
         activeTabId: existing.id,
         tabs: state.tabs.map((tab) =>
           tab.id === existing.id
             ? {
-                ...toPlainEditorTab(tab, pendingReveal),
+                ...toOpenedFileTab(tab, pendingReveal, nextRenderMode),
                 workspaceId,
                 rootPath,
                 filePath,
@@ -221,7 +248,11 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
         tabs: state.tabs.map((t) =>
           t.id === id
             ? {
-                ...toPlainEditorTab(t, pendingReveal),
+                ...toOpenedFileTab(
+                  t,
+                  pendingReveal,
+                  result.isBinary ? "plain-editor" : renderMode,
+                ),
                 content: result.content,
                 savedContent: result.content,
                 isBinary: result.isBinary,
