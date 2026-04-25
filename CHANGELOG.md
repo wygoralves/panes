@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.56.0...vnull) (2026-04-25)
+
+### Bug Fixes
+
+* **perf:** first batch of perf improvements for reduced RAM usage ([aa843b4](https://github.com/wygoralves/panes/commit/aa843b498c873289765a13e27cab5ff0728b48ff))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.55.0...vnull) (2026-04-25)
 
 ### Features
