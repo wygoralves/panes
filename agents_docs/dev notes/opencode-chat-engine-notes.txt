@@ -1,0 +1,23 @@
+## Summary
+Adds OpenCode as a native Panes chat engine alongside Codex and Claude. The backend runs OpenCode through the local headless server, maps streaming events into Panes chat events, and handles OpenCode permissions/questions through the existing approval pipeline. The frontend exposes OpenCode in chat/onboarding, keeps Codex sandbox controls out of OpenCode threads, and adds OpenCode-specific permission labels and readiness flow.
+## Changes
+- Added the OpenCode backend engine, model discovery, health check, local server/session lifecycle, SSE event mapping, permission/question response routing, interruption, and cleanup.
+- Added OpenCode engine capabilities and execution-policy normalization so OpenCode uses ask/allow/deny permission modes instead of Codex sandbox modes.
+- Added OpenCode frontend support in the model/chat surfaces, attachment filtering, permission picker, onboarding engine selection, readiness install path, notification labels, and i18n resources.
+- Added tests for OpenCode backend routing/capabilities, frontend capability fallbacks, onboarding persistence/readiness, and OpenCode question approval action gating.
+## Validation
+- [x] pnpm typecheck
+- [x] pnpm test
+- [x] pnpm build
+- [x] cd src-tauri && cargo check
+Additional check run: cd src-tauri && cargo test opencode -- --nocapture.
+Skipped: pnpm tauri:build, because the native bundle build is slower and the changed surfaces were covered by frontend build plus Rust checks.
+## UI / UX impact
+- [ ] No user-facing UI change
+- [ ] Screenshots or screen recording attached
+OpenCode now appears in chat engine selection/onboarding and has OpenCode-specific permission controls. No screenshot was captured in this pass.
+## Localization
+- [ ] No new user-facing copy
+- [x] Updated both src/i18n/resources/en/ and src/i18n/resources/pt-BR/
+## Notes for review
+Review OpenCode server lifecycle and approval/question routing closely. The frontend intentionally hides sandbox/network controls for OpenCode because OpenCode permissions are not equivalent to Panes/Codex sandboxing.
