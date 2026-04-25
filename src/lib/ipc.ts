@@ -42,6 +42,7 @@ import type {
   Message,
   MessageWindow,
   MessageWindowCursor,
+  OpenCodeRuntimeCatalog,
   ReadFileResult,
   Repo,
   SearchResult,
@@ -258,6 +259,17 @@ export const ipc = {
       updateOutputSchema: Object.prototype.hasOwnProperty.call(patch, "outputSchema"),
       outputSchema: patch.outputSchema ?? null,
     }),
+  setThreadOpenCodeConfig: (
+    threadId: string,
+    patch: {
+      agent?: string | null;
+    },
+  ) =>
+    invoke<Thread>("set_thread_opencode_config", {
+      threadId,
+      updateAgent: Object.prototype.hasOwnProperty.call(patch, "agent"),
+      agent: patch.agent ?? null,
+    }),
   archiveThread: (threadId: string) => invoke<void>("archive_thread", { threadId }),
   restoreThread: (threadId: string) => invoke<Thread>("restore_thread", { threadId }),
   syncThreadFromEngine: (threadId: string) =>
@@ -277,6 +289,8 @@ export const ipc = {
   listCodexSkills: (cwd: string) =>
     invoke<CodexSkill[]>("list_codex_skills", { cwd }),
   listCodexApps: () => invoke<CodexApp[]>("list_codex_apps"),
+  getOpenCodeRuntimeCatalog: (cwd: string) =>
+    invoke<OpenCodeRuntimeCatalog>("get_opencode_runtime_catalog", { cwd }),
   sendMessage: (
     threadId: string,
     message: string,

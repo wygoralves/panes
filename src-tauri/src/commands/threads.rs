@@ -1205,6 +1205,73 @@ async fn set_thread_codex_config_inner(
     .ok_or_else(|| format!("thread not found after Codex config update: {thread_id}"))
 }
 
+#[tauri::command]
+pub async fn set_thread_opencode_config(
+    state: State<'_, AppState>,
+    thread_id: String,
+    update_agent: bool,
+    agent: Option<String>,
+) -> Result<ThreadDto, String> {
+    set_thread_opencode_config_inner(state.inner(), thread_id, update_agent, agent).await
+}
+
+async fn set_thread_opencode_config_inner(
+    state: &AppState,
+    thread_id: String,
+    update_agent: bool,
+    agent: Option<String>,
+) -> Result<ThreadDto, String> {
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    if thread.engine_id != "opencode" {
+        return Err("OpenCode thread config is only available for OpenCode threads".to_string());
+    }
+
+    let normalized_agent = if update_agent {
+        normalize_thread_opencode_agent(agent)?
+    } else {
+        None
+    };
+
+    let mut metadata = thread.engine_metadata.unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        metadata = json!({});
+    }
+
+    if let Some(object) = metadata.as_object_mut() {
+        if update_agent {
+            match normalized_agent {
+                Some(value) => {
+                    object.insert("opencodeAgent".to_string(), json!(value));
+                }
+                None => {
+                    object.remove("opencodeAgent");
+                }
+            }
+        }
+    }
+
+    run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        let metadata = metadata.clone();
+        move |db| db::threads::update_engine_metadata(db, &thread_id, &metadata)
+    })
+    .await?;
+
+    run_db(db, {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found after OpenCode config update: {thread_id}"))
+}
+
 async fn validate_reasoning_effort(
     state: &AppState,
     engine_id: &str,
@@ -1428,6 +1495,7 @@ async fn build_codex_branch_context(
             service_tier: thread_service_tier(thread.engine_metadata.as_ref()),
             personality: thread_personality(thread.engine_metadata.as_ref()),
             output_schema: thread_output_schema(thread.engine_metadata.as_ref()),
+            opencode_agent: thread_opencode_agent(thread.engine_metadata.as_ref()),
         },
     ))
 }
@@ -1816,6 +1884,15 @@ fn thread_output_schema(metadata: Option<&Value>) -> Option<Value> {
         .cloned()
 }
 
+fn thread_opencode_agent(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("opencodeAgent"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn map_codex_thread_status_to_local(
     raw_status: Option<&str>,
     active_flags: &[String],
@@ -2000,6 +2077,37 @@ fn normalize_thread_output_schema(value: Option<Value>) -> Result<Option<Value>,
         Value::Object(_) | Value::Bool(_) => Ok(Some(value)),
         _ => Err("invalid output schema. expected a JSON Schema object or boolean".to_string()),
     }
+}
+
+fn normalize_thread_opencode_agent(value: Option<String>) -> Result<Option<String>, String> {
+    let normalized = value
+        .as_deref()
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty());
+
+    let Some(normalized) = normalized else {
+        return Ok(None);
+    };
+
+    if normalized.chars().count() > 120 {
+        return Err("invalid OpenCode agent. name is too long".to_string());
+    }
+
+    if !normalized
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    {
+        return Err(
+            "invalid OpenCode agent. expected letters, numbers, dots, dashes, or underscores"
+                .to_string(),
+        );
+    }
+
+    if normalized == "build" {
+        return Ok(None);
+    }
+
+    Ok(Some(normalized.to_string()))
 }
 
 fn normalize_thread_sandbox_mode(value: Option<String>) -> Result<Option<String>, String> {
@@ -2755,5 +2863,62 @@ mod tests {
         .expect_err("expected non-codex thread to be rejected");
 
         assert!(error.contains("Codex thread config is only available for Codex threads"));
+    }
+
+    #[tokio::test]
+    async fn set_thread_opencode_config_persists_agent() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "opencode", "opencode/big-pickle");
+
+        let updated = set_thread_opencode_config_inner(
+            &state,
+            thread.id.clone(),
+            true,
+            Some("Explore_1".to_string()),
+        )
+        .await
+        .expect("expected OpenCode config update to succeed");
+
+        let metadata = updated
+            .engine_metadata
+            .expect("expected engine metadata to be present");
+        assert_eq!(metadata.get("opencodeAgent"), Some(&json!("Explore_1")));
+    }
+
+    #[tokio::test]
+    async fn set_thread_opencode_config_clears_build_agent() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "opencode", "opencode/big-pickle");
+
+        let updated = set_thread_opencode_config_inner(
+            &state,
+            thread.id.clone(),
+            true,
+            Some("build".to_string()),
+        )
+        .await
+        .expect("expected OpenCode build agent to clear override");
+
+        assert!(updated
+            .engine_metadata
+            .and_then(|metadata| metadata.get("opencodeAgent").cloned())
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn set_thread_opencode_config_rejects_non_opencode_threads() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "codex", "gpt-5.4");
+
+        let error = set_thread_opencode_config_inner(
+            &state,
+            thread.id.clone(),
+            true,
+            Some("explore".to_string()),
+        )
+        .await
+        .expect_err("expected non-opencode thread to be rejected");
+
+        assert!(error.contains("OpenCode thread config is only available for OpenCode threads"));
     }
 }

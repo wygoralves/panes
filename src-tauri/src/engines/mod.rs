@@ -17,7 +17,7 @@ use crate::{
     models::{
         CodexAppDto, CodexSkillDto, EngineCapabilitiesDto, EngineHealthDto, EngineInfoDto,
         EngineModelAvailabilityNuxDto, EngineModelDto, EngineModelUpgradeInfoDto,
-        ReasoningEffortOptionDto, ThreadDto,
+        OpenCodeRuntimeCatalogDto, ReasoningEffortOptionDto, ThreadDto,
     },
 };
 
@@ -60,6 +60,7 @@ pub struct SandboxPolicy {
     pub service_tier: Option<String>,
     pub personality: Option<String>,
     pub output_schema: Option<Value>,
+    pub opencode_agent: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -550,6 +551,13 @@ impl EngineManager {
 
     pub async fn list_codex_apps(&self) -> anyhow::Result<Vec<CodexAppDto>> {
         self.codex.list_apps().await
+    }
+
+    pub async fn opencode_runtime_catalog(
+        &self,
+        cwd: &str,
+    ) -> anyhow::Result<OpenCodeRuntimeCatalogDto> {
+        self.opencode.runtime_catalog(cwd).await
     }
 
     pub async fn fork_codex_thread(

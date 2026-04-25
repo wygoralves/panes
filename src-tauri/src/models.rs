@@ -404,6 +404,53 @@ pub struct CodexSkillDto {
     pub scope: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeRuntimeCatalogDto {
+    #[serde(default)]
+    pub agents: Vec<OpenCodeAgentDto>,
+    #[serde(default)]
+    pub commands: Vec<OpenCodeCommandDto>,
+    #[serde(default)]
+    pub mcp_servers: Vec<OpenCodeMcpServerDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeAgentDto {
+    pub name: String,
+    pub description: Option<String>,
+    pub mode: String,
+    pub native: bool,
+    pub hidden: bool,
+    pub model_provider_id: Option<String>,
+    pub model_id: Option<String>,
+    pub variant: Option<String>,
+    pub steps: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeCommandDto {
+    pub name: String,
+    pub description: Option<String>,
+    pub agent: Option<String>,
+    pub model: Option<String>,
+    pub source: Option<String>,
+    pub subtask: bool,
+    #[serde(default)]
+    pub hints: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeMcpServerDto {
+    pub name: String,
+    pub status: String,
+    pub detail: Option<String>,
+    pub raw: Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexPluginMarketplaceDto {

@@ -6904,6 +6904,137 @@ button, input, textarea, select {
   color: var(--bg-0);
 }
 
+.oc-agent-root {
+  position: relative;
+  display: inline-flex;
+}
+
+.oc-agent-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 150px;
+  padding: 3px 8px 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  background: var(--bg-3);
+  color: var(--text-2);
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.oc-agent-trigger:hover,
+.oc-agent-trigger-open {
+  border-color: var(--border-active);
+  background: var(--bg-4);
+  color: var(--text-1);
+}
+
+.oc-agent-trigger:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.oc-agent-trigger-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.oc-agent-trigger-chevron {
+  flex-shrink: 0;
+  opacity: 0.55;
+}
+
+.oc-agent-popover {
+  z-index: 9999;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  max-height: min(360px, calc(100vh - 24px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-3);
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.65),
+    0 0 0 1px rgba(255, 255, 255, 0.04);
+  animation: mp-enter 150ms var(--ease-out) both;
+}
+
+.oc-agent-header {
+  padding: 9px 10px 7px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.oc-agent-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.oc-agent-option {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.oc-agent-option:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-1);
+}
+
+.oc-agent-option-active {
+  background: var(--bg-4);
+  color: var(--text-1);
+}
+
+.oc-agent-option-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.oc-agent-option-name {
+  color: inherit;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.oc-agent-option-detail,
+.oc-agent-option-meta {
+  color: var(--text-3);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.oc-agent-option-meta {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+.oc-agent-option-check {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
 .codex-config-popover {
   width: min(420px, calc(100vw - 16px));
   padding: 12px;

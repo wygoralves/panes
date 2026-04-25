@@ -76,6 +76,10 @@
     "sandbox": "Sandbox",
     "network": "Network"
   },
+  "openCodeAgentPicker": {
+    "title": "OpenCode agent",
+    "selectAgent": "Agent"
+  },
   "configPicker": {
     "title": "Turn configuration",
     "shortTitle": "Config",
@@ -400,6 +404,7 @@
       "fullAccessNetworkWarning": "Full access sandbox temporarily enables network access.",
       "updateExecutionPolicyFailed": "Failed to update thread execution policy: {{error}}",
       "updateCodexConfigFailed": "Failed to update Codex turn config: {{error}}",
+      "updateOpenCodeConfigFailed": "Failed to update OpenCode turn config: {{error}}",
       "planImplementationThreadUnavailable": "The original planning thread is no longer available. Reopen the thread and try again.",
       "invalidOutputSchema": "Output schema must be valid JSON Schema object or boolean: {{error}}",
       "invalidCustomApprovalPolicy": "Structured approval policy must be a JSON object.",
@@ -501,15 +506,29 @@
     "panels": {
       "skills": {
         "title": "Skills",
-        "empty": "No skills loaded on this runtime."
+        "empty": "No skills loaded on this runtime.",
+        "description": "View loaded Codex skills"
       },
       "mcp": {
         "title": "MCP servers",
-        "empty": "No MCP servers connected."
+        "empty": "No MCP servers connected.",
+        "description": "View MCP server status"
       },
       "experimental": {
         "title": "Experimental features",
-        "empty": "No experimental features available."
+        "empty": "No experimental features available.",
+        "description": "View experimental features"
+      },
+      "openCodeAgents": {
+        "title": "OpenCode agents",
+        "empty": "No OpenCode agents found.",
+        "description": "View OpenCode agents"
+      },
+      "openCodeCommands": {
+        "title": "OpenCode commands",
+        "empty": "No OpenCode commands found.",
+        "description": "View OpenCode slash commands",
+        "insertDescription": "Insert OpenCode command"
       },
       "info": {
         "badgeOn": "on",
