@@ -17,7 +17,11 @@ export interface ToolInputQuestion {
   header?: string;
   question: string;
   options: ToolInputOption[];
+  multiple?: boolean;
+  custom?: boolean;
 }
+
+export type ToolInputSelections = Record<string, string[]>;
 
 const REQUEST_USER_INPUT_METHOD = "item/tool/requestuserinput";
 const DYNAMIC_TOOL_CALL_METHOD = "item/tool/call";
@@ -453,47 +457,71 @@ export function parseToolInputQuestions(details: Record<string, unknown>): ToolI
       header,
       question: questionText,
       options,
+      multiple: questionObj.multiple === true,
+      custom:
+        typeof questionObj.custom === "boolean" ? questionObj.custom : undefined,
     });
   }
 
   return questions;
 }
 
-function defaultAnswerForQuestion(question: ToolInputQuestion): string {
-  const recommended = question.options.find((option) => option.recommended);
-  if (recommended) {
-    return recommended.label;
+function defaultAnswersForQuestion(question: ToolInputQuestion): string[] {
+  if (question.multiple) {
+    return question.options
+      .filter((option) => option.recommended)
+      .map((option) => option.label);
   }
-  return question.options[0]?.label ?? "";
+
+  const recommended = question.options.find((option) => option.recommended);
+  return [recommended?.label ?? question.options[0]?.label]
+    .filter((answer): answer is string => Boolean(answer?.trim()));
 }
 
 export function defaultToolInputSelections(
   questions: ToolInputQuestion[]
-): Record<string, string> {
-  const selections: Record<string, string> = {};
+): ToolInputSelections {
+  const selections: ToolInputSelections = {};
   for (const question of questions) {
-    const answer = defaultAnswerForQuestion(question);
-    if (answer) {
-      selections[question.id] = answer;
+    const answers = defaultAnswersForQuestion(question);
+    if (answers.length > 0) {
+      selections[question.id] = answers;
     }
   }
   return selections;
 }
 
+function selectedAnswersForQuestion(
+  selectedByQuestion: Record<string, string | string[]>,
+  question: ToolInputQuestion,
+): string[] {
+  const selected = selectedByQuestion[question.id];
+  const rawAnswers = Array.isArray(selected) ? selected : [selected];
+  return rawAnswers
+    .filter((answer): answer is string => typeof answer === "string")
+    .map((answer) => answer.trim())
+    .filter((answer) => answer.length > 0);
+}
+
 export function buildToolInputResponseFromSelections(
   questions: ToolInputQuestion[],
-  selectedByQuestion: Record<string, string>,
+  selectedByQuestion: Record<string, string | string[]>,
   customByQuestion?: Record<string, string>
 ): ApprovalResponse {
   const answers: Record<string, { answers: string[] }> = {};
 
   for (const question of questions) {
-    const customAnswer = customByQuestion?.[question.id]?.trim();
-    const selectedAnswer = selectedByQuestion[question.id]?.trim();
-    const fallbackAnswer = defaultAnswerForQuestion(question).trim();
-    const finalAnswer = customAnswer || selectedAnswer || fallbackAnswer;
+    const allowCustom = question.custom !== false;
+    const customAnswer = allowCustom ? customByQuestion?.[question.id]?.trim() : "";
+    const selectedAnswers = selectedAnswersForQuestion(selectedByQuestion, question);
+    const fallbackAnswers = defaultAnswersForQuestion(question);
+    const baseAnswers = selectedAnswers.length > 0 ? selectedAnswers : fallbackAnswers;
+    let finalAnswers = baseAnswers;
+    if (customAnswer) {
+      finalAnswers = question.multiple ? [...baseAnswers, customAnswer] : [customAnswer];
+    }
 
-    answers[question.id] = { answers: finalAnswer ? [finalAnswer] : [] };
+    answers[question.id] = { answers: Array.from(new Set(finalAnswers)) };
   }
 
   return { answers };

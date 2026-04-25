@@ -1052,6 +1052,10 @@ export type TurnCompletionStatus = "completed" | "interrupted" | "failed";
 export interface StreamTokenUsage {
   input: number;
   output: number;
+  reasoning?: number | null;
+  cacheRead?: number | null;
+  cacheWrite?: number | null;
+  costUsd?: number | null;
 }
 
 export interface TurnStartedEvent {

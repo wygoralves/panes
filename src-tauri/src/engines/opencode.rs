@@ -28,8 +28,8 @@ use crate::{process_utils, runtime_env};
 use super::{
     normalize_approval_response_for_engine, trim_action_output_delta_content, ActionResult,
     ActionType, ApprovalRequestRoute, DiffScope, Engine, EngineEvent, EngineThread, ModelInfo,
-    OutputStream, ReasoningEffortOption, SandboxPolicy, ThreadScope, TurnCompletionStatus,
-    TurnInput,
+    OutputStream, ReasoningEffortOption, SandboxPolicy, ThreadScope, TokenUsage,
+    TurnCompletionStatus, TurnInput,
 };
 
 const OPENCODE_STARTUP_TIMEOUT: Duration = Duration::from_secs(8);
@@ -184,6 +184,31 @@ struct OpenCodePart {
     text: Option<String>,
     tool: Option<String>,
     state: Option<OpenCodeToolState>,
+    reason: Option<String>,
+    cost: Option<f64>,
+    tokens: Option<OpenCodeStepTokenUsage>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+struct OpenCodeStepTokenUsage {
+    #[serde(default)]
+    input: u64,
+    #[serde(default)]
+    output: u64,
+    #[serde(default)]
+    reasoning: u64,
+    #[serde(default)]
+    cache: OpenCodeStepTokenCache,
+    #[allow(dead_code)]
+    total: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+struct OpenCodeStepTokenCache {
+    #[serde(default)]
+    read: u64,
+    #[serde(default)]
+    write: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -203,9 +228,7 @@ struct OpenCodeQuestionInfo {
     header: String,
     #[serde(default)]
     options: Vec<OpenCodeQuestionOption>,
-    #[allow(dead_code)]
     multiple: Option<bool>,
-    #[allow(dead_code)]
     custom: Option<bool>,
 }
 
@@ -222,10 +245,35 @@ struct OpenCodeTurnMapper {
     part_type_by_id: HashMap<String, String>,
     started_actions: HashSet<String>,
     completed_actions: HashSet<String>,
+    latest_token_usage: Option<TokenUsage>,
     busy_seen: bool,
     content_seen: bool,
     completed: bool,
     failed: bool,
+}
+
+async fn emit_turn_completed(
+    mapper: &mut OpenCodeTurnMapper,
+    event_tx: &mpsc::Sender<EngineEvent>,
+    status: TurnCompletionStatus,
+) {
+    if mapper.completed {
+        return;
+    }
+
+    mapper.completed = true;
+    let token_usage = if status == TurnCompletionStatus::Completed {
+        mapper.latest_token_usage.clone()
+    } else {
+        None
+    };
+    event_tx
+        .send(EngineEvent::TurnCompleted {
+            token_usage,
+            status,
+        })
+        .await
+        .ok();
 }
 
 impl Default for OpenCodeEngine {
@@ -490,17 +538,29 @@ impl Engine for OpenCodeEngine {
                 server,
             } => {
                 let server_cwd = server.cwd.clone();
-                let answers = build_question_answers(&questions, normalized.get("answers"));
-                self.request(
-                    server.as_ref(),
-                    reqwest::Method::POST,
-                    &format!("/question/{request_id}/reply"),
-                )
-                .json(&json!({ "answers": answers }))
-                .send()
-                .await?
-                .error_for_status()
-                .context("failed to reply to OpenCode question request")?;
+                if should_reject_question_response(&normalized) {
+                    self.request(
+                        server.as_ref(),
+                        reqwest::Method::POST,
+                        &format!("/question/{request_id}/reject"),
+                    )
+                    .send()
+                    .await?
+                    .error_for_status()
+                    .context("failed to reject OpenCode question request")?;
+                } else {
+                    let answers = build_question_answers(&questions, normalized.get("answers"));
+                    self.request(
+                        server.as_ref(),
+                        reqwest::Method::POST,
+                        &format!("/question/{request_id}/reply"),
+                    )
+                    .json(&json!({ "answers": answers }))
+                    .send()
+                    .await?
+                    .error_for_status()
+                    .context("failed to reply to OpenCode question request")?;
+                }
                 server_cwd
             }
         };
@@ -986,31 +1046,17 @@ impl OpenCodeEngine {
                         mapper.busy_seen = true;
                     }
                     Some("idle") if mapper.busy_seen || mapper.content_seen => {
-                        mapper.completed = true;
-                        event_tx
-                            .send(EngineEvent::TurnCompleted {
-                                token_usage: None,
-                                status: TurnCompletionStatus::Completed,
-                            })
-                            .await
-                            .ok();
+                        emit_turn_completed(mapper, event_tx, TurnCompletionStatus::Completed)
+                            .await;
                     }
                     _ => {}
                 }
             }
             "session.idle" if mapper.busy_seen || mapper.content_seen => {
-                mapper.completed = true;
-                event_tx
-                    .send(EngineEvent::TurnCompleted {
-                        token_usage: None,
-                        status: TurnCompletionStatus::Completed,
-                    })
-                    .await
-                    .ok();
+                emit_turn_completed(mapper, event_tx, TurnCompletionStatus::Completed).await;
             }
             "session.error" => {
                 mapper.failed = true;
-                mapper.completed = true;
                 let message = session_error_message(&event.properties);
                 event_tx
                     .send(EngineEvent::Error {
@@ -1019,13 +1065,7 @@ impl OpenCodeEngine {
                     })
                     .await
                     .ok();
-                event_tx
-                    .send(EngineEvent::TurnCompleted {
-                        token_usage: None,
-                        status: TurnCompletionStatus::Failed,
-                    })
-                    .await
-                    .ok();
+                emit_turn_completed(mapper, event_tx, TurnCompletionStatus::Failed).await;
             }
             "session.diff" => {
                 if let Some(diff) = format_session_diff(&event.properties) {
@@ -1102,6 +1142,12 @@ impl OpenCodeEngine {
                     })
                     .await
                     .ok();
+            }
+            "step-finish" => {
+                if let Some(usage) = token_usage_from_step_finish(part) {
+                    mapper.latest_token_usage = Some(usage);
+                    mapper.content_seen = true;
+                }
             }
             _ => {}
         }
@@ -1269,19 +1315,7 @@ impl OpenCodeEngine {
         let question_details = questions
             .iter()
             .enumerate()
-            .map(|(index, question)| {
-                json!({
-                    "id": question_id(index, question),
-                    "header": question.header,
-                    "question": question.question,
-                    "options": question.options.iter().map(|option| {
-                        json!({
-                            "label": option.label,
-                            "description": option.description,
-                        })
-                    }).collect::<Vec<_>>(),
-                })
-            })
+            .map(question_details_json)
             .collect::<Vec<_>>();
 
         event_tx
@@ -1370,7 +1404,10 @@ fn build_prompt_body(
         if plan_mode {
             object.insert("agent".to_string(), json!("plan"));
         }
-        if let Some(variant) = reasoning_effort.map(str::trim).filter(|value| !value.is_empty()) {
+        if let Some(variant) = reasoning_effort
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
             object.insert("variant".to_string(), json!(variant));
         }
     }
@@ -1915,6 +1952,29 @@ fn question_id(index: usize, question: &OpenCodeQuestionInfo) -> String {
     }
 }
 
+fn question_details_json((index, question): (usize, &OpenCodeQuestionInfo)) -> Value {
+    json!({
+        "id": question_id(index, question),
+        "header": question.header,
+        "question": question.question,
+        "multiple": question.multiple.unwrap_or(false),
+        "custom": question.custom.unwrap_or(true),
+        "options": question.options.iter().map(|option| {
+            json!({
+                "label": option.label,
+                "description": option.description,
+            })
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn should_reject_question_response(response: &Value) -> bool {
+    matches!(
+        response.get("decision").and_then(Value::as_str),
+        Some("decline" | "cancel")
+    )
+}
+
 fn build_question_answers(
     questions: &[OpenCodeQuestionInfo],
     answers: Option<&Value>,
@@ -1968,6 +2028,22 @@ fn answer_to_vec(value: &Value) -> Vec<String> {
 fn non_empty_answer(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn token_usage_from_step_finish(part: &OpenCodePart) -> Option<TokenUsage> {
+    if part.part_type != "step-finish" {
+        return None;
+    }
+
+    let tokens = part.tokens.as_ref()?;
+    Some(TokenUsage {
+        input: tokens.input,
+        output: tokens.output,
+        reasoning: Some(tokens.reasoning),
+        cache_read: Some(tokens.cache.read),
+        cache_write: Some(tokens.cache.write),
+        cost_usd: part.cost,
+    })
 }
 
 fn file_url(path: &str) -> String {
@@ -2152,6 +2228,68 @@ opencode/gpt-5-nano
             answers,
             vec![vec!["pnpm".to_string()], vec!["yes".to_string()]]
         );
+    }
+
+    #[test]
+    fn question_details_preserve_opencode_selection_flags() {
+        let question = OpenCodeQuestionInfo {
+            question: "Which checks should OpenCode run?".to_string(),
+            header: "Checks".to_string(),
+            options: vec![OpenCodeQuestionOption {
+                label: "typecheck".to_string(),
+                description: "Run TypeScript".to_string(),
+            }],
+            multiple: Some(true),
+            custom: Some(false),
+        };
+
+        let details = question_details_json((0, &question));
+
+        assert_eq!(details["id"], json!("question-0-checks"));
+        assert_eq!(details["multiple"], json!(true));
+        assert_eq!(details["custom"], json!(false));
+        assert_eq!(details["options"][0]["label"], json!("typecheck"));
+    }
+
+    #[test]
+    fn decline_and_cancel_reject_opencode_questions() {
+        assert!(should_reject_question_response(
+            &json!({ "decision": "decline" })
+        ));
+        assert!(should_reject_question_response(
+            &json!({ "decision": "cancel" })
+        ));
+        assert!(!should_reject_question_response(&json!({
+            "answers": { "question-0-checks": { "answers": ["typecheck"] } }
+        })));
+    }
+
+    #[test]
+    fn step_finish_part_maps_rich_token_usage() {
+        let part: OpenCodePart = serde_json::from_value(json!({
+            "id": "prt_123",
+            "messageID": "msg_123",
+            "type": "step-finish",
+            "reason": "stop",
+            "cost": 0.0123,
+            "tokens": {
+                "input": 100,
+                "output": 25,
+                "reasoning": 10,
+                "cache": { "read": 7, "write": 3 },
+                "total": 145
+            }
+        }))
+        .expect("step-finish part should deserialize");
+
+        let usage = token_usage_from_step_finish(&part).expect("token usage");
+
+        assert_eq!(usage.input, 100);
+        assert_eq!(usage.output, 25);
+        assert_eq!(usage.reasoning, Some(10));
+        assert_eq!(usage.cache_read, Some(7));
+        assert_eq!(usage.cache_write, Some(3));
+        assert_eq!(usage.cost_usd, Some(0.0123));
     }
 
     #[test]

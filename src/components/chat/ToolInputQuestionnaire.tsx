@@ -5,6 +5,7 @@ import {
   buildToolInputResponseFromSelections,
   defaultToolInputSelections,
   parseToolInputQuestions,
+  type ToolInputSelections,
 } from "./toolInputApproval";
 
 interface Props {
@@ -20,7 +21,9 @@ function buildQuestionSignature(questions: ReturnType<typeof parseToolInputQuest
   return questions
     .map((question) => {
       const optionsSignature = question.options.map((option) => option.label).join(",");
-      return `${question.id}:${question.question}:${optionsSignature}`;
+      const modeSignature = question.multiple ? "multiple" : "single";
+      const customSignature = question.custom === false ? "no-custom" : "custom";
+      return `${question.id}:${question.question}:${modeSignature}:${customSignature}:${optionsSignature}`;
     })
     .join("|");
 }
@@ -40,7 +43,7 @@ export function ToolInputQuestionnaire({
   const { t } = useTranslation("chat");
   const questions = useMemo(() => parseToolInputQuestions(details), [details]);
   const questionSignature = useMemo(() => buildQuestionSignature(questions), [questions]);
-  const [selectedByQuestion, setSelectedByQuestion] = useState<Record<string, string>>(() =>
+  const [selectedByQuestion, setSelectedByQuestion] = useState<ToolInputSelections>(() =>
     defaultToolInputSelections(questions),
   );
   const [customByQuestion, setCustomByQuestion] = useState<Record<string, string>>({});
@@ -57,12 +60,13 @@ export function ToolInputQuestionnaire({
   }
 
   const currentQuestion = questions[Math.min(currentQuestionIndex, questions.length - 1)];
-  const currentSelectedAnswer = selectedByQuestion[currentQuestion.id] ?? "";
+  const currentSelectedAnswers = selectedByQuestion[currentQuestion.id] ?? [];
   const currentCustomAnswer = customByQuestion[currentQuestion.id] ?? "";
+  const questionAllowsCustomAnswer = allowCustomAnswer && currentQuestion.custom !== false;
   const isLastQuestion = currentQuestionIndex >= questions.length - 1;
   const canAdvance =
-    (allowCustomAnswer && currentCustomAnswer.trim().length > 0) ||
-    currentSelectedAnswer.trim().length > 0;
+    (questionAllowsCustomAnswer && currentCustomAnswer.trim().length > 0) ||
+    currentSelectedAnswers.length > 0;
 
   function handleAdvance() {
     if (!canAdvance) {
@@ -102,17 +106,27 @@ export function ToolInputQuestionnaire({
       {currentQuestion.options.length > 0 && (
         <div className="chat-tool-input-options">
           {currentQuestion.options.map((option) => {
-            const selected = currentSelectedAnswer === option.label;
+            const selected = currentSelectedAnswers.includes(option.label);
             return (
               <button
                 key={option.label}
                 type="button"
                 className={`chat-tool-input-option${selected ? " chat-tool-input-option-active" : ""}`}
+                aria-pressed={selected}
                 onClick={() =>
-                  setSelectedByQuestion((current) => ({
-                    ...current,
-                    [currentQuestion.id]: option.label,
-                  }))
+                  setSelectedByQuestion((current) => {
+                    const currentAnswers = current[currentQuestion.id] ?? [];
+                    const nextAnswers = currentQuestion.multiple
+                      ? selected
+                        ? currentAnswers.filter((answer) => answer !== option.label)
+                        : [...currentAnswers, option.label]
+                      : [option.label];
+
+                    return {
+                      ...current,
+                      [currentQuestion.id]: nextAnswers,
+                    };
+                  })
                 }
                 title={option.description}
               >
@@ -128,7 +142,7 @@ export function ToolInputQuestionnaire({
         </div>
       )}
 
-      {allowCustomAnswer ? (
+      {questionAllowsCustomAnswer ? (
         <div className="chat-tool-input-editor">
           <textarea
             value={currentCustomAnswer}
