@@ -846,11 +846,11 @@ export interface TerminalNotificationClearedEvent {
   sessionId: string | null;
 }
 
-export interface TerminalOutputEvent {
+export interface TerminalOutputReadyEvent {
   sessionId: string;
-  seq: number;
+  latestSeq: number;
   ts: string;
-  data: string;
+  bytes: number;
 }
 
 export interface TerminalReplayChunk {

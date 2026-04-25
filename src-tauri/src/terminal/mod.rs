@@ -37,10 +37,12 @@ const TERMINAL_OUTPUT_MAX_EMIT_BYTES: usize = 256 * 1024;
 const TERMINAL_OUTPUT_BUFFER_MAX_BYTES: usize = 4 * 1024 * 1024;
 const TERMINAL_REPLAY_MAX_CHUNKS: usize = 4096;
 const TERMINAL_REPLAY_MAX_BYTES: usize = 8 * 1024 * 1024;
+const TERMINAL_COMPLETED_REPLAY_GRACE_MS: u64 = 60_000;
 
 #[derive(Default)]
 pub struct TerminalManager {
     workspaces: RwLock<HashMap<String, HashMap<String, Arc<TerminalSessionHandle>>>>,
+    completed_replays: RwLock<HashMap<String, HashMap<String, TerminalReplaySnapshot>>>,
 }
 
 struct TerminalSessionHandle {
@@ -57,6 +59,22 @@ struct TerminalSessionHandle {
 struct TerminalReplayState {
     entries: VecDeque<TerminalReplayChunkDto>,
     total_bytes: usize,
+}
+
+#[derive(Clone, Default)]
+struct TerminalReplaySnapshot {
+    latest_seq: u64,
+    entries: Vec<TerminalReplayChunkDto>,
+}
+
+impl TerminalReplaySnapshot {
+    fn replay_since_limited(
+        &self,
+        from_seq: Option<u64>,
+        max_bytes: usize,
+    ) -> TerminalResumeSessionDto {
+        replay_response_from_entries(self.latest_seq, self.entries.iter(), from_seq, max_bytes)
+    }
 }
 
 struct TerminalSessionDiagnosticsState {
@@ -225,13 +243,51 @@ fn trim_string_to_tail(value: &mut String, max_bytes: usize) -> usize {
     before.saturating_sub(value.len())
 }
 
+fn replay_response_from_entries<'a>(
+    latest_seq: u64,
+    entries: impl Iterator<Item = &'a TerminalReplayChunkDto>,
+    from_seq: Option<u64>,
+    max_bytes: usize,
+) -> TerminalResumeSessionDto {
+    let entries = entries.collect::<Vec<_>>();
+    let oldest_available_seq = entries.first().map(|chunk| chunk.seq);
+    let gap = match (from_seq, oldest_available_seq) {
+        (Some(from), Some(oldest)) => from.saturating_add(1) < oldest,
+        _ => false,
+    };
+
+    let mut chunks = Vec::new();
+    let mut total_bytes = 0usize;
+    for chunk in entries
+        .into_iter()
+        .filter(|chunk| from_seq.map(|value| chunk.seq > value).unwrap_or(true))
+    {
+        let chunk_bytes = chunk.data.len();
+        if !chunks.is_empty() && total_bytes.saturating_add(chunk_bytes) > max_bytes {
+            break;
+        }
+        total_bytes = total_bytes.saturating_add(chunk_bytes);
+        chunks.push(chunk.clone());
+        if total_bytes >= max_bytes {
+            break;
+        }
+    }
+
+    TerminalResumeSessionDto {
+        latest_seq,
+        oldest_available_seq,
+        gap,
+        chunks,
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct TerminalOutputEvent {
+struct TerminalOutputReadyEvent {
     session_id: String,
-    seq: u64,
+    latest_seq: u64,
     ts: String,
-    data: String,
+    bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -290,11 +346,36 @@ impl TerminalManager {
         session_id: &str,
         from_seq: Option<u64>,
     ) -> anyhow::Result<TerminalResumeSessionDto> {
-        let session = self
-            .get_session(workspace_id, session_id)
+        if let Some(session) = self.get_session(workspace_id, session_id).await {
+            return Ok(session.replay_since(from_seq));
+        }
+        if let Some(replay) = self
+            .completed_replay_since(workspace_id, session_id, from_seq, usize::MAX)
             .await
-            .ok_or_else(|| anyhow::anyhow!("terminal session not found: {session_id}"))?;
-        Ok(session.replay_since(from_seq))
+        {
+            return Ok(replay);
+        }
+        Err(anyhow::anyhow!("terminal session not found: {session_id}"))
+    }
+
+    pub async fn drain_output(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+        from_seq: Option<u64>,
+        target_bytes: usize,
+    ) -> anyhow::Result<TerminalResumeSessionDto> {
+        let target_bytes = target_bytes.max(TERMINAL_OUTPUT_MAX_EMIT_BYTES);
+        if let Some(session) = self.get_session(workspace_id, session_id).await {
+            return Ok(session.replay_since_limited(from_seq, target_bytes));
+        }
+        if let Some(replay) = self
+            .completed_replay_since(workspace_id, session_id, from_seq, target_bytes)
+            .await
+        {
+            return Ok(replay);
+        }
+        Err(anyhow::anyhow!("terminal session not found: {session_id}"))
     }
 
     pub async fn create_session(
@@ -468,6 +549,46 @@ impl TerminalManager {
             .get(workspace_id)
             .and_then(|sessions| sessions.get(session_id))
             .cloned()
+    }
+
+    async fn completed_replay_since(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+        from_seq: Option<u64>,
+        max_bytes: usize,
+    ) -> Option<TerminalResumeSessionDto> {
+        self.completed_replays
+            .read()
+            .await
+            .get(workspace_id)
+            .and_then(|sessions| sessions.get(session_id))
+            .map(|snapshot| snapshot.replay_since_limited(from_seq, max_bytes))
+    }
+
+    async fn store_completed_replay(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+        snapshot: TerminalReplaySnapshot,
+    ) {
+        self.completed_replays
+            .write()
+            .await
+            .entry(workspace_id.to_string())
+            .or_default()
+            .insert(session_id.to_string(), snapshot);
+    }
+
+    async fn remove_completed_replay(&self, workspace_id: &str, session_id: &str) {
+        let mut replays = self.completed_replays.write().await;
+        let Some(workspace_replays) = replays.get_mut(workspace_id) else {
+            return;
+        };
+        workspace_replays.remove(session_id);
+        if workspace_replays.is_empty() {
+            replays.remove(workspace_id);
+        }
     }
 
     async fn take_session(
@@ -795,6 +916,8 @@ impl TerminalManager {
             return;
         };
         let event_session_id = session.meta.id.clone();
+        self.store_completed_replay(&workspace_id, &event_session_id, session.replay_snapshot())
+            .await;
         let exit = match tokio::task::spawn_blocking(move || session.wait_for_exit()).await {
             Ok(payload) => payload,
             Err(error) => {
@@ -809,6 +932,9 @@ impl TerminalManager {
         let notifications = app.state::<AppState>().notifications.clone();
         notifications
             .clear_for_session(&app, &workspace_id, &event_session_id)
+            .await;
+        tokio::time::sleep(Duration::from_millis(TERMINAL_COMPLETED_REPLAY_GRACE_MS)).await;
+        self.remove_completed_replay(&workspace_id, &event_session_id)
             .await;
     }
 }
@@ -974,6 +1100,14 @@ impl TerminalSessionHandle {
     }
 
     fn replay_since(&self, from_seq: Option<u64>) -> TerminalResumeSessionDto {
+        self.replay_since_limited(from_seq, usize::MAX)
+    }
+
+    fn replay_since_limited(
+        &self,
+        from_seq: Option<u64>,
+        max_bytes: usize,
+    ) -> TerminalResumeSessionDto {
         let latest_seq = self.replay_seq.load(Ordering::Relaxed);
         match self
             .replay_state
@@ -981,24 +1115,7 @@ impl TerminalSessionHandle {
             .map_err(|_| anyhow::anyhow!("terminal replay lock poisoned"))
         {
             Ok(state) => {
-                let oldest_available_seq = state.entries.front().map(|chunk| chunk.seq);
-                let gap = match (from_seq, oldest_available_seq) {
-                    (Some(from), Some(oldest)) => from.saturating_add(1) < oldest,
-                    _ => false,
-                };
-                let chunks = state
-                    .entries
-                    .iter()
-                    .filter(|chunk| from_seq.map(|value| chunk.seq > value).unwrap_or(true))
-                    .cloned()
-                    .collect();
-
-                TerminalResumeSessionDto {
-                    latest_seq,
-                    oldest_available_seq,
-                    gap,
-                    chunks,
-                }
+                replay_response_from_entries(latest_seq, state.entries.iter(), from_seq, max_bytes)
             }
             Err(error) => {
                 log::warn!("failed reading terminal replay chunk: {error}");
@@ -1007,6 +1124,27 @@ impl TerminalSessionHandle {
                     oldest_available_seq: None,
                     gap: false,
                     chunks: Vec::new(),
+                }
+            }
+        }
+    }
+
+    fn replay_snapshot(&self) -> TerminalReplaySnapshot {
+        let latest_seq = self.replay_seq.load(Ordering::Relaxed);
+        match self
+            .replay_state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("terminal replay lock poisoned"))
+        {
+            Ok(state) => TerminalReplaySnapshot {
+                latest_seq,
+                entries: state.entries.iter().cloned().collect(),
+            },
+            Err(error) => {
+                log::warn!("failed snapshotting terminal replay chunk: {error}");
+                TerminalReplaySnapshot {
+                    latest_seq,
+                    entries: Vec::new(),
                 }
             }
         }
@@ -1660,11 +1798,12 @@ fn emit_output(
     chunk: TerminalReplayChunkDto,
 ) {
     let event_name = format!("terminal-output-{workspace_id}");
-    let payload = TerminalOutputEvent {
+    let bytes = chunk.data.len() as u64;
+    let payload = TerminalOutputReadyEvent {
         session_id: session_id.to_string(),
-        seq: chunk.seq,
+        latest_seq: chunk.seq,
         ts: chunk.ts,
-        data: chunk.data,
+        bytes,
     };
     let _ = app.emit(&event_name, payload);
 }

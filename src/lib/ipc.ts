@@ -51,7 +51,7 @@ import type {
   TerminalForegroundChangedEvent,
   TerminalNotificationIntegrationId,
   TerminalNotificationSettings,
-  TerminalOutputEvent,
+  TerminalOutputReadyEvent,
   TerminalRendererDiagnostics,
   TerminalResumeSession,
   TerminalSession,
@@ -497,6 +497,18 @@ export const ipc = {
       sessionId,
       fromSeq: fromSeq ?? null,
     }),
+  terminalDrainOutput: (
+    workspaceId: string,
+    sessionId: string,
+    fromSeq: number | null,
+    targetBytes: number,
+  ) =>
+    invoke<TerminalResumeSession>("terminal_drain_output", {
+      workspaceId,
+      sessionId,
+      fromSeq,
+      targetBytes,
+    }),
   terminalListNotifications: (workspaceId: string) =>
     invoke<TerminalNotification[]>("terminal_list_notifications", { workspaceId }),
   terminalClearNotification: (workspaceId: string, sessionId?: string | null) =>
@@ -585,9 +597,9 @@ export async function listenMenuAction(
 
 export async function listenTerminalOutput(
   workspaceId: string,
-  onEvent: (event: TerminalOutputEvent) => void
+  onEvent: (event: TerminalOutputReadyEvent) => void
 ): Promise<UnlistenFn> {
-  return listen<TerminalOutputEvent>(
+  return listen<TerminalOutputReadyEvent>(
     `terminal-output-${workspaceId}`,
     ({ payload }) => onEvent(payload)
   );
@@ -671,7 +683,7 @@ export async function writeCommandToNewSession(
 
     const fallbackTimer = setTimeout(doWrite, FALLBACK_TIMEOUT_MS);
 
-    listen<TerminalOutputEvent>(
+    listen<TerminalOutputReadyEvent>(
       `terminal-output-${workspaceId}`,
       ({ payload }) => {
         if (settled || payload.sessionId !== sessionId) return;
