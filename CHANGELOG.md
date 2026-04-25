@@ -1,5 +1,17 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.55.0...vnull) (2026-04-25)
+
+### Features
+
+* add workspace pane splitting ([41e4c02](https://github.com/wygoralves/panes/commit/41e4c02afd084f15805613ec9e0060fbb8b036ad))
+* improve file link navigation ([29deac1](https://github.com/wygoralves/panes/commit/29deac1e87ac40fb07098b96ac74e214a8870def))
+
+### Bug Fixes
+
+* **terminal:** add output backpressure ([e2fcaf6](https://github.com/wygoralves/panes/commit/e2fcaf6b0280b5d58486c44ef4ba3363ddd2b7d9))
+* **workspace:** preserve source pane for file links ([fb1a3de](https://github.com/wygoralves/panes/commit/fb1a3dec56de14ce1f25611d299c24ec7c05f195))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.54.1...vnull) (2026-04-20)
 
 ### Features
