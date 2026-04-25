@@ -26,6 +26,15 @@
       "image": "Vision",
       "textOnly": "Text only"
     },
+    "metadata": {
+      "vision": "Vision",
+      "pdf": "PDF",
+      "files": "Files",
+      "noFiles": "No files",
+      "contextLimit": "{{tokens}} ctx",
+      "inputLimit": "{{tokens}} in",
+      "outputLimit": "{{tokens}} out"
+    },
     "effort": {
       "none": "None",
       "minimal": "Minimal",
@@ -48,8 +57,8 @@
     "codexWarning": "Only image and text attachments are supported for Codex turns.",
     "claudeTitle": "Attach files (text, SVG, and supported images)",
     "claudeWarning": "Only text files, including SVG, and PNG, JPEG, GIF, or WEBP images are supported for Claude turns.",
-    "opencodeTitle": "Attach files (text)",
-    "opencodeWarning": "Only text attachments are supported for OpenCode turns.",
+    "opencodeTitle": "Attach files",
+    "opencodeWarning": "The selected OpenCode model does not support that attachment type.",
     "remove": "Remove attachment",
     "filters": {
       "supportedFiles": "Supported files",

@@ -17,6 +17,7 @@ const engines: EngineInfo[] = [
         hidden: false,
         isDefault: true,
         inputModalities: ["text"],
+        attachmentModalities: ["text"],
         supportsPersonality: true,
         defaultReasoningEffort: "medium",
         supportedReasoningEfforts: [
@@ -33,6 +34,7 @@ const engines: EngineInfo[] = [
         hidden: false,
         isDefault: false,
         inputModalities: ["text"],
+        attachmentModalities: ["text"],
         supportsPersonality: true,
         defaultReasoningEffort: "medium",
         supportedReasoningEfforts: [
@@ -60,6 +62,7 @@ const engines: EngineInfo[] = [
         hidden: false,
         isDefault: true,
         inputModalities: ["text"],
+        attachmentModalities: ["text"],
         supportsPersonality: false,
         defaultReasoningEffort: "medium",
         supportedReasoningEfforts: [

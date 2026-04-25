@@ -453,9 +453,17 @@ export interface EngineModel {
   availabilityNux?: EngineModelAvailabilityNux;
   upgradeInfo?: EngineModelUpgradeInfo;
   inputModalities: string[];
+  attachmentModalities: string[];
+  limits?: EngineModelLimits;
   supportsPersonality: boolean;
   defaultReasoningEffort: string;
   supportedReasoningEfforts: ReasoningEffortOption[];
+}
+
+export interface EngineModelLimits {
+  contextTokens?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
 }
 
 export interface EngineModelAvailabilityNux {

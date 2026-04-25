@@ -28,7 +28,7 @@ use crate::{process_utils, runtime_env};
 use super::{
     normalize_approval_response_for_engine, trim_action_output_delta_content, ActionResult,
     ActionType, ApprovalRequestRoute, DiffScope, Engine, EngineEvent, EngineThread, ModelInfo,
-    OutputStream, ReasoningEffortOption, SandboxPolicy, ThreadScope, TokenUsage,
+    ModelLimits, OutputStream, ReasoningEffortOption, SandboxPolicy, ThreadScope, TokenUsage,
     TurnCompletionStatus, TurnInput,
 };
 
@@ -129,6 +129,7 @@ struct OpenCodeProviderModel {
     id: String,
     name: String,
     status: Option<String>,
+    limit: Option<OpenCodeModelLimit>,
     capabilities: Option<OpenCodeModelCapabilities>,
     #[serde(default)]
     variants: HashMap<String, Value>,
@@ -141,6 +142,7 @@ struct OpenCodeVerboseModel {
     provider_id: String,
     name: String,
     status: Option<String>,
+    limit: Option<OpenCodeModelLimit>,
     capabilities: Option<OpenCodeModelCapabilities>,
     #[serde(default)]
     variants: HashMap<String, Value>,
@@ -148,7 +150,16 @@ struct OpenCodeVerboseModel {
 
 #[derive(Debug, Clone, Deserialize)]
 struct OpenCodeModelCapabilities {
+    #[serde(default)]
+    attachment: bool,
     input: Option<OpenCodeModelInputCapabilities>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct OpenCodeModelLimit {
+    context: Option<u64>,
+    input: Option<u64>,
+    output: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -781,13 +792,17 @@ impl OpenCodeEngine {
                 continue;
             }
             let modalities = model_modalities_from_capabilities(record.capabilities.as_ref());
-            models.push(model_info(
+            let attachment_modalities =
+                attachment_modalities_from_capabilities(record.capabilities.as_ref());
+            models.push(model_info_with_metadata(
                 &slug,
                 &record.name,
                 "OpenCode model",
                 index == 0,
                 reasoning_efforts_from_variants(&record.variants),
                 modalities,
+                attachment_modalities,
+                model_limits(record.limit.as_ref()),
             ));
         }
 
@@ -842,13 +857,17 @@ impl OpenCodeEngine {
                 }
                 let slug = format!("{}/{}", provider.id, model.id);
                 let modalities = model_modalities(model);
-                models.push(model_info(
+                let attachment_modalities =
+                    attachment_modalities_from_capabilities(model.capabilities.as_ref());
+                models.push(model_info_with_metadata(
                     &slug,
                     &model.name,
                     &format!("{} model via OpenCode", provider.name),
                     false,
                     reasoning_efforts_from_variants(&model.variants),
                     modalities,
+                    attachment_modalities,
+                    model_limits(model.limit.as_ref()),
                 ));
             }
         }
@@ -1423,6 +1442,28 @@ fn model_info(
     supported_reasoning_efforts: Vec<ReasoningEffortOption>,
     input_modalities: Vec<String>,
 ) -> ModelInfo {
+    model_info_with_metadata(
+        id,
+        display_name,
+        description,
+        is_default,
+        supported_reasoning_efforts,
+        input_modalities,
+        vec!["text".to_string()],
+        None,
+    )
+}
+
+fn model_info_with_metadata(
+    id: &str,
+    display_name: &str,
+    description: &str,
+    is_default: bool,
+    supported_reasoning_efforts: Vec<ReasoningEffortOption>,
+    input_modalities: Vec<String>,
+    attachment_modalities: Vec<String>,
+    limits: Option<ModelLimits>,
+) -> ModelInfo {
     let default_reasoning_effort =
         default_reasoning_effort(&supported_reasoning_efforts).unwrap_or("medium");
     ModelInfo {
@@ -1435,6 +1476,8 @@ fn model_info(
         availability_nux: None,
         upgrade_info: None,
         input_modalities,
+        attachment_modalities,
+        limits,
         supports_personality: false,
         default_reasoning_effort: default_reasoning_effort.to_string(),
         supported_reasoning_efforts,
@@ -1537,6 +1580,42 @@ fn model_modalities_from_capabilities(
         modalities.push("pdf".to_string());
     }
     modalities
+}
+
+fn attachment_modalities_from_capabilities(
+    capabilities: Option<&OpenCodeModelCapabilities>,
+) -> Vec<String> {
+    let Some(capabilities) = capabilities else {
+        return vec!["text".to_string()];
+    };
+    if !capabilities.attachment {
+        return Vec::new();
+    }
+
+    let input = capabilities.input.as_ref();
+    let mut modalities = Vec::new();
+    if input.map(|input| input.text).unwrap_or(true) {
+        modalities.push("text".to_string());
+    }
+    if input.map(|input| input.image).unwrap_or(false) {
+        modalities.push("image".to_string());
+    }
+    if input.map(|input| input.pdf).unwrap_or(false) {
+        modalities.push("pdf".to_string());
+    }
+    modalities
+}
+
+fn model_limits(limit: Option<&OpenCodeModelLimit>) -> Option<ModelLimits> {
+    let limit = limit?;
+    if limit.context.is_none() && limit.input.is_none() && limit.output.is_none() {
+        return None;
+    }
+    Some(ModelLimits {
+        context_tokens: limit.context,
+        input_tokens: limit.input,
+        output_tokens: limit.output,
+    })
 }
 
 fn model_modalities(model: &OpenCodeProviderModel) -> Vec<String> {
@@ -2083,8 +2162,10 @@ mod tests {
   "providerID": "opencode",
   "name": "Big Pickle",
   "status": "active",
+  "limit": { "context": 200000, "input": 200000, "output": 100000 },
   "capabilities": {
     "reasoning": true,
+    "attachment": false,
     "input": { "text": true, "image": false, "pdf": false }
   },
   "variants": {
@@ -2098,9 +2179,11 @@ opencode/gpt-5-nano
   "providerID": "opencode",
   "name": "GPT-5 Nano",
   "status": "active",
+  "limit": { "context": 400000, "input": 200000, "output": 128000 },
   "capabilities": {
     "reasoning": true,
-    "input": { "text": true, "image": true, "pdf": false }
+    "attachment": true,
+    "input": { "text": true, "image": true, "pdf": true }
   },
   "variants": {
     "minimal": { "reasoningEffort": "minimal" },
@@ -2124,7 +2207,22 @@ opencode/gpt-5-nano
         assert_eq!(nano_efforts, vec!["minimal", "low", "medium", "high"]);
         assert_eq!(
             model_modalities_from_capabilities(records[1].capabilities.as_ref()),
-            vec!["text".to_string(), "image".to_string()]
+            vec!["text".to_string(), "image".to_string(), "pdf".to_string()]
+        );
+        assert_eq!(
+            attachment_modalities_from_capabilities(records[0].capabilities.as_ref()),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            attachment_modalities_from_capabilities(records[1].capabilities.as_ref()),
+            vec!["text".to_string(), "image".to_string(), "pdf".to_string()]
+        );
+        let limits = model_limits(records[1].limit.as_ref()).expect("limits");
+        assert_eq!(limits.context_tokens, Some(400000));
+        assert_eq!(limits.output_tokens, Some(128000));
+        assert_eq!(
+            model_limits(records[0].limit.as_ref()).and_then(|limits| limits.input_tokens),
+            Some(200000)
         );
     }
 

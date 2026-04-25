@@ -8694,6 +8694,27 @@ button, input, textarea, select {
   white-space: nowrap;
 }
 
+.mp-model-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.mp-model-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 16px;
+  padding: 0 5px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  color: var(--text-3);
+  background: var(--bg-2);
+  font-size: 9.5px;
+  line-height: 1.2;
+}
+
 .mp-model-check {
   flex-shrink: 0;
   color: var(--accent);

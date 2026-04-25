@@ -949,6 +949,8 @@ impl Engine for ClaudeSidecarEngine {
                 availability_nux: None,
                 upgrade_info: None,
                 input_modalities: vec!["text".to_string(), "image".to_string()],
+                attachment_modalities: vec!["text".to_string(), "image".to_string()],
+                limits: None,
                 supports_personality: false,
                 default_reasoning_effort: "xhigh".to_string(),
                 supported_reasoning_efforts: vec![
@@ -984,6 +986,8 @@ impl Engine for ClaudeSidecarEngine {
                 availability_nux: None,
                 upgrade_info: None,
                 input_modalities: vec!["text".to_string(), "image".to_string()],
+                attachment_modalities: vec!["text".to_string(), "image".to_string()],
+                limits: None,
                 supports_personality: false,
                 default_reasoning_effort: "high".to_string(),
                 supported_reasoning_efforts: vec![
@@ -1011,6 +1015,8 @@ impl Engine for ClaudeSidecarEngine {
                 availability_nux: None,
                 upgrade_info: None,
                 input_modalities: vec!["text".to_string(), "image".to_string()],
+                attachment_modalities: vec!["text".to_string(), "image".to_string()],
+                limits: None,
                 supports_personality: false,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![
@@ -1038,6 +1044,8 @@ impl Engine for ClaudeSidecarEngine {
                 availability_nux: None,
                 upgrade_info: None,
                 input_modalities: vec!["text".to_string(), "image".to_string()],
+                attachment_modalities: vec!["text".to_string(), "image".to_string()],
+                limits: None,
                 supports_personality: false,
                 default_reasoning_effort: "low".to_string(),
                 supported_reasoning_efforts: vec![
