@@ -2197,11 +2197,14 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     activeThread?.engineId,
     pendingToolInputApproval?.details,
   );
+  const pendingToolInputIsOpenCodeQuestion =
+    activeThread?.engineId === "opencode" &&
+    isOpenCodeQuestionApproval(pendingToolInputApproval?.details);
   const pendingToolInputSupportsDecline =
-    pendingToolInputCanUseDecisionActions &&
+    (pendingToolInputCanUseDecisionActions || pendingToolInputIsOpenCodeQuestion) &&
     activeThreadApprovalDecisionCapabilities.includes("decline");
   const pendingToolInputSupportsCancel =
-    pendingToolInputCanUseDecisionActions &&
+    (pendingToolInputCanUseDecisionActions || pendingToolInputIsOpenCodeQuestion) &&
     activeThreadApprovalDecisionCapabilities.includes("cancel");
 
   const appendAttachmentsFromPaths = useCallback((paths: string[]) => {
@@ -4991,7 +4994,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   pendingToolInputSupportsCancel
                     ? () =>
                         void respondApproval(pendingToolInputApproval.approvalId, {
-                          action: "cancel",
+                          [pendingToolInputIsOpenCodeQuestion ? "decision" : "action"]:
+                            "cancel",
                         })
                     : undefined
                 }
@@ -4999,7 +5003,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   pendingToolInputSupportsDecline
                     ? () =>
                         void respondApproval(pendingToolInputApproval.approvalId, {
-                          action: "decline",
+                          [pendingToolInputIsOpenCodeQuestion ? "decision" : "action"]:
+                            "decline",
                         })
                     : undefined
                 }

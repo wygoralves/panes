@@ -157,6 +157,10 @@ pub struct ActionResult {
 pub struct TokenUsage {
     pub input: u64,
     pub output: u64,
+    pub reasoning: Option<u64>,
+    pub cache_read: Option<u64>,
+    pub cache_write: Option<u64>,
+    pub cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

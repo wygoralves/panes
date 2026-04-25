@@ -1253,7 +1253,14 @@ fn extract_token_usage(value: &Value) -> Option<TokenUsage> {
             .or_else(|| usage.get("completionTokens").and_then(Value::as_u64));
 
         if let (Some(input), Some(output)) = (input, output) {
-            return Some(TokenUsage { input, output });
+            return Some(TokenUsage {
+                input,
+                output,
+                reasoning: None,
+                cache_read: None,
+                cache_write: None,
+                cost_usd: None,
+            });
         }
     }
 

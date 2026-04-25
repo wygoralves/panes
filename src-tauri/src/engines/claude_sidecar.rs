@@ -1368,6 +1368,10 @@ impl Engine for ClaudeSidecarEngine {
                                             token_usage: token_usage.map(|usage| super::TokenUsage {
                                                 input: usage.input,
                                                 output: usage.output,
+                                                reasoning: None,
+                                                cache_read: None,
+                                                cache_write: None,
+                                                cost_usd: None,
                                             }),
                                             status: completion_status,
                                         })
