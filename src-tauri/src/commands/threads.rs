@@ -1211,7 +1211,8 @@ async fn validate_reasoning_effort(
     model_id: &str,
     requested_effort: &str,
 ) -> Result<String, String> {
-    const KNOWN_REASONING_EFFORTS: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh"];
+    const KNOWN_REASONING_EFFORTS: &[&str] =
+        &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
     if !KNOWN_REASONING_EFFORTS.contains(&requested_effort) {
         return Err(format!(
             "invalid reasoning effort `{requested_effort}`. expected one of: {}",

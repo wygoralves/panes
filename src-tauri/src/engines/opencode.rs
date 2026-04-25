@@ -56,6 +56,7 @@ struct OpenCodeState {
 struct OpenCodeSession {
     cwd: String,
     model_id: String,
+    reasoning_effort: Option<String>,
     permission_mode: OpenCodePermissionMode,
     server: Arc<OpenCodeServer>,
 }
@@ -129,18 +130,34 @@ struct OpenCodeProviderModel {
     name: String,
     status: Option<String>,
     capabilities: Option<OpenCodeModelCapabilities>,
+    #[serde(default)]
+    variants: HashMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct OpenCodeVerboseModel {
+    id: String,
+    #[serde(rename = "providerID")]
+    provider_id: String,
+    name: String,
+    status: Option<String>,
+    capabilities: Option<OpenCodeModelCapabilities>,
+    #[serde(default)]
+    variants: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct OpenCodeModelCapabilities {
-    reasoning: bool,
     input: Option<OpenCodeModelInputCapabilities>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 struct OpenCodeModelInputCapabilities {
+    #[serde(default)]
     text: bool,
+    #[serde(default)]
     image: bool,
+    #[serde(default)]
     pdf: bool,
 }
 
@@ -236,7 +253,7 @@ impl Engine for OpenCodeEngine {
             "OpenCode Big Pickle",
             "Default OpenCode-hosted coding model.",
             true,
-            false,
+            reasoning_efforts_from_variant_names(&["high", "max"]),
             vec!["text".to_string()],
         )]
     }
@@ -257,6 +274,9 @@ impl Engine for OpenCodeEngine {
             .with_context(|| format!("OpenCode model `{model}` must use provider/model format"))?;
         let _ = parsed_model;
         let permission_mode = permission_mode_from_policy(sandbox.approval_policy.as_ref());
+        let reasoning_effort = self
+            .resolve_session_reasoning_effort(model, sandbox.reasoning_effort.as_deref())
+            .await;
 
         if let Some(existing_id) = resume_engine_thread_id {
             let mut state = self.state.lock().await;
@@ -265,6 +285,7 @@ impl Engine for OpenCodeEngine {
                     let server = existing.server.clone();
                     let previous_permission_mode = existing.permission_mode;
                     existing.model_id = model.to_string();
+                    existing.reasoning_effort = reasoning_effort.clone();
                     existing.permission_mode = permission_mode;
                     drop(state);
                     if previous_permission_mode != permission_mode {
@@ -307,6 +328,7 @@ impl Engine for OpenCodeEngine {
                 OpenCodeSession {
                     cwd: cwd.clone(),
                     model_id: model.to_string(),
+                    reasoning_effort,
                     permission_mode,
                     server,
                 },
@@ -652,13 +674,64 @@ impl OpenCodeEngine {
             }
         }
 
-        let models = match self.load_models_from_command().await {
+        let models = match self.load_models_from_verbose_command().await {
             Ok(models) if !models.is_empty() => models,
-            Ok(_) | Err(_) => self.models(),
+            Ok(_) => match self.load_models_from_command().await {
+                Ok(models) if !models.is_empty() => models,
+                Ok(_) | Err(_) => self.models(),
+            },
+            Err(error) => {
+                log::warn!(
+                    "failed to load verbose opencode models; falling back to basic list: {error}"
+                );
+                match self.load_models_from_command().await {
+                    Ok(models) if !models.is_empty() => models,
+                    Ok(_) | Err(_) => self.models(),
+                }
+            }
         };
 
         self.state.lock().await.runtime_model_cache = Some(models.clone());
         models
+    }
+
+    async fn resolve_session_reasoning_effort(
+        &self,
+        model_id: &str,
+        requested_effort: Option<&str>,
+    ) -> Option<String> {
+        let models = self.list_models_runtime().await;
+        let model = models.iter().find(|model| model.id == model_id)?;
+        resolve_model_reasoning_effort(model, requested_effort)
+    }
+
+    async fn load_models_from_verbose_command(&self) -> Result<Vec<ModelInfo>> {
+        let executable =
+            resolve_opencode_executable().context("`opencode` executable not found")?;
+        let output = run_opencode_command(&executable, &["models", "--verbose"]).await?;
+        let records = parse_verbose_model_records(&output)?;
+        let mut models = Vec::new();
+
+        for (index, record) in records.into_iter().enumerate() {
+            if record.status.as_deref() == Some("deprecated") {
+                continue;
+            }
+            let slug = format!("{}/{}", record.provider_id, record.id);
+            if parse_model_slug(&slug).is_none() {
+                continue;
+            }
+            let modalities = model_modalities_from_capabilities(record.capabilities.as_ref());
+            models.push(model_info(
+                &slug,
+                &record.name,
+                "OpenCode model",
+                index == 0,
+                reasoning_efforts_from_variants(&record.variants),
+                modalities,
+            ));
+        }
+
+        Ok(models)
     }
 
     async fn load_models_from_command(&self) -> Result<Vec<ModelInfo>> {
@@ -676,7 +749,7 @@ impl OpenCodeEngine {
                 slug,
                 "OpenCode model",
                 index == 0,
-                false,
+                Vec::new(),
                 vec!["text".to_string()],
             ));
         }
@@ -714,11 +787,7 @@ impl OpenCodeEngine {
                     &model.name,
                     &format!("{} model via OpenCode", provider.name),
                     false,
-                    model
-                        .capabilities
-                        .as_ref()
-                        .map(|c| c.reasoning)
-                        .unwrap_or(false),
+                    reasoning_efforts_from_variants(&model.variants),
                     modalities,
                 ));
             }
@@ -789,41 +858,11 @@ impl OpenCodeEngine {
         session: &OpenCodeSession,
         input: TurnInput,
     ) -> Result<()> {
-        let model = parse_model_slug(&session.model_id)
-            .with_context(|| format!("invalid OpenCode model `{}`", session.model_id))?;
-        let mut parts = vec![json!({
-            "type": "text",
-            "text": if input.plan_mode {
-                format!(
-                    "Plan the solution first. Do not execute commands or edit files until the plan is complete.\n\n{}",
-                    input.message
-                )
-            } else {
-                input.message
-            },
-        })];
-        for attachment in input.attachments {
-            parts.push(json!({
-                "type": "file",
-                "mime": attachment.mime_type.unwrap_or_else(|| "text/plain".to_string()),
-                "filename": attachment.file_name,
-                "url": file_url(&attachment.file_path),
-            }));
-        }
-
-        let mut body = json!({
-            "messageID": new_message_id(),
-            "model": {
-                "providerID": model.provider_id,
-                "modelID": model.model_id,
-            },
-            "parts": parts,
-        });
-        if input.plan_mode {
-            if let Some(object) = body.as_object_mut() {
-                object.insert("agent".to_string(), json!("plan"));
-            }
-        }
+        let body = build_prompt_body(
+            &session.model_id,
+            session.reasoning_effort.as_deref(),
+            input,
+        )?;
 
         self.request(
             session.server.as_ref(),
@@ -1291,14 +1330,64 @@ fn parse_model_slug(slug: &str) -> Option<ParsedModelSlug> {
     })
 }
 
+fn build_prompt_body(
+    model_id: &str,
+    reasoning_effort: Option<&str>,
+    input: TurnInput,
+) -> Result<Value> {
+    let model = parse_model_slug(model_id)
+        .with_context(|| format!("invalid OpenCode model `{model_id}`"))?;
+    let plan_mode = input.plan_mode;
+    let mut parts = vec![json!({
+        "type": "text",
+        "text": if plan_mode {
+            format!(
+                "Plan the solution first. Do not execute commands or edit files until the plan is complete.\n\n{}",
+                input.message
+            )
+        } else {
+            input.message
+        },
+    })];
+    for attachment in input.attachments {
+        parts.push(json!({
+            "type": "file",
+            "mime": attachment.mime_type.unwrap_or_else(|| "text/plain".to_string()),
+            "filename": attachment.file_name,
+            "url": file_url(&attachment.file_path),
+        }));
+    }
+
+    let mut body = json!({
+        "messageID": new_message_id(),
+        "model": {
+            "providerID": model.provider_id,
+            "modelID": model.model_id,
+        },
+        "parts": parts,
+    });
+    if let Some(object) = body.as_object_mut() {
+        if plan_mode {
+            object.insert("agent".to_string(), json!("plan"));
+        }
+        if let Some(variant) = reasoning_effort.map(str::trim).filter(|value| !value.is_empty()) {
+            object.insert("variant".to_string(), json!(variant));
+        }
+    }
+
+    Ok(body)
+}
+
 fn model_info(
     id: &str,
     display_name: &str,
     description: &str,
     is_default: bool,
-    supports_reasoning: bool,
+    supported_reasoning_efforts: Vec<ReasoningEffortOption>,
     input_modalities: Vec<String>,
 ) -> ModelInfo {
+    let default_reasoning_effort =
+        default_reasoning_effort(&supported_reasoning_efforts).unwrap_or("medium");
     ModelInfo {
         id: id.to_string(),
         display_name: display_name.to_string(),
@@ -1310,41 +1399,100 @@ fn model_info(
         upgrade_info: None,
         input_modalities,
         supports_personality: false,
-        default_reasoning_effort: "medium".to_string(),
-        supported_reasoning_efforts: if supports_reasoning {
-            vec![ReasoningEffortOption {
-                reasoning_effort: "medium".to_string(),
-                description: "OpenCode provider default reasoning".to_string(),
-            }]
-        } else {
-            Vec::new()
-        },
+        default_reasoning_effort: default_reasoning_effort.to_string(),
+        supported_reasoning_efforts,
     }
 }
 
-fn model_modalities(model: &OpenCodeProviderModel) -> Vec<String> {
-    let mut modalities = Vec::new();
+fn default_reasoning_effort(options: &[ReasoningEffortOption]) -> Option<&'static str> {
+    for preferred in ["medium", "high", "low", "minimal", "none", "xhigh", "max"] {
+        if options
+            .iter()
+            .any(|option| option.reasoning_effort == preferred)
+        {
+            return Some(preferred);
+        }
+    }
+    None
+}
+
+fn resolve_model_reasoning_effort(
+    model: &ModelInfo,
+    requested_effort: Option<&str>,
+) -> Option<String> {
+    if model.supported_reasoning_efforts.is_empty() {
+        return None;
+    }
+
+    let requested = requested_effort
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_lowercase);
+    if let Some(requested) = requested.as_ref() {
+        if model
+            .supported_reasoning_efforts
+            .iter()
+            .any(|option| option.reasoning_effort == *requested)
+        {
+            return Some(requested.clone());
+        }
+    }
+
     if model
-        .capabilities
-        .as_ref()
+        .supported_reasoning_efforts
+        .iter()
+        .any(|option| option.reasoning_effort == model.default_reasoning_effort)
+    {
+        return Some(model.default_reasoning_effort.clone());
+    }
+
+    model
+        .supported_reasoning_efforts
+        .iter()
+        .map(|option| option.reasoning_effort.trim())
+        .find(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn reasoning_efforts_from_variants(
+    variants: &HashMap<String, Value>,
+) -> Vec<ReasoningEffortOption> {
+    let names = variants.keys().map(String::as_str).collect::<Vec<_>>();
+    reasoning_efforts_from_variant_names(&names)
+}
+
+fn reasoning_efforts_from_variant_names(names: &[&str]) -> Vec<ReasoningEffortOption> {
+    const ORDER: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+    ORDER
+        .iter()
+        .copied()
+        .filter(|effort| names.iter().any(|name| name.eq_ignore_ascii_case(effort)))
+        .map(|effort| ReasoningEffortOption {
+            reasoning_effort: effort.to_string(),
+            description: format!("OpenCode {effort} variant"),
+        })
+        .collect()
+}
+
+fn model_modalities_from_capabilities(
+    capabilities: Option<&OpenCodeModelCapabilities>,
+) -> Vec<String> {
+    let mut modalities = Vec::new();
+    if capabilities
         .and_then(|capabilities| capabilities.input.as_ref())
         .map(|input| input.text)
         .unwrap_or(true)
     {
         modalities.push("text".to_string());
     }
-    if model
-        .capabilities
-        .as_ref()
+    if capabilities
         .and_then(|capabilities| capabilities.input.as_ref())
         .map(|input| input.image)
         .unwrap_or(false)
     {
         modalities.push("image".to_string());
     }
-    if model
-        .capabilities
-        .as_ref()
+    if capabilities
         .and_then(|capabilities| capabilities.input.as_ref())
         .map(|input| input.pdf)
         .unwrap_or(false)
@@ -1352,6 +1500,10 @@ fn model_modalities(model: &OpenCodeProviderModel) -> Vec<String> {
         modalities.push("pdf".to_string());
     }
     modalities
+}
+
+fn model_modalities(model: &OpenCodeProviderModel) -> Vec<String> {
+    model_modalities_from_capabilities(model.capabilities.as_ref())
 }
 
 fn scope_cwd(scope: &ThreadScope) -> String {
@@ -1534,6 +1686,80 @@ async fn run_opencode_command(executable: &Path, args: &[&str]) -> Result<String
         );
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn parse_verbose_model_records(output: &str) -> Result<Vec<OpenCodeVerboseModel>> {
+    let mut records = Vec::new();
+    let mut pending_slug: Option<String> = None;
+    let mut json_buffer = String::new();
+    let mut depth = 0_i32;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut collecting = false;
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if !collecting {
+            if parse_model_slug(trimmed).is_some() {
+                pending_slug = Some(trimmed.to_string());
+                continue;
+            }
+            if !trimmed.starts_with('{') {
+                continue;
+            }
+            collecting = true;
+        }
+
+        json_buffer.push_str(line);
+        json_buffer.push('\n');
+        for character in line.chars() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if in_string {
+                match character {
+                    '\\' => escaped = true,
+                    '"' => in_string = false,
+                    _ => {}
+                }
+                continue;
+            }
+            match character {
+                '"' => in_string = true,
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+
+        if collecting && depth == 0 {
+            let mut record: OpenCodeVerboseModel = serde_json::from_str(&json_buffer)
+                .context("failed to parse verbose OpenCode model metadata")?;
+            if let Some(slug) = pending_slug.take() {
+                if let Some(parsed) = parse_model_slug(&slug) {
+                    if record.provider_id.trim().is_empty() {
+                        record.provider_id = parsed.provider_id;
+                    }
+                    if record.id.trim().is_empty() {
+                        record.id = parsed.model_id;
+                    }
+                }
+            }
+            records.push(record);
+            json_buffer.clear();
+            depth = 0;
+            in_string = false;
+            escaped = false;
+            collecting = false;
+        }
+    }
+
+    if collecting {
+        anyhow::bail!("unterminated verbose OpenCode model JSON object");
+    }
+
+    Ok(records)
 }
 
 fn executable_augmented_path(executable: &Path) -> Option<OsString> {
@@ -1771,6 +1997,113 @@ mod tests {
         assert_eq!(parsed.provider_id, "openrouter");
         assert_eq!(parsed.model_id, "anthropic/claude-sonnet-4.5");
         assert!(parse_model_slug("missing-provider").is_none());
+    }
+
+    #[test]
+    fn verbose_models_expose_reasoning_variants() {
+        let output = r#"opencode/big-pickle
+{
+  "id": "big-pickle",
+  "providerID": "opencode",
+  "name": "Big Pickle",
+  "status": "active",
+  "capabilities": {
+    "reasoning": true,
+    "input": { "text": true, "image": false, "pdf": false }
+  },
+  "variants": {
+    "high": { "thinking": { "type": "enabled" } },
+    "max": { "thinking": { "type": "enabled" } }
+  }
+}
+opencode/gpt-5-nano
+{
+  "id": "gpt-5-nano",
+  "providerID": "opencode",
+  "name": "GPT-5 Nano",
+  "status": "active",
+  "capabilities": {
+    "reasoning": true,
+    "input": { "text": true, "image": true, "pdf": false }
+  },
+  "variants": {
+    "minimal": { "reasoningEffort": "minimal" },
+    "low": { "reasoningEffort": "low" },
+    "medium": { "reasoningEffort": "medium" },
+    "high": { "reasoningEffort": "high" }
+  }
+}"#;
+
+        let records = parse_verbose_model_records(output).unwrap();
+        assert_eq!(records.len(), 2);
+        let big_pickle_efforts = reasoning_efforts_from_variants(&records[0].variants)
+            .into_iter()
+            .map(|option| option.reasoning_effort)
+            .collect::<Vec<_>>();
+        assert_eq!(big_pickle_efforts, vec!["high", "max"]);
+        let nano_efforts = reasoning_efforts_from_variants(&records[1].variants)
+            .into_iter()
+            .map(|option| option.reasoning_effort)
+            .collect::<Vec<_>>();
+        assert_eq!(nano_efforts, vec!["minimal", "low", "medium", "high"]);
+        assert_eq!(
+            model_modalities_from_capabilities(records[1].capabilities.as_ref()),
+            vec!["text".to_string(), "image".to_string()]
+        );
+    }
+
+    #[test]
+    fn prompt_body_includes_selected_opencode_variant() {
+        let body = build_prompt_body(
+            "opencode/big-pickle",
+            Some("max"),
+            TurnInput {
+                message: "hello".to_string(),
+                attachments: Vec::new(),
+                plan_mode: false,
+                input_items: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(body.get("variant"), Some(&json!("max")));
+        assert_eq!(body["model"]["providerID"], json!("opencode"));
+        assert_eq!(body["model"]["modelID"], json!("big-pickle"));
+    }
+
+    #[test]
+    fn model_reasoning_effort_omits_models_without_variants() {
+        let model = model_info(
+            "openrouter/example/plain-model",
+            "Plain Model",
+            "OpenCode model",
+            false,
+            Vec::new(),
+            vec!["text".to_string()],
+        );
+
+        assert_eq!(resolve_model_reasoning_effort(&model, Some("medium")), None);
+    }
+
+    #[test]
+    fn model_reasoning_effort_falls_back_to_supported_default() {
+        let model = model_info(
+            "opencode/big-pickle",
+            "Big Pickle",
+            "OpenCode model",
+            true,
+            reasoning_efforts_from_variant_names(&["high", "max"]),
+            vec!["text".to_string()],
+        );
+
+        assert_eq!(
+            resolve_model_reasoning_effort(&model, Some("medium")).as_deref(),
+            Some("high")
+        );
+        assert_eq!(
+            resolve_model_reasoning_effort(&model, Some("max")).as_deref(),
+            Some("max")
+        );
     }
 
     #[test]
