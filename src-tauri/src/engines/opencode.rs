@@ -119,6 +119,7 @@ struct OpenCodeSessionRecord {
     id: String,
     title: Option<String>,
     directory: String,
+    permission: Option<Value>,
     time: OpenCodeSessionTime,
 }
 
@@ -399,26 +400,36 @@ impl Engine for OpenCodeEngine {
 
         if let Some(existing_id) = resume_engine_thread_id {
             let mut state = self.state.lock().await;
-            if let Some(existing) = state.sessions.get_mut(existing_id) {
-                if existing.cwd == cwd {
-                    let server = existing.server.clone();
-                    let previous_permission_mode = existing.permission_mode;
-                    existing.model_id = model.to_string();
-                    existing.reasoning_effort = reasoning_effort.clone();
-                    existing.agent = agent.clone();
-                    existing.permission_mode = permission_mode;
-                    drop(state);
-                    if previous_permission_mode != permission_mode {
-                        self.update_session_permission(
-                            server.as_ref(),
-                            existing_id,
-                            permission_mode,
-                        )
-                        .await?;
+            if let Some(existing) = state.sessions.get(existing_id).cloned() {
+                if existing.cwd == cwd && existing.permission_mode == permission_mode {
+                    if let Some(existing) = state.sessions.get_mut(existing_id) {
+                        existing.model_id = model.to_string();
+                        existing.reasoning_effort = reasoning_effort.clone();
+                        existing.agent = agent.clone();
                     }
                     return Ok(EngineThread {
                         engine_thread_id: existing_id.to_string(),
                     });
+                }
+
+                if existing.cwd == cwd {
+                    state.sessions.remove(existing_id);
+                    drop(state);
+                    let engine_thread_id = self
+                        .create_session(existing.server.as_ref(), permission_mode)
+                        .await?;
+                    self.state.lock().await.sessions.insert(
+                        engine_thread_id.clone(),
+                        OpenCodeSession {
+                            cwd,
+                            model_id: model.to_string(),
+                            reasoning_effort,
+                            agent,
+                            permission_mode,
+                            server: existing.server,
+                        },
+                    );
+                    return Ok(EngineThread { engine_thread_id });
                 }
             }
         }
@@ -426,7 +437,16 @@ impl Engine for OpenCodeEngine {
         let server = self.ensure_server(&cwd).await?;
         let engine_thread_id = match resume_engine_thread_id {
             Some(existing_id) => match self.get_session(server.as_ref(), existing_id).await {
-                Ok(_) => existing_id.to_string(),
+                Ok(session) if session_permission_matches(&session, permission_mode) => {
+                    existing_id.to_string()
+                }
+                Ok(_) => {
+                    log::warn!(
+                        "opencode session {existing_id} permission rules differ from requested mode; creating a new session"
+                    );
+                    self.create_session(server.as_ref(), permission_mode)
+                        .await?
+                }
                 Err(error) => {
                     log::warn!(
                         "opencode session resume failed for {existing_id}, creating a new session: {error}"
@@ -1119,17 +1139,25 @@ impl OpenCodeEngine {
         Ok(session.id)
     }
 
-    async fn get_session(&self, server: &OpenCodeServer, session_id: &str) -> Result<()> {
-        self.request(
-            server,
-            reqwest::Method::GET,
-            &format!("/session/{session_id}"),
-        )
-        .send()
-        .await?
-        .error_for_status()
-        .context("failed to read OpenCode session")?;
-        Ok(())
+    async fn get_session(
+        &self,
+        server: &OpenCodeServer,
+        session_id: &str,
+    ) -> Result<OpenCodeSessionRecord> {
+        let session = self
+            .request(
+                server,
+                reqwest::Method::GET,
+                &format!("/session/{session_id}"),
+            )
+            .send()
+            .await?
+            .error_for_status()
+            .context("failed to read OpenCode session")?
+            .json::<OpenCodeSessionRecord>()
+            .await
+            .context("failed to parse OpenCode session")?;
+        Ok(session)
     }
 
     async fn patch_session_archive(
@@ -1152,27 +1180,6 @@ impl OpenCodeEngine {
         .await?
         .error_for_status()
         .context("failed to update OpenCode session archive state")?;
-        Ok(())
-    }
-
-    async fn update_session_permission(
-        &self,
-        server: &OpenCodeServer,
-        session_id: &str,
-        permission_mode: OpenCodePermissionMode,
-    ) -> Result<()> {
-        self.request(
-            server,
-            reqwest::Method::PATCH,
-            &format!("/session/{session_id}"),
-        )
-        .json(&json!({
-            "permission": permission_rules(permission_mode),
-        }))
-        .send()
-        .await?
-        .error_for_status()
-        .context("failed to update OpenCode session permissions")?;
         Ok(())
     }
 
@@ -2041,6 +2048,30 @@ fn permission_rules(mode: OpenCodePermissionMode) -> Value {
     }
 }
 
+fn session_permission_matches(
+    session: &OpenCodeSessionRecord,
+    mode: OpenCodePermissionMode,
+) -> bool {
+    let expected_action = match mode {
+        OpenCodePermissionMode::Ask => "ask",
+        OpenCodePermissionMode::Allow => "allow",
+        OpenCodePermissionMode::Deny => "deny",
+    };
+    session_wildcard_permission_action(session.permission.as_ref()) == Some(expected_action)
+}
+
+fn session_wildcard_permission_action(permission: Option<&Value>) -> Option<&str> {
+    let rules = permission?.as_array()?;
+    rules.iter().find_map(|rule| {
+        let permission = rule.get("permission").and_then(Value::as_str)?;
+        let pattern = rule.get("pattern").and_then(Value::as_str)?;
+        if permission == "*" && pattern == "*" {
+            return rule.get("action").and_then(Value::as_str);
+        }
+        None
+    })
+}
+
 async fn start_server(cwd: &str) -> Result<OpenCodeServer> {
     let executable = resolve_opencode_executable().context("`opencode` executable not found")?;
     let port = allocate_loopback_port()?;
@@ -2818,6 +2849,7 @@ opencode/gpt-5-nano
             id: "ses_123".to_string(),
             title: Some("  Existing session  ".to_string()),
             directory: "/workspace".to_string(),
+            permission: Some(permission_rules(OpenCodePermissionMode::Ask)),
             time: OpenCodeSessionTime {
                 created: 1_777_155_663_506,
                 updated: 1_777_155_663_524,
@@ -2829,6 +2861,33 @@ opencode/gpt-5-nano
         assert_eq!(session.title.as_deref(), Some("Existing session"));
         assert_eq!(session.cwd, "/workspace");
         assert!(!session.archived);
+    }
+
+    #[test]
+    fn session_permission_match_compares_current_rules() {
+        let session = OpenCodeSessionRecord {
+            id: "ses_123".to_string(),
+            title: None,
+            directory: "/workspace".to_string(),
+            permission: Some(json!([
+                { "permission": "question", "pattern": "*", "action": "allow" },
+                { "permission": "*", "pattern": "*", "action": "ask" }
+            ])),
+            time: OpenCodeSessionTime {
+                created: 1,
+                updated: 1,
+                archived: None,
+            },
+        };
+
+        assert!(session_permission_matches(
+            &session,
+            OpenCodePermissionMode::Ask
+        ));
+        assert!(!session_permission_matches(
+            &session,
+            OpenCodePermissionMode::Allow
+        ));
     }
 
     #[test]
