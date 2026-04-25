@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ApprovalBlock } from "../../types";
 import {
+  buildPermissionApprovalResponseForEngine,
   canUseApprovalDecisionActions,
   filterPendingApprovalBannerRows,
   isOpenCodeQuestionApproval,
@@ -174,5 +175,26 @@ describe("Claude tool-input gating", () => {
     expect(canUseApprovalDecisionActions("opencode", openCodeQuestion.details)).toBe(false);
     expect(canUseApprovalDecisionActions("opencode", openCodePermission.details)).toBe(true);
     expect(canUseApprovalDecisionActions("claude", openCodeQuestion.details)).toBe(true);
+  });
+
+  it("uses OpenCode-native decision payloads for permission approvals", () => {
+    const details = {
+      _serverMethod: "item/permissions/requestApproval",
+      _opencodeRequestKind: "permission",
+      permission: "bash",
+    };
+
+    expect(
+      buildPermissionApprovalResponseForEngine("opencode", details, "accept"),
+    ).toEqual({ decision: "accept" });
+    expect(
+      buildPermissionApprovalResponseForEngine("opencode", details, "accept_for_session"),
+    ).toEqual({ decision: "accept_for_session" });
+    expect(
+      buildPermissionApprovalResponseForEngine("opencode", details, "decline"),
+    ).toEqual({ decision: "decline" });
+    expect(
+      buildPermissionApprovalResponseForEngine("codex", details, "accept"),
+    ).toEqual({ permissions: {}, scope: "turn" });
   });
 });

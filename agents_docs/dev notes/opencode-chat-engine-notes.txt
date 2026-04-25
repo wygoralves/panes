@@ -1,9 +1,11 @@
 ## Summary
-Adds OpenCode as a native Panes chat engine alongside Codex and Claude. The backend runs OpenCode through the local headless server, maps streaming events into Panes chat events, and handles OpenCode permissions/questions through the existing approval pipeline. The frontend exposes OpenCode in chat/onboarding, keeps Codex sandbox controls out of OpenCode threads, and adds OpenCode-specific permission labels and readiness flow.
+Adds OpenCode as a native Panes chat engine alongside Codex and Claude. The backend runs OpenCode through the local headless server, maps streaming events into Panes chat events, and handles OpenCode permissions/questions through the existing approval pipeline. The frontend exposes OpenCode in chat/onboarding, keeps Codex sandbox controls out of OpenCode threads, adds OpenCode-specific permission labels and readiness flow, and groups OpenCode models by provider in the picker.
 ## Changes
 - Added the OpenCode backend engine, model discovery, health check, local server/session lifecycle, SSE event mapping, permission/question response routing, interruption, and cleanup.
 - Added OpenCode engine capabilities and execution-policy normalization so OpenCode uses ask/allow/deny permission modes instead of Codex sandbox modes.
 - Added OpenCode frontend support in the model/chat surfaces, attachment filtering, permission picker, onboarding engine selection, readiness install path, notification labels, and i18n resources.
+- Added an OpenCode provider/model tree in the chat model picker so large OpenCode catalogs stay browsable by provider.
+- Normalized OpenCode permission button responses to OpenCode-native decision payloads so permission approvals do not receive Codex-style permission payloads.
 - Added tests for OpenCode backend routing/capabilities, frontend capability fallbacks, onboarding persistence/readiness, and OpenCode question approval action gating.
 ## Validation
 - [x] pnpm typecheck
@@ -16,6 +18,7 @@ Skipped: pnpm tauri:build, because the native bundle build is slower and the cha
 - [ ] No user-facing UI change
 - [ ] Screenshots or screen recording attached
 OpenCode now appears in chat engine selection/onboarding and has OpenCode-specific permission controls. No screenshot was captured in this pass.
+The OpenCode picker now shows provider groups before model rows for large catalogs. No screenshot was captured in this pass.
 ## Localization
 - [ ] No new user-facing copy
 - [x] Updated both src/i18n/resources/en/ and src/i18n/resources/pt-BR/

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, ChevronRight } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Search } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useEngineStore } from "../../stores/engineStore";
@@ -22,27 +22,144 @@ interface ModelPickerProps {
 
 /* ── Helpers ── */
 
+export interface OpenCodeProviderModelGroup {
+  providerId: string;
+  providerLabel: string;
+  activeModels: EngineModel[];
+  legacyModels: EngineModel[];
+  totalModelCount: number;
+}
+
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  azure: "Azure",
+  bedrock: "Bedrock",
+  github: "GitHub",
+  google: "Google",
+  groq: "Groq",
+  local: "Local",
+  mistral: "Mistral",
+  ollama: "Ollama",
+  openai: "OpenAI",
+  opencode: "OpenCode",
+  openrouter: "OpenRouter",
+  vertex: "Vertex",
+};
+
 function formatModelName(name: string): string {
   const tokens: Record<string, string> = {
     gpt: "GPT",
     codex: "Codex",
+    opencode: "OpenCode",
     claude: "Claude",
     opus: "Opus",
     sonnet: "Sonnet",
     haiku: "Haiku",
     mini: "Mini",
   };
-  return name
-    .split("-")
+  const slashParts = name
+    .split("/")
     .filter(Boolean)
-    .map((s) => {
-      const lower = s.toLowerCase();
-      if (tokens[lower]) return tokens[lower];
-      if (/^\d+(\.\d+)*$/.test(s)) return s;
-      if (/^[a-z]?\d+(\.\d+)*$/i.test(s)) return s.toUpperCase();
-      return s.charAt(0).toUpperCase() + s.slice(1);
-    })
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const displayParts =
+    slashParts.length > 2 && slashParts[0]?.toLowerCase() === "openrouter"
+      ? slashParts.slice(2)
+      : slashParts.length > 1
+        ? slashParts.slice(1)
+        : slashParts;
+  const source = displayParts.length > 0 ? displayParts : [name];
+  return source
+    .map((part) =>
+      part
+        .split(/[-_\s]+/)
+        .filter(Boolean)
+        .map((s) => {
+          const lower = s.toLowerCase();
+          if (tokens[lower]) return tokens[lower];
+          if (/^\d+(\.\d+)*$/.test(s)) return s;
+          if (/^[a-z]?\d+(\.\d+)*$/i.test(s)) return s.toUpperCase();
+          return s.charAt(0).toUpperCase() + s.slice(1);
+        })
+        .join(" "),
+    )
+    .join(" / ");
+}
+
+export function getOpenCodeProviderId(modelId: string): string {
+  const parts = modelId
+    .trim()
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length <= 1) {
+    return "local";
+  }
+  if (parts[0]?.toLowerCase() === "openrouter" && parts.length > 2) {
+    return parts[1].toLowerCase();
+  }
+  return parts[0].toLowerCase();
+}
+
+export function formatOpenCodeProviderName(providerId: string): string {
+  const normalized = providerId.trim().toLowerCase();
+  if (PROVIDER_LABELS[normalized]) {
+    return PROVIDER_LABELS[normalized];
+  }
+  return normalized
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => PROVIDER_LABELS[part] ?? formatModelName(part))
     .join(" ");
+}
+
+export function groupOpenCodeModels(models: EngineModel[]): OpenCodeProviderModelGroup[] {
+  const groups = new Map<string, OpenCodeProviderModelGroup>();
+  for (const model of models) {
+    const providerId = getOpenCodeProviderId(model.id);
+    let group = groups.get(providerId);
+    if (!group) {
+      group = {
+        providerId,
+        providerLabel: formatOpenCodeProviderName(providerId),
+        activeModels: [],
+        legacyModels: [],
+        totalModelCount: 0,
+      };
+      groups.set(providerId, group);
+    }
+
+    group.totalModelCount += 1;
+    if (model.hidden) {
+      group.legacyModels.push(model);
+    } else {
+      group.activeModels.push(model);
+    }
+  }
+
+  return Array.from(groups.values());
+}
+
+export function filterOpenCodeModelsForQuery(
+  models: EngineModel[],
+  query: string,
+): EngineModel[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) {
+    return models;
+  }
+
+  return models.filter((model) => {
+    const searchable = [
+      model.id,
+      model.displayName,
+      model.description,
+      formatModelName(model.displayName),
+    ]
+      .join(" ")
+      .toLowerCase();
+    return searchable.includes(normalized);
+  });
 }
 
 function shortEffortLabel(t: TFunction<"chat">, effort: string): string {
@@ -86,6 +203,8 @@ export function ModelPicker({
   const { t } = useTranslation("chat");
   const [open, setOpen] = useState(false);
   const [activeEngineId, setActiveEngineId] = useState(selectedEngineId);
+  const [activeOpenCodeProviderId, setActiveOpenCodeProviderId] = useState<string | null>(null);
+  const [openCodeModelQuery, setOpenCodeModelQuery] = useState("");
   const [legacyExpanded, setLegacyExpanded] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -129,12 +248,13 @@ export function ModelPicker({
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - 460));
+    const popoverWidth = activeEngineId === "opencode" ? 680 : 440;
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - popoverWidth - 8));
     setPos({
       bottom: window.innerHeight - rect.top + 6,
       left,
     });
-  }, [open]);
+  }, [activeEngineId, open]);
 
   // Click outside + Escape
   useEffect(() => {
@@ -180,10 +300,202 @@ export function ModelPicker({
   const browsingModels = browsingEngine?.models ?? [];
   const activeModels = browsingModels.filter((m) => !m.hidden);
   const legacyModels = browsingModels.filter((m) => m.hidden);
+  const openCodeProviderGroups = useMemo(
+    () => groupOpenCodeModels(browsingModels),
+    [browsingModels],
+  );
+  const selectedOpenCodeProviderId =
+    selectedEngineId === "opencode" && selectedModelId
+      ? getOpenCodeProviderId(selectedModelId)
+      : null;
+  const activeOpenCodeProvider =
+    openCodeProviderGroups.find((group) => group.providerId === activeOpenCodeProviderId) ??
+    openCodeProviderGroups.find((group) => group.providerId === selectedOpenCodeProviderId) ??
+    openCodeProviderGroups[0] ??
+    null;
+
+  useEffect(() => {
+    if (activeEngineId !== "opencode") {
+      setActiveOpenCodeProviderId(null);
+      setOpenCodeModelQuery("");
+      return;
+    }
+
+    setActiveOpenCodeProviderId((current) => {
+      if (current && openCodeProviderGroups.some((group) => group.providerId === current)) {
+        return current;
+      }
+      return selectedOpenCodeProviderId ?? openCodeProviderGroups[0]?.providerId ?? null;
+    });
+  }, [activeEngineId, openCodeProviderGroups, selectedOpenCodeProviderId]);
 
   function handleModelSelect(engineId: string, modelId: string) {
     onEngineModelChange(engineId, modelId);
     // Keep popover open so the user can adjust reasoning effort
+  }
+
+  function renderFlatModelList() {
+    return (
+      <div className="mp-models-list">
+        {activeModels.map((model) => (
+          <ModelRow
+            key={model.id}
+            model={model}
+            engineId={activeEngineId}
+            isSelected={
+              selectedEngineId === activeEngineId &&
+              model.id === (selectedModelId ?? currentModel?.id)
+            }
+            selectedEffort={selectedEffort}
+            onSelect={handleModelSelect}
+            onEffortChange={onEffortChange}
+          />
+        ))}
+
+        {legacyModels.length > 0 && (
+          <>
+            <button
+              type="button"
+              className="mp-legacy-toggle"
+              onClick={() => setLegacyExpanded((prev) => !prev)}
+            >
+              <span className="mp-legacy-toggle-label">
+                {t("modelPicker.legacy", { count: legacyModels.length })}
+              </span>
+              <ChevronRight
+                size={11}
+                className={`mp-legacy-chevron${legacyExpanded ? " mp-legacy-chevron-open" : ""}`}
+              />
+            </button>
+            {legacyExpanded &&
+              legacyModels.map((model) => (
+                <ModelRow
+                  key={model.id}
+                  model={model}
+                  engineId={activeEngineId}
+                  isSelected={
+                    selectedEngineId === activeEngineId &&
+                    model.id === (selectedModelId ?? currentModel?.id)
+                  }
+                  selectedEffort={selectedEffort}
+                  onSelect={handleModelSelect}
+                  onEffortChange={onEffortChange}
+                />
+              ))}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  function renderOpenCodeProviderTree() {
+    const provider = activeOpenCodeProvider;
+    const providerActiveModels = provider
+      ? filterOpenCodeModelsForQuery(provider.activeModels, openCodeModelQuery)
+      : [];
+    const providerLegacyModels = provider
+      ? filterOpenCodeModelsForQuery(provider.legacyModels, openCodeModelQuery)
+      : [];
+    const providerVisibleCount = providerActiveModels.length + providerLegacyModels.length;
+    return (
+      <div className="mp-provider-tree">
+        <div className="mp-provider-list">
+          <div className="mp-provider-list-heading">{t("modelPicker.providers")}</div>
+          {openCodeProviderGroups.map((group) => {
+            const isActive = group.providerId === provider?.providerId;
+            const isSelected = group.providerId === selectedOpenCodeProviderId;
+            return (
+              <button
+                key={group.providerId}
+                type="button"
+                className={`mp-provider-row${isActive ? " mp-provider-row-active" : ""}${isSelected ? " mp-provider-row-selected" : ""}`}
+                onClick={() => {
+                  setLegacyExpanded(false);
+                  setActiveOpenCodeProviderId(group.providerId);
+                }}
+              >
+                <span className="mp-provider-name">{group.providerLabel}</span>
+                <span className="mp-provider-count">{group.totalModelCount}</span>
+                <ChevronRight size={12} className="mp-provider-chevron" />
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mp-provider-models">
+          <div className="mp-model-search">
+            <Search size={12} className="mp-model-search-icon" />
+            <input
+              className="mp-model-search-input"
+              value={openCodeModelQuery}
+              onChange={(event) => setOpenCodeModelQuery(event.target.value)}
+              placeholder={t("modelPicker.searchModels")}
+              aria-label={t("modelPicker.searchModels")}
+            />
+            {provider ? (
+              <span className="mp-model-search-count">
+                {openCodeModelQuery.trim()
+                  ? `${providerVisibleCount}/${provider.totalModelCount}`
+                  : provider.totalModelCount}
+              </span>
+            ) : null}
+          </div>
+
+          <div className="mp-models-list mp-models-list-provider">
+            {providerActiveModels.map((model) => (
+              <ModelRow
+                key={model.id}
+                model={model}
+                engineId={activeEngineId}
+                isSelected={
+                  selectedEngineId === activeEngineId &&
+                  model.id === (selectedModelId ?? currentModel?.id)
+                }
+                selectedEffort={selectedEffort}
+                onSelect={handleModelSelect}
+                onEffortChange={onEffortChange}
+              />
+            ))}
+
+            {provider && providerLegacyModels.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  className="mp-legacy-toggle"
+                  onClick={() => setLegacyExpanded((prev) => !prev)}
+                >
+                  <span className="mp-legacy-toggle-label">
+                    {t("modelPicker.legacy", { count: providerLegacyModels.length })}
+                  </span>
+                  <ChevronRight
+                    size={11}
+                    className={`mp-legacy-chevron${legacyExpanded ? " mp-legacy-chevron-open" : ""}`}
+                  />
+                </button>
+                {legacyExpanded &&
+                  providerLegacyModels.map((model) => (
+                    <ModelRow
+                      key={model.id}
+                      model={model}
+                      engineId={activeEngineId}
+                      isSelected={
+                        selectedEngineId === activeEngineId &&
+                        model.id === (selectedModelId ?? currentModel?.id)
+                      }
+                      selectedEffort={selectedEffort}
+                      onSelect={handleModelSelect}
+                      onEffortChange={onEffortChange}
+                    />
+                  ))}
+              </>
+            )}
+            {provider && providerVisibleCount === 0 ? (
+              <div className="mp-empty">{t("modelPicker.noModels")}</div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   // Build trigger label
@@ -220,7 +532,7 @@ export function ModelPicker({
     ? createPortal(
         <div
           ref={popoverRef}
-          className="mp-popover"
+          className={`mp-popover${browsingEngine?.id === "opencode" ? " mp-popover-opencode" : ""}`}
           style={{
             position: "fixed",
             bottom: pos.bottom,
@@ -255,60 +567,16 @@ export function ModelPicker({
 
           {/* Models panel */}
           <div className="mp-models">
-            <div className="mp-models-header">
-              <span className="mp-models-title">{t("modelPicker.models")}</span>
-              <span className="mp-models-count">{activeModels.length}</span>
-            </div>
+            {browsingEngine?.id !== "opencode" ? (
+              <div className="mp-models-header">
+                <span className="mp-models-title">{t("modelPicker.models")}</span>
+                <span className="mp-models-count">{activeModels.length}</span>
+              </div>
+            ) : null}
 
-            <div className="mp-models-list">
-              {activeModels.map((model) => (
-                <ModelRow
-                  key={model.id}
-                  model={model}
-                  engineId={activeEngineId}
-                  isSelected={
-                    selectedEngineId === activeEngineId &&
-                    model.id === (selectedModelId ?? currentModel?.id)
-                  }
-                  selectedEffort={selectedEffort}
-                  onSelect={handleModelSelect}
-                  onEffortChange={onEffortChange}
-                />
-              ))}
-
-              {legacyModels.length > 0 && (
-                <>
-                  <button
-                    type="button"
-                    className="mp-legacy-toggle"
-                    onClick={() => setLegacyExpanded((prev) => !prev)}
-                  >
-                    <span className="mp-legacy-toggle-label">
-                      {t("modelPicker.legacy", { count: legacyModels.length })}
-                    </span>
-                    <ChevronRight
-                      size={11}
-                      className={`mp-legacy-chevron${legacyExpanded ? " mp-legacy-chevron-open" : ""}`}
-                    />
-                  </button>
-                  {legacyExpanded &&
-                    legacyModels.map((model) => (
-                      <ModelRow
-                        key={model.id}
-                        model={model}
-                        engineId={activeEngineId}
-                        isSelected={
-                          selectedEngineId === activeEngineId &&
-                          model.id === (selectedModelId ?? currentModel?.id)
-                        }
-                        selectedEffort={selectedEffort}
-                        onSelect={handleModelSelect}
-                        onEffortChange={onEffortChange}
-                      />
-                    ))}
-                </>
-              )}
-            </div>
+            {browsingEngine?.id === "opencode"
+              ? renderOpenCodeProviderTree()
+              : renderFlatModelList()}
           </div>
         </div>,
         document.body,

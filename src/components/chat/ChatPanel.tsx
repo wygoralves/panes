@@ -189,6 +189,25 @@ export function canUseApprovalDecisionActions(
   return engineId !== "opencode" || !isOpenCodeQuestionApproval(details);
 }
 
+export function buildPermissionApprovalResponseForEngine(
+  engineId: string | undefined,
+  details: Record<string, unknown> | undefined,
+  decision: "accept" | "decline" | "accept_for_session",
+): ApprovalResponse {
+  if (engineId === "opencode") {
+    return { decision };
+  }
+
+  if (decision === "decline") {
+    return buildPermissionsDeclineResponse();
+  }
+
+  return buildPermissionsApprovalResponse(
+    details,
+    decision === "accept_for_session" ? "session" : "turn",
+  );
+}
+
 function MeasuredMessageRow({ messageId, onHeightChange, children }: MeasuredMessageRowProps) {
   const rowRef = useRef<HTMLDivElement>(null);
 
@@ -4856,7 +4875,11 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                                 onClick={() =>
                                   void respondApproval(approval.approvalId, {
                                     ...(isPermissionsRequest
-                                      ? buildPermissionsDeclineResponse()
+                                      ? buildPermissionApprovalResponseForEngine(
+                                          activeThread?.engineId,
+                                          details,
+                                          "decline",
+                                        )
                                       : isToolInputRequest
                                         ? { action: "decline" }
                                         : { decision: "decline" }),
@@ -4876,7 +4899,11 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                                 onClick={() =>
                                   void respondApproval(approval.approvalId, {
                                     ...(isPermissionsRequest
-                                      ? buildPermissionsApprovalResponse(details, "session")
+                                      ? buildPermissionApprovalResponseForEngine(
+                                          activeThread?.engineId,
+                                          details,
+                                          "accept_for_session",
+                                        )
                                       : { decision: "accept_for_session" }),
                                   })
                                 }
@@ -4931,7 +4958,11 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                                   void respondApproval(
                                     approval.approvalId,
                                     isPermissionsRequest
-                                      ? buildPermissionsApprovalResponse(details, "turn")
+                                      ? buildPermissionApprovalResponseForEngine(
+                                          activeThread?.engineId,
+                                          details,
+                                          "accept",
+                                        )
                                       : { decision: "accept" },
                                   )
                                 }
