@@ -322,9 +322,22 @@ pub async fn send_message(
         configured_reasoning_effort.clone()
     };
     let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref())?;
-    let sandbox_mode = sandbox_mode_override
-        .clone()
-        .unwrap_or_else(|| "workspace-write".to_string());
+    let supports_panes_sandbox = thread.engine_id != "opencode";
+    let sandbox_mode = if supports_panes_sandbox {
+        Some(
+            sandbox_mode_override
+                .clone()
+                .unwrap_or_else(|| "workspace-write".to_string()),
+        )
+    } else {
+        if sandbox_mode_override.is_some() {
+            log::warn!(
+                "ignoring sandbox mode override on OpenCode thread {}",
+                thread.id
+            );
+        }
+        None
+    };
     let workspace_writable_roots = if selected_repo.is_some() {
         None
     } else {
@@ -358,25 +371,27 @@ pub async fn send_message(
         false
     };
 
-    if unsupported_thread_sandbox_override_for_external_sandbox(
-        sandbox_mode_override.as_deref(),
-        codex_external_sandbox_active,
-    ) {
-        return Err(
-            "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode. Clear the override or restore local Codex sandboxing first.".to_string(),
-        );
-    }
+    if let Some(sandbox_mode) = sandbox_mode.as_deref() {
+        if unsupported_thread_sandbox_override_for_external_sandbox(
+            sandbox_mode_override.as_deref(),
+            codex_external_sandbox_active,
+        ) {
+            return Err(
+                "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode. Clear the override or restore local Codex sandboxing first.".to_string(),
+            );
+        }
 
-    validate_engine_sandbox_mode(thread.engine_id.as_str(), Some(sandbox_mode.as_str()))?;
+        validate_engine_sandbox_mode(thread.engine_id.as_str(), Some(sandbox_mode))?;
 
-    if workspace_write_confirmation_required(
-        workspace_writable_roots.as_ref(),
-        sandbox_mode.as_str(),
-        workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
-    ) {
-        return Err(
-            "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
-        );
+        if workspace_write_confirmation_required(
+            workspace_writable_roots.as_ref(),
+            sandbox_mode,
+            workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
+        ) {
+            return Err(
+                "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
+            );
+        }
     }
 
     if requested_model_id.is_some() || reasoning_effort != stored_reasoning_effort {
@@ -466,7 +481,7 @@ pub async fn send_message(
     };
 
     let allow_network =
-        if thread.engine_id == "codex" && sandbox_mode.eq_ignore_ascii_case("danger-full-access") {
+        if thread.engine_id == "codex" && sandbox_mode.as_deref() == Some("danger-full-access") {
             true
         } else {
             thread_allow_network_override(thread.engine_metadata.as_ref())
@@ -495,7 +510,7 @@ pub async fn send_message(
             )
         })),
         reasoning_effort,
-        sandbox_mode: Some(sandbox_mode),
+        sandbox_mode,
         service_tier: thread_service_tier(thread.engine_metadata.as_ref()),
         personality,
         output_schema: thread_output_schema(thread.engine_metadata.as_ref()),
@@ -1058,10 +1073,6 @@ async fn load_approval_response_route(
     engine_id: &str,
     approval_id: &str,
 ) -> Result<Option<ApprovalRequestRoute>, String> {
-    if engine_id != "codex" {
-        return Ok(None);
-    }
-
     let engine_id = engine_id.to_string();
     let approval_id = approval_id.to_string();
     run_db(db, move |db| {
@@ -3409,6 +3420,10 @@ fn approval_policy_for_engine_and_trust_level(
             TrustLevelDto::Standard => "standard",
             TrustLevelDto::Restricted => "restricted",
         },
+        "opencode" => match trust_level {
+            TrustLevelDto::Trusted | TrustLevelDto::Standard => "ask",
+            TrustLevelDto::Restricted => "deny",
+        },
         _ => match trust_level {
             TrustLevelDto::Trusted => "on-request",
             TrustLevelDto::Standard => "on-request",
@@ -3431,6 +3446,12 @@ fn thread_approval_policy_override_value(
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| matches!(*value, "trusted" | "standard" | "restricted"))
+            .map(|value| Value::String(value.to_string()))),
+        "opencode" => Ok(metadata
+            .and_then(|value| value.get("opencodePermissionMode"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| matches!(*value, "ask" | "allow" | "deny"))
             .map(|value| Value::String(value.to_string()))),
         _ => metadata
             .and_then(|value| value.get("sandboxApprovalPolicy"))
@@ -4165,6 +4186,22 @@ mod tests {
     }
 
     #[test]
+    fn opencode_defaults_use_permission_modes_not_codex_sandbox_policies() {
+        assert_eq!(
+            approval_policy_for_engine_and_trust_level("opencode", &TrustLevelDto::Trusted),
+            "ask"
+        );
+        assert_eq!(
+            approval_policy_for_engine_and_trust_level("opencode", &TrustLevelDto::Standard),
+            "ask"
+        );
+        assert_eq!(
+            approval_policy_for_engine_and_trust_level("opencode", &TrustLevelDto::Restricted),
+            "deny"
+        );
+    }
+
+    #[test]
     fn claude_permission_mode_override_uses_claude_key() {
         let metadata = serde_json::json!({
             "claudePermissionMode": "restricted",
@@ -4174,6 +4211,23 @@ mod tests {
         assert_eq!(
             thread_approval_policy_override_value("claude", Some(&metadata)).unwrap(),
             Some(Value::String("restricted".to_string()))
+        );
+        assert_eq!(
+            thread_approval_policy_override_value("codex", Some(&metadata)).unwrap(),
+            Some(Value::String("never".to_string()))
+        );
+    }
+
+    #[test]
+    fn opencode_permission_mode_override_uses_opencode_key() {
+        let metadata = serde_json::json!({
+            "opencodePermissionMode": "allow",
+            "sandboxApprovalPolicy": "never",
+        });
+
+        assert_eq!(
+            thread_approval_policy_override_value("opencode", Some(&metadata)).unwrap(),
+            Some(Value::String("allow".to_string()))
         );
         assert_eq!(
             thread_approval_policy_override_value("codex", Some(&metadata)).unwrap(),

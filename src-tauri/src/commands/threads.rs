@@ -1586,6 +1586,10 @@ fn approval_policy_for_engine_and_trust_level(
             TrustLevelDto::Standard => "standard",
             TrustLevelDto::Restricted => "restricted",
         },
+        "opencode" => match trust_level {
+            TrustLevelDto::Trusted | TrustLevelDto::Standard => "ask",
+            TrustLevelDto::Restricted => "deny",
+        },
         _ => match trust_level {
             TrustLevelDto::Trusted | TrustLevelDto::Standard => "on-request",
             TrustLevelDto::Restricted => "untrusted",
@@ -1607,6 +1611,12 @@ fn thread_approval_policy_override_value(
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| matches!(*value, "trusted" | "standard" | "restricted"))
+            .map(|value| Value::String(value.to_string()))),
+        "opencode" => Ok(metadata
+            .and_then(|value| value.get("opencodePermissionMode"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| matches!(*value, "ask" | "allow" | "deny"))
             .map(|value| Value::String(value.to_string()))),
         _ => metadata
             .and_then(|value| value.get("sandboxApprovalPolicy"))
@@ -1838,6 +1848,7 @@ fn err_to_string(error: impl std::fmt::Display) -> String {
 fn approval_policy_metadata_key(engine_id: &str) -> &'static str {
     match engine_id {
         "claude" => "claudePermissionMode",
+        "opencode" => "opencodePermissionMode",
         _ => "sandboxApprovalPolicy",
     }
 }
@@ -1867,6 +1878,23 @@ fn normalize_thread_approval_policy_for_engine(
                 }
                 _ => Err(format!(
                     "invalid Claude permission mode `{normalized}`. expected one of: restricted, standard, trusted"
+                )),
+            }
+        }
+        "opencode" => {
+            let normalized = value
+                .as_str()
+                .map(str::trim)
+                .filter(|candidate| !candidate.is_empty())
+                .map(str::to_lowercase)
+                .ok_or_else(|| {
+                    "invalid OpenCode permission mode. expected a string value".to_string()
+                })?;
+
+            match normalized.as_str() {
+                "ask" | "allow" | "deny" => Ok(Some(Value::String(normalized))),
+                _ => Err(format!(
+                    "invalid OpenCode permission mode `{normalized}`. expected one of: ask, allow, deny"
                 )),
             }
         }
@@ -2157,6 +2185,22 @@ mod tests {
     fn normalize_thread_approval_policy_rejects_codex_values_for_claude() {
         assert!(
             normalize_thread_approval_policy_for_engine("claude", Some(json!("on-request")))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn normalize_thread_approval_policy_accepts_opencode_modes() {
+        assert_eq!(
+            normalize_thread_approval_policy_for_engine("opencode", Some(json!("ALLOW"))).unwrap(),
+            Some(json!("allow"))
+        );
+        assert_eq!(
+            normalize_thread_approval_policy_for_engine("opencode", Some(json!("ask"))).unwrap(),
+            Some(json!("ask"))
+        );
+        assert!(
+            normalize_thread_approval_policy_for_engine("opencode", Some(json!("on-request")))
                 .is_err()
         );
     }
