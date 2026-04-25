@@ -12,6 +12,7 @@ use crate::{
     engines::{
         claude_sidecar::ClaudeSidecarEngine,
         codex::{CodexEngine, CodexForkedThread, CodexReviewStarted},
+        opencode::OpenCodeEngine,
     },
     models::{
         CodexAppDto, CodexSkillDto, EngineCapabilitiesDto, EngineHealthDto, EngineInfoDto,
@@ -27,6 +28,7 @@ pub mod codex_event_mapper;
 pub mod codex_protocol;
 pub mod codex_transport;
 pub mod events;
+pub mod opencode;
 
 pub use codex::CodexRuntimeEvent;
 pub use events::*;
@@ -114,10 +116,22 @@ const CLAUDE_CAPABILITIES: EngineCapabilities = EngineCapabilities {
     approval_decisions: &["accept", "decline", "accept_for_session"],
 };
 
+const OPENCODE_CAPABILITIES: EngineCapabilities = EngineCapabilities {
+    permission_modes: &["ask", "allow", "deny"],
+    sandbox_modes: &[],
+    approval_decisions: &["accept", "decline", "cancel", "accept_for_session"],
+};
+
 pub fn capabilities_for_engine(engine_id: &str) -> EngineCapabilities {
     match engine_id {
         "claude" => CLAUDE_CAPABILITIES,
-        _ => CODEX_CAPABILITIES,
+        "codex" => CODEX_CAPABILITIES,
+        "opencode" => OPENCODE_CAPABILITIES,
+        _ => EngineCapabilities {
+            permission_modes: &[],
+            sandbox_modes: &[],
+            approval_decisions: &[],
+        },
     }
 }
 
@@ -155,6 +169,10 @@ pub fn normalize_approval_response_for_engine(
     engine_id: &str,
     response: Value,
 ) -> Result<Value, String> {
+    if engine_id == "opencode" {
+        return normalize_opencode_approval_response(response);
+    }
+
     if engine_id != "claude" {
         return Ok(response);
     }
@@ -202,12 +220,64 @@ pub fn normalize_approval_response_for_engine(
     )
 }
 
+fn normalize_opencode_approval_response(response: Value) -> Result<Value, String> {
+    let object = response
+        .as_object()
+        .ok_or_else(|| "OpenCode approval response must be a JSON object".to_string())?;
+
+    if object.contains_key("answers") {
+        if object.len() != 1 {
+            return Err(
+                "OpenCode question response must include only an `answers` object".to_string(),
+            );
+        }
+        return Ok(response);
+    }
+
+    if object.len() != 1 {
+        return Err(
+            "OpenCode approval response must include either only a `decision` field or only an `answers` object".to_string(),
+        );
+    }
+
+    let raw_decision = object
+        .get("decision")
+        .or_else(|| object.get("action"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "OpenCode approval response must include either a `decision` field or an `answers` object"
+                .to_string()
+        })?;
+
+    let normalized_decision = match raw_decision
+        .to_lowercase()
+        .replace(['-', '_'], "")
+        .as_str()
+    {
+        "accept" => "accept",
+        "decline" | "deny" => "decline",
+        "cancel" => "cancel",
+        "acceptforsession" => "accept_for_session",
+        _ => {
+            return Err(
+                "unsupported OpenCode approval decision. expected one of: accept, decline, cancel, accept_for_session"
+                    .to_string(),
+            )
+        }
+    };
+
+    Ok(json!({ "decision": normalized_decision }))
+}
+
 pub fn approval_response_route_for_engine(
     engine_id: &str,
     details: &Value,
 ) -> Option<ApprovalRequestRoute> {
     match engine_id {
         "codex" => codex_event_mapper::extract_persisted_approval_route(details),
+        "opencode" => opencode::extract_persisted_approval_route(details),
         _ => None,
     }
 }
@@ -347,6 +417,7 @@ pub trait Engine: Send + Sync {
 pub struct EngineManager {
     codex: Arc<CodexEngine>,
     claude: Arc<ClaudeSidecarEngine>,
+    opencode: Arc<OpenCodeEngine>,
 }
 
 impl EngineManager {
@@ -354,6 +425,7 @@ impl EngineManager {
         Self {
             codex: Arc::new(CodexEngine::default()),
             claude: Arc::new(ClaudeSidecarEngine::default()),
+            opencode: Arc::new(OpenCodeEngine::default()),
         }
     }
 
@@ -374,6 +446,18 @@ impl EngineManager {
             }
         };
         let claude_models = self.claude.models();
+        let opencode_models = match timeout(
+            Duration::from_secs(4),
+            self.opencode.list_models_runtime(),
+        )
+        .await
+        {
+            Ok(models) => models,
+            Err(_) => {
+                log::warn!("timed out loading opencode runtime models; falling back to static model catalog");
+                self.opencode.models()
+            }
+        };
 
         Ok(vec![
             EngineInfoDto {
@@ -387,6 +471,12 @@ impl EngineManager {
                 name: self.claude.name().to_string(),
                 models: claude_models.into_iter().map(map_model_info).collect(),
                 capabilities: map_engine_capabilities(capabilities_for_engine(self.claude.id())),
+            },
+            EngineInfoDto {
+                id: self.opencode.id().to_string(),
+                name: self.opencode.name().to_string(),
+                models: opencode_models.into_iter().map(map_model_info).collect(),
+                capabilities: map_engine_capabilities(capabilities_for_engine(self.opencode.id())),
             },
         ])
     }
@@ -419,6 +509,19 @@ impl EngineManager {
                     protocol_diagnostics: None,
                 })
             }
+            "opencode" => {
+                let report = self.opencode.health_report().await;
+                Ok(EngineHealthDto {
+                    id: "opencode".to_string(),
+                    available: report.available,
+                    version: report.version,
+                    details: report.details,
+                    warnings: report.warnings,
+                    checks: report.checks,
+                    fixes: report.fixes,
+                    protocol_diagnostics: None,
+                })
+            }
             _ => anyhow::bail!("unknown engine: {engine_id}"),
         }
     }
@@ -427,6 +530,7 @@ impl EngineManager {
         match engine_id {
             "codex" => self.codex.prewarm().await,
             "claude" => self.claude.prewarm().await,
+            "opencode" => self.opencode.prewarm().await,
             _ => anyhow::bail!("unknown engine: {engine_id}"),
         }
     }
@@ -533,6 +637,11 @@ impl EngineManager {
                 .start_thread(scope, resume_id, effective_model_id, sandbox)
                 .await
                 .context("failed to start claude thread")?,
+            "opencode" => self
+                .opencode
+                .start_thread(scope, resume_id, effective_model_id, sandbox)
+                .await
+                .context("failed to start opencode thread")?,
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         };
 
@@ -558,6 +667,11 @@ impl EngineManager {
                 .send_message(engine_thread_id, input, event_tx, cancellation)
                 .await
                 .context("claude send_message failed"),
+            "opencode" => self
+                .opencode
+                .send_message(engine_thread_id, input, event_tx, cancellation)
+                .await
+                .context("opencode send_message failed"),
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         }
     }
@@ -579,6 +693,11 @@ impl EngineManager {
                 .steer_message(engine_thread_id, input)
                 .await
                 .context("claude steer_message failed"),
+            "opencode" => self
+                .opencode
+                .steer_message(engine_thread_id, input)
+                .await
+                .context("opencode steer_message failed"),
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         }
     }
@@ -601,6 +720,11 @@ impl EngineManager {
                     .respond_to_approval(approval_id, response, route)
                     .await
             }
+            "opencode" => {
+                self.opencode
+                    .respond_to_approval(approval_id, response, route)
+                    .await
+            }
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         }
     }
@@ -610,6 +734,7 @@ impl EngineManager {
         match thread.engine_id.as_str() {
             "codex" => self.codex.interrupt(engine_thread_id).await,
             "claude" => self.claude.interrupt(engine_thread_id).await,
+            "opencode" => self.opencode.interrupt(engine_thread_id).await,
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         }
     }
@@ -622,6 +747,7 @@ impl EngineManager {
         match thread.engine_id.as_str() {
             "codex" => self.codex.archive_thread(engine_thread_id).await,
             "claude" => self.claude.archive_thread(engine_thread_id).await,
+            "opencode" => self.opencode.archive_thread(engine_thread_id).await,
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         }
     }
@@ -634,6 +760,7 @@ impl EngineManager {
         match thread.engine_id.as_str() {
             "codex" => self.codex.unarchive_thread(engine_thread_id).await,
             "claude" => self.claude.unarchive_thread(engine_thread_id).await,
+            "opencode" => self.opencode.unarchive_thread(engine_thread_id).await,
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         }
     }
@@ -662,6 +789,7 @@ impl EngineManager {
         match thread.engine_id.as_str() {
             "codex" => self.codex.set_thread_name(engine_thread_id, name).await,
             "claude" => Ok(()),
+            "opencode" => Ok(()),
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         }
     }
@@ -685,6 +813,7 @@ impl EngineManager {
                 .await
                 .map(Some),
             "claude" => Ok(None),
+            "opencode" => Ok(None),
             _ => anyhow::bail!("unsupported engine_id {}", thread.engine_id),
         }
     }
@@ -743,6 +872,20 @@ mod tests {
             capabilities.approval_decisions,
             &["accept", "decline", "accept_for_session"]
         );
+    }
+
+    #[test]
+    fn opencode_capabilities_do_not_inherit_codex_sandbox_modes() {
+        let capabilities = capabilities_for_engine("opencode");
+
+        assert_eq!(capabilities.permission_modes, &["ask", "allow", "deny"]);
+        assert_eq!(capabilities.sandbox_modes, &[] as &[&str]);
+        assert_eq!(
+            capabilities.approval_decisions,
+            &["accept", "decline", "cancel", "accept_for_session"]
+        );
+        assert!(validate_engine_sandbox_mode("opencode", Some("danger-full-access")).is_err());
+        assert!(validate_engine_sandbox_mode("opencode", Some("workspace-write")).is_err());
     }
 
     #[test]
@@ -811,6 +954,36 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn normalize_opencode_approval_response_accepts_decisions_and_questions() {
+        assert_eq!(
+            normalize_approval_response_for_engine("opencode", json!({ "decision": "accept" }))
+                .unwrap(),
+            json!({ "decision": "accept" })
+        );
+        assert_eq!(
+            normalize_approval_response_for_engine(
+                "opencode",
+                json!({ "action": "acceptForSession" })
+            )
+            .unwrap(),
+            json!({ "decision": "accept_for_session" })
+        );
+        assert_eq!(
+            normalize_approval_response_for_engine(
+                "opencode",
+                json!({ "answers": { "question-0-name": { "answers": ["pnpm"] } } })
+            )
+            .unwrap(),
+            json!({ "answers": { "question-0-name": { "answers": ["pnpm"] } } })
+        );
+        assert!(normalize_approval_response_for_engine(
+            "opencode",
+            json!({ "decision": "accept", "answers": {} })
+        )
+        .is_err());
     }
 
     #[test]
