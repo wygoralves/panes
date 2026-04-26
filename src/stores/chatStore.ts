@@ -63,6 +63,7 @@ interface ChatState {
 
 let activeThreadBindSeq = 0;
 const STREAM_EVENT_BATCH_WINDOW_MS = 16;
+const STREAM_EVENT_QUEUE_FLUSH_THRESHOLD = 500;
 
 /**
  * Background listeners for threads that are still streaming when the user switches away.
@@ -225,6 +226,68 @@ function recordPendingTurnLatencyMetrics(threadId: string, event: StreamEvent) {
   if (event.type === "TextDelta" && String(event.content ?? "").length > 0) {
     recordPendingTurnMetric(threadId, "firstTextRecorded", "chat.turn.first_text.ms");
   }
+}
+
+function enqueueStreamEvent(queue: StreamEvent[], event: StreamEvent) {
+  const previous = queue[queue.length - 1];
+  if (!previous) {
+    queue.push(event);
+    return;
+  }
+
+  if (previous.type === "TextDelta" && event.type === "TextDelta") {
+    queue[queue.length - 1] = {
+      ...previous,
+      content: `${previous.content}${event.content}`,
+    };
+    return;
+  }
+
+  if (previous.type === "ThinkingDelta" && event.type === "ThinkingDelta") {
+    queue[queue.length - 1] = {
+      ...previous,
+      content: `${previous.content}${event.content}`,
+    };
+    return;
+  }
+
+  if (
+    previous.type === "ActionOutputDelta" &&
+    event.type === "ActionOutputDelta" &&
+    previous.action_id === event.action_id &&
+    previous.stream === event.stream
+  ) {
+    queue[queue.length - 1] = {
+      ...previous,
+      content: `${previous.content}${event.content}`,
+    };
+    return;
+  }
+
+  if (
+    previous.type === "ActionProgressUpdated" &&
+    event.type === "ActionProgressUpdated" &&
+    previous.action_id === event.action_id
+  ) {
+    queue[queue.length - 1] = event;
+    return;
+  }
+
+  if (
+    previous.type === "DiffUpdated" &&
+    event.type === "DiffUpdated" &&
+    previous.scope === event.scope
+  ) {
+    queue[queue.length - 1] = event;
+    return;
+  }
+
+  if (previous.type === "UsageLimitsUpdated" && event.type === "UsageLimitsUpdated") {
+    queue[queue.length - 1] = event;
+    return;
+  }
+
+  queue.push(event);
 }
 
 function resolveApprovalDecision(response: ApprovalResponse): ApprovalBlock["decision"] {
@@ -1687,7 +1750,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }
         }
         recordPendingTurnLatencyMetrics(threadId, event);
-        queuedStreamEvents.push(event);
+        enqueueStreamEvent(queuedStreamEvents, event);
         eventRateWindowCount += 1;
         const now = performance.now();
         if (now - eventRateWindowStartedAt >= 1000) {
@@ -1696,6 +1759,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (event.type === "TurnCompleted") {
           flushQueuedStreamEvents();
           emitEventRateMetric(performance.now());
+          return;
+        }
+        if (queuedStreamEvents.length >= STREAM_EVENT_QUEUE_FLUSH_THRESHOLD) {
+          flushQueuedStreamEvents();
           return;
         }
         scheduleStreamFlush();
