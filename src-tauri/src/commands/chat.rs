@@ -5,7 +5,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{value::RawValue, Value};
 use tauri::{Emitter, State};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -16,7 +16,7 @@ use crate::{
         approval_response_route_for_engine, normalize_approval_response_for_engine,
         trim_action_output_delta_content, validate_engine_sandbox_mode, ApprovalRequestRoute,
         EngineEvent, OutputStream, SandboxPolicy, ThreadScope, TurnAttachment,
-        TurnCompletionStatus, TurnInput, TurnInputItem,
+        TurnCompletionStatus, TurnInput, TurnInputItem, STREAMED_DIFF_MAX_CHARS,
     },
     models::{
         ActionOutputDto, EngineInfoDto, EngineModelDto, MessageDto, MessageStatusDto,
@@ -33,6 +33,8 @@ const STREAM_DB_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 const STREAM_DB_BLOCKS_FLUSH_INTERVAL: Duration = Duration::from_millis(900);
 const ENGINE_EVENT_QUEUE_CAPACITY: usize = 128;
 const ACTION_OUTPUT_MAX_CHUNKS: usize = 240;
+const ENGINE_EVENT_LOG_ACTION_OUTPUT_MAX_CHARS: usize = 4_096;
+const TRUNCATED_SUFFIX: &str = "\n... [truncated]";
 const MAX_ATTACHMENTS_PER_TURN: usize = 10;
 const TEXT_ATTACHMENT_EXTENSIONS: &[&str] = &[
     "txt", "md", "json", "js", "ts", "tsx", "jsx", "py", "rs", "go", "css", "html", "yaml", "yml",
@@ -44,6 +46,14 @@ const IMAGE_ATTACHMENT_EXTENSIONS: &[&str] = &[
 const MESSAGE_WINDOW_DEFAULT_LIMIT: usize = 120;
 const MESSAGE_WINDOW_MAX_LIMIT: usize = 400;
 const MAX_CHAT_NOTIFICATION_PREVIEW_CHARS: usize = 240;
+
+fn value_to_raw(value: &Value) -> Box<RawValue> {
+    serde_json::value::to_raw_value(value).unwrap_or_else(|_| empty_raw_value())
+}
+
+fn empty_raw_value() -> Box<RawValue> {
+    RawValue::from_string("null".to_string()).expect("\"null\" is a valid JSON literal")
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -69,7 +79,7 @@ enum ContentBlock {
         #[serde(rename = "actionType")]
         action_type: String,
         summary: String,
-        details: Value,
+        details: Box<RawValue>,
         #[serde(rename = "outputChunks")]
         output_chunks: Vec<ActionOutputChunk>,
         status: String,
@@ -84,7 +94,7 @@ enum ContentBlock {
         #[serde(rename = "actionType")]
         action_type: String,
         summary: String,
-        details: Value,
+        details: Box<RawValue>,
         status: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         decision: Option<String>,
@@ -2585,6 +2595,9 @@ async fn process_stream_event(
         EngineEvent::ActionCompleted { result, .. } => {
             truncate_action_result_output(result, max_output_chars);
         }
+        EngineEvent::DiffUpdated { diff, .. } => {
+            *diff = truncate_chars(diff, STREAMED_DIFF_MAX_CHARS);
+        }
         _ => {}
     }
 
@@ -2594,7 +2607,8 @@ async fn process_stream_event(
     }
 
     if state.config.debug.persist_engine_event_logs {
-        if let Ok(value) = serde_json::to_value(&normalized_event) {
+        let log_event = engine_event_for_debug_log(&normalized_event);
+        if let Ok(value) = serde_json::to_value(&log_event) {
             if let Err(error) = run_db(state.db.clone(), {
                 let thread_id = thread.id.clone();
                 let assistant_message_id = assistant_message_id.to_string();
@@ -3115,7 +3129,7 @@ fn apply_event_to_blocks(
                 engine_action_id: engine_action_id.clone(),
                 action_type: action_type.as_str().to_string(),
                 summary: summary.to_string(),
-                details: details.clone(),
+                details: value_to_raw(details),
                 output_chunks: Vec::new(),
                 status: "running".to_string(),
                 result: None,
@@ -3255,7 +3269,7 @@ fn apply_event_to_blocks(
                 approval_id: approval_id.to_string(),
                 action_type: action_type.as_str().to_string(),
                 summary: summary.to_string(),
-                details: details.clone(),
+                details: value_to_raw(details),
                 status: "pending".to_string(),
                 decision: None,
             };
@@ -3326,12 +3340,15 @@ fn append_thinking_delta(blocks: &mut Vec<ContentBlock>, content: &str) -> bool 
     true
 }
 
-fn update_action_progress(details: &mut Value, message: &str) -> bool {
-    let current_message = details
+fn update_action_progress(details: &mut Box<RawValue>, message: &str) -> bool {
+    let mut value: Value =
+        serde_json::from_str(details.get()).unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+
+    let current_message = value
         .get("progressMessage")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
-    let current_kind = details
+    let current_kind = value
         .get("progressKind")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
@@ -3340,16 +3357,17 @@ fn update_action_progress(details: &mut Value, message: &str) -> bool {
         return false;
     }
 
-    if !details.is_object() {
-        *details = Value::Object(serde_json::Map::new());
+    if !value.is_object() {
+        value = Value::Object(serde_json::Map::new());
     }
 
-    if let Some(details_object) = details.as_object_mut() {
+    if let Some(details_object) = value.as_object_mut() {
         details_object.insert("progressKind".to_string(), Value::String("mcp".to_string()));
         details_object.insert(
             "progressMessage".to_string(),
             Value::String(message.to_string()),
         );
+        *details = value_to_raw(&value);
         return true;
     }
 
@@ -3472,12 +3490,20 @@ fn trim_action_output_chunks(
 
     let mut remaining_to_trim = chars_to_trim;
     let mut remove_count = 0usize;
-    for chunk in output_chunks.iter() {
+    for chunk in output_chunks.iter_mut() {
         if remaining_to_trim == 0 {
             break;
         }
-        remaining_to_trim = remaining_to_trim.saturating_sub(chunk.content.len());
-        remove_count += 1;
+        let chunk_len = chunk.content.len();
+        if chunk_len <= remaining_to_trim {
+            remaining_to_trim -= chunk_len;
+            remove_count += 1;
+            continue;
+        }
+
+        chunk.content = trim_string_start_bytes(&chunk.content, remaining_to_trim);
+        remaining_to_trim = 0;
+        truncated = true;
     }
 
     if remove_count > 0 {
@@ -3488,13 +3514,48 @@ fn trim_action_output_chunks(
     truncated
 }
 
-fn mark_output_truncated(details: &mut Value) {
-    if !details.is_object() {
-        *details = Value::Object(serde_json::Map::new());
+fn engine_event_for_debug_log(event: &EngineEvent) -> EngineEvent {
+    match event {
+        EngineEvent::ActionOutputDelta {
+            action_id,
+            stream,
+            content,
+        } => EngineEvent::ActionOutputDelta {
+            action_id: action_id.clone(),
+            stream: stream.clone(),
+            content: truncate_chars_within_limit(content, ENGINE_EVENT_LOG_ACTION_OUTPUT_MAX_CHARS),
+        },
+        _ => event.clone(),
+    }
+}
+
+fn trim_string_start_bytes(value: &str, bytes_to_trim: usize) -> String {
+    if bytes_to_trim == 0 {
+        return value.to_string();
+    }
+    if bytes_to_trim >= value.len() {
+        return String::new();
     }
 
-    if let Some(details_object) = details.as_object_mut() {
+    let start = value
+        .char_indices()
+        .map(|(index, _)| index)
+        .find(|index| *index >= bytes_to_trim)
+        .unwrap_or(value.len());
+    value[start..].to_string()
+}
+
+fn mark_output_truncated(details: &mut Box<RawValue>) {
+    let mut value: Value =
+        serde_json::from_str(details.get()).unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+
+    if !value.is_object() {
+        value = Value::Object(serde_json::Map::new());
+    }
+
+    if let Some(details_object) = value.as_object_mut() {
         details_object.insert("outputTruncated".to_string(), Value::Bool(true));
+        *details = value_to_raw(&value);
     }
 }
 
@@ -3504,7 +3565,25 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     }
 
     let mut output = value.chars().take(max_chars).collect::<String>();
-    output.push_str("\n... [truncated]");
+    output.push_str(TRUNCATED_SUFFIX);
+    output
+}
+
+fn truncate_chars_within_limit(value: &str, max_chars: usize) -> String {
+    let max_chars = max_chars.max(1);
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+
+    if max_chars <= TRUNCATED_SUFFIX.len() {
+        return value.chars().take(max_chars).collect();
+    }
+
+    let mut output = value
+        .chars()
+        .take(max_chars - TRUNCATED_SUFFIX.len())
+        .collect::<String>();
+    output.push_str(TRUNCATED_SUFFIX);
     output
 }
 
@@ -4512,6 +4591,37 @@ mod tests {
     }
 
     #[test]
+    fn debug_event_log_trims_action_output_payload() {
+        let content = "x".repeat(ENGINE_EVENT_LOG_ACTION_OUTPUT_MAX_CHARS + 128);
+        let event = EngineEvent::ActionOutputDelta {
+            action_id: "action-1".to_string(),
+            stream: OutputStream::Stdout,
+            content,
+        };
+
+        let log_event = engine_event_for_debug_log(&event);
+
+        match log_event {
+            EngineEvent::ActionOutputDelta { content, .. } => {
+                assert_eq!(content.len(), ENGINE_EVENT_LOG_ACTION_OUTPUT_MAX_CHARS);
+            }
+            other => panic!("expected action output event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trim_action_output_chunks_keeps_tail_of_oversized_chunk() {
+        let mut chunks = vec![ActionOutputChunk {
+            stream: "stdout".to_string(),
+            content: "0123456789".to_string(),
+        }];
+
+        assert!(trim_action_output_chunks(&mut chunks, 6));
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].content, "6789");
+    }
+
+    #[test]
     fn model_reroute_notice_reindexes_action_blocks() {
         let mut blocks = Vec::new();
         let mut action_index = HashMap::new();
@@ -4569,14 +4679,16 @@ mod tests {
         ));
         match &blocks[1] {
             ContentBlock::Action { details, .. } => {
+                let details_value: Value = serde_json::from_str(details.get())
+                    .expect("action details should parse as JSON");
                 assert_eq!(
-                    details
+                    details_value
                         .get("progressKind")
                         .and_then(serde_json::Value::as_str),
                     Some("mcp")
                 );
                 assert_eq!(
-                    details
+                    details_value
                         .get("progressMessage")
                         .and_then(serde_json::Value::as_str),
                     Some("Fetching results")
