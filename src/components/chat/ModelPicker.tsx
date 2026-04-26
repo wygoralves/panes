@@ -224,6 +224,14 @@ export function modelMetadataChips(
   return chips;
 }
 
+function shouldShowModelDescription(engineId: string, model: EngineModel): boolean {
+  if (!model.description) {
+    return false;
+  }
+
+  return !(engineId === "opencode" && model.description.trim() === "OpenCode model");
+}
+
 function shortEffortLabel(t: TFunction<"chat">, effort: string): string {
   switch (effort) {
     case "none": return t("modelPicker.effort.noneShort");
@@ -674,9 +682,17 @@ function ModelRow({
   const efforts = model.supportedReasoningEfforts ?? [];
   const showControls = efforts.length > 0;
   const metadataChips = modelMetadataChips(t, model);
+  const showMetadataChips = isSelected;
+  const showDescription = shouldShowModelDescription(engineId, model);
+  const modelClassName = [
+    "mp-model",
+    isSelected ? "mp-model-selected" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <div className={`mp-model${isSelected ? " mp-model-selected" : ""}`}>
+    <div className={modelClassName}>
       <button
         type="button"
         className="mp-model-btn"
@@ -691,10 +707,10 @@ function ModelRow({
               <span className="mp-model-default">{t("modelPicker.default")}</span>
             )}
           </div>
-          {model.description && (
+          {showDescription && (
             <span className="mp-model-desc">{model.description}</span>
           )}
-          {metadataChips.length > 0 ? (
+          {showMetadataChips && metadataChips.length > 0 ? (
             <span className="mp-model-meta">
               {metadataChips.map((chip) => (
                 <span key={chip.label} className="mp-model-meta-chip" title={chip.title}>

@@ -8643,7 +8643,7 @@ button, input, textarea, select {
 .mp-models-list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px;
+  padding: 5px;
 }
 
 .mp-provider-tree {
@@ -8796,6 +8796,10 @@ button, input, textarea, select {
     border-color var(--duration-fast) var(--ease-out);
 }
 
+.mp-model + .mp-model {
+  margin-top: 1px;
+}
+
 .mp-model-selected {
   background: var(--bg-4);
   border-color: var(--border-active);
@@ -8806,7 +8810,8 @@ button, input, textarea, select {
   align-items: flex-start;
   gap: 8px;
   width: 100%;
-  padding: 8px 10px;
+  min-height: 30px;
+  padding: 6px 9px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -8816,7 +8821,7 @@ button, input, textarea, select {
 }
 
 .mp-model:not(.mp-model-selected) .mp-model-btn:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: color-mix(in srgb, var(--bg-4) 52%, transparent);
 }
 
 .mp-model-info {
@@ -8831,13 +8836,18 @@ button, input, textarea, select {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .mp-model-name {
-  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
   font-weight: 500;
-  color: var(--text-1);
+  color: var(--text-2);
   line-height: 1.3;
 }
 
@@ -8865,13 +8875,13 @@ button, input, textarea, select {
 .mp-model-meta-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 16px;
-  padding: 0 5px;
-  border: 1px solid var(--border-subtle);
+  min-height: 15px;
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, var(--border-active) 28%, var(--border-subtle));
   border-radius: var(--radius-xs);
   color: var(--text-3);
-  background: var(--bg-2);
-  font-size: 9.5px;
+  background: color-mix(in srgb, var(--bg-2) 22%, transparent);
+  font-size: 9px;
   line-height: 1.2;
 }
 
