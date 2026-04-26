@@ -851,6 +851,13 @@ export interface ReadFileResult {
   isBinary: boolean;
 }
 
+export interface ResolvedEditorFileReference {
+  repoPath: string;
+  filePath: string;
+  line?: number | null;
+  column?: number | null;
+}
+
 export type EditorRenderMode = "plain-editor" | "markdown-preview" | "git-diff-editor";
 
 export interface GitEditorContext extends GitFileCompare {}

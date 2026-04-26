@@ -45,6 +45,7 @@ import type {
   OpenCodeRemoteSessionPage,
   OpenCodeRuntimeCatalog,
   ReadFileResult,
+  ResolvedEditorFileReference,
   Repo,
   SearchResult,
   StreamEvent,
@@ -462,6 +463,18 @@ export const ipc = {
     invoke<void>("pop_git_stash", { repoPath, stashIndex }),
   readFile: (repoPath: string, filePath: string) =>
     invoke<ReadFileResult>("read_file", { repoPath, filePath }),
+  resolveEditorFileReference: (
+    workspaceId: string,
+    rawReference: string,
+    preferredRepoPath?: string | null,
+    currentCwd?: string | null,
+  ) =>
+    invoke<ResolvedEditorFileReference | null>("resolve_editor_file_reference", {
+      workspaceId,
+      rawReference,
+      preferredRepoPath: preferredRepoPath ?? null,
+      currentCwd: currentCwd ?? null,
+    }),
   writeFile: (repoPath: string, filePath: string, content: string, workspaceId?: string | null) =>
     invoke<void>("write_file", { repoPath, filePath, content, workspaceId: workspaceId ?? null }),
   watchGitRepo: (repoPath: string) => invoke<void>("watch_git_repo", { repoPath }),

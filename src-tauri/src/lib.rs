@@ -260,6 +260,7 @@ pub fn run() {
             commands::app::show_agent_notification,
             commands::files::list_dir,
             commands::files::read_file,
+            commands::files::resolve_editor_file_reference,
             commands::files::write_file,
             commands::files::create_file,
             commands::files::create_dir,

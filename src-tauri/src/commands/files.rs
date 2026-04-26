@@ -10,7 +10,8 @@ use tauri::State;
 
 use crate::{
     db, fs_ops,
-    models::{FileTreeEntryDto, ReadFileResultDto, TrustLevelDto},
+    models::{FileTreeEntryDto, ReadFileResultDto, ResolvedEditorFileReferenceDto, TrustLevelDto},
+    path_utils,
     state::AppState,
 };
 
@@ -30,6 +31,33 @@ pub async fn list_dir(
 pub async fn read_file(repo_path: String, file_path: String) -> Result<ReadFileResultDto, String> {
     tokio::task::spawn_blocking(move || {
         fs_ops::read_file(&repo_path, &file_path).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn resolve_editor_file_reference(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    raw_reference: String,
+    preferred_repo_path: Option<String>,
+    current_cwd: Option<String>,
+) -> Result<Option<ResolvedEditorFileReferenceDto>, String> {
+    let db = state.db.clone();
+    tokio::task::spawn_blocking(move || {
+        let workspace = db::workspaces::find_workspace_by_id(&db, &workspace_id)
+            .map_err(err_to_string)?
+            .ok_or_else(|| "workspace not found".to_string())?;
+        let repos = db::repos::get_repos(&db, &workspace_id).map_err(err_to_string)?;
+        resolve_editor_file_reference_impl(
+            &workspace.root_path,
+            &repos,
+            &raw_reference,
+            preferred_repo_path.as_deref(),
+            current_cwd.as_deref(),
+        )
+        .map_err(err_to_string)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -499,6 +527,143 @@ fn resolve_target_path_for_repo_lookup(
         .strip_prefix(ancestor)
         .context("failed to resolve target path")?;
     Ok(ancestor_canonical.join(remainder))
+}
+
+fn resolve_editor_file_reference_impl(
+    workspace_root: &str,
+    repos: &[crate::models::RepoDto],
+    raw_reference: &str,
+    preferred_repo_path: Option<&str>,
+    current_cwd: Option<&str>,
+) -> anyhow::Result<Option<ResolvedEditorFileReferenceDto>> {
+    let Some(parsed) = parse_editor_file_reference(raw_reference) else {
+        return Ok(None);
+    };
+
+    let workspace_root = path_utils::canonicalize_path(Path::new(workspace_root))
+        .context("failed to canonicalize workspace root")?;
+    let ordered_roots =
+        ordered_editor_reference_roots(&workspace_root, repos, preferred_repo_path, current_cwd);
+
+    for root in ordered_roots {
+        let candidate = if parsed.path.is_absolute() {
+            parsed.path.clone()
+        } else {
+            root.join(&parsed.path)
+        };
+        let Ok(resolved) = candidate.canonicalize() else {
+            continue;
+        };
+        if !resolved.is_file() || !resolved.starts_with(&root) {
+            continue;
+        }
+        let Ok(relative) = resolved.strip_prefix(&root) else {
+            continue;
+        };
+        return Ok(Some(ResolvedEditorFileReferenceDto {
+            repo_path: root.to_string_lossy().to_string(),
+            file_path: relative.to_string_lossy().to_string(),
+            line: parsed.line,
+            column: parsed.column,
+        }));
+    }
+
+    Ok(None)
+}
+
+#[derive(Debug)]
+struct ParsedEditorFileReference {
+    path: PathBuf,
+    line: Option<u32>,
+    column: Option<u32>,
+}
+
+fn parse_editor_file_reference(raw_reference: &str) -> Option<ParsedEditorFileReference> {
+    let trimmed = raw_reference.trim();
+    if trimmed.is_empty() || trimmed.contains("://") {
+        return None;
+    }
+
+    let (path, line, column) = split_editor_reference_location(trimmed);
+    let path = path.trim_start_matches("./");
+    if path.is_empty() || path.contains('\0') {
+        return None;
+    }
+    if !Path::new(path).is_absolute() {
+        fs_ops::validate_repo_relative_path(path).ok()?;
+    }
+
+    Some(ParsedEditorFileReference {
+        path: PathBuf::from(path),
+        line,
+        column,
+    })
+}
+
+fn split_editor_reference_location(value: &str) -> (&str, Option<u32>, Option<u32>) {
+    if let Some((path, suffix)) = value.rsplit_once("#L") {
+        if let Some((line, column)) = parse_line_column(suffix, '-') {
+            return (path, line, column);
+        }
+    }
+
+    let Some((path, line)) = value.rsplit_once(':') else {
+        return (value, None, None);
+    };
+    let Some(line) = line.parse::<u32>().ok().filter(|line| *line > 0) else {
+        return (value, None, None);
+    };
+    if let Some((path, column)) = path.rsplit_once(':') {
+        if let Some(column) = column.parse::<u32>().ok().filter(|column| *column > 0) {
+            return (path, Some(line), Some(column));
+        }
+    }
+    (path, Some(line), None)
+}
+
+fn parse_line_column(value: &str, separator: char) -> Option<(Option<u32>, Option<u32>)> {
+    let (line, column) = value
+        .split_once(separator)
+        .map_or((value, None), |(line, column)| (line, Some(column)));
+    let line = line.parse::<u32>().ok().filter(|line| *line > 0)?;
+    let column = column.and_then(|value| value.parse::<u32>().ok().filter(|column| *column > 0));
+    Some((Some(line), column))
+}
+
+fn ordered_editor_reference_roots(
+    workspace_root: &Path,
+    repos: &[crate::models::RepoDto],
+    preferred_repo_path: Option<&str>,
+    current_cwd: Option<&str>,
+) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    push_editor_reference_root(&mut roots, current_cwd);
+    push_editor_reference_root(&mut roots, preferred_repo_path);
+
+    for repo in repos.iter().filter(|repo| repo.is_active) {
+        push_editor_reference_root(&mut roots, Some(repo.path.as_str()));
+    }
+    for repo in repos.iter().filter(|repo| !repo.is_active) {
+        push_editor_reference_root(&mut roots, Some(repo.path.as_str()));
+    }
+    push_editor_reference_path_root(&mut roots, workspace_root.to_path_buf());
+    roots
+}
+
+fn push_editor_reference_root(roots: &mut Vec<PathBuf>, path: Option<&str>) {
+    let Some(path) = path else {
+        return;
+    };
+    let Ok(root) = path_utils::canonicalize_path(Path::new(path)) else {
+        return;
+    };
+    push_editor_reference_path_root(roots, root);
+}
+
+fn push_editor_reference_path_root(roots: &mut Vec<PathBuf>, root: PathBuf) {
+    if !roots.iter().any(|existing| existing == &root) {
+        roots.push(root);
+    }
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {
