@@ -1,5 +1,30 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.56.2...vnull) (2026-04-27)
+
+### Features
+
+* **chat:** add inline file reference resolution ([1aa069a](https://github.com/wygoralves/panes/commit/1aa069acb629fbfd1e31b48c5bb9c4df8ae45556))
+* **opencode:** add backend engine ([3f7708d](https://github.com/wygoralves/panes/commit/3f7708dcde90c80df4b94be7f4320addffce603e))
+* **opencode:** add frontend chat support ([27cfc56](https://github.com/wygoralves/panes/commit/27cfc56edde45701ecb97dd004cf2730b652356e))
+* **opencode:** add model attachment metadata ([2863e96](https://github.com/wygoralves/panes/commit/2863e96174ad0b7f3a9612e9cc0b0addd48021f6))
+* **opencode:** add session lifecycle tools ([31b6e43](https://github.com/wygoralves/panes/commit/31b6e433225546d01f7e0fa5c673137408268160))
+* **opencode:** expose reasoning variants ([fecc32d](https://github.com/wygoralves/panes/commit/fecc32d5c6a4428ffda7ecf69a6628ce1f316689))
+* **opencode:** expose runtime controls ([5ecff3c](https://github.com/wygoralves/panes/commit/5ecff3c9784c7265d50e6d63250967c82e164740))
+* **opencode:** improve model picker and approvals ([115c623](https://github.com/wygoralves/panes/commit/115c623a60b3798c0b1487364d13299d8f1c6b83))
+* **opencode:** improve usage and question handling ([0e75bc1](https://github.com/wygoralves/panes/commit/0e75bc1da3409857d8ce30bb4cbd2c1acc05e4c9))
+
+### Bug Fixes
+
+* **chat:** reduce model picker visual noise ([2f5a59d](https://github.com/wygoralves/panes/commit/2f5a59d79256c1abb081605d36ce4522e0308f2d))
+* **opencode:** composer reasoning fallback ([415f163](https://github.com/wygoralves/panes/commit/415f1632fc898ca1f15d217b3f7da2d7a5ecb25d))
+* **opencode:** permission mode resumes ([2429698](https://github.com/wygoralves/panes/commit/24296981651d99afdda2ca7fb4b3f7ebaad935a1))
+* **opencode:** stabilize turns and idle memory ([6550bc4](https://github.com/wygoralves/panes/commit/6550bc48b95ac6e4260c63ff1c91fb32b8afcc42))
+* **perf:** bound completed terminal replay snapshots ([c1f2993](https://github.com/wygoralves/panes/commit/c1f29934cbc6a08ab241766812bd3f3be122d828))
+* **perf:** coalesce consecutive stream events in chat queue ([7afbf27](https://github.com/wygoralves/panes/commit/7afbf2737c5b60e074ecbd772f0d8aae70bb1519))
+* **perf:** store codex action details as raw json ([1e21554](https://github.com/wygoralves/panes/commit/1e21554b2ca3d220bdac17d214b5f7c708594144))
+* **perf:** trim large codex payloads at protocol boundary ([2b4244d](https://github.com/wygoralves/panes/commit/2b4244d9714ec0595f3ed3763ccb0669721da7c6))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.56.1...vnull) (2026-04-25)
 
 ### Bug Fixes
