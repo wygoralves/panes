@@ -70,7 +70,31 @@ const CHAT_ENGINE_OPTIONS: Array<{
 }> = [
   { id: "codex", descriptionKey: "chatEngines.options.codex.description" },
   { id: "claude", descriptionKey: "chatEngines.options.claude.description" },
+  { id: "opencode", descriptionKey: "chatEngines.options.opencode.description" },
 ];
+
+function chatEngineLabel(engineId: OnboardingChatEngineId): string {
+  switch (engineId) {
+    case "codex":
+      return "Codex";
+    case "claude":
+      return "Claude";
+    case "opencode":
+      return "OpenCode";
+  }
+}
+
+function shouldShowOpenCodeInstallCard(health?: EngineHealth): boolean {
+  if (health?.available !== false) {
+    return false;
+  }
+
+  const details = health.details?.toLowerCase() ?? "";
+  return (
+    details.includes("not found") ||
+    health.fixes?.some((fix) => fix.toLowerCase().includes("opencode")) === true
+  );
+}
 
 const STEP_TITLES: Record<
   OnboardingStep,
@@ -355,7 +379,7 @@ function ChatEngineCard({
       </div>
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-1)", marginBottom: 3 }}>
-          {id === "codex" ? "Codex" : "Claude"}
+          {chatEngineLabel(id)}
         </div>
         <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: "var(--text-3)" }}>
           {description}
@@ -571,7 +595,7 @@ function ReadinessEngineRow({
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {getHarnessIcon(engineId, 22)}
           <span style={{ fontSize: 15, fontWeight: 600, color: "var(--text-1)" }}>
-            {engineId === "codex" ? "Codex" : "Claude"}
+            {chatEngineLabel(engineId)}
           </span>
         </div>
         <span
@@ -894,6 +918,15 @@ export function OnboardingWizard() {
     if (ok) await refreshReadiness();
   }
 
+  async function handleInstallOpenCode() {
+    if (installing) return;
+    clearInstallState();
+    const ok = await installHarness("opencode", chatEngineLabel("opencode"));
+    if (!ok) return;
+    await scanHarnesses();
+    await refreshReadiness();
+  }
+
   async function handleOpenWebsite(url: string) {
     try { await openExternal(url); } catch { /* best-effort */ }
   }
@@ -940,6 +973,12 @@ export function OnboardingWizard() {
   const nodeManualGuidance = readiness.dependencyReport
     ? getNodeManualGuidance(readiness.dependencyReport)
     : null;
+  const openCodeInstallCommand = getHarnessInstallCommand("opencode");
+  const showOpenCodeInstallCard =
+    selectedChatEngines.includes("opencode") &&
+    shouldShowOpenCodeInstallCard(readiness.engineHealth.opencode);
+  const canInstallOpenCodeFromReadiness =
+    readiness.dependencyReport?.node.found !== false && Boolean(openCodeInstallCommand);
 
   if (!open) return null;
 
@@ -1300,6 +1339,25 @@ export function OnboardingWizard() {
                     />
                   ) : null}
 
+                  {showOpenCodeInstallCard ? (
+                    <ReadinessDependencyCard
+                      label="OpenCode"
+                      description={
+                        canInstallOpenCodeFromReadiness
+                          ? t("setup:chatReadiness.openCodeInstallAvailable")
+                          : t("setup:chatReadiness.openCodeInstallManual")
+                      }
+                      command={openCodeInstallCommand}
+                      disabled={Boolean(installing)}
+                      installing={installing?.kind === "harness" && installing.id === "opencode"}
+                      onInstall={
+                        canInstallOpenCodeFromReadiness
+                          ? () => void handleInstallOpenCode()
+                          : undefined
+                      }
+                    />
+                  ) : null}
+
                   <div style={{ display: "grid", gap: 8, gridTemplateColumns: selectedChatEngines.length > 1 ? "1fr 1fr" : "1fr" }}>
                     {selectedChatEngines.map((engineId) => (
                       <ReadinessEngineRow
@@ -1316,7 +1374,7 @@ export function OnboardingWizard() {
                     <StatusMessage tone="info">{t("setup:chatReadiness.readyHint")}</StatusMessage>
                   ) : null}
 
-                  {installing?.kind === "dependency" || installLog.length > 0 || installError ? (
+                  {installing || installLog.length > 0 || installError ? (
                     <div style={{ display: "grid", gap: 6 }}>
                       {installing ? (
                         <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-3)" }}>

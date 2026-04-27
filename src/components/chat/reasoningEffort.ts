@@ -18,6 +18,10 @@ export function resolveReasoningEffortForModel(
     return normalizedPreferred;
   }
 
+  if (model.supportedReasoningEfforts.length === 0) {
+    return null;
+  }
+
   if (
     normalizedPreferred &&
     model.supportedReasoningEfforts.some(

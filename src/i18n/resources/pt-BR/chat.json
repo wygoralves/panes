@@ -13,6 +13,9 @@
     "selectModel": "Selecionar modelo",
     "engine": "Engine",
     "models": "Modelos",
+    "providers": "Provedores",
+    "searchModels": "Buscar modelos",
+    "noModels": "Nenhum modelo encontrado",
     "legacy": "Legado ({{count}})",
     "thinking": "Raciocínio",
     "default": "padrão",
@@ -22,6 +25,15 @@
     "modalities": {
       "image": "Visão",
       "textOnly": "Só texto"
+    },
+    "metadata": {
+      "vision": "Visão",
+      "pdf": "PDF",
+      "files": "Arquivos",
+      "noFiles": "Sem arquivos",
+      "contextLimit": "{{tokens}} ctx",
+      "inputLimit": "{{tokens}} ent",
+      "outputLimit": "{{tokens}} saída"
     },
     "effort": {
       "none": "Nenhum",
@@ -45,6 +57,8 @@
     "codexWarning": "Apenas anexos de imagem e texto são suportados em turns do Codex.",
     "claudeTitle": "Anexar arquivos (texto, SVG e imagens suportadas)",
     "claudeWarning": "Apenas arquivos de texto, incluindo SVG, e imagens PNG, JPEG, GIF ou WEBP são suportados em turns do Claude.",
+    "opencodeTitle": "Anexar arquivos",
+    "opencodeWarning": "O modelo OpenCode selecionado não suporta esse tipo de anexo.",
     "remove": "Remover anexo",
     "filters": {
       "supportedFiles": "Arquivos compatíveis",
@@ -61,6 +75,10 @@
     "networkAccess": "Acesso à rede",
     "sandbox": "Sandbox",
     "network": "Rede"
+  },
+  "openCodeAgentPicker": {
+    "title": "Agente OpenCode",
+    "selectAgent": "Agente"
   },
   "configPicker": {
     "title": "Configuração do turno",
@@ -242,6 +260,7 @@
     "trustTitle": "Confiança",
     "approvalTitleCodex": "Aprovação",
     "approvalTitleClaude": "Modo de permissão",
+    "approvalTitleOpenCode": "Permissões do OpenCode",
     "sandboxTitle": "Sandbox",
     "networkTitle": "Rede",
     "customSuffix": "{{count}} personalizado",
@@ -254,6 +273,7 @@
     "auto": "Automático",
     "autoRepoTrust": "Seguir a política de confiança do repositório.",
     "autoClaude": "Seguir os padrões de confiança do repositório para Claude.",
+    "autoOpenCode": "Perguntar antes de ferramentas, exceto se a política do repositório for restrita.",
     "autoSandbox": "Seguir o sandbox padrão da thread.",
     "autoNetwork": "Seguir a política de rede padrão da thread.",
     "untrusted": "Não confiável",
@@ -278,6 +298,12 @@
     "claudeRestrictedDescription": "A maioria das ações exige aprovações mais rigorosas.",
     "claudeStandardDescription": "Permissões equilibradas para o trabalho do dia a dia.",
     "claudeTrustedDescription": "Permissões amplas com menos interrupções.",
+    "openCodeAsk": "Perguntar",
+    "openCodeAskDescription": "Pergunta antes do OpenCode executar ferramentas.",
+    "openCodeAllow": "Permitir",
+    "openCodeAllowDescription": "Permite ferramentas do OpenCode sem perguntar. Isto não é um sandbox do Panes.",
+    "openCodeDeny": "Negar",
+    "openCodeDenyDescription": "Nega permissões de ferramenta do OpenCode para esta thread.",
     "permissionPolicyFallback": "Política de permissão"
   },
   "panel": {
@@ -364,11 +390,14 @@
       "codexThreadCompactFailed": "Falha ao iniciar a compactação da thread do Codex.",
       "codexThreadResumeUnavailable": "Selecione um workspace e um modelo do Codex antes de retomar uma thread remota.",
       "codexThreadResumeFailed": "Falha ao anexar a thread do Codex selecionada.",
+      "openCodeSessionResumeUnavailable": "Selecione um workspace e um modelo do OpenCode antes de retomar uma sessão remota.",
+      "openCodeSessionResumeFailed": "Falha ao anexar a sessão do OpenCode selecionada.",
       "codexThreadForked": "Uma nova thread ramificada do Codex foi criada.",
       "codexThreadRolledBack_one": "Uma nova ramificação com rollback do último {{count}} turno foi criada.",
       "codexThreadRolledBack_other": "Uma nova ramificação com rollback dos últimos {{count}} turnos foi criada.",
       "codexThreadCompactionStarted": "A compactação da thread do Codex foi iniciada.",
       "codexThreadResumed": "A thread remota do Codex selecionada foi anexada.",
+      "openCodeSessionResumed": "A sessão remota do OpenCode selecionada foi anexada.",
       "serviceTierUpdated": "Camada de serviço -> {{value}}",
       "fastToggled": "Modo fast {{state}}",
       "on": "ligado",
@@ -378,6 +407,7 @@
       "fullAccessNetworkWarning": "O modo acesso total habilita temporariamente o acesso à rede.",
       "updateExecutionPolicyFailed": "Falha ao atualizar a política de execução da thread: {{error}}",
       "updateCodexConfigFailed": "Falha ao atualizar a configuração de turno do Codex: {{error}}",
+      "updateOpenCodeConfigFailed": "Falha ao atualizar a configuração de turno do OpenCode: {{error}}",
       "planImplementationThreadUnavailable": "A thread original de planejamento não está mais disponível. Reabra a thread e tente novamente.",
       "invalidOutputSchema": "O schema de saída deve ser um objeto ou booleano JSON Schema válido: {{error}}",
       "invalidCustomApprovalPolicy": "A política de aprovação estruturada deve ser um objeto JSON.",
@@ -479,15 +509,43 @@
     "panels": {
       "skills": {
         "title": "Skills",
-        "empty": "Nenhuma skill carregada neste runtime."
+        "empty": "Nenhuma skill carregada neste runtime.",
+        "description": "Ver skills carregadas do Codex"
       },
       "mcp": {
         "title": "Servidores MCP",
-        "empty": "Nenhum servidor MCP conectado."
+        "empty": "Nenhum servidor MCP conectado.",
+        "description": "Ver status dos servidores MCP"
       },
       "experimental": {
         "title": "Recursos experimentais",
-        "empty": "Nenhum recurso experimental disponível."
+        "empty": "Nenhum recurso experimental disponível.",
+        "description": "Ver recursos experimentais"
+      },
+      "openCodeAgents": {
+        "title": "Agentes OpenCode",
+        "empty": "Nenhum agente OpenCode encontrado.",
+        "description": "Ver agentes do OpenCode"
+      },
+      "openCodeCommands": {
+        "title": "Comandos OpenCode",
+        "empty": "Nenhum comando OpenCode encontrado.",
+        "description": "Ver comandos de barra do OpenCode",
+        "insertDescription": "Inserir comando OpenCode"
+      },
+      "openCodeSessions": {
+        "title": "Sessões OpenCode",
+        "empty": "Nenhuma sessão OpenCode correspondente foi encontrada para este workspace.",
+        "description": "Navegar e anexar sessões do OpenCode",
+        "searchPlaceholder": "Buscar sessões OpenCode",
+        "unavailable": "Selecione um workspace e um modelo do OpenCode antes de navegar pelas sessões remotas.",
+        "historyNote": "O histórico anterior continua no OpenCode por enquanto. Novos turnos seguem na sessão anexada.",
+        "loading": "Carregando sessões OpenCode...",
+        "meta": "Atualizada em {{updatedAt}}.",
+        "filters": {
+          "active": "Ativas",
+          "archived": "Arquivadas"
+        }
       },
       "info": {
         "badgeOn": "lig",

@@ -6,6 +6,7 @@ import type {
   ApprovalResponse,
   ActionOutputPayload,
   ChatAttachment,
+  ChatEngineId,
   ChatInputItem,
   CodexReviewDelivery,
   CodexReviewTarget,
@@ -41,7 +42,10 @@ import type {
   Message,
   MessageWindow,
   MessageWindowCursor,
+  OpenCodeRemoteSessionPage,
+  OpenCodeRuntimeCatalog,
   ReadFileResult,
+  ResolvedEditorFileReference,
   Repo,
   SearchResult,
   StreamEvent,
@@ -192,6 +196,34 @@ export const ipc = {
       engineThreadId,
       modelId,
     }),
+  listOpenCodeRemoteSessions: (
+    workspaceId: string,
+    options?: {
+      cursor?: string | null;
+      limit?: number | null;
+      searchTerm?: string | null;
+      archived?: boolean | null;
+    },
+  ) =>
+    invoke<OpenCodeRemoteSessionPage>("list_opencode_remote_sessions", {
+      workspaceId,
+      cursor: options?.cursor ?? null,
+      limit: options?.limit ?? null,
+      searchTerm: options?.searchTerm ?? null,
+      archived: options?.archived ?? null,
+    }),
+  attachOpenCodeRemoteSession: (
+    workspaceId: string,
+    engineThreadId: string,
+    cwd: string,
+    modelId: string,
+  ) =>
+    invoke<Thread>("attach_opencode_remote_session", {
+      workspaceId,
+      engineThreadId,
+      cwd,
+      modelId,
+    }),
   createThread: (
     workspaceId: string,
     repoId: string | null,
@@ -257,6 +289,17 @@ export const ipc = {
       updateOutputSchema: Object.prototype.hasOwnProperty.call(patch, "outputSchema"),
       outputSchema: patch.outputSchema ?? null,
     }),
+  setThreadOpenCodeConfig: (
+    threadId: string,
+    patch: {
+      agent?: string | null;
+    },
+  ) =>
+    invoke<Thread>("set_thread_opencode_config", {
+      threadId,
+      updateAgent: Object.prototype.hasOwnProperty.call(patch, "agent"),
+      agent: patch.agent ?? null,
+    }),
   archiveThread: (threadId: string) => invoke<void>("archive_thread", { threadId }),
   restoreThread: (threadId: string) => invoke<Thread>("restore_thread", { threadId }),
   syncThreadFromEngine: (threadId: string) =>
@@ -276,6 +319,8 @@ export const ipc = {
   listCodexSkills: (cwd: string) =>
     invoke<CodexSkill[]>("list_codex_skills", { cwd }),
   listCodexApps: () => invoke<CodexApp[]>("list_codex_apps"),
+  getOpenCodeRuntimeCatalog: (cwd: string) =>
+    invoke<OpenCodeRuntimeCatalog>("get_opencode_runtime_catalog", { cwd }),
   sendMessage: (
     threadId: string,
     message: string,
@@ -418,6 +463,18 @@ export const ipc = {
     invoke<void>("pop_git_stash", { repoPath, stashIndex }),
   readFile: (repoPath: string, filePath: string) =>
     invoke<ReadFileResult>("read_file", { repoPath, filePath }),
+  resolveEditorFileReference: (
+    workspaceId: string,
+    rawReference: string,
+    preferredRepoPath?: string | null,
+    currentCwd?: string | null,
+  ) =>
+    invoke<ResolvedEditorFileReference | null>("resolve_editor_file_reference", {
+      workspaceId,
+      rawReference,
+      preferredRepoPath: preferredRepoPath ?? null,
+      currentCwd: currentCwd ?? null,
+    }),
   writeFile: (repoPath: string, filePath: string, content: string, workspaceId?: string | null) =>
     invoke<void>("write_file", { repoPath, filePath, content, workspaceId: workspaceId ?? null }),
   watchGitRepo: (repoPath: string) => invoke<void>("watch_git_repo", { repoPath }),
@@ -562,7 +619,7 @@ export interface ThreadUpdatedEvent {
 export interface ChatTurnFinishedEvent {
   threadId: string;
   workspaceId: string;
-  engineId: "codex" | "claude";
+  engineId: ChatEngineId;
   threadTitle: string;
   status: "completed" | "interrupted" | "error";
   preview?: string | null;

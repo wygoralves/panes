@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { ApprovalBlock } from "../../types";
 import {
+  buildPermissionApprovalResponseForEngine,
+  canUseApprovalDecisionActions,
   filterPendingApprovalBannerRows,
+  isOpenCodeQuestionApproval,
   resolvePendingToolInputApproval,
 } from "./ChatPanel";
 import { shouldShowClaudeUnsupportedApproval } from "./MessageBlocks";
+import {
+  buildToolInputResponseFromSelections,
+  defaultToolInputSelections,
+  parseToolInputQuestions,
+} from "./toolInputApproval";
 
 function makeApprovalBlock(
   approvalId: string,
@@ -149,5 +157,129 @@ describe("Claude tool-input gating", () => {
     expect(
       shouldShowClaudeUnsupportedApproval(mixedApproval.details, true, true),
     ).toBe(true);
+  });
+
+  it("does not expose decision actions for OpenCode question approvals", () => {
+    const openCodeQuestion = makeApprovalBlock("opencode-question", {
+      _serverMethod: "item/tool/requestUserInput",
+      _opencodeRequestKind: "question",
+      questions: [
+        {
+          id: "question-1",
+          question: "Which package manager should OpenCode use?",
+          options: [{ label: "pnpm", description: "Use pnpm" }],
+        },
+      ],
+    });
+    const openCodePermission = makeApprovalBlock("opencode-permission", {
+      _serverMethod: "item/permissions/requestApproval",
+      _opencodeRequestKind: "permission",
+    });
+
+    expect(isOpenCodeQuestionApproval(openCodeQuestion.details)).toBe(true);
+    expect(canUseApprovalDecisionActions("opencode", openCodeQuestion.details)).toBe(false);
+    expect(canUseApprovalDecisionActions("opencode", openCodePermission.details)).toBe(true);
+    expect(canUseApprovalDecisionActions("claude", openCodeQuestion.details)).toBe(true);
+  });
+
+  it("uses OpenCode-native decision payloads for permission approvals", () => {
+    const details = {
+      _serverMethod: "item/permissions/requestApproval",
+      _opencodeRequestKind: "permission",
+      permission: "bash",
+    };
+
+    expect(
+      buildPermissionApprovalResponseForEngine("opencode", details, "accept"),
+    ).toEqual({ decision: "accept" });
+    expect(
+      buildPermissionApprovalResponseForEngine("opencode", details, "accept_for_session"),
+    ).toEqual({ decision: "accept_for_session" });
+    expect(
+      buildPermissionApprovalResponseForEngine("opencode", details, "decline"),
+    ).toEqual({ decision: "decline" });
+    expect(
+      buildPermissionApprovalResponseForEngine("codex", details, "accept"),
+    ).toEqual({ permissions: {}, scope: "turn" });
+  });
+
+  it("preserves OpenCode multiple-choice and custom-answer question metadata", () => {
+    const questions = parseToolInputQuestions({
+      questions: [
+        {
+          id: "question-1-tools",
+          question: "Which checks should OpenCode run?",
+          header: "Checks",
+          multiple: true,
+          custom: false,
+          options: [
+            { label: "typecheck", description: "Run TypeScript", recommended: true },
+            { label: "test", description: "Run tests", recommended: false },
+          ],
+        },
+      ],
+    });
+
+    expect(questions).toEqual([
+      {
+        id: "question-1-tools",
+        question: "Which checks should OpenCode run?",
+        header: "Checks",
+        multiple: true,
+        custom: false,
+        options: [
+          { label: "typecheck", description: "Run TypeScript", recommended: true },
+          { label: "test", description: "Run tests", recommended: false },
+        ],
+      },
+    ]);
+    expect(defaultToolInputSelections(questions)).toEqual({
+      "question-1-tools": ["typecheck"],
+    });
+  });
+
+  it("builds ordered OpenCode-style answer arrays for multi-select questions", () => {
+    const questions = parseToolInputQuestions({
+      questions: [
+        {
+          id: "checks",
+          question: "Which checks?",
+          multiple: true,
+          custom: true,
+          options: [
+            { label: "typecheck", description: "Run TypeScript" },
+            { label: "test", description: "Run tests" },
+          ],
+        },
+        {
+          id: "manager",
+          question: "Which package manager?",
+          custom: false,
+          options: [
+            { label: "pnpm", description: "Use pnpm" },
+            { label: "npm", description: "Use npm" },
+          ],
+        },
+      ],
+    });
+
+    expect(
+      buildToolInputResponseFromSelections(
+        questions,
+        {
+          checks: ["typecheck", "test"],
+          manager: ["npm"],
+        },
+        {
+          checks: "lint",
+          manager: "yarn",
+        },
+      ),
+    ).toEqual({
+      answers: {
+        checks: { answers: ["typecheck", "test", "lint"] },
+        manager: { answers: ["npm"] },
+      },
+    });
   });
 });

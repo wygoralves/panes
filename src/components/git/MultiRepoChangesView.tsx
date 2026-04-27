@@ -37,6 +37,7 @@ import type { GitFileStatus, GitStatus, Repo } from "../../types";
 interface Props {
   repos: Repo[];
   onError: (error: string | undefined) => void;
+  pollingEnabled?: boolean;
   refreshTick?: number;
 }
 
@@ -52,7 +53,12 @@ interface RepoStatusEntry {
 const MULTI_REPO_WATCHER_REFRESH_DEBOUNCE_MS = 550;
 const MULTI_REPO_WORKING_TREE_POLL_INTERVAL_MS = 8000;
 
-export function MultiRepoChangesView({ repos, onError, refreshTick = 0 }: Props) {
+export function MultiRepoChangesView({
+  repos,
+  onError,
+  pollingEnabled = true,
+  refreshTick = 0,
+}: Props) {
   const { t } = useTranslation("git");
   const { getStatusForRepo, invalidateRepoCache } = useGitStore();
 
@@ -121,21 +127,29 @@ export function MultiRepoChangesView({ repos, onError, refreshTick = 0 }: Props)
   // Initial fetch + re-fetch when repos change
   const prevRepoPathsRef = useRef<string>("");
   useEffect(() => {
+    if (!pollingEnabled) {
+      return;
+    }
+
     const key = repos.map((r) => r.path).join("|");
     if (key !== prevRepoPathsRef.current) {
       prevRepoPathsRef.current = key;
       void fetchStatusForAll();
     }
-  }, [repos, fetchStatusForAll]);
+  }, [fetchStatusForAll, pollingEnabled, repos]);
 
   const prevRefreshTickRef = useRef(refreshTick);
   useEffect(() => {
+    if (!pollingEnabled) {
+      return;
+    }
+
     if (refreshTick === prevRefreshTickRef.current) {
       return;
     }
     prevRefreshTickRef.current = refreshTick;
     void fetchStatusForAll(true);
-  }, [fetchStatusForAll, refreshTick]);
+  }, [fetchStatusForAll, pollingEnabled, refreshTick]);
 
   // Re-fetch on gitStore status updates (file watcher triggers)
   const storeStatus = useGitStore((s) => s.status);
@@ -150,6 +164,10 @@ export function MultiRepoChangesView({ repos, onError, refreshTick = 0 }: Props)
   }, [storeStatus, storeActiveRepoPath]);
 
   useEffect(() => {
+    if (!pollingEnabled) {
+      return;
+    }
+
     const repoPaths = repos.map((repo) => repo.path);
     if (repoPaths.length === 0) {
       return;
@@ -210,9 +228,13 @@ export function MultiRepoChangesView({ repos, onError, refreshTick = 0 }: Props)
       refreshTimers.clear();
       unlisten?.();
     };
-  }, [refreshRepoStatus, repos]);
+  }, [pollingEnabled, refreshRepoStatus, repos]);
 
   useEffect(() => {
+    if (!pollingEnabled) {
+      return;
+    }
+
     const repoPaths = repos.map((repo) => repo.path);
     if (repoPaths.length === 0) {
       return;
@@ -237,7 +259,7 @@ export function MultiRepoChangesView({ repos, onError, refreshTick = 0 }: Props)
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [refreshRepoStatus, repos]);
+  }, [pollingEnabled, refreshRepoStatus, repos]);
 
   // ── Accordion state ──
   const [expandedRepos, setExpandedRepos] = useState<Record<string, boolean>>(

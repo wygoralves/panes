@@ -118,7 +118,7 @@ describe("chatStore send", () => {
     await expect(sendPromise).resolves.toBe(true);
   });
 
-  it("removes the optimistic assistant placeholder if the turn request fails", async () => {
+  it("removes the optimistic turn if the turn request fails", async () => {
     mockIpc.sendMessage.mockRejectedValueOnce(new Error("send failed"));
 
     await expect(useChatStore.getState().send("hello")).resolves.toBe(false);
@@ -126,8 +126,7 @@ describe("chatStore send", () => {
     const state = useChatStore.getState();
     expect(state.streaming).toBe(false);
     expect(state.status).toBe("error");
-    expect(state.messages).toHaveLength(1);
-    expect(state.messages[0]?.role).toBe("user");
+    expect(state.messages).toEqual([]);
   });
 
   it("routes streamed content to the matching optimistic assistant via clientTurnId", async () => {
@@ -1043,6 +1042,56 @@ describe("chatStore send", () => {
       });
     },
   );
+
+  it("does not let a late bind replace an active optimistic turn", async () => {
+    const existingUnlisten = vi.fn();
+    const lateUnlisten = vi.fn();
+    mockListenThreadEvents.mockImplementationOnce(async () => {
+      useChatStore.setState({
+        threadId: "thread-1",
+        messages: [
+          {
+            id: "optimistic-user",
+            threadId: "thread-1",
+            role: "user",
+            status: "completed",
+            schemaVersion: 1,
+            blocks: [{ type: "text", content: "hello" }],
+            createdAt: new Date().toISOString(),
+            hydration: "full",
+            hasDeferredContent: false,
+          },
+          {
+            id: "optimistic-assistant",
+            threadId: "thread-1",
+            role: "assistant",
+            status: "streaming",
+            schemaVersion: 1,
+            blocks: [],
+            createdAt: new Date().toISOString(),
+            hydration: "full",
+            hasDeferredContent: false,
+          },
+        ],
+        status: "streaming",
+        streaming: true,
+        unlisten: existingUnlisten,
+      });
+      return lateUnlisten;
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    const state = useChatStore.getState();
+    expect(state.streaming).toBe(true);
+    expect(state.status).toBe("streaming");
+    expect(state.messages.map((message) => message.id)).toEqual([
+      "optimistic-user",
+      "optimistic-assistant",
+    ]);
+    expect(lateUnlisten).toHaveBeenCalledTimes(1);
+    expect(existingUnlisten).not.toHaveBeenCalled();
+  });
 
   it("marks the thread as awaiting approval while a streamed approval is pending", async () => {
     vi.useFakeTimers();

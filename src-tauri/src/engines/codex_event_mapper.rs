@@ -471,7 +471,8 @@ impl TurnEventMapper {
                     collab_agent_completion_output(item)
                 } else {
                     extract_any_string(item, &["aggregatedOutput", "output", "text"])
-                };
+                }
+                .map(|output| trim_action_output_delta_content(&output));
                 let mut error = if item_type == "collabAgentToolCall" {
                     collab_agent_error(item, &normalized_status)
                 } else {
@@ -502,7 +503,8 @@ impl TurnEventMapper {
                     extract_combined_diff(item)
                 } else {
                     None
-                };
+                }
+                .map(|diff| trim_action_output_delta_content(&diff));
 
                 vec![EngineEvent::ActionCompleted {
                     action_id,
@@ -1253,7 +1255,14 @@ fn extract_token_usage(value: &Value) -> Option<TokenUsage> {
             .or_else(|| usage.get("completionTokens").and_then(Value::as_u64));
 
         if let (Some(input), Some(output)) = (input, output) {
-            return Some(TokenUsage { input, output });
+            return Some(TokenUsage {
+                input,
+                output,
+                reasoning: None,
+                cache_read: None,
+                cache_write: None,
+                cost_usd: None,
+            });
         }
     }
 

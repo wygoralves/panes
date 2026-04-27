@@ -54,6 +54,12 @@ interface ThreadState {
     engineThreadId: string,
     modelId: string,
   ) => Promise<Thread | null>;
+  attachOpenCodeRemoteSession: (
+    workspaceId: string,
+    engineThreadId: string,
+    cwd: string,
+    modelId: string,
+  ) => Promise<Thread | null>;
   setActiveThread: (threadId: string | null) => void;
   applyThreadUpdateLocal: (thread: Thread) => boolean;
   setThreadReasoningEffortLocal: (threadId: string, reasoningEffort: string | null) => void;
@@ -545,6 +551,47 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     set({ loading: true, error: undefined });
     try {
       const attached = await ipc.attachCodexRemoteThread(workspaceId, engineThreadId, modelId);
+      localStorage.setItem(LAST_THREAD_KEY, attached.id);
+      set((state) => {
+        const workspaceThreads = state.threadsByWorkspace[workspaceId] ?? [];
+        const nextWorkspaceThreads = [
+          attached,
+          ...workspaceThreads.filter((thread) => thread.id !== attached.id),
+        ];
+        const threadsByWorkspace = mergeWorkspaceThreads(
+          state.threadsByWorkspace,
+          workspaceId,
+          nextWorkspaceThreads,
+        );
+        const archivedThreads = state.archivedThreadsByWorkspace[workspaceId] ?? [];
+        const archivedThreadsByWorkspace = {
+          ...state.archivedThreadsByWorkspace,
+          [workspaceId]: archivedThreads.filter((thread) => thread.id !== attached.id),
+        };
+
+        return {
+          threadsByWorkspace,
+          archivedThreadsByWorkspace,
+          threads: flattenThreadsByWorkspace(threadsByWorkspace),
+          activeThreadId: attached.id,
+          loading: false,
+        };
+      });
+      return attached;
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      return null;
+    }
+  },
+  attachOpenCodeRemoteSession: async (workspaceId, engineThreadId, cwd, modelId) => {
+    set({ loading: true, error: undefined });
+    try {
+      const attached = await ipc.attachOpenCodeRemoteSession(
+        workspaceId,
+        engineThreadId,
+        cwd,
+        modelId,
+      );
       localStorage.setItem(LAST_THREAD_KEY, attached.id);
       set((state) => {
         const workspaceThreads = state.threadsByWorkspace[workspaceId] ?? [];

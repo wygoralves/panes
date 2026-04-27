@@ -11,6 +11,10 @@
     "retry": "Tentar novamente",
     "save": "Salvar"
   },
+  "fileReferences": {
+    "resolveFailed": "Não foi possível encontrar {{reference}} neste workspace.",
+    "shiftClickHint": "Shift-clique para abrir no editor"
+  },
   "language": {
     "label": "Idioma",
     "changed": "Idioma atualizado. Os rótulos do menu nativo serão atualizados após reiniciar.",

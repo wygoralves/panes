@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 pub const ACTION_OUTPUT_DELTA_MAX_CHARS: usize = 16 * 1024;
+pub const STREAMED_DIFF_MAX_CHARS: usize = 128 * 1024;
 const ACTION_OUTPUT_DELTA_TRUNCATED_PREFIX: &str = "... [output truncated; showing tail]\n";
 
 pub fn trim_action_output_delta_content(content: &str) -> String {
@@ -22,6 +23,91 @@ pub fn trim_action_output_delta_content(content: &str) -> String {
         ACTION_OUTPUT_DELTA_TRUNCATED_PREFIX,
         tail.into_iter().collect::<String>()
     )
+}
+
+pub fn trim_action_output_delta_json_string(raw_json_string: &str) -> Option<String> {
+    trim_json_string_to_chars(raw_json_string, ACTION_OUTPUT_DELTA_MAX_CHARS)
+}
+
+pub fn trim_json_string_to_chars(raw_json_string: &str, max_chars: usize) -> Option<String> {
+    let inner = raw_json_string.strip_prefix('"')?.strip_suffix('"')?;
+    let mut chars = inner.chars().peekable();
+    let max_chars = max_chars.max(1);
+    let mut tail = std::collections::VecDeque::with_capacity(max_chars);
+    let mut total_chars = 0usize;
+
+    while let Some(ch) = chars.next() {
+        let decoded = if ch == '\\' {
+            decode_json_escape(&mut chars)?
+        } else {
+            ch
+        };
+        total_chars = total_chars.saturating_add(1);
+        if tail.len() == max_chars {
+            tail.pop_front();
+        }
+        tail.push_back(decoded);
+    }
+
+    if total_chars <= max_chars {
+        return Some(tail.into_iter().collect());
+    }
+
+    let tail_chars = max_chars.saturating_sub(ACTION_OUTPUT_DELTA_TRUNCATED_PREFIX.len());
+    let skip = tail.len().saturating_sub(tail_chars.max(1));
+    let mut trimmed = String::with_capacity(max_chars);
+    trimmed.push_str(ACTION_OUTPUT_DELTA_TRUNCATED_PREFIX);
+    trimmed.extend(tail.into_iter().skip(skip));
+    Some(trimmed)
+}
+
+fn decode_json_escape(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<char> {
+    match chars.next()? {
+        '"' => Some('"'),
+        '\\' => Some('\\'),
+        '/' => Some('/'),
+        'b' => Some('\u{0008}'),
+        'f' => Some('\u{000c}'),
+        'n' => Some('\n'),
+        'r' => Some('\r'),
+        't' => Some('\t'),
+        'u' => decode_json_unicode_escape(chars),
+        _ => None,
+    }
+}
+
+fn decode_json_unicode_escape(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+) -> Option<char> {
+    let code = read_json_hex_escape(chars)?;
+    if (0xd800..=0xdbff).contains(&code) {
+        let mut lookahead = chars.clone();
+        if lookahead.next()? != '\\' || lookahead.next()? != 'u' {
+            return None;
+        }
+        let low = read_json_hex_escape(&mut lookahead)?;
+        if !(0xdc00..=0xdfff).contains(&low) {
+            return None;
+        }
+        *chars = lookahead;
+        let high_ten = code - 0xd800;
+        let low_ten = low - 0xdc00;
+        return char::from_u32(0x10000 + ((high_ten << 10) | low_ten));
+    }
+
+    if (0xdc00..=0xdfff).contains(&code) {
+        return None;
+    }
+
+    char::from_u32(code)
+}
+
+fn read_json_hex_escape(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<u32> {
+    let mut value = 0u32;
+    for _ in 0..4 {
+        value = (value << 4) | chars.next()?.to_digit(16)?;
+    }
+    Some(value)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,6 +243,10 @@ pub struct ActionResult {
 pub struct TokenUsage {
     pub input: u64,
     pub output: u64,
+    pub reasoning: Option<u64>,
+    pub cache_read: Option<u64>,
+    pub cache_write: Option<u64>,
+    pub cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

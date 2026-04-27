@@ -27,6 +27,7 @@ import {
   Scissors,
   Sparkles,
   Server,
+  SquareCode,
   FlaskConical,
   UserCircle,
   Lightbulb,
@@ -81,6 +82,7 @@ import {
 } from "./CodexConfigPicker";
 // CodexRuntimePicker removed from toolbar — runtime info accessed via /slash commands
 import { PermissionPicker } from "./PermissionPicker";
+import { OpenCodeAgentPicker } from "./OpenCodeAgentPicker";
 // CodexReviewPicker and CodexThreadPicker replaced by slash commands (ChatSlashMenu + ChatCommandPanel)
 import { ChatSlashMenu, type SlashCommand } from "./ChatSlashMenu";
 import { ChatCommandPanel, type ActiveSlashCommand } from "./ChatCommandPanel";
@@ -96,7 +98,10 @@ import type {
   CodexSkill,
   ContentBlock,
   EngineHealth,
+  EngineModel,
   Message,
+  OpenCodeRemoteSession,
+  OpenCodeRuntimeCatalog,
   Thread,
   TrustLevel,
 } from "../../types";
@@ -178,6 +183,36 @@ export function filterPendingApprovalBannerRows(
   });
 }
 
+export function isOpenCodeQuestionApproval(details?: Record<string, unknown>): boolean {
+  return details?._opencodeRequestKind === "question";
+}
+
+export function canUseApprovalDecisionActions(
+  engineId?: string,
+  details?: Record<string, unknown>,
+): boolean {
+  return engineId !== "opencode" || !isOpenCodeQuestionApproval(details);
+}
+
+export function buildPermissionApprovalResponseForEngine(
+  engineId: string | undefined,
+  details: Record<string, unknown> | undefined,
+  decision: "accept" | "decline" | "accept_for_session",
+): ApprovalResponse {
+  if (engineId === "opencode") {
+    return { decision };
+  }
+
+  if (decision === "decline") {
+    return buildPermissionsDeclineResponse();
+  }
+
+  return buildPermissionsApprovalResponse(
+    details,
+    decision === "accept_for_session" ? "session" : "turn",
+  );
+}
+
 function MeasuredMessageRow({ messageId, onHeightChange, children }: MeasuredMessageRowProps) {
   const rowRef = useRef<HTMLDivElement>(null);
 
@@ -220,9 +255,11 @@ type CodexThreadApprovalPolicyValue =
   | "never"
   | "custom";
 type ClaudeThreadPermissionModeValue = "inherit" | "restricted" | "standard" | "trusted";
+type OpenCodeThreadPermissionModeValue = "inherit" | "ask" | "allow" | "deny";
 type ThreadApprovalPolicyValue =
   | CodexThreadApprovalPolicyValue
-  | ClaudeThreadPermissionModeValue;
+  | ClaudeThreadPermissionModeValue
+  | OpenCodeThreadPermissionModeValue;
 type ThreadApprovalPolicyStateValue =
   | ThreadApprovalPolicyValue
   | Record<string, unknown>;
@@ -327,6 +364,37 @@ function getClaudeThreadPermissionModeOptions(
       value: "trusted",
       label: t("policy.trusted"),
       description: t("policy.claudeTrustedDescription"),
+    },
+  ];
+}
+
+function getOpenCodeThreadPermissionModeOptions(
+  t: TFunction<"chat">,
+): Array<{
+  value: OpenCodeThreadPermissionModeValue;
+  label: string;
+  description: string;
+}> {
+  return [
+    {
+      value: "inherit",
+      label: t("policy.auto"),
+      description: t("policy.autoOpenCode"),
+    },
+    {
+      value: "ask",
+      label: t("policy.openCodeAsk"),
+      description: t("policy.openCodeAskDescription"),
+    },
+    {
+      value: "allow",
+      label: t("policy.openCodeAllow"),
+      description: t("policy.openCodeAllowDescription"),
+    },
+    {
+      value: "deny",
+      label: t("policy.openCodeDeny"),
+      description: t("policy.openCodeDenyDescription"),
     },
   ];
 }
@@ -450,6 +518,7 @@ const CLAUDE_IMAGE_ATTACHMENT_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp"]
 const CLAUDE_ATTACHMENT_EXTENSIONS = Array.from(
   new Set([...CLAUDE_TEXT_ATTACHMENT_EXTENSIONS, ...CLAUDE_IMAGE_ATTACHMENT_EXTENSIONS]),
 );
+const PDF_ATTACHMENT_EXTENSIONS = ["pdf"];
 const ENGINE_PREWARM_THROTTLE_MS = 30_000;
 const lastPrewarmAttemptAtByEngine = new Map<string, number>();
 const inflightPrewarmByEngine = new Map<string, Promise<void>>();
@@ -499,9 +568,29 @@ interface AttachmentFilterConfig {
   textFilesLabel: string;
 }
 
+function attachmentExtensionsForModalities(modalities: string[]): {
+  supportedExtensions: string[];
+  textExtensions: string[];
+  imageExtensions: string[];
+} {
+  const normalized = new Set(modalities.map((modality) => modality.trim().toLowerCase()));
+  const textExtensions = normalized.has("text") ? [...TEXT_ATTACHMENT_EXTENSIONS] : [];
+  const imageExtensions = normalized.has("image") ? [...IMAGE_ATTACHMENT_EXTENSIONS] : [];
+  const pdfExtensions = normalized.has("pdf") ? PDF_ATTACHMENT_EXTENSIONS : [];
+
+  return {
+    supportedExtensions: Array.from(
+      new Set([...textExtensions, ...imageExtensions, ...pdfExtensions]),
+    ),
+    textExtensions,
+    imageExtensions,
+  };
+}
+
 function getAttachmentFilterConfig(
   t: TFunction<"chat">,
   engineId: string,
+  model?: EngineModel | null,
 ): AttachmentFilterConfig | null {
   switch (engineId) {
     case "codex":
@@ -526,6 +615,21 @@ function getAttachmentFilterConfig(
         imagesLabel: t("attachments.filters.images"),
         textFilesLabel: t("attachments.filters.textFiles"),
       };
+    case "opencode": {
+      const openCodeExtensions = attachmentExtensionsForModalities(
+        model?.attachmentModalities ?? [],
+      );
+      return {
+        supportedExtensions: openCodeExtensions.supportedExtensions,
+        textExtensions: openCodeExtensions.textExtensions,
+        imageExtensions: openCodeExtensions.imageExtensions,
+        title: t("attachments.opencodeTitle"),
+        warningMessage: t("attachments.opencodeWarning"),
+        supportedLabel: t("attachments.filters.supportedFiles"),
+        imagesLabel: t("attachments.filters.images"),
+        textFilesLabel: t("attachments.filters.textFiles"),
+      };
+    }
     default:
       return null;
   }
@@ -661,9 +765,27 @@ function readClaudeThreadPermissionModeValue(
   return "inherit";
 }
 
+function readOpenCodeThreadPermissionModeValue(
+  thread: Thread | null,
+): OpenCodeThreadPermissionModeValue {
+  const value = thread?.engineMetadata?.opencodePermissionMode;
+  if (value === "ask" || value === "allow" || value === "deny") {
+    return value;
+  }
+  return "inherit";
+}
+
+function readThreadOpenCodeAgentValue(thread: Thread | null): string {
+  const value = thread?.engineMetadata?.opencodeAgent;
+  return typeof value === "string" && value.trim() ? value.trim() : "build";
+}
+
 function readThreadApprovalPolicyValue(thread: Thread | null): ThreadApprovalPolicyValue {
   if (thread?.engineId === "claude") {
     return readClaudeThreadPermissionModeValue(thread);
+  }
+  if (thread?.engineId === "opencode") {
+    return readOpenCodeThreadPermissionModeValue(thread);
   }
 
   return readCodexThreadApprovalPolicyValue(thread);
@@ -752,6 +874,18 @@ function applyThreadExecutionPolicyPatch(
     } else {
       delete metadata.claudePermissionMode;
     }
+  } else if (thread.engineId === "opencode") {
+    if (
+      nextState.approvalPolicy === "ask" ||
+      nextState.approvalPolicy === "allow" ||
+      nextState.approvalPolicy === "deny"
+    ) {
+      metadata.opencodePermissionMode = nextState.approvalPolicy;
+    } else {
+      delete metadata.opencodePermissionMode;
+    }
+    delete metadata.sandboxMode;
+    delete metadata.sandboxAllowNetwork;
   } else {
     if (isCustomCodexApprovalPolicyValue(nextState.approvalPolicy)) {
       metadata.sandboxApprovalPolicy = nextState.approvalPolicy;
@@ -767,16 +901,18 @@ function applyThreadExecutionPolicyPatch(
     }
   }
 
-  if (nextState.sandboxMode === "inherit") {
-    delete metadata.sandboxMode;
-  } else {
-    metadata.sandboxMode = nextState.sandboxMode;
-  }
+  if (thread.engineId !== "opencode") {
+    if (nextState.sandboxMode === "inherit") {
+      delete metadata.sandboxMode;
+    } else {
+      metadata.sandboxMode = nextState.sandboxMode;
+    }
 
-  if (nextState.networkPolicy === "inherit") {
-    delete metadata.sandboxAllowNetwork;
-  } else {
-    metadata.sandboxAllowNetwork = nextState.networkPolicy === "enabled";
+    if (nextState.networkPolicy === "inherit") {
+      delete metadata.sandboxAllowNetwork;
+    } else {
+      metadata.sandboxAllowNetwork = nextState.networkPolicy === "enabled";
+    }
   }
 
   return {
@@ -1350,6 +1486,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       skillsLoaded: false,
       appsLoaded: false,
     });
+  const [openCodeCatalog, setOpenCodeCatalog] = useState<OpenCodeRuntimeCatalog | null>(null);
+  const [openCodeCatalogLoaded, setOpenCodeCatalogLoaded] = useState(false);
+  const [selectedOpenCodeAgent, setSelectedOpenCodeAgent] = useState("build");
+  const selectedOpenCodeAgentRef = useRef(selectedOpenCodeAgent);
   const [selectedPersonality, setSelectedPersonality] = useState<CodexPersonalityValue>("inherit");
   const [selectedServiceTier, setSelectedServiceTier] = useState<CodexServiceTierValue>("inherit");
   const [outputSchemaText, setOutputSchemaText] = useState("");
@@ -1441,6 +1581,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     rollbackCodexThread,
     compactCodexThread,
     attachCodexRemoteThread,
+    attachOpenCodeRemoteSession,
     refreshThreads,
     setActiveThread: setActiveThreadInStore,
     applyThreadUpdateLocal,
@@ -1455,6 +1596,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       rollbackCodexThread: state.rollbackCodexThread,
       compactCodexThread: state.compactCodexThread,
       attachCodexRemoteThread: state.attachCodexRemoteThread,
+      attachOpenCodeRemoteSession: state.attachOpenCodeRemoteSession,
       refreshThreads: state.refreshThreads,
       setActiveThread: state.setActiveThread,
       applyThreadUpdateLocal: state.applyThreadUpdateLocal,
@@ -1478,6 +1620,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const titleInputRef = useRef<HTMLInputElement>(null);
   const effortSyncKeyRef = useRef<string | null>(null);
   const manuallyOverrodeThreadSelectionRef = useRef(false);
+  const manualThreadBindTargetRef = useRef<string | null>(null);
   const lastSyncedThreadIdRef = useRef<string | null>(null);
   const highlightTimeoutRef = useRef<number | null>(null);
   const prependLoadInFlightRef = useRef(false);
@@ -1507,6 +1650,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     serviceTier: CodexServiceTierValue;
     outputSchemaText: string;
     customApprovalPolicyText: string;
+    openCodeAgent: string;
     restorePlanModeOnCancel: boolean;
   } | null>(null);
   const [planImplementationPrompt, setPlanImplementationPrompt] = useState<{
@@ -1518,6 +1662,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     serviceTier: CodexServiceTierValue;
     outputSchemaText: string;
     customApprovalPolicyText: string;
+    openCodeAgent: string;
   } | null>(null);
 
   const trustLevelOptions = useMemo(() => getTrustLevelOptions(t), [t]);
@@ -1527,6 +1672,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   );
   const claudeThreadPermissionModeOptions = useMemo(
     () => getClaudeThreadPermissionModeOptions(t),
+    [t],
+  );
+  const openCodeThreadPermissionModeOptions = useMemo(
+    () => getOpenCodeThreadPermissionModeOptions(t),
     [t],
   );
   const threadSandboxModeOptionsAll = useMemo(
@@ -1550,6 +1699,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     [availableModels],
   );
   const codexReferenceRoot = activeRepo?.path ?? activeWorkspace?.rootPath ?? null;
+  const openCodeRuntimeRoot = codexReferenceRoot;
 
   const legacyModels = useMemo(
     () => availableModels.filter((m) => m.hidden),
@@ -1626,12 +1776,22 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }, [selectedEngineId]);
 
   useEffect(() => {
+    if (selectedEngineId === "opencode" && planMode) {
+      setPlanMode(false);
+    }
+  }, [planMode, selectedEngineId]);
+
+  useEffect(() => {
     selectedModelIdRef.current = selectedModelId;
   }, [selectedModelId]);
 
   useEffect(() => {
     selectedEffortRef.current = selectedEffort;
   }, [selectedEffort]);
+
+  useEffect(() => {
+    selectedOpenCodeAgentRef.current = selectedOpenCodeAgent;
+  }, [selectedOpenCodeAgent]);
   const canSteerActiveTurn = useMemo(() => {
     if (
       !streaming ||
@@ -1659,6 +1819,30 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     threadId,
   ]);
   const codexReferencesAvailable = codexSkills.length > 0 || codexApps.length > 0;
+  const openCodeSelectableAgents = useMemo(
+    () =>
+      (openCodeCatalog?.agents ?? []).filter(
+        (agent) => !agent.hidden && (agent.mode === "primary" || agent.mode === "all"),
+      ),
+    [openCodeCatalog?.agents],
+  );
+  const openCodeSlashCommands = useMemo<SlashCommand[]>(
+    () =>
+      selectedEngineId === "opencode"
+        ? (openCodeCatalog?.commands ?? []).map((command) => ({
+            id: `opencode-command:${command.name}`,
+            name: command.name,
+            description:
+              command.description ||
+              (command.hints.length > 0
+                ? command.hints.join(" ")
+                : t("slashCommands.panels.openCodeCommands.insertDescription")),
+            icon: command.subtask ? GitBranch : SquareCode,
+            disabled: false,
+          }))
+        : [],
+    [openCodeCatalog?.commands, selectedEngineId, t],
+  );
 
   const loadCodexReferenceCatalogs = useCallback(async (): Promise<{
     skills: CodexSkill[];
@@ -1757,8 +1941,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     return encodeModelOptionValue(selectedEngineId, selectedModelId);
   }, [selectedEngineId, selectedModelId]);
   const resolveComposerRuntimeSelection = useCallback(() => {
-    const engineId = selectedEngineIdRef.current;
-    const modelId = selectedModelIdRef.current;
+    const engineId = selectedEngineId || selectedEngineIdRef.current;
+    const modelId = selectedModelId ?? selectedModel?.id ?? selectedModelIdRef.current;
     if (!engineId || !modelId) {
       return null;
     }
@@ -1771,7 +1955,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       modelId,
       reasoningEffort: resolveReasoningEffortForModel(model, selectedEffortRef.current),
     };
-  }, [engines]);
+  }, [engines, selectedEngineId, selectedModel?.id, selectedModelId]);
 
   const renderAssistantIdentity = useCallback((message: Message) => {
     const messageEngineId =
@@ -1821,10 +2005,14 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const activeThreadApprovalTitle =
     activeThread?.engineId === "claude"
       ? t("policy.approvalTitleClaude")
+      : activeThread?.engineId === "opencode"
+        ? t("policy.approvalTitleOpenCode")
       : t("permissionPicker.approvalPolicy");
   const activeThreadApprovalOptions =
     activeThread?.engineId === "claude"
       ? claudeThreadPermissionModeOptions
+      : activeThread?.engineId === "opencode"
+        ? openCodeThreadPermissionModeOptions
       : codexThreadApprovalPolicyOptions;
   const activeThreadApprovalSelectedLabel =
     activeThread?.engineId === "codex" && activeThreadApprovalPolicy === "custom"
@@ -1877,7 +2065,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       ? `${activeThreadSandboxModeOption.label} ${t("panel.unsupportedSuffix")}`
       : undefined;
   const threadPolicyCustomCount =
-    activeThread?.engineId === "claude"
+    activeThread?.engineId === "opencode"
+      ? activeThreadApprovalPolicy !== "inherit" ? 1 : 0
+      : activeThread?.engineId === "claude"
       ? (activeThreadApprovalPolicy !== "inherit" ? 1 : 0) +
         (activeThreadSandboxMode !== "inherit" ? 1 : 0) +
         (activeThreadNetworkPolicy !== "inherit" ? 1 : 0)
@@ -2002,6 +2192,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         serviceTier: selectedServiceTier,
         outputSchemaText,
         customApprovalPolicyText,
+        openCodeAgent: readThreadOpenCodeAgentValue(promptThread),
       });
       return;
     }
@@ -2082,9 +2273,18 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   );
   const showSpecialInputComposer =
     showPendingToolInputComposer || showPlanImplementationComposer;
+  const pendingToolInputCanUseDecisionActions = canUseApprovalDecisionActions(
+    activeThread?.engineId,
+    pendingToolInputApproval?.details,
+  );
+  const pendingToolInputIsOpenCodeQuestion =
+    activeThread?.engineId === "opencode" &&
+    isOpenCodeQuestionApproval(pendingToolInputApproval?.details);
   const pendingToolInputSupportsDecline =
+    (pendingToolInputCanUseDecisionActions || pendingToolInputIsOpenCodeQuestion) &&
     activeThreadApprovalDecisionCapabilities.includes("decline");
   const pendingToolInputSupportsCancel =
+    (pendingToolInputCanUseDecisionActions || pendingToolInputIsOpenCodeQuestion) &&
     activeThreadApprovalDecisionCapabilities.includes("cancel");
 
   const appendAttachmentsFromPaths = useCallback((paths: string[]) => {
@@ -2108,7 +2308,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       });
     }
 
-    const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId);
+    const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId, selectedModel);
     if (attachmentFilterConfig) {
       const supportedExtensions = new Set(attachmentFilterConfig.supportedExtensions);
       const supportedAttachments = nextAttachments.filter((attachment) =>
@@ -2137,10 +2337,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       }
       return merged;
     });
-  }, [activeWorkspaceId, selectedEngineId, t]);
+  }, [activeWorkspaceId, selectedEngineId, selectedModel, t]);
 
   useEffect(() => {
-    const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId);
+    const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId, selectedModel);
     if (!attachmentFilterConfig) {
       return;
     }
@@ -2156,7 +2356,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       toast.warning(attachmentFilterConfig.warningMessage);
       return supportedAttachments;
     });
-  }, [selectedEngineId, t]);
+  }, [selectedEngineId, selectedModel, t]);
 
   const isDropPositionInsideChatSection = useCallback((x: number, y: number): boolean => {
     const container = chatSectionRef.current;
@@ -2463,6 +2663,39 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }, [activeWorkspaceId, codexReferenceRoot, loadCodexReferenceCatalogs, selectedEngineId]);
 
   useEffect(() => {
+    if (selectedEngineId !== "opencode" || !activeWorkspaceId || !openCodeRuntimeRoot) {
+      setOpenCodeCatalog(null);
+      setOpenCodeCatalogLoaded(false);
+      return;
+    }
+
+    let disposed = false;
+    setOpenCodeCatalog(null);
+    setOpenCodeCatalogLoaded(false);
+    void ipc
+      .getOpenCodeRuntimeCatalog(openCodeRuntimeRoot)
+      .then((catalog) => {
+        if (disposed) {
+          return;
+        }
+        setOpenCodeCatalog(catalog);
+        setOpenCodeCatalogLoaded(true);
+      })
+      .catch((error) => {
+        if (disposed) {
+          return;
+        }
+        setOpenCodeCatalog({ agents: [], commands: [], mcpServers: [] });
+        setOpenCodeCatalogLoaded(false);
+        console.warn("Failed to load OpenCode runtime catalog", error);
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [activeWorkspaceId, openCodeRuntimeRoot, selectedEngineId]);
+
+  useEffect(() => {
     if (
       selectedEngineId !== "codex" ||
       !activeWorkspaceId ||
@@ -2595,6 +2828,14 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }, [activeThread?.engineId, activeThread?.id, activeThread?.engineMetadata]);
 
   useEffect(() => {
+    if (activeThread?.engineId === "opencode") {
+      setSelectedOpenCodeAgent(readThreadOpenCodeAgentValue(activeThread));
+    } else if (selectedEngineId !== "opencode") {
+      setSelectedOpenCodeAgent("build");
+    }
+  }, [activeThread?.engineId, activeThread?.id, activeThread?.engineMetadata, selectedEngineId]);
+
+  useEffect(() => {
     if (!activeThread) {
       lastSyncedThreadIdRef.current = null;
       manuallyOverrodeThreadSelectionRef.current = false;
@@ -2655,6 +2896,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
     if (!activeThreadInCurrentWorkspace) {
       setActiveThreadInStore(null);
+    }
+    if (targetThreadId && manualThreadBindTargetRef.current === targetThreadId) {
+      return;
     }
     void bindChatThread(targetThreadId);
   }, [
@@ -3022,6 +3266,54 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     }
   }
 
+  async function onOpenCodeAgentChange(agent: string) {
+    setSelectedOpenCodeAgent(agent);
+    selectedOpenCodeAgentRef.current = agent;
+    setHasExplicitComposerRuntime(true);
+
+    if (!activeThreadMatchesComposer || activeThread?.engineId !== "opencode") {
+      return;
+    }
+
+    try {
+      const updatedThread = await ipc.setThreadOpenCodeConfig(activeThread.id, {
+        agent: agent === "build" ? null : agent,
+      });
+      applyThreadUpdateLocal(updatedThread);
+    } catch (error) {
+      toast.error(
+        t("panel.toasts.updateOpenCodeConfigFailed", { error: String(error) }),
+      );
+    }
+  }
+
+  async function applyOpenCodeConfigToThread(
+    targetThreadId: string,
+    config?: {
+      engineId: string;
+      agent: string;
+    },
+  ): Promise<boolean> {
+    const effectiveEngineId = config?.engineId ?? selectedEngineId;
+    if (effectiveEngineId !== "opencode") {
+      return true;
+    }
+
+    const agent = config?.agent ?? selectedOpenCodeAgentRef.current;
+    try {
+      const updatedThread = await ipc.setThreadOpenCodeConfig(targetThreadId, {
+        agent: agent === "build" ? null : agent,
+      });
+      applyThreadUpdateLocal(updatedThread);
+      return true;
+    } catch (error) {
+      toast.error(
+        t("panel.toasts.updateOpenCodeConfigFailed", { error: String(error) }),
+      );
+      return false;
+    }
+  }
+
   async function onForkCodexThread() {
     if (!activeThread || activeThread.engineId !== "codex") {
       throw new Error(t("panel.toasts.codexThreadToolUnavailable"));
@@ -3114,6 +3406,26 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     toast.success(t("panel.toasts.codexThreadResumed"));
   }
 
+  async function onAttachOpenCodeRemoteSession(session: OpenCodeRemoteSession) {
+    if (!activeWorkspaceId || !selectedModelId) {
+      throw new Error(t("panel.toasts.openCodeSessionResumeUnavailable"));
+    }
+
+    const attachedThread = await attachOpenCodeRemoteSession(
+      activeWorkspaceId,
+      session.engineThreadId,
+      session.cwd,
+      selectedModelId,
+    );
+    if (!attachedThread) {
+      throw new Error(t("panel.toasts.openCodeSessionResumeFailed"));
+    }
+
+    setActiveThreadInStore(attachedThread.id);
+    await bindChatThread(attachedThread.id);
+    toast.success(t("panel.toasts.openCodeSessionResumed"));
+  }
+
   /* ── Slash command system ── */
 
   const canManageActiveCodexThread =
@@ -3126,83 +3438,116 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     activeThread?.engineMetadata?.codexTranscriptImported !== false;
 
   const isCodexEngine = selectedEngineId === "codex";
+  const isOpenCodeEngine = selectedEngineId === "opencode";
+  const activePlanMode = planMode && !isOpenCodeEngine;
 
   const slashCommands: SlashCommand[] = useMemo(
     () => [
-      {
-        id: "review",
-        name: "review",
-        description: t("reviewPicker.subtitle"),
-        icon: Search,
-        codexOnly: true,
-        disabled: !canManageActiveCodexThread,
-      },
-      {
-        id: "fork",
-        name: "fork",
-        description: t("threadPicker.forkDescription"),
-        icon: GitBranch,
-        codexOnly: true,
-        disabled: !canUseNativeCodexHistoryTools,
-      },
-      {
-        id: "rollback",
-        name: "rollback",
-        description: t("threadPicker.rollbackDescription"),
-        icon: RotateCcw,
-        codexOnly: true,
-        disabled: !canUseNativeCodexHistoryTools,
-      },
-      {
-        id: "compact",
-        name: "compact",
-        description: t("threadPicker.compactDescription"),
-        icon: Scissors,
-        codexOnly: true,
-        disabled: !canManageActiveCodexThread,
-      },
-      {
-        id: "fast",
-        name: "fast",
-        description: t("configPicker.serviceTierDescription"),
-        icon: Zap,
-        codexOnly: true,
-        disabled: !isCodexEngine,
-      },
-      {
-        id: "personality",
-        name: "personality",
-        description: t("configPicker.personalityDescription"),
-        icon: UserCircle,
-        codexOnly: true,
-        disabled: !isCodexEngine,
-      },
-      {
-        id: "skills",
-        name: "skills",
-        description: "View loaded Codex skills",
-        icon: Sparkles,
-        codexOnly: true,
-        disabled: !isCodexEngine,
-      },
-      {
-        id: "mcp",
-        name: "MCP",
-        description: "View MCP server status",
-        icon: Server,
-        codexOnly: true,
-        disabled: !isCodexEngine,
-      },
-      {
-        id: "experimental",
-        name: "experimental",
-        description: "View experimental features",
-        icon: FlaskConical,
-        codexOnly: true,
-        disabled: !isCodexEngine,
-      },
+      ...[
+        {
+          id: "review",
+          name: "review",
+          description: t("reviewPicker.subtitle"),
+          icon: Search,
+          codexOnly: true,
+          disabled: !canManageActiveCodexThread,
+        },
+        {
+          id: "fork",
+          name: "fork",
+          description: t("threadPicker.forkDescription"),
+          icon: GitBranch,
+          codexOnly: true,
+          disabled: !canUseNativeCodexHistoryTools,
+        },
+        {
+          id: "rollback",
+          name: "rollback",
+          description: t("threadPicker.rollbackDescription"),
+          icon: RotateCcw,
+          codexOnly: true,
+          disabled: !canUseNativeCodexHistoryTools,
+        },
+        {
+          id: "compact",
+          name: "compact",
+          description: t("threadPicker.compactDescription"),
+          icon: Scissors,
+          codexOnly: true,
+          disabled: !canManageActiveCodexThread,
+        },
+        {
+          id: "fast",
+          name: "fast",
+          description: t("configPicker.serviceTierDescription"),
+          icon: Zap,
+          codexOnly: true,
+          disabled: !isCodexEngine,
+        },
+        {
+          id: "personality",
+          name: "personality",
+          description: t("configPicker.personalityDescription"),
+          icon: UserCircle,
+          codexOnly: true,
+          disabled: !isCodexEngine,
+        },
+        {
+          id: "skills",
+          name: "skills",
+          description: t("slashCommands.panels.skills.description"),
+          icon: Sparkles,
+          codexOnly: true,
+          disabled: !isCodexEngine,
+        },
+        {
+          id: "mcp",
+          name: "MCP",
+          description: t("slashCommands.panels.mcp.description"),
+          icon: Server,
+          codexOnly: isCodexEngine,
+          disabled: !(isCodexEngine || isOpenCodeEngine),
+        },
+        {
+          id: "experimental",
+          name: "experimental",
+          description: t("slashCommands.panels.experimental.description"),
+          icon: FlaskConical,
+          codexOnly: true,
+          disabled: !isCodexEngine,
+        },
+        {
+          id: "agents",
+          name: "agents",
+          description: t("slashCommands.panels.openCodeAgents.description"),
+          icon: UserCircle,
+          disabled: !isOpenCodeEngine,
+        },
+        {
+          id: "commands",
+          name: "commands",
+          description: t("slashCommands.panels.openCodeCommands.description"),
+          icon: SquareCode,
+          disabled: !isOpenCodeEngine,
+        },
+        {
+          id: "sessions",
+          name: "sessions",
+          description: t("slashCommands.panels.openCodeSessions.description"),
+          icon: GitBranch,
+          disabled: !isOpenCodeEngine,
+        },
+      ],
+      ...openCodeSlashCommands,
     ],
-    [canManageActiveCodexThread, canUseNativeCodexHistoryTools, isCodexEngine, t],
+    [
+      canManageActiveCodexThread,
+      canUseNativeCodexHistoryTools,
+      isCodexEngine,
+      isOpenCodeEngine,
+      openCodeSlashCommands,
+      t,
+    ],
   );
 
   const filteredSlashCommands = useMemo(() => {
@@ -3222,6 +3567,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
     const cmd = slashCommands.find((c) => c.id === commandId);
     if (!cmd || cmd.disabled) return;
+
+    if (commandId.startsWith("opencode-command:")) {
+      const commandName = commandId.slice("opencode-command:".length);
+      setInput(`/${commandName} `);
+      requestAnimationFrame(() => inputRef.current?.focus());
+      return;
+    }
 
     // /fast is a simple toggle — no panel needed
     if (commandId === "fast") {
@@ -3376,6 +3728,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     const submitEngineId = composerRuntime.engineId;
     const submitModelId = composerRuntime.modelId;
     const submitReasoningEffort = composerRuntime.reasoningEffort;
+    const submitPlanMode = submitEngineId === "opencode" ? false : planMode;
 
     const activeScopeRepoId = activeRepo?.id ?? null;
     const activeThreadInScope = activeThread
@@ -3418,7 +3771,14 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         return;
       }
       targetThreadId = createdThreadId;
-      await bindChatThread(createdThreadId);
+      manualThreadBindTargetRef.current = createdThreadId;
+      try {
+        await bindChatThread(createdThreadId);
+      } finally {
+        if (manualThreadBindTargetRef.current === createdThreadId) {
+          manualThreadBindTargetRef.current = null;
+        }
+      }
     }
 
     const inputItems = await resolveCodexInputItems(text, submitEngineId);
@@ -3449,7 +3809,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           text,
           attachments: [...attachments],
           inputItems: inputItems ?? null,
-          planMode,
+          planMode: submitPlanMode,
           engineId: submitEngineId,
           modelId: submitModelId,
           effort: submitReasoningEffort,
@@ -3457,6 +3817,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           serviceTier: selectedServiceTier,
           outputSchemaText,
           customApprovalPolicyText,
+          openCodeAgent: selectedOpenCodeAgentRef.current,
           restorePlanModeOnCancel: false,
         });
         return;
@@ -3472,6 +3833,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     if (!(await applyCodexConfigToThread(targetThreadId))) {
       return;
     }
+    if (!(await applyOpenCodeConfigToThread(targetThreadId))) {
+      return;
+    }
     setThreadLastModelLocal(targetThreadId, submitModelId);
 
     const sent = await send(text, {
@@ -3481,10 +3845,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       reasoningEffort: submitReasoningEffort,
       attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
       inputItems,
-      planMode,
+      planMode: submitPlanMode,
     });
     if (sent) {
-      pendingPlanImplementationThreadIdRef.current = planMode ? targetThreadId : null;
+      pendingPlanImplementationThreadIdRef.current = submitPlanMode ? targetThreadId : null;
       const trimmed = input.trim();
       if (trimmed) {
         const hist = inputHistoryRef.current;
@@ -3520,8 +3884,17 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         setAttachments(prompt.attachments);
         return;
       }
+      if (!(await applyOpenCodeConfigToThread(prompt.threadId, {
+        engineId: prompt.engineId,
+        agent: prompt.openCodeAgent,
+      }))) {
+        setInput(prompt.text);
+        setAttachments(prompt.attachments);
+        return;
+      }
       setThreadLastModelLocal(prompt.threadId, prompt.modelId);
 
+      const promptPlanMode = prompt.engineId === "opencode" ? false : prompt.planMode;
       const sent = await send(prompt.text, {
         threadIdOverride: prompt.threadId,
         engineId: prompt.engineId,
@@ -3529,7 +3902,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         reasoningEffort: prompt.effort,
         attachments: prompt.attachments.length > 0 ? prompt.attachments : undefined,
         inputItems: prompt.inputItems ?? undefined,
-        planMode: prompt.planMode,
+        planMode: promptPlanMode,
       });
       if (!sent) {
         setInput(prompt.text);
@@ -3537,7 +3910,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         return;
       }
 
-      pendingPlanImplementationThreadIdRef.current = prompt.planMode ? prompt.threadId : null;
+      pendingPlanImplementationThreadIdRef.current = promptPlanMode ? prompt.threadId : null;
       setInput("");
       setAttachments([]);
 
@@ -3594,6 +3967,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           serviceTier: prompt.serviceTier,
           outputSchemaText: prompt.outputSchemaText,
           customApprovalPolicyText: prompt.customApprovalPolicyText,
+          openCodeAgent: prompt.openCodeAgent,
           restorePlanModeOnCancel: true,
         });
         return;
@@ -3612,6 +3986,16 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           serviceTier: prompt.serviceTier,
           outputSchemaText: prompt.outputSchemaText,
           customApprovalPolicyText: prompt.customApprovalPolicyText,
+        }))
+      ) {
+        setPlanMode(true);
+        setPlanImplementationPrompt(prompt);
+        return;
+      }
+      if (
+        !(await applyOpenCodeConfigToThread(currentThread.id, {
+          engineId: prompt.engineId,
+          agent: prompt.openCodeAgent,
         }))
       ) {
         setPlanMode(true);
@@ -3693,7 +4077,12 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }
 
   async function onThreadExecutionPolicyChange(patch: ThreadExecutionPolicyPatch) {
-    if (!activeThread || (activeThread.engineId !== "codex" && activeThread.engineId !== "claude")) {
+    if (
+      !activeThread ||
+      (activeThread.engineId !== "codex" &&
+        activeThread.engineId !== "claude" &&
+        activeThread.engineId !== "opencode")
+    ) {
       return;
     }
 
@@ -3701,11 +4090,14 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       useThreadStore.getState().threads.find((thread) => thread.id === activeThread.id) ??
       activeThread;
     const isCodexThread = currentThread.engineId === "codex";
+    const isOpenCodeThread = currentThread.engineId === "opencode";
     const nextState = {
       ...readThreadExecutionPolicyState(currentThread),
       ...patch,
     };
-    const nextPatch: ThreadExecutionPolicyPatch = { ...patch };
+    const nextPatch: ThreadExecutionPolicyPatch = isOpenCodeThread
+      ? { approvalPolicy: patch.approvalPolicy }
+      : { ...patch };
     const currentStoredNetworkPolicy = isCodexThread
       ? readThreadStoredNetworkPolicyValue(currentThread)
       : "inherit";
@@ -3735,6 +4127,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       patch.sandboxMode !== undefined
     ) {
       toast.error(t("panel.toasts.codexOnlySandbox"));
+      return;
+    }
+
+    if (isOpenCodeThread && (patch.sandboxMode !== undefined || patch.networkPolicy !== undefined)) {
       return;
     }
 
@@ -3815,7 +4211,11 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   async function handleAddAttachment() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId);
+      const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId, selectedModel);
+      if (attachmentFilterConfig?.supportedExtensions.length === 0) {
+        toast.warning(attachmentFilterConfig.warningMessage);
+        return;
+      }
       const selected = await open({
         multiple: true,
         title: attachmentFilterConfig?.title ?? t("panel.attachFiles"),
@@ -3825,15 +4225,21 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 name: attachmentFilterConfig.supportedLabel,
                 extensions: attachmentFilterConfig.supportedExtensions,
               },
-              {
-                name: attachmentFilterConfig.imagesLabel,
-                extensions: attachmentFilterConfig.imageExtensions,
-              },
-              {
-                name: attachmentFilterConfig.textFilesLabel,
-                extensions: attachmentFilterConfig.textExtensions,
-              },
-            ]
+              attachmentFilterConfig.imageExtensions.length > 0
+                ? {
+                    name: attachmentFilterConfig.imagesLabel,
+                    extensions: attachmentFilterConfig.imageExtensions,
+                  }
+                : null,
+              attachmentFilterConfig.textExtensions.length > 0
+                ? {
+                    name: attachmentFilterConfig.textFilesLabel,
+                    extensions: attachmentFilterConfig.textExtensions,
+                  }
+                : null,
+            ].filter((filter): filter is { name: string; extensions: string[] } =>
+              Boolean(filter),
+            )
           : undefined,
       });
       if (!selected) return;
@@ -4617,13 +5023,19 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   const isPermissionsRequest = isPermissionsRequestApproval(details);
                   const isToolInputRequest = isRequestUserInputApproval(details);
                   const requiresCustomPayload = requiresCustomApprovalPayload(details);
+                  const canUseDecisionActions = canUseApprovalDecisionActions(
+                    activeThread?.engineId,
+                    details,
+                  );
                   const toolInputQuestionCount = isToolInputRequest
                     ? parseToolInputQuestions(details).length
                     : 0;
                   const isClaudeApproval = activeThread?.engineId === "claude";
                   const supportsDecline =
+                    canUseDecisionActions &&
                     activeThreadApprovalDecisionCapabilities.includes("decline");
                   const supportsCancel =
+                    canUseDecisionActions &&
                     activeThreadApprovalDecisionCapabilities.includes("cancel");
                   const supportsSession =
                     activeThreadApprovalDecisionCapabilities.includes("accept_for_session");
@@ -4740,7 +5152,11 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                                 onClick={() =>
                                   void respondApproval(approval.approvalId, {
                                     ...(isPermissionsRequest
-                                      ? buildPermissionsDeclineResponse()
+                                      ? buildPermissionApprovalResponseForEngine(
+                                          activeThread?.engineId,
+                                          details,
+                                          "decline",
+                                        )
                                       : isToolInputRequest
                                         ? { action: "decline" }
                                         : { decision: "decline" }),
@@ -4760,7 +5176,11 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                                 onClick={() =>
                                   void respondApproval(approval.approvalId, {
                                     ...(isPermissionsRequest
-                                      ? buildPermissionsApprovalResponse(details, "session")
+                                      ? buildPermissionApprovalResponseForEngine(
+                                          activeThread?.engineId,
+                                          details,
+                                          "accept_for_session",
+                                        )
                                       : { decision: "accept_for_session" }),
                                   })
                                 }
@@ -4815,7 +5235,11 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                                   void respondApproval(
                                     approval.approvalId,
                                     isPermissionsRequest
-                                      ? buildPermissionsApprovalResponse(details, "turn")
+                                      ? buildPermissionApprovalResponseForEngine(
+                                          activeThread?.engineId,
+                                          details,
+                                          "accept",
+                                        )
                                       : { decision: "accept" },
                                   )
                                 }
@@ -4835,7 +5259,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
           {/* Input container */}
           <div
-            className={`chat-input-box ${planMode && !showSpecialInputComposer ? "chat-input-box-plan" : ""} ${showSpecialInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
+            className={`chat-input-box ${activePlanMode && !showSpecialInputComposer ? "chat-input-box-plan" : ""} ${showSpecialInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
           >
             {showPendingToolInputComposer && pendingToolInputApproval ? (
               <ToolInputQuestionnaire
@@ -4844,7 +5268,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   pendingToolInputSupportsCancel
                     ? () =>
                         void respondApproval(pendingToolInputApproval.approvalId, {
-                          action: "cancel",
+                          [pendingToolInputIsOpenCodeQuestion ? "decision" : "action"]:
+                            "cancel",
                         })
                     : undefined
                 }
@@ -4852,7 +5277,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   pendingToolInputSupportsDecline
                     ? () =>
                         void respondApproval(pendingToolInputApproval.approvalId, {
-                          action: "decline",
+                          [pendingToolInputIsOpenCodeQuestion ? "decision" : "action"]:
+                            "decline",
                         })
                     : undefined
                 }
@@ -4870,7 +5296,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
             ) : (
               <>
                 {/* Plan mode indicator banner */}
-                {planMode && (
+                {activePlanMode && (
                   <div className="chat-plan-mode-banner">
                     <ListChecks size={12} />
                     <span>{t("panel.planMode")}</span>
@@ -4924,7 +5350,21 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         ? codexSkills
                         : (codexProtocolDiagnostics?.skills ?? [])
                     }
-                    mcpServers={codexProtocolDiagnostics?.mcpServers}
+                    openCodeAgents={openCodeCatalog?.agents}
+                    openCodeCommands={openCodeCatalog?.commands}
+                    openCodeMcpServers={
+                      selectedEngineId === "opencode"
+                        ? openCodeCatalog?.mcpServers ?? []
+                        : undefined
+                    }
+                    workspaceId={activeWorkspaceId}
+                    selectedModelId={selectedModelId}
+                    onAttachOpenCodeSession={onAttachOpenCodeRemoteSession}
+                    mcpServers={
+                      selectedEngineId === "opencode"
+                        ? undefined
+                        : codexProtocolDiagnostics?.mcpServers
+                    }
                     experimentalFeatures={codexProtocolDiagnostics?.experimentalFeatures}
                     onConfirm={handleCommandPanelConfirm}
                     onDismiss={() => {
@@ -5018,13 +5458,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     }
                     if (e.shiftKey && e.key === "Tab") {
                       e.preventDefault();
-                      if (activeWorkspaceId) {
+                      if (activeWorkspaceId && !isOpenCodeEngine) {
                         setPlanMode((prev) => !prev);
                       }
                     }
                   }}
                   placeholder={
-                    planMode
+                    activePlanMode
                       ? t("panel.placeholders.plan")
                       : t("panel.placeholders.chat")
                   }
@@ -5038,7 +5478,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     lineHeight: 1.6,
                     resize: "none",
                     fontFamily: "inherit",
-                    caretColor: planMode ? "var(--accent-2)" : "var(--accent)",
+                    caretColor: activePlanMode ? "var(--accent-2)" : "var(--accent)",
                   }}
                 />
 
@@ -5082,24 +5522,33 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               )}
 
               {!showSpecialInputComposer && (
-                <button
-                  type="button"
-                  className={`chat-toolbar-btn chat-toolbar-btn-bordered ${planMode ? "chat-toolbar-btn-active" : ""}`}
-                  onClick={() => setPlanMode((prev) => !prev)}
-                  disabled={!activeWorkspaceId}
-                  title={
-                    selectedEngineId === "codex"
-                      ? planMode
-                        ? t("panel.disablePlanModeCodex")
-                        : t("panel.enablePlanModeCodex")
-                      : planMode
-                        ? t("panel.disablePlanMode")
-                        : t("panel.enablePlanMode")
-                  }
-                >
-                  <ListChecks size={12} />
-                  <span style={{ fontSize: 11 }}>{t("panel.planShort")}</span>
-                </button>
+                isOpenCodeEngine ? (
+                  <OpenCodeAgentPicker
+                    agents={openCodeSelectableAgents}
+                    selectedAgent={selectedOpenCodeAgent}
+                    onAgentChange={(agent) => void onOpenCodeAgentChange(agent)}
+                    disabled={!openCodeCatalogLoaded && openCodeSelectableAgents.length === 0}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className={`chat-toolbar-btn chat-toolbar-btn-bordered ${activePlanMode ? "chat-toolbar-btn-active" : ""}`}
+                    onClick={() => setPlanMode((prev) => !prev)}
+                    disabled={!activeWorkspaceId}
+                    title={
+                      selectedEngineId === "codex"
+                        ? activePlanMode
+                          ? t("panel.disablePlanModeCodex")
+                          : t("panel.enablePlanModeCodex")
+                        : activePlanMode
+                          ? t("panel.disablePlanMode")
+                          : t("panel.enablePlanMode")
+                    }
+                  >
+                    <ListChecks size={12} />
+                    <span style={{ fontSize: 11 }}>{t("panel.planShort")}</span>
+                  </button>
+                )
               )}
 
               {!showSpecialInputComposer && <div className="chat-toolbar-divider" />}
@@ -5117,6 +5566,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       manuallyOverrodeThreadSelectionRef.current = true;
                       setHasExplicitComposerRuntime(true);
                       selectedEngineIdRef.current = engineId;
+                      if (engineId === "opencode") setPlanMode(false);
                       if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
                       const nextEngine =
                         engines.find((engine) => engine.id === engineId) ?? null;
@@ -5170,7 +5620,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 (activeRepo ||
                   repos.length > 0 ||
                   activeThread?.engineId === "codex" ||
-                  activeThread?.engineId === "claude") && (
+                  activeThread?.engineId === "claude" ||
+                  activeThread?.engineId === "opencode") && (
                 <>
                   <div className="chat-toolbar-divider" />
                   <PermissionPicker
@@ -5191,13 +5642,17 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                           : undefined
                     }
                     customPolicyCount={
-                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                      activeThread?.engineId === "codex" ||
+                      activeThread?.engineId === "claude" ||
+                      activeThread?.engineId === "opencode"
                         ? threadPolicyCustomCount
                         : 0
                     }
                     approvalTitle={activeThread?.engineId ? activeThreadApprovalTitle : undefined}
                     approvalValue={
-                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                      activeThread?.engineId === "codex" ||
+                      activeThread?.engineId === "claude" ||
+                      activeThread?.engineId === "opencode"
                         ? activeThreadApprovalPolicy
                         : undefined
                     }
@@ -5207,12 +5662,16 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         : undefined
                     }
                     approvalOptions={
-                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                      activeThread?.engineId === "codex" ||
+                      activeThread?.engineId === "claude" ||
+                      activeThread?.engineId === "opencode"
                         ? activeThreadApprovalOptions
                         : undefined
                     }
                     onApprovalChange={
-                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                      activeThread?.engineId === "codex" ||
+                      activeThread?.engineId === "claude" ||
+                      activeThread?.engineId === "opencode"
                         ? (value) => {
                             if (activeThread?.engineId === "codex") {
                               setCustomApprovalPolicyText("");

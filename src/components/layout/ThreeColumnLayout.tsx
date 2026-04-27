@@ -335,6 +335,7 @@ export function ThreeColumnLayout() {
               >
                 <GitPanel
                   mode="flyout"
+                  visible={gitFlyoutVisible}
                   onPin={() => {
                     setGitPanelPinned(true);
                     setGitFlyoutVisible(false);

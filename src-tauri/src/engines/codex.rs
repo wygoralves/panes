@@ -31,11 +31,13 @@ use crate::models::{
 use crate::{process_utils, runtime_env};
 
 use super::{
-    codex_event_mapper::TurnEventMapper, codex_protocol::IncomingMessage,
-    codex_transport::CodexTransport, ActionResult, ApprovalRequestRoute, CodexRemoteThreadSummary,
-    Engine, EngineEvent, EngineThread, ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo,
-    ReasoningEffortOption, SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment,
-    TurnCompletionStatus, TurnInput, TurnInputItem,
+    codex_event_mapper::TurnEventMapper,
+    codex_protocol::{raw_value_to_value, IncomingMessage},
+    codex_transport::CodexTransport,
+    ActionResult, ApprovalRequestRoute, CodexRemoteThreadSummary, Engine, EngineEvent,
+    EngineThread, ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo, ReasoningEffortOption,
+    SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment, TurnCompletionStatus,
+    TurnInput, TurnInputItem,
 };
 
 const INITIALIZE_METHODS: &[&str] = &["initialize"];
@@ -240,6 +242,8 @@ impl Engine for CodexEngine {
                 availability_nux: None,
                 upgrade_info: None,
                 input_modalities: vec!["text".to_string(), "image".to_string()],
+                attachment_modalities: vec!["text".to_string(), "image".to_string()],
+                limits: None,
                 supports_personality: true,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![
@@ -277,6 +281,8 @@ impl Engine for CodexEngine {
                     migration_markdown: None,
                 }),
                 input_modalities: vec!["text".to_string(), "image".to_string()],
+                attachment_modalities: vec!["text".to_string(), "image".to_string()],
+                limits: None,
                 supports_personality: true,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![
@@ -308,6 +314,8 @@ impl Engine for CodexEngine {
                 availability_nux: None,
                 upgrade_info: None,
                 input_modalities: vec!["text".to_string()],
+                attachment_modalities: vec!["text".to_string()],
+                limits: None,
                 supports_personality: true,
                 default_reasoning_effort: "high".to_string(),
                 supported_reasoning_efforts: vec![
@@ -345,6 +353,8 @@ impl Engine for CodexEngine {
                     migration_markdown: None,
                 }),
                 input_modalities: vec!["text".to_string(), "image".to_string()],
+                attachment_modalities: vec!["text".to_string(), "image".to_string()],
+                limits: None,
                 supports_personality: false,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![
@@ -652,6 +662,7 @@ impl Engine for CodexEngine {
               incoming = subscription.recv() => {
                 match incoming {
                   Ok(IncomingMessage::Notification { method, params }) => {
+                    let params = raw_value_to_value(&params);
                     let normalized_method = normalize_method(&method);
                     if let Some(error_message) =
                       transport_failure_message(normalized_method.as_str(), &params)
@@ -728,6 +739,7 @@ impl Engine for CodexEngine {
                     }
                   }
                   Ok(IncomingMessage::Request { id, raw_id, method, params }) => {
+                    let params = raw_value_to_value(&params);
                     log::debug!(
                       "codex server request: method={method}, id={id}, raw_id={raw_id}, params_keys={:?}",
                       params.as_object().map(|o| o.keys().collect::<Vec<_>>())
@@ -1371,6 +1383,7 @@ impl CodexEngine {
               incoming = subscription.recv() => {
                 match incoming {
                   Ok(IncomingMessage::Notification { method, params }) => {
+                    let params = raw_value_to_value(&params);
                     let normalized_method = normalize_method(&method);
                     if let Some(error_message) =
                       transport_failure_message(normalized_method.as_str(), &params)
@@ -1448,6 +1461,7 @@ impl CodexEngine {
                     }
                   }
                   Ok(IncomingMessage::Request { id, raw_id, method, params }) => {
+                    let params = raw_value_to_value(&params);
                     log::debug!(
                       "codex review server request: method={method}, id={id}, raw_id={raw_id}, params_keys={:?}",
                       params.as_object().map(|o| o.keys().collect::<Vec<_>>())
@@ -2326,6 +2340,7 @@ impl CodexEngine {
             loop {
                 match subscription.recv().await {
                     Ok(IncomingMessage::Notification { method, params }) => {
+                        let params = raw_value_to_value(&params);
                         let normalized_method = normalize_method(&method);
                         match normalized_method.as_str() {
                             "thread/started" => {
@@ -2904,6 +2919,12 @@ struct CodexModelUpgradeInfo {
 }
 
 fn map_codex_model(value: CodexModel) -> ModelInfo {
+    let input_modalities = if value.input_modalities.is_empty() {
+        vec!["text".to_string(), "image".to_string()]
+    } else {
+        value.input_modalities
+    };
+
     ModelInfo {
         id: value.id.clone(),
         display_name: value.display_name.unwrap_or_else(|| value.id.clone()),
@@ -2920,11 +2941,9 @@ fn map_codex_model(value: CodexModel) -> ModelInfo {
             model_link: info.model_link,
             migration_markdown: info.migration_markdown,
         }),
-        input_modalities: if value.input_modalities.is_empty() {
-            vec!["text".to_string(), "image".to_string()]
-        } else {
-            value.input_modalities
-        },
+        input_modalities: input_modalities.clone(),
+        attachment_modalities: input_modalities,
+        limits: None,
         supports_personality: value.supports_personality.unwrap_or(false),
         default_reasoning_effort: value
             .default_reasoning_effort
@@ -6964,6 +6983,8 @@ mod tests {
             availability_nux: None,
             upgrade_info: None,
             input_modalities: vec!["text".to_string()],
+            attachment_modalities: vec!["text".to_string()],
+            limits: None,
             supports_personality: true,
             default_reasoning_effort: "minimal".to_string(),
             supported_reasoning_efforts: vec![ReasoningEffortOption {

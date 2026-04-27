@@ -9,6 +9,7 @@ const codexModel: EngineModel = {
   hidden: false,
   isDefault: true,
   inputModalities: ["text"],
+  attachmentModalities: ["text"],
   supportsPersonality: true,
   defaultReasoningEffort: "medium",
   supportedReasoningEfforts: [
@@ -68,6 +69,28 @@ describe("buildComposerRuntimeSnapshot", () => {
       engineId: "claude",
       modelId: "claude-sonnet-4-6",
       reasoningEffort: "high",
+      serviceTier: null,
+    });
+  });
+
+  it("does not send a reasoning effort for engines without effort controls", () => {
+    expect(
+      buildComposerRuntimeSnapshot({
+        hasActiveThread: true,
+        hasExplicitOverride: false,
+        selectedEngineId: "opencode",
+        selectedModel: {
+          id: "opencode/big-pickle",
+          defaultReasoningEffort: "medium",
+          supportedReasoningEfforts: [],
+        },
+        selectedEffort: "medium",
+        selectedServiceTier: "inherit",
+      }),
+    ).toEqual({
+      engineId: "opencode",
+      modelId: "opencode/big-pickle",
+      reasoningEffort: null,
       serviceTier: null,
     });
   });

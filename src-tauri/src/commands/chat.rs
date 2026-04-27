@@ -1,11 +1,11 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::Path,
     time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{value::RawValue, Value};
 use tauri::{Emitter, State};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -16,7 +16,7 @@ use crate::{
         approval_response_route_for_engine, normalize_approval_response_for_engine,
         trim_action_output_delta_content, validate_engine_sandbox_mode, ApprovalRequestRoute,
         EngineEvent, OutputStream, SandboxPolicy, ThreadScope, TurnAttachment,
-        TurnCompletionStatus, TurnInput, TurnInputItem,
+        TurnCompletionStatus, TurnInput, TurnInputItem, STREAMED_DIFF_MAX_CHARS,
     },
     models::{
         ActionOutputDto, EngineInfoDto, EngineModelDto, MessageDto, MessageStatusDto,
@@ -33,10 +33,27 @@ const STREAM_DB_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 const STREAM_DB_BLOCKS_FLUSH_INTERVAL: Duration = Duration::from_millis(900);
 const ENGINE_EVENT_QUEUE_CAPACITY: usize = 128;
 const ACTION_OUTPUT_MAX_CHUNKS: usize = 240;
+const ENGINE_EVENT_LOG_ACTION_OUTPUT_MAX_CHARS: usize = 4_096;
+const TRUNCATED_SUFFIX: &str = "\n... [truncated]";
 const MAX_ATTACHMENTS_PER_TURN: usize = 10;
+const TEXT_ATTACHMENT_EXTENSIONS: &[&str] = &[
+    "txt", "md", "json", "js", "ts", "tsx", "jsx", "py", "rs", "go", "css", "html", "yaml", "yml",
+    "toml", "xml", "sql", "sh", "csv",
+];
+const IMAGE_ATTACHMENT_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "svg",
+];
 const MESSAGE_WINDOW_DEFAULT_LIMIT: usize = 120;
 const MESSAGE_WINDOW_MAX_LIMIT: usize = 400;
 const MAX_CHAT_NOTIFICATION_PREVIEW_CHARS: usize = 240;
+
+fn value_to_raw(value: &Value) -> Box<RawValue> {
+    serde_json::value::to_raw_value(value).unwrap_or_else(|_| empty_raw_value())
+}
+
+fn empty_raw_value() -> Box<RawValue> {
+    RawValue::from_string("null".to_string()).expect("\"null\" is a valid JSON literal")
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -62,7 +79,7 @@ enum ContentBlock {
         #[serde(rename = "actionType")]
         action_type: String,
         summary: String,
-        details: Value,
+        details: Box<RawValue>,
         #[serde(rename = "outputChunks")]
         output_chunks: Vec<ActionOutputChunk>,
         status: String,
@@ -77,7 +94,7 @@ enum ContentBlock {
         #[serde(rename = "actionType")]
         action_type: String,
         summary: String,
-        details: Value,
+        details: Box<RawValue>,
         status: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         decision: Option<String>,
@@ -236,7 +253,8 @@ pub async fn send_message(
     plan_mode: Option<bool>,
     client_turn_id: Option<String>,
 ) -> Result<String, String> {
-    if state.turns.get(&thread_id).await.is_some() {
+    let already_running = state.turns.get(&thread_id).await.is_some();
+    if already_running {
         return Err(
             "A turn is already running for this thread. Cancel it before sending another message."
                 .to_string(),
@@ -275,6 +293,19 @@ pub async fn send_message(
     };
     let effective_model_id =
         resolve_turn_model_id(&thread, requested_model_id, validation_catalog.as_deref())?;
+    let attachment_catalog = if attachments.is_empty() {
+        None
+    } else if let Some(catalog) = validation_catalog.as_ref() {
+        Some(catalog.clone())
+    } else {
+        Some(state.engines.list_engines().await.map_err(err_to_string)?)
+    };
+    validate_attachments_for_engine_model(
+        &attachments,
+        &thread.engine_id,
+        &effective_model_id,
+        attachment_catalog.as_deref(),
+    )?;
 
     let (workspace, repos, selected_repo) = run_db(db.clone(), {
         let workspace_id = thread.workspace_id.clone();
@@ -322,9 +353,22 @@ pub async fn send_message(
         configured_reasoning_effort.clone()
     };
     let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref())?;
-    let sandbox_mode = sandbox_mode_override
-        .clone()
-        .unwrap_or_else(|| "workspace-write".to_string());
+    let supports_panes_sandbox = thread.engine_id != "opencode";
+    let sandbox_mode = if supports_panes_sandbox {
+        Some(
+            sandbox_mode_override
+                .clone()
+                .unwrap_or_else(|| "workspace-write".to_string()),
+        )
+    } else {
+        if sandbox_mode_override.is_some() {
+            log::warn!(
+                "ignoring sandbox mode override on OpenCode thread {}",
+                thread.id
+            );
+        }
+        None
+    };
     let workspace_writable_roots = if selected_repo.is_some() {
         None
     } else {
@@ -358,25 +402,27 @@ pub async fn send_message(
         false
     };
 
-    if unsupported_thread_sandbox_override_for_external_sandbox(
-        sandbox_mode_override.as_deref(),
-        codex_external_sandbox_active,
-    ) {
-        return Err(
-            "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode. Clear the override or restore local Codex sandboxing first.".to_string(),
-        );
-    }
+    if let Some(sandbox_mode) = sandbox_mode.as_deref() {
+        if unsupported_thread_sandbox_override_for_external_sandbox(
+            sandbox_mode_override.as_deref(),
+            codex_external_sandbox_active,
+        ) {
+            return Err(
+                "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode. Clear the override or restore local Codex sandboxing first.".to_string(),
+            );
+        }
 
-    validate_engine_sandbox_mode(thread.engine_id.as_str(), Some(sandbox_mode.as_str()))?;
+        validate_engine_sandbox_mode(thread.engine_id.as_str(), Some(sandbox_mode))?;
 
-    if workspace_write_confirmation_required(
-        workspace_writable_roots.as_ref(),
-        sandbox_mode.as_str(),
-        workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
-    ) {
-        return Err(
-            "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
-        );
+        if workspace_write_confirmation_required(
+            workspace_writable_roots.as_ref(),
+            sandbox_mode,
+            workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
+        ) {
+            return Err(
+                "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
+            );
+        }
     }
 
     if requested_model_id.is_some() || reasoning_effort != stored_reasoning_effort {
@@ -412,7 +458,86 @@ pub async fn send_message(
         thread.engine_metadata = Some(metadata);
     }
 
-    let assistant_message = run_db(db.clone(), {
+    let writable_roots = match &scope {
+        ThreadScope::Repo { repo_path } => vec![repo_path.clone()],
+        ThreadScope::Workspace {
+            writable_roots,
+            root_path,
+        } => {
+            if writable_roots.is_empty() {
+                vec![root_path.clone()]
+            } else {
+                writable_roots.clone()
+            }
+        }
+    };
+
+    let allow_network =
+        if thread.engine_id == "codex" && sandbox_mode.as_deref() == Some("danger-full-access") {
+            true
+        } else {
+            thread_allow_network_override(thread.engine_metadata.as_ref())
+                .unwrap_or_else(|| allow_network_for_trust_level(&trust_level))
+        };
+    let personality = if thread.engine_id == "codex"
+        && model_supports_personality(state.inner(), &thread.engine_id, &effective_model_id).await
+    {
+        thread_personality(thread.engine_metadata.as_ref())
+    } else {
+        None
+    };
+
+    let approval_policy_override = thread_approval_policy_override_value(
+        thread.engine_id.as_str(),
+        thread.engine_metadata.as_ref(),
+    )?;
+
+    let sandbox = SandboxPolicy {
+        writable_roots,
+        allow_network,
+        approval_policy: Some(approval_policy_override.unwrap_or_else(|| {
+            Value::String(
+                approval_policy_for_engine_and_trust_level(thread.engine_id.as_str(), &trust_level)
+                    .to_string(),
+            )
+        })),
+        reasoning_effort: reasoning_effort.clone(),
+        sandbox_mode,
+        service_tier: thread_service_tier(thread.engine_metadata.as_ref()),
+        personality,
+        output_schema: thread_output_schema(thread.engine_metadata.as_ref()),
+        opencode_agent: thread_opencode_agent(thread.engine_metadata.as_ref()),
+    };
+
+    let engine_thread_id = state
+        .engines
+        .ensure_engine_thread(&thread, Some(effective_model_id.as_str()), scope, sandbox)
+        .await
+        .map_err(err_to_string)?;
+
+    if thread.engine_thread_id.as_deref() != Some(&engine_thread_id) {
+        run_db(db.clone(), {
+            let thread_id = thread.id.clone();
+            let engine_thread_id = engine_thread_id.clone();
+            move |db| db::threads::set_engine_thread_id(db, &thread_id, &engine_thread_id)
+        })
+        .await?;
+        thread.engine_thread_id = Some(engine_thread_id.clone());
+    }
+
+    let cancellation = CancellationToken::new();
+    if !state
+        .turns
+        .try_register(&thread.id, cancellation.clone())
+        .await
+    {
+        return Err(
+            "A turn is already running for this thread. Cancel it before sending another message."
+                .to_string(),
+        );
+    }
+
+    let assistant_message = match run_db(db.clone(), {
         let thread_id = thread.id.clone();
         let message = message.clone();
         let attachments = attachments.clone();
@@ -449,85 +574,14 @@ pub async fn send_message(
             Ok(assistant_message)
         }
     })
-    .await?;
-
-    let writable_roots = match &scope {
-        ThreadScope::Repo { repo_path } => vec![repo_path.clone()],
-        ThreadScope::Workspace {
-            writable_roots,
-            root_path,
-        } => {
-            if writable_roots.is_empty() {
-                vec![root_path.clone()]
-            } else {
-                writable_roots.clone()
-            }
+    .await
+    {
+        Ok(assistant_message) => assistant_message,
+        Err(error) => {
+            state.turns.finish(&thread.id).await;
+            return Err(error);
         }
     };
-
-    let allow_network =
-        if thread.engine_id == "codex" && sandbox_mode.eq_ignore_ascii_case("danger-full-access") {
-            true
-        } else {
-            thread_allow_network_override(thread.engine_metadata.as_ref())
-                .unwrap_or_else(|| allow_network_for_trust_level(&trust_level))
-        };
-    let personality = if thread.engine_id == "codex"
-        && model_supports_personality(state.inner(), &thread.engine_id, &effective_model_id).await
-    {
-        thread_personality(thread.engine_metadata.as_ref())
-    } else {
-        None
-    };
-
-    let approval_policy_override = thread_approval_policy_override_value(
-        thread.engine_id.as_str(),
-        thread.engine_metadata.as_ref(),
-    )?;
-
-    let sandbox = SandboxPolicy {
-        writable_roots,
-        allow_network,
-        approval_policy: Some(approval_policy_override.unwrap_or_else(|| {
-            Value::String(
-                approval_policy_for_engine_and_trust_level(thread.engine_id.as_str(), &trust_level)
-                    .to_string(),
-            )
-        })),
-        reasoning_effort,
-        sandbox_mode: Some(sandbox_mode),
-        service_tier: thread_service_tier(thread.engine_metadata.as_ref()),
-        personality,
-        output_schema: thread_output_schema(thread.engine_metadata.as_ref()),
-    };
-
-    let engine_thread_id = state
-        .engines
-        .ensure_engine_thread(&thread, Some(effective_model_id.as_str()), scope, sandbox)
-        .await
-        .map_err(err_to_string)?;
-
-    if thread.engine_thread_id.as_deref() != Some(&engine_thread_id) {
-        run_db(db.clone(), {
-            let thread_id = thread.id.clone();
-            let engine_thread_id = engine_thread_id.clone();
-            move |db| db::threads::set_engine_thread_id(db, &thread_id, &engine_thread_id)
-        })
-        .await?;
-        thread.engine_thread_id = Some(engine_thread_id.clone());
-    }
-
-    let cancellation = CancellationToken::new();
-    if !state
-        .turns
-        .try_register(&thread.id, cancellation.clone())
-        .await
-    {
-        return Err(
-            "A turn is already running for this thread. Cancel it before sending another message."
-                .to_string(),
-        );
-    }
 
     let state_cloned = state.inner().clone();
     let app_handle = app.clone();
@@ -966,6 +1020,123 @@ fn normalize_attachments(
     Ok(normalized)
 }
 
+fn validate_attachments_for_engine_model(
+    attachments: &[TurnAttachment],
+    engine_id: &str,
+    model_id: &str,
+    catalog: Option<&[EngineInfoDto]>,
+) -> Result<(), String> {
+    if attachments.is_empty() {
+        return Ok(());
+    }
+
+    let Some(model) = catalog
+        .and_then(|engines| engines.iter().find(|engine| engine.id == engine_id))
+        .and_then(|engine| engine.models.iter().find(|model| model.id == model_id))
+    else {
+        return Ok(());
+    };
+
+    let allowed_modalities = if model.attachment_modalities.is_empty() {
+        HashSet::new()
+    } else {
+        model
+            .attachment_modalities
+            .iter()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+            .collect::<HashSet<_>>()
+    };
+
+    if allowed_modalities.is_empty() {
+        return Err(format!(
+            "{} does not support file attachments.",
+            model.display_name
+        ));
+    }
+
+    for attachment in attachments {
+        let Some(modality) = attachment_modality(attachment) else {
+            return Err(format!(
+                "{} is not a supported attachment type for {}.",
+                attachment.file_name, model.display_name
+            ));
+        };
+        if !allowed_modalities.contains(modality) {
+            return Err(format!(
+                "{} attachments are not supported by {}.",
+                attachment_modality_label(modality),
+                model.display_name
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn attachment_modality(attachment: &TurnAttachment) -> Option<&'static str> {
+    let extension = Path::new(&attachment.file_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_lowercase);
+    let mime_type = attachment
+        .mime_type
+        .as_deref()
+        .map(str::trim)
+        .map(str::to_lowercase);
+
+    if extension.as_deref() == Some("pdf") || mime_type.as_deref() == Some("application/pdf") {
+        return Some("pdf");
+    }
+    if extension
+        .as_deref()
+        .map(|value| IMAGE_ATTACHMENT_EXTENSIONS.contains(&value))
+        .unwrap_or(false)
+        || mime_type
+            .as_deref()
+            .map(|value| value.starts_with("image/"))
+            .unwrap_or(false)
+    {
+        return Some("image");
+    }
+    if extension
+        .as_deref()
+        .map(|value| TEXT_ATTACHMENT_EXTENSIONS.contains(&value))
+        .unwrap_or(false)
+        || mime_type
+            .as_deref()
+            .map(is_text_attachment_mime_type)
+            .unwrap_or(false)
+    {
+        return Some("text");
+    }
+
+    None
+}
+
+fn is_text_attachment_mime_type(value: &str) -> bool {
+    value.starts_with("text/")
+        || matches!(
+            value,
+            "application/json"
+                | "application/javascript"
+                | "application/typescript"
+                | "application/xml"
+                | "application/x-sh"
+                | "application/x-yaml"
+                | "application/yaml"
+                | "text/csv"
+        )
+}
+
+fn attachment_modality_label(modality: &str) -> &'static str {
+    match modality {
+        "image" => "Image",
+        "pdf" => "PDF",
+        _ => "Text file",
+    }
+}
+
 #[tauri::command]
 pub async fn cancel_turn(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
     state.turns.cancel(&thread_id).await;
@@ -1058,10 +1229,6 @@ async fn load_approval_response_route(
     engine_id: &str,
     approval_id: &str,
 ) -> Result<Option<ApprovalRequestRoute>, String> {
-    if engine_id != "codex" {
-        return Ok(None);
-    }
-
     let engine_id = engine_id.to_string();
     let approval_id = approval_id.to_string();
     run_db(db, move |db| {
@@ -1708,6 +1875,8 @@ async fn run_turn(
     )
     .await;
 
+    state.turns.finish(&thread.id).await;
+
     if let Err(error) = run_db(state.db.clone(), {
         let assistant_message_id = assistant_message_id.clone();
         let message_status = message_status.clone();
@@ -1757,8 +1926,6 @@ async fn run_turn(
     if let Some(final_thread) = final_thread.as_ref() {
         emit_chat_turn_finished(&app, final_thread, &message_status, &blocks);
     }
-
-    state.turns.finish(&thread.id).await;
 }
 
 async fn run_codex_review_turn(
@@ -2259,6 +2426,9 @@ async fn run_codex_review_turn(
     )
     .await;
 
+    state.turns.finish(&source_thread.id).await;
+    state.turns.finish(&review_thread.id).await;
+
     if let Err(error) = run_db(state.db.clone(), {
         let assistant_message_id = assistant_message_id.clone();
         let message_status = message_status.clone();
@@ -2305,9 +2475,6 @@ async fn run_codex_review_turn(
     if let Some(final_review_thread) = final_review_thread.as_ref() {
         emit_chat_turn_finished(&app, final_review_thread, &message_status, &blocks);
     }
-
-    state.turns.finish(&source_thread.id).await;
-    state.turns.finish(&review_thread.id).await;
 }
 
 fn is_coalescable_stream_event(event: &EngineEvent) -> bool {
@@ -2436,6 +2603,9 @@ async fn process_stream_event(
         EngineEvent::ActionCompleted { result, .. } => {
             truncate_action_result_output(result, max_output_chars);
         }
+        EngineEvent::DiffUpdated { diff, .. } => {
+            *diff = truncate_chars(diff, STREAMED_DIFF_MAX_CHARS);
+        }
         _ => {}
     }
 
@@ -2445,7 +2615,8 @@ async fn process_stream_event(
     }
 
     if state.config.debug.persist_engine_event_logs {
-        if let Ok(value) = serde_json::to_value(&normalized_event) {
+        let log_event = engine_event_for_debug_log(&normalized_event);
+        if let Ok(value) = serde_json::to_value(&log_event) {
             if let Err(error) = run_db(state.db.clone(), {
                 let thread_id = thread.id.clone();
                 let assistant_message_id = assistant_message_id.to_string();
@@ -2966,7 +3137,7 @@ fn apply_event_to_blocks(
                 engine_action_id: engine_action_id.clone(),
                 action_type: action_type.as_str().to_string(),
                 summary: summary.to_string(),
-                details: details.clone(),
+                details: value_to_raw(details),
                 output_chunks: Vec::new(),
                 status: "running".to_string(),
                 result: None,
@@ -3106,7 +3277,7 @@ fn apply_event_to_blocks(
                 approval_id: approval_id.to_string(),
                 action_type: action_type.as_str().to_string(),
                 summary: summary.to_string(),
-                details: details.clone(),
+                details: value_to_raw(details),
                 status: "pending".to_string(),
                 decision: None,
             };
@@ -3177,12 +3348,15 @@ fn append_thinking_delta(blocks: &mut Vec<ContentBlock>, content: &str) -> bool 
     true
 }
 
-fn update_action_progress(details: &mut Value, message: &str) -> bool {
-    let current_message = details
+fn update_action_progress(details: &mut Box<RawValue>, message: &str) -> bool {
+    let mut value: Value = serde_json::from_str(details.get())
+        .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+
+    let current_message = value
         .get("progressMessage")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
-    let current_kind = details
+    let current_kind = value
         .get("progressKind")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
@@ -3191,16 +3365,17 @@ fn update_action_progress(details: &mut Value, message: &str) -> bool {
         return false;
     }
 
-    if !details.is_object() {
-        *details = Value::Object(serde_json::Map::new());
+    if !value.is_object() {
+        value = Value::Object(serde_json::Map::new());
     }
 
-    if let Some(details_object) = details.as_object_mut() {
+    if let Some(details_object) = value.as_object_mut() {
         details_object.insert("progressKind".to_string(), Value::String("mcp".to_string()));
         details_object.insert(
             "progressMessage".to_string(),
             Value::String(message.to_string()),
         );
+        *details = value_to_raw(&value);
         return true;
     }
 
@@ -3323,12 +3498,20 @@ fn trim_action_output_chunks(
 
     let mut remaining_to_trim = chars_to_trim;
     let mut remove_count = 0usize;
-    for chunk in output_chunks.iter() {
+    for chunk in output_chunks.iter_mut() {
         if remaining_to_trim == 0 {
             break;
         }
-        remaining_to_trim = remaining_to_trim.saturating_sub(chunk.content.len());
-        remove_count += 1;
+        let chunk_len = chunk.content.len();
+        if chunk_len <= remaining_to_trim {
+            remaining_to_trim -= chunk_len;
+            remove_count += 1;
+            continue;
+        }
+
+        chunk.content = trim_string_start_bytes(&chunk.content, remaining_to_trim);
+        remaining_to_trim = 0;
+        truncated = true;
     }
 
     if remove_count > 0 {
@@ -3339,13 +3522,48 @@ fn trim_action_output_chunks(
     truncated
 }
 
-fn mark_output_truncated(details: &mut Value) {
-    if !details.is_object() {
-        *details = Value::Object(serde_json::Map::new());
+fn engine_event_for_debug_log(event: &EngineEvent) -> EngineEvent {
+    match event {
+        EngineEvent::ActionOutputDelta {
+            action_id,
+            stream,
+            content,
+        } => EngineEvent::ActionOutputDelta {
+            action_id: action_id.clone(),
+            stream: stream.clone(),
+            content: truncate_chars_within_limit(content, ENGINE_EVENT_LOG_ACTION_OUTPUT_MAX_CHARS),
+        },
+        _ => event.clone(),
+    }
+}
+
+fn trim_string_start_bytes(value: &str, bytes_to_trim: usize) -> String {
+    if bytes_to_trim == 0 {
+        return value.to_string();
+    }
+    if bytes_to_trim >= value.len() {
+        return String::new();
     }
 
-    if let Some(details_object) = details.as_object_mut() {
+    let start = value
+        .char_indices()
+        .map(|(index, _)| index)
+        .find(|index| *index >= bytes_to_trim)
+        .unwrap_or(value.len());
+    value[start..].to_string()
+}
+
+fn mark_output_truncated(details: &mut Box<RawValue>) {
+    let mut value: Value = serde_json::from_str(details.get())
+        .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+
+    if !value.is_object() {
+        value = Value::Object(serde_json::Map::new());
+    }
+
+    if let Some(details_object) = value.as_object_mut() {
         details_object.insert("outputTruncated".to_string(), Value::Bool(true));
+        *details = value_to_raw(&value);
     }
 }
 
@@ -3355,7 +3573,25 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     }
 
     let mut output = value.chars().take(max_chars).collect::<String>();
-    output.push_str("\n... [truncated]");
+    output.push_str(TRUNCATED_SUFFIX);
+    output
+}
+
+fn truncate_chars_within_limit(value: &str, max_chars: usize) -> String {
+    let max_chars = max_chars.max(1);
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+
+    if max_chars <= TRUNCATED_SUFFIX.len() {
+        return value.chars().take(max_chars).collect();
+    }
+
+    let mut output = value
+        .chars()
+        .take(max_chars - TRUNCATED_SUFFIX.len())
+        .collect::<String>();
+    output.push_str(TRUNCATED_SUFFIX);
     output
 }
 
@@ -3409,6 +3645,10 @@ fn approval_policy_for_engine_and_trust_level(
             TrustLevelDto::Standard => "standard",
             TrustLevelDto::Restricted => "restricted",
         },
+        "opencode" => match trust_level {
+            TrustLevelDto::Trusted | TrustLevelDto::Standard => "ask",
+            TrustLevelDto::Restricted => "deny",
+        },
         _ => match trust_level {
             TrustLevelDto::Trusted => "on-request",
             TrustLevelDto::Standard => "on-request",
@@ -3431,6 +3671,12 @@ fn thread_approval_policy_override_value(
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| matches!(*value, "trusted" | "standard" | "restricted"))
+            .map(|value| Value::String(value.to_string()))),
+        "opencode" => Ok(metadata
+            .and_then(|value| value.get("opencodePermissionMode"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| matches!(*value, "ask" | "allow" | "deny"))
             .map(|value| Value::String(value.to_string()))),
         _ => metadata
             .and_then(|value| value.get("sandboxApprovalPolicy"))
@@ -3628,6 +3874,15 @@ fn thread_output_schema(metadata: Option<&Value>) -> Option<Value> {
         .cloned()
 }
 
+fn thread_opencode_agent(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("opencodeAgent"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn normalize_reasoning_effort_value(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -3800,6 +4055,95 @@ mod tests {
             "Thread",
         )
         .expect("failed to create thread")
+    }
+
+    fn attachment_validation_catalog(attachment_modalities: Vec<&str>) -> Vec<EngineInfoDto> {
+        vec![EngineInfoDto {
+            id: "opencode".to_string(),
+            name: "OpenCode".to_string(),
+            models: vec![EngineModelDto {
+                id: "opencode/test".to_string(),
+                display_name: "OpenCode Test".to_string(),
+                description: String::new(),
+                hidden: false,
+                is_default: true,
+                upgrade: None,
+                availability_nux: None,
+                upgrade_info: None,
+                input_modalities: vec!["text".to_string(), "image".to_string(), "pdf".to_string()],
+                attachment_modalities: attachment_modalities
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+                limits: None,
+                supports_personality: false,
+                default_reasoning_effort: "medium".to_string(),
+                supported_reasoning_efforts: Vec::new(),
+            }],
+            capabilities: EngineCapabilitiesDto {
+                permission_modes: Vec::new(),
+                sandbox_modes: Vec::new(),
+                approval_decisions: Vec::new(),
+            },
+        }]
+    }
+
+    fn test_attachment(file_name: &str, mime_type: Option<&str>) -> TurnAttachment {
+        TurnAttachment {
+            file_name: file_name.to_string(),
+            file_path: format!("/tmp/{file_name}"),
+            size_bytes: 1,
+            mime_type: mime_type.map(ToOwned::to_owned),
+        }
+    }
+
+    #[test]
+    fn validates_attachments_against_model_attachment_modalities() {
+        let catalog = attachment_validation_catalog(vec!["text", "image"]);
+        let attachments = vec![
+            test_attachment("notes.md", Some("text/markdown")),
+            test_attachment("screenshot.png", Some("image/png")),
+        ];
+
+        assert!(validate_attachments_for_engine_model(
+            &attachments,
+            "opencode",
+            "opencode/test",
+            Some(&catalog),
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn rejects_attachments_when_model_disables_files() {
+        let catalog = attachment_validation_catalog(Vec::new());
+        let attachments = vec![test_attachment("notes.md", Some("text/markdown"))];
+
+        let error = validate_attachments_for_engine_model(
+            &attachments,
+            "opencode",
+            "opencode/test",
+            Some(&catalog),
+        )
+        .expect_err("model without attachment modalities should reject files");
+
+        assert!(error.contains("does not support file attachments"));
+    }
+
+    #[test]
+    fn rejects_attachment_modalities_not_allowed_by_model() {
+        let catalog = attachment_validation_catalog(vec!["text"]);
+        let attachments = vec![test_attachment("diagram.png", Some("image/png"))];
+
+        let error = validate_attachments_for_engine_model(
+            &attachments,
+            "opencode",
+            "opencode/test",
+            Some(&catalog),
+        )
+        .expect_err("image should be blocked for text-only models");
+
+        assert!(error.contains("Image attachments are not supported"));
     }
 
     fn insert_pending_approval_with_details(
@@ -4165,6 +4509,22 @@ mod tests {
     }
 
     #[test]
+    fn opencode_defaults_use_permission_modes_not_codex_sandbox_policies() {
+        assert_eq!(
+            approval_policy_for_engine_and_trust_level("opencode", &TrustLevelDto::Trusted),
+            "ask"
+        );
+        assert_eq!(
+            approval_policy_for_engine_and_trust_level("opencode", &TrustLevelDto::Standard),
+            "ask"
+        );
+        assert_eq!(
+            approval_policy_for_engine_and_trust_level("opencode", &TrustLevelDto::Restricted),
+            "deny"
+        );
+    }
+
+    #[test]
     fn claude_permission_mode_override_uses_claude_key() {
         let metadata = serde_json::json!({
             "claudePermissionMode": "restricted",
@@ -4174,6 +4534,23 @@ mod tests {
         assert_eq!(
             thread_approval_policy_override_value("claude", Some(&metadata)).unwrap(),
             Some(Value::String("restricted".to_string()))
+        );
+        assert_eq!(
+            thread_approval_policy_override_value("codex", Some(&metadata)).unwrap(),
+            Some(Value::String("never".to_string()))
+        );
+    }
+
+    #[test]
+    fn opencode_permission_mode_override_uses_opencode_key() {
+        let metadata = serde_json::json!({
+            "opencodePermissionMode": "allow",
+            "sandboxApprovalPolicy": "never",
+        });
+
+        assert_eq!(
+            thread_approval_policy_override_value("opencode", Some(&metadata)).unwrap(),
+            Some(Value::String("allow".to_string()))
         );
         assert_eq!(
             thread_approval_policy_override_value("codex", Some(&metadata)).unwrap(),
@@ -4219,6 +4596,37 @@ mod tests {
             }
             other => panic!("expected action progress event, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn debug_event_log_trims_action_output_payload() {
+        let content = "x".repeat(ENGINE_EVENT_LOG_ACTION_OUTPUT_MAX_CHARS + 128);
+        let event = EngineEvent::ActionOutputDelta {
+            action_id: "action-1".to_string(),
+            stream: OutputStream::Stdout,
+            content,
+        };
+
+        let log_event = engine_event_for_debug_log(&event);
+
+        match log_event {
+            EngineEvent::ActionOutputDelta { content, .. } => {
+                assert_eq!(content.len(), ENGINE_EVENT_LOG_ACTION_OUTPUT_MAX_CHARS);
+            }
+            other => panic!("expected action output event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trim_action_output_chunks_keeps_tail_of_oversized_chunk() {
+        let mut chunks = vec![ActionOutputChunk {
+            stream: "stdout".to_string(),
+            content: "0123456789".to_string(),
+        }];
+
+        assert!(trim_action_output_chunks(&mut chunks, 6));
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].content, "6789");
     }
 
     #[test]
@@ -4279,14 +4687,16 @@ mod tests {
         ));
         match &blocks[1] {
             ContentBlock::Action { details, .. } => {
+                let details_value: Value = serde_json::from_str(details.get())
+                    .expect("action details should parse as JSON");
                 assert_eq!(
-                    details
+                    details_value
                         .get("progressKind")
                         .and_then(serde_json::Value::as_str),
                     Some("mcp")
                 );
                 assert_eq!(
-                    details
+                    details_value
                         .get("progressMessage")
                         .and_then(serde_json::Value::as_str),
                     Some("Fetching results")
@@ -4554,6 +4964,8 @@ mod tests {
                 availability_nux: None,
                 upgrade_info: None,
                 input_modalities: vec!["text".to_string()],
+                attachment_modalities: vec!["text".to_string()],
+                limits: None,
                 supports_personality: false,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![
@@ -4600,6 +5012,8 @@ mod tests {
                 availability_nux: None,
                 upgrade_info: None,
                 input_modalities: vec!["text".to_string()],
+                attachment_modalities: vec!["text".to_string()],
+                limits: None,
                 supports_personality: false,
                 default_reasoning_effort: "medium".to_string(),
                 supported_reasoning_efforts: vec![

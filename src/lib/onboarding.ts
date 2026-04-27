@@ -9,6 +9,7 @@ import type {
 export const CHAT_ENGINE_INSTALL_HARNESS_IDS: Readonly<Record<OnboardingChatEngineId, string>> = {
   codex: "codex",
   claude: "claude-code",
+  opencode: "opencode",
 };
 
 const CODEX_AUTH_ERROR_MARKERS = [
@@ -169,7 +170,7 @@ export function isChatEngineReady(
     );
   }
 
-  return engineHealth.claude?.available ?? false;
+  return engineHealth[engineId]?.available ?? false;
 }
 
 export function isChatWorkflowReady(

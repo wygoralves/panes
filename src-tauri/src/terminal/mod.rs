@@ -38,6 +38,8 @@ const TERMINAL_OUTPUT_BUFFER_MAX_BYTES: usize = 2 * 1024 * 1024;
 const TERMINAL_REPLAY_MAX_CHUNKS: usize = 4096;
 const TERMINAL_REPLAY_MAX_BYTES: usize = 4 * 1024 * 1024;
 const TERMINAL_COMPLETED_REPLAY_GRACE_MS: u64 = 60_000;
+const TERMINAL_COMPLETED_REPLAY_MAX_SESSIONS: usize = 32;
+const TERMINAL_COMPLETED_REPLAY_MAX_TOTAL_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Default)]
 pub struct TerminalManager {
@@ -65,6 +67,8 @@ struct TerminalReplayState {
 struct TerminalReplaySnapshot {
     latest_seq: u64,
     entries: Vec<TerminalReplayChunkDto>,
+    total_bytes: usize,
+    stored_at: Option<Instant>,
 }
 
 impl TerminalReplaySnapshot {
@@ -570,14 +574,15 @@ impl TerminalManager {
         &self,
         workspace_id: &str,
         session_id: &str,
-        snapshot: TerminalReplaySnapshot,
+        mut snapshot: TerminalReplaySnapshot,
     ) {
-        self.completed_replays
-            .write()
-            .await
+        snapshot.stored_at = Some(Instant::now());
+        let mut replays = self.completed_replays.write().await;
+        replays
             .entry(workspace_id.to_string())
             .or_default()
             .insert(session_id.to_string(), snapshot);
+        prune_completed_replays(&mut replays);
     }
 
     async fn remove_completed_replay(&self, workspace_id: &str, session_id: &str) {
@@ -1139,12 +1144,16 @@ impl TerminalSessionHandle {
             Ok(state) => TerminalReplaySnapshot {
                 latest_seq,
                 entries: state.entries.iter().cloned().collect(),
+                total_bytes: state.total_bytes,
+                stored_at: None,
             },
             Err(error) => {
                 log::warn!("failed snapshotting terminal replay chunk: {error}");
                 TerminalReplaySnapshot {
                     latest_seq,
                     entries: Vec::new(),
+                    total_bytes: 0,
+                    stored_at: None,
                 }
             }
         }
@@ -1333,6 +1342,59 @@ impl TerminalSessionHandle {
             }
         }
     }
+}
+
+fn prune_completed_replays(replays: &mut HashMap<String, HashMap<String, TerminalReplaySnapshot>>) {
+    while completed_replay_session_count(replays) > TERMINAL_COMPLETED_REPLAY_MAX_SESSIONS
+        || completed_replay_total_bytes(replays) > TERMINAL_COMPLETED_REPLAY_MAX_TOTAL_BYTES
+    {
+        let Some((workspace_id, session_id)) = oldest_completed_replay(replays) else {
+            break;
+        };
+        let remove_workspace = if let Some(workspace_replays) = replays.get_mut(&workspace_id) {
+            workspace_replays.remove(&session_id);
+            workspace_replays.is_empty()
+        } else {
+            false
+        };
+        if remove_workspace {
+            replays.remove(&workspace_id);
+        }
+    }
+}
+
+fn completed_replay_session_count(
+    replays: &HashMap<String, HashMap<String, TerminalReplaySnapshot>>,
+) -> usize {
+    replays.values().map(HashMap::len).sum()
+}
+
+fn completed_replay_total_bytes(
+    replays: &HashMap<String, HashMap<String, TerminalReplaySnapshot>>,
+) -> usize {
+    replays
+        .values()
+        .flat_map(HashMap::values)
+        .map(|snapshot| snapshot.total_bytes)
+        .sum()
+}
+
+fn oldest_completed_replay(
+    replays: &HashMap<String, HashMap<String, TerminalReplaySnapshot>>,
+) -> Option<(String, String)> {
+    replays
+        .iter()
+        .flat_map(|(workspace_id, sessions)| {
+            sessions.iter().map(move |(session_id, snapshot)| {
+                (
+                    snapshot.stored_at,
+                    workspace_id.as_str(),
+                    session_id.as_str(),
+                )
+            })
+        })
+        .min_by_key(|(stored_at, _, _)| *stored_at)
+        .map(|(_, workspace_id, session_id)| (workspace_id.to_string(), session_id.to_string()))
 }
 
 fn spawn_session(

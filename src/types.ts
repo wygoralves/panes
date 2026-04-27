@@ -150,11 +150,13 @@ export type ThreadStatus =
   | "error"
   | "completed";
 
+export type ChatEngineId = "codex" | "claude" | "opencode";
+
 export interface Thread {
   id: string;
   workspaceId: string;
   repoId: string | null;
-  engineId: "codex" | "claude";
+  engineId: ChatEngineId;
   modelId: string;
   engineThreadId: string | null;
   engineMetadata?: Record<string, unknown>;
@@ -183,6 +185,21 @@ export interface CodexRemoteThread {
 
 export interface CodexRemoteThreadPage {
   threads: CodexRemoteThread[];
+  nextCursor?: string | null;
+}
+
+export interface OpenCodeRemoteSession {
+  engineThreadId: string;
+  title?: string | null;
+  cwd: string;
+  createdAt: string;
+  updatedAt: string;
+  archived: boolean;
+  localThreadId?: string | null;
+}
+
+export interface OpenCodeRemoteSessionPage {
+  sessions: OpenCodeRemoteSession[];
   nextCursor?: string | null;
 }
 
@@ -451,9 +468,17 @@ export interface EngineModel {
   availabilityNux?: EngineModelAvailabilityNux;
   upgradeInfo?: EngineModelUpgradeInfo;
   inputModalities: string[];
+  attachmentModalities: string[];
+  limits?: EngineModelLimits;
   supportsPersonality: boolean;
   defaultReasoningEffort: string;
   supportedReasoningEfforts: ReasoningEffortOption[];
+}
+
+export interface EngineModelLimits {
+  contextTokens?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
 }
 
 export interface EngineModelAvailabilityNux {
@@ -512,6 +537,41 @@ export interface CodexSkill {
   description: string;
   enabled: boolean;
   scope: string;
+}
+
+export interface OpenCodeRuntimeCatalog {
+  agents: OpenCodeAgent[];
+  commands: OpenCodeCommand[];
+  mcpServers: OpenCodeMcpServer[];
+}
+
+export interface OpenCodeAgent {
+  name: string;
+  description?: string | null;
+  mode: string;
+  native: boolean;
+  hidden: boolean;
+  modelProviderId?: string | null;
+  modelId?: string | null;
+  variant?: string | null;
+  steps?: number | null;
+}
+
+export interface OpenCodeCommand {
+  name: string;
+  description?: string | null;
+  agent?: string | null;
+  model?: string | null;
+  source?: string | null;
+  subtask: boolean;
+  hints: string[];
+}
+
+export interface OpenCodeMcpServer {
+  name: string;
+  status: string;
+  detail?: string | null;
+  raw: unknown;
 }
 
 export interface CodexPluginMarketplace {
@@ -791,6 +851,13 @@ export interface ReadFileResult {
   isBinary: boolean;
 }
 
+export interface ResolvedEditorFileReference {
+  repoPath: string;
+  filePath: string;
+  line?: number | null;
+  column?: number | null;
+}
+
 export type EditorRenderMode = "plain-editor" | "markdown-preview" | "git-diff-editor";
 
 export interface GitEditorContext extends GitFileCompare {}
@@ -986,7 +1053,7 @@ export interface TerminalGroup {
 // ── Setup / Onboarding ──────────────────────────────────────────────
 
 export type OnboardingWorkflowPreference = "cli" | "chat";
-export type OnboardingChatEngineId = "codex" | "claude";
+export type OnboardingChatEngineId = ChatEngineId;
 export type OnboardingStep =
   | "greeting"
   | "workflow"
@@ -1050,6 +1117,10 @@ export type TurnCompletionStatus = "completed" | "interrupted" | "failed";
 export interface StreamTokenUsage {
   input: number;
   output: number;
+  reasoning?: number | null;
+  cacheRead?: number | null;
+  cacheWrite?: number | null;
+  costUsd?: number | null;
 }
 
 export interface TurnStartedEvent {

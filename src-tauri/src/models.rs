@@ -99,6 +99,25 @@ pub struct CodexRemoteThreadPageDto {
     pub next_cursor: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeRemoteSessionDto {
+    pub engine_thread_id: String,
+    pub title: Option<String>,
+    pub cwd: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub archived: bool,
+    pub local_thread_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeRemoteSessionPageDto {
+    pub sessions: Vec<OpenCodeRemoteSessionDto>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadStatusDto {
@@ -261,9 +280,21 @@ pub struct EngineModelDto {
     #[serde(default)]
     pub input_modalities: Vec<String>,
     #[serde(default)]
+    pub attachment_modalities: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limits: Option<EngineModelLimitsDto>,
+    #[serde(default)]
     pub supports_personality: bool,
     pub default_reasoning_effort: String,
     pub supported_reasoning_efforts: Vec<ReasoningEffortOptionDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineModelLimitsDto {
+    pub context_tokens: Option<u64>,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -390,6 +421,53 @@ pub struct CodexSkillDto {
     pub enabled: bool,
     #[serde(default)]
     pub scope: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeRuntimeCatalogDto {
+    #[serde(default)]
+    pub agents: Vec<OpenCodeAgentDto>,
+    #[serde(default)]
+    pub commands: Vec<OpenCodeCommandDto>,
+    #[serde(default)]
+    pub mcp_servers: Vec<OpenCodeMcpServerDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeAgentDto {
+    pub name: String,
+    pub description: Option<String>,
+    pub mode: String,
+    pub native: bool,
+    pub hidden: bool,
+    pub model_provider_id: Option<String>,
+    pub model_id: Option<String>,
+    pub variant: Option<String>,
+    pub steps: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeCommandDto {
+    pub name: String,
+    pub description: Option<String>,
+    pub agent: Option<String>,
+    pub model: Option<String>,
+    pub source: Option<String>,
+    pub subtask: bool,
+    #[serde(default)]
+    pub hints: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeMcpServerDto {
+    pub name: String,
+    pub status: String,
+    pub detail: Option<String>,
+    pub raw: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -747,6 +825,17 @@ pub struct ReadFileResultDto {
     pub content: String,
     pub size_bytes: u64,
     pub is_binary: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedEditorFileReferenceDto {
+    pub repo_path: String,
+    pub file_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
