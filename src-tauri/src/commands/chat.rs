@@ -253,7 +253,8 @@ pub async fn send_message(
     plan_mode: Option<bool>,
     client_turn_id: Option<String>,
 ) -> Result<String, String> {
-    if state.turns.get(&thread_id).await.is_some() {
+    let already_running = state.turns.get(&thread_id).await.is_some();
+    if already_running {
         return Err(
             "A turn is already running for this thread. Cancel it before sending another message."
                 .to_string(),
@@ -457,45 +458,6 @@ pub async fn send_message(
         thread.engine_metadata = Some(metadata);
     }
 
-    let assistant_message = run_db(db.clone(), {
-        let thread_id = thread.id.clone();
-        let message = message.clone();
-        let attachments = attachments.clone();
-        let input_items = input_items.clone();
-        let plan_mode_enabled = plan_mode;
-        let engine_id = thread.engine_id.clone();
-        let model_id = effective_model_id.clone();
-        let reasoning_effort = reasoning_effort.clone();
-        move |db| {
-            let user_blocks = build_user_blocks(
-                &message,
-                &input_items,
-                &attachments,
-                plan_mode_enabled,
-                false,
-            );
-            db::messages::insert_user_message(
-                db,
-                &thread_id,
-                &message,
-                Some(serde_json::to_value(&user_blocks)?),
-                Some(engine_id.as_str()),
-                Some(model_id.as_str()),
-                reasoning_effort.as_deref(),
-            )?;
-            let assistant_message = db::messages::insert_assistant_placeholder(
-                db,
-                &thread_id,
-                Some(engine_id.as_str()),
-                Some(model_id.as_str()),
-                reasoning_effort.as_deref(),
-            )?;
-            db::threads::update_thread_status(db, &thread_id, ThreadStatusDto::Streaming)?;
-            Ok(assistant_message)
-        }
-    })
-    .await?;
-
     let writable_roots = match &scope {
         ThreadScope::Repo { repo_path } => vec![repo_path.clone()],
         ThreadScope::Workspace {
@@ -539,7 +501,7 @@ pub async fn send_message(
                     .to_string(),
             )
         })),
-        reasoning_effort,
+        reasoning_effort: reasoning_effort.clone(),
         sandbox_mode,
         service_tier: thread_service_tier(thread.engine_metadata.as_ref()),
         personality,
@@ -574,6 +536,52 @@ pub async fn send_message(
                 .to_string(),
         );
     }
+
+    let assistant_message = match run_db(db.clone(), {
+        let thread_id = thread.id.clone();
+        let message = message.clone();
+        let attachments = attachments.clone();
+        let input_items = input_items.clone();
+        let plan_mode_enabled = plan_mode;
+        let engine_id = thread.engine_id.clone();
+        let model_id = effective_model_id.clone();
+        let reasoning_effort = reasoning_effort.clone();
+        move |db| {
+            let user_blocks = build_user_blocks(
+                &message,
+                &input_items,
+                &attachments,
+                plan_mode_enabled,
+                false,
+            );
+            db::messages::insert_user_message(
+                db,
+                &thread_id,
+                &message,
+                Some(serde_json::to_value(&user_blocks)?),
+                Some(engine_id.as_str()),
+                Some(model_id.as_str()),
+                reasoning_effort.as_deref(),
+            )?;
+            let assistant_message = db::messages::insert_assistant_placeholder(
+                db,
+                &thread_id,
+                Some(engine_id.as_str()),
+                Some(model_id.as_str()),
+                reasoning_effort.as_deref(),
+            )?;
+            db::threads::update_thread_status(db, &thread_id, ThreadStatusDto::Streaming)?;
+            Ok(assistant_message)
+        }
+    })
+    .await
+    {
+        Ok(assistant_message) => assistant_message,
+        Err(error) => {
+            state.turns.finish(&thread.id).await;
+            return Err(error);
+        }
+    };
 
     let state_cloned = state.inner().clone();
     let app_handle = app.clone();
@@ -1867,6 +1875,8 @@ async fn run_turn(
     )
     .await;
 
+    state.turns.finish(&thread.id).await;
+
     if let Err(error) = run_db(state.db.clone(), {
         let assistant_message_id = assistant_message_id.clone();
         let message_status = message_status.clone();
@@ -1916,8 +1926,6 @@ async fn run_turn(
     if let Some(final_thread) = final_thread.as_ref() {
         emit_chat_turn_finished(&app, final_thread, &message_status, &blocks);
     }
-
-    state.turns.finish(&thread.id).await;
 }
 
 async fn run_codex_review_turn(
@@ -2418,6 +2426,9 @@ async fn run_codex_review_turn(
     )
     .await;
 
+    state.turns.finish(&source_thread.id).await;
+    state.turns.finish(&review_thread.id).await;
+
     if let Err(error) = run_db(state.db.clone(), {
         let assistant_message_id = assistant_message_id.clone();
         let message_status = message_status.clone();
@@ -2464,9 +2475,6 @@ async fn run_codex_review_turn(
     if let Some(final_review_thread) = final_review_thread.as_ref() {
         emit_chat_turn_finished(&app, final_review_thread, &message_status, &blocks);
     }
-
-    state.turns.finish(&source_thread.id).await;
-    state.turns.finish(&review_thread.id).await;
 }
 
 fn is_coalescable_stream_event(event: &EngineEvent) -> bool {
@@ -3341,8 +3349,8 @@ fn append_thinking_delta(blocks: &mut Vec<ContentBlock>, content: &str) -> bool 
 }
 
 fn update_action_progress(details: &mut Box<RawValue>, message: &str) -> bool {
-    let mut value: Value =
-        serde_json::from_str(details.get()).unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+    let mut value: Value = serde_json::from_str(details.get())
+        .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
 
     let current_message = value
         .get("progressMessage")
@@ -3546,8 +3554,8 @@ fn trim_string_start_bytes(value: &str, bytes_to_trim: usize) -> String {
 }
 
 fn mark_output_truncated(details: &mut Box<RawValue>) {
-    let mut value: Value =
-        serde_json::from_str(details.get()).unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+    let mut value: Value = serde_json::from_str(details.get())
+        .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
 
     if !value.is_object() {
         value = Value::Object(serde_json::Map::new());

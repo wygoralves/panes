@@ -14,12 +14,21 @@ pub enum IncomingMessage {
         id: String,
         raw_id: Value,
         method: String,
-        params: Value,
+        params: Box<RawValue>,
     },
     Notification {
         method: String,
-        params: Value,
+        params: Box<RawValue>,
     },
+}
+
+fn raw_value_from_value(value: &Value) -> Box<RawValue> {
+    serde_json::value::to_raw_value(value)
+        .unwrap_or_else(|_| RawValue::from_string("null".to_string()).expect("null is valid JSON"))
+}
+
+pub fn raw_value_to_value(raw: &RawValue) -> Value {
+    serde_json::from_str(raw.get()).unwrap_or(Value::Null)
 }
 
 #[derive(Debug, Clone)]
@@ -58,7 +67,7 @@ pub fn parse_incoming(line: &str) -> anyhow::Result<IncomingMessage> {
     if let Some(method) = method {
         let raw_id_value = envelope.id.map(parse_raw_value).transpose()?;
         let id = raw_id_value.as_ref().and_then(normalize_id);
-        let params = parse_params_for_method(&method, envelope.params)?;
+        let params = raw_value_from_value(&parse_params_for_method(&method, envelope.params)?);
 
         if let Some(id) = id {
             let raw_id = raw_id_value.unwrap_or_else(|| Value::String(id.clone()));
@@ -370,6 +379,7 @@ mod tests {
 
         match message {
             IncomingMessage::Notification { method, params } => {
+                let params = raw_value_to_value(&params);
                 assert_eq!(method, "thread/updated");
                 assert_eq!(
                     params,
@@ -398,6 +408,7 @@ mod tests {
                 method,
                 params,
             } => {
+                let params = raw_value_to_value(&params);
                 assert_eq!(id, "42");
                 assert_eq!(raw_id, json!(42));
                 assert_eq!(method, "serverRequest");
@@ -452,6 +463,7 @@ mod tests {
 
         match message {
             IncomingMessage::Notification { params, .. } => {
+                let params = raw_value_to_value(&params);
                 assert_eq!(params, json!({}));
             }
             other => panic!("expected notification, got {other:?}"),
@@ -479,6 +491,7 @@ mod tests {
         let IncomingMessage::Notification { params, .. } = message else {
             panic!("expected notification");
         };
+        let params = raw_value_to_value(&params);
 
         let delta = params
             .get("delta")
@@ -500,6 +513,7 @@ mod tests {
         let IncomingMessage::Notification { params, .. } = message else {
             panic!("expected notification");
         };
+        let params = raw_value_to_value(&params);
 
         assert_eq!(params["delta"], json!("line: one\nline two"));
     }
@@ -535,6 +549,7 @@ mod tests {
         let IncomingMessage::Notification { params, .. } = message else {
             panic!("expected notification");
         };
+        let params = raw_value_to_value(&params);
 
         let item = params.get("item").expect("item should be present");
         let output = item
@@ -582,6 +597,7 @@ mod tests {
         let IncomingMessage::Notification { params, .. } = message else {
             panic!("expected notification");
         };
+        let params = raw_value_to_value(&params);
         let diff = params
             .get("diff")
             .and_then(Value::as_str)

@@ -41,10 +41,11 @@ const GIT_WORKING_TREE_POLL_INTERVAL_MS = 5000;
 
 interface Props {
   mode?: "docked" | "flyout";
+  visible?: boolean;
   onPin?: () => void;
 }
 
-export function GitPanel({ mode = "docked", onPin }: Props) {
+export function GitPanel({ mode = "docked", visible = true, onPin }: Props) {
   const { t } = useTranslation("git");
   const {
     workspaces,
@@ -94,6 +95,7 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
   const watcherRefreshInFlightRef = useRef(false);
   const watcherRefreshQueuedRef = useRef(false);
   const gitFlyoutContext = useContext(GitFlyoutContext);
+  const panelActive = mode === "docked" || visible;
   const moreMenuWidth = 220;
   const viewOptions = useMemo(
     () => [
@@ -312,17 +314,17 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
   ]);
 
   useEffect(() => {
-    if (!effectiveRepoPath) {
+    if (!panelActive || !effectiveRepoPath) {
       return;
     }
     void refresh(
       effectiveRepoPath,
       activeView === "changes" ? { force: true } : undefined,
     );
-  }, [activeView, effectiveRepoPath, refresh]);
+  }, [activeView, effectiveRepoPath, panelActive, refresh]);
 
   useEffect(() => {
-    if (!effectiveRepoPath) return;
+    if (!panelActive || !effectiveRepoPath) return;
 
     let unlisten: (() => void) | null = null;
     let disposed = false;
@@ -413,10 +415,10 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
       watcherRefreshQueuedRef.current = false;
       unlisten?.();
     };
-  }, [effectiveRepoPath, invalidateRepoCache, refresh]);
+  }, [effectiveRepoPath, invalidateRepoCache, panelActive, refresh]);
 
   useEffect(() => {
-    if (!effectiveRepoPath || activeView !== "changes") {
+    if (!panelActive || !effectiveRepoPath || activeView !== "changes") {
       return;
     }
 
@@ -457,10 +459,10 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [activeView, effectiveRepoPath, invalidateRepoCache, refresh]);
+  }, [activeView, effectiveRepoPath, invalidateRepoCache, panelActive, refresh]);
 
   useEffect(() => {
-    if (reposLoading || effectiveRepo || !activeWorkspaceRootPath) {
+    if (!panelActive || reposLoading || effectiveRepo || !activeWorkspaceRootPath) {
       setInitRepoStatus(null);
       return;
     }
@@ -482,10 +484,10 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [activeWorkspaceRootPath, effectiveRepo, reposLoading]);
+  }, [activeWorkspaceRootPath, effectiveRepo, panelActive, reposLoading]);
 
   useEffect(() => {
-    if (!effectiveRepoPath || isActiveRepoSyncing) {
+    if (!panelActive || !effectiveRepoPath || isActiveRepoSyncing) {
       return;
     }
     if (!watcherRefreshQueuedRef.current || watcherRefreshInFlightRef.current) {
@@ -508,15 +510,15 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
         watcherRefreshInFlightRef.current = false;
       }
     })();
-  }, [effectiveRepoPath, invalidateRepoCache, isActiveRepoSyncing, refresh]);
+  }, [effectiveRepoPath, invalidateRepoCache, isActiveRepoSyncing, panelActive, refresh]);
 
   useEffect(() => {
     const worktreeRootPath = mainRepoPath ?? baseRepoPath;
-    if (!worktreeRootPath) {
+    if (!panelActive || !worktreeRootPath) {
       return;
     }
     void loadWorktrees(worktreeRootPath);
-  }, [baseRepoPath, mainRepoPath, loadWorktrees]);
+  }, [baseRepoPath, mainRepoPath, loadWorktrees, panelActive]);
 
   const repoOptions = useMemo(() => {
     const options: { value: string; label: string }[] = [];
@@ -694,6 +696,7 @@ export function GitPanel({ mode = "docked", onPin }: Props) {
               <MultiRepoChangesView
                 repos={controlledRepos}
                 onError={setLocalError}
+                pollingEnabled={panelActive}
                 refreshTick={multiRepoRefreshTick}
               />
             ) : (

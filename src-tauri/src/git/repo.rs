@@ -111,6 +111,157 @@ impl FileTreeCache {
 }
 
 pub fn get_git_status(repo_path: &str) -> anyhow::Result<GitStatusDto> {
+    get_git_status_via_cli(repo_path).or_else(|error| {
+        log::debug!("falling back to git2 status for {repo_path}: {error}");
+        get_git_status_via_git2(repo_path)
+    })
+}
+
+fn get_git_status_via_cli(repo_path: &str) -> anyhow::Result<GitStatusDto> {
+    let output = run_git(
+        repo_path,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-b",
+            "-z",
+            "--untracked-files=normal",
+        ],
+    )
+    .context("failed to read git status via cli")?;
+
+    parse_porcelain_v1_status(&output)
+}
+
+fn parse_porcelain_v1_status(output: &str) -> anyhow::Result<GitStatusDto> {
+    let mut branch = "detached".to_string();
+    let mut ahead = 0usize;
+    let mut behind = 0usize;
+    let mut files = Vec::new();
+    let mut records = output.split('\0').filter(|record| !record.is_empty());
+
+    while let Some(record) = records.next() {
+        if let Some(header) = record.strip_prefix("## ") {
+            let parsed = parse_porcelain_branch_header(header);
+            branch = parsed.0;
+            ahead = parsed.1;
+            behind = parsed.2;
+            continue;
+        }
+
+        if let Some((file, consumes_next_path)) = parse_porcelain_status_record(record) {
+            files.push(file);
+            if consumes_next_path {
+                let _ = records.next();
+            }
+        }
+    }
+
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+
+    Ok(GitStatusDto {
+        branch,
+        files,
+        ahead,
+        behind,
+    })
+}
+
+fn parse_porcelain_branch_header(header: &str) -> (String, usize, usize) {
+    let branch = if let Some(branch) = header.strip_prefix("No commits yet on ") {
+        branch
+    } else if let Some(branch) = header.strip_prefix("Initial commit on ") {
+        branch
+    } else if header.starts_with("HEAD ") {
+        "detached"
+    } else {
+        header
+            .split("...")
+            .next()
+            .and_then(|value| value.split(" [").next())
+            .unwrap_or(header)
+    };
+
+    let (ahead, behind) = header
+        .split_once('[')
+        .and_then(|(_, rest)| {
+            rest.split_once(']')
+                .map(|(track, _)| parse_upstream_track(track))
+        })
+        .unwrap_or((0, 0));
+
+    (branch.trim().to_string(), ahead, behind)
+}
+
+fn parse_porcelain_status_record(record: &str) -> Option<(GitFileStatusDto, bool)> {
+    let mut chars = record.chars();
+    let index_code = chars.next()?;
+    let worktree_code = chars.next()?;
+    if chars.next()? != ' ' {
+        return None;
+    }
+
+    let path = chars.as_str();
+    if path.is_empty() {
+        return None;
+    }
+
+    let conflicted = is_porcelain_conflicted(index_code, worktree_code);
+    let index_status = if conflicted {
+        Some("conflicted".to_string())
+    } else {
+        porcelain_index_status_label(index_code)
+    };
+    let worktree_status = if conflicted {
+        Some("conflicted".to_string())
+    } else {
+        porcelain_worktree_status_label(worktree_code)
+    };
+
+    if index_status.is_none() && worktree_status.is_none() {
+        return None;
+    }
+
+    Some((
+        GitFileStatusDto {
+            path: path.to_string(),
+            index_status,
+            worktree_status,
+        },
+        matches!(index_code, 'R' | 'C') || matches!(worktree_code, 'R' | 'C'),
+    ))
+}
+
+fn is_porcelain_conflicted(index_code: char, worktree_code: char) -> bool {
+    matches!(
+        (index_code, worktree_code),
+        ('D', 'D') | ('A', 'U') | ('U', 'D') | ('U', 'A') | ('D', 'U') | ('A', 'A') | ('U', 'U')
+    ) || index_code == 'U'
+        || worktree_code == 'U'
+}
+
+fn porcelain_index_status_label(code: char) -> Option<String> {
+    match code {
+        'A' => Some("added".to_string()),
+        'M' | 'T' => Some("modified".to_string()),
+        'D' => Some("deleted".to_string()),
+        'R' | 'C' => Some("renamed".to_string()),
+        _ => None,
+    }
+}
+
+fn porcelain_worktree_status_label(code: char) -> Option<String> {
+    match code {
+        '?' => Some("untracked".to_string()),
+        'A' => Some("added".to_string()),
+        'M' | 'T' => Some("modified".to_string()),
+        'D' => Some("deleted".to_string()),
+        'R' | 'C' => Some("renamed".to_string()),
+        _ => None,
+    }
+}
+
+fn get_git_status_via_git2(repo_path: &str) -> anyhow::Result<GitStatusDto> {
     let repo = Repository::open(repo_path).context("failed to open repository")?;
 
     let branch = repo
@@ -1352,11 +1503,81 @@ mod tests {
 
     use super::{
         build_diff_preview, get_workspace_file_tree_page, is_diff_preview_metadata_line,
-        truncate_utf8_prefix, FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES,
+        parse_porcelain_v1_status, truncate_utf8_prefix, FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES,
         GIT_DIFF_PREVIEW_MAX_LINES,
     };
     use crate::models::FileTreeEntryDto;
     use uuid::Uuid;
+
+    #[test]
+    fn parses_porcelain_status_branch_and_file_states() {
+        let output = concat!(
+            "## main...origin/main [ahead 2, behind 1]\0",
+            " M src/app.ts\0",
+            "M  src/staged.ts\0",
+            "A  src/added.ts\0",
+            "D  src/deleted.ts\0",
+            "R  src/new-name.ts\0src/old-name.ts\0",
+            "?? src/new-file.ts\0",
+        );
+
+        let status = parse_porcelain_v1_status(output).expect("status should parse");
+
+        assert_eq!(status.branch, "main");
+        assert_eq!(status.ahead, 2);
+        assert_eq!(status.behind, 1);
+        assert_eq!(
+            status
+                .files
+                .iter()
+                .map(|file| (
+                    file.path.as_str(),
+                    file.index_status.as_deref(),
+                    file.worktree_status.as_deref(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("src/added.ts", Some("added"), None),
+                ("src/app.ts", None, Some("modified")),
+                ("src/deleted.ts", Some("deleted"), None),
+                ("src/new-file.ts", None, Some("untracked")),
+                ("src/new-name.ts", Some("renamed"), None),
+                ("src/staged.ts", Some("modified"), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_porcelain_conflicts_as_both_sides_conflicted() {
+        let output = "## HEAD (no branch)\0UU src/conflict.ts\0";
+
+        let status = parse_porcelain_v1_status(output).expect("status should parse");
+
+        assert_eq!(status.branch, "detached");
+        assert_eq!(status.files.len(), 1);
+        assert_eq!(status.files[0].path, "src/conflict.ts");
+        assert_eq!(status.files[0].index_status.as_deref(), Some("conflicted"));
+        assert_eq!(
+            status.files[0].worktree_status.as_deref(),
+            Some("conflicted")
+        );
+    }
+
+    #[test]
+    fn parses_porcelain_unborn_branch() {
+        let output = "## No commits yet on feature/start\0?? README.md\0";
+
+        let status = parse_porcelain_v1_status(output).expect("status should parse");
+
+        assert_eq!(status.branch, "feature/start");
+        assert_eq!(status.ahead, 0);
+        assert_eq!(status.behind, 0);
+        assert_eq!(status.files[0].path, "README.md");
+        assert_eq!(
+            status.files[0].worktree_status.as_deref(),
+            Some("untracked")
+        );
+    }
 
     #[test]
     fn keeps_small_diffs_untruncated() {

@@ -31,11 +31,13 @@ use crate::models::{
 use crate::{process_utils, runtime_env};
 
 use super::{
-    codex_event_mapper::TurnEventMapper, codex_protocol::IncomingMessage,
-    codex_transport::CodexTransport, ActionResult, ApprovalRequestRoute, CodexRemoteThreadSummary,
-    Engine, EngineEvent, EngineThread, ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo,
-    ReasoningEffortOption, SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment,
-    TurnCompletionStatus, TurnInput, TurnInputItem,
+    codex_event_mapper::TurnEventMapper,
+    codex_protocol::{raw_value_to_value, IncomingMessage},
+    codex_transport::CodexTransport,
+    ActionResult, ApprovalRequestRoute, CodexRemoteThreadSummary, Engine, EngineEvent,
+    EngineThread, ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo, ReasoningEffortOption,
+    SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment, TurnCompletionStatus,
+    TurnInput, TurnInputItem,
 };
 
 const INITIALIZE_METHODS: &[&str] = &["initialize"];
@@ -660,6 +662,7 @@ impl Engine for CodexEngine {
               incoming = subscription.recv() => {
                 match incoming {
                   Ok(IncomingMessage::Notification { method, params }) => {
+                    let params = raw_value_to_value(&params);
                     let normalized_method = normalize_method(&method);
                     if let Some(error_message) =
                       transport_failure_message(normalized_method.as_str(), &params)
@@ -736,6 +739,7 @@ impl Engine for CodexEngine {
                     }
                   }
                   Ok(IncomingMessage::Request { id, raw_id, method, params }) => {
+                    let params = raw_value_to_value(&params);
                     log::debug!(
                       "codex server request: method={method}, id={id}, raw_id={raw_id}, params_keys={:?}",
                       params.as_object().map(|o| o.keys().collect::<Vec<_>>())
@@ -1379,6 +1383,7 @@ impl CodexEngine {
               incoming = subscription.recv() => {
                 match incoming {
                   Ok(IncomingMessage::Notification { method, params }) => {
+                    let params = raw_value_to_value(&params);
                     let normalized_method = normalize_method(&method);
                     if let Some(error_message) =
                       transport_failure_message(normalized_method.as_str(), &params)
@@ -1456,6 +1461,7 @@ impl CodexEngine {
                     }
                   }
                   Ok(IncomingMessage::Request { id, raw_id, method, params }) => {
+                    let params = raw_value_to_value(&params);
                     log::debug!(
                       "codex review server request: method={method}, id={id}, raw_id={raw_id}, params_keys={:?}",
                       params.as_object().map(|o| o.keys().collect::<Vec<_>>())
@@ -2334,6 +2340,7 @@ impl CodexEngine {
             loop {
                 match subscription.recv().await {
                     Ok(IncomingMessage::Notification { method, params }) => {
+                        let params = raw_value_to_value(&params);
                         let normalized_method = normalize_method(&method);
                         match normalized_method.as_str() {
                             "thread/started" => {

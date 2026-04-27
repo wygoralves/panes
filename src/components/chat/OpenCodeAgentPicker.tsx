@@ -36,6 +36,16 @@ function buildAgentOptions(agents: OpenCodeAgent[]): OpenCodeAgent[] {
   ];
 }
 
+function formatAgentLabel(name: string): string {
+  if (name === "build") {
+    return "Build";
+  }
+  if (name === "plan") {
+    return "Plan";
+  }
+  return name;
+}
+
 export function OpenCodeAgentPicker({
   agents,
   selectedAgent,
@@ -86,7 +96,9 @@ export function OpenCodeAgentPicker({
     };
   }, [open]);
 
-  const label = selected?.name ?? t("openCodeAgentPicker.selectAgent");
+  const label = selected
+    ? formatAgentLabel(selected.name)
+    : t("openCodeAgentPicker.selectAgent");
 
   return (
     <div className="oc-agent-root">
@@ -132,7 +144,9 @@ export function OpenCodeAgentPicker({
                       }}
                     >
                       <span className="oc-agent-option-copy">
-                        <span className="oc-agent-option-name">{agent.name}</span>
+                        <span className="oc-agent-option-name">
+                          {formatAgentLabel(agent.name)}
+                        </span>
                         {agent.description ? (
                           <span className="oc-agent-option-detail">{agent.description}</span>
                         ) : null}

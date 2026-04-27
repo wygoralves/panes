@@ -3,7 +3,10 @@ use std::{
     ffi::OsString,
     net::TcpListener,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -17,7 +20,7 @@ use serde_json::{json, Value};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::{Child, Command},
-    sync::{mpsc, Mutex},
+    sync::{broadcast, mpsc, Mutex},
     time::{sleep, timeout},
 };
 use tokio_util::sync::CancellationToken;
@@ -38,9 +41,15 @@ use super::{
 const OPENCODE_STARTUP_TIMEOUT: Duration = Duration::from_secs(8);
 const OPENCODE_HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
 const OPENCODE_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+const OPENCODE_RECONCILE_MESSAGE_LIMIT: usize = 128;
 const SSE_IDLE_TIMEOUT: Duration = Duration::from_secs(900);
 const SERVER_READY_PREFIX: &str = "opencode server listening";
 const DEFAULT_HOST: &str = "127.0.0.1";
+const OPENCODE_MESSAGE_ID_RANDOM_LEN: usize = 14;
+const OPENCODE_ID_COUNTER_STEP: u64 = 0x1000;
+const OPENCODE_ID_TIME_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
+
+static LAST_OPENCODE_MESSAGE_SORT_VALUE: AtomicU64 = AtomicU64::new(0);
 
 pub struct OpenCodeEngine {
     state: Arc<Mutex<OpenCodeState>>,
@@ -70,6 +79,14 @@ struct OpenCodeServer {
     base_url: String,
     password: String,
     child: Mutex<Child>,
+    event_bus: broadcast::Sender<Arc<OpenCodeBusEvent>>,
+    pump_cancel: CancellationToken,
+}
+
+impl Drop for OpenCodeServer {
+    fn drop(&mut self) {
+        self.pump_cancel.cancel();
+    }
 }
 
 #[derive(Clone)]
@@ -83,6 +100,11 @@ enum PendingOpenCodeRequest {
         questions: Vec<OpenCodeQuestionInfo>,
         server: Arc<OpenCodeServer>,
     },
+}
+
+struct OpenCodePromptBody {
+    message_id: String,
+    body: Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -260,6 +282,21 @@ struct OpenCodePart {
     tokens: Option<OpenCodeStepTokenUsage>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct OpenCodeMessageWithParts {
+    info: OpenCodeMessageInfo,
+    #[serde(default)]
+    parts: Vec<OpenCodePart>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct OpenCodeMessageInfo {
+    id: String,
+    role: String,
+    #[serde(rename = "parentID")]
+    parent_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 struct OpenCodeStepTokenUsage {
     #[serde(default)]
@@ -309,10 +346,18 @@ struct OpenCodeQuestionOption {
     description: String,
 }
 
-#[derive(Default)]
+#[derive(Debug, Clone)]
+struct PendingOpenCodeTextPart {
+    message_id: String,
+    text: String,
+}
+
 struct OpenCodeTurnMapper {
+    prompt_message_id: String,
     message_roles: HashMap<String, String>,
+    message_parents: HashMap<String, String>,
     emitted_text_by_part_id: HashMap<String, String>,
+    pending_text_by_part_id: HashMap<String, PendingOpenCodeTextPart>,
     part_type_by_id: HashMap<String, String>,
     started_actions: HashSet<String>,
     completed_actions: HashSet<String>,
@@ -321,6 +366,163 @@ struct OpenCodeTurnMapper {
     content_seen: bool,
     completed: bool,
     failed: bool,
+}
+
+impl OpenCodeTurnMapper {
+    fn new(prompt_message_id: String) -> Self {
+        Self {
+            prompt_message_id,
+            message_roles: HashMap::new(),
+            message_parents: HashMap::new(),
+            emitted_text_by_part_id: HashMap::new(),
+            pending_text_by_part_id: HashMap::new(),
+            part_type_by_id: HashMap::new(),
+            started_actions: HashSet::new(),
+            completed_actions: HashSet::new(),
+            latest_token_usage: None,
+            busy_seen: false,
+            content_seen: false,
+            completed: false,
+            failed: false,
+        }
+    }
+
+    fn record_message(&mut self, message_id: &str, role: &str, parent_id: Option<&str>) {
+        let role = role.trim().to_lowercase();
+        self.message_roles
+            .insert(message_id.to_string(), role.clone());
+        if let Some(parent_id) = parent_id.filter(|value| !value.trim().is_empty()) {
+            self.message_parents
+                .insert(message_id.to_string(), parent_id.to_string());
+        }
+        if role == "user" {
+            self.remove_pending_text_for_message(message_id);
+        }
+    }
+
+    fn is_prompt_user_message(&self, message_id: &str) -> bool {
+        message_id == self.prompt_message_id || is_user_message(&self.message_roles, message_id)
+    }
+
+    fn should_process_part_for_message(&self, message_id: &str) -> bool {
+        if self.is_prompt_user_message(message_id) {
+            return false;
+        }
+        self.message_parents
+            .get(message_id)
+            .map(|parent_id| parent_id == &self.prompt_message_id)
+            .unwrap_or(true)
+    }
+
+    fn store_pending_text(&mut self, part_id: &str, message_id: &str, text: &str) {
+        self.pending_text_by_part_id
+            .entry(part_id.to_string())
+            .and_modify(|pending| {
+                pending.message_id = message_id.to_string();
+                pending.text.push_str(text);
+            })
+            .or_insert_with(|| PendingOpenCodeTextPart {
+                message_id: message_id.to_string(),
+                text: text.to_string(),
+            });
+    }
+
+    fn remove_pending_text_for_message(&mut self, message_id: &str) {
+        self.pending_text_by_part_id
+            .retain(|_, pending| pending.message_id != message_id);
+    }
+}
+
+async fn emit_opencode_part_delta(
+    mapper: &mut OpenCodeTurnMapper,
+    event_tx: &mpsc::Sender<EngineEvent>,
+    part_id: &str,
+    part_type: &str,
+    delta: &str,
+) {
+    if delta.is_empty() {
+        return;
+    }
+
+    mapper.content_seen = true;
+    mapper
+        .emitted_text_by_part_id
+        .entry(part_id.to_string())
+        .and_modify(|existing| existing.push_str(delta))
+        .or_insert_with(|| delta.to_string());
+
+    let event = if part_type == "reasoning" {
+        EngineEvent::ThinkingDelta {
+            content: delta.to_string(),
+        }
+    } else {
+        EngineEvent::TextDelta {
+            content: delta.to_string(),
+        }
+    };
+    event_tx.send(event).await.ok();
+}
+
+async fn emit_opencode_part_snapshot(
+    mapper: &mut OpenCodeTurnMapper,
+    event_tx: &mpsc::Sender<EngineEvent>,
+    part_id: &str,
+    part_type: &str,
+    text: &str,
+) {
+    let previous = mapper
+        .emitted_text_by_part_id
+        .get(part_id)
+        .map(String::as_str)
+        .unwrap_or("");
+    let Some(delta) = text.strip_prefix(previous) else {
+        if !previous.is_empty() {
+            log::debug!(
+                "ignoring non-append OpenCode text snapshot for part {part_id}; previous_len={}, next_len={}",
+                previous.len(),
+                text.len()
+            );
+            return;
+        }
+        return emit_opencode_part_delta(mapper, event_tx, part_id, part_type, text).await;
+    };
+    if delta.is_empty() {
+        return;
+    }
+    mapper
+        .emitted_text_by_part_id
+        .insert(part_id.to_string(), text.to_string());
+    mapper.content_seen = true;
+    let event = if part_type == "reasoning" {
+        EngineEvent::ThinkingDelta {
+            content: delta.to_string(),
+        }
+    } else {
+        EngineEvent::TextDelta {
+            content: delta.to_string(),
+        }
+    };
+    event_tx.send(event).await.ok();
+}
+
+async fn flush_pending_opencode_text_for_part(
+    mapper: &mut OpenCodeTurnMapper,
+    event_tx: &mpsc::Sender<EngineEvent>,
+    part_id: &str,
+) {
+    let Some(pending) = mapper.pending_text_by_part_id.remove(part_id) else {
+        return;
+    };
+    if mapper.is_prompt_user_message(&pending.message_id) {
+        return;
+    }
+    let Some(part_type) = mapper.part_type_by_id.get(part_id).cloned() else {
+        mapper
+            .pending_text_by_part_id
+            .insert(part_id.to_string(), pending);
+        return;
+    };
+    emit_opencode_part_delta(mapper, event_tx, part_id, &part_type, &pending.text).await;
 }
 
 async fn emit_turn_completed(
@@ -498,25 +700,26 @@ impl Engine for OpenCodeEngine {
                 .context("no OpenCode session found; was start_thread called?")?
         };
 
-        let stream_response = self
-            .request(session.server.as_ref(), reqwest::Method::GET, "/event")
-            .send()
-            .await?
-            .error_for_status()
-            .context("failed to subscribe to OpenCode event stream")?;
+        // Subscribe to the persistent event bus BEFORE firing the prompt.
+        // broadcast::Receiver does not replay history; it only delivers events
+        // emitted after subscribe(). This eliminates the cross-turn replay race
+        // that caused follow-up turns to immediately complete with no content
+        // when a fresh `/event` HTTP connection delivered the prior turn's
+        // buffered busy/idle events into the new turn's mapper.
+        let mut events = session.server.event_bus.subscribe();
 
-        event_tx
-            .send(EngineEvent::TurnStarted {
-                client_turn_id: None,
-            })
-            .await
-            .ok();
+        let prompt = build_prompt_body(
+            &session.model_id,
+            session.reasoning_effort.as_deref(),
+            session.agent.as_deref(),
+            input,
+        )?;
+        let prompt_message_id = prompt.message_id.clone();
+        let prompt_request =
+            self.prompt_message(engine_thread_id, session.server.as_ref(), prompt.body);
+        tokio::pin!(prompt_request);
 
-        self.prompt_async(engine_thread_id, &session, input).await?;
-
-        let mut mapper = OpenCodeTurnMapper::default();
-        let mut bytes = stream_response.bytes_stream();
-        let mut buffer = String::new();
+        let mut mapper = OpenCodeTurnMapper::new(prompt_message_id);
         let mut last_relevant_event_at = Instant::now();
 
         loop {
@@ -525,57 +728,94 @@ impl Engine for OpenCodeEngine {
                     self.interrupt(engine_thread_id).await?;
                     return Ok(());
                 }
-                chunk = timeout(SSE_IDLE_TIMEOUT, bytes.next()) => {
-                    let Some(chunk) = chunk.context("timed out waiting for OpenCode stream events")? else {
-                        if mapper.completed {
+                result = &mut prompt_request => {
+                    match result {
+                        Ok(()) => {
+                            if !mapper.completed {
+                                self.reconcile_session_messages(
+                                    engine_thread_id,
+                                    &mut mapper,
+                                    &event_tx,
+                                    session.server.as_ref(),
+                                )
+                                .await;
+                                self.complete_after_idle(&mut mapper, &event_tx).await;
+                            }
                             return Ok(());
                         }
-                        anyhow::bail!("OpenCode event stream ended before the turn completed");
-                    };
-                    let chunk = chunk.context("failed to read OpenCode event stream")?;
-                    buffer.push_str(&String::from_utf8_lossy(&chunk));
-                    while let Some(line_end) = buffer.find('\n') {
-                        let line = buffer[..line_end].trim_end_matches('\r').to_string();
-                        buffer = buffer[line_end + 1..].to_string();
-                        if let Some(raw_event) = line.strip_prefix("data:") {
-                            let raw_event = raw_event.trim();
-                            if raw_event.is_empty() {
-                                continue;
-                            }
-                            let event: OpenCodeBusEvent = match serde_json::from_str(raw_event) {
-                                Ok(event) => event,
-                                Err(error) => {
-                                    log::warn!("opencode event parse failed: {error}; event={raw_event}");
-                                    continue;
-                                }
-                            };
-                            if event_matches_session(&event, engine_thread_id) {
-                                last_relevant_event_at = Instant::now();
-                                self.handle_event(engine_thread_id, &event, &mut mapper, &event_tx, session.server.clone()).await;
-                            } else if last_relevant_event_at.elapsed() > SSE_IDLE_TIMEOUT {
-                                anyhow::bail!("timed out waiting for OpenCode turn events");
-                            }
+                        Err(error) => {
                             if mapper.completed {
+                                log::warn!(
+                                    "OpenCode /message request finished with an error after turn completion: {error:#}"
+                                );
                                 return Ok(());
                             }
+                            event_tx
+                                .send(EngineEvent::Error {
+                                    message: format!("failed to send OpenCode prompt: {error:#}"),
+                                    recoverable: false,
+                                })
+                                .await
+                                .ok();
+                            emit_turn_completed(
+                                &mut mapper,
+                                &event_tx,
+                                TurnCompletionStatus::Failed,
+                            )
+                            .await;
+                            return Err(error);
                         }
+                    }
+                }
+                incoming = timeout(SSE_IDLE_TIMEOUT, events.recv()) => {
+                    let event = match incoming.context("timed out waiting for OpenCode events")? {
+                        Ok(event) => event,
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            log::warn!(
+                                "opencode event bus lagged by {skipped} events for thread {engine_thread_id}"
+                            );
+                            continue;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            anyhow::bail!("OpenCode event bus closed before the turn completed");
+                        }
+                    };
+                    if event_matches_session(event.as_ref(), engine_thread_id) {
+                        last_relevant_event_at = Instant::now();
+                        self.handle_event(
+                            engine_thread_id,
+                            event.as_ref(),
+                            &mut mapper,
+                            &event_tx,
+                            session.server.clone(),
+                        )
+                        .await;
+                    } else if last_relevant_event_at.elapsed() > SSE_IDLE_TIMEOUT {
+                        anyhow::bail!("timed out waiting for OpenCode turn events");
+                    }
+                    if mapper.completed {
+                        match timeout(OPENCODE_COMMAND_TIMEOUT, &mut prompt_request).await {
+                            Ok(Ok(())) => {}
+                            Ok(Err(error)) => {
+                                log::warn!(
+                                    "OpenCode /message request errored after turn completion: {error:#}"
+                                );
+                            }
+                            Err(_) => {
+                                log::warn!(
+                                    "timed out draining OpenCode /message response after turn completion"
+                                );
+                            }
+                        }
+                        return Ok(());
                     }
                 }
             }
         }
     }
 
-    async fn steer_message(&self, engine_thread_id: &str, input: TurnInput) -> Result<()> {
-        let session = {
-            let state = self.state.lock().await;
-            state
-                .sessions
-                .get(engine_thread_id)
-                .cloned()
-                .context("no OpenCode session found; was start_thread called?")?
-        };
-
-        self.prompt_async(engine_thread_id, &session, input).await
+    async fn steer_message(&self, _engine_thread_id: &str, _input: TurnInput) -> Result<()> {
+        anyhow::bail!("Mid-turn steering is not supported for OpenCode")
     }
 
     async fn respond_to_approval(
@@ -1183,29 +1423,31 @@ impl OpenCodeEngine {
         Ok(())
     }
 
-    async fn prompt_async(
+    async fn prompt_message(
         &self,
         engine_thread_id: &str,
-        session: &OpenCodeSession,
-        input: TurnInput,
+        server: &OpenCodeServer,
+        body: Value,
     ) -> Result<()> {
-        let body = build_prompt_body(
-            &session.model_id,
-            session.reasoning_effort.as_deref(),
-            session.agent.as_deref(),
-            input,
-        )?;
-
-        self.request(
-            session.server.as_ref(),
-            reqwest::Method::POST,
-            &format!("/session/{engine_thread_id}/prompt_async"),
-        )
-        .json(&body)
-        .send()
-        .await?
-        .error_for_status()
-        .context("failed to start OpenCode prompt")?;
+        let response = self
+            .request(
+                server,
+                reqwest::Method::POST,
+                &opencode_prompt_message_path(engine_thread_id),
+            )
+            .json(&body)
+            .send()
+            .await
+            .context("failed to send OpenCode prompt")?;
+        let status = response.status();
+        let body = response
+            .bytes()
+            .await
+            .context("failed to read OpenCode prompt response")?;
+        if !status.is_success() {
+            let body = String::from_utf8_lossy(&body);
+            anyhow::bail!("failed to send OpenCode prompt: HTTP {status}: {body}");
+        }
         Ok(())
     }
 
@@ -1240,9 +1482,11 @@ impl OpenCodeEngine {
                         info.get("id").and_then(Value::as_str),
                         info.get("role").and_then(Value::as_str),
                     ) {
-                        mapper
-                            .message_roles
-                            .insert(id.to_string(), role.to_string());
+                        mapper.record_message(
+                            id,
+                            role,
+                            info.get("parentID").and_then(Value::as_str),
+                        );
                     }
                 }
             }
@@ -1263,7 +1507,6 @@ impl OpenCodeEngine {
                 if delta.is_empty() {
                     return;
                 }
-                mapper.content_seen = true;
                 let part_id = event
                     .properties
                     .get("partID")
@@ -1274,29 +1517,22 @@ impl OpenCodeEngine {
                     .get("messageID")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                if is_user_message(&mapper.message_roles, message_id) {
+                if part_id.is_empty() || message_id.is_empty() {
                     return;
                 }
-                let part_type = mapper
-                    .part_type_by_id
-                    .get(part_id)
-                    .map(String::as_str)
-                    .unwrap_or("text");
-                let engine_event = if part_type == "reasoning" {
-                    EngineEvent::ThinkingDelta {
-                        content: delta.to_string(),
-                    }
-                } else {
-                    EngineEvent::TextDelta {
-                        content: delta.to_string(),
-                    }
+                if mapper.is_prompt_user_message(message_id) {
+                    mapper.pending_text_by_part_id.remove(part_id);
+                    return;
+                }
+                if !mapper.should_process_part_for_message(message_id) {
+                    mapper.pending_text_by_part_id.remove(part_id);
+                    return;
+                }
+                let Some(part_type) = mapper.part_type_by_id.get(part_id).cloned() else {
+                    mapper.store_pending_text(part_id, message_id, delta);
+                    return;
                 };
-                event_tx.send(engine_event).await.ok();
-                mapper
-                    .emitted_text_by_part_id
-                    .entry(part_id.to_string())
-                    .and_modify(|existing| existing.push_str(delta))
-                    .or_insert_with(|| delta.to_string());
+                emit_opencode_part_delta(mapper, event_tx, part_id, &part_type, delta).await;
             }
             "message.part.updated" => {
                 let Ok(envelope) =
@@ -1318,17 +1554,31 @@ impl OpenCodeEngine {
                         mapper.busy_seen = true;
                     }
                     Some("idle") if mapper.busy_seen || mapper.content_seen => {
-                        emit_turn_completed(mapper, event_tx, TurnCompletionStatus::Completed)
-                            .await;
+                        self.reconcile_session_messages(
+                            engine_thread_id,
+                            mapper,
+                            event_tx,
+                            server.as_ref(),
+                        )
+                        .await;
+                        self.complete_after_idle(mapper, event_tx).await;
                     }
                     _ => {}
                 }
             }
             "session.idle" if mapper.busy_seen || mapper.content_seen => {
-                emit_turn_completed(mapper, event_tx, TurnCompletionStatus::Completed).await;
+                self.reconcile_session_messages(
+                    engine_thread_id,
+                    mapper,
+                    event_tx,
+                    server.as_ref(),
+                )
+                .await;
+                self.complete_after_idle(mapper, event_tx).await;
             }
             "session.error" => {
                 mapper.failed = true;
+                mapper.content_seen = true;
                 let message = session_error_message(&event.properties);
                 event_tx
                     .send(EngineEvent::Error {
@@ -1341,6 +1591,7 @@ impl OpenCodeEngine {
             }
             "session.diff" => {
                 if let Some(diff) = format_session_diff(&event.properties) {
+                    mapper.content_seen = true;
                     event_tx
                         .send(EngineEvent::DiffUpdated {
                             diff,
@@ -1351,15 +1602,38 @@ impl OpenCodeEngine {
                 }
             }
             "permission.asked" => {
+                mapper.content_seen = true;
                 self.handle_permission_asked(&event.properties, event_tx, server)
                     .await;
             }
             "question.asked" => {
+                mapper.content_seen = true;
                 self.handle_question_asked(&event.properties, event_tx, server)
                     .await;
             }
             _ => {}
         }
+    }
+
+    async fn complete_after_idle(
+        &self,
+        mapper: &mut OpenCodeTurnMapper,
+        event_tx: &mpsc::Sender<EngineEvent>,
+    ) {
+        if mapper.content_seen {
+            emit_turn_completed(mapper, event_tx, TurnCompletionStatus::Completed).await;
+            return;
+        }
+
+        event_tx
+            .send(EngineEvent::Error {
+                message: "OpenCode became idle without producing a response for this prompt."
+                    .to_string(),
+                recoverable: false,
+            })
+            .await
+            .ok();
+        emit_turn_completed(mapper, event_tx, TurnCompletionStatus::Failed).await;
     }
 
     async fn handle_part_updated(
@@ -1368,40 +1642,26 @@ impl OpenCodeEngine {
         mapper: &mut OpenCodeTurnMapper,
         event_tx: &mpsc::Sender<EngineEvent>,
     ) {
+        if !mapper.should_process_part_for_message(&part.message_id) {
+            mapper.pending_text_by_part_id.remove(&part.id);
+            return;
+        }
         mapper
             .part_type_by_id
             .insert(part.id.clone(), part.part_type.clone());
         match part.part_type.as_str() {
             "text" | "reasoning" => {
-                if is_user_message(&mapper.message_roles, &part.message_id) {
+                if mapper.is_prompt_user_message(&part.message_id) {
+                    mapper.pending_text_by_part_id.remove(&part.id);
                     return;
                 }
                 let Some(text) = part.text.as_deref() else {
+                    flush_pending_opencode_text_for_part(mapper, event_tx, &part.id).await;
                     return;
                 };
-                let previous = mapper
-                    .emitted_text_by_part_id
-                    .get(&part.id)
-                    .map(String::as_str)
-                    .unwrap_or("");
-                let delta = text.strip_prefix(previous).unwrap_or(text);
-                if delta.is_empty() {
-                    return;
-                }
-                mapper.content_seen = true;
-                mapper
-                    .emitted_text_by_part_id
-                    .insert(part.id.clone(), text.to_string());
-                let event = if part.part_type == "reasoning" {
-                    EngineEvent::ThinkingDelta {
-                        content: delta.to_string(),
-                    }
-                } else {
-                    EngineEvent::TextDelta {
-                        content: delta.to_string(),
-                    }
-                };
-                event_tx.send(event).await.ok();
+                mapper.pending_text_by_part_id.remove(&part.id);
+                emit_opencode_part_snapshot(mapper, event_tx, &part.id, &part.part_type, text)
+                    .await;
             }
             "tool" => {
                 self.handle_tool_part(part, mapper, event_tx).await;
@@ -1410,6 +1670,7 @@ impl OpenCodeEngine {
                 self.handle_agent_part(part, mapper, event_tx).await;
             }
             "patch" => {
+                mapper.content_seen = true;
                 event_tx
                     .send(EngineEvent::DiffUpdated {
                         diff: serde_json::to_string_pretty(part).unwrap_or_default(),
@@ -1424,7 +1685,61 @@ impl OpenCodeEngine {
                     mapper.content_seen = true;
                 }
             }
-            _ => {}
+            _ => {
+                mapper.pending_text_by_part_id.remove(&part.id);
+            }
+        }
+    }
+
+    async fn reconcile_session_messages(
+        &self,
+        engine_thread_id: &str,
+        mapper: &mut OpenCodeTurnMapper,
+        event_tx: &mpsc::Sender<EngineEvent>,
+        server: &OpenCodeServer,
+    ) {
+        let result = timeout(OPENCODE_COMMAND_TIMEOUT, async {
+            let response = self
+                .request(
+                    server,
+                    reqwest::Method::GET,
+                    &format!(
+                        "/session/{engine_thread_id}/message?limit={OPENCODE_RECONCILE_MESSAGE_LIMIT}"
+                    ),
+                )
+                .send()
+                .await?
+                .error_for_status()?;
+            response.json::<Vec<OpenCodeMessageWithParts>>().await
+        })
+        .await;
+
+        let messages = match result {
+            Ok(Ok(messages)) => messages,
+            Ok(Err(error)) => {
+                log::warn!("failed to reconcile OpenCode messages after idle: {error}");
+                return;
+            }
+            Err(_) => {
+                log::warn!("timed out reconciling OpenCode messages after idle");
+                return;
+            }
+        };
+
+        for message in messages {
+            mapper.record_message(
+                &message.info.id,
+                &message.info.role,
+                message.info.parent_id.as_deref(),
+            );
+            if message.info.role != "assistant"
+                || message.info.parent_id.as_deref() != Some(mapper.prompt_message_id.as_str())
+            {
+                continue;
+            }
+            for part in message.parts {
+                self.handle_part_updated(&part, mapper, event_tx).await;
+            }
         }
     }
 
@@ -1444,6 +1759,7 @@ impl OpenCodeEngine {
             .unwrap_or_else(|| tool_name.clone());
 
         if mapper.started_actions.insert(action_id.clone()) {
+            mapper.content_seen = true;
             event_tx
                 .send(EngineEvent::ActionStarted {
                     action_id: action_id.clone(),
@@ -1523,6 +1839,7 @@ impl OpenCodeEngine {
         let summary = format!("OpenCode agent: {agent_name}");
 
         if mapper.started_actions.insert(action_id.clone()) {
+            mapper.content_seen = true;
             event_tx
                 .send(EngineEvent::ActionStarted {
                     action_id: action_id.clone(),
@@ -1686,25 +2003,22 @@ fn parse_model_slug(slug: &str) -> Option<ParsedModelSlug> {
     })
 }
 
+fn opencode_prompt_message_path(engine_thread_id: &str) -> String {
+    format!("/session/{engine_thread_id}/message")
+}
+
 fn build_prompt_body(
     model_id: &str,
     reasoning_effort: Option<&str>,
     agent: Option<&str>,
     input: TurnInput,
-) -> Result<Value> {
+) -> Result<OpenCodePromptBody> {
     let model = parse_model_slug(model_id)
         .with_context(|| format!("invalid OpenCode model `{model_id}`"))?;
-    let plan_mode = input.plan_mode;
+    let message_id = new_message_id();
     let mut parts = vec![json!({
         "type": "text",
-        "text": if plan_mode {
-            format!(
-                "Plan the solution first. Do not execute commands or edit files until the plan is complete.\n\n{}",
-                input.message
-            )
-        } else {
-            input.message
-        },
+        "text": input.message,
     })];
     for attachment in input.attachments {
         parts.push(json!({
@@ -1716,7 +2030,7 @@ fn build_prompt_body(
     }
 
     let mut body = json!({
-        "messageID": new_message_id(),
+        "messageID": message_id.clone(),
         "model": {
             "providerID": model.provider_id,
             "modelID": model.model_id,
@@ -1724,9 +2038,7 @@ fn build_prompt_body(
         "parts": parts,
     });
     if let Some(object) = body.as_object_mut() {
-        if plan_mode {
-            object.insert("agent".to_string(), json!("plan"));
-        } else if let Some(agent) = normalize_opencode_agent(agent) {
+        if let Some(agent) = normalize_opencode_agent(agent) {
             object.insert("agent".to_string(), json!(agent));
         }
         if let Some(variant) = reasoning_effort
@@ -1737,7 +2049,7 @@ fn build_prompt_body(
         }
     }
 
-    Ok(body)
+    Ok(OpenCodePromptBody { message_id, body })
 }
 
 fn normalize_opencode_agent(value: Option<&str>) -> Option<String> {
@@ -2142,15 +2454,112 @@ async fn start_server(cwd: &str) -> Result<OpenCodeServer> {
         .context("timed out waiting for OpenCode server startup")?
         .context("OpenCode server exited before startup completed")?;
 
+    let (event_bus, _) = broadcast::channel::<Arc<OpenCodeBusEvent>>(1024);
+    let pump_cancel = CancellationToken::new();
     let server = OpenCodeServer {
         cwd: cwd.to_string(),
         base_url,
         password,
         child: Mutex::new(child),
+        event_bus: event_bus.clone(),
+        pump_cancel: pump_cancel.clone(),
     };
 
     wait_for_server_health(&server).await?;
+
+    let pump_url = server.base_url.clone();
+    let pump_password = server.password.clone();
+    let pump_http = reqwest::Client::new();
+    tokio::spawn(async move {
+        run_event_pump(pump_url, pump_password, pump_http, event_bus, pump_cancel).await;
+    });
+
     Ok(server)
+}
+
+async fn run_event_pump(
+    base_url: String,
+    password: String,
+    http: reqwest::Client,
+    event_bus: broadcast::Sender<Arc<OpenCodeBusEvent>>,
+    cancel: CancellationToken,
+) {
+    let url = format!("{}/event", base_url.trim_end_matches('/'));
+    let mut backoff = Duration::from_millis(100);
+    let max_backoff = Duration::from_secs(10);
+
+    loop {
+        if cancel.is_cancelled() {
+            return;
+        }
+
+        let response = match http.get(&url).headers(auth_headers(&password)).send().await {
+            Ok(response) => response,
+            Err(error) => {
+                log::warn!("opencode SSE pump connect failed: {error}");
+                tokio::select! {
+                    _ = cancel.cancelled() => return,
+                    _ = sleep(backoff) => {}
+                }
+                backoff = (backoff * 2).min(max_backoff);
+                continue;
+            }
+        };
+
+        let response = match response.error_for_status() {
+            Ok(response) => response,
+            Err(error) => {
+                log::warn!("opencode SSE pump status error: {error}");
+                tokio::select! {
+                    _ = cancel.cancelled() => return,
+                    _ = sleep(backoff) => {}
+                }
+                backoff = (backoff * 2).min(max_backoff);
+                continue;
+            }
+        };
+
+        backoff = Duration::from_millis(100);
+        let mut bytes = response.bytes_stream();
+        let mut buffer = String::new();
+
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => return,
+                chunk = bytes.next() => {
+                    let Some(chunk) = chunk else { break };
+                    let chunk = match chunk {
+                        Ok(chunk) => chunk,
+                        Err(error) => {
+                            log::warn!("opencode SSE pump read failed: {error}");
+                            break;
+                        }
+                    };
+                    buffer.push_str(&String::from_utf8_lossy(&chunk));
+                    while let Some(line_end) = buffer.find('\n') {
+                        let line = buffer[..line_end].trim_end_matches('\r').to_string();
+                        buffer = buffer[line_end + 1..].to_string();
+                        if let Some(raw_event) = line.strip_prefix("data:") {
+                            let raw_event = raw_event.trim();
+                            if raw_event.is_empty() {
+                                continue;
+                            }
+                            let event: OpenCodeBusEvent = match serde_json::from_str(raw_event) {
+                                Ok(event) => event,
+                                Err(error) => {
+                                    log::warn!(
+                                        "opencode event parse failed: {error}; event={raw_event}"
+                                    );
+                                    continue;
+                                }
+                            };
+                            let _ = event_bus.send(Arc::new(event));
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn wait_for_server_health(server: &OpenCodeServer) -> Result<()> {
@@ -2555,7 +2964,60 @@ fn file_url(path: &str) -> String {
 }
 
 fn new_message_id() -> String {
-    format!("msg_{}", Uuid::new_v4().simple())
+    let now_ms = current_unix_time_millis().max(0) as u64;
+    let sort_value = next_opencode_message_sort_value(now_ms);
+    format!(
+        "msg_{:012x}{}",
+        sort_value & OPENCODE_ID_TIME_MASK,
+        random_base62(OPENCODE_MESSAGE_ID_RANDOM_LEN)
+    )
+}
+
+fn next_opencode_message_sort_value(now_ms: u64) -> u64 {
+    let base = now_ms.saturating_mul(OPENCODE_ID_COUNTER_STEP);
+
+    loop {
+        let last = LAST_OPENCODE_MESSAGE_SORT_VALUE.load(Ordering::Relaxed);
+        let candidate = if base <= last {
+            last.saturating_add(1)
+        } else {
+            base.saturating_add(1)
+        };
+
+        if LAST_OPENCODE_MESSAGE_SORT_VALUE
+            .compare_exchange_weak(last, candidate, Ordering::SeqCst, Ordering::Relaxed)
+            .is_ok()
+        {
+            return candidate;
+        }
+    }
+}
+
+fn random_base62(len: usize) -> String {
+    const CHARS: &[u8; 62] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+    let mut output = String::with_capacity(len);
+    while output.len() < len {
+        let uuid = Uuid::new_v4();
+        for byte in uuid.as_bytes() {
+            output.push(CHARS[*byte as usize % CHARS.len()] as char);
+            if output.len() == len {
+                break;
+            }
+        }
+    }
+    output
+}
+
+#[cfg(test)]
+fn opencode_sort_prefix_for_millis(now_ms: u64, counter: u64) -> String {
+    format!(
+        "{:012x}",
+        now_ms
+            .saturating_mul(OPENCODE_ID_COUNTER_STEP)
+            .saturating_add(counter)
+            & OPENCODE_ID_TIME_MASK
+    )
 }
 
 #[cfg(test)]
@@ -2655,7 +3117,8 @@ opencode/gpt-5-nano
                 input_items: Vec::new(),
             },
         )
-        .unwrap();
+        .unwrap()
+        .body;
 
         assert_eq!(body.get("variant"), Some(&json!("max")));
         assert_eq!(body["model"]["providerID"], json!("opencode"));
@@ -2675,13 +3138,14 @@ opencode/gpt-5-nano
                 input_items: Vec::new(),
             },
         )
-        .unwrap();
+        .unwrap()
+        .body;
 
         assert_eq!(body.get("agent"), Some(&json!("explore")));
     }
 
     #[test]
-    fn prompt_body_plan_mode_overrides_selected_opencode_agent() {
+    fn prompt_body_ignores_generic_plan_mode_text_for_opencode() {
         let body = build_prompt_body(
             "opencode/big-pickle",
             None,
@@ -2693,9 +3157,45 @@ opencode/gpt-5-nano
                 input_items: Vec::new(),
             },
         )
+        .unwrap()
+        .body;
+
+        assert_eq!(body.get("agent"), Some(&json!("explore")));
+        assert_eq!(body["parts"][0]["text"], json!("hello"));
+    }
+
+    #[test]
+    fn build_prompt_body_returns_same_message_id_it_sends() {
+        let prompt = build_prompt_body(
+            "opencode/big-pickle",
+            None,
+            None,
+            TurnInput {
+                message: "hello".to_string(),
+                attachments: Vec::new(),
+                plan_mode: false,
+                input_items: Vec::new(),
+            },
+        )
         .unwrap();
 
-        assert_eq!(body.get("agent"), Some(&json!("plan")));
+        assert_eq!(
+            prompt.body.get("messageID").and_then(Value::as_str),
+            Some(prompt.message_id.as_str())
+        );
+        assert!(prompt.body.get("tools").is_none());
+        assert!(!json_contains_key(&prompt.body, "eager_input_streaming"));
+    }
+
+    fn json_contains_key(value: &Value, key: &str) -> bool {
+        match value {
+            Value::Object(object) => {
+                object.contains_key(key)
+                    || object.values().any(|value| json_contains_key(value, key))
+            }
+            Value::Array(items) => items.iter().any(|value| json_contains_key(value, key)),
+            _ => false,
+        }
     }
 
     #[test]
@@ -2909,9 +3409,215 @@ opencode/gpt-5-nano
         assert!(!is_user_message(&roles, "unknown"));
     }
 
+    #[tokio::test]
+    async fn mapper_ignores_prompt_user_text_parts() {
+        let engine = OpenCodeEngine::default();
+        let (event_tx, mut event_rx) = mpsc::channel(8);
+        let mut mapper = OpenCodeTurnMapper::new("msg_user".to_string());
+        mapper.record_message("msg_user", "user", None);
+        let part: OpenCodePart = serde_json::from_value(json!({
+            "id": "prt_user",
+            "messageID": "msg_user",
+            "type": "text",
+            "text": "hello"
+        }))
+        .unwrap();
+
+        engine
+            .handle_part_updated(&part, &mut mapper, &event_tx)
+            .await;
+
+        assert!(!mapper.content_seen);
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn mapper_flushes_pending_reasoning_after_part_type_is_known() {
+        let (event_tx, mut event_rx) = mpsc::channel(8);
+        let mut mapper = OpenCodeTurnMapper::new("msg_user".to_string());
+        mapper.store_pending_text("prt_reasoning", "msg_assistant", "thinking");
+
+        mapper
+            .part_type_by_id
+            .insert("prt_reasoning".to_string(), "reasoning".to_string());
+        flush_pending_opencode_text_for_part(&mut mapper, &event_tx, "prt_reasoning").await;
+
+        match event_rx
+            .try_recv()
+            .expect("expected pending reasoning to flush")
+        {
+            EngineEvent::ThinkingDelta { content } => assert_eq!(content, "thinking"),
+            other => panic!("expected thinking delta, got {other:?}"),
+        }
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn mapper_accepts_non_prompt_text_without_message_role() {
+        let engine = OpenCodeEngine::default();
+        let (event_tx, mut event_rx) = mpsc::channel(8);
+        let mut mapper = OpenCodeTurnMapper::new("msg_user".to_string());
+        let part: OpenCodePart = serde_json::from_value(json!({
+            "id": "prt_text",
+            "messageID": "msg_assistant",
+            "type": "text",
+            "text": "response"
+        }))
+        .unwrap();
+
+        engine
+            .handle_part_updated(&part, &mut mapper, &event_tx)
+            .await;
+
+        match event_rx.try_recv().expect("expected text delta") {
+            EngineEvent::TextDelta { content } => assert_eq!(content, "response"),
+            other => panic!("expected text delta, got {other:?}"),
+        }
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn mapper_ignores_assistant_parts_for_previous_prompt() {
+        let engine = OpenCodeEngine::default();
+        let (event_tx, mut event_rx) = mpsc::channel(8);
+        let mut mapper = OpenCodeTurnMapper::new("msg_current_user".to_string());
+        mapper.record_message("msg_old_user", "user", None);
+        mapper.record_message("msg_old_assistant", "assistant", Some("msg_old_user"));
+        let part: OpenCodePart = serde_json::from_value(json!({
+            "id": "prt_old_text",
+            "messageID": "msg_old_assistant",
+            "type": "text",
+            "text": "stale response"
+        }))
+        .unwrap();
+
+        engine
+            .handle_part_updated(&part, &mut mapper, &event_tx)
+            .await;
+
+        assert!(!mapper.content_seen);
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn idle_without_current_prompt_response_fails_turn() {
+        let engine = OpenCodeEngine::default();
+        let (event_tx, mut event_rx) = mpsc::channel(8);
+        let mut mapper = OpenCodeTurnMapper::new("msg_current_user".to_string());
+        mapper.busy_seen = true;
+
+        engine.complete_after_idle(&mut mapper, &event_tx).await;
+
+        match event_rx.try_recv().expect("expected error event") {
+            EngineEvent::Error {
+                message,
+                recoverable,
+            } => {
+                assert!(!recoverable);
+                assert!(message.contains("without producing a response"));
+            }
+            other => panic!("expected error event, got {other:?}"),
+        }
+        match event_rx.try_recv().expect("expected failed completion") {
+            EngineEvent::TurnCompleted { status, .. } => {
+                assert_eq!(status, TurnCompletionStatus::Failed);
+            }
+            other => panic!("expected failed completion, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn mapper_ignores_non_append_text_snapshots() {
+        let engine = OpenCodeEngine::default();
+        let (event_tx, mut event_rx) = mpsc::channel(8);
+        let mut mapper = OpenCodeTurnMapper::new("msg_user".to_string());
+        let first_part: OpenCodePart = serde_json::from_value(json!({
+            "id": "prt_reasoning",
+            "messageID": "msg_assistant",
+            "type": "reasoning",
+            "text": "first"
+        }))
+        .unwrap();
+        let revised_part: OpenCodePart = serde_json::from_value(json!({
+            "id": "prt_reasoning",
+            "messageID": "msg_assistant",
+            "type": "reasoning",
+            "text": "second"
+        }))
+        .unwrap();
+
+        engine
+            .handle_part_updated(&first_part, &mut mapper, &event_tx)
+            .await;
+        engine
+            .handle_part_updated(&revised_part, &mut mapper, &event_tx)
+            .await;
+
+        match event_rx.try_recv().expect("expected initial reasoning") {
+            EngineEvent::ThinkingDelta { content } => assert_eq!(content, "first"),
+            other => panic!("expected thinking delta, got {other:?}"),
+        }
+        assert!(event_rx.try_recv().is_err());
+    }
+
     #[test]
-    fn new_message_id_uses_opencode_prefix() {
-        assert!(new_message_id().starts_with("msg_"));
+    fn new_message_id_uses_opencode_ascending_shape() {
+        let id = new_message_id();
+
+        assert_eq!(id.len(), "msg_".len() + 26);
+        assert!(id.starts_with("msg_"));
+
+        let sortable = &id[4..16];
+        let suffix = &id[16..];
+
+        assert_eq!(sortable.len(), 12);
+        assert!(sortable
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || ('a'..='f').contains(&ch)));
+        assert_eq!(suffix.len(), 14);
+        assert!(suffix.chars().all(|ch| ch.is_ascii_alphanumeric()));
+    }
+
+    #[test]
+    fn opencode_prompt_message_path_uses_synchronous_message_endpoint() {
+        assert_eq!(
+            opencode_prompt_message_path("ses_123"),
+            "/session/ses_123/message"
+        );
+    }
+
+    #[test]
+    fn new_message_id_is_lexicographically_monotonic() {
+        let mut previous = new_message_id();
+
+        for _ in 0..1000 {
+            let current = new_message_id();
+            assert!(previous < current, "expected {previous} < {current}");
+            previous = current;
+        }
+    }
+
+    #[test]
+    fn opencode_sort_prefix_matches_observed_timestamp_formula() {
+        assert_eq!(
+            opencode_sort_prefix_for_millis(1_777_173_925_808, 1),
+            "dc7d20fb0001"
+        );
+        assert_eq!(
+            opencode_sort_prefix_for_millis(1_777_173_926_670, 1),
+            "dc7d2130e001"
+        );
+    }
+
+    #[test]
+    fn generated_style_user_id_sorts_between_observed_turn_messages() {
+        let prior_assistant = "msg_dc7d20fb0001rH5hSHrepNXLgJ";
+        let user_prefix = opencode_sort_prefix_for_millis(1_777_173_926_670, 1);
+        let user_id = format!("msg_{user_prefix}00000000000000");
+        let next_assistant = "msg_dc7d2132b001iU68RZlw7CFMwn";
+
+        assert!(prior_assistant < user_id.as_str());
+        assert!(user_id.as_str() < next_assistant);
     }
 
     #[test]

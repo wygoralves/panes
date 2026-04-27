@@ -1620,6 +1620,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const titleInputRef = useRef<HTMLInputElement>(null);
   const effortSyncKeyRef = useRef<string | null>(null);
   const manuallyOverrodeThreadSelectionRef = useRef(false);
+  const manualThreadBindTargetRef = useRef<string | null>(null);
   const lastSyncedThreadIdRef = useRef<string | null>(null);
   const highlightTimeoutRef = useRef<number | null>(null);
   const prependLoadInFlightRef = useRef(false);
@@ -1773,6 +1774,12 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   useEffect(() => {
     selectedEngineIdRef.current = selectedEngineId;
   }, [selectedEngineId]);
+
+  useEffect(() => {
+    if (selectedEngineId === "opencode" && planMode) {
+      setPlanMode(false);
+    }
+  }, [planMode, selectedEngineId]);
 
   useEffect(() => {
     selectedModelIdRef.current = selectedModelId;
@@ -2890,6 +2897,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     if (!activeThreadInCurrentWorkspace) {
       setActiveThreadInStore(null);
     }
+    if (targetThreadId && manualThreadBindTargetRef.current === targetThreadId) {
+      return;
+    }
     void bindChatThread(targetThreadId);
   }, [
     activeWorkspaceId,
@@ -3429,6 +3439,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
   const isCodexEngine = selectedEngineId === "codex";
   const isOpenCodeEngine = selectedEngineId === "opencode";
+  const activePlanMode = planMode && !isOpenCodeEngine;
 
   const slashCommands: SlashCommand[] = useMemo(
     () => [
@@ -3717,6 +3728,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     const submitEngineId = composerRuntime.engineId;
     const submitModelId = composerRuntime.modelId;
     const submitReasoningEffort = composerRuntime.reasoningEffort;
+    const submitPlanMode = submitEngineId === "opencode" ? false : planMode;
 
     const activeScopeRepoId = activeRepo?.id ?? null;
     const activeThreadInScope = activeThread
@@ -3759,7 +3771,14 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         return;
       }
       targetThreadId = createdThreadId;
-      await bindChatThread(createdThreadId);
+      manualThreadBindTargetRef.current = createdThreadId;
+      try {
+        await bindChatThread(createdThreadId);
+      } finally {
+        if (manualThreadBindTargetRef.current === createdThreadId) {
+          manualThreadBindTargetRef.current = null;
+        }
+      }
     }
 
     const inputItems = await resolveCodexInputItems(text, submitEngineId);
@@ -3790,7 +3809,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           text,
           attachments: [...attachments],
           inputItems: inputItems ?? null,
-          planMode,
+          planMode: submitPlanMode,
           engineId: submitEngineId,
           modelId: submitModelId,
           effort: submitReasoningEffort,
@@ -3826,10 +3845,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       reasoningEffort: submitReasoningEffort,
       attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
       inputItems,
-      planMode,
+      planMode: submitPlanMode,
     });
     if (sent) {
-      pendingPlanImplementationThreadIdRef.current = planMode ? targetThreadId : null;
+      pendingPlanImplementationThreadIdRef.current = submitPlanMode ? targetThreadId : null;
       const trimmed = input.trim();
       if (trimmed) {
         const hist = inputHistoryRef.current;
@@ -3875,6 +3894,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       }
       setThreadLastModelLocal(prompt.threadId, prompt.modelId);
 
+      const promptPlanMode = prompt.engineId === "opencode" ? false : prompt.planMode;
       const sent = await send(prompt.text, {
         threadIdOverride: prompt.threadId,
         engineId: prompt.engineId,
@@ -3882,7 +3902,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         reasoningEffort: prompt.effort,
         attachments: prompt.attachments.length > 0 ? prompt.attachments : undefined,
         inputItems: prompt.inputItems ?? undefined,
-        planMode: prompt.planMode,
+        planMode: promptPlanMode,
       });
       if (!sent) {
         setInput(prompt.text);
@@ -3890,7 +3910,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         return;
       }
 
-      pendingPlanImplementationThreadIdRef.current = prompt.planMode ? prompt.threadId : null;
+      pendingPlanImplementationThreadIdRef.current = promptPlanMode ? prompt.threadId : null;
       setInput("");
       setAttachments([]);
 
@@ -5239,7 +5259,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
           {/* Input container */}
           <div
-            className={`chat-input-box ${planMode && !showSpecialInputComposer ? "chat-input-box-plan" : ""} ${showSpecialInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
+            className={`chat-input-box ${activePlanMode && !showSpecialInputComposer ? "chat-input-box-plan" : ""} ${showSpecialInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
           >
             {showPendingToolInputComposer && pendingToolInputApproval ? (
               <ToolInputQuestionnaire
@@ -5276,7 +5296,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
             ) : (
               <>
                 {/* Plan mode indicator banner */}
-                {planMode && (
+                {activePlanMode && (
                   <div className="chat-plan-mode-banner">
                     <ListChecks size={12} />
                     <span>{t("panel.planMode")}</span>
@@ -5438,13 +5458,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     }
                     if (e.shiftKey && e.key === "Tab") {
                       e.preventDefault();
-                      if (activeWorkspaceId) {
+                      if (activeWorkspaceId && !isOpenCodeEngine) {
                         setPlanMode((prev) => !prev);
                       }
                     }
                   }}
                   placeholder={
-                    planMode
+                    activePlanMode
                       ? t("panel.placeholders.plan")
                       : t("panel.placeholders.chat")
                   }
@@ -5458,7 +5478,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     lineHeight: 1.6,
                     resize: "none",
                     fontFamily: "inherit",
-                    caretColor: planMode ? "var(--accent-2)" : "var(--accent)",
+                    caretColor: activePlanMode ? "var(--accent-2)" : "var(--accent)",
                   }}
                 />
 
@@ -5502,24 +5522,33 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               )}
 
               {!showSpecialInputComposer && (
-                <button
-                  type="button"
-                  className={`chat-toolbar-btn chat-toolbar-btn-bordered ${planMode ? "chat-toolbar-btn-active" : ""}`}
-                  onClick={() => setPlanMode((prev) => !prev)}
-                  disabled={!activeWorkspaceId}
-                  title={
-                    selectedEngineId === "codex"
-                      ? planMode
-                        ? t("panel.disablePlanModeCodex")
-                        : t("panel.enablePlanModeCodex")
-                      : planMode
-                        ? t("panel.disablePlanMode")
-                        : t("panel.enablePlanMode")
-                  }
-                >
-                  <ListChecks size={12} />
-                  <span style={{ fontSize: 11 }}>{t("panel.planShort")}</span>
-                </button>
+                isOpenCodeEngine ? (
+                  <OpenCodeAgentPicker
+                    agents={openCodeSelectableAgents}
+                    selectedAgent={selectedOpenCodeAgent}
+                    onAgentChange={(agent) => void onOpenCodeAgentChange(agent)}
+                    disabled={!openCodeCatalogLoaded && openCodeSelectableAgents.length === 0}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className={`chat-toolbar-btn chat-toolbar-btn-bordered ${activePlanMode ? "chat-toolbar-btn-active" : ""}`}
+                    onClick={() => setPlanMode((prev) => !prev)}
+                    disabled={!activeWorkspaceId}
+                    title={
+                      selectedEngineId === "codex"
+                        ? activePlanMode
+                          ? t("panel.disablePlanModeCodex")
+                          : t("panel.enablePlanModeCodex")
+                        : activePlanMode
+                          ? t("panel.disablePlanMode")
+                          : t("panel.enablePlanMode")
+                    }
+                  >
+                    <ListChecks size={12} />
+                    <span style={{ fontSize: 11 }}>{t("panel.planShort")}</span>
+                  </button>
+                )
               )}
 
               {!showSpecialInputComposer && <div className="chat-toolbar-divider" />}
@@ -5537,6 +5566,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       manuallyOverrodeThreadSelectionRef.current = true;
                       setHasExplicitComposerRuntime(true);
                       selectedEngineIdRef.current = engineId;
+                      if (engineId === "opencode") setPlanMode(false);
                       if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
                       const nextEngine =
                         engines.find((engine) => engine.id === engineId) ?? null;
@@ -5556,14 +5586,6 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     onEffortChange={(effort) => void onReasoningEffortChange(effort)}
                     disabled={availableModels.length === 0}
                   />
-                  {selectedEngineId === "opencode" && (
-                    <OpenCodeAgentPicker
-                      agents={openCodeSelectableAgents}
-                      selectedAgent={selectedOpenCodeAgent}
-                      onAgentChange={(agent) => void onOpenCodeAgentChange(agent)}
-                      disabled={!openCodeCatalogLoaded && openCodeSelectableAgents.length === 0}
-                    />
-                  )}
                   {selectedEngineId === "codex" && (
                     <button
                       type="button"

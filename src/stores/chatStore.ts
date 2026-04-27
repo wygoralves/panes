@@ -1784,6 +1784,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const threadStatus = activeThread?.status ?? "idle";
+      const currentState = get();
+      if (currentState.threadId === threadId && currentState.streaming) {
+        if (currentState.unlisten) {
+          unlisten();
+        }
+        set({
+          olderCursor,
+          hasOlderMessages: olderCursor !== null,
+          loadingOlderMessages: false,
+          olderLoadBlockedUntil: 0,
+          unlisten: currentState.unlisten ?? unlisten,
+          error: undefined,
+        });
+        return;
+      }
+
       set({
         threadId,
         messages,
@@ -1951,7 +1967,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (error) {
       pendingTurnMetaByThread.delete(threadId);
       set((state) => ({
-        messages: state.messages.filter((item) => item.id !== optimisticAssistantMessage.id),
+        messages: state.messages.filter(
+          (item) => item.id !== userMessage.id && item.id !== optimisticAssistantMessage.id,
+        ),
         status: "error",
         streaming: false,
         error: String(error),

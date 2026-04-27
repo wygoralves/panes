@@ -17,7 +17,12 @@ use super::codex_protocol::{
 };
 use super::trim_action_output_delta_content;
 
-const INCOMING_EVENT_BUFFER_CAPACITY: usize = 1024;
+// This channel is only a live fan-out for active Codex subscribers. Tokio's
+// broadcast ring retains every slot until it is overwritten, so keeping a large
+// history here can pin already-delivered protocol payloads while Panes is idle.
+const INCOMING_EVENT_BUFFER_CAPACITY: usize = 64;
+const TRANSPORT_ERROR_LINE_MAX_CHARS: usize = 16 * 1024;
+const TRANSPORT_ERROR_LINE_TRUNCATED_PREFIX: &str = "... [protocol line truncated; showing tail]\n";
 
 pub struct CodexTransport {
     child: Mutex<Child>,
@@ -87,17 +92,18 @@ impl CodexTransport {
                                 log::warn!("codex stdout parse error: {error}");
                                 let _ = incoming_tx.send(IncomingMessage::Notification {
                                     method: "transport/parse_error".to_string(),
-                                    params: serde_json::json!({
-                                      "error": error.to_string(),
-                                      "line": line,
-                                    }),
+                                    params: transport_parse_error_payload(
+                                        &error.to_string(),
+                                        &line,
+                                    ),
                                 });
                             }
                         },
                         Ok(None) => {
                             let _ = incoming_tx.send(IncomingMessage::Notification {
                                 method: "transport/eof".to_string(),
-                                params: serde_json::json!({}),
+                                params: serde_json::value::RawValue::from_string("{}".to_string())
+                                    .expect("\"{}\" is valid json"),
                             });
                             break;
                         }
@@ -105,9 +111,10 @@ impl CodexTransport {
                             log::warn!("codex stdout read error: {error}");
                             let _ = incoming_tx.send(IncomingMessage::Notification {
                                 method: "transport/read_error".to_string(),
-                                params: serde_json::json!({
+                                params: serde_json::value::to_raw_value(&serde_json::json!({
                                   "error": error.to_string(),
-                                }),
+                                }))
+                                .expect("internal error payload is valid json"),
                             });
                             break;
                         }
@@ -279,20 +286,53 @@ fn trim_buffered_incoming_message(message: IncomingMessage) -> IncomingMessage {
     }
 }
 
-fn trim_large_output_params(method: &str, mut params: serde_json::Value) -> serde_json::Value {
+fn transport_parse_error_payload(error: &str, line: &str) -> Box<serde_json::value::RawValue> {
+    serde_json::value::to_raw_value(&serde_json::json!({
+        "error": error,
+        "line": trim_transport_error_line(line),
+    }))
+    .expect("internal error payload is valid json")
+}
+
+fn trim_transport_error_line(line: &str) -> String {
+    if line.chars().count() <= TRANSPORT_ERROR_LINE_MAX_CHARS {
+        return line.to_string();
+    }
+
+    let tail_chars = TRANSPORT_ERROR_LINE_MAX_CHARS
+        .saturating_sub(TRANSPORT_ERROR_LINE_TRUNCATED_PREFIX.len())
+        .max(1);
+    let mut tail = line.chars().rev().take(tail_chars).collect::<Vec<_>>();
+    tail.reverse();
+
+    format!(
+        "{}{}",
+        TRANSPORT_ERROR_LINE_TRUNCATED_PREFIX,
+        tail.into_iter().collect::<String>()
+    )
+}
+
+fn trim_large_output_params(
+    method: &str,
+    params: Box<serde_json::value::RawValue>,
+) -> Box<serde_json::value::RawValue> {
     if !is_large_output_event(method) {
         return params;
     }
 
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(params.get()) else {
+        return params;
+    };
+
     if method_signature(method).contains("terminalinteraction") {
-        trim_string_field(&mut params, "stdin");
+        trim_string_field(&mut value, "stdin");
     } else {
         for key in ["delta", "output", "text", "content"] {
-            trim_string_field(&mut params, key);
+            trim_string_field(&mut value, key);
         }
     }
 
-    params
+    serde_json::value::to_raw_value(&value).unwrap_or(params)
 }
 
 fn trim_string_field(value: &mut serde_json::Value, key: &str) {
@@ -326,4 +366,38 @@ fn method_signature(method: &str) -> String {
 
 fn codex_augmented_path(executable: &str) -> Option<OsString> {
     runtime_env::augmented_path_with_prepend([Path::new(executable).parent()?.to_path_buf()])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    #[test]
+    fn incoming_event_buffer_capacity_bounds_idle_retention() {
+        assert!(
+            INCOMING_EVENT_BUFFER_CAPACITY <= 64,
+            "Codex incoming events are live fan-out only; raising this can retain large protocol payloads while idle"
+        );
+    }
+
+    #[test]
+    fn transport_parse_error_payload_trims_large_protocol_lines() {
+        let line = "x".repeat(TRANSPORT_ERROR_LINE_MAX_CHARS + 2048);
+
+        let payload = transport_parse_error_payload("bad json", &line);
+        let parsed: Value = serde_json::from_str(payload.get()).expect("valid json payload");
+        let trimmed_line = parsed
+            .get("line")
+            .and_then(Value::as_str)
+            .expect("line should be present");
+
+        assert!(trimmed_line.starts_with(TRANSPORT_ERROR_LINE_TRUNCATED_PREFIX));
+        assert!(trimmed_line.chars().count() <= TRANSPORT_ERROR_LINE_MAX_CHARS);
+        assert!(trimmed_line.ends_with(&"x".repeat(64)));
+        assert_eq!(
+            parsed.get("error").and_then(Value::as_str),
+            Some("bad json")
+        );
+    }
 }
