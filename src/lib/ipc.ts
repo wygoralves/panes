@@ -8,6 +8,7 @@ import type {
   ChatAttachment,
   ChatEngineId,
   ChatInputItem,
+  CodexApprovalsReviewer,
   CodexReviewDelivery,
   CodexReviewTarget,
   CodexRemoteThreadPage,
@@ -275,6 +276,8 @@ export const ipc = {
       approvalPolicy?: unknown;
       sandboxMode?: string | null;
       allowNetwork?: boolean | null;
+      permissionProfile?: Record<string, unknown> | null;
+      approvalsReviewer?: CodexApprovalsReviewer | null;
     },
   ) =>
     invoke<Thread>("set_thread_execution_policy", {
@@ -285,6 +288,10 @@ export const ipc = {
       sandboxMode: patch.sandboxMode ?? null,
       updateAllowNetwork: Object.prototype.hasOwnProperty.call(patch, "allowNetwork"),
       allowNetwork: patch.allowNetwork ?? null,
+      updatePermissionProfile: Object.prototype.hasOwnProperty.call(patch, "permissionProfile"),
+      permissionProfile: patch.permissionProfile ?? null,
+      updateApprovalsReviewer: Object.prototype.hasOwnProperty.call(patch, "approvalsReviewer"),
+      approvalsReviewer: patch.approvalsReviewer ?? null,
     }),
   setThreadCodexConfig: (
     threadId: string,

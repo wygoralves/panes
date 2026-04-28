@@ -159,6 +159,8 @@
       "modelProvider": "Model provider",
       "serviceTier": "Service tier",
       "approvalPolicy": "Approval policy",
+      "permissionProfile": "Permission profile",
+      "approvalsReviewer": "Approvals reviewer",
       "sandboxMode": "Sandbox mode",
       "webSearch": "Web search",
       "profile": "Profile",

@@ -481,6 +481,14 @@ export function CodexRuntimePicker({
                       value={formatJsonValue(config.approvalPolicy, t("runtimePicker.none"))}
                     />
                     <FieldRow
+                      label={t("runtimePicker.fields.permissionProfile")}
+                      value={formatJsonValue(config.permissionProfile, t("runtimePicker.none"))}
+                    />
+                    <FieldRow
+                      label={t("runtimePicker.fields.approvalsReviewer")}
+                      value={config.approvalsReviewer ?? t("runtimePicker.none")}
+                    />
+                    <FieldRow
                       label={t("runtimePicker.fields.sandboxMode")}
                       value={
                         config.sandboxMode

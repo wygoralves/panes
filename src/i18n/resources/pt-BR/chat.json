@@ -159,6 +159,8 @@
       "modelProvider": "Provedor do modelo",
       "serviceTier": "Camada de serviço",
       "approvalPolicy": "Política de aprovação",
+      "permissionProfile": "Perfil de permissão",
+      "approvalsReviewer": "Revisor de aprovações",
       "sandboxMode": "Modo de sandbox",
       "webSearch": "Busca web",
       "profile": "Perfil",

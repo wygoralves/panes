@@ -611,11 +611,15 @@ export interface CodexConfigLayer {
   version: string;
 }
 
+export type CodexApprovalsReviewer = "user" | "auto_review" | "guardian_subagent";
+
 export interface CodexConfigState {
   model?: string;
   modelProvider?: string;
   serviceTier?: string;
   approvalPolicy?: unknown;
+  permissionProfile?: unknown;
+  approvalsReviewer?: CodexApprovalsReviewer;
   sandboxMode?: string;
   webSearch?: string;
   profile?: string;
