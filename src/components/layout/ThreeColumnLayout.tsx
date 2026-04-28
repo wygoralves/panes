@@ -78,6 +78,8 @@ export function ThreeColumnLayout() {
   const gitFlyoutRef = useRef<HTMLDivElement>(null);
   const gitTriggerRef = useRef<HTMLButtonElement>(null);
   const gitFlyoutCloseTimerRef = useRef<number | null>(null);
+  const gitFlyoutInternalPointerDownRef = useRef(false);
+  const gitFlyoutInternalPointerResetTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth)); } catch { /* ignore */ }
@@ -110,6 +112,13 @@ export function ThreeColumnLayout() {
     }
   }, []);
 
+  const clearGitFlyoutInternalPointerResetTimer = useCallback(() => {
+    if (gitFlyoutInternalPointerResetTimerRef.current !== null) {
+      window.clearTimeout(gitFlyoutInternalPointerResetTimerRef.current);
+      gitFlyoutInternalPointerResetTimerRef.current = null;
+    }
+  }, []);
+
   const openGitFlyout = useCallback(() => {
     if (!showGitPanel || gitPanelPinned) {
       return;
@@ -137,7 +146,10 @@ export function ThreeColumnLayout() {
     }
   }, [clearGitFlyoutCloseTimer, gitPanelPinned, showGitPanel]);
 
-  useEffect(() => () => clearGitFlyoutCloseTimer(), [clearGitFlyoutCloseTimer]);
+  useEffect(() => () => {
+    clearGitFlyoutCloseTimer();
+    clearGitFlyoutInternalPointerResetTimer();
+  }, [clearGitFlyoutCloseTimer, clearGitFlyoutInternalPointerResetTimer]);
 
   const handleSidebarResizeMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -169,6 +181,9 @@ export function ThreeColumnLayout() {
   }, [sidebarWidth, toggleSidebarPin]);
 
   const handleGitTriggerBlur = useCallback((event: React.FocusEvent<HTMLButtonElement>) => {
+    if (gitFlyoutInternalPointerDownRef.current) {
+      return;
+    }
     const nextTarget = event.relatedTarget;
     if (isTargetWithinGitFlyoutRegion(nextTarget, [gitFlyoutRef.current, gitTriggerRef.current])) {
       return;
@@ -177,12 +192,25 @@ export function ThreeColumnLayout() {
   }, [closeGitFlyout]);
 
   const handleGitFlyoutBlurCapture = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
+    if (gitFlyoutInternalPointerDownRef.current) {
+      return;
+    }
     const nextTarget = event.relatedTarget;
     if (isTargetWithinGitFlyoutRegion(nextTarget, [gitFlyoutRef.current, gitTriggerRef.current])) {
       return;
     }
     closeGitFlyout();
   }, [closeGitFlyout]);
+
+  const handleGitFlyoutPointerDownCapture = useCallback(() => {
+    gitFlyoutInternalPointerDownRef.current = true;
+    clearGitFlyoutInternalPointerResetTimer();
+    openGitFlyout();
+    gitFlyoutInternalPointerResetTimerRef.current = window.setTimeout(() => {
+      gitFlyoutInternalPointerResetTimerRef.current = null;
+      gitFlyoutInternalPointerDownRef.current = false;
+    }, 0);
+  }, [clearGitFlyoutInternalPointerResetTimer, openGitFlyout]);
 
   const gitFlyoutContextValue = useMemo(
     () => ({
@@ -316,6 +344,7 @@ export function ThreeColumnLayout() {
               }}
               onMouseEnter={openGitFlyout}
               onMouseLeave={() => closeGitFlyout(150)}
+              onPointerDownCapture={handleGitFlyoutPointerDownCapture}
               onFocusCapture={openGitFlyout}
               onBlurCapture={handleGitFlyoutBlurCapture}
               onKeyDown={(event) => {
