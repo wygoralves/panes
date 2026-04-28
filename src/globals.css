@@ -2504,6 +2504,12 @@ button, input, textarea, select {
   white-space: nowrap;
 }
 
+.file-explorer-row-parent {
+  margin-left: 6px;
+  color: var(--text-3);
+  font-size: 10.5px;
+}
+
 .file-explorer-row.selected {
   background: rgba(255, 107, 107, 0.08);
 }

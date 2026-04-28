@@ -73,8 +73,9 @@ import { canToggleKeepAwake, useKeepAwakeStore } from "../../stores/keepAwakeSto
 import { toast } from "../../stores/toastStore";
 import type { FileTreeEntry, GitBranch, GitStash, GitStatus, HarnessInfo, Repo, SearchResult, Thread, Workspace } from "../../types";
 
-const FILE_SEARCH_PAGE_SIZE = 500;
-const FILE_SEARCH_PAGE_DELAY_MS = 80;
+const FILE_SEARCH_RESULT_LIMIT = 80;
+const FILE_SEARCH_DEBOUNCE_MS = 150;
+const FILE_SEARCH_CACHE_LIMIT = 16;
 
 /* ------------------------------------------------------------------ */
 /*  Fuzzy search                                                       */
@@ -115,6 +116,22 @@ function fuzzyFilter<T>(
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
     .slice(0, limit)
     .map((entry) => entry.item);
+}
+
+function rememberFileSearchResult(
+  cache: Map<string, FileTreeEntry[]>,
+  key: string,
+  entries: FileTreeEntry[],
+) {
+  if (cache.has(key)) {
+    cache.delete(key);
+  }
+  cache.set(key, entries);
+  while (cache.size > FILE_SEARCH_CACHE_LIMIT) {
+    const oldestKey = cache.keys().next().value;
+    if (!oldestKey) break;
+    cache.delete(oldestKey);
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1175,10 +1192,11 @@ export function CommandPalette({ open, onClose }: Props) {
     // In auto and search modes, require 2+ chars before loading; in file mode, load immediately.
     if ((mode === "auto" || mode === "search") && trimmedTerm.length < 2) {
       setFileLoading(false);
+      setFileEntries([]);
       return;
     }
 
-    const cacheKey = activeWorkspaceRootPath;
+    const cacheKey = `${activeWorkspaceId}:${activeWorkspaceRootPath}:${trimmedTerm}`;
     const cached = fileCacheRef.current.get(cacheKey);
     if (cached) {
       setFileEntries(cached);
@@ -1191,38 +1209,23 @@ export function CommandPalette({ open, onClose }: Props) {
 
     const timer = window.setTimeout(async () => {
       try {
-        const accumulated: FileTreeEntry[] = [];
+        const result = await ipc.searchWorkspaceFiles(
+          activeWorkspaceId,
+          trimmedTerm,
+          0,
+          FILE_SEARCH_RESULT_LIMIT,
+        );
+        if (cancelled) return;
 
-        for (let page = 0; ; page++) {
-          if (cancelled) return;
-
-          const result = await ipc.getWorkspaceFileTreePage(
-            activeWorkspaceId,
-            page * FILE_SEARCH_PAGE_SIZE,
-            FILE_SEARCH_PAGE_SIZE,
-            page === 0,
-          );
-          if (cancelled) return;
-
-          const files = result.entries.filter((e) => !e.isDir);
-          accumulated.push(...files);
-          setFileEntries([...accumulated]);
-
-          if (!result.hasMore) break;
-
-          // Let the UI breathe between pages
-          await new Promise((r) => setTimeout(r, FILE_SEARCH_PAGE_DELAY_MS));
-        }
-
-        if (!cancelled) {
-          fileCacheRef.current.set(cacheKey, accumulated);
-        }
+        const files = result.entries.filter((entry) => !entry.isDir);
+        setFileEntries(files);
+        rememberFileSearchResult(fileCacheRef.current, cacheKey, files);
       } catch {
         // Degrade gracefully — no file results
       } finally {
         if (!cancelled) setFileLoading(false);
       }
-    }, 250);
+    }, FILE_SEARCH_DEBOUNCE_MS);
 
     return () => {
       cancelled = true;
@@ -1618,7 +1621,7 @@ export function CommandPalette({ open, onClose }: Props) {
               items: [{ type: "sub-action", label: t("commandPalette.status.loadingFiles") }],
             });
           } else {
-            const filteredFiles = fuzzyFilter(fileEntries, trimmedTerm, (f) => f.path, searchScope === "files" ? 20 : 8);
+            const filteredFiles = fileEntries.slice(0, searchScope === "files" ? 20 : 8);
             if (filteredFiles.length > 0) {
               result.push({
                 label: fileLoading
@@ -1775,9 +1778,7 @@ export function CommandPalette({ open, onClose }: Props) {
           items: [{ type: "sub-action", label: t("commandPalette.status.loadingFiles") }],
         }];
       }
-      const filteredFiles = term.length > 0
-        ? fuzzyFilter(fileEntries, term, (f) => f.path, 20)
-        : fileEntries.slice(0, 20);
+      const filteredFiles = fileEntries.slice(0, 20);
       if (filteredFiles.length === 0) {
         return [{
           label: t("commandPalette.group.files"),
@@ -1810,7 +1811,7 @@ export function CommandPalette({ open, onClose }: Props) {
 
     // Files
     if (showFilesInAuto && fileEntries.length > 0 && term.length >= 2) {
-      const filteredFiles = fuzzyFilter(fileEntries, term, (f) => f.path, 10);
+      const filteredFiles = fileEntries.slice(0, 10);
       if (filteredFiles.length > 0) {
         result.push({
           label: fileLoading
