@@ -216,6 +216,7 @@ pub fn run() {
             commands::workspace::export_workspace_startup_preset,
             commands::workspace::list_workspace_dirs,
             commands::workspace::get_workspace_file_tree_page,
+            commands::workspace::search_workspace_files,
             commands::git::get_git_status,
             commands::git::get_file_diff,
             commands::git::get_git_file_compare,

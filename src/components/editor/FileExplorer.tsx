@@ -67,6 +67,7 @@ interface FileRow {
   name: string;
   path: string;
   depth: number;
+  parentPath?: string;
 }
 
 /** Synthetic row inserted at the top of a directory while creating a new item. */
@@ -88,6 +89,9 @@ const TREE_ROW_HEIGHT = 24;
 const TREE_VERTICAL_PADDING = 4;
 const TREE_OVERSCAN_ROWS = 10;
 const TREE_VIRTUALIZATION_THRESHOLD = 200;
+const WORKSPACE_SEARCH_MIN_CHARS = 2;
+const WORKSPACE_SEARCH_LIMIT = 200;
+const WORKSPACE_SEARCH_DEBOUNCE_MS = 150;
 
 const EXT_COLORS: Record<string, string> = {
   ts: "#3178c6",
@@ -181,6 +185,12 @@ export function FileExplorer() {
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
   const [rootLoading, setRootLoading] = useState(false);
   const [filter, setFilter] = useState("");
+  const trimmedFilter = filter.trim();
+  const workspaceSearchActive = trimmedFilter.length >= WORKSPACE_SEARCH_MIN_CHARS;
+  const [workspaceSearchEntries, setWorkspaceSearchEntries] = useState<FileTreeEntry[]>([]);
+  const [workspaceSearchLoading, setWorkspaceSearchLoading] = useState(false);
+  const [workspaceSearchTotal, setWorkspaceSearchTotal] = useState(0);
+  const [workspaceSearchRefreshKey, setWorkspaceSearchRefreshKey] = useState(0);
 
   // -- Store bindings --
   const openFile = useFileStore((s) => s.openFile);
@@ -191,6 +201,8 @@ export function FileExplorer() {
   const prevRootPath = useRef(rootPath);
   const loadSignatureRef = useRef({ generation: 0, rootPath });
   const refreshRequestIdRef = useRef(0);
+  const workspaceSearchRequestIdRef = useRef(0);
+  const workspaceSearchRefreshAppliedRef = useRef(0);
   const dirContentsRef = useRef(dirContents);
   const expandedDirsRef = useRef(expandedDirs);
   const refreshTimerRef = useRef<number | null>(null);
@@ -292,6 +304,12 @@ export function FileExplorer() {
       setLoadingDirs(new Set());
       setRootLoading(false);
       setFilter("");
+      setWorkspaceSearchEntries([]);
+      setWorkspaceSearchLoading(false);
+      setWorkspaceSearchTotal(0);
+      setWorkspaceSearchRefreshKey(0);
+      workspaceSearchRequestIdRef.current += 1;
+      workspaceSearchRefreshAppliedRef.current = 0;
       setScrollTop(0);
       setSelectedPaths(new Set());
       setLastClickedIndex(null);
@@ -449,6 +467,62 @@ export function FileExplorer() {
     };
   }, [rootPath, scheduleRefreshVisibleDirs]);
 
+  useEffect(() => {
+    if (!activeWorkspaceId || !rootPath || !workspaceSearchActive) {
+      workspaceSearchRequestIdRef.current += 1;
+      setWorkspaceSearchLoading(false);
+      setWorkspaceSearchEntries([]);
+      setWorkspaceSearchTotal(0);
+      return;
+    }
+
+    const requestId = workspaceSearchRequestIdRef.current + 1;
+    workspaceSearchRequestIdRef.current = requestId;
+    const shouldRefresh = workspaceSearchRefreshKey !== workspaceSearchRefreshAppliedRef.current;
+    setWorkspaceSearchLoading(true);
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const page = await ipc.searchWorkspaceFiles(
+          activeWorkspaceId,
+          trimmedFilter,
+          0,
+          WORKSPACE_SEARCH_LIMIT,
+          shouldRefresh,
+        );
+        if (workspaceSearchRequestIdRef.current !== requestId) {
+          return;
+        }
+        if (shouldRefresh) {
+          workspaceSearchRefreshAppliedRef.current = workspaceSearchRefreshKey;
+        }
+        setWorkspaceSearchEntries(page.entries.filter((entry) => !entry.isDir));
+        setWorkspaceSearchTotal(page.total);
+      } catch (err) {
+        if (workspaceSearchRequestIdRef.current !== requestId) {
+          return;
+        }
+        console.warn("[FileExplorer] workspace file search failed:", err);
+        setWorkspaceSearchEntries([]);
+        setWorkspaceSearchTotal(0);
+      } finally {
+        if (workspaceSearchRequestIdRef.current === requestId) {
+          setWorkspaceSearchLoading(false);
+        }
+      }
+    }, WORKSPACE_SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    activeWorkspaceId,
+    rootPath,
+    trimmedFilter,
+    workspaceSearchActive,
+    workspaceSearchRefreshKey,
+  ]);
+
   // ---------------------------------------------------------------------------
   // Toggle directory expand/collapse
   // ---------------------------------------------------------------------------
@@ -507,6 +581,17 @@ export function FileExplorer() {
   // ---------------------------------------------------------------------------
 
   const rows = useMemo(() => {
+    if (workspaceSearchActive) {
+      return workspaceSearchEntries.map((entry) => ({
+        type: "file" as const,
+        key: `search:file:${entry.path}`,
+        name: entryName(entry),
+        path: entry.path,
+        parentPath: parentPath(entry.path),
+        depth: 0,
+      }));
+    }
+
     const result: TreeRow[] = [];
     const lowerFilter = filter.toLowerCase();
 
@@ -565,11 +650,13 @@ export function FileExplorer() {
 
     visitDir("", 0);
     return result;
-  }, [dirContents, expandedDirs, filter, creating]);
+  }, [creating, dirContents, expandedDirs, filter, workspaceSearchActive, workspaceSearchEntries]);
 
   const filteredFileCount = useMemo(
-    () => rows.reduce((count, row) => count + (row.type === "file" ? 1 : 0), 0),
-    [rows],
+    () => workspaceSearchActive
+      ? workspaceSearchTotal
+      : rows.reduce((count, row) => count + (row.type === "file" ? 1 : 0), 0),
+    [rows, workspaceSearchActive, workspaceSearchTotal],
   );
 
   // ---------------------------------------------------------------------------
@@ -642,6 +729,7 @@ export function FileExplorer() {
     () => rows.slice(virtualWindow.startIndex, virtualWindow.endIndexExclusive),
     [rows, virtualWindow.endIndexExclusive, virtualWindow.startIndex],
   );
+  const explorerRefreshInProgress = refreshing || workspaceSearchLoading;
 
   // ---------------------------------------------------------------------------
   // Context menu helpers
@@ -1254,11 +1342,17 @@ export function FileExplorer() {
           <button
             type="button"
             className="file-explorer-collapse-btn"
-            title={refreshing ? t("explorer.refreshing") : t("explorer.refresh")}
-            aria-label={refreshing ? t("explorer.refreshing") : t("explorer.refresh")}
-            onClick={() => void refreshVisibleDirs()}
+            title={explorerRefreshInProgress ? t("explorer.refreshing") : t("explorer.refresh")}
+            aria-label={explorerRefreshInProgress ? t("explorer.refreshing") : t("explorer.refresh")}
+            onClick={() => {
+              if (workspaceSearchActive) {
+                setWorkspaceSearchRefreshKey((value) => value + 1);
+                return;
+              }
+              void refreshVisibleDirs();
+            }}
           >
-            {refreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+            {explorerRefreshInProgress ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
           </button>
           <button
             type="button"
@@ -1304,10 +1398,11 @@ export function FileExplorer() {
           }
         }}
       >
-        {rootLoading && !dirContents.has("") ? (
+        {(workspaceSearchActive && workspaceSearchLoading && rows.length === 0) ||
+        (!workspaceSearchActive && rootLoading && !dirContents.has("")) ? (
           <div className="file-explorer-empty">
             <Loader2 size={14} className="animate-spin" style={{ marginRight: 6 }} />
-            {t("explorer.loading")}
+            {workspaceSearchActive ? t("explorer.refreshing") : t("explorer.loading")}
           </div>
         ) : rows.length === 0 ? (
           <div className="file-explorer-empty">
@@ -1481,7 +1576,12 @@ export function FileExplorer() {
                           flexShrink: 0,
                         }}
                       />
-                      <span className="file-explorer-row-name">{row.name}</span>
+                      <span className="file-explorer-row-name">
+                        {row.name}
+                        {row.parentPath ? (
+                          <span className="file-explorer-row-parent">{row.parentPath}</span>
+                        ) : null}
+                      </span>
                     </>
                   )}
                 </div>

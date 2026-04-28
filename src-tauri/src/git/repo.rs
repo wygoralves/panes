@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -23,6 +24,21 @@ const FILE_TREE_MAX_PAGE_SIZE: usize = 5000;
 const FILE_TREE_MAX_SCAN_ENTRIES: usize = 50_000;
 const FILE_TREE_SCAN_TIMEOUT: Duration = Duration::from_secs(2);
 const FILE_TREE_CACHE_TTL: Duration = Duration::from_secs(30);
+const FILE_TREE_EXCLUDED_DIR_NAMES: &[&str] = &[
+    ".cache",
+    ".git",
+    ".next",
+    ".nuxt",
+    ".pnpm-store",
+    ".turbo",
+    ".yarn",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "out",
+    "target",
+];
 
 const GIT_BRANCH_MAX_PAGE_SIZE: usize = 1000;
 const GIT_COMMIT_MAX_PAGE_SIZE: usize = 200;
@@ -949,6 +965,60 @@ pub fn get_workspace_file_tree_page(
     get_cached_file_tree_page(root_path, offset, limit, FileTreeScanMode::Workspace, cache)
 }
 
+pub fn search_workspace_files(
+    root_path: &str,
+    query: &str,
+    offset: usize,
+    limit: usize,
+    cache: &FileTreeCache,
+) -> anyhow::Result<FileTreePageDto> {
+    let limit = limit.clamp(1, FILE_TREE_MAX_PAGE_SIZE);
+    let query = query.trim();
+    let (all_entries, truncated) =
+        get_cached_file_tree_entries(root_path, FileTreeScanMode::Workspace, cache)?;
+
+    let mut matches = all_entries
+        .iter()
+        .filter(|entry| !entry.is_dir)
+        .filter_map(|entry| {
+            if query.is_empty() {
+                return Some((0, file_tree_basename_len(&entry.path), entry));
+            }
+            file_tree_search_score(query, &entry.path)
+                .map(|score| (score, file_tree_basename_len(&entry.path), entry))
+        })
+        .collect::<Vec<_>>();
+
+    if query.is_empty() {
+        matches.sort_by(|left, right| left.2.path.cmp(&right.2.path));
+    } else {
+        matches.sort_by(|left, right| {
+            right
+                .0
+                .cmp(&left.0)
+                .then_with(|| left.1.cmp(&right.1))
+                .then_with(|| left.2.path.cmp(&right.2.path))
+        });
+    }
+
+    let total = matches.len();
+    let offset = offset.min(total);
+    let end = offset.saturating_add(limit).min(total);
+    let entries = matches[offset..end]
+        .iter()
+        .map(|(_, _, entry)| (*entry).clone())
+        .collect::<Vec<_>>();
+
+    Ok(FileTreePageDto {
+        entries,
+        offset,
+        limit,
+        total,
+        has_more: end < total,
+        scan_truncated: truncated,
+    })
+}
+
 fn get_cached_file_tree_page(
     root_path: &str,
     offset: usize,
@@ -957,15 +1027,7 @@ fn get_cached_file_tree_page(
     cache: &FileTreeCache,
 ) -> anyhow::Result<FileTreePageDto> {
     let limit = limit.clamp(1, FILE_TREE_MAX_PAGE_SIZE);
-    let cache_key = file_tree_cache_key(root_path, mode);
-
-    let (all_entries, truncated) = if let Some(hit) = cache.get(&cache_key) {
-        hit
-    } else {
-        let scan = scan_file_tree(root_path, mode)?;
-        let arc = cache.insert(&cache_key, scan.entries, scan.truncated);
-        (arc, scan.truncated)
-    };
+    let (all_entries, truncated) = get_cached_file_tree_entries(root_path, mode, cache)?;
 
     let total = all_entries.len();
     let offset = offset.min(total);
@@ -982,6 +1044,123 @@ fn get_cached_file_tree_page(
     })
 }
 
+fn get_cached_file_tree_entries(
+    root_path: &str,
+    mode: FileTreeScanMode,
+    cache: &FileTreeCache,
+) -> anyhow::Result<(Arc<Vec<FileTreeEntryDto>>, bool)> {
+    let cache_key = file_tree_cache_key(root_path, mode);
+
+    if let Some(hit) = cache.get(&cache_key) {
+        return Ok(hit);
+    }
+
+    let scan = scan_file_tree(root_path, mode)?;
+    let arc = cache.insert(&cache_key, scan.entries, scan.truncated);
+    Ok((arc, scan.truncated))
+}
+
+fn file_tree_search_score(query: &str, path: &str) -> Option<i32> {
+    let query = query.to_lowercase().replace('\\', "/");
+    let path_lower = path.to_lowercase().replace('\\', "/");
+    let basename = path_lower.rsplit('/').next().unwrap_or(path_lower.as_str());
+    let query_is_path_like = query.contains('/');
+    let query_is_literal_filename = !query_is_path_like && query.contains('.');
+
+    if query_is_literal_filename {
+        return file_tree_literal_filename_score(&query, basename);
+    }
+
+    let basename_bonus = if basename == query {
+        500
+    } else if basename.starts_with(&query) {
+        300
+    } else if basename.contains(&query) {
+        220
+    } else {
+        100
+    };
+    let basename_score = fuzzy_path_score(&query, basename).map(|score| score + basename_bonus);
+
+    if !query_is_path_like {
+        return basename_score;
+    }
+
+    let path_bonus = if path_lower == query {
+        300
+    } else if path_lower.starts_with(&query) {
+        180
+    } else if path_lower.contains(&query) {
+        60
+    } else {
+        0
+    };
+    let path_score = fuzzy_path_score(&query, &path_lower);
+
+    match (basename_score, path_score) {
+        (Some(left), Some(right)) => Some(left.max(right + path_bonus)),
+        (Some(score), None) | (None, Some(score)) => Some(score),
+        (None, None) => None,
+    }
+}
+
+fn file_tree_literal_filename_score(query: &str, basename: &str) -> Option<i32> {
+    if basename == query {
+        Some(1_000)
+    } else if basename.starts_with(query) {
+        Some(850)
+    } else if basename.contains(query) {
+        Some(760)
+    } else {
+        None
+    }
+}
+
+fn file_tree_basename_len(path: &str) -> usize {
+    path.rsplit('/').next().unwrap_or(path).len()
+}
+
+fn fuzzy_path_score(pattern: &str, text: &str) -> Option<i32> {
+    if pattern.is_empty() {
+        return Some(0);
+    }
+
+    let pattern_chars = pattern.chars().collect::<Vec<_>>();
+    let text_chars = text.chars().collect::<Vec<_>>();
+    let mut pattern_index = 0;
+    let mut score = 0;
+    let mut last_match: Option<usize> = None;
+
+    for (text_index, character) in text_chars.iter().enumerate() {
+        if pattern_index >= pattern_chars.len() {
+            break;
+        }
+        if *character != pattern_chars[pattern_index] {
+            continue;
+        }
+
+        score += if last_match == Some(text_index.saturating_sub(1)) {
+            3
+        } else {
+            1
+        };
+        if text_index == 0 {
+            score += 5;
+        }
+        if text_index > 0 && matches!(text_chars[text_index - 1], ' ' | '/' | '.' | '_' | '-') {
+            score += 3;
+        }
+        last_match = Some(text_index);
+        pattern_index += 1;
+    }
+
+    if pattern_index == pattern_chars.len() {
+        Some(score)
+    } else {
+        None
+    }
+}
+
 fn file_tree_cache_key(root_path: &str, mode: FileTreeScanMode) -> String {
     match mode {
         FileTreeScanMode::Repo => root_path.to_string(),
@@ -991,6 +1170,11 @@ fn file_tree_cache_key(root_path: &str, mode: FileTreeScanMode) -> String {
 
 fn workspace_root_from_cache_key(cache_key: &str) -> Option<&str> {
     cache_key.strip_prefix("workspace::")
+}
+
+fn should_skip_file_tree_dir_name(name: &OsStr) -> bool {
+    let normalized = name.to_string_lossy().to_ascii_lowercase();
+    FILE_TREE_EXCLUDED_DIR_NAMES.contains(&normalized.as_str())
 }
 
 struct FileTreeScanResult {
@@ -1059,7 +1243,7 @@ fn visit_dir(
         };
         let path = entry.path();
 
-        if path.file_name().is_some_and(|name| name == ".git") {
+        if path.is_dir() && path.file_name().is_some_and(should_skip_file_tree_dir_name) {
             continue;
         }
 
@@ -1503,8 +1687,8 @@ mod tests {
 
     use super::{
         build_diff_preview, get_workspace_file_tree_page, is_diff_preview_metadata_line,
-        parse_porcelain_v1_status, truncate_utf8_prefix, FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES,
-        GIT_DIFF_PREVIEW_MAX_LINES,
+        parse_porcelain_v1_status, search_workspace_files, truncate_utf8_prefix, FileTreeCache,
+        GIT_DIFF_PREVIEW_MAX_BYTES, GIT_DIFF_PREVIEW_MAX_LINES,
     };
     use crate::models::FileTreeEntryDto;
     use uuid::Uuid;
@@ -1802,6 +1986,121 @@ mod tests {
         assert!(paths.contains(&"apps/app/src/main.ts".to_string()));
         assert!(paths.contains(&"apps/app/packages/web/src/page.tsx".to_string()));
         assert!(!paths.iter().any(|path| path.starts_with(".git")));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn workspace_file_search_skips_dependency_dirs_but_keeps_gitignored_style_files() {
+        let root =
+            std::env::temp_dir().join(format!("panes-workspace-exclusions-{}", Uuid::new_v4()));
+        let node_modules_dir = root.join("node_modules/pkg");
+        let target_dir = root.join("target/debug");
+
+        fs::create_dir_all(&node_modules_dir).expect("node_modules dir should exist");
+        fs::create_dir_all(&target_dir).expect("target dir should exist");
+        fs::write(root.join("AGENTS.md"), "instructions").expect("agents file exists");
+        fs::write(node_modules_dir.join("AGENTS.md"), "dependency")
+            .expect("dependency file exists");
+        fs::write(target_dir.join("agents-cache.md"), "cache").expect("cache file exists");
+
+        let cache = FileTreeCache::new();
+        let page = search_workspace_files(root.to_string_lossy().as_ref(), "agents", 0, 20, &cache)
+            .expect("workspace file search should load");
+        let paths = page
+            .entries
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&"AGENTS.md".to_string()));
+        assert!(!paths.iter().any(|path| path.starts_with("node_modules/")));
+        assert!(!paths.iter().any(|path| path.starts_with("target/")));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn workspace_file_search_matches_plain_queries_against_file_names() {
+        let root =
+            std::env::temp_dir().join(format!("panes-workspace-title-search-{}", Uuid::new_v4()));
+        let docs_dir = root.join("agents_docs");
+
+        fs::create_dir_all(&docs_dir).expect("agents docs dir should exist");
+        fs::write(root.join("AGENTS.md"), "instructions").expect("agents file exists");
+        fs::write(docs_dir.join("unrelated.md"), "# unrelated").expect("unrelated doc exists");
+
+        let cache = FileTreeCache::new();
+        let exact_page =
+            search_workspace_files(root.to_string_lossy().as_ref(), "agents.md", 0, 20, &cache)
+                .expect("workspace file search should load");
+        let exact_paths = exact_page
+            .entries
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+
+        assert!(exact_paths.contains(&"AGENTS.md".to_string()));
+        assert!(!exact_paths.contains(&"agents_docs/unrelated.md".to_string()));
+
+        let title_page =
+            search_workspace_files(root.to_string_lossy().as_ref(), "agents", 0, 20, &cache)
+                .expect("workspace file search should load");
+        let title_paths = title_page
+            .entries
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+
+        assert!(title_paths.contains(&"AGENTS.md".to_string()));
+        assert!(!title_paths.contains(&"agents_docs/unrelated.md".to_string()));
+
+        let path_page = search_workspace_files(
+            root.to_string_lossy().as_ref(),
+            "agents_docs/unrelated",
+            0,
+            20,
+            &cache,
+        )
+        .expect("workspace file search should load");
+        let path_paths = path_page
+            .entries
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+
+        assert!(path_paths.contains(&"agents_docs/unrelated.md".to_string()));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn workspace_file_search_returns_bounded_ranked_file_matches() {
+        let root = std::env::temp_dir().join(format!("panes-workspace-search-{}", Uuid::new_v4()));
+        let app_dir = root.join("apps/app/src");
+        let docs_dir = root.join("docs");
+
+        fs::create_dir_all(&app_dir).expect("workspace app dir should exist");
+        fs::create_dir_all(&docs_dir).expect("workspace docs dir should exist");
+        fs::write(app_dir.join("main.ts"), "console.log('app')").expect("main file exists");
+        fs::write(app_dir.join("main-view.ts"), "export {}").expect("main view file exists");
+        fs::write(app_dir.join("manifest.ts"), "export {}").expect("manifest file exists");
+        fs::write(docs_dir.join("maintenance.md"), "# Maintenance").expect("doc file exists");
+
+        let cache = FileTreeCache::new();
+        let page = search_workspace_files(root.to_string_lossy().as_ref(), "main", 0, 2, &cache)
+            .expect("workspace file search should load");
+        let paths = page
+            .entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<&str>>();
+
+        assert_eq!(page.limit, 2);
+        assert!(page.total >= 2);
+        assert_eq!(paths.first().copied(), Some("apps/app/src/main.ts"));
+        assert!(paths.iter().all(|path| !path.ends_with("/src")));
+        assert!(page.has_more);
 
         let _ = fs::remove_dir_all(&root);
     }

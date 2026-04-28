@@ -343,6 +343,32 @@ pub async fn get_workspace_file_tree_page(
     .await
 }
 
+#[tauri::command]
+pub async fn search_workspace_files(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    query: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    refresh: Option<bool>,
+) -> Result<FileTreePageDto, String> {
+    let cache = state.file_tree_cache.clone();
+    run_db(state.db.clone(), move |db| {
+        let workspace = load_workspace(db, &workspace_id)?;
+        if refresh.unwrap_or(false) {
+            cache.invalidate_workspace(&workspace.root_path);
+        }
+        repo::search_workspace_files(
+            &workspace.root_path,
+            &query,
+            offset.unwrap_or(0),
+            limit.unwrap_or(80),
+            &cache,
+        )
+    })
+    .await
+}
+
 fn err_to_string(error: impl std::fmt::Display) -> String {
     error.to_string()
 }

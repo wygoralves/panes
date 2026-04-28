@@ -171,6 +171,20 @@ export const ipc = {
       limit: limit ?? null,
       refresh: refresh ?? null,
     }),
+  searchWorkspaceFiles: (
+    workspaceId: string,
+    query: string,
+    offset?: number,
+    limit?: number,
+    refresh?: boolean,
+  ) =>
+    invoke<FileTreePage>("search_workspace_files", {
+      workspaceId,
+      query,
+      offset: offset ?? null,
+      limit: limit ?? null,
+      refresh: refresh ?? null,
+    }),
   listThreads: (workspaceId: string) => invoke<Thread[]>("list_threads", { workspaceId }),
   listArchivedThreads: (workspaceId: string) =>
     invoke<Thread[]>("list_archived_threads", { workspaceId }),
