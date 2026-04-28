@@ -1,5 +1,13 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.57.0...vnull) (2026-04-28)
+
+### Bug Fixes
+
+* **editor:** open direct files without explorer ([099d234](https://github.com/wygoralves/panes/commit/099d2347a3e3ec01aafce7f5b1af472279204ed1))
+* **files:** search workspace filenames from cache ([74a0142](https://github.com/wygoralves/panes/commit/74a014268f6cebc56e46c4a3a8be69c33957a95a))
+* **git:** keep flyout open for internal clicks ([41756a5](https://github.com/wygoralves/panes/commit/41756a5a6b50547c465107fc40cf4ba33d715ba8))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.56.2...vnull) (2026-04-27)
 
 ### Features
