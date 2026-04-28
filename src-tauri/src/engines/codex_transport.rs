@@ -36,6 +36,7 @@ impl CodexTransport {
     pub async fn spawn(codex_executable: &str) -> anyhow::Result<Self> {
         let mut command = Command::new(codex_executable);
         process_utils::configure_tokio_command(&mut command);
+        runtime_env::apply_missing_login_shell_env(&mut command).await;
         if let Some(augmented_path) = codex_augmented_path(codex_executable) {
             command.env("PATH", augmented_path);
         }

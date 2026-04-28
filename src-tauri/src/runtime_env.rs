@@ -1,9 +1,21 @@
 use std::{
+    collections::HashMap,
     env,
     ffi::{OsStr, OsString},
     fs,
     path::{Path, PathBuf},
 };
+
+use tokio::{
+    process::Command,
+    sync::OnceCell,
+    time::{timeout, Duration},
+};
+
+const LOGIN_ENV_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+const LOGIN_ENV_PROBE_MARKER: &str = "__PANES_LOGIN_ENV_START__";
+
+static LOGIN_SHELL_ENV: OnceCell<HashMap<OsString, OsString>> = OnceCell::const_new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ShellFlavor {
@@ -84,6 +96,74 @@ pub fn resolve_executable(binary: &str) -> Option<PathBuf> {
     let augmented_path = augmented_path()?;
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     which::which_in(binary, Some(augmented_path), cwd).ok()
+}
+
+pub async fn apply_missing_login_shell_env(command: &mut Command) {
+    let shell_env = login_shell_environment().await;
+    for (key, value) in shell_env {
+        if !should_import_login_shell_env_var(key) || env::var_os(key).is_some() {
+            continue;
+        }
+        command.env(key, value);
+    }
+}
+
+async fn login_shell_environment() -> &'static HashMap<OsString, OsString> {
+    LOGIN_SHELL_ENV
+        .get_or_init(load_login_shell_environment)
+        .await
+}
+
+async fn load_login_shell_environment() -> HashMap<OsString, OsString> {
+    #[cfg(target_os = "windows")]
+    {
+        HashMap::new()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        for shell in login_probe_shells() {
+            let output = match timeout(
+                LOGIN_ENV_PROBE_TIMEOUT,
+                Command::new(&shell)
+                    .args(login_env_probe_shell_args(&shell))
+                    .output(),
+            )
+            .await
+            {
+                Ok(Ok(output)) if output.status.success() => output,
+                Ok(Ok(output)) => {
+                    log::warn!(
+                        "login shell env probe via `{}` exited with status {}",
+                        shell.display(),
+                        output.status
+                    );
+                    continue;
+                }
+                Ok(Err(error)) => {
+                    log::warn!(
+                        "failed to probe login shell env via `{}`: {error}",
+                        shell.display()
+                    );
+                    continue;
+                }
+                Err(_) => {
+                    log::warn!(
+                        "timed out probing login shell env via `{}`",
+                        shell.display()
+                    );
+                    continue;
+                }
+            };
+
+            let parsed = parse_login_shell_env_output(&output.stdout);
+            if !parsed.is_empty() {
+                return parsed;
+            }
+        }
+
+        HashMap::new()
+    }
 }
 
 #[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
@@ -189,6 +269,88 @@ pub fn login_probe_shell_args(shell: &Path, command: &str) -> Vec<String> {
             vec!["-l".to_string(), "-c".to_string(), command.to_string()]
         }
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn login_env_probe_shell_args(shell: &Path) -> Vec<String> {
+    let command = format!("printf '%s\\0' {LOGIN_ENV_PROBE_MARKER}; env -0");
+    match shell_flavor(shell) {
+        ShellFlavor::Bash | ShellFlavor::Fish | ShellFlavor::Zsh => vec![
+            "-l".to_string(),
+            "-i".to_string(),
+            "-c".to_string(),
+            command,
+        ],
+        ShellFlavor::Sh | ShellFlavor::Cmd | ShellFlavor::PowerShell | ShellFlavor::Other => {
+            vec!["-l".to_string(), "-c".to_string(), command]
+        }
+    }
+}
+
+fn parse_login_shell_env_output(stdout: &[u8]) -> HashMap<OsString, OsString> {
+    let mut parsed = HashMap::new();
+    let mut after_marker = false;
+    let marker = LOGIN_ENV_PROBE_MARKER.as_bytes();
+
+    for entry in stdout.split(|byte| *byte == b'\0') {
+        if !after_marker {
+            if entry == marker || entry.ends_with(marker) {
+                after_marker = true;
+            }
+            continue;
+        }
+
+        if entry.is_empty() {
+            continue;
+        }
+        let Some(separator) = entry.iter().position(|byte| *byte == b'=') else {
+            continue;
+        };
+        if separator == 0 {
+            continue;
+        }
+
+        let key = os_string_from_bytes(&entry[..separator]);
+        let value = os_string_from_bytes(&entry[separator + 1..]);
+        parsed.insert(key, value);
+    }
+
+    parsed
+}
+
+fn os_string_from_bytes(bytes: &[u8]) -> OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        OsString::from_vec(bytes.to_vec())
+    }
+
+    #[cfg(not(unix))]
+    {
+        OsString::from(String::from_utf8_lossy(bytes).to_string())
+    }
+}
+
+fn should_import_login_shell_env_var(key: &OsStr) -> bool {
+    let Some(key) = key.to_str() else {
+        return false;
+    };
+
+    !matches!(
+        key,
+        "PATH"
+            | "PWD"
+            | "OLDPWD"
+            | "SHLVL"
+            | "_"
+            | "TERM"
+            | "TERM_PROGRAM"
+            | "TERM_PROGRAM_VERSION"
+            | "XPC_SERVICE_NAME"
+            | "XPC_FLAGS"
+            | "__CFBundleIdentifier"
+            | "__CF_USER_TEXT_ENCODING"
+    )
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -834,7 +996,7 @@ fn nvm_bin_dirs(home: &Path) -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use std::{
-        ffi::OsString,
+        ffi::{OsStr, OsString},
         sync::{Mutex, OnceLock},
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -961,6 +1123,43 @@ mod tests {
             parse_login_probe_output("Welcome to fish\n/usr/local/bin/node\nv22.0.0\n"),
             Some(("/usr/local/bin/node".to_string(), "v22.0.0".to_string()))
         );
+    }
+
+    #[test]
+    fn parse_login_shell_env_output_starts_after_marker() {
+        let mut output = b"profile noise\n".to_vec();
+        output.extend_from_slice(LOGIN_ENV_PROBE_MARKER.as_bytes());
+        output.push(0);
+        output.extend_from_slice(b"OPENROUTER_API_KEY=secret-value");
+        output.push(0);
+        output.extend_from_slice(b"BROKEN_ENTRY");
+        output.push(0);
+        output.extend_from_slice(b"EMPTY=");
+        output.push(0);
+
+        let parsed = parse_login_shell_env_output(&output);
+
+        assert_eq!(
+            parsed.get(&OsString::from("OPENROUTER_API_KEY")),
+            Some(&OsString::from("secret-value"))
+        );
+        assert_eq!(
+            parsed.get(&OsString::from("EMPTY")),
+            Some(&OsString::from(""))
+        );
+        assert!(!parsed.contains_key(&OsString::from("BROKEN_ENTRY")));
+    }
+
+    #[test]
+    fn login_shell_env_import_skips_process_and_path_keys() {
+        assert!(!should_import_login_shell_env_var(OsStr::new("PATH")));
+        assert!(!should_import_login_shell_env_var(OsStr::new("PWD")));
+        assert!(!should_import_login_shell_env_var(OsStr::new(
+            "XPC_SERVICE_NAME"
+        )));
+        assert!(should_import_login_shell_env_var(OsStr::new(
+            "OPENROUTER_API_KEY"
+        )));
     }
 
     #[test]

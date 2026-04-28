@@ -198,6 +198,7 @@ impl ClaudeTransport {
 
         let mut command = Command::new(&node);
         process_utils::configure_tokio_command(&mut command);
+        runtime_env::apply_missing_login_shell_env(&mut command).await;
         if let Some(augmented_path) = executable_augmented_path(&node) {
             command.env("PATH", augmented_path);
         }

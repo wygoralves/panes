@@ -1090,7 +1090,13 @@ impl OpenCodeEngine {
             }
         };
 
-        self.state.lock().await.runtime_model_cache = Some(models.clone());
+        if should_cache_runtime_model_catalog(&models) {
+            self.state.lock().await.runtime_model_cache = Some(models.clone());
+        } else {
+            log::info!(
+                "not caching opencode-only model catalog; provider environment may change while Panes is running"
+            );
+        }
         models
     }
 
@@ -2003,6 +2009,14 @@ fn parse_model_slug(slug: &str) -> Option<ParsedModelSlug> {
     })
 }
 
+fn should_cache_runtime_model_catalog(models: &[ModelInfo]) -> bool {
+    models.iter().any(|model| {
+        parse_model_slug(&model.id)
+            .map(|slug| slug.provider_id != "opencode")
+            .unwrap_or(false)
+    })
+}
+
 fn opencode_prompt_message_path(engine_thread_id: &str) -> String {
     format!("/session/{engine_thread_id}/message")
 }
@@ -2392,6 +2406,7 @@ async fn start_server(cwd: &str) -> Result<OpenCodeServer> {
 
     let mut command = Command::new(&executable);
     process_utils::configure_tokio_command(&mut command);
+    runtime_env::apply_missing_login_shell_env(&mut command).await;
     command
         .arg("serve")
         .arg("--hostname")
@@ -2610,6 +2625,7 @@ fn resolve_opencode_executable() -> Option<PathBuf> {
 async fn run_opencode_command(executable: &Path, args: &[&str]) -> Result<String> {
     let mut command = Command::new(executable);
     process_utils::configure_tokio_command(&mut command);
+    runtime_env::apply_missing_login_shell_env(&mut command).await;
     command.args(args);
     if let Some(path) = executable_augmented_path(executable) {
         command.env("PATH", path);
@@ -3231,6 +3247,32 @@ opencode/gpt-5-nano
             resolve_model_reasoning_effort(&model, Some("max")).as_deref(),
             Some("max")
         );
+    }
+
+    #[test]
+    fn opencode_only_model_catalog_is_not_cached() {
+        let opencode_only = vec![model_info(
+            "opencode/big-pickle",
+            "Big Pickle",
+            "OpenCode model",
+            true,
+            Vec::new(),
+            vec!["text".to_string()],
+        )];
+        let mixed = vec![
+            opencode_only[0].clone(),
+            model_info(
+                "openrouter/anthropic/claude-sonnet-4.5",
+                "Claude Sonnet 4.5",
+                "OpenRouter model",
+                false,
+                Vec::new(),
+                vec!["text".to_string()],
+            ),
+        ];
+
+        assert!(!should_cache_runtime_model_catalog(&opencode_only));
+        assert!(should_cache_runtime_model_catalog(&mixed));
     }
 
     #[test]

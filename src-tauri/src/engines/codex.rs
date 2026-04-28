@@ -1759,16 +1759,13 @@ impl CodexEngine {
             .executable
             .as_ref()
             .ok_or_else(|| CODEX_MISSING_DEFAULT_DETAILS.to_string())?;
-        let output = codex_command(executable)
-            .arg("--version")
-            .output()
-            .await
-            .map_err(|error| {
-                format!(
-                    "failed to execute `{}`: {error}",
-                    executable.to_string_lossy()
-                )
-            })?;
+        let mut command = codex_command(executable).await;
+        let output = command.arg("--version").output().await.map_err(|error| {
+            format!(
+                "failed to execute `{}`: {error}",
+                executable.to_string_lossy()
+            )
+        })?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -3207,9 +3204,10 @@ fn codex_augmented_path(executable: &Path) -> Option<OsString> {
     )
 }
 
-fn codex_command(executable: &Path) -> Command {
+async fn codex_command(executable: &Path) -> Command {
     let mut command = Command::new(executable);
     process_utils::configure_tokio_command(&mut command);
+    runtime_env::apply_missing_login_shell_env(&mut command).await;
     if let Some(augmented_path) = codex_augmented_path(executable) {
         command.env("PATH", augmented_path);
     }
