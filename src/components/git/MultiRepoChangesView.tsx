@@ -20,7 +20,7 @@ import { useGitStore } from "../../stores/gitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useFileStore } from "../../stores/fileStore";
 import { ipc, listenGitRepoChanged } from "../../lib/ipc";
-import { showWorkspaceSurface } from "../../lib/workspacePaneNavigation";
+import { showWorkspaceEditorForDirectFileOpen } from "../../lib/workspacePaneNavigation";
 import {
   closeGitFlyoutIfFocusLeft,
   GitFlyoutContext,
@@ -673,7 +673,7 @@ function RepoAccordionSection({
     (filePath: string) => {
       void openGitDiffFile(repo.path, filePath, { source: "changes" });
       if (activeWorkspaceId) {
-        showWorkspaceSurface(activeWorkspaceId, "editor");
+        showWorkspaceEditorForDirectFileOpen(activeWorkspaceId);
       }
     },
     [repo.path, openGitDiffFile, activeWorkspaceId],

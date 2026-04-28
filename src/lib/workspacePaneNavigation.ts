@@ -35,11 +35,21 @@ export function showWorkspaceSurface(
   syncTerminalLayoutMode(workspaceId);
 }
 
+export function showWorkspaceEditorForDirectFileOpen(
+  workspaceId: string,
+  leafId?: string | null,
+): void {
+  useUiStore.getState().setExplorerOpen(false);
+  showWorkspaceSurface(workspaceId, "editor", leafId);
+}
+
 export function showWorkspaceEditorForFileLink(
   workspaceId: string,
   sourceLeafId?: string | null,
 ): void {
-  useUiStore.getState().setActiveView("chat");
+  const uiStore = useUiStore.getState();
+  uiStore.setActiveView("chat");
+  uiStore.setExplorerOpen(false);
 
   let paneStore = useWorkspacePaneStore.getState();
   let layout = paneStore.workspaces[workspaceId];

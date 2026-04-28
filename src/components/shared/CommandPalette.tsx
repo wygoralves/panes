@@ -58,6 +58,7 @@ import { formatRelativeTime } from "../../lib/formatters";
 import { createAndActivateWorkspaceThread } from "../../lib/newThreadActions";
 import {
   applyWorkspaceLayoutMode,
+  showWorkspaceEditorForDirectFileOpen,
   showWorkspaceSurface,
 } from "../../lib/workspacePaneNavigation";
 import { useUiStore } from "../../stores/uiStore";
@@ -1969,7 +1970,7 @@ export function CommandPalette({ open, onClose }: Props) {
           if (activeWorkspaceRootPath) {
             await useFileStore.getState().openFile(activeWorkspaceRootPath, item.entry.path);
             if (activeWorkspaceId) {
-              showWorkspaceSurface(activeWorkspaceId, "editor");
+              showWorkspaceEditorForDirectFileOpen(activeWorkspaceId);
             }
           }
           break;

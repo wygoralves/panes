@@ -3,6 +3,7 @@ import { t } from "../i18n";
 import { ipc } from "./ipc";
 import { useFileStore } from "../stores/fileStore";
 import { useTerminalStore } from "../stores/terminalStore";
+import { useUiStore } from "../stores/uiStore";
 import { toast } from "../stores/toastStore";
 
 export interface EditorFileReferenceContext {
@@ -31,6 +32,7 @@ export async function openEditorFileReference(
   }
 
   await useFileStore.getState().openFile(resolved.repoPath, resolved.filePath);
+  useUiStore.getState().setExplorerOpen(false);
   await useTerminalStore.getState().setLayoutMode(context.workspaceId, "editor");
   return true;
 }

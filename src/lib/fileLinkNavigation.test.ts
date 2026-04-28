@@ -6,6 +6,7 @@ const mockSetLayoutMode = vi.hoisted(() => vi.fn());
 const mockEnsureWorkspace = vi.hoisted(() => vi.fn());
 const mockShowSurface = vi.hoisted(() => vi.fn());
 const mockSetActiveView = vi.hoisted(() => vi.fn());
+const mockSetExplorerOpen = vi.hoisted(() => vi.fn());
 const mockWorkspaceState = vi.hoisted(() => ({
   activeWorkspaceId: "ws-1",
   activeRepoId: "repo-1",
@@ -78,6 +79,7 @@ vi.mock("../stores/uiStore", () => ({
   useUiStore: {
     getState: () => ({
       setActiveView: mockSetActiveView,
+      setExplorerOpen: mockSetExplorerOpen,
     }),
   },
 }));
@@ -357,6 +359,7 @@ describe("fileLinkNavigation", () => {
     expect(mockSetLayoutMode).not.toHaveBeenCalled();
     expect(mockShowSurface).not.toHaveBeenCalled();
     expect(mockSetActiveView).not.toHaveBeenCalled();
+    expect(mockSetExplorerOpen).not.toHaveBeenCalled();
 
     await expect(
       navigateLinkTarget("/workspace/apps/app/src/main.ts#L12C4", { shiftKey: true }),
@@ -369,6 +372,7 @@ describe("fileLinkNavigation", () => {
     );
     expect(mockShowSurface).toHaveBeenCalledWith("ws-1", "editor");
     expect(mockSetActiveView).toHaveBeenCalledWith("chat");
+    expect(mockSetExplorerOpen).toHaveBeenCalledWith(false);
     expect(mockSetLayoutMode).not.toHaveBeenCalled();
   });
 
@@ -383,6 +387,7 @@ describe("fileLinkNavigation", () => {
       { line: 12, column: 4 },
     );
     expect(mockShowSurface).toHaveBeenCalledWith("ws-1", "editor");
+    expect(mockSetExplorerOpen).toHaveBeenCalledWith(false);
     expect(mockSetLayoutMode).not.toHaveBeenCalled();
   });
 

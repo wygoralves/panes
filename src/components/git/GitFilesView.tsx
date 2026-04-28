@@ -10,7 +10,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { ipc } from "../../lib/ipc";
-import { showWorkspaceSurface } from "../../lib/workspacePaneNavigation";
+import { showWorkspaceEditorForDirectFileOpen } from "../../lib/workspacePaneNavigation";
 import { useFileStore } from "../../stores/fileStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import type { FileTreeEntry } from "../../types";
@@ -156,7 +156,7 @@ export function GitFilesView({ rootPath }: Props) {
     (filePath: string) => {
       void openFile(rootPath, filePath);
       if (activeWorkspaceId) {
-        showWorkspaceSurface(activeWorkspaceId, "editor");
+        showWorkspaceEditorForDirectFileOpen(activeWorkspaceId);
       }
     },
     [rootPath, openFile, activeWorkspaceId],

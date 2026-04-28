@@ -20,7 +20,10 @@ import {
   useWorkspacePaneStore,
 } from "../stores/workspacePaneStore";
 import { useUiStore } from "../stores/uiStore";
-import { showWorkspaceEditorForFileLink } from "./workspacePaneNavigation";
+import {
+  showWorkspaceEditorForDirectFileOpen,
+  showWorkspaceEditorForFileLink,
+} from "./workspacePaneNavigation";
 
 describe("showWorkspaceEditorForFileLink", () => {
   const storage = new Map<string, string>();
@@ -44,7 +47,7 @@ describe("showWorkspaceEditorForFileLink", () => {
       },
     });
     useWorkspacePaneStore.setState({ workspaces: {} });
-    useUiStore.setState({ activeView: "harnesses" });
+    useUiStore.setState({ activeView: "harnesses", showExplorer: true });
     mockSetLayoutMode.mockClear();
     for (const key of Object.keys(terminalWorkspaces)) {
       delete terminalWorkspaces[key];
@@ -70,7 +73,22 @@ describe("showWorkspaceEditorForFileLink", () => {
     expect(leaves[0].id).toBe(sourceLeaf.id);
     expect(layout.focusedLeafId).toBe(leaves[1].id);
     expect(useUiStore.getState().activeView).toBe("chat");
+    expect(useUiStore.getState().showExplorer).toBe(false);
+    expect(localStorage.setItem).toHaveBeenCalledWith("panes:explorerOpen", "false");
     expect(mockSetLayoutMode).toHaveBeenCalledWith("ws-1", "editor");
+  });
+
+  it("opens direct file selections without showing the file explorer", () => {
+    useWorkspacePaneStore.getState().ensureWorkspace("ws-1", "chat");
+
+    showWorkspaceEditorForDirectFileOpen("ws-1");
+
+    const layout = useWorkspacePaneStore.getState().workspaces["ws-1"];
+    const leaves = collectWorkspacePaneLeaves(layout.root);
+    expect(leaves.map((leaf) => getWorkspacePaneActiveTab(leaf)?.kind)).toEqual([
+      "editor",
+    ]);
+    expect(useUiStore.getState().showExplorer).toBe(false);
   });
 
   it("opens an editor split next to a terminal-only focused pane", () => {

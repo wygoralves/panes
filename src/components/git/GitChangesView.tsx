@@ -18,7 +18,7 @@ import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useFileStore } from "../../stores/fileStore";
-import { showWorkspaceSurface } from "../../lib/workspacePaneNavigation";
+import { showWorkspaceEditorForDirectFileOpen } from "../../lib/workspacePaneNavigation";
 import {
   buildDirectoryFileMap,
   buildTreeRows,
@@ -126,7 +126,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
     (filePath: string, source: ChangeSection) => {
       void openGitDiffFile(repo.path, filePath, { source });
       if (activeWorkspaceId) {
-        showWorkspaceSurface(activeWorkspaceId, "editor");
+        showWorkspaceEditorForDirectFileOpen(activeWorkspaceId);
       }
     },
     [repo.path, openGitDiffFile, activeWorkspaceId],
