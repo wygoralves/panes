@@ -529,6 +529,10 @@ pub struct CodexConfigStateDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval_policy: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_profile: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approvals_reviewer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sandbox_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub web_search: Option<String>,

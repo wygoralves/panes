@@ -401,27 +401,34 @@ pub async fn send_message(
     } else {
         false
     };
+    let permission_profile = if thread.engine_id == "codex" {
+        thread_permission_profile(thread.engine_metadata.as_ref())
+    } else {
+        None
+    };
 
-    if let Some(sandbox_mode) = sandbox_mode.as_deref() {
-        if unsupported_thread_sandbox_override_for_external_sandbox(
-            sandbox_mode_override.as_deref(),
-            codex_external_sandbox_active,
-        ) {
-            return Err(
+    if permission_profile.is_none() {
+        if let Some(sandbox_mode) = sandbox_mode.as_deref() {
+            if unsupported_thread_sandbox_override_for_external_sandbox(
+                sandbox_mode_override.as_deref(),
+                codex_external_sandbox_active,
+            ) {
+                return Err(
                 "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode. Clear the override or restore local Codex sandboxing first.".to_string(),
             );
-        }
+            }
 
-        validate_engine_sandbox_mode(thread.engine_id.as_str(), Some(sandbox_mode))?;
+            validate_engine_sandbox_mode(thread.engine_id.as_str(), Some(sandbox_mode))?;
 
-        if workspace_write_confirmation_required(
-            workspace_writable_roots.as_ref(),
-            sandbox_mode,
-            workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
-        ) {
-            return Err(
+            if workspace_write_confirmation_required(
+                workspace_writable_roots.as_ref(),
+                sandbox_mode,
+                workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
+            ) {
+                return Err(
                 "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
             );
+            }
         }
     }
 
@@ -501,6 +508,12 @@ pub async fn send_message(
                     .to_string(),
             )
         })),
+        permission_profile,
+        approvals_reviewer: if thread.engine_id == "codex" {
+            thread_approvals_reviewer(thread.engine_metadata.as_ref())
+        } else {
+            None
+        },
         reasoning_effort: reasoning_effort.clone(),
         sandbox_mode,
         service_tier: thread_service_tier(thread.engine_metadata.as_ref()),
@@ -3872,6 +3885,21 @@ fn thread_output_schema(metadata: Option<&Value>) -> Option<Value> {
     metadata
         .and_then(|value| value.get("outputSchema"))
         .cloned()
+}
+
+fn thread_permission_profile(metadata: Option<&Value>) -> Option<Value> {
+    metadata
+        .and_then(|value| value.get("permissionProfile"))
+        .cloned()
+}
+
+fn thread_approvals_reviewer(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("approvalsReviewer"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn thread_opencode_agent(metadata: Option<&Value>) -> Option<String> {

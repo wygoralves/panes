@@ -8,8 +8,9 @@ use crate::{
     engines::CodexRemoteThreadSummary,
     engines::OpenCodeRemoteSessionSummary,
     engines::SandboxPolicy,
+    engines::ThreadSyncSnapshot,
     models::{
-        CodexRemoteThreadDto, CodexRemoteThreadPageDto, OpenCodeRemoteSessionDto,
+        CodexRemoteThreadDto, CodexRemoteThreadPageDto, MessageStatusDto, OpenCodeRemoteSessionDto,
         OpenCodeRemoteSessionPageDto, RepoDto, ThreadDto, ThreadStatusDto, TrustLevelDto,
     },
     state::AppState,
@@ -1094,14 +1095,48 @@ pub async fn sync_thread_from_engine(
     };
 
     let has_local_turn = state.turns.get(&thread_id).await.is_some();
+    let has_active_remote_turn =
+        !snapshot.active_flags.is_empty() || imported_messages_have_streaming_turn(&snapshot);
+    let should_import_messages =
+        !has_local_turn && !has_active_remote_turn && !snapshot.imported_messages.is_empty();
+    if should_import_messages {
+        let imported_messages = snapshot
+            .imported_messages
+            .iter()
+            .map(|message| db::messages::ImportedMessageRecord {
+                role: message.role.clone(),
+                content: message.content.clone(),
+                blocks: message.blocks.clone(),
+                status: MessageStatusDto::from_str(message.status.as_str()),
+                turn_engine_id: message.turn_engine_id.clone(),
+                turn_model_id: message.turn_model_id.clone(),
+                turn_reasoning_effort: message.turn_reasoning_effort.clone(),
+                token_input: message.token_input,
+                token_output: message.token_output,
+                created_at: message.created_at.clone(),
+            })
+            .collect::<Vec<_>>();
+        run_db(db.clone(), {
+            let thread_id = thread_id.clone();
+            move |db| {
+                db::messages::replace_thread_messages(db, &thread_id, &imported_messages)?;
+                db::threads::refresh_thread_message_stats(db, &thread_id)?;
+                Ok::<_, anyhow::Error>(())
+            }
+        })
+        .await?;
+    }
+
+    let sync_required = !has_local_turn && has_active_remote_turn;
     let metadata = merge_codex_runtime_metadata(
         thread.engine_metadata.clone(),
         snapshot.raw_status.as_deref(),
         &snapshot.active_flags,
         snapshot.preview.as_deref(),
-        false,
-        None,
+        sync_required,
+        sync_required.then_some("remote thread has an active turn"),
     );
+    let metadata = mark_codex_transcript_imported(metadata, should_import_messages);
     let next_status = map_codex_thread_status_to_local(
         snapshot.raw_status.as_deref(),
         &snapshot.active_flags,
@@ -1124,6 +1159,23 @@ pub async fn sync_thread_from_engine(
         }
     })
     .await
+}
+
+fn mark_codex_transcript_imported(mut metadata: Value, imported: bool) -> Value {
+    if imported {
+        if let Some(object) = metadata.as_object_mut() {
+            object.insert("codexTranscriptImported".to_string(), json!(true));
+        }
+    }
+
+    metadata
+}
+
+fn imported_messages_have_streaming_turn(snapshot: &ThreadSyncSnapshot) -> bool {
+    snapshot
+        .imported_messages
+        .iter()
+        .any(|message| message.status == "streaming")
 }
 
 #[tauri::command]
@@ -1295,6 +1347,10 @@ pub async fn set_thread_execution_policy(
     sandbox_mode: Option<String>,
     update_allow_network: bool,
     allow_network: Option<bool>,
+    update_permission_profile: bool,
+    permission_profile: Option<Value>,
+    update_approvals_reviewer: bool,
+    approvals_reviewer: Option<String>,
 ) -> Result<ThreadDto, String> {
     set_thread_execution_policy_inner(
         state.inner(),
@@ -1305,6 +1361,10 @@ pub async fn set_thread_execution_policy(
         sandbox_mode,
         update_allow_network,
         allow_network,
+        update_permission_profile,
+        permission_profile,
+        update_approvals_reviewer,
+        approvals_reviewer,
     )
     .await
 }
@@ -1318,6 +1378,10 @@ async fn set_thread_execution_policy_inner(
     sandbox_mode: Option<String>,
     update_allow_network: bool,
     allow_network: Option<bool>,
+    update_permission_profile: bool,
+    permission_profile: Option<Value>,
+    update_approvals_reviewer: bool,
+    approvals_reviewer: Option<String>,
 ) -> Result<ThreadDto, String> {
     let db = state.db.clone();
     let thread = run_db(db.clone(), {
@@ -1336,6 +1400,22 @@ async fn set_thread_execution_policy_inner(
         let normalized = normalize_thread_sandbox_mode(sandbox_mode)?;
         validate_engine_sandbox_mode(thread.engine_id.as_str(), normalized.as_deref())?;
         normalized
+    } else {
+        None
+    };
+    let normalized_permission_profile = if update_permission_profile {
+        if thread.engine_id != "codex" {
+            return Err("Codex permission profile is only available for Codex threads".to_string());
+        }
+        normalize_thread_permission_profile(permission_profile)?
+    } else {
+        None
+    };
+    let normalized_approvals_reviewer = if update_approvals_reviewer {
+        if thread.engine_id != "codex" {
+            return Err("Codex approvals reviewer is only available for Codex threads".to_string());
+        }
+        normalize_thread_approvals_reviewer(approvals_reviewer)?
     } else {
         None
     };
@@ -1390,6 +1470,34 @@ async fn set_thread_execution_policy_inner(
                 }
                 None => {
                     object.remove("sandboxAllowNetwork");
+                }
+            }
+        }
+
+        if (update_sandbox_mode || update_allow_network) && !update_permission_profile {
+            object.remove("permissionProfile");
+        }
+
+        if update_permission_profile {
+            match normalized_permission_profile {
+                Some(value) => {
+                    object.insert("permissionProfile".to_string(), value);
+                    object.remove("sandboxMode");
+                    object.remove("sandboxAllowNetwork");
+                }
+                None => {
+                    object.remove("permissionProfile");
+                }
+            }
+        }
+
+        if update_approvals_reviewer {
+            match normalized_approvals_reviewer {
+                Some(value) => {
+                    object.insert("approvalsReviewer".to_string(), json!(value));
+                }
+                None => {
+                    object.remove("approvalsReviewer");
                 }
             }
         }
@@ -1753,26 +1861,29 @@ async fn build_codex_branch_context(
         .map(|repo| repo.trust_level.clone())
         .unwrap_or_else(|| aggregate_workspace_trust_level(&repos));
     let codex_external_sandbox_active = state.engines.codex_uses_external_sandbox().await;
+    let permission_profile = thread_permission_profile(thread.engine_metadata.as_ref());
 
-    if unsupported_thread_sandbox_override_for_external_sandbox(
-        sandbox_mode_override.as_deref(),
-        codex_external_sandbox_active,
-    ) {
-        return Err(
-            "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode. Clear the override or restore local Codex sandboxing first.".to_string(),
-        );
-    }
+    if permission_profile.is_none() {
+        if unsupported_thread_sandbox_override_for_external_sandbox(
+            sandbox_mode_override.as_deref(),
+            codex_external_sandbox_active,
+        ) {
+            return Err(
+                "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode. Clear the override or restore local Codex sandboxing first.".to_string(),
+            );
+        }
 
-    validate_engine_sandbox_mode(thread.engine_id.as_str(), Some(sandbox_mode.as_str()))?;
+        validate_engine_sandbox_mode(thread.engine_id.as_str(), Some(sandbox_mode.as_str()))?;
 
-    if workspace_write_confirmation_required(
-        workspace_writable_roots.as_ref(),
-        sandbox_mode.as_str(),
-        workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
-    ) {
-        return Err(
-            "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
-        );
+        if workspace_write_confirmation_required(
+            workspace_writable_roots.as_ref(),
+            sandbox_mode.as_str(),
+            workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
+        ) {
+            return Err(
+                "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
+            );
+        }
     }
 
     let writable_roots = match selected_repo.as_ref() {
@@ -1812,6 +1923,8 @@ async fn build_codex_branch_context(
                     .to_string(),
                 )
             })),
+            permission_profile,
+            approvals_reviewer: thread_approvals_reviewer(thread.engine_metadata.as_ref()),
             reasoning_effort: thread_reasoning_effort(thread.engine_metadata.as_ref()),
             sandbox_mode: Some(sandbox_mode),
             service_tier: thread_service_tier(thread.engine_metadata.as_ref()),
@@ -2206,6 +2319,21 @@ fn thread_output_schema(metadata: Option<&Value>) -> Option<Value> {
         .cloned()
 }
 
+fn thread_permission_profile(metadata: Option<&Value>) -> Option<Value> {
+    metadata
+        .and_then(|value| value.get("permissionProfile"))
+        .cloned()
+}
+
+fn thread_approvals_reviewer(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("approvalsReviewer"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn thread_opencode_agent(metadata: Option<&Value>) -> Option<String> {
     metadata
         .and_then(|value| value.get("opencodeAgent"))
@@ -2398,6 +2526,123 @@ fn normalize_thread_output_schema(value: Option<Value>) -> Result<Option<Value>,
     match value {
         Value::Object(_) | Value::Bool(_) => Ok(Some(value)),
         _ => Err("invalid output schema. expected a JSON Schema object or boolean".to_string()),
+    }
+}
+
+fn normalize_thread_permission_profile(value: Option<Value>) -> Result<Option<Value>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let Some(object) = value.as_object() else {
+        return Err("invalid permission profile. expected a profile object".to_string());
+    };
+    let profile_type = object
+        .get("type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .ok_or_else(|| "invalid permission profile. missing string `type`".to_string())?;
+    match profile_type {
+        "managed" => {
+            validate_permission_profile_file_system(object.get("fileSystem"))?;
+            validate_permission_profile_network(object.get("network"))?;
+        }
+        "external" => {
+            validate_permission_profile_network(object.get("network"))?;
+        }
+        "disabled" => {}
+        _ => {
+            return Err(format!(
+                "invalid permission profile type `{profile_type}`. expected one of: managed, external, disabled"
+            ));
+        }
+    }
+    Ok(Some(value))
+}
+
+fn validate_permission_profile_file_system(value: Option<&Value>) -> Result<(), String> {
+    let Some(file_system) = value.and_then(Value::as_object) else {
+        return Err("invalid permission profile. managed.fileSystem must be an object".to_string());
+    };
+    let fs_type = file_system
+        .get("type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .ok_or_else(|| {
+            "invalid permission profile. managed.fileSystem.type must be a string".to_string()
+        })?;
+    match fs_type {
+        "unrestricted" => Ok(()),
+        "restricted" => {
+            let entries = file_system.get("entries").and_then(Value::as_array).ok_or_else(
+                || {
+                    "invalid permission profile. managed.fileSystem.entries must be an array"
+                        .to_string()
+                },
+            )?;
+            for entry in entries {
+                validate_permission_profile_file_system_entry(entry)?;
+            }
+            Ok(())
+        }
+        _ => Err(format!(
+            "invalid permission profile filesystem type `{fs_type}`. expected one of: restricted, unrestricted"
+        )),
+    }
+}
+
+fn validate_permission_profile_file_system_entry(value: &Value) -> Result<(), String> {
+    let Some(entry) = value.as_object() else {
+        return Err("invalid permission profile. fileSystem entry must be an object".to_string());
+    };
+    let access = entry
+        .get("access")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .ok_or_else(|| {
+            "invalid permission profile. fileSystem entry access must be a string".to_string()
+        })?;
+    if !matches!(access, "read" | "write" | "none") {
+        return Err(format!(
+            "invalid permission profile fileSystem entry access `{access}`. expected one of: read, write, none"
+        ));
+    }
+    let Some(path) = entry.get("path").and_then(Value::as_object) else {
+        return Err(
+            "invalid permission profile. fileSystem entry path must be an object".to_string(),
+        );
+    };
+    if path.get("type").and_then(Value::as_str).is_none() {
+        return Err(
+            "invalid permission profile. fileSystem entry path.type must be a string".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_permission_profile_network(value: Option<&Value>) -> Result<(), String> {
+    let Some(network) = value.and_then(Value::as_object) else {
+        return Err("invalid permission profile. network must be an object".to_string());
+    };
+    if network.get("enabled").and_then(Value::as_bool).is_none() {
+        return Err("invalid permission profile. network.enabled must be a boolean".to_string());
+    }
+    Ok(())
+}
+
+fn normalize_thread_approvals_reviewer(value: Option<String>) -> Result<Option<String>, String> {
+    let normalized = value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let Some(normalized) = normalized else {
+        return Ok(None);
+    };
+    match normalized.as_str() {
+        "user" | "auto_review" | "guardian_subagent" => Ok(Some(normalized)),
+        _ => Err(format!(
+            "invalid approvals reviewer `{normalized}`. expected one of: user, auto_review, guardian_subagent"
+        )),
     }
 }
 
@@ -3062,7 +3307,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_thread_inner_rejects_unsupported_reasoning_effort() {
+    async fn create_thread_inner_rejects_invalid_reasoning_effort() {
         let state = test_app_state();
         let workspace = test_workspace(&state);
 
@@ -3071,15 +3316,15 @@ mod tests {
             workspace.id,
             None,
             "codex".to_string(),
-            "gpt-5.1-codex-mini".to_string(),
+            "gpt-5.4".to_string(),
             "Thread".to_string(),
-            Some("low".to_string()),
+            Some("turbo".to_string()),
             None,
         )
         .await
-        .expect_err("expected unsupported effort to be rejected");
+        .expect_err("expected invalid effort to be rejected");
 
-        assert!(error.contains("reasoning effort `low` is not supported"));
+        assert!(error.contains("invalid reasoning effort `turbo`"));
     }
 
     #[tokio::test]
@@ -3117,6 +3362,10 @@ mod tests {
             Some("read-only".to_string()),
             false,
             None,
+            false,
+            None,
+            false,
+            None,
         )
         .await
         .expect("expected read-only update to succeed");
@@ -3143,6 +3392,10 @@ mod tests {
             None,
             true,
             Some("workspace-write".to_string()),
+            false,
+            None,
+            false,
+            None,
             false,
             None,
         )
@@ -3173,11 +3426,98 @@ mod tests {
             Some("danger-full-access".to_string()),
             false,
             None,
+            false,
+            None,
+            false,
+            None,
         )
         .await
         .expect_err("expected danger-full-access to be rejected");
 
         assert!(error.contains("Claude sandbox mode `danger-full-access` is not supported"));
+    }
+
+    #[tokio::test]
+    async fn set_thread_execution_policy_clears_permission_profile_when_sandbox_changes() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "codex", "gpt-5.4");
+
+        let profile = json!({
+            "type": "managed",
+            "fileSystem": {
+                "type": "unrestricted"
+            },
+            "network": {
+                "enabled": true
+            }
+        });
+        let updated = set_thread_execution_policy_inner(
+            &state,
+            thread.id.clone(),
+            false,
+            None,
+            false,
+            None,
+            false,
+            None,
+            true,
+            Some(profile),
+            false,
+            None,
+        )
+        .await
+        .expect("expected permission profile update to succeed");
+        assert!(updated
+            .engine_metadata
+            .as_ref()
+            .and_then(|value| value.get("permissionProfile"))
+            .is_some());
+
+        let updated = set_thread_execution_policy_inner(
+            &state,
+            thread.id.clone(),
+            false,
+            None,
+            true,
+            Some("danger-full-access".to_string()),
+            false,
+            None,
+            false,
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect("expected sandbox update to succeed");
+        let metadata = updated
+            .engine_metadata
+            .expect("expected engine metadata to be present");
+        assert_eq!(metadata.get("permissionProfile"), None);
+        assert_eq!(
+            metadata.get("sandboxMode"),
+            Some(&json!("danger-full-access"))
+        );
+    }
+
+    #[test]
+    fn normalize_thread_permission_profile_rejects_incomplete_profiles() {
+        let error = normalize_thread_permission_profile(Some(json!({
+            "type": "managed",
+            "fileSystem": {
+                "type": "unrestricted"
+            }
+        })))
+        .expect_err("expected missing network to be rejected");
+
+        assert!(error.contains("network must be an object"));
+    }
+
+    #[test]
+    fn normalize_thread_approvals_reviewer_rejects_unknown_values() {
+        let error = normalize_thread_approvals_reviewer(Some("robot".to_string()))
+            .expect_err("expected unknown reviewer to be rejected");
+
+        assert!(error.contains("invalid approvals reviewer `robot`"));
     }
 
     #[tokio::test]

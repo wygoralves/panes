@@ -13,6 +13,20 @@ use crate::models::{
 
 use super::Database;
 
+#[derive(Debug, Clone)]
+pub struct ImportedMessageRecord {
+    pub role: String,
+    pub content: Option<String>,
+    pub blocks: Value,
+    pub status: MessageStatusDto,
+    pub turn_engine_id: Option<String>,
+    pub turn_model_id: Option<String>,
+    pub turn_reasoning_effort: Option<String>,
+    pub token_input: u64,
+    pub token_output: u64,
+    pub created_at: Option<String>,
+}
+
 pub fn insert_user_message(
     db: &Database,
     thread_id: &str,
@@ -113,6 +127,69 @@ pub fn clone_thread_messages(
 
     tx.commit()
         .context("failed to commit thread message clone transaction")?;
+    Ok(messages.len())
+}
+
+pub fn replace_thread_messages(
+    db: &Database,
+    thread_id: &str,
+    messages: &[ImportedMessageRecord],
+) -> anyhow::Result<usize> {
+    let mut conn = db.connect()?;
+    let tx = conn
+        .transaction()
+        .context("failed to start thread message import transaction")?;
+
+    tx.execute(
+        "DELETE FROM actions WHERE thread_id = ?1",
+        params![thread_id],
+    )
+    .context("failed to clear imported thread actions")?;
+    tx.execute(
+        "DELETE FROM approvals WHERE thread_id = ?1",
+        params![thread_id],
+    )
+    .context("failed to clear imported thread approvals")?;
+    tx.execute(
+        "DELETE FROM messages WHERE thread_id = ?1",
+        params![thread_id],
+    )
+    .context("failed to clear imported thread messages")?;
+
+    let fallback_created_at_base = Utc::now();
+    for (index, message) in messages.iter().enumerate() {
+        let created_at = message.created_at.clone().unwrap_or_else(|| {
+            (fallback_created_at_base + ChronoDuration::milliseconds(index as i64))
+                .format("%Y-%m-%d %H:%M:%S%.3f")
+                .to_string()
+        });
+
+        tx.execute(
+            "INSERT INTO messages (
+                id, thread_id, role, content, blocks_json, turn_engine_id, turn_model_id,
+                turn_reasoning_effort, schema_version, stream_seq, status, token_input,
+                token_output, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, 0, ?9, ?10, ?11, ?12)",
+            params![
+                Uuid::new_v4().to_string(),
+                thread_id,
+                message.role,
+                message.content,
+                message.blocks.to_string(),
+                message.turn_engine_id,
+                message.turn_model_id,
+                message.turn_reasoning_effort,
+                message.status.as_str(),
+                message.token_input as i64,
+                message.token_output as i64,
+                created_at,
+            ],
+        )
+        .context("failed to insert imported thread message")?;
+    }
+
+    tx.commit()
+        .context("failed to commit thread message import transaction")?;
     Ok(messages.len())
 }
 
