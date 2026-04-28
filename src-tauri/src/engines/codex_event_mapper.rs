@@ -20,6 +20,7 @@ pub struct TurnEventMapper {
     latest_token_usage: Option<TokenUsage>,
     latest_usage_limits: UsageLimitsSnapshot,
     streamed_agent_message_items: HashSet<String>,
+    streamed_realtime_transcript: bool,
 }
 
 pub struct ApprovalRequest {
@@ -68,6 +69,7 @@ impl TurnEventMapper {
                 });
                 self.latest_token_usage = None;
                 self.reasoning_summary_parts_by_item_id.clear();
+                self.streamed_realtime_transcript = false;
                 events
             }
             "turndiffupdated" => {
@@ -151,15 +153,77 @@ impl TurnEventMapper {
                     "Codex compacted the active thread context to keep the conversation moving."
                         .to_string(),
             }],
+            "warning" => vec![map_simple_notice(
+                "codex_warning",
+                "warning",
+                "Codex warning",
+                extract_any_string(params, &["message"])
+                    .unwrap_or_else(|| "Codex reported a warning".to_string()),
+            )],
+            "guardianwarning" => vec![map_simple_notice(
+                "codex_guardian_warning",
+                "warning",
+                "Guardian warning",
+                extract_any_string(params, &["message"])
+                    .unwrap_or_else(|| "Codex reported a guardian warning".to_string()),
+            )],
+            "modelverification" => map_model_verification_notice(params).into_iter().collect(),
+            "itemguardianapprovalreviewstarted" => {
+                vec![map_guardian_review_notice(params, true)]
+            }
+            "itemguardianapprovalreviewcompleted" => {
+                vec![map_guardian_review_notice(params, false)]
+            }
+            "itemfilechangepatchupdated" => {
+                map_file_change_patch_updated(params).into_iter().collect()
+            }
+            "threadrealtimestarted" => vec![map_simple_notice(
+                "codex_realtime_started",
+                "info",
+                "Realtime started",
+                "Codex realtime session started.".to_string(),
+            )],
+            "threadrealtimeclosed" => {
+                self.streamed_realtime_transcript = false;
+                vec![map_simple_notice(
+                    "codex_realtime_closed",
+                    "info",
+                    "Realtime closed",
+                    extract_any_string(params, &["reason"])
+                        .filter(|reason| !reason.is_empty())
+                        .map(|reason| format!("Codex realtime session closed: {reason}"))
+                        .unwrap_or_else(|| "Codex realtime session closed.".to_string()),
+                )]
+            }
+            "threadrealtimeerror" => {
+                vec![EngineEvent::Error {
+                    message: extract_any_string(params, &["message"])
+                        .unwrap_or_else(|| "Codex realtime session reported an error".to_string()),
+                    recoverable: true,
+                }]
+            }
+            "threadrealtimetranscriptdelta" => {
+                let event = map_realtime_transcript_delta(params);
+                if event.is_some() {
+                    self.streamed_realtime_transcript = true;
+                }
+                event.into_iter().collect()
+            }
+            "threadrealtimetranscriptdone" => {
+                let event = map_realtime_transcript_done(params, self.streamed_realtime_transcript);
+                self.streamed_realtime_transcript = false;
+                event.into_iter().collect()
+            }
+            "threadrealtimeitemadded" => self.map_realtime_item_added(params),
             "deprecationnotice" => map_deprecation_notice(params).into_iter().collect(),
             "hookstarted" | "hookcompleted" => map_hook_notification(method_key.as_str(), params)
                 .into_iter()
                 .collect(),
             "itemstarted" => self.map_item_started(params),
             "itemcompleted" => self.map_item_completed(params),
-            "itemcommandexecutionoutputdelta" | "itemfilechangeoutputdelta" => {
-                self.map_output_delta(params).into_iter().collect()
-            }
+            "itemcommandexecutionoutputdelta"
+            | "commandexecoutputdelta"
+            | "itemfilechangeoutputdelta" => self.map_output_delta(params).into_iter().collect(),
             "itemcommandexecutionterminalinteraction" | "terminalinteraction" => {
                 self.map_terminal_interaction(params).into_iter().collect()
             }
@@ -534,6 +598,16 @@ impl TurnEventMapper {
         }
     }
 
+    fn map_realtime_item_added(&mut self, params: &Value) -> Vec<EngineEvent> {
+        let Some(item) = params.get("item") else {
+            return Vec::new();
+        };
+        let item_params = serde_json::json!({ "item": item });
+        let mut events = self.map_item_started(&item_params);
+        events.extend(self.map_item_completed(&item_params));
+        events
+    }
+
     fn map_output_delta(&mut self, params: &Value) -> Option<EngineEvent> {
         let item_id = extract_any_string(params, &["itemId", "item_id", "id"])?;
         let action_id = self.resolve_action_for_output(Some(&item_id))?;
@@ -790,6 +864,137 @@ fn map_deprecation_notice(params: &Value) -> Option<EngineEvent> {
         title: "Deprecation notice".to_string(),
         message,
     })
+}
+
+fn map_simple_notice(kind: &str, level: &str, title: &str, message: String) -> EngineEvent {
+    EngineEvent::Notice {
+        kind: kind.to_string(),
+        level: level.to_string(),
+        title: title.to_string(),
+        message,
+    }
+}
+
+fn map_model_verification_notice(params: &Value) -> Option<EngineEvent> {
+    let verifications = params
+        .get("verifications")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|verification| {
+                    extract_any_string(verification, &["message", "reason", "name", "type"])
+                })
+                .filter(|message| !message.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+    let message = if verifications.is_empty() {
+        "Codex requested model verification.".to_string()
+    } else {
+        verifications
+    };
+
+    Some(map_simple_notice(
+        "codex_model_verification",
+        "warning",
+        "Model verification",
+        message,
+    ))
+}
+
+fn map_guardian_review_notice(params: &Value, started: bool) -> EngineEvent {
+    let review_id = extract_any_string(params, &["reviewId", "review_id"])
+        .unwrap_or_else(|| "unknown".to_string());
+    let action = params.get("action").unwrap_or(&Value::Null);
+    let action_summary = summarize_guardian_action(action);
+    let review = params.get("review").unwrap_or(&Value::Null);
+    let status = extract_any_string(review, &["status"]).unwrap_or_default();
+    let decision_source = extract_any_string(params, &["decisionSource", "decision_source"]);
+    let message = if started {
+        format!("Review {review_id} started for {action_summary}.")
+    } else {
+        let mut text = format!("Review {review_id} completed for {action_summary}.");
+        if !status.is_empty() {
+            text.push_str(&format!(" Status: {status}."));
+        }
+        if let Some(decision_source) = decision_source.filter(|value| !value.is_empty()) {
+            text.push_str(&format!(" Decision source: {decision_source}."));
+        }
+        text
+    };
+
+    map_simple_notice(
+        if started {
+            "codex_guardian_review_started"
+        } else {
+            "codex_guardian_review_completed"
+        },
+        if started { "info" } else { "warning" },
+        if started {
+            "Approval review started"
+        } else {
+            "Approval review completed"
+        },
+        message,
+    )
+}
+
+fn summarize_guardian_action(action: &Value) -> String {
+    let action_type = extract_any_string(action, &["type"]).unwrap_or_else(|| "action".to_string());
+    if let Some(command) = extract_any_string(action, &["command"]) {
+        return format!("{action_type}: {command}");
+    }
+    if let Some(tool) = extract_any_string(action, &["tool"]) {
+        let server = extract_any_string(action, &["server"]).unwrap_or_default();
+        return if server.is_empty() {
+            format!("{action_type}: {tool}")
+        } else {
+            format!("{action_type}: {server}.{tool}")
+        };
+    }
+    if let Some(reason) = extract_any_string(action, &["reason"]) {
+        return format!("{action_type}: {reason}");
+    }
+    action_type
+}
+
+fn map_file_change_patch_updated(params: &Value) -> Option<EngineEvent> {
+    let diff = extract_combined_diff(params)?;
+    Some(EngineEvent::DiffUpdated {
+        diff,
+        scope: DiffScope::Turn,
+    })
+}
+
+fn map_realtime_transcript_delta(params: &Value) -> Option<EngineEvent> {
+    let role = extract_any_string(params, &["role"]).unwrap_or_default();
+    if !role.eq_ignore_ascii_case("assistant") {
+        return None;
+    }
+    let content = extract_any_string(params, &["delta"]).unwrap_or_default();
+    if content.is_empty() {
+        None
+    } else {
+        Some(EngineEvent::TextDelta { content })
+    }
+}
+
+fn map_realtime_transcript_done(params: &Value, already_streamed: bool) -> Option<EngineEvent> {
+    if already_streamed {
+        return None;
+    }
+    let role = extract_any_string(params, &["role"]).unwrap_or_default();
+    if !role.eq_ignore_ascii_case("assistant") {
+        return None;
+    }
+    let content = extract_any_string(params, &["text"]).unwrap_or_default();
+    if content.is_empty() {
+        None
+    } else {
+        Some(EngineEvent::TextDelta { content })
+    }
 }
 
 fn map_hook_notification(method_key: &str, params: &Value) -> Option<EngineEvent> {
@@ -1681,6 +1886,55 @@ mod tests {
             }
             _ => panic!("expected usage limits update"),
         }
+    }
+
+    #[test]
+    fn map_notification_emits_realtime_transcript_done_when_no_delta_streamed() {
+        let mut mapper = TurnEventMapper::default();
+
+        let events = mapper.map_notification(
+            "thread/realtime/transcriptDone",
+            &json!({
+                "threadId": "thr_123",
+                "role": "assistant",
+                "text": "Final transcript"
+            }),
+        );
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            EngineEvent::TextDelta { content } => assert_eq!(content, "Final transcript"),
+            _ => panic!("expected realtime transcript text delta"),
+        }
+    }
+
+    #[test]
+    fn map_notification_ignores_realtime_transcript_done_after_delta_streamed() {
+        let mut mapper = TurnEventMapper::default();
+
+        let events = mapper.map_notification(
+            "thread/realtime/transcriptDelta",
+            &json!({
+                "threadId": "thr_123",
+                "role": "assistant",
+                "delta": "Partial"
+            }),
+        );
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            EngineEvent::TextDelta { content } => assert_eq!(content, "Partial"),
+            _ => panic!("expected realtime transcript text delta"),
+        }
+
+        let events = mapper.map_notification(
+            "thread/realtime/transcriptDone",
+            &json!({
+                "threadId": "thr_123",
+                "role": "assistant",
+                "text": "Partial"
+            }),
+        );
+        assert!(events.is_empty());
     }
 
     #[test]

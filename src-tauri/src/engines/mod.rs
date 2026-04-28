@@ -55,6 +55,8 @@ pub struct SandboxPolicy {
     pub writable_roots: Vec<String>,
     pub allow_network: bool,
     pub approval_policy: Option<Value>,
+    pub permission_profile: Option<Value>,
+    pub approvals_reviewer: Option<String>,
     pub reasoning_effort: Option<String>,
     pub sandbox_mode: Option<String>,
     pub service_tier: Option<String>,
@@ -339,6 +341,21 @@ pub struct ThreadSyncSnapshot {
     pub preview: Option<String>,
     pub raw_status: Option<String>,
     pub active_flags: Vec<String>,
+    pub imported_messages: Vec<ImportedThreadMessage>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImportedThreadMessage {
+    pub role: String,
+    pub content: Option<String>,
+    pub blocks: Value,
+    pub status: String,
+    pub turn_engine_id: Option<String>,
+    pub turn_model_id: Option<String>,
+    pub turn_reasoning_effort: Option<String>,
+    pub token_input: u64,
+    pub token_output: u64,
+    pub created_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]

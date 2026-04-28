@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::Context;
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
 use serde::Deserialize;
 use tokio::time::timeout;
 use tokio::{
@@ -35,15 +35,16 @@ use super::{
     codex_protocol::{raw_value_to_value, IncomingMessage},
     codex_transport::CodexTransport,
     ActionResult, ApprovalRequestRoute, CodexRemoteThreadSummary, Engine, EngineEvent,
-    EngineThread, ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo, ReasoningEffortOption,
-    SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment, TurnCompletionStatus,
-    TurnInput, TurnInputItem,
+    EngineThread, ImportedThreadMessage, ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo,
+    ReasoningEffortOption, SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment,
+    TurnCompletionStatus, TurnInput, TurnInputItem,
 };
 
 const INITIALIZE_METHODS: &[&str] = &["initialize"];
 const THREAD_START_METHODS: &[&str] = &["thread/start"];
 const THREAD_RESUME_METHODS: &[&str] = &["thread/resume"];
 const THREAD_READ_METHODS: &[&str] = &["thread/read"];
+const THREAD_TURNS_LIST_METHODS: &[&str] = &["thread/turns/list"];
 const THREAD_ARCHIVE_METHODS: &[&str] = &["thread/archive"];
 const THREAD_UNARCHIVE_METHODS: &[&str] = &["thread/unarchive"];
 const THREAD_SET_NAME_METHODS: &[&str] = &["thread/name/set"];
@@ -97,6 +98,8 @@ struct ThreadRuntime {
     cwd: String,
     model_id: String,
     approval_policy: serde_json::Value,
+    permission_profile: Option<serde_json::Value>,
+    approvals_reviewer: Option<String>,
     sandbox_policy: serde_json::Value,
     reasoning_effort: Option<String>,
     service_tier: Option<String>,
@@ -395,6 +398,8 @@ impl Engine for CodexEngine {
             cwd: cwd.clone(),
             model_id: model.to_string(),
             approval_policy: approval_policy.clone(),
+            permission_profile: sandbox.permission_profile.clone(),
+            approvals_reviewer: sandbox.approvals_reviewer.clone(),
             sandbox_policy: sandbox_policy.clone(),
             reasoning_effort: sandbox.reasoning_effort.clone(),
             service_tier: sandbox.service_tier.clone(),
@@ -441,6 +446,8 @@ impl Engine for CodexEngine {
                 &cwd,
                 &approval_policy,
                 &sandbox_mode,
+                sandbox.permission_profile.as_ref(),
+                sandbox.approvals_reviewer.as_deref(),
                 sandbox.service_tier.as_deref(),
                 sandbox.personality.as_deref(),
             );
@@ -467,16 +474,8 @@ impl Engine for CodexEngine {
             }
         }
 
-        let start_params = serde_json::json!({
-          "model": model,
-          "cwd": cwd.clone(),
-          "approvalPolicy": approval_policy.clone(),
-          "sandbox": sandbox_mode,
-          "serviceTier": sandbox.service_tier.clone(),
-          "personality": sandbox.personality.clone(),
-          "experimentalRawEvents": false,
-          "persistExtendedHistory": false,
-        });
+        let start_params =
+            build_thread_start_params(model, &cwd, &approval_policy, &sandbox_mode, &sandbox);
 
         let result = request_with_fallback(
             transport.as_ref(),
@@ -506,6 +505,8 @@ impl Engine for CodexEngine {
             &requested_runtime.cwd,
             &requested_runtime.model_id,
             &requested_runtime.approval_policy,
+            requested_runtime.permission_profile.clone(),
+            requested_runtime.approvals_reviewer.clone(),
             &requested_runtime.sandbox_policy,
             requested_runtime.reasoning_effort.clone(),
             requested_runtime.service_tier.clone(),
@@ -1135,6 +1136,8 @@ impl CodexEngine {
             cwd: cwd.to_string(),
             model_id: model.to_string(),
             approval_policy: approval_policy.clone(),
+            permission_profile: sandbox.permission_profile.clone(),
+            approvals_reviewer: sandbox.approvals_reviewer.clone(),
             sandbox_policy: sandbox_policy.clone(),
             reasoning_effort: sandbox.reasoning_effort.clone(),
             service_tier: sandbox.service_tier.clone(),
@@ -1146,14 +1149,14 @@ impl CodexEngine {
         let response = request_with_fallback(
             transport.as_ref(),
             THREAD_FORK_METHODS,
-            serde_json::json!({
-                "threadId": engine_thread_id,
-                "cwd": cwd,
-                "model": model,
-                "approvalPolicy": approval_policy,
-                "sandbox": sandbox_mode,
-                "serviceTier": sandbox.service_tier,
-            }),
+            build_thread_fork_params(
+                engine_thread_id,
+                cwd,
+                model,
+                &approval_policy,
+                &sandbox_mode,
+                &sandbox,
+            ),
             DEFAULT_TIMEOUT,
         )
         .await
@@ -1166,6 +1169,8 @@ impl CodexEngine {
             &requested_runtime.cwd,
             &requested_runtime.model_id,
             &requested_runtime.approval_policy,
+            requested_runtime.permission_profile.clone(),
+            requested_runtime.approvals_reviewer.clone(),
             &requested_runtime.sandbox_policy,
             requested_runtime.reasoning_effort.clone(),
             requested_runtime.service_tier.clone(),
@@ -1209,6 +1214,7 @@ impl CodexEngine {
             preview: extract_thread_preview(&response),
             raw_status: extract_thread_runtime_status_type(&response),
             active_flags: extract_thread_runtime_active_flags(&response),
+            imported_messages: Vec::new(),
         })
     }
 
@@ -1897,7 +1903,61 @@ impl CodexEngine {
             preview: extract_thread_preview(&result),
             raw_status: extract_thread_runtime_status_type(&result),
             active_flags: extract_thread_runtime_active_flags(&result),
+            imported_messages: self
+                .list_thread_import_messages(transport.as_ref(), engine_thread_id)
+                .await?,
         })
+    }
+
+    async fn list_thread_import_messages(
+        &self,
+        transport: &CodexTransport,
+        engine_thread_id: &str,
+    ) -> anyhow::Result<Vec<ImportedThreadMessage>> {
+        let turns = match fetch_paginated_data(transport, THREAD_TURNS_LIST_METHODS, |cursor| {
+            serde_json::json!({
+              "threadId": engine_thread_id,
+              "cursor": cursor,
+              "limit": 100,
+              "sortDirection": "asc",
+            })
+        })
+        .await
+        {
+            Ok(turns) => turns,
+            Err(error) if is_method_not_supported_error(&error.to_string()) => {
+                log::debug!(
+                    "codex thread/turns/list unsupported, falling back to thread/read includeTurns"
+                );
+                self.list_thread_import_messages_via_thread_read(transport, engine_thread_id)
+                    .await?
+            }
+            Err(error) => {
+                return Err(error).context("failed to list codex thread turns");
+            }
+        };
+
+        Ok(extract_imported_messages_from_turns(&turns))
+    }
+
+    async fn list_thread_import_messages_via_thread_read(
+        &self,
+        transport: &CodexTransport,
+        engine_thread_id: &str,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        let result = request_with_fallback(
+            transport,
+            THREAD_READ_METHODS,
+            serde_json::json!({
+              "threadId": engine_thread_id,
+              "includeTurns": true,
+            }),
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        .context("failed to read codex thread turns")?;
+
+        Ok(extract_turns_from_thread_read_response(&result))
     }
 
     async fn reconcile_turn_completion_via_thread_read(
@@ -3395,7 +3455,17 @@ async fn build_turn_start_params(
                 "approvalPolicy".to_string(),
                 runtime.approval_policy.clone(),
             );
-            params.insert("sandboxPolicy".to_string(), runtime.sandbox_policy.clone());
+            if let Some(permission_profile) = runtime.permission_profile.as_ref() {
+                params.insert("permissionProfile".to_string(), permission_profile.clone());
+            } else {
+                params.insert("sandboxPolicy".to_string(), runtime.sandbox_policy.clone());
+            }
+            if let Some(approvals_reviewer) = runtime.approvals_reviewer.as_ref() {
+                params.insert(
+                    "approvalsReviewer".to_string(),
+                    serde_json::Value::String(approvals_reviewer.clone()),
+                );
+            }
             params.insert(
                 "model".to_string(),
                 serde_json::Value::String(runtime.model_id.clone()),
@@ -3835,19 +3905,139 @@ fn build_thread_resume_params(
     cwd: &str,
     approval_policy: &serde_json::Value,
     sandbox_mode: &str,
+    permission_profile: Option<&serde_json::Value>,
+    approvals_reviewer: Option<&str>,
     service_tier: Option<&str>,
     personality: Option<&str>,
 ) -> serde_json::Value {
-    serde_json::json!({
-      "threadId": thread_id,
-      "model": model,
-      "cwd": cwd,
-      "approvalPolicy": approval_policy,
-      "sandbox": sandbox_mode,
-      "serviceTier": service_tier,
-      "personality": personality,
-      "persistExtendedHistory": false,
-    })
+    let mut params = serde_json::Map::new();
+    params.insert(
+        "threadId".to_string(),
+        serde_json::Value::String(thread_id.to_string()),
+    );
+    params.insert(
+        "model".to_string(),
+        serde_json::Value::String(model.to_string()),
+    );
+    params.insert(
+        "cwd".to_string(),
+        serde_json::Value::String(cwd.to_string()),
+    );
+    params.insert("approvalPolicy".to_string(), approval_policy.clone());
+    insert_permission_or_sandbox(&mut params, permission_profile, sandbox_mode);
+    insert_optional_string(&mut params, "approvalsReviewer", approvals_reviewer);
+    insert_optional_string(&mut params, "serviceTier", service_tier);
+    insert_optional_string(&mut params, "personality", personality);
+    params.insert(
+        "persistExtendedHistory".to_string(),
+        serde_json::Value::Bool(false),
+    );
+    serde_json::Value::Object(params)
+}
+
+fn build_thread_start_params(
+    model: &str,
+    cwd: &str,
+    approval_policy: &serde_json::Value,
+    sandbox_mode: &str,
+    sandbox: &SandboxPolicy,
+) -> serde_json::Value {
+    let mut params = serde_json::Map::new();
+    params.insert(
+        "model".to_string(),
+        serde_json::Value::String(model.to_string()),
+    );
+    params.insert(
+        "cwd".to_string(),
+        serde_json::Value::String(cwd.to_string()),
+    );
+    params.insert("approvalPolicy".to_string(), approval_policy.clone());
+    insert_permission_or_sandbox(
+        &mut params,
+        sandbox.permission_profile.as_ref(),
+        sandbox_mode,
+    );
+    insert_optional_string(
+        &mut params,
+        "approvalsReviewer",
+        sandbox.approvals_reviewer.as_deref(),
+    );
+    insert_optional_string(&mut params, "serviceTier", sandbox.service_tier.as_deref());
+    insert_optional_string(&mut params, "personality", sandbox.personality.as_deref());
+    params.insert(
+        "experimentalRawEvents".to_string(),
+        serde_json::Value::Bool(false),
+    );
+    params.insert(
+        "persistExtendedHistory".to_string(),
+        serde_json::Value::Bool(false),
+    );
+    serde_json::Value::Object(params)
+}
+
+fn build_thread_fork_params(
+    thread_id: &str,
+    cwd: &str,
+    model: &str,
+    approval_policy: &serde_json::Value,
+    sandbox_mode: &str,
+    sandbox: &SandboxPolicy,
+) -> serde_json::Value {
+    let mut params = serde_json::Map::new();
+    params.insert(
+        "threadId".to_string(),
+        serde_json::Value::String(thread_id.to_string()),
+    );
+    params.insert(
+        "cwd".to_string(),
+        serde_json::Value::String(cwd.to_string()),
+    );
+    params.insert(
+        "model".to_string(),
+        serde_json::Value::String(model.to_string()),
+    );
+    params.insert("approvalPolicy".to_string(), approval_policy.clone());
+    insert_permission_or_sandbox(
+        &mut params,
+        sandbox.permission_profile.as_ref(),
+        sandbox_mode,
+    );
+    insert_optional_string(
+        &mut params,
+        "approvalsReviewer",
+        sandbox.approvals_reviewer.as_deref(),
+    );
+    insert_optional_string(&mut params, "serviceTier", sandbox.service_tier.as_deref());
+    insert_optional_string(&mut params, "personality", sandbox.personality.as_deref());
+    serde_json::Value::Object(params)
+}
+
+fn insert_permission_or_sandbox(
+    params: &mut serde_json::Map<String, serde_json::Value>,
+    permission_profile: Option<&serde_json::Value>,
+    sandbox_mode: &str,
+) {
+    if let Some(permission_profile) = permission_profile.filter(|value| !value.is_null()) {
+        params.insert("permissionProfile".to_string(), permission_profile.clone());
+    } else {
+        params.insert(
+            "sandbox".to_string(),
+            serde_json::Value::String(sandbox_mode.to_string()),
+        );
+    }
+}
+
+fn insert_optional_string(
+    params: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    value: Option<&str>,
+) {
+    if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+        params.insert(
+            key.to_string(),
+            serde_json::Value::String(value.to_string()),
+        );
+    }
 }
 
 fn sandbox_mode_from_policy(sandbox: &SandboxPolicy, force_external_sandbox: bool) -> String {
@@ -4267,6 +4457,8 @@ fn thread_runtime_from_start_response(
     fallback_cwd: &str,
     fallback_model: &str,
     fallback_approval_policy: &serde_json::Value,
+    fallback_permission_profile: Option<serde_json::Value>,
+    fallback_approvals_reviewer: Option<String>,
     fallback_sandbox_policy: &serde_json::Value,
     fallback_reasoning_effort: Option<String>,
     fallback_service_tier: Option<String>,
@@ -4282,6 +4474,17 @@ fn thread_runtime_from_start_response(
             .cloned()
             .filter(|value| !value.is_null())
             .unwrap_or_else(|| fallback_approval_policy.clone()),
+        permission_profile: response
+            .get("permissionProfile")
+            .or_else(|| response.get("permission_profile"))
+            .cloned()
+            .filter(|value| !value.is_null())
+            .or(fallback_permission_profile),
+        approvals_reviewer: extract_any_string(
+            response,
+            &["approvalsReviewer", "approvals_reviewer"],
+        )
+        .or(fallback_approvals_reviewer),
         sandbox_policy: response
             .get("sandbox")
             .cloned()
@@ -4316,6 +4519,8 @@ fn thread_runtime_from_resume_response(
         &requested_runtime.cwd,
         &requested_runtime.model_id,
         &requested_runtime.approval_policy,
+        requested_runtime.permission_profile.clone(),
+        requested_runtime.approvals_reviewer.clone(),
         &requested_runtime.sandbox_policy,
         requested_runtime.reasoning_effort.clone(),
         requested_runtime.service_tier.clone(),
@@ -4328,6 +4533,8 @@ fn thread_runtime_from_resume_response(
     runtime.cwd = requested_runtime.cwd.clone();
     runtime.model_id = requested_runtime.model_id.clone();
     runtime.approval_policy = requested_runtime.approval_policy.clone();
+    runtime.permission_profile = requested_runtime.permission_profile.clone();
+    runtime.approvals_reviewer = requested_runtime.approvals_reviewer.clone();
     runtime.sandbox_policy = requested_runtime.sandbox_policy.clone();
     runtime.reasoning_effort = requested_runtime.reasoning_effort.clone();
     runtime.service_tier = requested_runtime.service_tier.clone();
@@ -4335,6 +4542,471 @@ fn thread_runtime_from_resume_response(
     runtime.output_schema = requested_runtime.output_schema.clone();
 
     runtime
+}
+
+fn extract_turns_from_thread_read_response(response: &serde_json::Value) -> Vec<serde_json::Value> {
+    for candidate in [
+        response.get("turns"),
+        response
+            .get("thread")
+            .and_then(|thread| thread.get("turns")),
+        response.get("data"),
+    ] {
+        if let Some(turns) = candidate.and_then(serde_json::Value::as_array) {
+            return turns.to_vec();
+        }
+    }
+
+    Vec::new()
+}
+
+fn extract_imported_messages_from_turns(turns: &[serde_json::Value]) -> Vec<ImportedThreadMessage> {
+    let mut messages = Vec::new();
+
+    for (turn_index, turn) in turns.iter().enumerate() {
+        let turn_engine_id = extract_any_string(turn, &["id", "turnId", "turn_id"]);
+        let turn_model_id = extract_any_string(turn, &["model", "modelId", "model_id"]);
+        let turn_reasoning_effort =
+            extract_any_string(turn, &["reasoningEffort", "reasoning_effort", "effort"]);
+        let status = imported_message_status_for_turn(turn);
+        let items = turn
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        let mut user_blocks = Vec::new();
+        let mut user_content_parts = Vec::new();
+        let mut assistant_blocks = Vec::new();
+        let mut assistant_content_parts = Vec::new();
+
+        for item in items {
+            let item_type = extract_any_string(&item, &["type"]).unwrap_or_default();
+            match item_type.as_str() {
+                "userMessage" => {
+                    append_user_message_item(&item, &mut user_blocks, &mut user_content_parts);
+                }
+                "agentMessage" => {
+                    if let Some(text) = extract_any_string(&item, &["text"]) {
+                        if !text.is_empty() {
+                            assistant_content_parts.push(text.clone());
+                            assistant_blocks.push(json_text_block(text));
+                        }
+                    }
+                }
+                "plan" => {
+                    if let Some(text) = extract_any_string(&item, &["text"]) {
+                        if !text.is_empty() {
+                            assistant_blocks.push(json_thinking_block(text));
+                        }
+                    }
+                }
+                "reasoning" => {
+                    let text = join_string_array(
+                        item.get("summary").and_then(serde_json::Value::as_array),
+                    )
+                    .or_else(|| {
+                        join_string_array(item.get("content").and_then(serde_json::Value::as_array))
+                    })
+                    .unwrap_or_default();
+                    if !text.is_empty() {
+                        assistant_blocks.push(json_thinking_block(text));
+                    }
+                }
+                "commandExecution"
+                | "fileChange"
+                | "webSearch"
+                | "mcpToolCall"
+                | "dynamicToolCall"
+                | "collabAgentToolCall"
+                | "imageGeneration" => {
+                    assistant_blocks.push(json_action_block(&item, item_type.as_str()));
+                    if item_type == "fileChange" {
+                        if let Some(diff) = imported_item_combined_diff(&item) {
+                            assistant_blocks.push(serde_json::json!({
+                                "type": "diff",
+                                "diff": diff,
+                                "scope": "turn",
+                            }));
+                        }
+                    }
+                }
+                "imageView" => {
+                    let path = extract_any_string(&item, &["path"]).unwrap_or_default();
+                    assistant_blocks.push(serde_json::json!({
+                        "type": "notice",
+                        "kind": format!("codex_image_view_{}", imported_item_id(&item)),
+                        "level": "info",
+                        "title": "Image viewed",
+                        "message": if path.is_empty() { "Codex viewed an image".to_string() } else { format!("Codex viewed {path}") },
+                    }));
+                }
+                "contextCompaction" => {
+                    assistant_blocks.push(serde_json::json!({
+                        "type": "notice",
+                        "kind": format!("codex_context_compaction_{}", imported_item_id(&item)),
+                        "level": "info",
+                        "title": "Context compacted",
+                        "message": "Codex compacted the thread context.",
+                    }));
+                }
+                "enteredReviewMode" | "exitedReviewMode" => {
+                    let review = extract_any_string(&item, &["review"]).unwrap_or_default();
+                    assistant_blocks.push(serde_json::json!({
+                        "type": "notice",
+                        "kind": format!("codex_{}_{}", item_type, imported_item_id(&item)),
+                        "level": "info",
+                        "title": if item_type == "enteredReviewMode" { "Review mode entered" } else { "Review mode exited" },
+                        "message": if review.is_empty() { "Codex updated review mode.".to_string() } else { review },
+                    }));
+                }
+                "hookPrompt" => {
+                    let fragments = item
+                        .get("fragments")
+                        .and_then(serde_json::Value::as_array)
+                        .map(|fragments| {
+                            fragments
+                                .iter()
+                                .filter_map(|fragment| extract_any_string(fragment, &["text"]))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        })
+                        .unwrap_or_default();
+                    if !fragments.is_empty() {
+                        assistant_blocks.push(serde_json::json!({
+                            "type": "notice",
+                            "kind": format!("codex_hook_prompt_{}", imported_item_id(&item)),
+                            "level": "info",
+                            "title": "Hook prompt",
+                            "message": fragments,
+                        }));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if !user_blocks.is_empty() {
+            messages.push(ImportedThreadMessage {
+                role: "user".to_string(),
+                content: Some(user_content_parts.join("\n").trim().to_string())
+                    .filter(|value| !value.is_empty()),
+                blocks: serde_json::Value::Array(user_blocks),
+                status: "completed".to_string(),
+                turn_engine_id: turn_engine_id.clone(),
+                turn_model_id: turn_model_id.clone(),
+                turn_reasoning_effort: turn_reasoning_effort.clone(),
+                token_input: 0,
+                token_output: 0,
+                created_at: format_turn_timestamp(turn, "startedAt", turn_index, 0),
+            });
+        }
+
+        if status == "error" {
+            if let Some(message) = extract_nested_string(turn, &["error", "message"]) {
+                assistant_blocks.push(serde_json::json!({
+                    "type": "error",
+                    "message": message,
+                }));
+            }
+        }
+
+        if !assistant_blocks.is_empty() {
+            messages.push(ImportedThreadMessage {
+                role: "assistant".to_string(),
+                content: Some(assistant_content_parts.join("\n").trim().to_string())
+                    .filter(|value| !value.is_empty()),
+                blocks: serde_json::Value::Array(assistant_blocks),
+                status,
+                turn_engine_id,
+                turn_model_id,
+                turn_reasoning_effort,
+                token_input: 0,
+                token_output: 0,
+                created_at: format_turn_timestamp(turn, "completedAt", turn_index, 1)
+                    .or_else(|| format_turn_timestamp(turn, "startedAt", turn_index, 1)),
+            });
+        }
+    }
+
+    messages
+}
+
+fn append_user_message_item(
+    item: &serde_json::Value,
+    blocks: &mut Vec<serde_json::Value>,
+    content_parts: &mut Vec<String>,
+) {
+    let inputs = item
+        .get("content")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    for input in inputs {
+        let input_type = extract_any_string(&input, &["type"]).unwrap_or_default();
+        match input_type.as_str() {
+            "text" => {
+                if let Some(text) = extract_any_string(&input, &["text"]) {
+                    if !text.is_empty() {
+                        content_parts.push(text.clone());
+                        blocks.push(json_text_block(text));
+                    }
+                }
+            }
+            "skill" => {
+                let name = extract_any_string(&input, &["name"]).unwrap_or_default();
+                let path = extract_any_string(&input, &["path"]).unwrap_or_default();
+                blocks.push(serde_json::json!({
+                    "type": "skill",
+                    "name": name,
+                    "path": path,
+                }));
+            }
+            "mention" => {
+                let name = extract_any_string(&input, &["name"]).unwrap_or_default();
+                let path = extract_any_string(&input, &["path"]).unwrap_or_default();
+                blocks.push(serde_json::json!({
+                    "type": "mention",
+                    "name": name,
+                    "path": path,
+                }));
+            }
+            "localImage" => {
+                let path = extract_any_string(&input, &["path"]).unwrap_or_default();
+                let file_name = Path::new(&path)
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("image")
+                    .to_string();
+                blocks.push(serde_json::json!({
+                    "type": "attachment",
+                    "fileName": file_name,
+                    "filePath": path,
+                    "sizeBytes": 0,
+                    "mimeType": "image/*",
+                }));
+            }
+            "image" => {
+                if let Some(url) = extract_any_string(&input, &["url"]) {
+                    blocks.push(json_text_block(format!("[image: {url}]")));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn json_text_block(content: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({
+        "type": "text",
+        "content": content.into(),
+    })
+}
+
+fn json_thinking_block(content: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({
+        "type": "thinking",
+        "content": content.into(),
+    })
+}
+
+fn json_action_block(item: &serde_json::Value, item_type: &str) -> serde_json::Value {
+    let engine_action_id = extract_any_string(item, &["id"]);
+    let action_id = engine_action_id
+        .as_deref()
+        .map(|id| format!("codex-import-{id}"))
+        .unwrap_or_else(|| format!("codex-import-{}", uuid::Uuid::new_v4()));
+    let normalized_status = extract_any_string(item, &["status"])
+        .unwrap_or_else(|| "completed".to_string())
+        .to_lowercase();
+    let success = matches!(normalized_status.as_str(), "completed" | "done" | "success");
+    let running = matches!(
+        normalized_status.as_str(),
+        "inprogress" | "in_progress" | "running"
+    );
+    let output = imported_item_output(item);
+    let error = if success || running {
+        None
+    } else {
+        imported_item_error(item)
+            .or_else(|| Some(format!("Action ended with status `{normalized_status}`")))
+    };
+    let diff = if item_type == "fileChange" {
+        imported_item_combined_diff(item)
+    } else {
+        None
+    };
+    let duration_ms = extract_any_u64(item, &["durationMs", "duration_ms"]).unwrap_or(0);
+    let output_chunks = output
+        .as_ref()
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            vec![serde_json::json!({
+                "stream": "stdout",
+                "content": value,
+            })]
+        })
+        .unwrap_or_default();
+
+    let result = if running {
+        serde_json::Value::Null
+    } else {
+        serde_json::json!({
+            "success": success,
+            "output": output,
+            "error": error,
+            "diff": diff,
+            "durationMs": duration_ms,
+        })
+    };
+
+    let mut block = serde_json::json!({
+        "type": "action",
+        "actionId": action_id,
+        "engineActionId": engine_action_id,
+        "actionType": imported_action_type(item_type),
+        "summary": imported_action_summary(item, item_type),
+        "details": item,
+        "outputChunks": output_chunks,
+        "status": if running { "running" } else if success { "done" } else { "error" },
+    });
+
+    if !result.is_null() {
+        if let Some(object) = block.as_object_mut() {
+            object.insert("result".to_string(), result);
+        }
+    }
+
+    block
+}
+
+fn imported_action_type(item_type: &str) -> &'static str {
+    match item_type {
+        "commandExecution" => "command",
+        "fileChange" => "file_edit",
+        "webSearch" => "search",
+        _ => "other",
+    }
+}
+
+fn imported_action_summary(item: &serde_json::Value, item_type: &str) -> String {
+    match item_type {
+        "commandExecution" => extract_any_string(item, &["command"])
+            .map(|command| format!("Run `{command}`"))
+            .unwrap_or_else(|| "Run command".to_string()),
+        "fileChange" => extract_first_change_path_from_value(item)
+            .map(|path| format!("Apply changes in {path}"))
+            .unwrap_or_else(|| "Apply file changes".to_string()),
+        "webSearch" => extract_any_string(item, &["query"])
+            .map(|query| format!("Search web for `{query}`"))
+            .unwrap_or_else(|| "Web search".to_string()),
+        "mcpToolCall" => {
+            let server = extract_any_string(item, &["server"]).unwrap_or_default();
+            let tool = extract_any_string(item, &["tool"]).unwrap_or_else(|| "tool".to_string());
+            if server.is_empty() {
+                format!("MCP tool: {tool}")
+            } else {
+                format!("MCP tool: {server}.{tool}")
+            }
+        }
+        "dynamicToolCall" => extract_any_string(item, &["tool"])
+            .map(|tool| format!("Tool call: {tool}"))
+            .unwrap_or_else(|| "Tool call".to_string()),
+        "collabAgentToolCall" => extract_any_string(item, &["tool"])
+            .map(|tool| format!("Collaborative agent: {tool}"))
+            .unwrap_or_else(|| "Collaborative agent".to_string()),
+        "imageGeneration" => "Generate image".to_string(),
+        _ => "Codex action".to_string(),
+    }
+}
+
+fn imported_item_output(item: &serde_json::Value) -> Option<String> {
+    extract_any_string(item, &["aggregatedOutput", "output", "text", "result"])
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn join_string_array(items: Option<&Vec<serde_json::Value>>) -> Option<String> {
+    let items = items?;
+    let joined = items
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if joined.is_empty() {
+        None
+    } else {
+        Some(joined)
+    }
+}
+
+fn imported_item_error(item: &serde_json::Value) -> Option<String> {
+    extract_nested_string(item, &["error", "message"])
+        .or_else(|| extract_nested_string(item, &["error", "reason"]))
+        .or_else(|| extract_nested_string(item, &["error", "details"]))
+        .or_else(|| {
+            extract_any_string(
+                item.get("error").unwrap_or(&serde_json::Value::Null),
+                &["message"],
+            )
+        })
+}
+
+fn imported_item_combined_diff(item: &serde_json::Value) -> Option<String> {
+    let changes = item.get("changes")?.as_array()?;
+    let diffs = changes
+        .iter()
+        .filter_map(|change| extract_any_string(change, &["diff"]))
+        .filter(|diff| !diff.trim().is_empty())
+        .collect::<Vec<_>>();
+
+    if diffs.is_empty() {
+        None
+    } else {
+        Some(diffs.join("\n"))
+    }
+}
+
+fn extract_first_change_path_from_value(item: &serde_json::Value) -> Option<String> {
+    item.get("changes")?
+        .as_array()?
+        .iter()
+        .filter_map(|change| extract_any_string(change, &["path"]))
+        .find(|path| !path.trim().is_empty())
+}
+
+fn imported_item_id(item: &serde_json::Value) -> String {
+    extract_any_string(item, &["id"]).unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+}
+
+fn imported_message_status_for_turn(turn: &serde_json::Value) -> String {
+    match extract_any_string(turn, &["status"])
+        .unwrap_or_else(|| "completed".to_string())
+        .to_lowercase()
+        .as_str()
+    {
+        "inprogress" | "in_progress" | "running" | "streaming" => "streaming".to_string(),
+        "failed" | "error" => "error".to_string(),
+        "interrupted" | "cancelled" | "canceled" => "interrupted".to_string(),
+        _ => "completed".to_string(),
+    }
+}
+
+fn format_turn_timestamp(
+    turn: &serde_json::Value,
+    key: &str,
+    turn_index: usize,
+    message_offset: i64,
+) -> Option<String> {
+    let seconds = extract_any_i64(turn, &[key])?;
+    let timestamp = Utc.timestamp_opt(seconds, 0).single()?;
+    Some(
+        (timestamp + chrono::Duration::milliseconds((turn_index as i64 * 2) + message_offset))
+            .format("%Y-%m-%d %H:%M:%S%.3f")
+            .to_string(),
+    )
 }
 
 fn extract_any_string(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
@@ -4345,6 +5017,27 @@ fn extract_any_string(value: &serde_json::Value, keys: &[&str]) -> Option<String
             }
             if found.is_number() || found.is_boolean() {
                 return Some(found.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn extract_any_u64(value: &serde_json::Value, keys: &[&str]) -> Option<u64> {
+    for key in keys {
+        if let Some(found) = value.get(*key) {
+            if let Some(number) = found.as_u64() {
+                return Some(number);
+            }
+            if let Some(number) = found.as_i64() {
+                if number >= 0 {
+                    return Some(number as u64);
+                }
+            }
+            if let Some(text) = found.as_str() {
+                if let Ok(parsed) = text.trim().parse::<u64>() {
+                    return Some(parsed);
+                }
             }
         }
     }
@@ -5042,6 +5735,15 @@ fn map_config_state(response: &serde_json::Value) -> CodexConfigStateDto {
             .or_else(|| config.get("approval_policy"))
             .filter(|value| !value.is_null())
             .cloned(),
+        permission_profile: config
+            .get("permissionProfile")
+            .or_else(|| config.get("permission_profile"))
+            .filter(|value| !value.is_null())
+            .cloned(),
+        approvals_reviewer: extract_any_string(
+            config,
+            &["approvalsReviewer", "approvals_reviewer"],
+        ),
         sandbox_mode: extract_any_string(config, &["sandboxMode", "sandbox_mode"]),
         web_search: extract_any_string(config, &["webSearch", "web_search"]),
         profile: extract_any_string(config, &["profile"]),
@@ -5986,7 +6688,12 @@ fn is_known_codex_notification_method(normalized_method: &str) -> bool {
             | "thread/realtime/started"
             | "thread/realtime/closed"
             | "thread/realtime/error"
+            | "thread/realtime/transcriptdelta"
+            | "thread/realtime/transcript/delta"
+            | "thread/realtime/transcriptdone"
+            | "thread/realtime/transcript/done"
             | "thread/realtime/itemadded"
+            | "thread/realtime/item/added"
             | "thread/realtime/outputaudio/delta"
             | "thread/realtime/outputaudiodelta"
             | "windows/worldwritablewarning"
@@ -6132,6 +6839,8 @@ mod tests {
             "/tmp/workspace",
             &json!("on-request"),
             "workspace-write",
+            None,
+            None,
             Some("fast"),
             Some("friendly"),
         );
@@ -6157,6 +6866,8 @@ mod tests {
             cwd: "/tmp/workspace".to_string(),
             model_id: "gpt-5.4".to_string(),
             approval_policy: json!("on-request"),
+            permission_profile: None,
+            approvals_reviewer: None,
             sandbox_policy: json!({
                 "type": "workspaceWrite",
                 "writableRoots": ["/tmp/workspace"],
@@ -6218,6 +6929,8 @@ mod tests {
             cwd: "/tmp/workspace".to_string(),
             model_id: "gpt-5.4".to_string(),
             approval_policy: json!("on-request"),
+            permission_profile: None,
+            approvals_reviewer: None,
             sandbox_policy: json!({
                 "type": "workspaceWrite",
                 "writableRoots": ["/tmp/workspace"],
@@ -6276,6 +6989,8 @@ mod tests {
             cwd: "/tmp/workspace".to_string(),
             model_id: "gpt-5.4".to_string(),
             approval_policy: json!("on-request"),
+            permission_profile: None,
+            approvals_reviewer: None,
             sandbox_policy: json!({
                 "type": "workspaceWrite",
                 "writableRoots": ["/tmp/workspace"],
@@ -6630,6 +7345,18 @@ mod tests {
     }
 
     #[test]
+    fn imported_message_status_maps_in_progress_turns_to_streaming() {
+        assert_eq!(
+            imported_message_status_for_turn(&json!({ "status": "inProgress" })),
+            "streaming"
+        );
+        assert_eq!(
+            imported_message_status_for_turn(&json!({ "status": "failed" })),
+            "error"
+        );
+    }
+
+    #[test]
     fn resolve_approval_response_target_rejects_persisted_route_after_transport_reset() {
         let persisted = ApprovalRequestRoute {
             server_method: "item/commandExecution/requestApproval".to_string(),
@@ -6758,6 +7485,8 @@ mod tests {
             "/tmp/fallback",
             "gpt-5",
             &json!("on-request"),
+            None,
+            None,
             &json!({"type":"workspaceWrite"}),
             Some("medium".to_string()),
             Some("flex".to_string()),
@@ -6789,6 +7518,8 @@ mod tests {
             "/tmp/fallback",
             "gpt-5",
             &json!("on-request"),
+            None,
+            None,
             &json!({"type":"workspaceWrite","networkAccess":false}),
             Some("medium".to_string()),
             Some("fast".to_string()),
@@ -6815,6 +7546,8 @@ mod tests {
             cwd: "/tmp/requested".to_string(),
             model_id: "gpt-5.1-codex-mini".to_string(),
             approval_policy: json!("on-request"),
+            permission_profile: None,
+            approvals_reviewer: None,
             sandbox_policy: json!({
                 "type": "workspaceWrite",
                 "writableRoots": ["/tmp/requested"],
@@ -6847,6 +7580,8 @@ mod tests {
             cwd: "/tmp/original".to_string(),
             model_id: "gpt-5.4".to_string(),
             approval_policy: json!("on-request"),
+            permission_profile: None,
+            approvals_reviewer: None,
             sandbox_policy: json!({
                 "type": "workspaceWrite",
                 "writableRoots": ["/tmp/original"],
@@ -6862,6 +7597,8 @@ mod tests {
             cwd: "/tmp/updated".to_string(),
             model_id: "gpt-5.4".to_string(),
             approval_policy: json!("never"),
+            permission_profile: None,
+            approvals_reviewer: None,
             sandbox_policy: json!({
                 "type": "workspaceWrite",
                 "writableRoots": ["/tmp/updated"],
