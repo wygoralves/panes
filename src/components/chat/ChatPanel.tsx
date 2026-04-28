@@ -80,7 +80,7 @@ import {
   type CodexPersonalityValue,
   type CodexServiceTierValue,
 } from "./CodexConfigPicker";
-// CodexRuntimePicker removed from toolbar — runtime info accessed via /slash commands
+import { CodexRuntimePicker } from "./CodexRuntimePicker";
 import { PermissionPicker } from "./PermissionPicker";
 import { OpenCodeAgentPicker } from "./OpenCodeAgentPicker";
 // CodexReviewPicker and CodexThreadPicker replaced by slash commands (ChatSlashMenu + ChatCommandPanel)
@@ -94,6 +94,7 @@ import type {
   ApprovalResponse,
   ChatAttachment,
   ChatInputItem,
+  CodexApprovalsReviewer,
   CodexApp,
   CodexSkill,
   ContentBlock,
@@ -273,6 +274,8 @@ type ThreadExecutionPolicyPatch = Partial<{
   approvalPolicy: ThreadApprovalPolicyStateValue;
   sandboxMode: ThreadSandboxModeValue;
   networkPolicy: ThreadNetworkPolicyValue;
+  permissionProfile: Record<string, unknown> | null;
+  approvalsReviewer: CodexApprovalsReviewer | null;
 }>;
 interface CodexReferenceCatalogState {
   skillsLoaded: boolean;
@@ -913,6 +916,28 @@ function applyThreadExecutionPolicyPatch(
     } else {
       metadata.sandboxAllowNetwork = nextState.networkPolicy === "enabled";
     }
+
+    if ("sandboxMode" in patch || "networkPolicy" in patch) {
+      delete metadata.permissionProfile;
+    }
+  }
+
+  if ("permissionProfile" in patch) {
+    if (patch.permissionProfile === null || patch.permissionProfile === undefined) {
+      delete metadata.permissionProfile;
+    } else {
+      metadata.permissionProfile = patch.permissionProfile;
+      delete metadata.sandboxMode;
+      delete metadata.sandboxAllowNetwork;
+    }
+  }
+
+  if ("approvalsReviewer" in patch) {
+    if (patch.approvalsReviewer) {
+      metadata.approvalsReviewer = patch.approvalsReviewer;
+    } else {
+      delete metadata.approvalsReviewer;
+    }
   }
 
   return {
@@ -923,15 +948,20 @@ function applyThreadExecutionPolicyPatch(
 
 function toThreadExecutionPolicyRequest(
   patch: ThreadExecutionPolicyPatch,
+  clearPermissionProfileOnSandboxChange = false,
 ): {
   approvalPolicy?: unknown;
   sandboxMode?: string | null;
   allowNetwork?: boolean | null;
+  permissionProfile?: Record<string, unknown> | null;
+  approvalsReviewer?: CodexApprovalsReviewer | null;
 } {
   const request: {
     approvalPolicy?: unknown;
     sandboxMode?: string | null;
     allowNetwork?: boolean | null;
+    permissionProfile?: Record<string, unknown> | null;
+    approvalsReviewer?: CodexApprovalsReviewer | null;
   } = {};
 
   if ("approvalPolicy" in patch) {
@@ -947,6 +977,19 @@ function toThreadExecutionPolicyRequest(
       patch.networkPolicy === "inherit"
         ? null
         : patch.networkPolicy === "enabled";
+  }
+
+  if ("permissionProfile" in patch) {
+    request.permissionProfile = patch.permissionProfile ?? null;
+  } else if (
+    clearPermissionProfileOnSandboxChange &&
+    ("sandboxMode" in patch || "networkPolicy" in patch)
+  ) {
+    request.permissionProfile = null;
+  }
+
+  if ("approvalsReviewer" in patch) {
+    request.approvalsReviewer = patch.approvalsReviewer ?? null;
   }
 
   return request;
@@ -4157,7 +4200,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     try {
       const updatedThread = await ipc.setThreadExecutionPolicy(
         currentThread.id,
-        toThreadExecutionPolicyRequest(nextPatch),
+        toThreadExecutionPolicyRequest(nextPatch, isCodexThread),
       );
 
       if (threadExecutionPolicyRequestIdsRef.current[currentThread.id] !== requestId) {
@@ -5587,34 +5630,42 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     disabled={availableModels.length === 0}
                   />
                   {selectedEngineId === "codex" && (
-                    <button
-                      type="button"
-                      className={`chat-toolbar-btn chat-toolbar-btn-bordered chat-toolbar-btn-fast ${selectedServiceTier === "fast" ? "chat-toolbar-btn-fast-active" : ""}`}
-                      onClick={() => {
-                        void onCodexConfigSave({
-                          updatePersonality: false,
-                          personality: null,
-                          updateServiceTier: true,
-                          serviceTier:
-                            selectedServiceTier === "fast" ? null : "fast",
-                          updateOutputSchema: false,
-                          outputSchema: null,
-                          updateApprovalPolicy: false,
-                          approvalPolicy: null,
-                        }).catch((error) => {
-                          toast.error(String(error));
-                        });
-                      }}
-                      title={t("configPicker.serviceTierDescription")}
-                    >
-                      <Zap size={11} />
-                      <span style={{ fontSize: 11 }}>{t("modelPicker.fastOn")}</span>
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className={`chat-toolbar-btn chat-toolbar-btn-bordered chat-toolbar-btn-fast ${selectedServiceTier === "fast" ? "chat-toolbar-btn-fast-active" : ""}`}
+                        onClick={() => {
+                          void onCodexConfigSave({
+                            updatePersonality: false,
+                            personality: null,
+                            updateServiceTier: true,
+                            serviceTier:
+                              selectedServiceTier === "fast" ? null : "fast",
+                            updateOutputSchema: false,
+                            outputSchema: null,
+                            updateApprovalPolicy: false,
+                            approvalPolicy: null,
+                          }).catch((error) => {
+                            toast.error(String(error));
+                          });
+                        }}
+                        title={t("configPicker.serviceTierDescription")}
+                      >
+                        <Zap size={11} />
+                        <span style={{ fontSize: 11 }}>{t("modelPicker.fastOn")}</span>
+                      </button>
+                      <CodexRuntimePicker
+                        diagnostics={codexProtocolDiagnostics}
+                        skills={
+                          codexReferenceCatalogState.skillsLoaded
+                            ? codexSkills
+                            : (codexProtocolDiagnostics?.skills ?? [])
+                        }
+                      />
+                    </>
                   )}
                 </>
               )}
-
-              {/* Codex Runtime + Config removed from toolbar — accessed via /slash commands */}
 
               {!showSpecialInputComposer &&
                 (activeRepo ||
