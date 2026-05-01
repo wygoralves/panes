@@ -1,5 +1,16 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.57.1...vnull) (2026-05-01)
+
+### Features
+
+* **chat:** expose Codex runtime permissions ([6ee1b4f](https://github.com/wygoralves/panes/commit/6ee1b4f15ac9d88db9de8213c305295c26b6fa4d))
+* **codex:** align app-server chat protocol ([f4d317a](https://github.com/wygoralves/panes/commit/f4d317a7be32b4e037c4d5648779aa2f0c57e202))
+
+### Bug Fixes
+
+* **engines:** inherit login shell env ([15732f1](https://github.com/wygoralves/panes/commit/15732f10985ff4e6b7562772df77f1b80355d325))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.57.0...vnull) (2026-04-28)
 
 ### Bug Fixes
