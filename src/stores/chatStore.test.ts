@@ -407,6 +407,77 @@ describe("chatStore send", () => {
     vi.useRealTimers();
   });
 
+  it("collapses existing duplicate diff blocks for same-scope stream updates", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+    useChatStore.setState({
+      threadId: "thread-1",
+      messages: [
+        {
+          id: "assistant-diff",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "streaming",
+          schemaVersion: 1,
+          content: "",
+          blocks: [
+            { type: "diff", diff: "old diff 1", scope: "turn" },
+            { type: "text", content: "kept" },
+            { type: "diff", diff: "old diff 2", scope: "turn" },
+            {
+              type: "action",
+              actionId: "action-1",
+              engineActionId: "cmd-1",
+              actionType: "command",
+              summary: "pnpm test",
+              details: {},
+              outputChunks: [],
+              status: "done",
+            },
+          ],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: false,
+        },
+      ],
+      status: "streaming",
+      streaming: true,
+    });
+
+    expect(streamHandler).not.toBeNull();
+    streamHandler!({
+      type: "DiffUpdated",
+      diff: "new diff",
+      scope: "turn",
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(useChatStore.getState().messages[0]?.blocks).toEqual([
+      { type: "text", content: "kept" },
+      { type: "diff", diff: "new diff", scope: "turn" },
+      {
+        type: "action",
+        actionId: "action-1",
+        engineActionId: "cmd-1",
+        actionType: "command",
+        summary: "pnpm test",
+        details: {},
+        outputChunks: [],
+        status: "done",
+      },
+    ]);
+
+    vi.useRealTimers();
+  });
+
   it("marks approvals as answered when the runtime resolves them externally", async () => {
     vi.useFakeTimers();
 
