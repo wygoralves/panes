@@ -1,5 +1,16 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.58.0...vnull) (2026-05-02)
+
+### Features
+
+* **chat:** add pasted image previews ([c3addca](https://github.com/wygoralves/panes/commit/c3addcae348dde67d9db22021d6c315f906f3dbf))
+
+### Bug Fixes
+
+* **chat:** collapse duplicate diff blocks ([06312a4](https://github.com/wygoralves/panes/commit/06312a4f30711ac25c217b2447afaad33b38aca8))
+* update codex schema parity check ([2726354](https://github.com/wygoralves/panes/commit/27263548ff1b5f857c261c300d959be883007113))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.57.1...vnull) (2026-05-01)
 
 ### Features
