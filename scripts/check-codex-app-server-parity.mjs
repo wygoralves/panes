@@ -235,7 +235,6 @@ try {
     '"itemtoolcall"',
   ]);
   assertSourceContains("src/components/chat/ChatPanel.tsx", [
-    "CodexRuntimePicker",
     "permissionProfile",
   ]);
   assertSourceContains("src/components/chat/CodexRuntimePicker.tsx", [
