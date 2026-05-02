@@ -22,9 +22,6 @@ import {
   Loader2,
   XCircle,
   Brain,
-  FileText,
-  Image,
-  File,
   Info,
   Layers,
   Copy,
@@ -75,6 +72,7 @@ import {
   useParsedDiff,
 } from "../shared/DiffViewer";
 import MarkdownContent from "./MarkdownContent";
+import { AttachmentChip } from "./AttachmentChip";
 import {
   extractTextLinkMatches,
   getWorkspacePaneLeafIdFromEventTarget,
@@ -90,6 +88,26 @@ interface Props {
 
 function isBlockLike(value: unknown): value is { type: string } {
   return typeof value === "object" && value !== null && "type" in value;
+}
+
+function dedupeDiffBlocksByScope(blocks: ContentBlock[]): ContentBlock[] {
+  const latestDiffIndexByScope = new Map<string, number>();
+  blocks.forEach((block, index) => {
+    if (block.type === "diff") {
+      latestDiffIndexByScope.set(String(block.scope ?? "turn"), index);
+    }
+  });
+
+  if (latestDiffIndexByScope.size === 0) {
+    return blocks;
+  }
+
+  return blocks.filter((block, index) => {
+    if (block.type !== "diff") {
+      return true;
+    }
+    return latestDiffIndexByScope.get(String(block.scope ?? "turn")) === index;
+  });
 }
 
 function CodeBlockCopyButton({ content }: { content: string }) {
@@ -192,7 +210,7 @@ const ACTION_GROUP_MIN_SIZE = 3;
 
 type InnerSegment =
   | { kind: "single"; block: ContentBlock; index: number }
-  | { kind: "action-group"; blocks: ActionBlock[]; indices: number[]; hasError: boolean };
+  | { kind: "action-group"; blocks: ActionBlock[]; indices: number[] };
 
 type BlockSegment =
   | InnerSegment
@@ -201,8 +219,68 @@ type BlockSegment =
 
 function isCardSegment(seg: BlockSegment): seg is InnerSegment {
   if (seg.kind === "action-group") return true;
-  if (seg.kind === "single" && (seg.block.type === "action" || seg.block.type === "thinking" || seg.block.type === "approval")) return true;
+  if (
+    seg.kind === "single" &&
+    (
+      seg.block.type === "action" ||
+      seg.block.type === "diff" ||
+      seg.block.type === "thinking" ||
+      seg.block.type === "approval"
+    )
+  ) {
+    return true;
+  }
   return false;
+}
+
+function isCompletedActionSegment(
+  segment: InnerSegment,
+): segment is { kind: "single"; block: ActionBlock; index: number } {
+  return (
+    segment.kind === "single" &&
+    segment.block.type === "action" &&
+    segment.block.status !== "running" &&
+    segment.block.status !== "pending"
+  );
+}
+
+function groupCompletedActionsInCard(cardSegments: InnerSegment[]): InnerSegment[] {
+  const actionBlocks: ActionBlock[] = [];
+  const indices: number[] = [];
+  for (const segment of cardSegments) {
+    if (segment.kind === "action-group") {
+      actionBlocks.push(...segment.blocks);
+      indices.push(...segment.indices);
+    } else if (isCompletedActionSegment(segment)) {
+      actionBlocks.push(segment.block);
+      indices.push(segment.index);
+    }
+  }
+
+  if (actionBlocks.length < ACTION_GROUP_MIN_SIZE) {
+    return cardSegments;
+  }
+
+  let insertedGroup = false;
+  const groupedSegment: InnerSegment = {
+    kind: "action-group",
+    blocks: actionBlocks,
+    indices,
+  };
+
+  const groupedSegments: InnerSegment[] = [];
+  for (const segment of cardSegments) {
+    if (segment.kind === "action-group" || isCompletedActionSegment(segment)) {
+      if (insertedGroup) {
+        continue;
+      }
+      insertedGroup = true;
+      groupedSegments.push(groupedSegment);
+      continue;
+    }
+    groupedSegments.push(segment);
+  }
+  return groupedSegments;
 }
 
 function buildBlockSegments(blocks: ContentBlock[], isStreaming?: boolean): BlockSegment[] {
@@ -247,8 +325,7 @@ function buildBlockSegments(blocks: ContentBlock[], isStreaming?: boolean): Bloc
       if (!isStreaming && count >= ACTION_GROUP_MIN_SIZE) {
         const groupBlocks = blocks.slice(subStart, subEnd) as ActionBlock[];
         const indices = Array.from({ length: count }, (_, k) => subStart + k);
-        const hasError = groupBlocks.some((b) => b.status === "error");
-        flat.push({ kind: "action-group", blocks: groupBlocks, indices, hasError });
+        flat.push({ kind: "action-group", blocks: groupBlocks, indices });
       } else {
         for (let j = subStart; j < subEnd; j++) {
           flat.push({ kind: "single", block: blocks[j], index: j });
@@ -274,7 +351,10 @@ function buildBlockSegments(blocks: ContentBlock[], isStreaming?: boolean): Bloc
       cardSegments.push(flat[j] as InnerSegment);
       j++;
     }
-    segments.push({ kind: "action-card", segments: cardSegments });
+    segments.push({
+      kind: "action-card",
+      segments: groupCompletedActionsInCard(cardSegments),
+    });
   }
   return segments;
 }
@@ -479,21 +559,11 @@ function SteerBlockView({ block }: { block: SteerBlock }) {
               </span>
             ))}
             {attachmentBlocks.map((attachment) => {
-              const mime = attachment.mimeType ?? "";
-              const AttachIcon = mime.startsWith("image/")
-                ? Image
-                : mime.startsWith("text/") || mime.includes("json") || mime.includes("javascript")
-                  ? FileText
-                  : File;
               return (
-                <span
+                <AttachmentChip
                   key={`attachment:${attachment.filePath}:${attachment.fileName}`}
-                  className="chat-attachment-chip"
-                  style={{ display: "inline-flex" }}
-                >
-                  <AttachIcon size={12} />
-                  <span className="chat-attachment-chip-name">{attachment.fileName}</span>
-                </span>
+                  attachment={attachment}
+                />
               );
             })}
           </div>
@@ -767,11 +837,9 @@ const actionTypeLabels: Record<string, string> = {
 
 function ActionGroupView({
   blocks,
-  hasError,
   onLoadActionOutput,
 }: {
   blocks: ActionBlock[];
-  hasError: boolean;
   onLoadActionOutput?: (actionId: string) => Promise<void>;
 }) {
   const { t } = useTranslation("chat");
@@ -789,6 +857,8 @@ function ActionGroupView({
     () => blocks.filter((b) => b.status === "error").length,
     [blocks],
   );
+  const hasAnyError = errorCount > 0;
+  const allErrored = errorCount === blocks.length;
 
   const typeBreakdown = useMemo(() => {
     return Object.entries(typeCounts)
@@ -799,9 +869,10 @@ function ActionGroupView({
       .join(" · ");
   }, [typeCounts, t]);
 
-  const summaryText = hasError
-    ? t("messageBlocks.actionGroup.summaryWithError", { count: blocks.length, errorCount })
-    : t("messageBlocks.actionGroup.summary", { count: blocks.length });
+  const baseSummary = t("messageBlocks.actionGroup.summary", { count: blocks.length });
+  const summaryText = hasAnyError
+    ? `${baseSummary}, ${t("messageBlocks.actionGroup.errorCount", { count: errorCount })}`
+    : baseSummary;
 
   const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
   return (
@@ -825,8 +896,10 @@ function ActionGroupView({
         <span style={{ fontSize: 10, color: "var(--text-3)", flexShrink: 0 }}>
           {typeBreakdown}
         </span>
-        {hasError ? (
+        {allErrored ? (
           <XCircle size={11} style={{ color: "var(--danger)", flexShrink: 0 }} />
+        ) : hasAnyError ? (
+          <AlertTriangle size={11} style={{ color: "var(--text-3)", flexShrink: 0 }} />
         ) : (
           <CheckCircle2 size={11} style={{ color: "var(--text-3)", flexShrink: 0 }} />
         )}
@@ -1432,7 +1505,7 @@ function renderSingleBlock(
   /* ── Diff ── */
   if (block.type === "diff") {
     return (
-      <div key={blockKey} >
+      <div key={blockKey} className="msg-action-card">
         <MessageDiffBlock block={block} />
       </div>
     );
@@ -1488,20 +1561,9 @@ function renderSingleBlock(
   /* ── Attachment ── */
   if (block.type === "attachment") {
     const attachmentBlock = block as AttachmentBlock;
-    const mime = attachmentBlock.mimeType ?? "";
-    const AttachIcon = mime.startsWith("image/")
-      ? Image
-      : mime.startsWith("text/") || mime.includes("json") || mime.includes("javascript")
-        ? FileText
-        : File;
     return (
-      <div
-        key={blockKey}
-        className="chat-attachment-chip"
-        style={{ margin: "2px 12px", display: "inline-flex" }}
-      >
-        <AttachIcon size={12} />
-        <span className="chat-attachment-chip-name">{attachmentBlock.fileName}</span>
+      <div key={blockKey} style={{ margin: "2px 12px", display: "inline-flex" }}>
+        <AttachmentChip attachment={attachmentBlock} />
       </div>
     );
   }
@@ -1521,7 +1583,9 @@ function renderSingleBlock(
 
 function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadActionOutput }: Props) {
   const safeBlocks = useMemo(
-    () => (Array.isArray(blocks) ? blocks : []).filter(isBlockLike) as ContentBlock[],
+    () => dedupeDiffBlocksByScope(
+      (Array.isArray(blocks) ? blocks : []).filter(isBlockLike) as ContentBlock[],
+    ),
     [blocks],
   );
 
@@ -1546,7 +1610,6 @@ function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadAc
                     <ActionGroupView
                       key={`action-group:${first.actionId}:${last.actionId}`}
                       blocks={inner.blocks}
-                      hasError={inner.hasError}
                       onLoadActionOutput={onLoadActionOutput}
                     />
                   );
@@ -1573,6 +1636,14 @@ function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadAc
                     />
                   );
                 }
+                if (inner.block.type === "diff") {
+                  return (
+                    <MessageDiffBlock
+                      key={getMessageBlockKey(inner.block, inner.index, safeBlocks)}
+                      block={inner.block as DiffBlock}
+                    />
+                  );
+                }
                 return (
                   <ActionBlockView
                     key={inner.block.type === "action" ? (inner.block as ActionBlock).actionId : `inner-${innerIdx}`}
@@ -1594,7 +1665,6 @@ function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadAc
             <ActionGroupView
               key={`action-group:${first.actionId}:${last.actionId}`}
               blocks={segment.blocks}
-              hasError={segment.hasError}
               onLoadActionOutput={onLoadActionOutput}
             />
           );

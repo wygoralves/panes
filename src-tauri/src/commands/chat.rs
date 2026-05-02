@@ -3377,10 +3377,46 @@ fn apply_event_to_blocks(
             }
             .to_string();
 
-            blocks.push(ContentBlock::Diff {
-                diff: diff.to_string(),
-                scope,
-            });
+            let latest_matching_index =
+                blocks.iter().enumerate().rev().find_map(|(index, block)| {
+                    if let ContentBlock::Diff {
+                        scope: block_scope, ..
+                    } = block
+                    {
+                        if block_scope == &scope {
+                            return Some(index);
+                        }
+                    }
+                    None
+                });
+
+            if let Some(latest_matching_index) = latest_matching_index {
+                let mut next_blocks = Vec::with_capacity(blocks.len());
+                for (index, mut block) in blocks.drain(..).enumerate() {
+                    if let ContentBlock::Diff {
+                        diff: block_diff,
+                        scope: block_scope,
+                    } = &mut block
+                    {
+                        if block_scope == &scope {
+                            if index == latest_matching_index {
+                                if block_diff != diff {
+                                    *block_diff = diff.to_string();
+                                }
+                                next_blocks.push(block);
+                            }
+                            continue;
+                        }
+                    }
+                    next_blocks.push(block);
+                }
+                *blocks = next_blocks;
+            } else {
+                blocks.push(ContentBlock::Diff {
+                    diff: diff.to_string(),
+                    scope,
+                });
+            }
             progress.blocks_changed = true;
         }
         EngineEvent::ModelRerouted {
@@ -4872,6 +4908,49 @@ mod tests {
             }
             other => panic!("expected action block, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn diff_update_collapses_existing_same_scope_diff_blocks() {
+        let mut blocks = vec![
+            ContentBlock::Diff {
+                diff: "old diff 1".to_string(),
+                scope: "turn".to_string(),
+            },
+            ContentBlock::Text {
+                content: "kept".to_string(),
+                plan_mode: None,
+                is_steer: None,
+            },
+            ContentBlock::Diff {
+                diff: "old diff 2".to_string(),
+                scope: "turn".to_string(),
+            },
+        ];
+        let mut action_index = HashMap::new();
+        let mut approval_index = HashMap::new();
+
+        let progress = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::DiffUpdated {
+                diff: "new diff".to_string(),
+                scope: crate::engines::DiffScope::Turn,
+            },
+            1000,
+        );
+
+        assert!(progress.blocks_changed);
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Text { content, .. } if content == "kept"
+        ));
+        assert!(matches!(
+            &blocks[1],
+            ContentBlock::Diff { diff, scope } if diff == "new diff" && scope == "turn"
+        ));
     }
 
     #[test]

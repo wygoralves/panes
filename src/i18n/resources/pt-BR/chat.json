@@ -440,8 +440,8 @@
     "actionGroup": {
       "summary_one": "{{count}} ação concluída",
       "summary_other": "{{count}} ações concluídas",
-      "summaryWithError_one": "{{count}} ação concluída, {{errorCount}} erro",
-      "summaryWithError_other": "{{count}} ações concluídas, {{errorCount}} erros",
+      "errorCount_one": "{{count}} erro",
+      "errorCount_other": "{{count}} erros",
       "types": {
         "command": "cmd",
         "file_read": "leitura",

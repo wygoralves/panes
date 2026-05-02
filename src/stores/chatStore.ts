@@ -1426,13 +1426,23 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
 
     if (existingDiffIndex >= 0) {
       const existingBlock = blocks[existingDiffIndex];
-      if (existingBlock.type === "diff" && existingBlock.diff !== diff) {
-        const nextBlocks = [...blocks];
-        nextBlocks[existingDiffIndex] = {
-          ...existingBlock,
-          diff,
-        };
-        assistant.blocks = nextBlocks;
+      if (existingBlock.type === "diff") {
+        const nextBlocks: ContentBlock[] = [];
+        blocks.forEach((block, index) => {
+          if (block.type === "diff" && block.scope === scope) {
+            if (index === existingDiffIndex) {
+              nextBlocks.push({
+                ...existingBlock,
+                diff,
+              });
+            }
+            return;
+          }
+          nextBlocks.push(block);
+        });
+        if (nextBlocks.length !== blocks.length || existingBlock.diff !== diff) {
+          assistant.blocks = nextBlocks;
+        }
       }
     } else {
       assistant.blocks = [
