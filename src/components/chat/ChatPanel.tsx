@@ -1,4 +1,16 @@
-import { FormEvent, Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  FormEvent,
+  Suspense,
+  lazy,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent as ReactClipboardEvent,
+  type ReactNode,
+} from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { TFunction } from "i18next";
 import {
@@ -12,10 +24,6 @@ import {
   MessageSquare,
   FilePen,
   Plus,
-  X,
-  FileText,
-  Image,
-  File,
   ListChecks,
   Copy,
   Check,
@@ -75,12 +83,12 @@ import {
   requiresCustomApprovalPayload,
 } from "./toolInputApproval";
 import { ModelPicker } from "./ModelPicker";
+import { AttachmentChip } from "./AttachmentChip";
 import {
   type CodexConfigPatch,
   type CodexPersonalityValue,
   type CodexServiceTierValue,
 } from "./CodexConfigPicker";
-import { CodexRuntimePicker } from "./CodexRuntimePicker";
 import { PermissionPicker } from "./PermissionPicker";
 import { OpenCodeAgentPicker } from "./OpenCodeAgentPicker";
 // CodexReviewPicker and CodexThreadPicker replaced by slash commands (ChatSlashMenu + ChatCommandPanel)
@@ -1310,19 +1318,12 @@ function MessageRowView({
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
                 {userAuxiliaryBlocks.map((block, i) => {
                   if (block.type === "attachment") {
-                    const mime = block.mimeType ?? "";
-                    const AttachIcon = mime.startsWith("image/")
-                      ? Image
-                      : mime.startsWith("text/") || mime.includes("json")
-                        ? FileText
-                        : File;
                     return (
-                      <span key={i} className="chat-attachment-chip">
-                        <AttachIcon size={10} />
-                        <span className="chat-attachment-chip-name" style={{ fontSize: 10 }}>
-                          {block.fileName}
-                        </span>
-                      </span>
+                      <AttachmentChip
+                        key={i}
+                        attachment={block}
+                        compact
+                      />
                     );
                   }
 
@@ -1417,20 +1418,6 @@ const MessageRow = memo(
     prev.onLoadActionOutput === next.onLoadActionOutput,
 );
 
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function getAttachmentIcon(mimeType?: string) {
-  if (!mimeType) return File;
-  if (mimeType.startsWith("image/")) return Image;
-  if (mimeType.startsWith("text/") || mimeType.includes("json") || mimeType.includes("javascript") || mimeType.includes("typescript"))
-    return FileText;
-  return File;
-}
-
 function getFileExtension(fileName: string): string {
   const lastDot = fileName.lastIndexOf(".");
   return lastDot >= 0 ? fileName.slice(lastDot + 1).toLowerCase() : "";
@@ -1478,6 +1465,78 @@ function guessMimeType(fileName: string): string | undefined {
   return mimeMap[ext];
 }
 
+function imageExtensionForMimeType(mimeType: string): string | null {
+  switch (mimeType.toLowerCase()) {
+    case "image/png":
+      return "png";
+    case "image/jpeg":
+    case "image/jpg":
+      return "jpg";
+    case "image/gif":
+      return "gif";
+    case "image/webp":
+      return "webp";
+    case "image/bmp":
+      return "bmp";
+    case "image/tiff":
+      return "tiff";
+    case "image/svg+xml":
+      return "svg";
+    default:
+      return null;
+  }
+}
+
+function fileNameForPastedImage(file: File, index: number): string {
+  if (file.name.trim()) {
+    return file.name.trim();
+  }
+  const extension = imageExtensionForMimeType(file.type) ?? "png";
+  return `pasted-image-${index + 1}.${extension}`;
+}
+
+function pastedImageFileSupported(file: File, supportedExtensions: ReadonlySet<string>): boolean {
+  const mimeExtension = file.type ? imageExtensionForMimeType(file.type) : null;
+  if (file.type && !mimeExtension) {
+    return false;
+  }
+  const fileName = fileNameForPastedImage(file, 0);
+  const extension = getFileExtension(fileName) || mimeExtension;
+  return Boolean(extension && supportedExtensions.has(extension));
+}
+
+function clipboardImageFiles(clipboardData: DataTransfer): File[] {
+  const files: File[] = [];
+  for (const item of Array.from(clipboardData.items)) {
+    if (item.kind !== "file" || !item.type.toLowerCase().startsWith("image/")) {
+      continue;
+    }
+    const file = item.getAsFile();
+    if (file) {
+      files.push(file);
+    }
+  }
+  if (files.length > 0) {
+    return files;
+  }
+  return Array.from(clipboardData.files).filter((file) =>
+    file.type.toLowerCase().startsWith("image/"),
+  );
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const [, base64 = ""] = result.split(",", 2);
+      resolve(base64);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read image data."));
+    reader.readAsDataURL(blob);
+  });
+}
+
 function formatUsagePercent(percent: number | null): string {
   if (typeof percent !== "number" || !Number.isFinite(percent)) {
     return "--";
@@ -1515,7 +1574,6 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const [commandPanelBusy, setCommandPanelBusy] = useState(false);
   const [commandPanelError, setCommandPanelError] = useState<string | null>(null);
   const commandPanelBusyRef = useRef(false);
-  // runtimePickerOpenSection removed — runtime info panels are inline slash command panels
   const [selectedEngineId, setSelectedEngineId] = useState("codex");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [selectedEffort, setSelectedEffort] = useState("medium");
@@ -2381,6 +2439,73 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       return merged;
     });
   }, [activeWorkspaceId, selectedEngineId, selectedModel, t]);
+
+  const appendPastedImageFiles = useCallback(async (files: File[]) => {
+    if (!activeWorkspaceId || files.length === 0) {
+      return;
+    }
+
+    const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId, selectedModel);
+    if (!attachmentFilterConfig || attachmentFilterConfig.imageExtensions.length === 0) {
+      toast.warning(attachmentFilterConfig?.warningMessage ?? t("attachments.pasteFailed"));
+      return;
+    }
+
+    const supportedImageExtensions = new Set(attachmentFilterConfig.imageExtensions);
+    const supportedFiles = files.filter((file) =>
+      pastedImageFileSupported(file, supportedImageExtensions),
+    );
+    if (supportedFiles.length < files.length) {
+      toast.warning(attachmentFilterConfig.warningMessage);
+    }
+    if (supportedFiles.length === 0) {
+      return;
+    }
+
+    try {
+      const nextAttachments = await Promise.all(
+        supportedFiles.map(async (file, index) => {
+          const fileName = fileNameForPastedImage(file, index);
+          const mimeType = file.type || guessMimeType(fileName) || "image/png";
+          const dataBase64 = await blobToBase64(file);
+          const savedAttachment = await ipc.savePastedImageAttachment(fileName, mimeType, dataBase64);
+          return {
+            ...savedAttachment,
+            id: crypto.randomUUID(),
+          };
+        }),
+      );
+
+      setAttachments((prev) => {
+        const knownPaths = new Set(prev.map((attachment) => attachment.filePath));
+        const merged = [...prev];
+        for (const attachment of nextAttachments) {
+          if (knownPaths.has(attachment.filePath)) {
+            continue;
+          }
+          knownPaths.add(attachment.filePath);
+          merged.push(attachment);
+        }
+        return merged;
+      });
+    } catch (error) {
+      console.warn("Failed to attach pasted image", error);
+      toast.warning(t("attachments.pasteFailed"));
+    }
+  }, [activeWorkspaceId, selectedEngineId, selectedModel, t]);
+
+  const handleInputPaste = useCallback((event: ReactClipboardEvent<HTMLElement>) => {
+    if (showSpecialInputComposer) {
+      return;
+    }
+    const imageFiles = clipboardImageFiles(event.clipboardData);
+    if (imageFiles.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    void appendPastedImageFiles(imageFiles);
+  }, [appendPastedImageFiles, showSpecialInputComposer]);
 
   useEffect(() => {
     const attachmentFilterConfig = getAttachmentFilterConfig(t, selectedEngineId, selectedModel);
@@ -5303,6 +5428,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           {/* Input container */}
           <div
             className={`chat-input-box ${activePlanMode && !showSpecialInputComposer ? "chat-input-box-plan" : ""} ${showSpecialInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
+            onPaste={handleInputPaste}
           >
             {showPendingToolInputComposer && pendingToolInputApproval ? (
               <ToolInputQuestionnaire
@@ -5350,25 +5476,14 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 {attachments.length > 0 && (
                   <div className="chat-attachments-bar">
                     {attachments.map((attachment) => {
-                      const IconComponent = getAttachmentIcon(attachment.mimeType);
                       return (
-                        <div key={attachment.id} className="chat-attachment-chip">
-                          <IconComponent size={12} />
-                          <span className="chat-attachment-chip-name">{attachment.fileName}</span>
-                          {attachment.sizeBytes > 0 && (
-                            <span className="chat-attachment-chip-size">
-                              {formatFileSize(attachment.sizeBytes)}
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            className="chat-attachment-chip-remove"
-                            onClick={() => removeAttachment(attachment.id)}
-                            title={t("attachments.remove")}
-                          >
-                            <X size={10} />
-                          </button>
-                        </div>
+                        <AttachmentChip
+                          key={attachment.id}
+                          attachment={attachment}
+                          showSize
+                          removeLabel={t("attachments.remove")}
+                          onRemove={() => removeAttachment(attachment.id)}
+                        />
                       );
                     })}
                   </div>
@@ -5654,14 +5769,6 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         <Zap size={11} />
                         <span style={{ fontSize: 11 }}>{t("modelPicker.fastOn")}</span>
                       </button>
-                      <CodexRuntimePicker
-                        diagnostics={codexProtocolDiagnostics}
-                        skills={
-                          codexReferenceCatalogState.skillsLoaded
-                            ? codexSkills
-                            : (codexProtocolDiagnostics?.skills ?? [])
-                        }
-                      />
                     </>
                   )}
                 </>

@@ -60,6 +60,7 @@
     "opencodeTitle": "Anexar arquivos",
     "opencodeWarning": "O modelo OpenCode selecionado não suporta esse tipo de anexo.",
     "remove": "Remover anexo",
+    "pasteFailed": "Falha ao anexar a imagem colada.",
     "filters": {
       "supportedFiles": "Arquivos compatíveis",
       "images": "Imagens",
