@@ -60,6 +60,7 @@
     "opencodeTitle": "Attach files",
     "opencodeWarning": "The selected OpenCode model does not support that attachment type.",
     "remove": "Remove attachment",
+    "pasteFailed": "Failed to attach pasted image.",
     "filters": {
       "supportedFiles": "Supported files",
       "images": "Images",

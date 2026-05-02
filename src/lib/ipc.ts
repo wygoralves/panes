@@ -5,6 +5,7 @@ import type { AppLocale } from "./locale";
 import type {
   ApprovalResponse,
   ActionOutputPayload,
+  AttachmentPreview,
   ChatAttachment,
   ChatEngineId,
   ChatInputItem,
@@ -342,6 +343,17 @@ export const ipc = {
   listCodexApps: () => invoke<CodexApp[]>("list_codex_apps"),
   getOpenCodeRuntimeCatalog: (cwd: string) =>
     invoke<OpenCodeRuntimeCatalog>("get_opencode_runtime_catalog", { cwd }),
+  savePastedImageAttachment: (fileName: string, mimeType: string, dataBase64: string) =>
+    invoke<ChatAttachment>("save_pasted_image_attachment", {
+      fileName,
+      mimeType,
+      dataBase64,
+    }),
+  readAttachmentPreview: (filePath: string, mimeType?: string | null) =>
+    invoke<AttachmentPreview | null>("read_attachment_preview", {
+      filePath,
+      mimeType: mimeType ?? null,
+    }),
   sendMessage: (
     threadId: string,
     message: string,

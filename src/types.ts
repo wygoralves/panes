@@ -1262,6 +1262,11 @@ export interface ChatAttachment {
   mimeType?: string;
 }
 
+export interface AttachmentPreview {
+  mimeType: string;
+  dataBase64: string;
+}
+
 export type ChatInputItem =
   | {
       type: "text";
