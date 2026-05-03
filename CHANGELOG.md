@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.59.0...vnull) (2026-05-03)
+
+### Bug Fixes
+
+* **chat:** fix codex initialization bug on chat ([4adb7a2](https://github.com/wygoralves/panes/commit/4adb7a20cf84914851cb3d1dbfac846df08ff6f8))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.58.0...vnull) (2026-05-02)
 
 ### Features
