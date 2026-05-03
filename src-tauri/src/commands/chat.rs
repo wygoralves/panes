@@ -5374,5 +5374,5 @@ async fn model_supports_personality(state: &AppState, engine_id: &str, model_id:
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {
-    error.to_string()
+    format!("{error:#}")
 }
