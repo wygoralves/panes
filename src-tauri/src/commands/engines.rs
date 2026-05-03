@@ -157,5 +157,5 @@ fn truncate_output(value: &str, max_chars: usize) -> String {
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {
-    error.to_string()
+    format!("{error:#}")
 }

@@ -84,6 +84,7 @@ const PLAN_MODE_PROMPT_PREFIX: &str = "Plan the solution first. Do not execute c
 
 pub struct CodexEngine {
     state: Arc<Mutex<CodexState>>,
+    transport_spawn_lock: Arc<Mutex<()>>,
     runtime_events: broadcast::Sender<CodexRuntimeEvent>,
 }
 
@@ -139,6 +140,7 @@ impl Default for CodexEngine {
         let (runtime_events, _) = broadcast::channel(256);
         Self {
             state: Arc::new(Mutex::new(CodexState::default())),
+            transport_spawn_lock: Arc::new(Mutex::new(())),
             runtime_events,
         }
     }
@@ -2096,18 +2098,14 @@ impl CodexEngine {
     }
 
     async fn ensure_transport(&self) -> anyhow::Result<Arc<CodexTransport>> {
-        let current = {
-            let state = self.state.lock().await;
-            state.transport.clone()
-        };
+        if let Some(transport) = self.live_transport().await {
+            return Ok(transport);
+        }
 
-        if let Some(transport) = current {
-            if transport.is_alive().await {
-                return Ok(transport);
-            }
+        let _spawn_guard = self.transport_spawn_lock.lock().await;
 
-            self.invalidate_transport("codex transport is not alive")
-                .await;
+        if let Some(transport) = self.live_transport().await {
+            return Ok(transport);
         }
 
         let transport = self.spawn_transport_with_backoff().await?;
@@ -2115,6 +2113,24 @@ impl CodexEngine {
         state.transport = Some(transport.clone());
         state.initialized = false;
         Ok(transport)
+    }
+
+    async fn live_transport(&self) -> Option<Arc<CodexTransport>> {
+        let current = {
+            let state = self.state.lock().await;
+            state.transport.clone()
+        };
+
+        if let Some(transport) = current {
+            if transport.is_alive().await {
+                return Some(transport);
+            }
+
+            self.invalidate_transport("codex transport is not alive")
+                .await;
+        }
+
+        None
     }
 
     async fn ensure_ready_transport(&self) -> anyhow::Result<Arc<CodexTransport>> {
@@ -2400,6 +2416,12 @@ impl CodexEngine {
                         let params = raw_value_to_value(&params);
                         let normalized_method = normalize_method(&method);
                         match normalized_method.as_str() {
+                            "transport/eof" | "transport/readerror" | "transport/read_error" => {
+                                log::debug!(
+                                    "codex runtime monitor exiting after transport event: {method}"
+                                );
+                                break;
+                            }
                             "thread/started" => {
                                 let thread = params.get("thread").unwrap_or(&params);
                                 if let Some(engine_thread_id) =

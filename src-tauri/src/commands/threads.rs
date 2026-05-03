@@ -2370,7 +2370,7 @@ fn map_codex_thread_status_to_local(
 }
 
 fn err_to_string(error: impl std::fmt::Display) -> String {
-    error.to_string()
+    format!("{error:#}")
 }
 
 fn approval_policy_metadata_key(engine_id: &str) -> &'static str {

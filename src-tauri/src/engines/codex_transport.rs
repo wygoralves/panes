@@ -32,6 +32,14 @@ pub struct CodexTransport {
     next_request_id: std::sync::atomic::AtomicU64,
 }
 
+impl Drop for CodexTransport {
+    fn drop(&mut self) {
+        if let Ok(mut child) = self.child.try_lock() {
+            let _ = child.start_kill();
+        }
+    }
+}
+
 impl CodexTransport {
     pub async fn spawn(codex_executable: &str) -> anyhow::Result<Self> {
         let mut command = Command::new(codex_executable);
@@ -48,6 +56,7 @@ impl CodexTransport {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .kill_on_drop(true)
             .spawn()
             .with_context(|| {
                 format!("failed to spawn `codex app-server` using `{codex_executable}`")
