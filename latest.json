@@ -1,0 +1,31 @@
+{
+  "version": "0.59.1",
+  "notes": "## [](https://github.com/wygoralves/panes/compare/v0.59.0...vnull) (2026-05-03)\n\n### Bug Fixes\n\n* **chat:** fix codex initialization bug on chat ([4adb7a2](https://github.com/wygoralves/panes/commit/4adb7a20cf84914851cb3d1dbfac846df08ff6f8))",
+  "pub_date": "2026-05-03T21:16:58Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWpIeUM1ZlBHR2R0UTNqSVBWcW54d0tNL3hHTTJUOTIzbWwyVTNlZG1td2o3cHdnVmdoVU5xWlY3bDlSYUV6bC9SekdCUVU4dUhZaEVYUlNzUUQ2OVFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc3ODQzOTQ1CWZpbGU6UGFuZXMuYXBwLnRhci5negpZSUF1aW5kZzZFQUVKbjlqRHNuWC9KOWs2Rld2NWpUKzQ1bVBYcTc1Y1dqUm9Nc280OEk4d2U5T2dQQU1walZyOWRud0RRR0c3ejhvcWN5UHMyVnVBQT09Cg==",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.59.1/Panes.app.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWpIeUM1ZlBHR2R0UTNqSVBWcW54d0tNL3hHTTJUOTIzbWwyVTNlZG1td2o3cHdnVmdoVU5xWlY3bDlSYUV6bC9SekdCUVU4dUhZaEVYUlNzUUQ2OVFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc3ODQzOTQ1CWZpbGU6UGFuZXMuYXBwLnRhci5negpZSUF1aW5kZzZFQUVKbjlqRHNuWC9KOWs2Rld2NWpUKzQ1bVBYcTc1Y1dqUm9Nc280OEk4d2U5T2dQQU1walZyOWRud0RRR0c3ejhvcWN5UHMyVnVBQT09Cg==",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.59.1/Panes.app.tar.gz"
+    },
+    "linux-x86_64-appimage": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWsyNmRkS1RSOENBRTZtTC95Wngxc0dMdjNlUHArM0lNZnBkSitwSVJKaTg3dnNQUVNIWFVCVWVhbFRkVWdFbEMvRXhsTU5xOGVyQWJ5TW5sM3QxcVFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc3ODQzNzAwCWZpbGU6UGFuZXNfMC41OS4xX2FtZDY0LkFwcEltYWdlCjcvcWF1YTFaVVU1dDdWaTJhM2l6Y3NQZTFDdzR5S0x2VHNORDZtOXB3Z2g0QXpxWmNIVTVsTDRRQmVUWTVzZkxpc0d5T1FBdHIxSTl4VDI4RnZmZERBPT0K",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.59.1/Panes_0.59.1_amd64.AppImage"
+    },
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWsyNmRkS1RSOENBRTZtTC95Wngxc0dMdjNlUHArM0lNZnBkSitwSVJKaTg3dnNQUVNIWFVCVWVhbFRkVWdFbEMvRXhsTU5xOGVyQWJ5TW5sM3QxcVFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc3ODQzNzAwCWZpbGU6UGFuZXNfMC41OS4xX2FtZDY0LkFwcEltYWdlCjcvcWF1YTFaVVU1dDdWaTJhM2l6Y3NQZTFDdzR5S0x2VHNORDZtOXB3Z2g0QXpxWmNIVTVsTDRRQmVUWTVzZkxpc0d5T1FBdHIxSTl4VDI4RnZmZERBPT0K",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.59.1/Panes_0.59.1_amd64.AppImage"
+    },
+    "linux-x86_64-deb": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWdKR040L0szNHdRTjZFQXRpZDc0V0VHSkdPZ2dUTWRmRVM2REorOXBsTXJzZ3ZTOHpjME1FbERXSjJyWWpJK1ZwNmxySDdhc25pT1hyLzFHRnRMd3c4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc3ODQzNzAwCWZpbGU6UGFuZXNfMC41OS4xX2FtZDY0LmRlYgpzeWdBVmtmYlFsZ2o0Qi9GRFVZaS9kSzUreEJRMWNJa2pYaUJqbEF0Zi84UFFQYktCTDBwbUJrSEF0NHN4bC9CWHVjWE8zSXFEUUZvQi9SL1lyWFdBZz09Cg==",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.59.1/Panes_0.59.1_amd64.deb"
+    },
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWw3WDNmTjRIQ25EWnZsOGI3TVA0RXArOCtteEpGWW9aRVdZRmFNMzBLa2xRZjVORnZDVEtKSVBab2wwSnMxOTdPMDlhblBZRW5hN0dzbWl3ME82WndrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc3ODQzOTMwCWZpbGU6UGFuZXNfMC41OS4xX3g2NC1zZXR1cC5leGUKcmFEb3psdkN2UmtsZldzWjJJMC9qOFcwMmdLNTltR1pYZ3lqR293S2JqRWZHRklaMWNjWFprYkJsVWpRMks2dU5VWjlsbS8xdHhlRW5rQTFKb05EQ2c9PQo=",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.59.1/Panes_0.59.1_x64-setup.exe"
+    }
+  }
+}
