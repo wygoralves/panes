@@ -1039,4 +1039,10 @@ pub struct HarnessInfo {
 pub struct HarnessReport {
     pub harnesses: Vec<HarnessInfo>,
     pub npm_available: bool,
+    /// "mise" or "npm", whichever the current environment should use to
+    /// auto-install npm-packaged harnesses. `None` when neither is
+    /// available. Set to "mise" only inside a Flatpak sandbox where a
+    /// bundled `mise` is resolvable, since outside a sandbox npm-based
+    /// global installs remain the default.
+    pub preferred_install_method: Option<String>,
 }

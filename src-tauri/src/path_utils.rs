@@ -5,7 +5,19 @@ use std::{
 };
 
 pub fn canonicalize_path(path: &Path) -> io::Result<PathBuf> {
+    if is_flatpak_document_portal_path(path) {
+        // Paths under /run/flatpak/doc/ are bind mounts set up per-grant by
+        // xdg-desktop-portal for sandboxed apps. Canonicalizing them can
+        // resolve straight through the bind mount to a target the sandbox
+        // has no access to (or one that stops existing once the portal
+        // session ends), so we store them as-is instead.
+        return Ok(path.to_path_buf());
+    }
     std::fs::canonicalize(path).map(normalize_windows_path)
+}
+
+fn is_flatpak_document_portal_path(path: &Path) -> bool {
+    path.starts_with("/run/flatpak/doc")
 }
 
 pub fn normalize_windows_path_string(path: &str) -> String {
@@ -86,7 +98,11 @@ fn normalize_for_comparison(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{add_windows_verbatim_prefix, is_path_within_root, strip_windows_verbatim_prefix};
+    use super::{
+        add_windows_verbatim_prefix, canonicalize_path, is_path_within_root,
+        strip_windows_verbatim_prefix,
+    };
+    use std::path::Path;
 
     #[test]
     fn strips_drive_letter_windows_verbatim_prefix() {
@@ -138,5 +154,12 @@ mod tests {
             "/workspace/apps/api/src/main.ts",
             "/workspace/apps/app"
         ));
+    }
+
+    #[test]
+    fn leaves_flatpak_document_portal_paths_uncanonicalized() {
+        let portal_path = Path::new("/run/flatpak/doc/12345/my-repo");
+        let result = canonicalize_path(portal_path).expect("portal path is returned as-is");
+        assert_eq!(result, portal_path);
     }
 }

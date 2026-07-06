@@ -1112,6 +1112,7 @@ export interface HarnessInfo {
 export interface HarnessReport {
   harnesses: HarnessInfo[];
   npmAvailable: boolean;
+  preferredInstallMethod: string | null;
 }
 
 // ── Stream Events ───────────────────────────────────────────────────
