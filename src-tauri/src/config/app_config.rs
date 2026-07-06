@@ -406,6 +406,7 @@ max_action_output_chars = 20000
         assert_eq!(config.general.locale, None);
         assert_eq!(config.general.terminal_accelerated_rendering, None);
         assert_eq!(config.general.terminal_notifications, None);
+        assert_eq!(config.general.terminal_font_size, None);
     }
 
     #[test]
@@ -413,7 +414,10 @@ max_action_output_chars = 20000
         let config = AppConfig::default();
 
         assert_eq!(config.general.terminal_font_size, None);
-        assert_eq!(config.terminal_font_size(), super::DEFAULT_TERMINAL_FONT_SIZE);
+        assert_eq!(
+            config.terminal_font_size(),
+            super::DEFAULT_TERMINAL_FONT_SIZE
+        );
     }
 
     #[test]
