@@ -1,0 +1,112 @@
+export const THEME_PREFERENCES = ["dark", "light", "system"] as const;
+
+export type ThemePreference = (typeof THEME_PREFERENCES)[number];
+
+export type ThemeMode = "dark" | "light";
+
+export function isThemePreference(value?: string | null): value is ThemePreference {
+  return THEME_PREFERENCES.includes(value as ThemePreference);
+}
+
+export function normalizeThemePreference(value?: string | null): ThemePreference {
+  return isThemePreference(value) ? value : "dark";
+}
+
+function systemPrefersLight(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+  return window.matchMedia("(prefers-color-scheme: light)").matches;
+}
+
+export function resolveThemeMode(preference: ThemePreference): ThemeMode {
+  if (preference === "system") {
+    return systemPrefersLight() ? "light" : "dark";
+  }
+  return preference;
+}
+
+export function getCurrentThemeMode(): ThemeMode {
+  if (typeof document === "undefined") {
+    return "dark";
+  }
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
+const THEME_CHANGED_EVENT = "panes:theme-changed";
+
+export interface ThemeChangedEventDetail {
+  mode: ThemeMode;
+}
+
+let systemThemeListenerCleanup: (() => void) | null = null;
+
+/** Resolve, stamp `data-theme` on the document root, and broadcast the change.
+ * Safe to call before React mounts (main.tsx) and again whenever the user
+ * changes their preference or the OS theme flips while "system" is active. */
+export function applyThemePreference(preference: ThemePreference): ThemeMode {
+  systemThemeListenerCleanup?.();
+  systemThemeListenerCleanup = null;
+
+  const mode = resolveThemeMode(preference);
+  if (typeof document !== "undefined") {
+    document.documentElement.dataset.theme = mode;
+  }
+
+  if (
+    preference === "system" &&
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function"
+  ) {
+    const media = window.matchMedia("(prefers-color-scheme: light)");
+    const listener = () => applyThemePreference("system");
+    media.addEventListener("change", listener);
+    systemThemeListenerCleanup = () => media.removeEventListener("change", listener);
+  }
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent<ThemeChangedEventDetail>(THEME_CHANGED_EVENT, { detail: { mode } }),
+    );
+  }
+
+  return mode;
+}
+
+export function listenThemeChanged(handler: (mode: ThemeMode) => void): () => void {
+  if (typeof window === "undefined") {
+    return () => undefined;
+  }
+  const listener = (event: Event) => {
+    const detail = (event as CustomEvent<ThemeChangedEventDetail>).detail;
+    handler(detail.mode);
+  };
+  window.addEventListener(THEME_CHANGED_EVENT, listener);
+  return () => window.removeEventListener(THEME_CHANGED_EVENT, listener);
+}
+
+export interface XtermThemeColors {
+  background: string;
+  foreground: string;
+  cursor: string;
+  selectionBackground: string;
+}
+
+const XTERM_THEMES: Record<ThemeMode, XtermThemeColors> = {
+  dark: {
+    background: "#050505",
+    foreground: "#f5f5f5",
+    cursor: "#FF6B6B",
+    selectionBackground: "rgba(255, 107, 107, 0.28)",
+  },
+  light: {
+    background: "#f1f2f4",
+    foreground: "#17181c",
+    cursor: "#cc3333",
+    selectionBackground: "rgba(204, 51, 51, 0.22)",
+  },
+};
+
+export function getXtermThemeColors(mode: ThemeMode): XtermThemeColors {
+  return XTERM_THEMES[mode];
+}

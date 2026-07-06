@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { normalizeDependencyReport } from "./dependencies";
 import type { AppLocale } from "./locale";
+import type { ThemePreference } from "./theme";
 import type {
   ApprovalResponse,
   ActionOutputPayload,
@@ -72,6 +73,8 @@ import type {
 export const ipc = {
   getAppLocale: () => invoke<AppLocale>("get_app_locale"),
   setAppLocale: (locale: AppLocale) => invoke<AppLocale>("set_app_locale", { locale }),
+  getAppTheme: () => invoke<ThemePreference>("get_app_theme"),
+  setAppTheme: (theme: ThemePreference) => invoke<ThemePreference>("set_app_theme", { theme }),
   getKeepAwakeState: () => invoke<KeepAwakeState>("get_keep_awake_state"),
   setKeepAwakeEnabled: (enabled: boolean) =>
     invoke<KeepAwakeState>("set_keep_awake_enabled", { enabled }),

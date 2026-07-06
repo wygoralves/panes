@@ -22,6 +22,9 @@ import {
   PillBottle,
   BellRing,
   Globe,
+  Moon,
+  Sun,
+  Monitor,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -31,6 +34,7 @@ import { useOnboardingStore } from "../../stores/onboardingStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import { canToggleKeepAwake, useKeepAwakeStore } from "../../stores/keepAwakeStore";
 import { useTerminalNotificationSettingsStore } from "../../stores/terminalNotificationSettingsStore";
+import { useThemeStore } from "../../stores/themeStore";
 import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { formatRelativeTime } from "../../lib/formatters";
@@ -43,6 +47,7 @@ import {
   SUPPORTED_APP_LOCALES,
   type AppLocale,
 } from "../../lib/locale";
+import { THEME_PREFERENCES, type ThemePreference } from "../../lib/theme";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { createAndActivateWorkspaceThread } from "../../lib/newThreadActions";
 import { UpdateDialog } from "../onboarding/UpdateDialog";
@@ -152,6 +157,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const previousSyncedActiveWorkspaceIdRef = useRef<string | null>(activeWorkspaceId);
   const activeLocale = normalizeAppLocale(i18n.language);
+  const themePreference = useThemeStore((s) => s.preference);
+  const setThemePreference = useThemeStore((s) => s.setPreference);
 
   const closeSettingsMenu = useCallback(() => setSettingsMenuOpen(false), []);
 
@@ -311,6 +318,15 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     }
   }
 
+  async function onThemeSelect(theme: ThemePreference) {
+    if (theme === themePreference) return;
+
+    const ok = await setThemePreference(theme);
+    if (!ok) {
+      toast.error(t("app:sidebar.themeFailed"));
+    }
+  }
+
   async function onToggleTerminalAcceleratedRendering() {
     const nextValue = !terminalAcceleratedRendering;
 
@@ -453,7 +469,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       </div>
 
       {/* ── Scrollable content ── */}
-      <div style={{ flex: 1, minHeight: 0, overflow: "auto", paddingBottom: 4, borderTop: "1px solid rgba(255,255,255,0.06)", marginTop: 4 }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto", paddingBottom: 4, borderTop: "1px solid var(--wash-06)", marginTop: 4 }}>
         <div className="sb-section-label">
           <span>{t("app:sidebar.workspaces")}</span>
           <button
@@ -608,7 +624,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
         )}
 
         {/* Archived section */}
-        <div style={{ marginTop: 8, borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 4 }}>
+        <div style={{ marginTop: 8, borderTop: "1px solid var(--wash-06)", paddingTop: 4 }}>
           <button
             type="button"
             className="sb-archived-toggle"
@@ -844,6 +860,53 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             </div>
             <div className="git-action-menu-item" style={{ justifyContent: "space-between", cursor: "default" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Sun size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+                {t("app:sidebar.theme")}
+              </span>
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  background: "var(--wash-06)",
+                  borderRadius: 6,
+                  padding: 2,
+                  gap: 2,
+                }}
+              >
+                {THEME_PREFERENCES.map((theme) => {
+                  const ThemeIcon = theme === "dark" ? Moon : theme === "light" ? Sun : Monitor;
+                  const active = themePreference === theme;
+                  return (
+                    <button
+                      key={theme}
+                      type="button"
+                      title={t(`app:sidebar.theme_${theme}`)}
+                      aria-label={t(`app:sidebar.theme_${theme}`)}
+                      onClick={() => { void onThemeSelect(theme); }}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 24,
+                        height: 22,
+                        padding: 0,
+                        borderRadius: 4,
+                        border: "none",
+                        cursor: "pointer",
+                        background: active ? "var(--accent)" : "transparent",
+                        color: active ? "var(--on-accent)" : "var(--text-3)",
+                        boxShadow: "none",
+                        transition: "background 0.15s, color 0.15s, box-shadow 0.15s",
+                      }}
+                    >
+                      <ThemeIcon size={12} />
+                    </button>
+                  );
+                })}
+              </span>
+            </div>
+            <div className="git-action-menu-item" style={{ justifyContent: "space-between", cursor: "default" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <Globe size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
                 {t("common:language.label")}
               </span>
@@ -851,7 +914,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  background: "rgba(255,255,255,0.06)",
+                  background: "var(--wash-06)",
                   borderRadius: 6,
                   padding: 2,
                   gap: 2,
@@ -870,7 +933,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                       border: "none",
                       cursor: "pointer",
                       background: activeLocale === locale ? "var(--accent)" : "transparent",
-                      color: activeLocale === locale ? "#fff" : "var(--text-3)",
+                      color: activeLocale === locale ? "var(--on-accent)" : "var(--text-3)",
                       fontWeight: activeLocale === locale ? 500 : 400,
                       boxShadow: "none",
                       transition: "background 0.15s, color 0.15s, box-shadow 0.15s",
