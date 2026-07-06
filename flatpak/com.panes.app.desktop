@@ -6,4 +6,3 @@ Exec=panes-wrapper %U
 Icon=com.panes.app
 Terminal=false
 Categories=Development;IDE;
-StartupWMClass=Panes

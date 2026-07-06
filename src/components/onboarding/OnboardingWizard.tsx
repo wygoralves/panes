@@ -399,6 +399,7 @@ function ProviderRow({
   description,
   harness,
   installing,
+  preferredInstallMethod,
   onInstall,
   onOpenWebsite,
 }: {
@@ -407,11 +408,12 @@ function ProviderRow({
   description: string;
   harness: HarnessInfo;
   installing: boolean;
+  preferredInstallMethod: string | null;
   onInstall: () => void;
   onOpenWebsite: () => void;
 }) {
   const { t } = useTranslation(["setup", "app"]);
-  const installCommand = getHarnessInstallCommand(harness.id);
+  const installCommand = getHarnessInstallCommand(harness.id, preferredInstallMethod);
   const canInstall = harness.canAutoInstall && Boolean(installCommand);
 
   return (
@@ -746,6 +748,7 @@ export function OnboardingWizard() {
   const harnessError = useHarnessStore((s) => s.error);
   const harnesses = useHarnessStore((s) => s.harnesses);
   const scanHarnesses = useHarnessStore((s) => s.scan);
+  const preferredInstallMethod = useHarnessStore((s) => s.preferredInstallMethod);
 
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
@@ -973,7 +976,7 @@ export function OnboardingWizard() {
   const nodeManualGuidance = readiness.dependencyReport
     ? getNodeManualGuidance(readiness.dependencyReport)
     : null;
-  const openCodeInstallCommand = getHarnessInstallCommand("opencode");
+  const openCodeInstallCommand = getHarnessInstallCommand("opencode", preferredInstallMethod);
   const showOpenCodeInstallCard =
     selectedChatEngines.includes("opencode") &&
     shouldShowOpenCodeInstallCard(readiness.engineHealth.opencode);
@@ -1245,6 +1248,7 @@ export function OnboardingWizard() {
                           harness={harness}
                           description={t(`app:harnesses.descriptions.${harness.id}`, { defaultValue: harness.description })}
                           installing={installing?.kind === "harness" && installing.id === harness.id}
+                          preferredInstallMethod={preferredInstallMethod}
                           onInstall={() => void handleInstallHarness(harness)}
                           onOpenWebsite={() => void handleOpenWebsite(harness.website)}
                         />

@@ -19,16 +19,33 @@ step, but the design decisions (runtime, sandboxing model, mise) are his.
 ## Building locally
 
 ```sh
-flatpak install flathub org.gnome.Platform//49 org.gnome.Sdk//49
-flatpak install flathub org.freedesktop.Sdk.Extension.node20//24.08 org.freedesktop.Sdk.Extension.rust-stable//24.08
-flatpak-builder --user --install --force-clean build-flatpak com.panes.app.yml
+flatpak-builder --user --install --force-clean \
+  --install-deps-from=flathub \
+  build-flatpak com.panes.app.yml
 flatpak run com.panes.app
 ```
+
+`--install-deps-from=flathub` installs `org.gnome.Platform//50`,
+`org.gnome.Sdk//50`, and whatever branch of the `node20` and `rust-stable`
+SDK extensions that SDK version actually requires, resolved by
+flatpak-builder itself rather than a hand-picked branch in this README. An
+earlier draft of this file hardcoded `org.freedesktop.Sdk.Extension.node20//24.08`,
+which was a guess, not a verified pairing for GNOME 50; letting
+flatpak-builder resolve it avoids shipping a wrong pin.
 
 The manifest allows network access during the build (`--share=network` in
 `build-options.build-args`) so `pnpm`, `cargo`, and the bundled `mise`
 runtime can fetch dependencies. This is normal for a local build and is not
 part of the app's runtime sandbox.
+
+Runtime version note: `org.gnome.Platform//50` was verified against
+[GNOME's own release notes](https://release.gnome.org/50/) (GNOME 50 shipped
+2026-03-18) and its [Flathub listing](https://flathub.org/apps/org.gnome.Platform)
+as of this writing. GNOME 49 (the previous line) remains supported until
+roughly September 2026, so it would not have been wrong to stay on it, but
+50 is the current line and there was no reason to ship one cycle behind.
+Re-check both facts against Flathub before relying on this note long after
+it was written, since runtime support windows move.
 
 ## Sandboxing model: no host filesystem access
 
@@ -55,6 +72,28 @@ Every other permission in `finish-args` is commented in the manifest with
 why it is requested (display sockets, `--device=dri` for GPU accelerated
 rendering, `--share=network` for git/agent traffic, the tray icon
 talk-names, notifications, and `--socket=ssh-auth` for git-over-SSH).
+
+### Known gap: chat attachment drag-and-drop bypasses the portal
+
+Dropping a file onto the chat composer (`ChatPanel.tsx`'s
+`onDragDropEvent` handler, which calls `appendAttachmentsFromPaths` with
+whatever `event.payload.paths` the native window drag-and-drop event
+reports) receives real host filesystem paths directly from the window
+system, not through `xdg-desktop-portal`. Outside a sandbox this is fine;
+inside this Flatpak sandbox, a path handed over this way was never granted
+by the portal and will not be readable, so dropped files will silently fail
+to attach.
+
+This has not been fixed in this PR. The attach button in the chat composer
+(`ChatPanel.tsx`, the `@tauri-apps/plugin-dialog` based attach flow) is
+portal-safe and gives users a working alternative, so this is a rough edge
+rather than a broken feature, but it should be fixed properly rather than
+left as a silent failure: either detect the sandbox and show a message
+explaining that drag-and-drop attachments do not work there, or find a way
+to route dropped paths through the portal. Doing either requires exposing
+`runtime_env::is_flatpak()` to the frontend, which no existing IPC command
+currently does; that is a small, separate follow-up rather than something to
+bolt onto this PR's harness-install and workspace-path changes.
 
 ## Installing agent CLIs inside the sandbox (mise)
 
@@ -104,9 +143,10 @@ considered resolved; the maintainer or jgillich are best placed to do that.
 ## What still needs verifying on Linux
 
 - The manifest builds and `flatpak-builder` succeeds (untested here).
-- The `org.gnome.Platform//49` runtime and matching SDK extensions are
-  actually current on Flathub at build time; verify with `flatpak remote-info`
-  and bump if a newer runtime has since become the recommended baseline.
+- The `org.gnome.Platform//50` runtime is still current on Flathub at build
+  time; verify with `flatpak remote-info` and bump if a newer runtime has
+  since become the recommended baseline (see the runtime version note under
+  "Building locally").
 - The document-portal folder grant actually persists correctly across
   Panes restarts, and that terminal sessions can read/write the full
   directory tree under the granted folder, not just files explicitly
@@ -114,6 +154,22 @@ considered resolved; the maintainer or jgillich are best placed to do that.
 - Whether the curl-pipe harness installers (Kiro, Factory Droid) work at
   all inside the sandbox.
 - The Codex auth issue above.
+- The chat attachment drag-and-drop gap above.
 - Terminal PTY behavior, clipboard, and tray icon integration inside the
   sandbox, which the original issue thread flagged as rough even before the
   mise/permissions changes in this PR.
+- `flatpak/com.panes.app.desktop` does not set `StartupWMClass`. Panes'
+  AppImage desktop-entry generator (`src-tauri/src/linux_appimage.rs`)
+  deliberately omits it too, and its test suite asserts that omission, which
+  reads as a signal that the runtime `WM_CLASS` Tauri/wry sets on Linux does
+  not actually match `Panes`; setting it to a wrong value would break
+  taskbar/dock window matching worse than leaving it unset. This was not
+  independently reverified on real hardware for this PR, it was matched to
+  the existing precedent. If a future change verifies the actual `WM_CLASS`
+  Panes' window reports on Linux, add `StartupWMClass` back with the
+  correct value in both places.
+- `flatpak/com.panes.app.metainfo.xml`'s `<releases>` block has a single
+  hardcoded entry (currently `0.59.1`) with no wiring into
+  `scripts/generate-update-manifest.mjs` or the release workflow. It needs
+  to be bumped by hand on every release until (or unless) someone wires it
+  into the existing release automation.
