@@ -21,6 +21,7 @@ import {
 } from "../stores/workspacePaneStore";
 import { useUiStore } from "../stores/uiStore";
 import {
+  applyWorkspaceEditorChatSplit,
   showWorkspaceEditorForDirectFileOpen,
   showWorkspaceEditorForFileLink,
 } from "./workspacePaneNavigation";
@@ -195,5 +196,107 @@ describe("showWorkspaceEditorForFileLink", () => {
       "editor",
     ]);
     expect(layout.focusedLeafId).toBe(editorLeaf.id);
+  });
+});
+
+describe("applyWorkspaceEditorChatSplit", () => {
+  const storage = new Map<string, string>();
+
+  beforeEach(() => {
+    storage.clear();
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn((key: string) => storage.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => {
+        storage.set(key, value);
+      }),
+      removeItem: vi.fn((key: string) => {
+        storage.delete(key);
+      }),
+      clear: vi.fn(() => {
+        storage.clear();
+      }),
+      key: vi.fn((index: number) => Array.from(storage.keys())[index] ?? null),
+      get length() {
+        return storage.size;
+      },
+    });
+    useWorkspacePaneStore.setState({ workspaces: {} });
+    useUiStore.setState({ activeView: "harnesses", showExplorer: true });
+    mockSetLayoutMode.mockClear();
+    for (const key of Object.keys(terminalWorkspaces)) {
+      delete terminalWorkspaces[key];
+    }
+  });
+
+  it("splits a chat-only pane with the editor, side by side", () => {
+    useWorkspacePaneStore.getState().ensureWorkspace("ws-1", "chat");
+    const sourceLeaf = collectWorkspacePaneLeaves(
+      useWorkspacePaneStore.getState().workspaces["ws-1"].root,
+    )[0];
+
+    applyWorkspaceEditorChatSplit("ws-1");
+
+    const layout = useWorkspacePaneStore.getState().workspaces["ws-1"];
+    const leaves = collectWorkspacePaneLeaves(layout.root);
+    expect(layout.root.type).toBe("split");
+    expect(layout.root.type === "split" ? layout.root.direction : null).toBe("vertical");
+    expect(leaves.map((leaf) => getWorkspacePaneActiveTab(leaf)?.kind)).toEqual([
+      "chat",
+      "editor",
+    ]);
+    expect(leaves[0].id).toBe(sourceLeaf.id);
+    expect(layout.focusedLeafId).toBe(leaves[1].id);
+    expect(useUiStore.getState().activeView).toBe("chat");
+  });
+
+  it("splits an editor-only pane with chat placed before it", () => {
+    useWorkspacePaneStore.getState().ensureWorkspace("ws-1", "editor");
+    const sourceLeaf = collectWorkspacePaneLeaves(
+      useWorkspacePaneStore.getState().workspaces["ws-1"].root,
+    )[0];
+
+    applyWorkspaceEditorChatSplit("ws-1");
+
+    const layout = useWorkspacePaneStore.getState().workspaces["ws-1"];
+    const leaves = collectWorkspacePaneLeaves(layout.root);
+    expect(leaves.map((leaf) => getWorkspacePaneActiveTab(leaf)?.kind)).toEqual([
+      "chat",
+      "editor",
+    ]);
+    expect(leaves[1].id).toBe(sourceLeaf.id);
+  });
+
+  it("focuses the existing editor pane instead of creating a nested split", () => {
+    useWorkspacePaneStore.getState().ensureWorkspace("ws-1", "chat");
+    const sourceLeaf = collectWorkspacePaneLeaves(
+      useWorkspacePaneStore.getState().workspaces["ws-1"].root,
+    )[0];
+    useWorkspacePaneStore.getState().splitLeaf("ws-1", sourceLeaf.id, "vertical", "editor");
+    useWorkspacePaneStore.getState().focusLeaf(
+      "ws-1",
+      collectWorkspacePaneLeaves(useWorkspacePaneStore.getState().workspaces["ws-1"].root)[0].id,
+    );
+    const rootBefore = useWorkspacePaneStore.getState().workspaces["ws-1"].root;
+
+    applyWorkspaceEditorChatSplit("ws-1");
+
+    const layout = useWorkspacePaneStore.getState().workspaces["ws-1"];
+    const leaves = collectWorkspacePaneLeaves(layout.root);
+    const editorLeaf = leaves.find((leaf) => getWorkspacePaneActiveTab(leaf)?.kind === "editor");
+    expect(layout.root).toEqual(rootBefore);
+    expect(layout.focusedLeafId).toBe(editorLeaf?.id);
+  });
+
+  it("converts a terminal-only pane to chat and splits it with the editor", () => {
+    useWorkspacePaneStore.getState().ensureWorkspace("ws-1", "terminal");
+
+    applyWorkspaceEditorChatSplit("ws-1");
+
+    const layout = useWorkspacePaneStore.getState().workspaces["ws-1"];
+    const leaves = collectWorkspacePaneLeaves(layout.root);
+    expect(leaves.map((leaf) => getWorkspacePaneActiveTab(leaf)?.kind)).toEqual([
+      "chat",
+      "editor",
+    ]);
   });
 });

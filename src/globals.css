@@ -2188,6 +2188,46 @@ button, input, textarea, select {
   color: var(--text-1);
 }
 
+.workspace-pane-split-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 9;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.48);
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(4px);
+  transition: background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out),
+              opacity var(--duration-fast) var(--ease-out),
+              transform var(--duration-fast) var(--ease-out);
+}
+
+.workspace-pane-leaf-has-close .workspace-pane-split-btn {
+  right: 38px;
+}
+
+.workspace-pane-leaf-focused:hover .workspace-pane-split-btn,
+.workspace-pane-split-btn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.workspace-pane-split-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-1);
+}
+
 .workspace-pane-leaf-has-close .terminal-tabs-bar,
 .workspace-pane-leaf-has-close .editor-tabs-bar {
   transition: padding-right var(--duration-fast) var(--ease-out);

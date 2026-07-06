@@ -25,6 +25,7 @@ import {
   ChevronRight,
   type LucideIcon,
   SplitSquareHorizontal,
+  SquareSplitVertical,
   GitCommitHorizontal,
   ListTree,
   History,
@@ -57,6 +58,7 @@ import {
 import { formatRelativeTime } from "../../lib/formatters";
 import { createAndActivateWorkspaceThread } from "../../lib/newThreadActions";
 import {
+  applyWorkspaceEditorChatSplit,
   applyWorkspaceLayoutMode,
   showWorkspaceEditorForDirectFileOpen,
   showWorkspaceSurface,
@@ -239,6 +241,19 @@ export function getStaticCommands(
     action: ({ activeWorkspaceId, close }) => {
       if (activeWorkspaceId) {
         applyWorkspaceLayoutMode(activeWorkspaceId, "split");
+      }
+      close();
+    },
+  },
+  {
+    id: "layout-split-editor",
+    label: t("commandPalette.commands.layoutSplitEditor"),
+    icon: SquareSplitVertical,
+    group: "layout",
+    keywords: ["split", "editor", "file", "chat", "side by side", "dividir", "arquivo"],
+    action: ({ activeWorkspaceId, close }) => {
+      if (activeWorkspaceId) {
+        applyWorkspaceEditorChatSplit(activeWorkspaceId);
       }
       close();
     },
