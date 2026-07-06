@@ -4,6 +4,7 @@ export const HARNESS_INSTALL_COMMANDS: Readonly<Record<string, string>> = {
   codex: "npm install -g @openai/codex",
   "claude-code": "curl -fsSL https://claude.ai/install.sh | bash",
   "gemini-cli": "npm install -g @google/gemini-cli",
+  antigravity: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
   kiro: "curl -fsSL https://cli.kiro.dev/install | bash",
   opencode: "npm install -g opencode-ai",
   "kilo-code": "npm install -g @kilocode/cli",
