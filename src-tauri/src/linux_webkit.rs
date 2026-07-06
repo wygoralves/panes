@@ -97,6 +97,11 @@ fn plan_webkit_workarounds<'a>(
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn plan_has_work(plan: &WebkitWorkaroundPlan) -> bool {
+    plan.clear_forced_x11_backend || plan.disable_dmabuf_renderer || plan.disable_compositing_mode
+}
+
 #[cfg(target_os = "linux")]
 pub fn apply_webkit_display_workarounds() {
     use std::{env, os::unix::process::CommandExt, path::Path, process::Command};
@@ -190,10 +195,7 @@ pub fn apply_webkit_display_workarounds() {
         }
     }
 
-    if !plan.clear_forced_x11_backend
-        && !plan.disable_dmabuf_renderer
-        && !plan.disable_compositing_mode
-    {
+    if !plan_has_work(&plan) {
         return;
     }
 
@@ -217,10 +219,7 @@ pub fn apply_webkit_display_workarounds() {
         env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
     }
 
-    if plan.clear_forced_x11_backend
-        || plan.disable_dmabuf_renderer
-        || plan.disable_compositing_mode
-    {
+    if plan_has_work(&plan) {
         log::info!(
             "applied linux webkit display workarounds: wayland={}, cosmic={}, clear_forced_x11_backend={}, relaunch_with_wayland_client_preload={}, disable_dmabuf_renderer={}, disable_compositing_mode={}",
             plan.is_wayland_session,
@@ -239,8 +238,8 @@ pub fn apply_webkit_display_workarounds() {}
 #[cfg(test)]
 mod tests {
     use super::{
-        plan_webkit_workarounds, WebkitDisplayEnv, WebkitWorkaroundPlan, ORIGINAL_LD_PRELOAD_ENV,
-        WAYLAND_CLIENT_PRELOAD_ENV,
+        plan_has_work, plan_webkit_workarounds, WebkitDisplayEnv, WebkitWorkaroundPlan,
+        ORIGINAL_LD_PRELOAD_ENV, WAYLAND_CLIENT_PRELOAD_ENV,
     };
 
     fn base_env<'a>() -> WebkitDisplayEnv<'a> {
@@ -528,5 +527,27 @@ mod tests {
     fn helper_env_var_names_are_stable() {
         assert_eq!(WAYLAND_CLIENT_PRELOAD_ENV, "PANES_WAYLAND_CLIENT_PRELOAD");
         assert_eq!(ORIGINAL_LD_PRELOAD_ENV, "PANES_ORIGINAL_LD_PRELOAD");
+    }
+
+    #[test]
+    fn plan_has_work_for_x11_appimage_bundle() {
+        let mut env = base_env();
+        env.xdg_session_type = Some("x11");
+        env.appimage_present = true;
+
+        let plan = plan_webkit_workarounds(&env, Some("/usr/lib64/libwayland-client.so.0"));
+
+        assert!(plan_has_work(&plan));
+    }
+
+    #[test]
+    fn plan_has_no_work_for_plain_x11_without_appimage() {
+        let mut env = base_env();
+        env.xdg_session_type = Some("x11");
+        env.gdk_backend = Some("x11");
+
+        let plan = plan_webkit_workarounds(&env, Some("/usr/lib64/libwayland-client.so.0"));
+
+        assert!(!plan_has_work(&plan));
     }
 }
