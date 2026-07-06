@@ -92,6 +92,8 @@ impl Default for GeneralConfig {
     }
 }
 
+pub const VALID_THEME_PREFERENCES: [&str; 3] = ["dark", "light", "system"];
+
 impl AppConfig {
     /// Resolve the configured notification sound name.
     /// Returns `None` if explicitly set to `"none"`, the stored value if set,
@@ -101,6 +103,16 @@ impl AppConfig {
             Some("none") => None,
             Some(name) => Some(name),
             None => default_notification_sound(),
+        }
+    }
+
+    /// Resolve the configured theme preference, falling back to `"dark"` for
+    /// unrecognized or legacy values so old config files always load cleanly.
+    pub fn theme_preference(&self) -> &str {
+        if VALID_THEME_PREFERENCES.contains(&self.general.theme.as_str()) {
+            &self.general.theme
+        } else {
+            "dark"
         }
     }
 }
@@ -457,6 +469,32 @@ max_action_output_chars = 20000
         let config = AppConfig::default();
 
         assert!(!config.terminal_notifications_enabled());
+    }
+
+    #[test]
+    fn theme_preference_defaults_to_dark() {
+        let config = AppConfig::default();
+
+        assert_eq!(config.theme_preference(), "dark");
+    }
+
+    #[test]
+    fn theme_preference_accepts_light_and_system() {
+        let mut config = AppConfig::default();
+
+        config.general.theme = "light".to_string();
+        assert_eq!(config.theme_preference(), "light");
+
+        config.general.theme = "system".to_string();
+        assert_eq!(config.theme_preference(), "system");
+    }
+
+    #[test]
+    fn theme_preference_falls_back_to_dark_for_unknown_values() {
+        let mut config = AppConfig::default();
+        config.general.theme = "solarized".to_string();
+
+        assert_eq!(config.theme_preference(), "dark");
     }
 
     #[test]

@@ -927,7 +927,7 @@ const STYLES = {
     width: "calc(100% - 12px)",
     border: "none",
     borderRadius: "var(--radius-sm)",
-    background: active ? "rgba(255, 255, 255, 0.07)" : "transparent",
+    background: active ? "var(--wash-07)" : "transparent",
     cursor: "pointer",
     textAlign: "left" as const,
     fontFamily: "inherit",

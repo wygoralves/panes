@@ -402,7 +402,7 @@ export function PowerSettingsModal() {
               />
             </SettingsRow>
 
-            <div style={{ height: 1, background: "rgba(255,255,255,0.04)", margin: "0 -2px" }} />
+            <div style={{ height: 1, background: "var(--wash-04)", margin: "0 -2px" }} />
 
             <SettingsRow
               label={t("powerModal.preventScreenSaver")}
@@ -444,7 +444,7 @@ export function PowerSettingsModal() {
               />
             </SettingsRow>
 
-            <div style={{ height: 1, background: "rgba(255,255,255,0.04)", margin: "0 -2px" }} />
+            <div style={{ height: 1, background: "var(--wash-04)", margin: "0 -2px" }} />
 
             <SettingsRow
               label={t("powerModal.batteryThreshold")}

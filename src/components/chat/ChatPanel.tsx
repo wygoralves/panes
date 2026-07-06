@@ -4720,7 +4720,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   transition: "background var(--duration-fast) var(--ease-out)",
                 }}
                 onMouseEnter={(e) => {
-                  if (activeThread) e.currentTarget.style.background = "rgba(255,255,255,0.04)";
+                  if (activeThread) e.currentTarget.style.background = "var(--wash-04)";
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = "transparent";
@@ -4879,7 +4879,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   transition: "background var(--duration-fast) var(--ease-out)",
                 }}
                 onMouseEnter={(e) => {
-                  if (activeThread) e.currentTarget.style.background = "rgba(255,255,255,0.04)";
+                  if (activeThread) e.currentTarget.style.background = "var(--wash-04)";
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = "transparent";
