@@ -1,6 +1,6 @@
 app-id: com.panes.app
 runtime: org.gnome.Platform
-runtime-version: "49"
+runtime-version: "50"
 sdk: org.gnome.Sdk
 command: panes-wrapper
 sdk-extensions:
@@ -50,8 +50,8 @@ modules:
       - make prefix=/app NO_PERL=YesPlease NO_TCLTK=YesPlease NO_GETTEXT=YesPlease install
     sources:
       - type: archive
-        url: https://www.kernel.org/pub/software/scm/git/git-2.49.1.tar.xz
-        sha256: 310831de967f1c8c5e8ff55f92807dea89f83dc3d3d2a5d16c209bd01a31def1
+        url: https://www.kernel.org/pub/software/scm/git/git-2.55.0.tar.xz
+        sha256: 457fdb04dc8728e007d4688695e6912e6f680727920f2a40bf11eacc17505357
 
   - name: node-runtime
     buildsystem: simple
@@ -64,14 +64,14 @@ modules:
       - ln -sf ../lib/node/bin/npx /app/bin/npx
     sources:
       - type: file
-        url: https://nodejs.org/dist/v20.20.1/node-v20.20.1-linux-x64.tar.xz
-        sha256: 1592ef30f7a63309581a130f7fd8b3311a3e08ee0c609a3d13234590fe35409f
+        url: https://nodejs.org/dist/v20.20.2/node-v20.20.2-linux-x64.tar.xz
+        sha256: df770b2a6f130ed8627c9782c988fda9669fa23898329a61a871e32f965e007d
         dest-filename: node.tar.xz
         only-arches:
           - x86_64
       - type: file
-        url: https://nodejs.org/dist/v20.20.1/node-v20.20.1-linux-arm64.tar.xz
-        sha256: f9a7b07fafd1adaf2c375af2ede31f462395377a8a6c9427d32793a68135e774
+        url: https://nodejs.org/dist/v20.20.2/node-v20.20.2-linux-arm64.tar.xz
+        sha256: 73093db209e4e9e09dd7d15a47aeaab1b74833830df03efa5f942a1122c5fa71
         dest-filename: node.tar.xz
         only-arches:
           - aarch64
