@@ -299,4 +299,36 @@ describe("applyWorkspaceEditorChatSplit", () => {
       "editor",
     ]);
   });
+
+  it("focuses the existing editor pane in a genuinely nested three-leaf tree", () => {
+    useWorkspacePaneStore.getState().ensureWorkspace("ws-1", "split");
+    const [chatLeaf, terminalLeaf] = collectWorkspacePaneLeaves(
+      useWorkspacePaneStore.getState().workspaces["ws-1"].root,
+    );
+    // Split the terminal leaf with the editor, producing a split-of-a-split:
+    // root(horizontal)[chat, split(vertical)[terminal, editor]].
+    useWorkspacePaneStore.getState().splitLeaf("ws-1", terminalLeaf.id, "vertical", "editor");
+    useWorkspacePaneStore.getState().focusLeaf("ws-1", terminalLeaf.id);
+    const layoutBefore = useWorkspacePaneStore.getState().workspaces["ws-1"];
+    const leavesBefore = collectWorkspacePaneLeaves(layoutBefore.root);
+    expect(leavesBefore).toHaveLength(3);
+    expect(layoutBefore.root.type).toBe("split");
+    expect(
+      layoutBefore.root.type === "split" ? layoutBefore.root.children[1].type : null,
+    ).toBe("split");
+
+    applyWorkspaceEditorChatSplit("ws-1");
+
+    const layout = useWorkspacePaneStore.getState().workspaces["ws-1"];
+    const leaves = collectWorkspacePaneLeaves(layout.root);
+    const editorLeaf = leaves.find((leaf) => getWorkspacePaneActiveTab(leaf)?.kind === "editor");
+    expect(layout.root).toEqual(layoutBefore.root);
+    expect(leaves).toHaveLength(3);
+    expect(leaves.map((leaf) => leaf.id)).toEqual([
+      chatLeaf.id,
+      terminalLeaf.id,
+      editorLeaf?.id,
+    ]);
+    expect(layout.focusedLeafId).toBe(editorLeaf?.id);
+  });
 });
