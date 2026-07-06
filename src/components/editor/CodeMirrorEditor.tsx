@@ -9,7 +9,7 @@ import {
   redo,
   undo,
 } from "@codemirror/commands";
-import { bracketMatching, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from "@codemirror/language";
+import { bracketMatching, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting, defaultHighlightStyle, HighlightStyle, StreamLanguage } from "@codemirror/language";
 import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
 import { javascript } from "@codemirror/lang-javascript";
 import { rust } from "@codemirror/lang-rust";
@@ -20,6 +20,8 @@ import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
 import { sql } from "@codemirror/lang-sql";
 import { yaml } from "@codemirror/lang-yaml";
+import { java } from "@codemirror/lang-java";
+import { csharp } from "@codemirror/legacy-modes/mode/clike";
 import { tags } from "@lezer/highlight";
 import type { EditorRevealRequest } from "../../types";
 
@@ -195,7 +197,7 @@ const darkVoidHighlight = HighlightStyle.define([
   { tag: tags.regexp, color: "#89ddff" },
 ]);
 
-function getLanguageExtension(filePath: string): Extension | null {
+export function getLanguageExtension(filePath: string): Extension | null {
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
 
   switch (ext) {
@@ -229,6 +231,10 @@ function getLanguageExtension(filePath: string): Extension | null {
     case "yaml":
     case "yml":
       return yaml();
+    case "java":
+      return java();
+    case "cs":
+      return StreamLanguage.define(csharp);
     default:
       return null;
   }
