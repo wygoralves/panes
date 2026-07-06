@@ -372,7 +372,8 @@
     "descriptions": {
       "codex": "OpenAI's coding agent CLI, integrated natively with Panes chat and terminal workflows",
       "claude-code": "Anthropic's coding CLI, integrated natively with Panes for repo-aware and terminal-driven workflows",
-      "gemini-cli": "Google's coding agent CLI for code generation, repo tasks, and terminal workflows",
+      "gemini-cli": "Google's coding agent CLI, now discontinued for free tier accounts (Enterprise and Cloud licenses still supported)",
+      "antigravity": "Google's terminal agent CLI, the successor to Gemini CLI with unified reasoning and subagent orchestration",
       "kiro": "AWS's coding CLI focused on structured, agent-style development workflows",
       "opencode": "Open-source coding assistant for chat, edits, and terminal workflows",
       "kilo-code": "Lightweight coding assistant CLI for everyday code and repo tasks",
