@@ -962,23 +962,11 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                 <button
                   type="button"
+                  className="wss-icon-btn"
                   aria-label={t("app:sidebar.terminalFontSizeDecrease")}
                   disabled={updatingTerminalFontSize || terminalFontSize <= MIN_TERMINAL_FONT_SIZE}
                   onClick={() => {
                     void onChangeTerminalFontSize(-1);
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: 20,
-                    height: 20,
-                    borderRadius: 4,
-                    border: "none",
-                    background: "transparent",
-                    color: "var(--text-3)",
-                    cursor: "pointer",
-                    opacity: terminalFontSize <= MIN_TERMINAL_FONT_SIZE ? 0.4 : 1,
                   }}
                 >
                   <Minus size={12} />
@@ -996,23 +984,11 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 </span>
                 <button
                   type="button"
+                  className="wss-icon-btn"
                   aria-label={t("app:sidebar.terminalFontSizeIncrease")}
                   disabled={updatingTerminalFontSize || terminalFontSize >= MAX_TERMINAL_FONT_SIZE}
                   onClick={() => {
                     void onChangeTerminalFontSize(1);
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: 20,
-                    height: 20,
-                    borderRadius: 4,
-                    border: "none",
-                    background: "transparent",
-                    color: "var(--text-3)",
-                    cursor: "pointer",
-                    opacity: terminalFontSize >= MAX_TERMINAL_FONT_SIZE ? 0.4 : 1,
                   }}
                 >
                   <Plus size={12} />
