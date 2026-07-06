@@ -1,5 +1,26 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.59.1...vnull) (2026-07-06)
+
+### Features
+
+* **editor:** add syntax highlighting for Java and C# files ([c96e7d2](https://github.com/wygoralves/panes/commit/c96e7d24754dc6552a1ee6b5bb2e2b1083c01359))
+* **packaging:** add experimental flatpak manifest and mise install path ([8923aea](https://github.com/wygoralves/panes/commit/8923aeacdfaf38bf91ce739117bd60161bc41104))
+* **terminal:** add configurable terminal font size ([5b15ac0](https://github.com/wygoralves/panes/commit/5b15ac09acacf3d10f28f9c8a98e8fa903fc3337))
+* **ui:** add light mode theme ([fc5382a](https://github.com/wygoralves/panes/commit/fc5382a6a67df1847bbda245fcf88ae6003cf13f))
+* **workspace:** add a discoverable file plus chat split view ([bac435e](https://github.com/wygoralves/panes/commit/bac435e8bb8902906ca874784e7c1b4f292b7a8d))
+
+### Bug Fixes
+
+* **harness:** add Antigravity CLI harness, mark Gemini CLI enterprise only ([5013ac4](https://github.com/wygoralves/panes/commit/5013ac426789361cbaf9d8ce74140358f659e4e7))
+* **harness:** remove emdash from Antigravity logo comment ([d3e60b5](https://github.com/wygoralves/panes/commit/d3e60b573eff70abecb0edea792ccb1c17a181c8))
+* **linux:** apply EGL/DMABUF webview workaround to X11 AppImage sessions ([6c7721e](https://github.com/wygoralves/panes/commit/6c7721e715b6313a3af807020cfd5e7107dff44a))
+* **packaging:** address flatpak review findings ([0a71aaf](https://github.com/wygoralves/panes/commit/0a71aafbb6f8ceeb539560dd975dc58f5e4ad0a5))
+* **terminal:** address review feedback on font size setting ([d37fb08](https://github.com/wygoralves/panes/commit/d37fb08512105b2167c12784f9e3658e9696f047))
+* **ui:** fix light theme regressions, contrast, and remaining dark surfaces ([7a54862](https://github.com/wygoralves/panes/commit/7a54862197993317b59477f358a9d36d131ebd3f))
+* **workspace:** reserve space for the split button over the tab bar ([bf6bb22](https://github.com/wygoralves/panes/commit/bf6bb22c48a72c126f6835f963e3e6e6d1eb7d60))
+* **workspace:** tokenize the split button chip colors for light mode ([1ad561b](https://github.com/wygoralves/panes/commit/1ad561bce4bc98930d6242d26068acde440e9a16))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.59.0...vnull) (2026-05-03)
 
 ### Bug Fixes
