@@ -22,6 +22,7 @@ import {
   PillBottle,
   BellRing,
   Globe,
+  Minus,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -38,6 +39,14 @@ import {
   emitTerminalAcceleratedRenderingChanged,
   getTerminalAcceleratedRenderingPreferenceVersion,
 } from "../../lib/terminalRenderingSettings";
+import {
+  clampTerminalFontSize,
+  DEFAULT_TERMINAL_FONT_SIZE,
+  emitTerminalFontSizeChanged,
+  getTerminalFontSizePreferenceVersion,
+  MAX_TERMINAL_FONT_SIZE,
+  MIN_TERMINAL_FONT_SIZE,
+} from "../../lib/terminalFontSizeSettings";
 import {
   normalizeAppLocale,
   SUPPORTED_APP_LOCALES,
@@ -148,6 +157,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [settingsMenuPos, setSettingsMenuPos] = useState({ top: 0, left: 0 });
   const [terminalAcceleratedRendering, setTerminalAcceleratedRendering] = useState(true);
+  const [terminalFontSize, setTerminalFontSizeState] = useState(DEFAULT_TERMINAL_FONT_SIZE);
+  const [updatingTerminalFontSize, setUpdatingTerminalFontSize] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const previousSyncedActiveWorkspaceIdRef = useRef<string | null>(activeWorkspaceId);
@@ -188,6 +199,23 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
           getTerminalAcceleratedRenderingPreferenceVersion() === requestVersion
         ) {
           setTerminalAcceleratedRendering(enabled);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const requestVersion = getTerminalFontSizePreferenceVersion();
+    ipc
+      .getTerminalFontSize()
+      .then((fontSize) => {
+        if (!cancelled && getTerminalFontSizePreferenceVersion() === requestVersion) {
+          setTerminalFontSizeState(fontSize);
         }
       })
       .catch(() => undefined);
@@ -320,6 +348,22 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       emitTerminalAcceleratedRenderingChanged(saved);
     } catch {
       toast.error(t("app:sidebar.terminalAcceleratedRenderingFailed"));
+    }
+  }
+
+  async function onChangeTerminalFontSize(delta: number) {
+    const nextValue = clampTerminalFontSize(terminalFontSize + delta);
+    if (nextValue === terminalFontSize || updatingTerminalFontSize) return;
+
+    setUpdatingTerminalFontSize(true);
+    try {
+      const saved = await ipc.setTerminalFontSize(nextValue);
+      setTerminalFontSizeState(saved);
+      emitTerminalFontSizeChanged(saved);
+    } catch {
+      toast.error(t("app:sidebar.terminalFontSizeFailed"));
+    } finally {
+      setUpdatingTerminalFontSize(false);
     }
   }
 
@@ -905,6 +949,76 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               <span>{t("app:sidebar.terminalAcceleratedRendering")}</span>
               {terminalAcceleratedRendering ? <Check size={12} /> : null}
             </button>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "6px 10px",
+                gap: 8,
+              }}
+            >
+              <span style={{ fontSize: 12 }}>{t("app:sidebar.terminalFontSize")}</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <button
+                  type="button"
+                  aria-label={t("app:sidebar.terminalFontSizeDecrease")}
+                  disabled={updatingTerminalFontSize || terminalFontSize <= MIN_TERMINAL_FONT_SIZE}
+                  onClick={() => {
+                    void onChangeTerminalFontSize(-1);
+                  }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 20,
+                    height: 20,
+                    borderRadius: 4,
+                    border: "none",
+                    background: "transparent",
+                    color: "var(--text-3)",
+                    cursor: "pointer",
+                    opacity: terminalFontSize <= MIN_TERMINAL_FONT_SIZE ? 0.4 : 1,
+                  }}
+                >
+                  <Minus size={12} />
+                </button>
+                <span
+                  style={{
+                    minWidth: 20,
+                    textAlign: "center",
+                    fontSize: 11,
+                    color: "var(--text-2)",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {terminalFontSize}
+                </span>
+                <button
+                  type="button"
+                  aria-label={t("app:sidebar.terminalFontSizeIncrease")}
+                  disabled={updatingTerminalFontSize || terminalFontSize >= MAX_TERMINAL_FONT_SIZE}
+                  onClick={() => {
+                    void onChangeTerminalFontSize(1);
+                  }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 20,
+                    height: 20,
+                    borderRadius: 4,
+                    border: "none",
+                    background: "transparent",
+                    color: "var(--text-3)",
+                    cursor: "pointer",
+                    opacity: terminalFontSize >= MAX_TERMINAL_FONT_SIZE ? 0.4 : 1,
+                  }}
+                >
+                  <Plus size={12} />
+                </button>
+              </span>
+            </div>
             <div className="git-action-menu-divider" />
 
             {/* ── Actions ── */}
