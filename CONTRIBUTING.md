@@ -39,9 +39,25 @@ cargo fmt -- --check
 cargo check
 ```
 
+## Pull request access
+
+This repository currently has GitHub's pull request creation policy set to `collaborators_only`. That means only accounts with collaborator access can open a pull request directly against this repo, even though anyone can fork it and push a branch.
+
+If you are not a collaborator, the working path today is:
+
+1. Fork the repo and push your change to a branch on your fork.
+2. Open an issue describing the change, linking your fork and branch (a compare URL such as `https://github.com/<you>/panes/compare/master...<you>:panes:<branch>` works well).
+3. A maintainer reviews the diff from the issue, then either pulls the branch in directly or grants access so you can open the PR yourself.
+
+This is a temporary restriction while the project has one maintainer doing review, not a rejection of outside contributions. The policy may open up to all forks later; until then, route proposed changes through an issue first.
+
+### Translation contributions
+
+Localized READMEs follow the `README.<locale>.md` convention already used for `README.pt-BR.md`. A Chinese translation would live at `README.zh-CN.md` at the repo root, linked from the language line at the top of `README.md` alongside the existing English and Portuguese links. Propose translations through the same fork-and-issue path described above.
+
 ## Contribution rules
 
-- Send changes through a branch in your fork and open a pull request against `master`.
+- Send changes through a branch in your fork. If you already have collaborator access, open a pull request against `master` directly; otherwise see [Pull request access](#pull-request-access) above.
 - Keep one PR focused on one problem.
 - Update docs when behavior, setup, or workflow changes.
 - If you add or change user-facing copy, update both locale resource sets under `src/i18n/resources/en/` and `src/i18n/resources/pt-BR/`.
