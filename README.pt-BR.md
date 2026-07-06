@@ -43,6 +43,7 @@ O Panes não é uma IDE completa, mas inclui um editor multiaba embutido para re
 - Chat em streaming com blocos estruturados para texto, thinking, actions, diffs, approvals, attachments e atualizações de uso
 - Integração de chat com Codex via `codex app-server`
 - Integração de chat com Claude via sidecar do Claude Agent SDK
+- Integração de chat com OpenCode, incluindo providers customizados e locais compatíveis com OpenAI (LM Studio, Ollama, vLLM e outros)
 - Plan mode, attachments, controles de reasoning effort, overrides de approval/network por thread e overrides de sandbox mode específicos do Codex
 - Busca global de mensagens com FTS e navegação por teclado
 - Carregamento em janela e hidratação lazy para threads longas e outputs de action
@@ -133,6 +134,56 @@ Isso só funciona dentro de terminais abertos pelo Panes, porque o comando de ho
 O Panes também escuta sequências OSC comuns de notificação de desktop emitidas diretamente por programas rodando dentro de uma sessão de terminal do Panes. Elas funcionam sem nenhuma configuração de Claude ou Codex. Hoje o backend reconhece payloads de notificação `OSC 9`, `OSC 777;notify;...` e `OSC 99` antes de o replay do terminal ser gravado, então notificações ao vivo não disparam de novo quando a sessão do terminal é retomada.
 
 Relatórios de progresso `OSC 9;4` são deixados intactos de propósito e não são tratados como notificações.
+
+### Usando Modelos Locais (LM Studio, Ollama e Outros Servidores Compatíveis com OpenAI)
+
+O Panes não hospeda nem faz proxy de modelos por conta própria. O suporte a modelos locais vem das chat engines que ele integra, e hoje existem dois caminhos que funcionam.
+
+**Chat engine do OpenCode**
+
+O OpenCode aceita qualquer endpoint compatível com OpenAI como provider customizado. Adicione um bloco `provider` no `opencode.json` (no nível do projeto) ou em `~/.config/opencode/opencode.json` (global). Para o LM Studio:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "lmstudio": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "LM Studio (local)",
+      "options": {
+        "baseURL": "http://127.0.0.1:1234/v1"
+      },
+      "models": {
+        "qwen2.5-coder-7b-instruct": {
+          "name": "Qwen 2.5 Coder 7B"
+        }
+      }
+    }
+  }
+}
+```
+
+Troque o id do modelo pelo que estiver carregado no LM Studio e inicie o servidor local dele. Com o CLI `opencode` instalado, selecione a chat engine do OpenCode no model picker do Panes: o provider aparece na lista de providers da engine, com os modelos configurados agrupados abaixo dele. O mesmo padrão funciona para Ollama, vLLM ou qualquer outro servidor que fale a API compatível com OpenAI, bastando apontar o `baseURL` para esse servidor.
+
+**Chat engine do Codex**
+
+Versões recentes do Codex CLI trazem `ollama` e `lmstudio` como ids reservados e nativos em `model_providers`. Aponte o Codex para um deles em `~/.codex/config.toml`:
+
+```toml
+model_provider = "lmstudio"
+model = "qwen2.5-coder-7b-instruct"
+```
+
+ou defina um endpoint customizado por conta própria:
+
+```toml
+[model_providers.local_ollama]
+name = "Ollama (local)"
+base_url = "http://localhost:11434/v1"
+wire_api = "responses"
+```
+
+A chat engine do Codex no Panes lê o que o `codex app-server` reportar em `model/list`, então depois de configurar o Codex CLI dessa forma, o modelo resultante aparece no model picker do Codex no Panes sem nenhuma configuração adicional do lado do Panes. Isso depende da versão instalada do Codex CLI suportar `model_providers`; atualize o Codex se um id de provider for rejeitado.
 
 ### Build de Produção
 
