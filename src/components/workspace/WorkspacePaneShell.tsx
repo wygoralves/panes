@@ -808,7 +808,7 @@ function PaneLeafView({
     <section
       className={`workspace-pane-leaf${focused ? " workspace-pane-leaf-focused" : ""}${
         leafCount > 1 ? " workspace-pane-leaf-has-close" : ""
-      }`}
+      }${splitLabel ? " workspace-pane-leaf-has-split" : ""}`}
       data-workspace-pane-leaf-id={leaf.id}
       onMouseDownCapture={() => focusLeaf(workspaceId, leaf.id)}
     >
