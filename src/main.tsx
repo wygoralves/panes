@@ -6,6 +6,7 @@ import { AppErrorBoundary } from "./components/shared/AppErrorBoundary";
 import { initializeI18n } from "./i18n";
 import { ipc } from "./lib/ipc";
 import { getBrowserLocaleFallback } from "./lib/locale";
+import { useThemeStore } from "./stores/themeStore";
 import "./globals.css";
 
 async function bootstrap() {
@@ -16,6 +17,10 @@ async function bootstrap() {
   } catch {
     // Frontend-only dev/test contexts won't have the Tauri invoke bridge.
   }
+
+  // Stamp data-theme before first paint so returning users never see a flash
+  // of the wrong theme.
+  await useThemeStore.getState().load();
 
   await initializeI18n(locale);
 

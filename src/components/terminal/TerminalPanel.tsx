@@ -19,6 +19,7 @@ import {
   getTerminalAcceleratedRenderingPreferenceVersion,
   listenTerminalAcceleratedRenderingChanged,
 } from "../../lib/terminalRenderingSettings";
+import { getCurrentThemeMode, getXtermThemeColors, listenThemeChanged } from "../../lib/theme";
 import {
   extractTextLinkMatches,
   getWorkspacePaneLeafIdFromEventTarget,
@@ -316,6 +317,15 @@ function forEachWorkspaceCachedTerminal(
     }
     const sessionId = cacheKey.slice(workspacePrefix.length);
     callback(sessionId, session);
+  }
+}
+
+/** Theme is app-global (not workspace-scoped), so this updates every cached
+ * terminal across every workspace, including ones detached in the background. */
+function applyThemeToAllCachedTerminals(mode: ReturnType<typeof getCurrentThemeMode>) {
+  const theme = getXtermThemeColors(mode);
+  for (const session of cachedTerminals.values()) {
+    session.terminal.options.theme = theme;
   }
 }
 
@@ -2104,12 +2114,7 @@ function createCachedTerminal(
     },
     lineHeight: 1.3,
     scrollback: TERMINAL_SCROLLBACK_LINES,
-    theme: {
-      background: "#050505",
-      foreground: "#f5f5f5",
-      selectionBackground: "rgba(255, 107, 107, 0.28)",
-      cursor: "#FF6B6B",
-    },
+    theme: getXtermThemeColors(getCurrentThemeMode()),
   };
   terminalOptions.allowNonHttpProtocols = true;
   const terminal = new Terminal(terminalOptions);
@@ -3061,6 +3066,8 @@ export function TerminalPanel({ workspaceId, embedded = false }: TerminalPanelPr
       }),
     [workspaceId],
   );
+
+  useEffect(() => listenThemeChanged(applyThemeToAllCachedTerminals), []);
 
   useEffect(() => {
     if (renamingGroupId) {

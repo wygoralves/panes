@@ -29,13 +29,13 @@
   --info: #60a5fa;
 
   /* Borders */
-  --border: rgba(255, 255, 255, 0.16);
-  --border-active: rgba(255, 255, 255, 0.26);
+  --border: var(--wash-16);
+  --border-active: var(--wash-26);
   --border-accent: rgba(255, 107, 107, 0.20);
 
   /* Glass */
   --glass-bg: rgba(0, 0, 0, 0.75);
-  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-border: var(--wash-08);
   --glass-blur: 20px;
 
   /* Code */
@@ -57,7 +57,7 @@
   --content-bg: #111111;
   --content-top-margin: 8px;
   --content-radius: 10px;
-  --content-border: rgba(255, 255, 255, 0.08);
+  --content-border: var(--wash-08);
   --panel-header-height: 48px;
   --linux-forehead-height: 36px;
   --linux-window-control-size: 28px;
@@ -77,6 +77,156 @@
   --block-steer-bg: rgba(255, 107, 107, 0.06);
   --block-steer-border: rgba(255, 107, 107, 0.16);
 
+  /* Text drawn on top of accent-filled surfaces (buttons, launch chips) */
+  --on-accent: #0c0d13;
+
+  /* Overlay washes — translucent white tints used for hover/active states
+     on dark surfaces. Flipped to translucent black under the light theme. */
+  --wash-02: rgba(255,255,255,.02);
+  --wash-025: rgba(255,255,255,.025);
+  --wash-03: rgba(255,255,255,.03);
+  --wash-04: rgba(255,255,255,.04);
+  --wash-045: rgba(255,255,255,.045);
+  --wash-05: rgba(255,255,255,.05);
+  --wash-06: rgba(255,255,255,.06);
+  --wash-07: rgba(255,255,255,.07);
+  --wash-08: rgba(255,255,255,.08);
+  --wash-09: rgba(255,255,255,.09);
+  --wash-1: rgba(255,255,255,.1);
+  --wash-11: rgba(255,255,255,.11);
+  --wash-12: rgba(255,255,255,.12);
+  --wash-14: rgba(255,255,255,.14);
+  --wash-15: rgba(255,255,255,.15);
+  --wash-16: rgba(255,255,255,.16);
+  --wash-18: rgba(255,255,255,.18);
+  --wash-2: rgba(255,255,255,.2);
+  --wash-24: rgba(255,255,255,.24);
+  --wash-26: rgba(255,255,255,.26);
+  --wash-015: rgba(255,255,255,.015);
+
+  /* Markdown / chat code-fence syntax colors (highlight.js) */
+  --hljs-fg: #c9d1d9;
+  --hljs-keyword: #ff7b72;
+  --hljs-string: #a5d6ff;
+  --hljs-number: #79c0ff;
+  --hljs-comment: #484f58;
+  --hljs-function: #d2a8ff;
+  --hljs-built-in: #ffa657;
+  --hljs-meta: #8b949e;
+  --hljs-selector: #7ee787;
+  --hljs-addition-color: #aff5b4;
+  --hljs-addition-bg: rgba(46, 160, 67, 0.15);
+  --hljs-deletion-color: #ffdcd7;
+  --hljs-deletion-bg: rgba(248, 81, 73, 0.15);
+
+  /* File editor syntax colors (CodeMirror HighlightStyle) */
+  --cm-keyword: #c792ea;
+  --cm-operator: #89ddff;
+  --cm-special-variable: #eeffff;
+  --cm-type: #ffcb6b;
+  --cm-atom: #f78c6c;
+  --cm-def-variable: #82aaff;
+  --cm-string: #c3e88d;
+  --cm-special-string: #f07178;
+  --cm-comment: #546e7a;
+  --cm-invalid: #ff5370;
+}
+
+/* ── Light theme ──
+   Overrides every semantic token above. Selected explicitly via the
+   Preferences menu (dark / light / system); "system" resolves to one of
+   these two at runtime and stamps data-theme accordingly. */
+:root[data-theme="light"] {
+  --bg-0: #ffffff;
+  --bg-1: #ffffff;
+  --bg-2: #f6f6f7;
+  --bg-3: #ebedf0;
+  --bg-4: #dfe2e6;
+  --bg-5: #d1d5db;
+
+  --text-1: #17181c;
+  --text-2: #55585f;
+  --text-3: #85888f;
+
+  --accent: #cc3333;
+  --accent-dim: rgba(204, 51, 51, 0.08);
+  --accent-glow: 0 0 12px rgba(204, 51, 51, 0.12);
+  --accent-2: #7c5cd8;
+  --accent-2-dim: rgba(124, 92, 216, 0.1);
+  --on-accent: #ffffff;
+
+  --success: #15803d;
+  --danger: #cc3333;
+  --warning: #b45309;
+  --info: #2563eb;
+
+  --border: rgba(0, 0, 0, 0.12);
+  --border-active: rgba(0, 0, 0, 0.22);
+  --border-accent: rgba(204, 51, 51, 0.2);
+
+  --glass-bg: rgba(255, 255, 255, 0.75);
+  --glass-border: rgba(0, 0, 0, 0.08);
+
+  --code-bg: #f1f2f4;
+
+  --sidebar-bg: #f5f5f6;
+  --content-bg: #ffffff;
+  --content-border: rgba(0, 0, 0, 0.08);
+
+  --block-error-bg: rgba(204, 51, 51, 0.08);
+  --block-error-border: rgba(204, 51, 51, 0.22);
+  --block-notice-bg: rgba(37, 99, 235, 0.08);
+  --block-notice-border: rgba(37, 99, 235, 0.2);
+  --block-steer-bg: rgba(204, 51, 51, 0.06);
+  --block-steer-border: rgba(204, 51, 51, 0.18);
+
+  /* Overlay washes flip polarity: translucent black instead of white. */
+  --wash-02: rgba(0,0,0,.03);
+  --wash-025: rgba(0,0,0,.035);
+  --wash-03: rgba(0,0,0,.04);
+  --wash-04: rgba(0,0,0,.05);
+  --wash-045: rgba(0,0,0,.055);
+  --wash-05: rgba(0,0,0,.06);
+  --wash-06: rgba(0,0,0,.07);
+  --wash-07: rgba(0,0,0,.08);
+  --wash-08: rgba(0,0,0,.09);
+  --wash-09: rgba(0,0,0,.1);
+  --wash-1: rgba(0,0,0,.11);
+  --wash-11: rgba(0,0,0,.12);
+  --wash-12: rgba(0,0,0,.13);
+  --wash-14: rgba(0,0,0,.15);
+  --wash-15: rgba(0,0,0,.16);
+  --wash-16: rgba(0,0,0,.18);
+  --wash-18: rgba(0,0,0,.2);
+  --wash-2: rgba(0,0,0,.22);
+  --wash-24: rgba(0,0,0,.26);
+  --wash-26: rgba(0,0,0,.28);
+  --wash-015: rgba(0,0,0,.02);
+
+  /* Markdown / chat code-fence syntax colors (light, GitHub-Light-inspired) */
+  --hljs-fg: #24292f;
+  --hljs-keyword: #cf222e;
+  --hljs-string: #0a3069;
+  --hljs-number: #0550ae;
+  --hljs-comment: #6e7781;
+  --hljs-function: #8250df;
+  --hljs-built-in: #953800;
+  --hljs-meta: #57606a;
+  --hljs-selector: #116329;
+  --hljs-addition-color: #116329;
+  --hljs-deletion-color: #82071e;
+
+  /* File editor syntax colors (light, Atom-One-Light-inspired) */
+  --cm-keyword: #7c3aed;
+  --cm-operator: #0184bc;
+  --cm-special-variable: #383a42;
+  --cm-type: #c18401;
+  --cm-atom: #d2591c;
+  --cm-def-variable: #4078f2;
+  --cm-string: #50a14f;
+  --cm-special-string: #ca1243;
+  --cm-comment: #8a919c;
+  --cm-invalid: #e45649;
 }
 
 /* ── Reset ── */
@@ -137,11 +287,11 @@ button, input, textarea, select {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
   border-radius: 99px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--wash-15);
 }
 ::-webkit-scrollbar-corner {
   background: transparent;
@@ -326,15 +476,15 @@ button, input, textarea, select {
 }
 
 .linux-window-control:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
+  border-color: var(--wash-06);
   color: var(--text-1);
 }
 
 .linux-window-control-close:hover {
   background: rgba(248, 113, 113, 0.14);
   border-color: rgba(248, 113, 113, 0.12);
-  color: #fca5a5;
+  color: var(--danger);
 }
 
 .linux-window-control-icon {
@@ -498,7 +648,7 @@ button, input, textarea, select {
 
 .btn-primary {
   background: var(--accent);
-  color: #0c0d13;
+  color: var(--on-accent);
   font-weight: 600;
 }
 .btn-primary:hover {
@@ -510,7 +660,7 @@ button, input, textarea, select {
   color: var(--text-2);
 }
 .btn-ghost:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-1);
 }
 
@@ -542,7 +692,7 @@ button, input, textarea, select {
   background: transparent;
 }
 .btn-cancel-ghost:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-2);
   border-color: var(--border-active);
 }
@@ -608,7 +758,7 @@ button, input, textarea, select {
   transition: border-color 120ms, background 120ms;
 }
 .ob-interactive:not(.ob-selected):hover {
-  border-color: rgba(255, 255, 255, 0.24) !important;
+  border-color: var(--wash-24) !important;
 }
 
 @keyframes ob-backdrop-in {
@@ -697,25 +847,25 @@ button, input, textarea, select {
   animation: pulse-soft 2s ease-in-out infinite;
 }
 
-/* ── Code Syntax — Dark Void theme ── */
-.hljs { color: #c9d1d9; background: transparent; }
-.hljs-keyword { color: #ff7b72; }
-.hljs-string { color: #a5d6ff; }
-.hljs-number { color: #79c0ff; }
-.hljs-comment { color: #484f58; font-style: italic; }
-.hljs-function { color: #d2a8ff; }
-.hljs-title { color: #d2a8ff; }
-.hljs-built_in { color: #ffa657; }
-.hljs-literal { color: #79c0ff; }
-.hljs-type { color: #ffa657; }
-.hljs-params { color: #c9d1d9; }
-.hljs-meta { color: #8b949e; }
-.hljs-attr { color: #79c0ff; }
-.hljs-variable { color: #ffa657; }
-.hljs-selector-class { color: #7ee787; }
-.hljs-selector-tag { color: #7ee787; }
-.hljs-addition { color: #aff5b4; background: rgba(46, 160, 67, 0.15); }
-.hljs-deletion { color: #ffdcd7; background: rgba(248, 81, 73, 0.15); }
+/* ── Code Syntax — Void theme (dark default, light override below) ── */
+.hljs { color: var(--hljs-fg); background: transparent; }
+.hljs-keyword { color: var(--hljs-keyword); }
+.hljs-string { color: var(--hljs-string); }
+.hljs-number { color: var(--hljs-number); }
+.hljs-comment { color: var(--hljs-comment); font-style: italic; }
+.hljs-function { color: var(--hljs-function); }
+.hljs-title { color: var(--hljs-function); }
+.hljs-built_in { color: var(--hljs-built-in); }
+.hljs-literal { color: var(--hljs-number); }
+.hljs-type { color: var(--hljs-built-in); }
+.hljs-params { color: var(--hljs-fg); }
+.hljs-meta { color: var(--hljs-meta); }
+.hljs-attr { color: var(--hljs-number); }
+.hljs-variable { color: var(--hljs-built-in); }
+.hljs-selector-class { color: var(--hljs-selector); }
+.hljs-selector-tag { color: var(--hljs-selector); }
+.hljs-addition { color: var(--hljs-addition-color); background: var(--hljs-addition-bg); }
+.hljs-deletion { color: var(--hljs-deletion-color); background: var(--hljs-deletion-bg); }
 
 /* ── Markdown prose ── */
 .prose {
@@ -734,7 +884,7 @@ button, input, textarea, select {
   font-size: 0.88em;
   padding: 1px 5px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   border: none;
 }
 .prose pre { margin: 8px 0; padding: 10px 14px; border-radius: var(--radius-sm); background: var(--code-bg); border: 1px solid var(--border); overflow-x: auto; }
@@ -938,7 +1088,7 @@ button, input, textarea, select {
   border-radius: var(--radius-md);
   background: var(--bg-3);
   border: 1px solid var(--border-active);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--wash-04);
   animation: dropdown-in var(--duration-fast) var(--ease-out) both;
 }
 
@@ -969,7 +1119,7 @@ button, input, textarea, select {
 }
 
 .dropdown-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-1);
 }
 
@@ -1014,7 +1164,7 @@ button, input, textarea, select {
 }
 
 .dropdown-item-active {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-1);
 }
 
@@ -1110,7 +1260,7 @@ button, input, textarea, select {
   flex-shrink: 0;
 }
 .git-toolbar-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-1);
 }
 .git-toolbar-btn:focus-visible,
@@ -1153,7 +1303,7 @@ button, input, textarea, select {
   right: 4px;
   bottom: 18px;
   width: 1px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
   transition: background var(--duration-fast) var(--ease-out),
               opacity var(--duration-fast) var(--ease-out);
 }
@@ -1161,8 +1311,8 @@ button, input, textarea, select {
 .git-flyout-trigger:hover,
 .git-flyout-trigger:focus-visible,
 .git-flyout-trigger-active {
-  background: rgba(255, 255, 255, 0.03);
-  border-left-color: rgba(255, 255, 255, 0.05);
+  background: var(--wash-03);
+  border-left-color: var(--wash-05);
 }
 
 .git-flyout-trigger:hover::after,
@@ -1216,7 +1366,7 @@ button, input, textarea, select {
 }
 .git-tab:hover {
   color: var(--text-2);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--wash-02);
 }
 .git-tab-active {
   color: var(--text-1);
@@ -1260,10 +1410,10 @@ button, input, textarea, select {
   border-left: 2px solid transparent;
 }
 .git-file-row:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--wash-03);
 }
 .git-file-row-selected {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
   border-left-color: var(--accent);
 }
 .git-file-name {
@@ -1309,7 +1459,7 @@ button, input, textarea, select {
 }
 .git-file-row:hover .git-stage-btn { opacity: 1; }
 .git-stage-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
   color: var(--text-1);
 }
 
@@ -1481,15 +1631,15 @@ button, input, textarea, select {
   height: 38px;
   padding: 0 14px;
   gap: 6px;
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--wash-025);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out);
   user-select: none;
   flex-shrink: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--wash-06);
 }
 .multi-repo-header:first-child { border-top: none; }
-.multi-repo-header:hover { background: rgba(255, 255, 255, 0.045); }
+.multi-repo-header:hover { background: var(--wash-045); }
 .multi-repo-header-clean { opacity: 0.4; }
 .multi-repo-header-clean:hover { opacity: 0.6; }
 .multi-repo-chevron {
@@ -1499,7 +1649,7 @@ button, input, textarea, select {
 .multi-repo-name {
   font-size: 12px;
   font-weight: 600;
-  color: #e8e8e8;
+  color: var(--text-1);
 }
 .multi-repo-header-clean .multi-repo-name {
   font-weight: 500;
@@ -1547,18 +1697,18 @@ button, input, textarea, select {
 }
 .multi-repo-header:hover .multi-repo-badge { display: none; }
 .multi-repo-more-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
   color: var(--text-1);
 }
 .multi-repo-body {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--wash-06);
 }
 .multi-repo-commit-area {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 14px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--wash-06);
 }
 .multi-repo-commit-area .git-commit-input {
   flex: 1;
@@ -1742,11 +1892,11 @@ button, input, textarea, select {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--wash-03);
   transition: background var(--duration-fast) var(--ease-out);
 }
 .git-branch-row:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--wash-02);
 }
 .git-branch-row-actions {
   display: flex;
@@ -1805,16 +1955,16 @@ button, input, textarea, select {
 /* Commit rows */
 .git-commit-row {
   padding: 8px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--wash-03);
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 .git-commit-row:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--wash-03);
 }
 .git-commit-row-selected {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
 }
 .git-commit-hash {
   font-family: "JetBrains Mono", monospace;
@@ -1843,11 +1993,11 @@ button, input, textarea, select {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--wash-03);
   transition: background var(--duration-fast) var(--ease-out);
 }
 .git-stash-row:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--wash-02);
 }
 .git-stash-actions {
   display: flex;
@@ -1865,7 +2015,7 @@ button, input, textarea, select {
   border-radius: var(--radius-sm);
   background: var(--bg-3);
   border: 1px solid var(--border-active);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--wash-04);
   z-index: 9999;
   animation: dropdown-in var(--duration-fast) var(--ease-out) both;
 }
@@ -1886,7 +2036,7 @@ button, input, textarea, select {
 }
 
 .git-action-menu-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-1);
 }
 
@@ -1918,7 +2068,7 @@ button, input, textarea, select {
 .git-action-menu-divider {
   height: 1px;
   margin: 4px 8px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
 }
 
 .git-action-menu-section-label {
@@ -2015,7 +2165,7 @@ button, input, textarea, select {
 }
 
 .workspace-pane-title-btn:not(:disabled):hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
 }
 
 .workspace-pane-title-btn:disabled {
@@ -2061,7 +2211,7 @@ button, input, textarea, select {
   gap: 7px;
   max-width: 180px;
   padding: 7px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--wash-12);
   border-radius: var(--radius-sm);
   background: rgba(10, 10, 10, 0.82);
   color: var(--text-1);
@@ -2184,7 +2334,7 @@ button, input, textarea, select {
 }
 
 .workspace-pane-close-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
   color: var(--text-1);
 }
 
@@ -2214,7 +2364,7 @@ button, input, textarea, select {
   inset: 0;
   z-index: 8;
   pointer-events: none;
-  background: rgba(255, 255, 255, 0.015);
+  background: var(--wash-015);
 }
 
 .workspace-pane-snap-preview {
@@ -2236,7 +2386,7 @@ button, input, textarea, select {
   content: "";
   position: absolute;
   inset: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid var(--wash-16);
   border-radius: calc(var(--radius-sm) - 1px);
 }
 
@@ -2277,7 +2427,7 @@ button, input, textarea, select {
   max-width: calc(100% - 24px);
   padding: 7px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(255, 255, 255, 0.11);
+  border: 1px solid var(--wash-11);
   background: rgba(10, 10, 10, 0.72);
   color: var(--text-1);
   font-size: 12px;
@@ -2356,7 +2506,7 @@ button, input, textarea, select {
 }
 
 .layout-mode-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-2);
 }
 
@@ -2436,7 +2586,7 @@ button, input, textarea, select {
 }
 
 .file-explorer-collapse-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-2);
 }
 
@@ -2491,7 +2641,7 @@ button, input, textarea, select {
 }
 
 .file-explorer-row:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--wash-03);
 }
 
 .file-explorer-row-dir {
@@ -2525,7 +2675,7 @@ button, input, textarea, select {
 }
 
 .file-explorer-row.context-active {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
 }
 
 /* Inline rename / create input */
@@ -2601,7 +2751,7 @@ button, input, textarea, select {
 }
 
 .file-explorer-select-bar .select-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-1);
   border-color: var(--border-active);
 }
@@ -2655,7 +2805,7 @@ button, input, textarea, select {
 }
 
 .editor-explorer-toggle:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-2);
 }
 
@@ -2689,7 +2839,7 @@ button, input, textarea, select {
 .terminal-split-panel {
   height: 100%;
   min-height: 0;
-  background: #050505;
+  background: var(--code-bg);
 }
 
 .terminal-panel-root {
@@ -2697,7 +2847,7 @@ button, input, textarea, select {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: #050505;
+  background: var(--code-bg);
 }
 
 .terminal-tabs-bar {
@@ -2758,7 +2908,7 @@ button, input, textarea, select {
 
 .terminal-tab:hover {
   color: var(--text-2);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--wash-02);
 }
 
 .terminal-tab-active {
@@ -2816,8 +2966,8 @@ button, input, textarea, select {
 
 .terminal-tab-close:hover {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.1);
+  background: var(--wash-08);
+  border-color: var(--wash-1);
 }
 
 .terminal-add-btn {
@@ -2842,8 +2992,8 @@ button, input, textarea, select {
 
 .terminal-add-btn:hover {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.09);
-  border-color: rgba(255, 255, 255, 0.1);
+  background: var(--wash-09);
+  border-color: var(--wash-1);
 }
 
 .terminal-add-btn:active {
@@ -2891,7 +3041,7 @@ button, input, textarea, select {
 }
 
 .terminal-viewport .xterm-viewport::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
   border-radius: 99px;
 }
 
@@ -3076,7 +3226,7 @@ button, input, textarea, select {
   position: relative;
   z-index: 10;
   opacity: 0.85;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   transition: none !important;
 }
@@ -3181,7 +3331,7 @@ button, input, textarea, select {
 }
 .tnd-back-btn:hover {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
 }
 
 .tnd-multi-title {
@@ -3235,7 +3385,7 @@ button, input, textarea, select {
 }
 .tnd-stepper-btn:hover:not(:disabled) {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
 }
 .tnd-stepper-btn:disabled {
   opacity: 0.2;
@@ -3397,7 +3547,7 @@ button, input, textarea, select {
   padding: 8px 12px;
   border-radius: var(--radius-sm);
   background: var(--accent);
-  color: #0c0d13;
+  color: var(--on-accent);
   font-size: 11.5px;
   font-weight: 600;
   font-family: inherit;
@@ -3494,7 +3644,7 @@ button, input, textarea, select {
 .sb-rail-divider {
   width: 18px;
   height: 1px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   margin: 6px 0;
 }
 
@@ -3564,7 +3714,7 @@ button, input, textarea, select {
 }
 
 .shell-pin-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
   color: var(--text-1);
 }
 
@@ -3597,12 +3747,12 @@ button, input, textarea, select {
 }
 
 .sb-nav-item:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
   color: var(--text-1);
 }
 
 .sb-nav-item.sb-nav-item-active {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-1);
 }
 
@@ -3642,7 +3792,7 @@ button, input, textarea, select {
 }
 
 .sb-add-project-btn:hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--wash-07);
   color: var(--text-1);
 }
 
@@ -3660,13 +3810,13 @@ button, input, textarea, select {
 }
 
 .sb-project:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--wash-03);
   color: var(--text-1);
 }
 
 .sb-project-active {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
 }
 
 .sb-project-active::before {
@@ -3704,7 +3854,7 @@ button, input, textarea, select {
   align-items: center;
   justify-content: center;
   border-radius: 99px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -3732,7 +3882,7 @@ button, input, textarea, select {
 }
 
 .sb-project-archive:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
   color: var(--text-1);
   opacity: 1 !important;
 }
@@ -3770,7 +3920,7 @@ button, input, textarea, select {
 }
 
 .sb-thread:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--wash-03);
 }
 
 .sb-thread-active {
@@ -3852,7 +4002,7 @@ button, input, textarea, select {
 }
 
 .sb-thread-archive:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
   color: var(--text-1);
   opacity: 1 !important;
 }
@@ -3899,13 +4049,13 @@ button, input, textarea, select {
 }
 
 .sb-open-project-btn:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
   border-color: var(--border-active);
   color: var(--text-1);
 }
 
 .sb-open-project-btn.sb-btn-active {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   border-color: var(--border-active);
   color: var(--text-1);
 }
@@ -3951,7 +4101,7 @@ button, input, textarea, select {
 }
 
 .sb-archived-restore:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
   color: var(--accent);
 }
 
@@ -3979,7 +4129,7 @@ button, input, textarea, select {
 
 .sb-settings-btn:hover {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
 }
 
 /* Update notification dot */
@@ -4134,7 +4284,7 @@ button, input, textarea, select {
 .chat-approval-banner {
   border-radius: var(--radius-sm);
   background: var(--bg-3);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--wash-08);
   padding: 0;
   overflow: hidden;
   animation: slide-up var(--duration-normal) var(--ease-out) both;
@@ -4146,7 +4296,7 @@ button, input, textarea, select {
   gap: 7px;
   padding: 7px 10px;
   background: rgba(251, 191, 36, 0.06);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--wash-05);
 }
 
 .approval-header-icon {
@@ -4253,7 +4403,7 @@ button, input, textarea, select {
 /* Allow — primary */
 .approval-btn-allow {
   background: var(--accent);
-  color: #080808;
+  color: var(--on-accent);
   font-weight: 600;
 }
 
@@ -4265,13 +4415,13 @@ button, input, textarea, select {
 .approval-btn-session {
   background: transparent;
   color: var(--text-2);
-  border-color: rgba(255, 255, 255, 0.1);
+  border-color: var(--wash-1);
 }
 
 .approval-btn-session:hover {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.18);
+  background: var(--wash-05);
+  border-color: var(--wash-18);
 }
 
 /* Deny — red text, no border until hover */
@@ -4301,7 +4451,7 @@ button, input, textarea, select {
 .acard {
   border-radius: var(--radius-sm);
   background: var(--bg-3);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--wash-08);
   overflow: hidden;
   margin: 0 16px;
 }
@@ -4312,7 +4462,7 @@ button, input, textarea, select {
   gap: 8px;
   padding: 8px 12px;
   background: rgba(251, 191, 36, 0.06);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--wash-05);
 }
 
 .acard-header-icon {
@@ -4336,7 +4486,7 @@ button, input, textarea, select {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   padding: 1px 6px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
   color: var(--text-3);
   flex-shrink: 0;
 }
@@ -4584,7 +4734,7 @@ button, input, textarea, select {
 
 .toast-dismiss:hover {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
 }
 
 @keyframes toast-in {
@@ -4620,7 +4770,7 @@ button, input, textarea, select {
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--border-active);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--wash-04);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -4691,7 +4841,7 @@ button, input, textarea, select {
   font-weight: 600;
   cursor: pointer;
   background: var(--danger);
-  color: #0c0d13;
+  color: var(--on-accent);
   transition: all var(--duration-fast) var(--ease-out);
 }
 
@@ -4767,7 +4917,7 @@ button, input, textarea, select {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--accent);
   flex-shrink: 0;
 }
@@ -4796,12 +4946,12 @@ button, input, textarea, select {
 }
 
 .workspace-preset-mode-tab:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-1);
 }
 
 .workspace-preset-mode-tab-active {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
   color: var(--text-1);
 }
 
@@ -4818,8 +4968,8 @@ button, input, textarea, select {
 .workspace-preset-session-card,
 .workspace-preset-tree-node,
 .workspace-preset-apply-confirm {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--wash-08);
+  background: var(--wash-03);
   border-radius: var(--radius-md);
 }
 
@@ -4923,7 +5073,7 @@ button, input, textarea, select {
 
 .workspace-preset-empty-state {
   min-height: 120px;
-  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border: 1px dashed var(--wash-14);
   border-radius: var(--radius-md);
   display: flex;
   flex-direction: column;
@@ -4994,10 +5144,10 @@ button, input, textarea, select {
   overflow: hidden;
   border-radius: var(--radius-lg);
   background: var(--bg-2);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--wash-08);
   box-shadow:
     0 32px 80px rgba(0, 0, 0, 0.85),
-    0 0 0 1px rgba(255, 255, 255, 0.03);
+    0 0 0 1px var(--wash-03);
   animation: ws-enter 220ms var(--ease-out) both;
   display: flex;
   flex-direction: column;
@@ -5067,7 +5217,7 @@ button, input, textarea, select {
 
 .ws-close:hover {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
 }
 
 /* ── Nav tabs ── */
@@ -5093,12 +5243,12 @@ button, input, textarea, select {
 
 .ws-nav-item:hover {
   color: var(--text-2);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
 }
 
 .ws-nav-item-active {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--wash-07);
 }
 
 .ws-nav-icon {
@@ -5115,7 +5265,7 @@ button, input, textarea, select {
 .ws-divider {
   height: 1px;
   margin: 10px 20px 0;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   flex-shrink: 0;
 }
 
@@ -5154,7 +5304,7 @@ button, input, textarea, select {
 }
 
 .ws-prop + .ws-prop {
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-top: 1px solid var(--wash-04);
 }
 
 .ws-prop-label {
@@ -5197,15 +5347,15 @@ button, input, textarea, select {
   font-weight: 500;
   color: var(--text-2);
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--wash-08);
   cursor: pointer;
   transition: all var(--duration-fast) var(--ease-out);
 }
 
 .ws-prop-btn:hover {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.14);
+  background: var(--wash-06);
+  border-color: var(--wash-14);
 }
 
 .ws-prop-btn:disabled {
@@ -5216,7 +5366,7 @@ button, input, textarea, select {
 .ws-prop-btn:disabled:hover {
   color: var(--text-2);
   background: transparent;
-  border-color: rgba(255, 255, 255, 0.08);
+  border-color: var(--wash-08);
 }
 
 /* Scan depth */
@@ -5276,7 +5426,7 @@ button, input, textarea, select {
 }
 
 .ws-repo:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--wash-03);
 }
 
 .ws-repo-icon {
@@ -5376,7 +5526,7 @@ button, input, textarea, select {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 20px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--wash-06);
   flex-shrink: 0;
 }
 
@@ -5416,7 +5566,7 @@ button, input, textarea, select {
 }
 
 .ntf-row + .ntf-row {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--wash-06);
 }
 
 .ntf-row-left {
@@ -5433,7 +5583,7 @@ button, input, textarea, select {
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-3);
   transition: background var(--duration-fast) var(--ease-out),
               color var(--duration-fast) var(--ease-out);
@@ -5463,7 +5613,7 @@ button, input, textarea, select {
   gap: 14px;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--wash-03);
 }
 
 .ntf-hook-item {
@@ -5503,8 +5653,8 @@ button, input, textarea, select {
 /* Expanded integration — shown when needs setup or manage is clicked */
 .ntf-setup-card {
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--wash-08);
+  background: var(--wash-025);
   padding: 12px;
   display: flex;
   align-items: flex-start;
@@ -5561,14 +5711,14 @@ button, input, textarea, select {
   flex-shrink: 0;
   align-self: center;
   transition: all var(--duration-fast) var(--ease-out);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--wash-05);
+  border: 1px solid var(--wash-1);
   color: var(--text-2);
 }
 
 .ntf-setup-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.16);
+  background: var(--wash-08);
+  border-color: var(--wash-16);
   color: var(--text-1);
 }
 
@@ -5595,8 +5745,8 @@ button, input, textarea, select {
   border-radius: var(--radius-xs);
   display: grid;
   place-items: center;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--wash-05);
+  border: 1px solid var(--wash-1);
   color: var(--text-3);
   cursor: pointer;
   flex-shrink: 0;
@@ -5604,8 +5754,8 @@ button, input, textarea, select {
 }
 
 .ntf-preview-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.16);
+  background: var(--wash-08);
+  border-color: var(--wash-16);
   color: var(--text-1);
 }
 
@@ -5625,7 +5775,7 @@ button, input, textarea, select {
 /* Section divider inside body */
 .ntf-section-gap {
   height: 1px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   margin: 4px 0;
 }
 
@@ -5736,7 +5886,7 @@ button, input, textarea, select {
   align-items: center;
   gap: 6px;
   padding: 6px 8px 6px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--wash-04);
 }
 
 .wss-tab-index {
@@ -5746,7 +5896,7 @@ button, input, textarea, select {
   width: 16px;
   height: 16px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5768,7 +5918,7 @@ button, input, textarea, select {
 }
 
 .wss-tab-name:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--wash-03);
 }
 
 .wss-tab-name:focus {
@@ -5795,7 +5945,7 @@ button, input, textarea, select {
 
 .wss-icon-btn:hover {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
 }
 
 .wss-icon-btn-active {
@@ -5826,8 +5976,8 @@ button, input, textarea, select {
 /* Tab advanced settings */
 .wss-tab-settings {
   padding: 8px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  background: rgba(255, 255, 255, 0.015);
+  border-bottom: 1px solid var(--wash-04);
+  background: var(--wash-015);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -5895,7 +6045,7 @@ button, input, textarea, select {
 }
 
 .wss-input:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--wash-02);
 }
 
 .wss-input:focus {
@@ -5918,9 +6068,9 @@ button, input, textarea, select {
 }
 
 .wss-pane {
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--wash-04);
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.015);
+  background: var(--wash-015);
   overflow: hidden;
 }
 
@@ -5945,7 +6095,7 @@ button, input, textarea, select {
 /* Expanded pane details */
 .wss-pane-details {
   padding: 4px 8px 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-top: 1px solid var(--wash-04);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -5972,7 +6122,7 @@ button, input, textarea, select {
   gap: 4px;
   padding: 4px 8px;
   margin-top: 2px;
-  border: 1px dashed rgba(255, 255, 255, 0.08);
+  border: 1px dashed var(--wash-08);
   border-radius: var(--radius-sm);
   background: transparent;
   font-size: 10.5px;
@@ -5985,7 +6135,7 @@ button, input, textarea, select {
 .wss-add-pane:hover {
   color: var(--text-2);
   border-color: var(--border);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--wash-02);
 }
 
 /* Disclosure button */
@@ -6138,11 +6288,11 @@ button, input, textarea, select {
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--wash-03);
   transition: background var(--duration-fast) var(--ease-out);
 }
 .git-remotes-row:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--wash-02);
 }
 .git-remotes-name {
   font-weight: 600;
@@ -6250,7 +6400,7 @@ button, input, textarea, select {
 }
 
 .editor-tab:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
   color: var(--text-2);
 }
 
@@ -6295,7 +6445,7 @@ button, input, textarea, select {
 .editor-tab:hover .editor-tab-close:hover,
 .editor-tab.active .editor-tab-close:hover {
   opacity: 1;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--wash-1);
 }
 
 .editor-tabs-actions {
@@ -6324,7 +6474,7 @@ button, input, textarea, select {
 }
 
 .editor-tab-action:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-1);
 }
 
@@ -6580,7 +6730,7 @@ button, input, textarea, select {
   width: 28px;
   height: 28px;
   border-radius: var(--radius-xs);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--wash-12);
   background: var(--bg-2);
   object-fit: cover;
   flex-shrink: 0;
@@ -6713,8 +6863,8 @@ button, input, textarea, select {
   gap: 8px;
   padding: 8px 14px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--wash-12);
+  background: var(--wash-03);
   color: var(--text-2);
   font-size: 13px;
   font-weight: 600;
@@ -6726,8 +6876,8 @@ button, input, textarea, select {
 }
 
 .chat-tool-input-option:hover {
-  border-color: rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--wash-2);
+  background: var(--wash-05);
   color: var(--text-1);
 }
 
@@ -6749,7 +6899,7 @@ button, input, textarea, select {
   align-items: center;
   padding: 3px 8px;
   border-radius: var(--radius-xs);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08);
   color: var(--text-2);
   font-size: 10px;
   font-weight: 700;
@@ -6760,7 +6910,7 @@ button, input, textarea, select {
   display: grid;
   gap: 8px;
   padding-top: 14px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--wash-08);
 }
 
 .chat-tool-input-textarea {
@@ -6840,7 +6990,7 @@ button, input, textarea, select {
 }
 
 .chat-tool-input-btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
   color: var(--text-1);
 }
 
@@ -6996,7 +7146,7 @@ button, input, textarea, select {
   background: var(--bg-3);
   box-shadow:
     0 16px 48px rgba(0, 0, 0, 0.65),
-    0 0 0 1px rgba(255, 255, 255, 0.04);
+    0 0 0 1px var(--wash-04);
   animation: mp-enter 150ms var(--ease-out) both;
 }
 
@@ -7032,7 +7182,7 @@ button, input, textarea, select {
 }
 
 .oc-agent-option:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
   color: var(--text-1);
 }
 
@@ -7107,7 +7257,7 @@ button, input, textarea, select {
   min-height: 20px;
   padding: 0 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-2);
   font-size: 10px;
   white-space: nowrap;
@@ -7282,7 +7432,7 @@ button, input, textarea, select {
   border-radius: 12px;
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-2) 80%, var(--bg-1));
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--wash-04) inset;
   backdrop-filter: blur(18px);
   overflow-y: auto;
   max-height: 300px;
@@ -7312,11 +7462,11 @@ button, input, textarea, select {
 
 .slash-menu-item:hover,
 .slash-menu-item-active {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
 }
 
 .slash-menu-item:focus-visible {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   outline: none;
 }
 
@@ -7333,7 +7483,7 @@ button, input, textarea, select {
   height: 28px;
   flex-shrink: 0;
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
   color: var(--text-3);
   transition: color var(--duration-fast) var(--ease-out),
               background var(--duration-fast) var(--ease-out);
@@ -7428,7 +7578,7 @@ button, input, textarea, select {
 
 .chat-command-panel-close:hover {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
 }
 
 .chat-command-panel-close:focus-visible {
@@ -7466,7 +7616,7 @@ button, input, textarea, select {
   padding: 7px 10px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--wash-03);
   color: var(--text-1);
   font-size: 12px;
   font-family: inherit;
@@ -7477,13 +7627,13 @@ button, input, textarea, select {
 
 .chat-command-panel-input:hover,
 .chat-command-panel-select:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
 }
 
 .chat-command-panel-input:focus,
 .chat-command-panel-select:focus {
   border-color: var(--accent);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
 }
 
 .chat-command-panel-input::placeholder {
@@ -7563,7 +7713,7 @@ button, input, textarea, select {
 }
 
 .chat-command-panel-btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
   color: var(--text-1);
 }
 
@@ -7597,7 +7747,7 @@ button, input, textarea, select {
   gap: 4px;
   border-radius: 8px;
   padding: 3px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--wash-03);
 }
 
 .chat-command-panel-toggle {
@@ -7616,7 +7766,7 @@ button, input, textarea, select {
 }
 
 .chat-command-panel-toggle:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-2);
 }
 
@@ -7645,11 +7795,11 @@ button, input, textarea, select {
   padding: 5px 8px;
   border-radius: 6px;
   font-size: 11px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--wash-02);
 }
 
 .chat-command-panel-info-item:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
 }
 
 .chat-command-panel-list-item {
@@ -7659,7 +7809,7 @@ button, input, textarea, select {
   gap: 10px;
   padding: 8px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--wash-02);
   border: 1px solid var(--border);
 }
 
@@ -7708,7 +7858,7 @@ button, input, textarea, select {
   letter-spacing: 0.04em;
   padding: 1px 5px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-3);
 }
 
@@ -7718,7 +7868,7 @@ button, input, textarea, select {
 }
 
 .chat-command-panel-info-badge-off {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
   color: var(--text-3);
 }
 
@@ -7805,7 +7955,7 @@ button, input, textarea, select {
 
 .hp-rescan:hover {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   border-color: var(--border);
 }
 
@@ -7856,7 +8006,7 @@ button, input, textarea, select {
 }
 
 .hp-tile:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--wash-03);
 }
 
 .hp-tile-native {
@@ -7864,20 +8014,20 @@ button, input, textarea, select {
   margin-bottom: 8px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--wash-02);
 }
 
 .hp-tile-native:hover {
   border-color: var(--border-active);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
 }
 
 .hp-tile-icon {
   width: 36px;
   height: 36px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--wash-05);
+  border: 1px solid var(--wash-08);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -7893,7 +8043,7 @@ button, input, textarea, select {
 }
 
 .hp-tile:hover .hp-tile-icon {
-  border-color: rgba(255, 255, 255, 0.14);
+  border-color: var(--wash-14);
 }
 
 .hp-tile-native:hover .hp-tile-icon {
@@ -8006,7 +8156,7 @@ button, input, textarea, select {
 .hp-btn:hover {
   color: var(--text-1);
   border-color: var(--border-active);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
 }
 
 .hp-btn-launch {
@@ -8028,13 +8178,13 @@ button, input, textarea, select {
 .hp-btn-copy {
   padding: 5px 7px;
   color: var(--text-3);
-  border-color: rgba(255, 255, 255, 0.08);
+  border-color: var(--wash-08);
 }
 
 .hp-btn-copy:hover {
   color: var(--text-1);
   border-color: var(--border);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
 }
 
 /* Install log */
@@ -8062,7 +8212,7 @@ button, input, textarea, select {
   font-size: 10.5px;
   line-height: 1.5;
   font-family: "JetBrains Mono", monospace;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--wash-02);
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   max-height: 200px;
@@ -8100,8 +8250,8 @@ button, input, textarea, select {
   gap: 7px;
   padding: 12px 14px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: var(--wash-02);
+  border: 1px solid var(--wash-04);
   font-size: 11px;
   color: var(--text-3);
   line-height: 1.4;
@@ -8115,7 +8265,7 @@ button, input, textarea, select {
   border-radius: var(--radius-md);
   background: var(--bg-1);
   border: 1px solid var(--border);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--wash-04);
   z-index: 100;
   animation: fade-in 0.1s ease-out;
 }
@@ -8138,7 +8288,7 @@ button, input, textarea, select {
 
 .terminal-new-dropdown-item:hover {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
 }
 
 .terminal-new-dropdown-divider {
@@ -8207,7 +8357,7 @@ button, input, textarea, select {
   align-items: center;
   padding: 1px 6px;
   border-radius: 99px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-2);
   font-size: 9px;
   font-weight: 600;
@@ -8250,7 +8400,7 @@ button, input, textarea, select {
   border: 1px solid var(--border);
   box-shadow:
     0 16px 48px rgba(0, 0, 0, 0.65),
-    0 0 0 1px rgba(255, 255, 255, 0.04);
+    0 0 0 1px var(--wash-04);
   overflow: hidden;
   animation: pp-enter 150ms var(--ease-out) both;
 }
@@ -8304,7 +8454,7 @@ button, input, textarea, select {
 }
 
 .pp-rail-item:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
   color: var(--text-1);
 }
 
@@ -8354,7 +8504,7 @@ button, input, textarea, select {
   justify-content: space-between;
   gap: 6px;
   padding: 10px 14px 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--wash-06);
 }
 
 .pp-panel-title {
@@ -8407,7 +8557,7 @@ button, input, textarea, select {
 }
 
 .pp-option:not(.pp-option-selected):hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
   color: var(--text-1);
 }
 
@@ -8557,7 +8707,7 @@ button, input, textarea, select {
   border: 1px solid var(--border);
   box-shadow:
     0 16px 48px rgba(0, 0, 0, 0.65),
-    0 0 0 1px rgba(255, 255, 255, 0.04);
+    0 0 0 1px var(--wash-04);
   overflow: hidden;
   animation: mp-enter 150ms var(--ease-out) both;
 }
@@ -8605,7 +8755,7 @@ button, input, textarea, select {
 }
 
 .mp-rail-engine:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
   color: var(--text-1);
 }
 
@@ -8660,7 +8810,7 @@ button, input, textarea, select {
   align-items: center;
   gap: 6px;
   padding: 10px 14px 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--wash-06);
 }
 
 .mp-models-title {
@@ -8692,7 +8842,7 @@ button, input, textarea, select {
 .mp-provider-list {
   min-width: 0;
   padding: 6px 4px;
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  border-right: 1px solid var(--wash-06);
   overflow-y: auto;
   min-height: 0;
 }
@@ -8704,7 +8854,7 @@ button, input, textarea, select {
   margin: -6px -4px 8px;
   padding: 10px 12px 8px;
   background: var(--bg-3);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--wash-06);
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -8733,7 +8883,7 @@ button, input, textarea, select {
 
 .mp-provider-row:hover,
 .mp-provider-row-active {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
   color: var(--text-1);
 }
 
@@ -8754,7 +8904,7 @@ button, input, textarea, select {
   min-width: 18px;
   padding: 1px 5px;
   border-radius: 99px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--wash-05);
   color: var(--text-3);
   font-size: 9.5px;
   line-height: 1.5;
@@ -8778,7 +8928,7 @@ button, input, textarea, select {
   align-items: center;
   gap: 6px;
   padding: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--wash-06);
 }
 
 .mp-model-search-icon {
@@ -8956,7 +9106,7 @@ button, input, textarea, select {
   display: flex;
   align-items: center;
   gap: 2px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--wash-04);
   border-radius: 99px;
   padding: 2px;
   min-width: 0;
@@ -8977,7 +9127,7 @@ button, input, textarea, select {
 
 .mp-model-option-pill:hover {
   color: var(--text-2);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
 }
 
 .mp-model-option-pill-active {
@@ -8999,7 +9149,7 @@ button, input, textarea, select {
   padding: 6px 10px;
   margin-top: 2px;
   border: none;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--wash-06);
   background: transparent;
   cursor: pointer;
   color: var(--text-3);
@@ -9076,7 +9226,7 @@ button, input, textarea, select {
 
 .wsp-back:hover {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   border-color: var(--border);
 }
 
@@ -9157,7 +9307,7 @@ button, input, textarea, select {
   font-size: 10px;
   padding: 1px 5px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-06);
   color: var(--text-3);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
