@@ -838,9 +838,9 @@ const STYLES = {
     display: "grid",
     gridTemplateRows: "auto 1fr auto",
     borderRadius: "var(--radius-lg)",
-    background: "rgba(14, 14, 16, 0.95)",
+    background: "var(--popover-bg)",
     boxShadow:
-      "0 0 0 1px rgba(255, 255, 255, 0.08), " +
+      "0 0 0 1px var(--wash-08), " +
       "0 24px 68px rgba(0, 0, 0, 0.55)",
     animation: "slide-up 180ms cubic-bezier(0.16, 1, 0.3, 1) both",
   },
