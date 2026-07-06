@@ -2200,7 +2200,7 @@ button, input, textarea, select {
   justify-content: center;
   border: 0;
   border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, 0.48);
+  background: var(--floating-chip-bg, rgba(0, 0, 0, 0.48));
   color: var(--text-3);
   cursor: pointer;
   opacity: 0;
@@ -2224,7 +2224,7 @@ button, input, textarea, select {
 }
 
 .workspace-pane-split-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--wash-08, rgba(255, 255, 255, 0.08));
   color: var(--text-1);
 }
 
