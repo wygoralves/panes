@@ -133,9 +133,20 @@ pub async fn check_harnesses() -> Result<HarnessReport, String> {
     let npm_available = runtime_env::resolve_executable("npm").is_some()
         || detect_via_login_shell("npm", "--version").await.is_some();
 
+    let mise_preferred =
+        runtime_env::is_flatpak() && runtime_env::resolve_executable("mise").is_some();
+    let preferred_install_method = if mise_preferred {
+        Some("mise".to_string())
+    } else if npm_available {
+        Some("npm".to_string())
+    } else {
+        None
+    };
+
     Ok(HarnessReport {
         harnesses,
         npm_available,
+        preferred_install_method,
     })
 }
 
@@ -179,6 +190,23 @@ pub async fn install_harness(app: AppHandle, harness_id: String) -> Result<Insta
         )
     })?;
 
+    // Inside a Flatpak sandbox, /app is read-only at runtime, so `npm
+    // install -g` has nowhere to write to. Prefer the bundled `mise`
+    // instead, which installs into the user's writable data dir.
+    if install_cmd == "npm" && runtime_env::is_flatpak() {
+        if let Some(package) = npm_package_from_install_args(def.install_args) {
+            if runtime_env::resolve_executable("mise").is_some() {
+                let mise = resolve_mise_path().await;
+                let args = vec![
+                    "use".to_string(),
+                    "-g".to_string(),
+                    format!("npm:{package}"),
+                ];
+                return run_harness_install(&app, &harness_id, &mise, &args).await;
+            }
+        }
+    }
+
     let npm = if install_cmd == "npm" {
         resolve_npm_path().await
     } else {
@@ -188,6 +216,16 @@ pub async fn install_harness(app: AppHandle, harness_id: String) -> Result<Insta
     let args: Vec<String> = def.install_args.iter().map(|s| s.to_string()).collect();
 
     run_harness_install(&app, &harness_id, &npm, &args).await
+}
+
+/// Extracts the npm package name from an `["install", "-g", "<package>"]`
+/// style install-args slice, which is the shape every npm-installed
+/// harness in `HARNESSES` uses.
+fn npm_package_from_install_args<'a>(install_args: &[&'a str]) -> Option<&'a str> {
+    match install_args {
+        ["install", "-g", package] => Some(package),
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -579,4 +617,45 @@ async fn resolve_npm_path() -> String {
         return path;
     }
     "npm".to_string()
+}
+
+async fn resolve_mise_path() -> String {
+    if let Some(path) = runtime_env::resolve_executable("mise") {
+        return path.display().to_string();
+    }
+    if let Some((path, _version)) = detect_via_login_shell("mise", "--version").await {
+        return path;
+    }
+    "mise".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn npm_package_from_install_args_matches_every_harness_definition() {
+        for def in HARNESSES {
+            if def.install_command == Some("npm") {
+                assert!(
+                    npm_package_from_install_args(def.install_args).is_some(),
+                    "expected {} to have an install_args shape of [\"install\", \"-g\", <package>]",
+                    def.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn npm_package_from_install_args_rejects_unexpected_shapes() {
+        assert_eq!(
+            npm_package_from_install_args(&["install", "opencode-ai"]),
+            None
+        );
+        assert_eq!(npm_package_from_install_args(&[]), None);
+        assert_eq!(
+            npm_package_from_install_args(&["install", "-g", "opencode-ai"]),
+            Some("opencode-ai")
+        );
+    }
 }

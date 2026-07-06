@@ -32,6 +32,7 @@ import type { HarnessInfo } from "../../types";
 function HarnessTile({
   harness,
   description,
+  preferredInstallMethod,
   onInstallInTerminal,
   onCopyCommand,
   onLaunch,
@@ -39,13 +40,14 @@ function HarnessTile({
 }: {
   harness: HarnessInfo;
   description: string;
+  preferredInstallMethod: string | null;
   onInstallInTerminal: () => void;
   onCopyCommand: () => void;
   onLaunch: () => void;
   onOpenWebsite: () => void;
 }) {
   const { t } = useTranslation("app");
-  const installCmd = getHarnessInstallCommand(harness.id);
+  const installCmd = getHarnessInstallCommand(harness.id, preferredInstallMethod);
   const action = getHarnessTileAction(harness);
 
   return (
@@ -122,6 +124,7 @@ export function HarnessPanel() {
   const scan = useHarnessStore((s) => s.scan);
   const ensureScanned = useHarnessStore((s) => s.ensureScanned);
   const launch = useHarnessStore((s) => s.launch);
+  const preferredInstallMethod = useHarnessStore((s) => s.preferredInstallMethod);
 
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const createSession = useTerminalStore((s) => s.createSession);
@@ -159,12 +162,12 @@ export function HarnessPanel() {
   }
 
   function handleInstallInTerminal(harnessId: string) {
-    const cmd = getHarnessInstallCommand(harnessId);
+    const cmd = getHarnessInstallCommand(harnessId, preferredInstallMethod);
     if (cmd) void spawnInTerminal(cmd);
   }
 
   function handleCopyCommand(harnessId: string) {
-    const cmd = getHarnessInstallCommand(harnessId);
+    const cmd = getHarnessInstallCommand(harnessId, preferredInstallMethod);
     if (cmd) {
       void copyTextToClipboard(cmd)
         .then(() => {
@@ -249,6 +252,7 @@ export function HarnessPanel() {
                   key={h.id}
                   harness={h}
                   description={t(`harnesses.descriptions.${h.id}`, { defaultValue: h.description })}
+                  preferredInstallMethod={preferredInstallMethod}
                   onInstallInTerminal={() => handleInstallInTerminal(h.id)}
                   onCopyCommand={() => handleCopyCommand(h.id)}
                   onLaunch={() => void handleLaunch(h.id)}
