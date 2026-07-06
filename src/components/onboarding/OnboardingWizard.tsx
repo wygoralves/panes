@@ -990,7 +990,7 @@ export function OnboardingWizard() {
         position: "fixed",
         inset: 0,
         zIndex: 70,
-        background: "rgba(0, 0, 0, 0.85)",
+        background: "var(--ob-backdrop-bg)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
         animation: "ob-backdrop-in 250ms var(--ease-out) both",
@@ -1058,11 +1058,11 @@ export function OnboardingWizard() {
                   animation: "ob-greeting-logo 500ms var(--ease-out) both",
                 }}
               >
-                <svg viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg" width={56} height={56}>
-                  <rect x="10" y="36" width="94" height="94" stroke="white" strokeWidth="6" />
-                  <rect x="36" y="10" width="94" height="94" stroke="white" strokeWidth="6" />
-                  <rect x="23" y="23" width="94" height="94" stroke="white" strokeWidth="6" />
-                  <rect x="50" y="50" width="40" height="40" fill="#FF6B6B" />
+                <svg viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg" width={56} height={56} style={{ color: "var(--text-1)" }}>
+                  <rect x="10" y="36" width="94" height="94" stroke="currentColor" strokeWidth="6" />
+                  <rect x="36" y="10" width="94" height="94" stroke="currentColor" strokeWidth="6" />
+                  <rect x="23" y="23" width="94" height="94" stroke="currentColor" strokeWidth="6" />
+                  <rect x="50" y="50" width="40" height="40" fill="var(--accent)" />
                 </svg>
               </div>
 
@@ -1440,7 +1440,7 @@ export function OnboardingWizard() {
             left: 0,
             right: 0,
             padding: "20px 24px",
-            background: "linear-gradient(to top, rgba(0, 0, 0, 0.90) 40%, transparent)",
+            background: "linear-gradient(to top, var(--ob-footer-fade) 40%, transparent)",
             pointerEvents: "none",
           }}
         >

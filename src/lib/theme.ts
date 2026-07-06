@@ -35,11 +35,25 @@ export function getCurrentThemeMode(): ThemeMode {
 
 const THEME_CHANGED_EVENT = "panes:theme-changed";
 
+// Mirrors the blocking inline script in index.html, which reads this same key
+// to stamp data-theme before first paint (a paint hint only; config.toml via
+// the theme store is still the source of truth once it loads).
+const THEME_STORAGE_KEY = "panes:theme-preference";
+
 export interface ThemeChangedEventDetail {
   mode: ThemeMode;
 }
 
 let systemThemeListenerCleanup: (() => void) | null = null;
+
+function cacheThemePreferenceHint(preference: ThemePreference) {
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, preference);
+  } catch {
+    // Storage can be unavailable (private browsing, disabled cookies). The
+    // cache is only a paint hint, so failing silently is fine.
+  }
+}
 
 /** Resolve, stamp `data-theme` on the document root, and broadcast the change.
  * Safe to call before React mounts (main.tsx) and again whenever the user
@@ -51,6 +65,9 @@ export function applyThemePreference(preference: ThemePreference): ThemeMode {
   const mode = resolveThemeMode(preference);
   if (typeof document !== "undefined") {
     document.documentElement.dataset.theme = mode;
+  }
+  if (typeof window !== "undefined") {
+    cacheThemePreferenceHint(preference);
   }
 
   if (
