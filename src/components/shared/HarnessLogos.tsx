@@ -29,7 +29,7 @@ function GeminiCliLogo({ size = 18 }: { size?: number }) {
   );
 }
 
-/* Antigravity CLI — floating dot above an orbit arc */
+/* Antigravity CLI: floating dot above an orbit arc */
 function AntigravityLogo({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
