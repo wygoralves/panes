@@ -154,6 +154,35 @@ pub async fn set_app_locale(state: State<'_, AppState>, locale: String) -> Resul
 }
 
 #[tauri::command]
+pub async fn get_app_theme() -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let config = AppConfig::load_or_create().map_err(err_to_string)?;
+        Ok(config.theme_preference().to_string())
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn set_app_theme(state: State<'_, AppState>, theme: String) -> Result<String, String> {
+    let config_write_lock = state.config_write_lock.clone();
+    let _guard = config_write_lock.lock_owned().await;
+
+    tokio::task::spawn_blocking(move || {
+        if !crate::config::app_config::VALID_THEME_PREFERENCES.contains(&theme.as_str()) {
+            return Err(format!("unsupported theme preference: {theme}"));
+        }
+        AppConfig::mutate(|config| {
+            config.general.theme = theme.clone();
+            Ok(theme)
+        })
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
 pub async fn get_terminal_accelerated_rendering() -> Result<bool, String> {
     tokio::task::spawn_blocking(move || {
         let config = AppConfig::load_or_create().map_err(err_to_string)?;

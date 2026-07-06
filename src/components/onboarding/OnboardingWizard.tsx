@@ -1071,7 +1071,7 @@ export function OnboardingWizard() {
                 style={{
                   width: 40,
                   height: 1,
-                  background: "rgba(255, 255, 255, 0.12)",
+                  background: "var(--wash-12)",
                   marginBottom: 32,
                   transformOrigin: "center",
                   animation: "ob-greeting-line 400ms var(--ease-out) 200ms both",

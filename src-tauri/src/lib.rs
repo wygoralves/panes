@@ -179,6 +179,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::app::get_app_locale,
             commands::app::set_app_locale,
+            commands::app::get_app_theme,
+            commands::app::set_app_theme,
             commands::power::get_keep_awake_state,
             commands::power::set_keep_awake_enabled,
             commands::power::get_power_settings,
