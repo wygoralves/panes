@@ -56,4 +56,22 @@ describe("harness install actions", () => {
       "npm install -g opencode-ai",
     );
   });
+
+  it("prefers mise for npm-packaged harnesses when it is the preferred install method", () => {
+    expect(getHarnessInstallCommand("codex", "mise")).toBe(
+      "mise use -g npm:@openai/codex",
+    );
+    expect(getHarnessInstallCommand("opencode", "mise")).toBe(
+      "mise use -g npm:opencode-ai",
+    );
+  });
+
+  it("leaves curl-pipe installers unchanged even when mise is preferred", () => {
+    expect(getHarnessInstallCommand("kiro", "mise")).toContain("bash");
+  });
+
+  it("falls back to npm when no preferred install method is given", () => {
+    expect(getHarnessInstallCommand("codex")).toBe("npm install -g @openai/codex");
+    expect(getHarnessInstallCommand("codex", null)).toBe("npm install -g @openai/codex");
+  });
 });

@@ -8,6 +8,7 @@ interface HarnessStore {
   phase: HarnessPhase;
   harnesses: HarnessInfo[];
   npmAvailable: boolean;
+  preferredInstallMethod: string | null;
   error: string | null;
   loadedOnce: boolean;
 
@@ -38,6 +39,7 @@ function requestHarnessScan(
       set({
         harnesses: report.harnesses,
         npmAvailable: report.npmAvailable,
+        preferredInstallMethod: report.preferredInstallMethod,
         phase: "idle",
         error: null,
         loadedOnce: true,
@@ -61,6 +63,7 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
   phase: "idle",
   harnesses: [],
   npmAvailable: false,
+  preferredInstallMethod: null,
   error: null,
   loadedOnce: false,
 
