@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.panes.app</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Panes</name>
+  <summary>Local-first cockpit for AI-assisted coding</summary>
+  <description>
+    <p>Panes is a local-first desktop app for AI-assisted coding workflows.</p>
+    <p>It combines chat-based coding agents, git operations, terminal sessions, and lightweight file editing in one place.</p>
+  </description>
+  <launchable type="desktop-id">com.panes.app.desktop</launchable>
+  <developer id="com.panes">
+    <name>Panes contributors</name>
+  </developer>
+  <url type="homepage">https://panesade.com</url>
+  <url type="bugtracker">https://github.com/wygoralves/panes/issues</url>
+  <url type="vcs-browser">https://github.com/wygoralves/panes</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.59.1" date="2026-07-05"/>
+  </releases>
+</component>

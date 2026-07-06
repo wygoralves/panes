@@ -43,6 +43,7 @@ Panes is not a full IDE, but it does ship with a built-in multi-tab editor for q
 - Streaming chat with structured content blocks for text, thinking, actions, diffs, approvals, attachments, and usage updates
 - Codex chat integration via `codex app-server`
 - Claude chat integration via a Claude Agent SDK sidecar
+- OpenCode chat integration as a native engine, available once the `opencode` CLI is on your `PATH`, including custom and local OpenAI-compatible providers (LM Studio, Ollama, vLLM, and others)
 - Plan mode, attachments, reasoning effort controls, per-thread approval/network overrides, and Codex-specific sandbox-mode overrides
 - Global FTS message search with keyboard navigation
 - Windowed message loading and lazy hydration for long threads/action output
@@ -167,6 +168,56 @@ Panes also listens for common desktop-notification OSC sequences emitted directl
 
 `OSC 9;4` progress reports are intentionally left alone and are not treated as notifications.
 
+### Using Local Models (LM Studio, Ollama, and Other OpenAI-Compatible Servers)
+
+Panes does not host or proxy models itself. Local model support comes from the chat engines it integrates, and there are two working paths today.
+
+**OpenCode engine**
+
+OpenCode accepts any OpenAI-compatible endpoint as a custom provider. Add a `provider` block to `opencode.json` (project-level) or `~/.config/opencode/opencode.json` (global). For LM Studio:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "lmstudio": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "LM Studio (local)",
+      "options": {
+        "baseURL": "http://127.0.0.1:1234/v1"
+      },
+      "models": {
+        "qwen2.5-coder-7b-instruct": {
+          "name": "Qwen 2.5 Coder 7B"
+        }
+      }
+    }
+  }
+}
+```
+
+Replace the model id with whichever model is loaded in LM Studio, then start LM Studio's local server. With the `opencode` CLI installed, select the OpenCode engine in Panes' model picker: the provider shows up in the engine's provider list, with your configured models grouped underneath it. The same pattern works for Ollama, vLLM, or any other server that speaks the OpenAI-compatible API, just point `baseURL` at that server instead.
+
+**Codex engine**
+
+Recent Codex CLI releases ship `ollama` and `lmstudio` as reserved, built-in `model_providers` ids. Point Codex at one of them in `~/.codex/config.toml`:
+
+```toml
+model_provider = "lmstudio"
+model = "qwen2.5-coder-7b-instruct"
+```
+
+or define a custom endpoint yourself:
+
+```toml
+[model_providers.local_ollama]
+name = "Ollama (local)"
+base_url = "http://localhost:11434/v1"
+wire_api = "responses"
+```
+
+Panes' Codex engine reads whatever `codex app-server` reports from `model/list`, so once Codex CLI is configured this way, the resulting model appears in Panes' Codex model picker with no Panes-side setup. This depends on the installed Codex CLI version supporting `model_providers`; update Codex if a provider id is rejected.
+
 ### Production Build
 
 ```bash
@@ -233,7 +284,7 @@ User-facing frontend copy is localized with `i18next`/`react-i18next`. Treat i18
 
 Panes uses a React + Zustand frontend running inside a Tauri shell, with a Rust backend that owns persistence, engine orchestration, git operations, terminal management, and filesystem-safe file access.
 
-The app currently exposes Codex and Claude as chat engines. Codex talks to `codex app-server`; Claude is bridged through the bundled Claude runtime sidecar.
+The app currently exposes Codex, Claude, and OpenCode as chat engines. Codex talks to `codex app-server`; Claude is bridged through the bundled Claude runtime sidecar; OpenCode talks to a locally installed `opencode` CLI and becomes selectable in the engine and model picker once that CLI is detected on your `PATH`.
 
 ### Stack
 

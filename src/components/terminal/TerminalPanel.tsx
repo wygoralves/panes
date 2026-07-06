@@ -19,6 +19,12 @@ import {
   getTerminalAcceleratedRenderingPreferenceVersion,
   listenTerminalAcceleratedRenderingChanged,
 } from "../../lib/terminalRenderingSettings";
+import { getCurrentThemeMode, getXtermThemeColors, listenThemeChanged } from "../../lib/theme";
+import {
+  DEFAULT_TERMINAL_FONT_SIZE,
+  getTerminalFontSizePreferenceVersion,
+  listenTerminalFontSizeChanged,
+} from "../../lib/terminalFontSizeSettings";
 import {
   extractTextLinkMatches,
   getWorkspacePaneLeafIdFromEventTarget,
@@ -280,6 +286,8 @@ const IMAGE_ADDON_ERROR_PATTERNS = [
 
 let acceleratedTerminalRenderingEnabled = true;
 let acceleratedTerminalRenderingPreferenceLoaded = false;
+let terminalFontSizePreference = DEFAULT_TERMINAL_FONT_SIZE;
+let terminalFontSizePreferenceLoaded = false;
 
 // Module-level cache — xterm instances survive component mount/unmount cycles.
 // This is what preserves terminal scrollback when switching workspaces.
@@ -316,6 +324,15 @@ function forEachWorkspaceCachedTerminal(
     }
     const sessionId = cacheKey.slice(workspacePrefix.length);
     callback(sessionId, session);
+  }
+}
+
+/** Theme is app-global (not workspace-scoped), so this updates every cached
+ * terminal across every workspace, including ones detached in the background. */
+function applyThemeToAllCachedTerminals(mode: ReturnType<typeof getCurrentThemeMode>) {
+  const theme = getXtermThemeColors(mode);
+  for (const session of cachedTerminals.values()) {
+    session.terminal.options.theme = theme;
   }
 }
 
@@ -789,6 +806,22 @@ function applyAcceleratedRenderingPreference(
     }
   }
 
+  if (session.terminal.rows > 0) {
+    session.terminal.refresh(0, session.terminal.rows - 1);
+  }
+}
+
+function applyTerminalFontSizePreference(
+  workspaceId: string,
+  sessionId: string,
+  session: SessionTerminal,
+  fontSize: number,
+) {
+  session.terminal.options.fontSize = fontSize;
+  // Re-fit so cols/rows account for the new glyph metrics, then let the
+  // existing resize pipeline propagate the change to the PTY.
+  session.fitAddon.fit();
+  sendResizeIfNeeded(workspaceId, sessionId, session, session.terminal.cols, session.terminal.rows);
   if (session.terminal.rows > 0) {
     session.terminal.refresh(0, session.terminal.rows - 1);
   }
@@ -2093,7 +2126,9 @@ function createCachedTerminal(
     cursorBlink: true,
     cursorInactiveStyle: "none",
     fontFamily: '"JetBrains Mono", monospace',
-    fontSize: 12,
+    fontSize: terminalFontSizePreferenceLoaded
+      ? terminalFontSizePreference
+      : DEFAULT_TERMINAL_FONT_SIZE,
     linkHandler: {
       activate(event, text) {
         void navigateLinkTarget(text, {
@@ -2104,12 +2139,7 @@ function createCachedTerminal(
     },
     lineHeight: 1.3,
     scrollback: TERMINAL_SCROLLBACK_LINES,
-    theme: {
-      background: "#050505",
-      foreground: "#f5f5f5",
-      selectionBackground: "rgba(255, 107, 107, 0.28)",
-      cursor: "#FF6B6B",
-    },
+    theme: getXtermThemeColors(getCurrentThemeMode()),
   };
   terminalOptions.allowNonHttpProtocols = true;
   const terminal = new Terminal(terminalOptions);
@@ -3057,6 +3087,42 @@ export function TerminalPanel({ workspaceId, embedded = false }: TerminalPanelPr
             session,
             enabled,
           );
+        });
+      }),
+    [workspaceId],
+  );
+
+  useEffect(() => listenThemeChanged(applyThemeToAllCachedTerminals), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const requestVersion = getTerminalFontSizePreferenceVersion();
+    ipc
+      .getTerminalFontSize()
+      .then((fontSize) => {
+        if (cancelled || getTerminalFontSizePreferenceVersion() !== requestVersion) {
+          return;
+        }
+        terminalFontSizePreferenceLoaded = true;
+        terminalFontSizePreference = fontSize;
+        forEachWorkspaceCachedTerminal(workspaceId, (sessionId, session) => {
+          applyTerminalFontSizePreference(workspaceId, sessionId, session, fontSize);
+        });
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
+  useEffect(
+    () =>
+      listenTerminalFontSizeChanged((fontSize) => {
+        terminalFontSizePreferenceLoaded = true;
+        terminalFontSizePreference = fontSize;
+        forEachWorkspaceCachedTerminal(workspaceId, (sessionId, session) => {
+          applyTerminalFontSizePreference(workspaceId, sessionId, session, fontSize);
         });
       }),
     [workspaceId],

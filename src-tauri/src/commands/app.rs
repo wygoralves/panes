@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    config::app_config::AppConfig,
+    config::app_config::{clamp_terminal_font_size, AppConfig},
     locale::{normalize_app_locale, resolve_app_locale},
     state::AppState,
     terminal_notifications::{
@@ -154,6 +154,35 @@ pub async fn set_app_locale(state: State<'_, AppState>, locale: String) -> Resul
 }
 
 #[tauri::command]
+pub async fn get_app_theme() -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let config = AppConfig::load_or_create().map_err(err_to_string)?;
+        Ok(config.theme_preference().to_string())
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn set_app_theme(state: State<'_, AppState>, theme: String) -> Result<String, String> {
+    let config_write_lock = state.config_write_lock.clone();
+    let _guard = config_write_lock.lock_owned().await;
+
+    tokio::task::spawn_blocking(move || {
+        if !crate::config::app_config::VALID_THEME_PREFERENCES.contains(&theme.as_str()) {
+            return Err(format!("unsupported theme preference: {theme}"));
+        }
+        AppConfig::mutate(|config| {
+            config.general.theme = theme.clone();
+            Ok(theme)
+        })
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
 pub async fn get_terminal_accelerated_rendering() -> Result<bool, String> {
     tokio::task::spawn_blocking(move || {
         let config = AppConfig::load_or_create().map_err(err_to_string)?;
@@ -176,6 +205,36 @@ pub async fn set_terminal_accelerated_rendering(
         config.general.terminal_accelerated_rendering = if enabled { None } else { Some(false) };
         config.save().map_err(err_to_string)?;
         Ok(enabled)
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn get_terminal_font_size() -> Result<u32, String> {
+    tokio::task::spawn_blocking(move || {
+        let config = AppConfig::load_or_create().map_err(err_to_string)?;
+        Ok(config.terminal_font_size())
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn set_terminal_font_size(
+    state: State<'_, AppState>,
+    font_size: u32,
+) -> Result<u32, String> {
+    let config_write_lock = state.config_write_lock.clone();
+    let _guard = config_write_lock.lock_owned().await;
+
+    tokio::task::spawn_blocking(move || -> Result<u32, String> {
+        let clamped = clamp_terminal_font_size(font_size);
+        AppConfig::mutate(|config| {
+            config.general.terminal_font_size = Some(clamped);
+            Ok(clamped)
+        })
+        .map_err(err_to_string)
     })
     .await
     .map_err(err_to_string)?

@@ -38,12 +38,14 @@ const PROVIDER_LABELS: Record<string, string> = {
   google: "Google",
   groq: "Groq",
   local: "Local",
+  lmstudio: "LM Studio",
   mistral: "Mistral",
   ollama: "Ollama",
   openai: "OpenAI",
   opencode: "OpenCode",
   openrouter: "OpenRouter",
   vertex: "Vertex",
+  vllm: "vLLM",
 };
 
 function formatModelName(name: string): string {

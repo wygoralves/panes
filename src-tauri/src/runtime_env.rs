@@ -44,6 +44,13 @@ pub fn platform_id() -> &'static str {
     }
 }
 
+/// Whether the app is currently running inside a Flatpak sandbox.
+/// Flatpak sets `FLATPAK_ID` in every sandboxed process, so this is
+/// reliable without shelling out.
+pub fn is_flatpak() -> bool {
+    env::var_os("FLATPAK_ID").is_some()
+}
+
 pub fn app_data_dir() -> PathBuf {
     app_data_dir_for(
         cfg!(target_os = "windows"),
@@ -1605,5 +1612,22 @@ mod tests {
         assert!(legacy.join("config.toml").exists());
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn is_flatpak_reflects_flatpak_id_env_var() {
+        let _env_guard = env_lock().lock().expect("env lock poisoned");
+        let original = std::env::var_os("FLATPAK_ID");
+
+        std::env::remove_var("FLATPAK_ID");
+        assert!(!is_flatpak());
+
+        std::env::set_var("FLATPAK_ID", "com.panes.app");
+        assert!(is_flatpak());
+
+        match original {
+            Some(value) => std::env::set_var("FLATPAK_ID", value),
+            None => std::env::remove_var("FLATPAK_ID"),
+        }
     }
 }

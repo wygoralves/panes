@@ -22,6 +22,10 @@ import {
   PillBottle,
   BellRing,
   Globe,
+  Minus,
+  Moon,
+  Sun,
+  Monitor,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -31,6 +35,7 @@ import { useOnboardingStore } from "../../stores/onboardingStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import { canToggleKeepAwake, useKeepAwakeStore } from "../../stores/keepAwakeStore";
 import { useTerminalNotificationSettingsStore } from "../../stores/terminalNotificationSettingsStore";
+import { useThemeStore } from "../../stores/themeStore";
 import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import { formatRelativeTime } from "../../lib/formatters";
@@ -39,10 +44,19 @@ import {
   getTerminalAcceleratedRenderingPreferenceVersion,
 } from "../../lib/terminalRenderingSettings";
 import {
+  clampTerminalFontSize,
+  DEFAULT_TERMINAL_FONT_SIZE,
+  emitTerminalFontSizeChanged,
+  getTerminalFontSizePreferenceVersion,
+  MAX_TERMINAL_FONT_SIZE,
+  MIN_TERMINAL_FONT_SIZE,
+} from "../../lib/terminalFontSizeSettings";
+import {
   normalizeAppLocale,
   SUPPORTED_APP_LOCALES,
   type AppLocale,
 } from "../../lib/locale";
+import { THEME_PREFERENCES, type ThemePreference } from "../../lib/theme";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { createAndActivateWorkspaceThread } from "../../lib/newThreadActions";
 import { UpdateDialog } from "../onboarding/UpdateDialog";
@@ -148,10 +162,14 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [settingsMenuPos, setSettingsMenuPos] = useState({ top: 0, left: 0 });
   const [terminalAcceleratedRendering, setTerminalAcceleratedRendering] = useState(true);
+  const [terminalFontSize, setTerminalFontSizeState] = useState(DEFAULT_TERMINAL_FONT_SIZE);
+  const [updatingTerminalFontSize, setUpdatingTerminalFontSize] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const previousSyncedActiveWorkspaceIdRef = useRef<string | null>(activeWorkspaceId);
   const activeLocale = normalizeAppLocale(i18n.language);
+  const themePreference = useThemeStore((s) => s.preference);
+  const setThemePreference = useThemeStore((s) => s.setPreference);
 
   const closeSettingsMenu = useCallback(() => setSettingsMenuOpen(false), []);
 
@@ -188,6 +206,23 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
           getTerminalAcceleratedRenderingPreferenceVersion() === requestVersion
         ) {
           setTerminalAcceleratedRendering(enabled);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const requestVersion = getTerminalFontSizePreferenceVersion();
+    ipc
+      .getTerminalFontSize()
+      .then((fontSize) => {
+        if (!cancelled && getTerminalFontSizePreferenceVersion() === requestVersion) {
+          setTerminalFontSizeState(fontSize);
         }
       })
       .catch(() => undefined);
@@ -311,6 +346,15 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     }
   }
 
+  async function onThemeSelect(theme: ThemePreference) {
+    if (theme === themePreference) return;
+
+    const ok = await setThemePreference(theme);
+    if (!ok) {
+      toast.error(t("app:sidebar.themeFailed"));
+    }
+  }
+
   async function onToggleTerminalAcceleratedRendering() {
     const nextValue = !terminalAcceleratedRendering;
 
@@ -320,6 +364,22 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       emitTerminalAcceleratedRenderingChanged(saved);
     } catch {
       toast.error(t("app:sidebar.terminalAcceleratedRenderingFailed"));
+    }
+  }
+
+  async function onChangeTerminalFontSize(delta: number) {
+    const nextValue = clampTerminalFontSize(terminalFontSize + delta);
+    if (nextValue === terminalFontSize || updatingTerminalFontSize) return;
+
+    setUpdatingTerminalFontSize(true);
+    try {
+      const saved = await ipc.setTerminalFontSize(nextValue);
+      setTerminalFontSizeState(saved);
+      emitTerminalFontSizeChanged(saved);
+    } catch {
+      toast.error(t("app:sidebar.terminalFontSizeFailed"));
+    } finally {
+      setUpdatingTerminalFontSize(false);
     }
   }
 
@@ -453,7 +513,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       </div>
 
       {/* ── Scrollable content ── */}
-      <div style={{ flex: 1, minHeight: 0, overflow: "auto", paddingBottom: 4, borderTop: "1px solid rgba(255,255,255,0.06)", marginTop: 4 }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto", paddingBottom: 4, borderTop: "1px solid var(--wash-06)", marginTop: 4 }}>
         <div className="sb-section-label">
           <span>{t("app:sidebar.workspaces")}</span>
           <button
@@ -608,7 +668,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
         )}
 
         {/* Archived section */}
-        <div style={{ marginTop: 8, borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 4 }}>
+        <div style={{ marginTop: 8, borderTop: "1px solid var(--wash-06)", paddingTop: 4 }}>
           <button
             type="button"
             className="sb-archived-toggle"
@@ -844,6 +904,53 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             </div>
             <div className="git-action-menu-item" style={{ justifyContent: "space-between", cursor: "default" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Sun size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+                {t("app:sidebar.theme")}
+              </span>
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  background: "var(--wash-06)",
+                  borderRadius: 6,
+                  padding: 2,
+                  gap: 2,
+                }}
+              >
+                {THEME_PREFERENCES.map((theme) => {
+                  const ThemeIcon = theme === "dark" ? Moon : theme === "light" ? Sun : Monitor;
+                  const active = themePreference === theme;
+                  return (
+                    <button
+                      key={theme}
+                      type="button"
+                      title={t(`app:sidebar.theme_${theme}`)}
+                      aria-label={t(`app:sidebar.theme_${theme}`)}
+                      onClick={() => { void onThemeSelect(theme); }}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 24,
+                        height: 22,
+                        padding: 0,
+                        borderRadius: 4,
+                        border: "none",
+                        cursor: "pointer",
+                        background: active ? "var(--accent)" : "transparent",
+                        color: active ? "#fff" : "var(--text-3)",
+                        boxShadow: "none",
+                        transition: "background 0.15s, color 0.15s, box-shadow 0.15s",
+                      }}
+                    >
+                      <ThemeIcon size={12} />
+                    </button>
+                  );
+                })}
+              </span>
+            </div>
+            <div className="git-action-menu-item" style={{ justifyContent: "space-between", cursor: "default" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <Globe size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
                 {t("common:language.label")}
               </span>
@@ -851,7 +958,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  background: "rgba(255,255,255,0.06)",
+                  background: "var(--wash-06)",
                   borderRadius: 6,
                   padding: 2,
                   gap: 2,
@@ -905,6 +1012,52 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               <span>{t("app:sidebar.terminalAcceleratedRendering")}</span>
               {terminalAcceleratedRendering ? <Check size={12} /> : null}
             </button>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "6px 10px",
+                gap: 8,
+              }}
+            >
+              <span style={{ fontSize: 12 }}>{t("app:sidebar.terminalFontSize")}</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <button
+                  type="button"
+                  className="wss-icon-btn"
+                  aria-label={t("app:sidebar.terminalFontSizeDecrease")}
+                  disabled={updatingTerminalFontSize || terminalFontSize <= MIN_TERMINAL_FONT_SIZE}
+                  onClick={() => {
+                    void onChangeTerminalFontSize(-1);
+                  }}
+                >
+                  <Minus size={12} />
+                </button>
+                <span
+                  style={{
+                    minWidth: 20,
+                    textAlign: "center",
+                    fontSize: 11,
+                    color: "var(--text-2)",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {terminalFontSize}
+                </span>
+                <button
+                  type="button"
+                  className="wss-icon-btn"
+                  aria-label={t("app:sidebar.terminalFontSizeIncrease")}
+                  disabled={updatingTerminalFontSize || terminalFontSize >= MAX_TERMINAL_FONT_SIZE}
+                  onClick={() => {
+                    void onChangeTerminalFontSize(1);
+                  }}
+                >
+                  <Plus size={12} />
+                </button>
+              </span>
+            </div>
             <div className="git-action-menu-divider" />
 
             {/* ── Actions ── */}
@@ -1072,11 +1225,11 @@ function CollapsedRail({
             background: "transparent",
           }}
         >
-          <svg viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg" width="20" height="20">
-            <rect x="10" y="36" width="94" height="94" stroke="white" strokeWidth="6"/>
-            <rect x="36" y="10" width="94" height="94" stroke="white" strokeWidth="6"/>
-            <rect x="23" y="23" width="94" height="94" stroke="white" strokeWidth="6"/>
-            <rect x="50" y="50" width="40" height="40" fill="#FF6B6B"/>
+          <svg viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg" width="20" height="20" style={{ color: "var(--text-1)" }}>
+            <rect x="10" y="36" width="94" height="94" stroke="currentColor" strokeWidth="6"/>
+            <rect x="36" y="10" width="94" height="94" stroke="currentColor" strokeWidth="6"/>
+            <rect x="23" y="23" width="94" height="94" stroke="currentColor" strokeWidth="6"/>
+            <rect x="50" y="50" width="40" height="40" fill="var(--accent)"/>
           </svg>
         </button>
       </div>

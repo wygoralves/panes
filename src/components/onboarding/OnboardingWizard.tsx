@@ -399,6 +399,7 @@ function ProviderRow({
   description,
   harness,
   installing,
+  preferredInstallMethod,
   onInstall,
   onOpenWebsite,
 }: {
@@ -407,11 +408,12 @@ function ProviderRow({
   description: string;
   harness: HarnessInfo;
   installing: boolean;
+  preferredInstallMethod: string | null;
   onInstall: () => void;
   onOpenWebsite: () => void;
 }) {
   const { t } = useTranslation(["setup", "app"]);
-  const installCommand = getHarnessInstallCommand(harness.id);
+  const installCommand = getHarnessInstallCommand(harness.id, preferredInstallMethod);
   const canInstall = harness.canAutoInstall && Boolean(installCommand);
 
   return (
@@ -746,6 +748,7 @@ export function OnboardingWizard() {
   const harnessError = useHarnessStore((s) => s.error);
   const harnesses = useHarnessStore((s) => s.harnesses);
   const scanHarnesses = useHarnessStore((s) => s.scan);
+  const preferredInstallMethod = useHarnessStore((s) => s.preferredInstallMethod);
 
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
@@ -973,7 +976,7 @@ export function OnboardingWizard() {
   const nodeManualGuidance = readiness.dependencyReport
     ? getNodeManualGuidance(readiness.dependencyReport)
     : null;
-  const openCodeInstallCommand = getHarnessInstallCommand("opencode");
+  const openCodeInstallCommand = getHarnessInstallCommand("opencode", preferredInstallMethod);
   const showOpenCodeInstallCard =
     selectedChatEngines.includes("opencode") &&
     shouldShowOpenCodeInstallCard(readiness.engineHealth.opencode);
@@ -990,7 +993,7 @@ export function OnboardingWizard() {
         position: "fixed",
         inset: 0,
         zIndex: 70,
-        background: "rgba(0, 0, 0, 0.85)",
+        background: "var(--ob-backdrop-bg)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
         animation: "ob-backdrop-in 250ms var(--ease-out) both",
@@ -1058,11 +1061,11 @@ export function OnboardingWizard() {
                   animation: "ob-greeting-logo 500ms var(--ease-out) both",
                 }}
               >
-                <svg viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg" width={56} height={56}>
-                  <rect x="10" y="36" width="94" height="94" stroke="white" strokeWidth="6" />
-                  <rect x="36" y="10" width="94" height="94" stroke="white" strokeWidth="6" />
-                  <rect x="23" y="23" width="94" height="94" stroke="white" strokeWidth="6" />
-                  <rect x="50" y="50" width="40" height="40" fill="#FF6B6B" />
+                <svg viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg" width={56} height={56} style={{ color: "var(--text-1)" }}>
+                  <rect x="10" y="36" width="94" height="94" stroke="currentColor" strokeWidth="6" />
+                  <rect x="36" y="10" width="94" height="94" stroke="currentColor" strokeWidth="6" />
+                  <rect x="23" y="23" width="94" height="94" stroke="currentColor" strokeWidth="6" />
+                  <rect x="50" y="50" width="40" height="40" fill="var(--accent)" />
                 </svg>
               </div>
 
@@ -1071,7 +1074,7 @@ export function OnboardingWizard() {
                 style={{
                   width: 40,
                   height: 1,
-                  background: "rgba(255, 255, 255, 0.12)",
+                  background: "var(--wash-12)",
                   marginBottom: 32,
                   transformOrigin: "center",
                   animation: "ob-greeting-line 400ms var(--ease-out) 200ms both",
@@ -1245,6 +1248,7 @@ export function OnboardingWizard() {
                           harness={harness}
                           description={t(`app:harnesses.descriptions.${harness.id}`, { defaultValue: harness.description })}
                           installing={installing?.kind === "harness" && installing.id === harness.id}
+                          preferredInstallMethod={preferredInstallMethod}
                           onInstall={() => void handleInstallHarness(harness)}
                           onOpenWebsite={() => void handleOpenWebsite(harness.website)}
                         />
@@ -1440,7 +1444,7 @@ export function OnboardingWizard() {
             left: 0,
             right: 0,
             padding: "20px 24px",
-            background: "linear-gradient(to top, rgba(0, 0, 0, 0.90) 40%, transparent)",
+            background: "linear-gradient(to top, var(--ob-footer-fade) 40%, transparent)",
             pointerEvents: "none",
           }}
         >

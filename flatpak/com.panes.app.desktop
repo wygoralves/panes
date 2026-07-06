@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Panes
+Comment=Local-first cockpit for AI-assisted coding
+Exec=panes-wrapper %U
+Icon=com.panes.app
+Terminal=false
+Categories=Development;IDE;

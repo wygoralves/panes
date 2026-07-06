@@ -179,6 +179,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::app::get_app_locale,
             commands::app::set_app_locale,
+            commands::app::get_app_theme,
+            commands::app::set_app_theme,
             commands::power::get_keep_awake_state,
             commands::power::set_keep_awake_enabled,
             commands::power::get_power_settings,
@@ -254,6 +256,8 @@ pub fn run() {
             commands::git::rename_git_remote,
             commands::app::get_terminal_accelerated_rendering,
             commands::app::set_terminal_accelerated_rendering,
+            commands::app::get_terminal_font_size,
+            commands::app::set_terminal_font_size,
             commands::app::get_agent_notification_settings,
             commands::app::set_chat_notifications_enabled,
             commands::app::set_terminal_notifications_enabled,
