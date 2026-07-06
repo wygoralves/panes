@@ -9,6 +9,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::runtime_env;
 
+pub const DEFAULT_TERMINAL_FONT_SIZE: u32 = 12;
+pub const MIN_TERMINAL_FONT_SIZE: u32 = 8;
+pub const MAX_TERMINAL_FONT_SIZE: u32 = 32;
+
+/// Clamp a requested terminal font size into the supported range.
+pub fn clamp_terminal_font_size(font_size: u32) -> u32 {
+    font_size.clamp(MIN_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -28,6 +37,8 @@ pub struct GeneralConfig {
     pub locale: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_accelerated_rendering: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_font_size: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_notifications: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -73,12 +84,15 @@ impl Default for GeneralConfig {
             default_model: "gpt-5.4".to_string(),
             locale: None,
             terminal_accelerated_rendering: None,
+            terminal_font_size: None,
             chat_notifications: None,
             terminal_notifications: None,
             notification_sound: None,
         }
     }
 }
+
+pub const VALID_THEME_PREFERENCES: [&str; 3] = ["dark", "light", "system"];
 
 impl AppConfig {
     /// Resolve the configured notification sound name.
@@ -89,6 +103,16 @@ impl AppConfig {
             Some("none") => None,
             Some(name) => Some(name),
             None => default_notification_sound(),
+        }
+    }
+
+    /// Resolve the configured theme preference, falling back to `"dark"` for
+    /// unrecognized or legacy values so old config files always load cleanly.
+    pub fn theme_preference(&self) -> &str {
+        if VALID_THEME_PREFERENCES.contains(&self.general.theme.as_str()) {
+            &self.general.theme
+        } else {
+            "dark"
         }
     }
 }
@@ -140,6 +164,13 @@ impl Default for AppConfig {
 impl AppConfig {
     pub fn terminal_accelerated_rendering_enabled(&self) -> bool {
         self.general.terminal_accelerated_rendering.unwrap_or(true)
+    }
+
+    pub fn terminal_font_size(&self) -> u32 {
+        self.general
+            .terminal_font_size
+            .map(clamp_terminal_font_size)
+            .unwrap_or(DEFAULT_TERMINAL_FONT_SIZE)
     }
 
     pub fn chat_notifications_enabled(&self) -> bool {
@@ -342,6 +373,7 @@ max_action_output_chars = 20000
         assert!(raw.contains("keep_awake_enabled = false"));
         assert!(!raw.contains("terminal_accelerated_rendering"));
         assert!(!raw.contains("terminal_notifications"));
+        assert!(!raw.contains("terminal_font_size"));
     }
 
     #[test]
@@ -386,6 +418,43 @@ max_action_output_chars = 20000
         assert_eq!(config.general.locale, None);
         assert_eq!(config.general.terminal_accelerated_rendering, None);
         assert_eq!(config.general.terminal_notifications, None);
+        assert_eq!(config.general.terminal_font_size, None);
+    }
+
+    #[test]
+    fn terminal_font_size_defaults_when_unset() {
+        let config = AppConfig::default();
+
+        assert_eq!(config.general.terminal_font_size, None);
+        assert_eq!(
+            config.terminal_font_size(),
+            super::DEFAULT_TERMINAL_FONT_SIZE
+        );
+    }
+
+    #[test]
+    fn terminal_font_size_clamps_out_of_range_values() {
+        assert_eq!(
+            super::clamp_terminal_font_size(1),
+            super::MIN_TERMINAL_FONT_SIZE
+        );
+        assert_eq!(
+            super::clamp_terminal_font_size(1000),
+            super::MAX_TERMINAL_FONT_SIZE
+        );
+        assert_eq!(super::clamp_terminal_font_size(18), 18);
+    }
+
+    #[test]
+    fn terminal_font_size_serialize_roundtrip() {
+        let mut config = AppConfig::default();
+        config.general.terminal_font_size = Some(16);
+
+        let raw = toml::to_string_pretty(&config).expect("config should serialize");
+        let loaded = toml::from_str::<AppConfig>(&raw).expect("config should deserialize");
+
+        assert_eq!(loaded.general.terminal_font_size, Some(16));
+        assert_eq!(loaded.terminal_font_size(), 16);
     }
 
     #[test]
@@ -400,6 +469,32 @@ max_action_output_chars = 20000
         let config = AppConfig::default();
 
         assert!(!config.terminal_notifications_enabled());
+    }
+
+    #[test]
+    fn theme_preference_defaults_to_dark() {
+        let config = AppConfig::default();
+
+        assert_eq!(config.theme_preference(), "dark");
+    }
+
+    #[test]
+    fn theme_preference_accepts_light_and_system() {
+        let mut config = AppConfig::default();
+
+        config.general.theme = "light".to_string();
+        assert_eq!(config.theme_preference(), "light");
+
+        config.general.theme = "system".to_string();
+        assert_eq!(config.theme_preference(), "system");
+    }
+
+    #[test]
+    fn theme_preference_falls_back_to_dark_for_unknown_values() {
+        let mut config = AppConfig::default();
+        config.general.theme = "solarized".to_string();
+
+        assert_eq!(config.theme_preference(), "dark");
     }
 
     #[test]

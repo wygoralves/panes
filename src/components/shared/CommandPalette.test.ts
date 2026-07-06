@@ -98,6 +98,8 @@ vi.mock("../../stores/terminalStore", () => ({
   },
 }));
 
+const mockEnsureWorkspace = vi.hoisted(() => vi.fn());
+
 vi.mock("../../stores/workspacePaneStore", () => ({
   collectWorkspacePaneLeaves: vi.fn(() => []),
   getWorkspacePaneActiveTab: vi.fn(() => null),
@@ -105,6 +107,7 @@ vi.mock("../../stores/workspacePaneStore", () => ({
     getState: () => ({
       showSurface: mockShowSurface,
       applyLegacyLayoutMode: vi.fn(),
+      ensureWorkspace: mockEnsureWorkspace,
       workspaces: {},
     }),
   },
@@ -138,6 +141,27 @@ describe("CommandPalette view-files command", () => {
     expect(mockUiState.setExplorerOpen).toHaveBeenCalledWith(true);
     expect(mockShowSurface).toHaveBeenCalledWith("ws-1", "editor");
     expect(mockSetLayoutMode).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalled();
+  });
+
+  it("wires the split-view-editor command to the file plus chat split helper", async () => {
+    const { getStaticCommands } = await import("./CommandPalette");
+    const close = vi.fn();
+    const command = getStaticCommands(((key: string) => key) as never).find(
+      (entry) => entry.id === "layout-split-editor",
+    );
+
+    await command?.action({
+      activeWorkspaceId: "ws-1",
+      activeRepoPath: null,
+      repos: [],
+      close,
+      openSubFlow: vi.fn(),
+    });
+
+    expect(command?.label).toBe("commandPalette.commands.layoutSplitEditor");
+    expect(mockUiState.setActiveView).toHaveBeenCalledWith("chat");
+    expect(mockEnsureWorkspace).toHaveBeenCalledWith("ws-1", "chat");
     expect(close).toHaveBeenCalled();
   });
 });

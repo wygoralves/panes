@@ -101,6 +101,47 @@ export function applyWorkspaceLayoutMode(workspaceId: string, mode: LayoutMode):
   syncTerminalLayoutMode(workspaceId);
 }
 
+export function applyWorkspaceEditorChatSplit(workspaceId: string): void {
+  useUiStore.getState().setActiveView("chat");
+
+  let paneStore = useWorkspacePaneStore.getState();
+  let layout = paneStore.workspaces[workspaceId];
+  if (!layout) {
+    const terminalMode = useTerminalStore.getState().workspaces[workspaceId]?.layoutMode ?? "chat";
+    paneStore.ensureWorkspace(workspaceId, terminalMode);
+    paneStore = useWorkspacePaneStore.getState();
+    layout = paneStore.workspaces[workspaceId];
+    if (!layout) {
+      return;
+    }
+  }
+
+  const leaves = collectWorkspacePaneLeaves(layout.root);
+  const chatLeaf = leaves.find((leaf) => getWorkspacePaneActiveTab(leaf)?.kind === "chat");
+  const editorLeaf = leaves.find((leaf) => getWorkspacePaneActiveTab(leaf)?.kind === "editor");
+
+  if (chatLeaf && editorLeaf) {
+    paneStore.focusLeaf(workspaceId, editorLeaf.id);
+    syncTerminalLayoutMode(workspaceId);
+    return;
+  }
+
+  if (chatLeaf && !editorLeaf) {
+    paneStore.splitLeaf(workspaceId, chatLeaf.id, "vertical", "editor", "after");
+  } else if (editorLeaf && !chatLeaf) {
+    paneStore.splitLeaf(workspaceId, editorLeaf.id, "vertical", "chat", "before");
+  } else {
+    const anchor = leaves.find((leaf) => leaf.id === layout.focusedLeafId) ?? leaves[0] ?? null;
+    if (!anchor) {
+      return;
+    }
+    paneStore.activateSurfaceInLeaf(workspaceId, anchor.id, "chat");
+    paneStore.splitLeaf(workspaceId, anchor.id, "vertical", "editor", "after");
+  }
+
+  syncTerminalLayoutMode(workspaceId);
+}
+
 export function getWorkspacePaneLayoutMode(workspaceId: string): LayoutMode | null {
   return useWorkspacePaneStore.getState().workspaces[workspaceId]?.legacyMode ?? null;
 }

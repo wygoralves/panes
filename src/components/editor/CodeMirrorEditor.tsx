@@ -9,7 +9,7 @@ import {
   redo,
   undo,
 } from "@codemirror/commands";
-import { bracketMatching, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from "@codemirror/language";
+import { bracketMatching, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting, defaultHighlightStyle, HighlightStyle, StreamLanguage } from "@codemirror/language";
 import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
 import { javascript } from "@codemirror/lang-javascript";
 import { rust } from "@codemirror/lang-rust";
@@ -20,6 +20,8 @@ import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
 import { sql } from "@codemirror/lang-sql";
 import { yaml } from "@codemirror/lang-yaml";
+import { java } from "@codemirror/lang-java";
+import { csharp } from "@codemirror/legacy-modes/mode/clike";
 import { tags } from "@lezer/highlight";
 import type { EditorRevealRequest } from "../../types";
 
@@ -62,10 +64,10 @@ const darkVoidTheme = EditorView.theme(
       backgroundColor: "rgba(255, 107, 107, 0.12) !important",
     },
     ".cm-activeLineGutter": {
-      backgroundColor: "rgba(255, 255, 255, 0.04)",
+      backgroundColor: "var(--wash-04)",
     },
     ".cm-activeLine": {
-      backgroundColor: "rgba(255, 255, 255, 0.02)",
+      backgroundColor: "var(--wash-02)",
     },
     ".cm-foldGutter span": {
       color: "var(--text-3)",
@@ -158,7 +160,7 @@ const darkVoidTheme = EditorView.theme(
       transition: "color 120ms ease, background 120ms ease",
     },
     ".cm-panel-close:hover": {
-      background: "rgba(255, 255, 255, 0.06)",
+      background: "var(--wash-06)",
       color: "var(--text-1)",
     },
     "&.cm-focused": {
@@ -171,31 +173,34 @@ const darkVoidTheme = EditorView.theme(
   { dark: true },
 );
 
+// Colors are CSS custom properties (see globals.css) so this single
+// HighlightStyle automatically follows the active theme; no reconfiguration
+// needed when the user switches between dark and light.
 const darkVoidHighlight = HighlightStyle.define([
-  { tag: tags.keyword, color: "#c792ea" },
-  { tag: tags.operator, color: "#89ddff" },
-  { tag: tags.special(tags.variableName), color: "#eeffff" },
-  { tag: tags.typeName, color: "#ffcb6b" },
-  { tag: tags.atom, color: "#f78c6c" },
-  { tag: tags.number, color: "#f78c6c" },
-  { tag: tags.definition(tags.variableName), color: "#82aaff" },
-  { tag: tags.string, color: "#c3e88d" },
-  { tag: tags.special(tags.string), color: "#f07178" },
-  { tag: tags.comment, color: "#546e7a" },
-  { tag: tags.variableName, color: "#eeffff" },
-  { tag: tags.tagName, color: "#f07178" },
-  { tag: tags.bracket, color: "#89ddff" },
-  { tag: tags.meta, color: "#ffcb6b" },
-  { tag: tags.attributeName, color: "#c792ea" },
-  { tag: tags.propertyName, color: "#82aaff" },
-  { tag: tags.className, color: "#ffcb6b" },
-  { tag: tags.invalid, color: "#ff5370" },
-  { tag: tags.function(tags.variableName), color: "#82aaff" },
-  { tag: tags.bool, color: "#f78c6c" },
-  { tag: tags.regexp, color: "#89ddff" },
+  { tag: tags.keyword, color: "var(--cm-keyword)" },
+  { tag: tags.operator, color: "var(--cm-operator)" },
+  { tag: tags.special(tags.variableName), color: "var(--cm-special-variable)" },
+  { tag: tags.typeName, color: "var(--cm-type)" },
+  { tag: tags.atom, color: "var(--cm-atom)" },
+  { tag: tags.number, color: "var(--cm-atom)" },
+  { tag: tags.definition(tags.variableName), color: "var(--cm-def-variable)" },
+  { tag: tags.string, color: "var(--cm-string)" },
+  { tag: tags.special(tags.string), color: "var(--cm-special-string)" },
+  { tag: tags.comment, color: "var(--cm-comment)" },
+  { tag: tags.variableName, color: "var(--cm-special-variable)" },
+  { tag: tags.tagName, color: "var(--cm-special-string)" },
+  { tag: tags.bracket, color: "var(--cm-operator)" },
+  { tag: tags.meta, color: "var(--cm-type)" },
+  { tag: tags.attributeName, color: "var(--cm-keyword)" },
+  { tag: tags.propertyName, color: "var(--cm-def-variable)" },
+  { tag: tags.className, color: "var(--cm-type)" },
+  { tag: tags.invalid, color: "var(--cm-invalid)" },
+  { tag: tags.function(tags.variableName), color: "var(--cm-def-variable)" },
+  { tag: tags.bool, color: "var(--cm-atom)" },
+  { tag: tags.regexp, color: "var(--cm-operator)" },
 ]);
 
-function getLanguageExtension(filePath: string): Extension | null {
+export function getLanguageExtension(filePath: string): Extension | null {
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
 
   switch (ext) {
@@ -229,6 +234,10 @@ function getLanguageExtension(filePath: string): Extension | null {
     case "yaml":
     case "yml":
       return yaml();
+    case "java":
+      return java();
+    case "cs":
+      return StreamLanguage.define(csharp);
     default:
       return null;
   }

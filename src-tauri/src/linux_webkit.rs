@@ -84,11 +84,22 @@ fn plan_webkit_workarounds<'a>(
             None
         },
         restore_original_ld_preload: env.internal_wayland_client_preload.is_some(),
-        disable_dmabuf_renderer: is_wayland_session && !env.dmabuf_renderer_configured,
+        // The DMA-BUF renderer crash (EGL_BAD_PARAMETER on startup, or a blank
+        // white webview) is not exclusive to Wayland: AppImage bundles carry
+        // their own Mesa/EGL stack, which can misbehave under X11 too. Apply
+        // the same conservative workaround whenever we're running as an
+        // AppImage, regardless of session type.
+        disable_dmabuf_renderer: (is_wayland_session || is_appimage_bundle)
+            && !env.dmabuf_renderer_configured,
         disable_compositing_mode: is_wayland_session
             && is_cosmic_session
             && !env.compositing_mode_configured,
     }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn plan_has_work(plan: &WebkitWorkaroundPlan) -> bool {
+    plan.clear_forced_x11_backend || plan.disable_dmabuf_renderer || plan.disable_compositing_mode
 }
 
 #[cfg(target_os = "linux")]
@@ -184,7 +195,7 @@ pub fn apply_webkit_display_workarounds() {
         }
     }
 
-    if !plan.is_wayland_session {
+    if !plan_has_work(&plan) {
         return;
     }
 
@@ -197,9 +208,10 @@ pub fn apply_webkit_display_workarounds() {
         env::remove_var("GDK_BACKEND");
     }
 
-    // WebKitGTK can fail before the frontend boots on some Wayland stacks,
-    // leaving a blank window with EGL display errors. Apply conservative
-    // defaults unless the user already configured an override.
+    // WebKitGTK can fail before the frontend boots on some Wayland or AppImage
+    // stacks, leaving a blank window with EGL display errors (for example
+    // "Could not create default EGL display: EGL_BAD_PARAMETER"). Apply
+    // conservative defaults unless the user already configured an override.
     if plan.disable_dmabuf_renderer {
         env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
@@ -207,10 +219,7 @@ pub fn apply_webkit_display_workarounds() {
         env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
     }
 
-    if plan.clear_forced_x11_backend
-        || plan.disable_dmabuf_renderer
-        || plan.disable_compositing_mode
-    {
+    if plan_has_work(&plan) {
         log::info!(
             "applied linux webkit display workarounds: wayland={}, cosmic={}, clear_forced_x11_backend={}, relaunch_with_wayland_client_preload={}, disable_dmabuf_renderer={}, disable_compositing_mode={}",
             plan.is_wayland_session,
@@ -229,8 +238,8 @@ pub fn apply_webkit_display_workarounds() {}
 #[cfg(test)]
 mod tests {
     use super::{
-        plan_webkit_workarounds, WebkitDisplayEnv, WebkitWorkaroundPlan, ORIGINAL_LD_PRELOAD_ENV,
-        WAYLAND_CLIENT_PRELOAD_ENV,
+        plan_has_work, plan_webkit_workarounds, WebkitDisplayEnv, WebkitWorkaroundPlan,
+        ORIGINAL_LD_PRELOAD_ENV, WAYLAND_CLIENT_PRELOAD_ENV,
     };
 
     fn base_env<'a>() -> WebkitDisplayEnv<'a> {
@@ -250,14 +259,14 @@ mod tests {
     }
 
     #[test]
-    fn skips_workarounds_outside_wayland() {
+    fn skips_workarounds_outside_wayland_without_appimage() {
         let plan = plan_webkit_workarounds(
             &WebkitDisplayEnv {
                 xdg_session_type: Some("x11"),
                 wayland_display_present: false,
                 xdg_current_desktop: Some("COSMIC"),
                 desktop_session: Some("cosmic"),
-                appimage_present: true,
+                appimage_present: false,
                 appdir_present: false,
                 gdk_backend: Some("x11"),
                 ld_preload: None,
@@ -280,6 +289,70 @@ mod tests {
                 disable_compositing_mode: false,
             }
         );
+    }
+
+    #[test]
+    fn enables_dmabuf_workaround_for_x11_appimage_bundle() {
+        // This mirrors the reported crash: an AppImage launched on a plain
+        // X11 session aborts with "Could not create default EGL display:
+        // EGL_BAD_PARAMETER" before the frontend ever boots.
+        let plan = plan_webkit_workarounds(
+            &WebkitDisplayEnv {
+                xdg_session_type: Some("x11"),
+                wayland_display_present: false,
+                xdg_current_desktop: None,
+                desktop_session: None,
+                appimage_present: true,
+                appdir_present: false,
+                gdk_backend: Some("x11"),
+                ld_preload: None,
+                internal_wayland_client_preload: None,
+                dmabuf_renderer_configured: false,
+                compositing_mode_configured: false,
+            },
+            Some("/usr/lib64/libwayland-client.so.0"),
+        );
+
+        assert_eq!(
+            plan,
+            WebkitWorkaroundPlan {
+                is_wayland_session: false,
+                is_cosmic_session: false,
+                clear_forced_x11_backend: false,
+                relaunch_with_wayland_client_preload: None,
+                restore_original_ld_preload: false,
+                disable_dmabuf_renderer: true,
+                disable_compositing_mode: false,
+            }
+        );
+    }
+
+    #[test]
+    fn enables_dmabuf_workaround_for_appimage_with_unset_session_type() {
+        // Some X11 window managers (for example qtile launched without a
+        // display manager) never populate XDG_SESSION_TYPE at all. The
+        // workaround must still trigger from APPIMAGE/APPDIR alone.
+        let mut env = base_env();
+        env.appimage_present = true;
+
+        let plan = plan_webkit_workarounds(&env, Some("/usr/lib64/libwayland-client.so.0"));
+
+        assert!(!plan.is_wayland_session);
+        assert!(plan.disable_dmabuf_renderer);
+        assert!(!plan.disable_compositing_mode);
+        assert!(!plan.clear_forced_x11_backend);
+    }
+
+    #[test]
+    fn preserves_existing_user_override_on_x11_appimage() {
+        let mut env = base_env();
+        env.xdg_session_type = Some("x11");
+        env.appimage_present = true;
+        env.dmabuf_renderer_configured = true;
+
+        let plan = plan_webkit_workarounds(&env, Some("/usr/lib64/libwayland-client.so.0"));
+
+        assert!(!plan.disable_dmabuf_renderer);
     }
 
     #[test]
@@ -454,5 +527,27 @@ mod tests {
     fn helper_env_var_names_are_stable() {
         assert_eq!(WAYLAND_CLIENT_PRELOAD_ENV, "PANES_WAYLAND_CLIENT_PRELOAD");
         assert_eq!(ORIGINAL_LD_PRELOAD_ENV, "PANES_ORIGINAL_LD_PRELOAD");
+    }
+
+    #[test]
+    fn plan_has_work_for_x11_appimage_bundle() {
+        let mut env = base_env();
+        env.xdg_session_type = Some("x11");
+        env.appimage_present = true;
+
+        let plan = plan_webkit_workarounds(&env, Some("/usr/lib64/libwayland-client.so.0"));
+
+        assert!(plan_has_work(&plan));
+    }
+
+    #[test]
+    fn plan_has_no_work_for_plain_x11_without_appimage() {
+        let mut env = base_env();
+        env.xdg_session_type = Some("x11");
+        env.gdk_backend = Some("x11");
+
+        let plan = plan_webkit_workarounds(&env, Some("/usr/lib64/libwayland-client.so.0"));
+
+        assert!(!plan_has_work(&plan));
     }
 }

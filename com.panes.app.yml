@@ -1,0 +1,102 @@
+app-id: com.panes.app
+runtime: org.gnome.Platform
+runtime-version: "50"
+sdk: org.gnome.Sdk
+command: panes-wrapper
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.node20
+  - org.freedesktop.Sdk.Extension.rust-stable
+
+finish-args:
+  # Display. Wayland is preferred, X11 is a fallback for non-Wayland sessions.
+  - --socket=wayland
+  - --socket=fallback-x11
+  # GPU acceleration for the webview.
+  - --device=dri
+  # Required by the webview process model.
+  - --share=ipc
+  # Codex, Claude, OpenCode, and git all need outbound network access.
+  - --share=network
+  # System tray icon (Cargo.toml enables the tauri "tray-icon" feature).
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --filesystem=xdg-run/tray-icon:create
+  # Desktop notifications for long-running agent turns.
+  - --talk-name=org.freedesktop.Notifications
+  # Git operations over SSH remotes.
+  - --socket=ssh-auth
+  # Deliberately NOT requesting --filesystem=host or --filesystem=home.
+  # Panes opens workspace folders exclusively through
+  # @tauri-apps/plugin-dialog, which on Linux routes through the
+  # xdg-desktop-portal FileChooser and returns a document-portal path
+  # under /run/flatpak/doc/. Editing, git, and terminal sessions then
+  # operate against that portal-granted path rather than an
+  # unrestricted host mount. See flatpak/README.md for the caveats
+  # this design still needs verified on real hardware.
+
+build-options:
+  append-path: /usr/lib/sdk/node20/bin:/usr/lib/sdk/rust-stable/bin
+  build-args:
+    - --share=network
+  env:
+    CARGO_HOME: /run/build/panes/cargo
+    XDG_CACHE_HOME: /run/build/panes/xdg-cache
+    npm_config_cache: /run/build/panes/npm-cache
+    PNPM_STORE_DIR: /run/build/panes/pnpm-store
+
+modules:
+  - name: git-runtime
+    buildsystem: simple
+    build-commands:
+      - make prefix=/app NO_PERL=YesPlease NO_TCLTK=YesPlease NO_GETTEXT=YesPlease install
+    sources:
+      - type: archive
+        url: https://www.kernel.org/pub/software/scm/git/git-2.55.0.tar.xz
+        sha256: 457fdb04dc8728e007d4688695e6912e6f680727920f2a40bf11eacc17505357
+
+  - name: node-runtime
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/bin /app/lib/node
+      - tar -xJf node.tar.xz --strip-components=1 -C /app/lib/node
+      - ln -sf ../lib/node/bin/corepack /app/bin/corepack
+      - ln -sf ../lib/node/bin/node /app/bin/node
+      - ln -sf ../lib/node/bin/npm /app/bin/npm
+      - ln -sf ../lib/node/bin/npx /app/bin/npx
+    sources:
+      - type: file
+        url: https://nodejs.org/dist/v20.20.2/node-v20.20.2-linux-x64.tar.xz
+        sha256: df770b2a6f130ed8627c9782c988fda9669fa23898329a61a871e32f965e007d
+        dest-filename: node.tar.xz
+        only-arches:
+          - x86_64
+      - type: file
+        url: https://nodejs.org/dist/v20.20.2/node-v20.20.2-linux-arm64.tar.xz
+        sha256: 73093db209e4e9e09dd7d15a47aeaab1b74833830df03efa5f942a1122c5fa71
+        dest-filename: node.tar.xz
+        only-arches:
+          - aarch64
+
+  - name: mise-runtime
+    buildsystem: simple
+    build-commands:
+      - cargo install --root /app mise --version 2026.7.0 --locked
+    sources: []
+
+  - name: panes
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/bin /app/lib/Panes /app/libexec
+      - npm exec --yes pnpm@9 install --frozen-lockfile
+      - PANES_SKIP_DESKTOP_PREBUILD= npm exec --yes pnpm@9 run build:desktop
+      - cargo build --manifest-path src-tauri/Cargo.toml --release
+      - bin_path="$(find src-tauri/target/release -maxdepth 1 -type f -perm -111 \( -name 'Panes' -o -name 'panes' \) | head -n1)" && test -n "$bin_path" && install -Dm755 "$bin_path" /app/bin/Panes
+      - install -Dm644 src-tauri/sidecar-dist/claude-agent-sdk-server.mjs /app/lib/Panes/sidecar-dist/claude-agent-sdk-server.mjs
+      - install -Dm755 flatpak/panes-wrapper.sh /app/bin/panes-wrapper
+      - install -Dm644 flatpak/mise-env.sh /app/etc/profile.d/mise-env.sh
+      - install -Dm644 flatpak/com.panes.app.desktop /app/share/applications/com.panes.app.desktop
+      - install -Dm644 flatpak/com.panes.app.metainfo.xml /app/share/metainfo/com.panes.app.metainfo.xml
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/com.panes.app.png
+      - install -Dm644 src-tauri/icons/icon.svg /app/share/icons/hicolor/scalable/apps/com.panes.app.svg
+    sources:
+      - type: dir
+        path: .

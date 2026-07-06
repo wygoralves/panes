@@ -14,6 +14,7 @@ import {
 import {
   FilePen,
   MessageSquare,
+  SquareSplitVertical,
   SquareTerminal,
   X,
 } from "lucide-react";
@@ -36,6 +37,7 @@ import {
   type WorkspacePaneSplitDirection,
   type WorkspacePaneSurfaceKind,
 } from "../../stores/workspacePaneStore";
+import { applyWorkspaceEditorChatSplit } from "../../lib/workspacePaneNavigation";
 import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
 import { isMacDesktop, usesCustomWindowFrame } from "../../lib/windowActions";
 
@@ -795,15 +797,33 @@ function PaneLeafView({
     surfaceDrag.targetLeafId === leaf.id &&
     surfaceDrag.placement !== null &&
     surfaceDrag.kind !== activeSurfaceKind;
+  const splitLabel =
+    activeSurfaceKind === "chat"
+      ? t("workspacePanes.splitWithEditor")
+      : activeSurfaceKind === "editor"
+        ? t("workspacePanes.splitWithChat")
+        : null;
 
   return (
     <section
       className={`workspace-pane-leaf${focused ? " workspace-pane-leaf-focused" : ""}${
         leafCount > 1 ? " workspace-pane-leaf-has-close" : ""
-      }`}
+      }${splitLabel ? " workspace-pane-leaf-has-split" : ""}`}
       data-workspace-pane-leaf-id={leaf.id}
       onMouseDownCapture={() => focusLeaf(workspaceId, leaf.id)}
     >
+      {splitLabel && (
+        <button
+          type="button"
+          className="workspace-pane-split-btn"
+          title={splitLabel}
+          aria-label={splitLabel}
+          onClick={() => applyWorkspaceEditorChatSplit(workspaceId)}
+        >
+          <SquareSplitVertical size={12} />
+        </button>
+      )}
+
       {leafCount > 1 && (
         <button
           type="button"

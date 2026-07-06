@@ -25,6 +25,7 @@ import {
   ChevronRight,
   type LucideIcon,
   SplitSquareHorizontal,
+  SquareSplitVertical,
   GitCommitHorizontal,
   ListTree,
   History,
@@ -57,6 +58,7 @@ import {
 import { formatRelativeTime } from "../../lib/formatters";
 import { createAndActivateWorkspaceThread } from "../../lib/newThreadActions";
 import {
+  applyWorkspaceEditorChatSplit,
   applyWorkspaceLayoutMode,
   showWorkspaceEditorForDirectFileOpen,
   showWorkspaceSurface,
@@ -239,6 +241,19 @@ export function getStaticCommands(
     action: ({ activeWorkspaceId, close }) => {
       if (activeWorkspaceId) {
         applyWorkspaceLayoutMode(activeWorkspaceId, "split");
+      }
+      close();
+    },
+  },
+  {
+    id: "layout-split-editor",
+    label: t("commandPalette.commands.layoutSplitEditor"),
+    icon: SquareSplitVertical,
+    group: "layout",
+    keywords: ["split", "editor", "file", "chat", "side by side", "dividir", "arquivo"],
+    action: ({ activeWorkspaceId, close }) => {
+      if (activeWorkspaceId) {
+        applyWorkspaceEditorChatSplit(activeWorkspaceId);
       }
       close();
     },
@@ -838,9 +853,9 @@ const STYLES = {
     display: "grid",
     gridTemplateRows: "auto 1fr auto",
     borderRadius: "var(--radius-lg)",
-    background: "rgba(14, 14, 16, 0.95)",
+    background: "var(--popover-bg)",
     boxShadow:
-      "0 0 0 1px rgba(255, 255, 255, 0.08), " +
+      "0 0 0 1px var(--wash-08), " +
       "0 24px 68px rgba(0, 0, 0, 0.55)",
     animation: "slide-up 180ms cubic-bezier(0.16, 1, 0.3, 1) both",
   },
@@ -912,7 +927,7 @@ const STYLES = {
     width: "calc(100% - 12px)",
     border: "none",
     borderRadius: "var(--radius-sm)",
-    background: active ? "rgba(255, 255, 255, 0.07)" : "transparent",
+    background: active ? "var(--wash-07)" : "transparent",
     cursor: "pointer",
     textAlign: "left" as const,
     fontFamily: "inherit",
