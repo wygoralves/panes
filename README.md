@@ -43,6 +43,7 @@ Panes is not a full IDE, but it does ship with a built-in multi-tab editor for q
 - Streaming chat with structured content blocks for text, thinking, actions, diffs, approvals, attachments, and usage updates
 - Codex chat integration via `codex app-server`
 - Claude chat integration via a Claude Agent SDK sidecar
+- OpenCode chat integration as a native engine, available once the `opencode` CLI is on your `PATH`
 - Plan mode, attachments, reasoning effort controls, per-thread approval/network overrides, and Codex-specific sandbox-mode overrides
 - Global FTS message search with keyboard navigation
 - Windowed message loading and lazy hydration for long threads/action output
@@ -233,7 +234,7 @@ User-facing frontend copy is localized with `i18next`/`react-i18next`. Treat i18
 
 Panes uses a React + Zustand frontend running inside a Tauri shell, with a Rust backend that owns persistence, engine orchestration, git operations, terminal management, and filesystem-safe file access.
 
-The app currently exposes Codex and Claude as chat engines. Codex talks to `codex app-server`; Claude is bridged through the bundled Claude runtime sidecar.
+The app currently exposes Codex, Claude, and OpenCode as chat engines. Codex talks to `codex app-server`; Claude is bridged through the bundled Claude runtime sidecar; OpenCode talks to a locally installed `opencode` CLI and becomes selectable in the engine and model picker once that CLI is detected on your `PATH`.
 
 ### Stack
 
