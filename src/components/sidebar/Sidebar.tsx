@@ -938,7 +938,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                         border: "none",
                         cursor: "pointer",
                         background: active ? "var(--accent)" : "transparent",
-                        color: active ? "var(--on-accent)" : "var(--text-3)",
+                        color: active ? "#fff" : "var(--text-3)",
                         boxShadow: "none",
                         transition: "background 0.15s, color 0.15s, box-shadow 0.15s",
                       }}
@@ -977,7 +977,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                       border: "none",
                       cursor: "pointer",
                       background: activeLocale === locale ? "var(--accent)" : "transparent",
-                      color: activeLocale === locale ? "var(--on-accent)" : "var(--text-3)",
+                      color: activeLocale === locale ? "#fff" : "var(--text-3)",
                       fontWeight: activeLocale === locale ? 500 : 400,
                       boxShadow: "none",
                       transition: "background 0.15s, color 0.15s, box-shadow 0.15s",
@@ -1225,11 +1225,11 @@ function CollapsedRail({
             background: "transparent",
           }}
         >
-          <svg viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg" width="20" height="20">
-            <rect x="10" y="36" width="94" height="94" stroke="white" strokeWidth="6"/>
-            <rect x="36" y="10" width="94" height="94" stroke="white" strokeWidth="6"/>
-            <rect x="23" y="23" width="94" height="94" stroke="white" strokeWidth="6"/>
-            <rect x="50" y="50" width="40" height="40" fill="#FF6B6B"/>
+          <svg viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg" width="20" height="20" style={{ color: "var(--text-1)" }}>
+            <rect x="10" y="36" width="94" height="94" stroke="currentColor" strokeWidth="6"/>
+            <rect x="36" y="10" width="94" height="94" stroke="currentColor" strokeWidth="6"/>
+            <rect x="23" y="23" width="94" height="94" stroke="currentColor" strokeWidth="6"/>
+            <rect x="50" y="50" width="40" height="40" fill="var(--accent)"/>
           </svg>
         </button>
       </div>
