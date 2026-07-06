@@ -87,6 +87,7 @@
     "commands": {
       "layoutChat": "Switch to Chat",
       "layoutSplit": "Switch to Split View",
+      "layoutSplitEditor": "Switch to Split View: File + Chat",
       "layoutTerminal": "Switch to Terminal",
       "layoutEditor": "Switch to File Editor",
       "toggleSidebar": "Toggle Sidebar",
@@ -302,6 +303,8 @@
     "primarySurfaceTitle": "Switch to {{surface}}",
     "emptyPane": "Drag Chat, Terminal, or Editor here.",
     "closePane": "Close pane",
+    "splitWithEditor": "Open file editor beside chat",
+    "splitWithChat": "Open chat beside file editor",
     "dropZones": {
       "left": "Split left with {{surface}}",
       "right": "Split right with {{surface}}",

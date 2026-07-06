@@ -87,6 +87,7 @@
     "commands": {
       "layoutChat": "Ir para Chat",
       "layoutSplit": "Ir para Visão dividida",
+      "layoutSplitEditor": "Ir para Visão dividida: Arquivo + Chat",
       "layoutTerminal": "Ir para Terminal",
       "layoutEditor": "Ir para Editor de arquivos",
       "toggleSidebar": "Alternar Sidebar",
@@ -302,6 +303,8 @@
     "primarySurfaceTitle": "Ir para {{surface}}",
     "emptyPane": "Arraste Chat, Terminal ou Editor para cá.",
     "closePane": "Fechar painel",
+    "splitWithEditor": "Abrir editor de arquivos ao lado do chat",
+    "splitWithChat": "Abrir chat ao lado do editor de arquivos",
     "dropZones": {
       "left": "Dividir à esquerda com {{surface}}",
       "right": "Dividir à direita com {{surface}}",
