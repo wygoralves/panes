@@ -4,6 +4,27 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Agent Workspace</title>
+    <script>
+      (function () {
+        // Blocking paint hint: stamp data-theme before first paint so returning
+        // users never see a flash of the wrong theme while the async config
+        // load (main.tsx) resolves the real, authoritative preference.
+        try {
+          var pref = localStorage.getItem("panes:theme-preference");
+          var mode =
+            pref === "light" || pref === "dark"
+              ? pref
+              : pref === "system"
+                ? (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+                    ? "light"
+                    : "dark")
+                : "dark";
+          document.documentElement.dataset.theme = mode;
+        } catch (e) {
+          document.documentElement.dataset.theme = "dark";
+        }
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

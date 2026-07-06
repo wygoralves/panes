@@ -41,6 +41,30 @@
   /* Code */
   --code-bg: #050505;
 
+  /* Frosted popover surface (command palette and similar floating cards) */
+  --popover-bg: rgba(14, 14, 16, 0.95);
+
+  /* Floating scrim chip (pane close/split buttons overlaid on content) */
+  --floating-chip-bg: rgba(0, 0, 0, 0.48);
+
+  /* Frosted chip with text on top (drag chip, snap label, toasts) */
+  --overlay-chip-bg: rgba(10, 10, 10, 0.82);
+  --overlay-chip-bg-subtle: rgba(10, 10, 10, 0.72);
+
+  /* Onboarding wizard full-screen takeover backdrop */
+  --ob-backdrop-bg: rgba(0, 0, 0, 0.85);
+  --ob-footer-fade: rgba(0, 0, 0, 0.9);
+
+  /* Model picker engine rail vignette (gradient end stop) */
+  --mp-rail-fade-end: rgba(15, 15, 15, 0.6);
+
+  /* Git diff added/deleted line text (distinct from the gutter icon color) */
+  --diff-add-text: #b5f5c8;
+  --diff-del-text: #ffd7d5;
+
+  /* Floating diff editor info overlay */
+  --diff-overlay-bg: rgba(15, 15, 15, 0.92);
+
   /* Radii */
   --radius-xs: 4px;
   --radius-sm: 6px;
@@ -80,7 +104,7 @@
   /* Text drawn on top of accent-filled surfaces (buttons, launch chips) */
   --on-accent: #0c0d13;
 
-  /* Overlay washes — translucent white tints used for hover/active states
+  /* Overlay washes: translucent white tints used for hover/active states
      on dark surfaces. Flipped to translucent black under the light theme. */
   --wash-02: rgba(255,255,255,.02);
   --wash-025: rgba(255,255,255,.025);
@@ -145,8 +169,8 @@
   --bg-5: #d1d5db;
 
   --text-1: #17181c;
-  --text-2: #55585f;
-  --text-3: #85888f;
+  --text-2: #494c52;
+  --text-3: #6b6e75;
 
   --accent: #cc3333;
   --accent-dim: rgba(204, 51, 51, 0.08);
@@ -160,14 +184,25 @@
   --warning: #b45309;
   --info: #2563eb;
 
-  --border: rgba(0, 0, 0, 0.12);
-  --border-active: rgba(0, 0, 0, 0.22);
-  --border-accent: rgba(204, 51, 51, 0.2);
+  --border: rgba(0, 0, 0, 0.16);
+  --border-active: rgba(0, 0, 0, 0.28);
+  --border-accent: rgba(204, 51, 51, 0.26);
 
   --glass-bg: rgba(255, 255, 255, 0.75);
   --glass-border: rgba(0, 0, 0, 0.08);
 
   --code-bg: #f1f2f4;
+
+  --popover-bg: rgba(255, 255, 255, 0.95);
+  --floating-chip-bg: rgba(255, 255, 255, 0.85);
+  --overlay-chip-bg: rgba(255, 255, 255, 0.92);
+  --overlay-chip-bg-subtle: rgba(255, 255, 255, 0.85);
+  --ob-backdrop-bg: rgba(255, 255, 255, 0.85);
+  --ob-footer-fade: rgba(255, 255, 255, 0.9);
+  --mp-rail-fade-end: rgba(220, 222, 226, 0.6);
+  --diff-add-text: var(--success);
+  --diff-del-text: var(--danger);
+  --diff-overlay-bg: rgba(255, 255, 255, 0.92);
 
   --sidebar-bg: #f5f5f6;
   --content-bg: #ffffff;
@@ -180,28 +215,31 @@
   --block-steer-bg: rgba(204, 51, 51, 0.06);
   --block-steer-border: rgba(204, 51, 51, 0.18);
 
-  /* Overlay washes flip polarity: translucent black instead of white. */
-  --wash-02: rgba(0,0,0,.03);
-  --wash-025: rgba(0,0,0,.035);
-  --wash-03: rgba(0,0,0,.04);
-  --wash-04: rgba(0,0,0,.05);
-  --wash-045: rgba(0,0,0,.055);
-  --wash-05: rgba(0,0,0,.06);
-  --wash-06: rgba(0,0,0,.07);
-  --wash-07: rgba(0,0,0,.08);
-  --wash-08: rgba(0,0,0,.09);
-  --wash-09: rgba(0,0,0,.1);
-  --wash-1: rgba(0,0,0,.11);
-  --wash-11: rgba(0,0,0,.12);
-  --wash-12: rgba(0,0,0,.13);
-  --wash-14: rgba(0,0,0,.15);
-  --wash-15: rgba(0,0,0,.16);
-  --wash-16: rgba(0,0,0,.18);
-  --wash-18: rgba(0,0,0,.2);
-  --wash-2: rgba(0,0,0,.22);
-  --wash-24: rgba(0,0,0,.26);
-  --wash-26: rgba(0,0,0,.28);
-  --wash-015: rgba(0,0,0,.02);
+  /* Overlay washes flip polarity: translucent black instead of white, at a
+     higher opacity than a literal flip would give, since a black wash on a
+     light surface reads fainter than the same opacity white wash reads on a
+     dark surface. */
+  --wash-015: rgba(0,0,0,.03);
+  --wash-02: rgba(0,0,0,.04);
+  --wash-025: rgba(0,0,0,.045);
+  --wash-03: rgba(0,0,0,.05);
+  --wash-04: rgba(0,0,0,.065);
+  --wash-045: rgba(0,0,0,.07);
+  --wash-05: rgba(0,0,0,.08);
+  --wash-06: rgba(0,0,0,.09);
+  --wash-07: rgba(0,0,0,.1);
+  --wash-08: rgba(0,0,0,.11);
+  --wash-09: rgba(0,0,0,.13);
+  --wash-1: rgba(0,0,0,.14);
+  --wash-11: rgba(0,0,0,.15);
+  --wash-12: rgba(0,0,0,.16);
+  --wash-14: rgba(0,0,0,.19);
+  --wash-15: rgba(0,0,0,.2);
+  --wash-16: rgba(0,0,0,.21);
+  --wash-18: rgba(0,0,0,.24);
+  --wash-2: rgba(0,0,0,.27);
+  --wash-24: rgba(0,0,0,.32);
+  --wash-26: rgba(0,0,0,.34);
 
   /* Markdown / chat code-fence syntax colors (light, GitHub-Light-inspired) */
   --hljs-fg: #24292f;
@@ -484,6 +522,10 @@ button, input, textarea, select {
 .linux-window-control-close:hover {
   background: rgba(248, 113, 113, 0.14);
   border-color: rgba(248, 113, 113, 0.12);
+  color: #fca5a5;
+}
+
+:root[data-theme="light"] .linux-window-control-close:hover {
   color: var(--danger);
 }
 
@@ -847,7 +889,7 @@ button, input, textarea, select {
   animation: pulse-soft 2s ease-in-out infinite;
 }
 
-/* ── Code Syntax — Void theme (dark default, light override below) ── */
+/* ── Code Syntax: Void theme (dark default, light override below) ── */
 .hljs { color: var(--hljs-fg); background: transparent; }
 .hljs-keyword { color: var(--hljs-keyword); }
 .hljs-string { color: var(--hljs-string); }
@@ -1567,13 +1609,13 @@ button, input, textarea, select {
 }
 .git-diff-add .git-diff-gutter { color: var(--success); opacity: 0.7; }
 .git-diff-add .git-diff-line-num { color: var(--success); opacity: 0.4; }
-.git-diff-add .git-diff-line-content { color: #b5f5c8; }
+.git-diff-add .git-diff-line-content { color: var(--diff-add-text); }
 .git-diff-del {
   background: rgba(248, 81, 73, 0.08);
 }
 .git-diff-del .git-diff-gutter { color: var(--danger); opacity: 0.7; }
 .git-diff-del .git-diff-line-num { color: var(--danger); opacity: 0.4; }
-.git-diff-del .git-diff-line-content { color: #ffd7d5; }
+.git-diff-del .git-diff-line-content { color: var(--diff-del-text); }
 .git-diff-hunk {
   background: rgba(96, 165, 250, 0.04);
   border-top: 1px solid rgba(96, 165, 250, 0.1);
@@ -1649,6 +1691,10 @@ button, input, textarea, select {
 .multi-repo-name {
   font-size: 12px;
   font-weight: 600;
+  color: #e8e8e8;
+}
+
+:root[data-theme="light"] .multi-repo-name {
   color: var(--text-1);
 }
 .multi-repo-header-clean .multi-repo-name {
@@ -2213,7 +2259,7 @@ button, input, textarea, select {
   padding: 7px 10px;
   border: 1px solid var(--wash-12);
   border-radius: var(--radius-sm);
-  background: rgba(10, 10, 10, 0.82);
+  background: var(--overlay-chip-bg);
   color: var(--text-1);
   font-size: 12px;
   font-weight: 600;
@@ -2314,7 +2360,7 @@ button, input, textarea, select {
   justify-content: center;
   border: 0;
   border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, 0.48);
+  background: var(--floating-chip-bg);
   color: var(--text-3);
   cursor: pointer;
   opacity: 0;
@@ -2476,7 +2522,7 @@ button, input, textarea, select {
   padding: 7px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--wash-11);
-  background: rgba(10, 10, 10, 0.72);
+  background: var(--overlay-chip-bg-subtle);
   color: var(--text-1);
   font-size: 12px;
   font-weight: 600;
@@ -4451,8 +4497,12 @@ button, input, textarea, select {
 /* Allow — primary */
 .approval-btn-allow {
   background: var(--accent);
-  color: var(--on-accent);
+  color: #080808;
   font-weight: 600;
+}
+
+:root[data-theme="light"] .approval-btn-allow {
+  color: var(--on-accent);
 }
 
 .approval-btn-allow:hover {
@@ -4641,7 +4691,7 @@ button, input, textarea, select {
   width: 100%;
   border-radius: 4px;
   border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.18);
+  background: var(--code-bg);
   color: var(--text-1);
   font-size: 11px;
   line-height: 1.5;
@@ -4719,7 +4769,7 @@ button, input, textarea, select {
   gap: 10px;
   padding: 10px 12px;
   border-radius: var(--radius-md);
-  background: rgba(10, 10, 10, 0.82);
+  background: var(--overlay-chip-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border);
@@ -5548,7 +5598,10 @@ button, input, textarea, select {
   left: 2px;
   width: 12px;
   height: 12px;
-  background: var(--text-1);
+  /* Always a light knob, on-track or off-track, in either theme: the
+     universal toggle-switch convention. Only the track color communicates
+     on/off and theme. */
+  background: #f5f5f5;
   border-radius: 50%;
   transition: transform var(--duration-fast) var(--ease-out);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
@@ -6709,7 +6762,7 @@ button, input, textarea, select {
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: rgba(15, 15, 15, 0.92);
+  background: var(--diff-overlay-bg);
   color: var(--text-2);
   font-size: 11px;
   pointer-events: none;
@@ -8472,7 +8525,7 @@ button, input, textarea, select {
   width: 148px;
   flex-shrink: 0;
   padding: 8px 0;
-  background: linear-gradient(to bottom, var(--bg-2), rgba(15, 15, 15, 0.6));
+  background: linear-gradient(to bottom, var(--bg-2), var(--mp-rail-fade-end));
   border-right: 1px solid var(--border);
 }
 
@@ -8773,7 +8826,7 @@ button, input, textarea, select {
   width: 120px;
   flex-shrink: 0;
   padding: 8px 0;
-  background: linear-gradient(to bottom, var(--bg-2), rgba(15, 15, 15, 0.6));
+  background: linear-gradient(to bottom, var(--bg-2), var(--mp-rail-fade-end));
   border-right: 1px solid var(--border);
 }
 
