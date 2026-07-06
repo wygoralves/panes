@@ -84,6 +84,9 @@ export const ipc = {
     invoke<boolean>("get_terminal_accelerated_rendering"),
   setTerminalAcceleratedRendering: (enabled: boolean) =>
     invoke<boolean>("set_terminal_accelerated_rendering", { enabled }),
+  getTerminalFontSize: () => invoke<number>("get_terminal_font_size"),
+  setTerminalFontSize: (fontSize: number) =>
+    invoke<number>("set_terminal_font_size", { fontSize }),
   getAgentNotificationSettings: () =>
     invoke<TerminalNotificationSettings>("get_agent_notification_settings"),
   setChatNotificationsEnabled: (enabled: boolean) =>
