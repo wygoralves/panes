@@ -99,9 +99,6 @@ vi.mock("../../stores/terminalStore", () => ({
 }));
 
 const mockEnsureWorkspace = vi.hoisted(() => vi.fn());
-const mockSplitLeaf = vi.hoisted(() => vi.fn());
-const mockFocusLeaf = vi.hoisted(() => vi.fn());
-const mockActivateSurfaceInLeaf = vi.hoisted(() => vi.fn());
 
 vi.mock("../../stores/workspacePaneStore", () => ({
   collectWorkspacePaneLeaves: vi.fn(() => []),
@@ -111,9 +108,6 @@ vi.mock("../../stores/workspacePaneStore", () => ({
       showSurface: mockShowSurface,
       applyLegacyLayoutMode: vi.fn(),
       ensureWorkspace: mockEnsureWorkspace,
-      splitLeaf: mockSplitLeaf,
-      focusLeaf: mockFocusLeaf,
-      activateSurfaceInLeaf: mockActivateSurfaceInLeaf,
       workspaces: {},
     }),
   },

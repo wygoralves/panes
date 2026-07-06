@@ -2229,13 +2229,21 @@ button, input, textarea, select {
 }
 
 .workspace-pane-leaf-has-close .terminal-tabs-bar,
-.workspace-pane-leaf-has-close .editor-tabs-bar {
+.workspace-pane-leaf-has-close .editor-tabs-bar,
+.workspace-pane-leaf-has-split .editor-tabs-bar {
   transition: padding-right var(--duration-fast) var(--ease-out);
 }
 
 .workspace-pane-leaf-focused.workspace-pane-leaf-has-close:hover .terminal-tabs-bar,
-.workspace-pane-leaf-focused.workspace-pane-leaf-has-close:hover .editor-tabs-bar {
+.workspace-pane-leaf-focused.workspace-pane-leaf-has-close:hover .editor-tabs-bar,
+.workspace-pane-leaf-focused.workspace-pane-leaf-has-split:hover .editor-tabs-bar {
   padding-right: 38px;
+}
+
+/* Both the close button and the split button float over this pane at once,
+   so the tab bar needs to clear both instead of just one. */
+.workspace-pane-leaf-focused.workspace-pane-leaf-has-close.workspace-pane-leaf-has-split:hover .editor-tabs-bar {
+  padding-right: 70px;
 }
 
 .workspace-pane-leaf-has-close .terminal-tabs-actions {
