@@ -83,6 +83,7 @@
 
   /* Borders */
   --border: var(--wash-16);
+  --divider: var(--wash-05);
   --border-active: var(--wash-26);
   --border-accent: rgba(var(--accent-rgb), 0.22);
 
@@ -133,8 +134,10 @@
   --sidebar-bg: var(--supporting-bg);
   --content-bg: var(--brand-neutral-900);
   --content-top-margin: 8px;
-  --content-radius: 10px;
+  --content-inset: 8px;
+  --content-radius: var(--radius-lg);
   --content-border: var(--wash-08);
+  --content-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
   --panel-header-height: 48px;
   --linux-forehead-height: 36px;
   --linux-window-control-size: 28px;
@@ -243,6 +246,7 @@
   --info-rgb: 0, 110, 184;
 
   --border: rgba(0, 0, 0, 0.16);
+  --divider: rgba(0, 0, 0, 0.06);
   --border-active: rgba(0, 0, 0, 0.28);
   --border-accent: rgba(var(--accent-rgb), 0.26);
 
@@ -266,6 +270,7 @@
   --sidebar-bg: var(--supporting-bg);
   --content-bg: var(--brand-neutral-0);
   --content-border: rgba(0, 0, 0, 0.08);
+  --content-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 
   --block-error-bg: rgba(var(--danger-rgb), 0.08);
   --block-error-border: rgba(var(--danger-rgb), 0.22);
@@ -393,8 +398,10 @@ button, input, textarea, select {
 .app-shell-custom-frame-maximized,
 .app-shell-custom-frame-fullscreen {
   --content-top-margin: 0px;
+  --content-inset: 0px;
   --content-radius: 0px;
   --content-border: transparent;
+  --content-shadow: none;
 }
 
 /* ── Ambient Background (disabled for pitch black) ── */
@@ -442,13 +449,13 @@ button, input, textarea, select {
 }
 
 .panel-border-r {
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--divider);
 }
 
 /* ── Resize Handle ── */
 .resize-handle {
   width: 1px;
-  background: var(--border);
+  background: var(--divider);
   transition: background var(--duration-normal) var(--ease-out),
               width var(--duration-normal) var(--ease-out);
   cursor: col-resize;
@@ -468,7 +475,7 @@ button, input, textarea, select {
 
 .resize-handle-vertical {
   height: 1px;
-  background: var(--border);
+  background: var(--divider);
   transition: background var(--duration-normal) var(--ease-out),
               height var(--duration-normal) var(--ease-out);
   cursor: row-resize;
@@ -521,22 +528,24 @@ button, input, textarea, select {
 
 .content-card {
   position: relative;
+  z-index: 1;
   flex: 1;
   min-width: 0;
-  margin-top: var(--content-top-margin);
+  margin: var(--content-top-margin) var(--content-inset) var(--content-inset) 0;
   background: var(--content-bg);
-  border-radius: var(--content-radius) var(--content-radius) 0 0;
+  border-radius: var(--content-radius);
   border: 1px solid var(--content-border);
-  border-bottom: none;
+  box-shadow: var(--content-shadow);
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
 .content-card-full {
-  margin-top: 0;
+  margin: 0;
   border-radius: 0;
   border: none;
+  box-shadow: none;
 }
 
 .focus-drag-strip {
@@ -1317,7 +1326,7 @@ button, input, textarea, select {
 .git-header {
   height: var(--panel-header-height);
   padding: 0 14px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--divider);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1345,7 +1354,7 @@ button, input, textarea, select {
   padding: 5px 14px;
   font-size: 11px;
   color: var(--text-3);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--divider);
   background: var(--bg-2);
 }
 
@@ -2247,7 +2256,7 @@ button, input, textarea, select {
   align-items: center;
   gap: 8px;
   padding: 0 16px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--divider);
   background: var(--content-bg);
 }
 
@@ -2382,7 +2391,7 @@ button, input, textarea, select {
 .workspace-pane-resize-handle-v,
 .workspace-pane-resize-handle-h {
   flex-shrink: 0;
-  background: var(--border);
+  background: var(--divider);
   position: relative;
   transition: background var(--duration-fast) var(--ease-out);
 }
@@ -2649,7 +2658,7 @@ button, input, textarea, select {
   align-items: center;
   gap: 8px;
   padding-right: 16px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--divider);
 }
 
 .chat-focus-header-leading {
@@ -4438,7 +4447,7 @@ button, input, textarea, select {
 .chat-input-box {
   border-radius: var(--radius-lg);
   overflow: hidden;
-  background: var(--bg-2);
+  background: var(--supporting-bg);
   border: 1px solid var(--border);
   transition: border-color var(--duration-fast) var(--ease-out),
               box-shadow var(--duration-fast) var(--ease-out);
@@ -4446,8 +4455,8 @@ button, input, textarea, select {
 
 .chat-composer-surface {
   padding: 8px 14px 10px;
-  border-top: 1px solid var(--border);
-  background: var(--supporting-bg);
+  border-top: 1px solid var(--divider);
+  background: var(--content-bg);
 }
 
 .chat-input-box:focus-within {
