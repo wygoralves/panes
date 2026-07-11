@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Panes | The cockpit for agent-led software work</title>
-  <meta name="description" content="Run Codex, Claude, terminal harnesses, git, and worktrees from one local desktop cockpit.">
+  <meta name="description" content="Run Codex, Claude, CLI agents, Git, terminals, and worktrees in one local desktop cockpit.">
   <meta property="og:title" content="Panes | The cockpit for agent-led software work">
-  <meta property="og:description" content="Run Codex, Claude, terminal harnesses, git, and worktrees from one local desktop cockpit.">
+  <meta property="og:description" content="Run Codex, Claude, CLI agents, Git, terminals, and worktrees in one local desktop cockpit.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://panesade.com">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="Panes | The cockpit for agent-led software work">
-  <meta name="twitter:description" content="Run Codex, Claude, terminal harnesses, git, and worktrees from one local desktop cockpit.">
+  <meta name="twitter:description" content="Run Codex, Claude, CLI agents, Git, terminals, and worktrees in one local desktop cockpit.">
   <script>
     (function () {
       var savedTheme = null;
@@ -28,7 +28,7 @@
   <link rel="icon" href="/product-room/panes-app-icon.svg?v=1" type="image/svg+xml">
   <link rel="dns-prefetch" href="https://unpkg.com">
   <link rel="stylesheet" href="/style.css?v=7">
-  <link rel="stylesheet" href="/product-room/product-room.css?v=29">
+  <link rel="stylesheet" href="/product-room/product-room.css?v=34">
   <script src="https://unpkg.com/lucide@0.460.0" defer></script>
 </head>
 <body class="prm-page">
@@ -85,7 +85,7 @@
     <section class="prm-hero prm-shell" aria-labelledby="prm-title">
       <div class="prm-hero-copy">
         <h1 id="prm-title"><span>Run every agent.</span><span>Stay in control.</span></h1>
-        <p>Agent chat, terminal, git, search, and worktrees in one native desktop app for engineers who run agents all day.</p>
+        <p>Agent chat, terminals, Git, search, and worktrees in one native desktop app for engineers coordinating agents all day.</p>
         <div class="prm-hero-actions">
           <a href="https://github.com/wygoralves/panes" class="prm-secondary" target="_blank" rel="noopener">View GitHub</a>
           <a href="https://github.com/wygoralves/panes/releases/latest" class="prm-primary">
@@ -128,7 +128,7 @@
                 <b>37</b>
               </div>
               <div class="sb-thread-list">
-                <div class="sb-thread active"><span>Fix git push retries</span><small>2m</small></div>
+                <div class="sb-thread active"><span>Fix git push failures</span><small>2m</small></div>
                 <div class="sb-thread"><span>Review release workflow</span><small>2m</small></div>
                 <div class="sb-thread"><span>Clean up agent output</span><small>4m</small></div>
               </div>
@@ -152,7 +152,7 @@
           <div class="content-card" data-active-view="chat">
           <div class="main-area">
             <div class="top-bar">
-              <span class="top-bar-path">panes&nbsp;&nbsp;/&nbsp;&nbsp;<strong>Fix git push retries</strong></span>
+              <span class="top-bar-path">panes&nbsp;&nbsp;/&nbsp;&nbsp;<strong>Fix git push failures</strong></span>
               <span class="prm-topbar-change">+1 file</span>
               <div class="layout-mode-pill">
                 <div class="lm-btn lm-active" data-view="chat"><i data-lucide="message-square" class="icon"></i></div>
@@ -179,7 +179,7 @@
                         <span>Codex</span>
                       </div>
                       <div class="msg-bubble">
-                        I'll add robust error handling with exponential backoff retry.
+                        I’ll add bounded retries with exponential backoff and preserve the original push error.
                         <div class="code-block">
                           <div class="code-header">src/git/repo.rs</div>
                           <div class="code-body">
@@ -213,7 +213,7 @@
                         <div class="v-toolbar-divider"></div>
                         <button class="v-toolbar-btn v-toolbar-btn-bordered v-model-picker" aria-label="Model">
                           <svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" style="opacity:0.7;"><path d="M14.949 6.547a3.94 3.94 0 0 0-.348-3.273 4.11 4.11 0 0 0-4.4-1.934A4.1 4.1 0 0 0 8.423.2 4.15 4.15 0 0 0 6.305.086a4.1 4.1 0 0 0-1.891.948 4.04 4.04 0 0 0-1.158 1.753 4.1 4.1 0 0 0-1.563.679A4 4 0 0 0 .554 4.72a3.99 3.99 0 0 0 .502 4.731 3.94 3.94 0 0 0 .346 3.274 4.11 4.11 0 0 0 4.402 1.933c.382.425.852.764 1.377.995.526.231 1.095.35 1.67.346 1.78.002 3.358-1.132 3.901-2.804a4.1 4.1 0 0 0 1.563-.68 4 4 0 0 0 1.14-1.253 3.99 3.99 0 0 0-.506-4.716z"/></svg>
-                          <span>Codex &middot; 5.3</span>
+                          <span>Codex &middot; 5.6 Sol</span>
                           <span class="v-effort-badge">XHigh</span>
                         </button>
                         <div class="v-toolbar-divider"></div>
@@ -279,14 +279,14 @@
                         <span>Codex</span>
                       </div>
                       <div class="msg-bubble">
-                        I found the failure path in the push command. I’m adding bounded retries, preserving the original error, and covering the backoff behavior.
-                        <div class="prm-action-summary"><span><i data-lucide="layers-3"></i> 8 actions completed</span><small>4 edit · 4 cmd</small></div>
-                        The implementation is in. The targeted tests and the full Rust check are both green.
+                        I found the failure path in git push. I’m adding bounded retries, preserving the original error, and covering the backoff behavior.
+                        <div class="prm-action-summary"><span><i data-lucide="layers-3"></i> 8 actions completed</span><small>4 edits · 4 commands</small></div>
+                        The change is ready. The targeted tests and cargo check both pass.
                         <div class="prm-action-summary"><span><i data-lucide="circle-check"></i> 14 tests passed</span><small>12s</small></div>
-                        The diff stays inside the push path and its targeted coverage. No unrelated files changed.
+                        The diff is limited to the push path and its tests. No unrelated files changed.
                         <div class="prm-action-summary"><span><i data-lucide="file-diff"></i> 2 files changed</span><small>+12&nbsp;&nbsp;-3</small></div>
                         The branch is clean and ready for review.
-                        <div class="prm-action-summary"><span><i data-lucide="git-commit-horizontal"></i> Review ready</span><small>feat/error-handling</small></div>
+                        <div class="prm-action-summary"><span><i data-lucide="git-commit-horizontal"></i> Ready for review</span><small>feat/error-handling</small></div>
                       </div>
                     </div>
                   </div>
@@ -304,7 +304,7 @@
                         <div class="v-toolbar-divider"></div>
                         <button class="v-toolbar-btn v-toolbar-btn-bordered v-model-picker" aria-label="Model">
                           <svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" style="opacity:0.7;"><path d="M14.949 6.547a3.94 3.94 0 0 0-.348-3.273 4.11 4.11 0 0 0-4.4-1.934A4.1 4.1 0 0 0 8.423.2 4.15 4.15 0 0 0 6.305.086a4.1 4.1 0 0 0-1.891.948 4.04 4.04 0 0 0-1.158 1.753 4.1 4.1 0 0 0-1.563.679A4 4 0 0 0 .554 4.72a3.99 3.99 0 0 0 .502 4.731 3.94 3.94 0 0 0 .346 3.274 4.11 4.11 0 0 0 4.402 1.933c.382.425.852.764 1.377.995.526.231 1.095.35 1.67.346 1.78.002 3.358-1.132 3.901-2.804a4.1 4.1 0 0 0 1.563-.68 4 4 0 0 0 1.14-1.253 3.99 3.99 0 0 0-.506-4.716z"/></svg>
-                          <span>Codex &middot; 5.3</span>
+                          <span>Codex &middot; 5.6 Sol</span>
                           <span class="v-effort-badge">XHigh</span>
                         </button>
                         <div class="v-toolbar-divider"></div>
@@ -339,7 +339,7 @@
                 <div class="mv-term-header">
                   <span class="mv-broadcast-badge">
                     <i data-lucide="radio" style="width:9px;height:9px;"></i>
-                    Broadcasting &middot; 4 worktrees
+                    Broadcast input &middot; 4 worktrees
                   </span>
                 </div>
                 <div class="mv-term-grid">
@@ -457,7 +457,7 @@
             <img class="prm-theme-asset prm-theme-asset-dark" src="/product-room/panes-mark-on-dark.svg?v=1" alt="">
             <img class="prm-theme-asset prm-theme-asset-light" src="/product-room/panes-mark-on-light.svg?v=1" alt="">
           </span>
-          <span><b>panes</b><i>/</i> Fix git push retries</span>
+          <span><b>panes</b><i>/</i> Fix git push failures</span>
           <small>+1 file</small>
         </div>
         <div class="prm-mobile-surface" aria-hidden="true">
@@ -469,7 +469,7 @@
             </div>
             <p>I found the failure path and added bounded retries without changing the rest of the push flow.</p>
             <div class="prm-mobile-proof">
-              <span><i data-lucide="circle-check"></i><strong>Review ready</strong></span>
+              <span><i data-lucide="circle-check"></i><strong>Ready for review</strong></span>
               <small>14 tests&nbsp;&nbsp;·&nbsp;&nbsp;2 files</small>
             </div>
           </div>
@@ -477,7 +477,7 @@
             <span>Ask for follow-up changes</span>
             <div>
               <span><i data-lucide="plus"></i></span>
-              <span class="prm-mobile-model"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M14.949 6.547a3.94 3.94 0 0 0-.348-3.273 4.11 4.11 0 0 0-4.4-1.934A4.1 4.1 0 0 0 8.423.2 4.15 4.15 0 0 0 6.305.086a4.1 4.1 0 0 0-1.891.948 4.04 4.04 0 0 0-1.158 1.753 4.1 4.1 0 0 0-1.563.679A4 4 0 0 0 .554 4.72a3.99 3.99 0 0 0 .502 4.731 3.94 3.94 0 0 0 .346 3.274 4.11 4.11 0 0 0 4.402 1.933c.382.425.852.764 1.377.995.526.231 1.095.35 1.67.346 1.78.002 3.358-1.132 3.901-2.804a4.1 4.1 0 0 0 1.563-.68 4 4 0 0 0 1.14-1.253 3.99 3.99 0 0 0-.506-4.716z"/></svg> Codex</span>
+              <span class="prm-mobile-model"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M14.949 6.547a3.94 3.94 0 0 0-.348-3.273 4.11 4.11 0 0 0-4.4-1.934A4.1 4.1 0 0 0 8.423.2 4.15 4.15 0 0 0 6.305.086a4.1 4.1 0 0 0-1.891.948 4.04 4.04 0 0 0-1.158 1.753 4.1 4.1 0 0 0-1.563.679A4 4 0 0 0 .554 4.72a3.99 3.99 0 0 0 .502 4.731 3.94 3.94 0 0 0 .346 3.274 4.11 4.11 0 0 0 4.402 1.933c.382.425.852.764 1.377.995.526.231 1.095.35 1.67.346 1.78.002 3.358-1.132 3.901-2.804a4.1 4.1 0 0 0 1.563-.68 4 4 0 0 0 1.14-1.253 3.99 3.99 0 0 0-.506-4.716z"/></svg> Codex &middot; 5.6 Sol</span>
               <span class="prm-mobile-send"><i data-lucide="send"></i></span>
             </div>
           </div>
@@ -488,8 +488,8 @@
     <section class="prm-handoff" id="workflow">
       <div class="prm-shell">
         <div class="prm-section-heading">
-          <h2>From prompt to reviewed change.</h2>
-          <p>Panes keeps the agent, its commands, the resulting diff, and your decision in one continuous workspace.</p>
+          <h2>From prompt to review-ready change.</h2>
+          <p>Panes keeps the conversation, commands, diff, and approval trail together in one workspace.</p>
         </div>
         <div class="prm-steps">
           <article>
@@ -507,12 +507,12 @@
               </div>
               <div class="prm-step-agent">
                 <span class="prm-provider-mark terminal">›_</span>
-                <span><strong>CLI harness</strong><small>Terminal session</small></span>
+                <span><strong>CLI agent</strong><small>Terminal session</small></span>
                 <span>⌘ 3</span>
               </div>
             </div>
             <h3>Choose the right agent</h3>
-            <p>Use structured chat with Codex and Claude, or launch any supported CLI harness into a terminal.</p>
+            <p>Use native chat for Codex and Claude, or launch a supported CLI agent in the terminal.</p>
           </article>
           <article>
             <div class="prm-step-visual prm-step-stream" aria-hidden="true">
@@ -521,8 +521,8 @@
               <div class="prm-activity-row"><i data-lucide="square-terminal"></i><span><strong>Ran</strong><small>cargo test git::</small></span><span class="is-pass">Passed</span></div>
               <div class="prm-activity-row"><i data-lucide="git-compare-arrows"></i><span><strong>Changed</strong><small>retry and backoff</small></span><span>2 files</span></div>
             </div>
-            <h3>Watch the work move</h3>
-            <p>Files, commands, terminal output, and git state stay visible while the task is running.</p>
+            <h3>Track every action</h3>
+            <p>Files read, commands run, terminal output, and Git state remain visible while the task runs.</p>
           </article>
           <article>
             <div class="prm-step-visual prm-step-ship" aria-hidden="true">
@@ -531,8 +531,8 @@
               <div class="prm-ship-file"><span>src/git/repo.rs</span><span>M</span></div>
               <div class="prm-ship-footer"><span><i data-lucide="circle-check"></i> Tests passed</span><strong>Commit</strong></div>
             </div>
-            <h3>Review and ship</h3>
-            <p>Check the diff, resolve the occasional risky action, then stage and commit from the same window.</p>
+            <h3>Review and commit</h3>
+            <p>Review the diff, approve sensitive commands, then stage and commit without leaving the task.</p>
           </article>
         </div>
       </div>
@@ -578,7 +578,7 @@
               <span class="prm-provider-mark codex"><svg class="prm-provider-logo"><use href="#prm-logo-codex"></use></svg></span>
               <span><strong>Auth hardening</strong><small>feat/error-handling</small></span>
             </div>
-            <div class="prm-cockpit-prompt">Audit the auth flow. Fix the race, then prove it.</div>
+            <div class="prm-cockpit-prompt">Audit the auth flow. Fix the refresh race, then prove it with tests.</div>
             <div class="prm-cockpit-answer">
               <strong>Codex</strong>
               <p>I found the refresh race and isolated it to two files. The fix is ready. All targeted tests pass.</p>
@@ -593,7 +593,7 @@
 
           <div class="prm-cockpit-review" aria-hidden="true">
             <div class="prm-cockpit-review-title"><span><i data-lucide="circle-check"></i></span><h3>Ready to review</h3></div>
-            <p>One focused fix. The proof travels with it.</p>
+            <p>The diff, test results, and branch are ready for review.</p>
             <div class="prm-cockpit-totals"><span><strong>2</strong> files</span><span><strong>14</strong> tests</span></div>
             <div class="prm-cockpit-file"><span>src/auth/session.rs</span><b>+8&nbsp;&nbsp;-2</b></div>
             <div class="prm-cockpit-file"><span>tests/auth_refresh.rs</span><b>+4&nbsp;&nbsp;-1</b></div>
@@ -635,7 +635,7 @@
       var localeContent = {
         "en-US": {
           title: "Panes | The cockpit for agent-led software work",
-          description: "Run Codex, Claude, terminal harnesses, git, and worktrees from one local desktop cockpit.",
+          description: "Run Codex, Claude, CLI agents, Git, terminals, and worktrees in one local desktop cockpit.",
           languageLabel: "Language selector",
           useEnglish: "Use English (United States)",
           usePortuguese: "Use Portuguese (Brazil)",
@@ -644,7 +644,7 @@
         },
         "pt-BR": {
           title: "Panes | O cockpit para software feito com agentes",
-          description: "Execute Codex, Claude, agentes de terminal, git e worktrees em um único cockpit desktop local.",
+          description: "Use Codex, Claude, agentes de CLI, Git, terminais e worktrees em um único cockpit desktop local.",
           languageLabel: "Seletor de idioma",
           useEnglish: "Usar inglês (Estados Unidos)",
           usePortuguese: "Usar português (Brasil)",
@@ -659,50 +659,64 @@
         "Workflow": "Fluxo",
         "Agents": "Agentes",
         "Download": "Baixar",
-        "Run every agent.": "Rode cada agente.",
+        "Run every agent.": "Rode todos os agentes.",
         "Stay in control.": "Tudo sob controle.",
-        "Agent chat, terminal, git, search, and worktrees in one native desktop app for engineers who run agents all day.": "Chat com agentes, terminal, git, busca e worktrees em um app desktop nativo para quem trabalha o dia todo com agentes.",
+        "Agent chat, terminals, Git, search, and worktrees in one native desktop app for engineers coordinating agents all day.": "Chat com agentes, terminais, Git, busca e worktrees em um app desktop nativo para quem coordena agentes o dia todo.",
         "View GitHub": "Ver no GitHub",
-        "New thread": "Nova tarefa",
+        "New thread": "Nova thread",
         "Commands": "Comandos",
         "Search": "Buscar",
-        "Workspaces": "Espaços de trabalho",
-        "Fix git push retries": "Corrigir tentativas do git push",
+        "Workspaces": "Workspaces",
+        "Broadcast input · 4 worktrees": "Entrada compartilhada · 4 worktrees",
+        "claude \"Refactor auth module\"": "claude \"Refatorar módulo de autenticação\"",
+        "✓ Reading src/auth/mod.rs...": "✓ Lendo src/auth/mod.rs...",
+        "✓ Analyzing dependencies...": "✓ Analisando dependências...",
+        "↳ Writing refactored auth": "↳ Aplicando a refatoração de autenticação",
+        "claude \"Add rate limiting\"": "claude \"Limitar requisições\"",
+        "✓ Reading src/middleware...": "✓ Lendo src/middleware...",
+        "↳ Inserting rate limiter": "↳ Adicionando limitador de requisições",
+        "antigravity \"Optimize queries\"": "antigravity \"Otimizar consultas\"",
+        "✓ Scanning db/queries.rs...": "✓ Analisando db/queries.rs...",
+        "↳ Rewriting N+1 queries": "↳ Reescrevendo consultas N+1",
+        "codex \"Write tests\"": "codex \"Escrever testes\"",
+        "✓ Discovering test targets...": "✓ Identificando testes...",
+        "↳ Generating unit tests": "↳ Gerando testes unitários",
+        "Fix git push failures": "Corrigir falhas no git push",
         "Review release workflow": "Revisar fluxo de release",
         "Clean up agent output": "Limpar saída do agente",
         "Add error handling to the git push command with retry logic.": "Adicione tratamento de erros ao git push com novas tentativas.",
         "+1 file": "+1 arquivo",
-        "I'll add robust error handling with exponential backoff retry.": "Vou adicionar tratamento de erros com novas tentativas e backoff exponencial.",
+        "I’ll add bounded retries with exponential backoff and preserve the original push error.": "Vou adicionar tentativas limitadas com backoff exponencial e preservar o erro original do git push.",
         "Ask for follow-up changes": "Peça ajustes adicionais",
         "Plan": "Planejar",
         "Standard": "Padrão",
         "Compiling panes-core": "Compilando panes-core",
         "Finished": "Concluído",
-        "I found the failure path in the push command. I’m adding bounded retries, preserving the original error, and covering the backoff behavior.": "Encontrei a falha no comando push. Estou adicionando tentativas limitadas, preservando o erro original e cobrindo o backoff.",
+        "I found the failure path in git push. I’m adding bounded retries, preserving the original error, and covering the backoff behavior.": "Encontrei a falha no git push. Estou adicionando tentativas limitadas, preservando o erro original e cobrindo o comportamento do backoff.",
         "8 actions completed": "8 ações concluídas",
-        "4 edit · 4 cmd": "4 edições · 4 cmds",
-        "The implementation is in. The targeted tests and the full Rust check are both green.": "A implementação está pronta. Os testes focados e a verificação completa do Rust passaram.",
+        "4 edits · 4 commands": "4 edições · 4 comandos",
+        "The change is ready. The targeted tests and cargo check both pass.": "A alteração está pronta. Os testes específicos e o cargo check passaram.",
         "14 tests passed": "14 testes passaram",
-        "The diff stays inside the push path and its targeted coverage. No unrelated files changed.": "O diff ficou restrito ao fluxo de push e aos testes relacionados. Nenhum arquivo fora do escopo foi alterado.",
+        "The diff is limited to the push path and its tests. No unrelated files changed.": "O diff está limitado ao fluxo de push e aos testes relacionados. Nenhum arquivo fora do escopo foi alterado.",
         "2 files changed": "2 arquivos alterados",
         "The branch is clean and ready for review.": "A branch está limpa e pronta para revisão.",
-        "Review ready": "Revisão pronta",
+        "Ready for review": "Pronto para revisão",
         "Changes": "Alterações",
         "Changes\u00a0\u00a01": "Alterações 1",
         "↶\u00a0\u00a0 + Stage all": "↶  + Adicionar tudo ao stage",
         "Add retry logic to git push.": "Adicione novas tentativas ao git push.",
         "I found the failure path and added bounded retries without changing the rest of the push flow.": "Encontrei a falha e adicionei tentativas limitadas sem alterar o restante do fluxo de push.",
         "14 tests\u00a0\u00a0·\u00a0\u00a02 files": "14 testes  ·  2 arquivos",
-        "From prompt to reviewed change.": "Do prompt à mudança revisada.",
-        "Panes keeps the agent, its commands, the resulting diff, and your decision in one continuous workspace.": "O Panes mantém o agente, seus comandos, o diff resultante e sua decisão no mesmo espaço de trabalho.",
+        "From prompt to review-ready change.": "Do prompt à mudança pronta para revisão.",
+        "Panes keeps the conversation, commands, diff, and approval trail together in one workspace.": "O Panes mantém a conversa, os comandos, o diff e o histórico de aprovações juntos no mesmo workspace.",
         "New pane": "Novo painel",
         "Agent": "Agente",
         "Native chat": "Chat nativo",
         "Selected": "Selecionado",
-        "CLI harness": "Agente de CLI",
+        "CLI agent": "Agente de CLI",
         "Terminal session": "Sessão de terminal",
         "Choose the right agent": "Escolha o agente certo",
-        "Use structured chat with Codex and Claude, or launch any supported CLI harness into a terminal.": "Use o chat estruturado com Codex e Claude ou execute qualquer agente de CLI compatível em um terminal.",
+        "Use native chat for Codex and Claude, or launch a supported CLI agent in the terminal.": "Use o chat nativo com Codex e Claude ou execute um agente de CLI compatível no terminal.",
         "Live activity": "Atividade em tempo real",
         "Running": "Em execução",
         "Read": "Leu",
@@ -712,33 +726,33 @@
         "4 files": "4 arquivos",
         "2 files": "2 arquivos",
         "retry and backoff": "tentativas e backoff",
-        "Watch the work move": "Acompanhe o trabalho",
-        "Files, commands, terminal output, and git state stay visible while the task is running.": "Arquivos, comandos, saída do terminal e estado do git continuam visíveis enquanto a tarefa é executada.",
+        "Track every action": "Acompanhe cada ação",
+        "Files read, commands run, terminal output, and Git state remain visible while the task runs.": "Arquivos lidos, comandos executados, saída do terminal e estado do Git permanecem visíveis durante a tarefa.",
         "Review changes": "Revisar alterações",
         "Tests passed": "Testes passaram",
         "Commit": "Criar commit",
-        "Review and ship": "Revise e entregue",
-        "Check the diff, resolve the occasional risky action, then stage and commit from the same window.": "Confira o diff, resolva ações de risco e faça stage e commit na mesma janela.",
+        "Review and commit": "Revise e faça o commit",
+        "Review the diff, approve sensitive commands, then stage and commit without leaving the task.": "Revise o diff, aprove comandos sensíveis e faça stage e commit sem sair da tarefa.",
         "Bring the agents you already use.": "Traga os agentes que você já usa.",
         "Use Codex and Claude in native chat. Launch Antigravity CLI, Factory Droid, OpenCode, Kilo Code, and Kiro in terminal panes.": "Use Codex e Claude no chat nativo. Execute Antigravity CLI, Factory Droid, OpenCode, Kilo Code e Kiro em painéis de terminal.",
-        "One workspace.": "Um espaço de trabalho.",
+        "One workspace.": "Um workspace.",
         "Repo context stays in the middle.": "O contexto do repositório fica no centro.",
         "One cockpit for the work around the code.": "Um cockpit além do código.",
         "Chat, terminal output, and changes stay attached to the same task.": "Chat, saída do terminal e alterações continuam ligados à mesma tarefa.",
         "Auth hardening": "Reforço de autenticação",
-        "Audit the auth flow. Fix the race, then prove it.": "Audite o fluxo de autenticação. Corrija a disputa e comprove.",
-        "I found the refresh race and isolated it to two files. The fix is ready. All targeted tests pass.": "Encontrei a disputa de atualização e a isolei em dois arquivos. A correção está pronta e todos os testes focados passaram.",
+        "Audit the auth flow. Fix the refresh race, then prove it with tests.": "Audite o fluxo de autenticação. Corrija a condição de corrida na renovação da sessão e comprove a correção com testes.",
+        "I found the refresh race and isolated it to two files. The fix is ready. All targeted tests pass.": "Encontrei a condição de corrida na renovação da sessão e a isolei em dois arquivos. A correção está pronta e todos os testes específicos passaram.",
         "Test run": "Execução de testes",
         "14 passed": "14 passaram",
         "test result:": "resultado:",
         ". 14 passed; 0 failed": ". 14 passaram; 0 falharam",
-        "Ready to review": "Pronto para revisar",
-        "One focused fix. The proof travels with it.": "Uma correção focada, com a comprovação junto.",
+        "Ready to review": "Pronto para revisão",
+        "The diff, test results, and branch are ready for review.": "O diff, os resultados dos testes e a branch estão prontos para revisão.",
         "files": "arquivos",
         "tests": "testes",
         "Open a repo. Keep every agent under control.": "Abra um repositório. Mantenha cada agente sob controle.",
         "Free, open source, and local-first.": "Grátis, código aberto e local-first.",
-        "Local-first desktop cockpit for agent-led software work.": "Cockpit desktop local-first para software feito com agentes."
+        "Local-first desktop cockpit for agent-led software work.": "Cockpit desktop local-first para trabalhar com agentes de código."
       };
 
       var ariaPortuguese = {
@@ -746,7 +760,7 @@
         "Main navigation": "Navegação principal",
         "Interactive Panes workspace preview": "Prévia interativa do espaço de trabalho do Panes",
         "A simplified Panes task showing one prompt, a Codex response, passing tests, and a follow-up composer": "Uma tarefa simplificada do Panes com um prompt, uma resposta do Codex, testes aprovados e um campo de acompanhamento",
-        "Codex, Claude, Antigravity CLI, Factory Droid, OpenCode, Kilo Code, and Kiro orbiting one shared Panes workspace": "Codex, Claude, Antigravity CLI, Factory Droid, OpenCode, Kilo Code e Kiro ao redor de um espaço de trabalho compartilhado no Panes",
+        "Codex, Claude, Antigravity CLI, Factory Droid, OpenCode, Kilo Code, and Kiro orbiting one shared Panes workspace": "Codex, Claude, Antigravity CLI, Factory Droid, OpenCode, Kilo Code e Kiro ao redor de um workspace compartilhado no Panes",
         "One Panes task holding an agent conversation, terminal test run, and review-ready code changes": "Uma tarefa do Panes com conversa do agente, execução de testes no terminal e alterações prontas para revisão",
         "Attach": "Anexar",
         "Plan mode": "Modo de planejamento",

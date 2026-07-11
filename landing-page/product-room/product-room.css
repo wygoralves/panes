@@ -83,13 +83,13 @@
   --bg-5: #b1b1b4;
   --bg-content: #ffffff;
   --bg-code: #ececef;
-  --bg-terminal: #18181c;
+  --bg-terminal: #fafafb;
 
   --text-1: #18181c;
   --text-2: #47474c;
   --text-3: #636367;
   --text-code: #2d2d32;
-  --text-term: #d4d4d7;
+  --text-term: #47474c;
 
   --accent: #006d40;
   --accent-on: #ffffff;
@@ -607,10 +607,18 @@ body.prm-page {
 }
 
 .prm-workspace-canvas .top-bar,
-.prm-workspace-canvas .term-tabs,
 .prm-workspace-canvas .git-header {
   border-color: var(--prm-line);
-  background: var(--bg-2);
+  background: var(--bg-content);
+}
+
+.prm-workspace-canvas .term-tabs {
+  border-color: var(--prm-line);
+  background: var(--bg-terminal);
+}
+
+.prm-workspace-canvas .typing-cursor {
+  background: var(--accent);
 }
 
 .prm-workspace-canvas .top-bar {
@@ -2623,13 +2631,13 @@ html.prm-motion-ready .prm-cockpit-stage:not(.is-in-view) .prm-cockpit-review {
 }
 
 :root[data-theme="light"] .prm-cockpit-terminal {
-  background: #18181c;
-  box-shadow: inset 0 0 0 1px #2d2d32, var(--prm-shadow-panel);
+  background: #fafafb;
+  box-shadow: inset 0 0 0 1px #d4d4d7, var(--prm-shadow-panel);
 }
 
 :root[data-theme="light"] .prm-cockpit-terminal > div,
 :root[data-theme="light"] .prm-cockpit-terminal p {
-  color: #b1b1b4;
+  color: #47474c;
 }
 
 :root[data-theme="light"] .prm-cockpit-review {
@@ -2697,7 +2705,9 @@ html.prm-motion-ready .prm-cockpit-stage:not(.is-in-view) .prm-cockpit-review {
 }
 
 :root[data-theme="light"] .prm-workspace-canvas .msg-row.user .msg-bubble {
+  background: #ececef;
   border-color: rgb(0 0 0 / 0.08);
+  color: #2d2d32;
 }
 
 :root[data-theme="light"] .prm-action-summary {
