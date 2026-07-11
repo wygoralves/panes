@@ -1,48 +1,101 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "Geist";
+  src: url("./assets/fonts/geist-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("./assets/fonts/geist-mono-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 /* ── Design Tokens ── */
 :root {
-  /* Backgrounds — pitch black */
-  --bg-0: #000000;
-  --bg-1: #000000;
-  --bg-2: #0f0f0f;
-  --bg-3: #1c1c1c;
-  --bg-4: #282828;
-  --bg-5: #333333;
+  /* Panes brand palette */
+  --brand-neutral-0: #ffffff;
+  --brand-neutral-50: #fafafb;
+  --brand-neutral-100: #ececef;
+  --brand-neutral-200: #d4d4d7;
+  --brand-neutral-300: #b1b1b4;
+  --brand-neutral-400: #89898d;
+  --brand-neutral-500: #636367;
+  --brand-neutral-600: #47474c;
+  --brand-neutral-700: #2d2d32;
+  --brand-neutral-800: #18181c;
+  --brand-neutral-850: #0d0d11;
+  --brand-neutral-900: #040406;
+  --brand-neutral-950: #010102;
+  --brand-mint-50: #e8fbee;
+  --brand-mint-100: #cef3db;
+  --brand-mint-200: #ace8c3;
+  --brand-mint-300: #88ddab;
+  --brand-mint-400: #61d596;
+  --brand-mint-500: #33b978;
+  --brand-mint-600: #02955a;
+  --brand-mint-700: #006d40;
+  --brand-mint-800: #014a2a;
+  --brand-mint-900: #042917;
+  --brand-mint-950: #021409;
+  --brand-blue: #57b6ff;
+  --brand-violet: #a88dff;
+  --brand-amber: #f1b047;
+  --brand-coral: #f9776e;
+  --font-body: "Geist", system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Backgrounds */
+  --bg-0: var(--brand-neutral-950);
+  --bg-1: var(--brand-neutral-950);
+  --bg-2: var(--brand-neutral-900);
+  --bg-3: var(--brand-neutral-850);
+  --bg-4: var(--brand-neutral-800);
+  --bg-5: var(--brand-neutral-700);
 
   /* Text */
-  --text-1: #f5f5f5;
-  --text-2: #a8a8a8;
-  --text-3: #737373;
+  --text-1: var(--brand-neutral-50);
+  --text-2: var(--brand-neutral-300);
+  --text-3: var(--brand-neutral-400);
 
-  /* Accent — Coral */
-  --accent: #FF6B6B;
-  --accent-dim: rgba(255, 107, 107, 0.10);
-  --accent-glow: 0 0 12px rgba(255, 107, 107, 0.15);
-  --accent-2: #a78bfa;
-  --accent-2-dim: rgba(167, 139, 250, 0.10);
+  /* Accent */
+  --accent: var(--brand-mint-400);
+  --accent-rgb: 97, 213, 150;
+  --accent-dim: rgba(var(--accent-rgb), 0.10);
+  --accent-glow: none;
+  --accent-2: var(--brand-violet);
+  --accent-2-dim: rgba(168, 141, 255, 0.10);
 
   /* Semantic */
-  --success: #34d399;
-  --danger: #f87171;
-  --warning: #fbbf24;
-  --info: #60a5fa;
+  --success: var(--brand-mint-500);
+  --success-rgb: 51, 185, 120;
+  --danger: var(--brand-coral);
+  --danger-rgb: 249, 119, 110;
+  --warning: var(--brand-amber);
+  --warning-rgb: 241, 176, 71;
+  --info: var(--brand-blue);
+  --info-rgb: 87, 182, 255;
 
   /* Borders */
   --border: var(--wash-16);
   --border-active: var(--wash-26);
-  --border-accent: rgba(255, 107, 107, 0.20);
+  --border-accent: rgba(var(--accent-rgb), 0.22);
 
   /* Glass */
-  --glass-bg: rgba(0, 0, 0, 0.75);
+  --glass-bg: rgba(1, 1, 2, 0.78);
   --glass-border: var(--wash-08);
   --glass-blur: 20px;
 
   /* Code */
-  --code-bg: #050505;
+  --code-bg: var(--brand-neutral-950);
 
   /* Frosted popover surface (command palette and similar floating cards) */
-  --popover-bg: rgba(14, 14, 16, 0.95);
+  --popover-bg: rgba(13, 13, 17, 0.96);
 
   /* Floating scrim chip (pane close/split buttons overlaid on content) */
   --floating-chip-bg: rgba(0, 0, 0, 0.48);
@@ -74,11 +127,11 @@
 
   /* Semantic aliases */
   --error: var(--danger);
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* Linear-style layout */
-  --sidebar-bg: #0a0a0a;
-  --content-bg: #111111;
+  --supporting-bg: var(--brand-neutral-850);
+  --sidebar-bg: var(--supporting-bg);
+  --content-bg: var(--brand-neutral-900);
   --content-top-margin: 8px;
   --content-radius: 10px;
   --content-border: var(--wash-08);
@@ -94,15 +147,15 @@
   --duration-slow: 350ms;
 
   /* Chat block colors */
-  --block-error-bg: rgba(248, 113, 113, 0.06);
-  --block-error-border: rgba(248, 113, 113, 0.15);
-  --block-notice-bg: rgba(96, 165, 250, 0.08);
-  --block-notice-border: rgba(96, 165, 250, 0.16);
-  --block-steer-bg: rgba(255, 107, 107, 0.06);
-  --block-steer-border: rgba(255, 107, 107, 0.16);
+  --block-error-bg: rgba(var(--danger-rgb), 0.06);
+  --block-error-border: rgba(var(--danger-rgb), 0.16);
+  --block-notice-bg: rgba(87, 182, 255, 0.08);
+  --block-notice-border: rgba(87, 182, 255, 0.18);
+  --block-steer-bg: rgba(var(--accent-rgb), 0.06);
+  --block-steer-border: rgba(var(--accent-rgb), 0.16);
 
   /* Text drawn on top of accent-filled surfaces (buttons, launch chips) */
-  --on-accent: #0c0d13;
+  --on-accent: var(--brand-mint-950);
 
   /* Overlay washes: translucent white tints used for hover/active states
      on dark surfaces. Flipped to translucent black under the light theme. */
@@ -161,37 +214,42 @@
    Preferences menu (dark / light / system); "system" resolves to one of
    these two at runtime and stamps data-theme accordingly. */
 :root[data-theme="light"] {
-  --bg-0: #ffffff;
-  --bg-1: #ffffff;
-  --bg-2: #f6f6f7;
-  --bg-3: #ebedf0;
-  --bg-4: #dfe2e6;
-  --bg-5: #d1d5db;
+  --bg-0: var(--brand-neutral-0);
+  --bg-1: var(--brand-neutral-0);
+  --bg-2: var(--brand-neutral-50);
+  --bg-3: var(--brand-neutral-100);
+  --bg-4: var(--brand-neutral-200);
+  --bg-5: var(--brand-neutral-300);
 
-  --text-1: #17181c;
-  --text-2: #494c52;
-  --text-3: #6b6e75;
+  --text-1: var(--brand-neutral-800);
+  --text-2: var(--brand-neutral-600);
+  --text-3: var(--brand-neutral-500);
 
-  --accent: #cc3333;
-  --accent-dim: rgba(204, 51, 51, 0.08);
-  --accent-glow: 0 0 12px rgba(204, 51, 51, 0.12);
-  --accent-2: #7c5cd8;
-  --accent-2-dim: rgba(124, 92, 216, 0.1);
+  --accent: var(--brand-mint-700);
+  --accent-rgb: 0, 109, 64;
+  --accent-dim: rgba(var(--accent-rgb), 0.08);
+  --accent-glow: none;
+  --accent-2: #6e4fc1;
+  --accent-2-dim: rgba(110, 79, 193, 0.10);
   --on-accent: #ffffff;
 
-  --success: #15803d;
-  --danger: #cc3333;
-  --warning: #b45309;
-  --info: #2563eb;
+  --success: var(--brand-mint-700);
+  --success-rgb: 0, 109, 64;
+  --danger: #bd413d;
+  --danger-rgb: 189, 65, 61;
+  --warning: #935c00;
+  --warning-rgb: 147, 92, 0;
+  --info: #006eb8;
+  --info-rgb: 0, 110, 184;
 
   --border: rgba(0, 0, 0, 0.16);
   --border-active: rgba(0, 0, 0, 0.28);
-  --border-accent: rgba(204, 51, 51, 0.26);
+  --border-accent: rgba(var(--accent-rgb), 0.26);
 
   --glass-bg: rgba(255, 255, 255, 0.75);
   --glass-border: rgba(0, 0, 0, 0.08);
 
-  --code-bg: #f1f2f4;
+  --code-bg: var(--brand-neutral-100);
 
   --popover-bg: rgba(255, 255, 255, 0.95);
   --floating-chip-bg: rgba(255, 255, 255, 0.85);
@@ -204,16 +262,17 @@
   --diff-del-text: var(--danger);
   --diff-overlay-bg: rgba(255, 255, 255, 0.92);
 
-  --sidebar-bg: #f5f5f6;
-  --content-bg: #ffffff;
+  --supporting-bg: var(--brand-neutral-100);
+  --sidebar-bg: var(--supporting-bg);
+  --content-bg: var(--brand-neutral-0);
   --content-border: rgba(0, 0, 0, 0.08);
 
-  --block-error-bg: rgba(204, 51, 51, 0.08);
-  --block-error-border: rgba(204, 51, 51, 0.22);
-  --block-notice-bg: rgba(37, 99, 235, 0.08);
-  --block-notice-border: rgba(37, 99, 235, 0.2);
-  --block-steer-bg: rgba(204, 51, 51, 0.06);
-  --block-steer-border: rgba(204, 51, 51, 0.18);
+  --block-error-bg: rgba(var(--danger-rgb), 0.08);
+  --block-error-border: rgba(var(--danger-rgb), 0.22);
+  --block-notice-bg: rgba(0, 110, 184, 0.08);
+  --block-notice-border: rgba(0, 110, 184, 0.20);
+  --block-steer-bg: rgba(var(--accent-rgb), 0.06);
+  --block-steer-border: rgba(var(--accent-rgb), 0.18);
 
   /* Overlay washes flip polarity: translucent black instead of white, at a
      higher opacity than a literal flip would give, since a black wash on a
@@ -274,7 +333,7 @@ html, body, #root {
   width: 100%; height: 100%; margin: 0;
   background: var(--sidebar-bg);
   color: var(--text-1);
-  font-family: "Sora", system-ui, -apple-system, sans-serif;
+  font-family: var(--font-body);
   font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -291,6 +350,30 @@ button, input, textarea, select {
   background: none;
   -webkit-user-select: text;
   user-select: text;
+}
+
+.panes-brand-lockup {
+  display: inline-grid;
+  place-items: center;
+}
+
+.panes-brand-lockup img {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.panes-brand-lockup-light {
+  visibility: hidden;
+}
+
+:root[data-theme="light"] .panes-brand-lockup-dark {
+  visibility: hidden;
+}
+
+:root[data-theme="light"] .panes-brand-lockup-light {
+  visibility: visible;
 }
 
 .app-shell {
@@ -520,8 +603,8 @@ button, input, textarea, select {
 }
 
 .linux-window-control-close:hover {
-  background: rgba(248, 113, 113, 0.14);
-  border-color: rgba(248, 113, 113, 0.12);
+  background: rgba(var(--danger-rgb), 0.14);
+  border-color: rgba(var(--danger-rgb), 0.12);
   color: #fca5a5;
 }
 
@@ -718,13 +801,13 @@ button, input, textarea, select {
 
 .btn-danger-ghost {
   color: var(--danger);
-  border: 1px solid rgba(248, 113, 113, 0.22);
+  border: 1px solid rgba(var(--danger-rgb), 0.22);
   border-radius: var(--radius-sm);
-  background: rgba(248, 113, 113, 0.06);
+  background: rgba(var(--danger-rgb), 0.06);
 }
 .btn-danger-ghost:hover {
-  background: rgba(248, 113, 113, 0.12);
-  border-color: rgba(248, 113, 113, 0.4);
+  background: rgba(var(--danger-rgb), 0.12);
+  border-color: rgba(var(--danger-rgb), 0.4);
 }
 
 .btn-cancel-ghost {
@@ -790,8 +873,8 @@ button, input, textarea, select {
 }
 
 @keyframes glow-pulse {
-  0%, 100% { box-shadow: 0 0 8px rgba(255, 107, 107, 0.15); }
-  50% { box-shadow: 0 0 20px rgba(255, 107, 107, 0.3); }
+  0%, 100% { box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.15); }
+  50% { box-shadow: 0 0 20px rgba(var(--accent-rgb), 0.3); }
 }
 
 /* ── Onboarding ── */
@@ -867,7 +950,7 @@ button, input, textarea, select {
 
 @keyframes thinking-pulse {
   0%, 100% { opacity: 0.45; filter: drop-shadow(0 0 0 transparent); }
-  50% { opacity: 1; filter: drop-shadow(0 0 4px rgba(96, 165, 250, 0.5)); }
+  50% { opacity: 1; filter: drop-shadow(0 0 4px rgba(var(--info-rgb), 0.5)); }
 }
 .thinking-icon-active {
   animation: thinking-pulse 2s ease-in-out infinite;
@@ -922,7 +1005,7 @@ button, input, textarea, select {
 .prose li { margin: 2px 0; }
 .prose img { max-width: 100%; border-radius: var(--radius-sm); }
 .prose code {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: 0.88em;
   padding: 1px 5px;
   border-radius: 3px;
@@ -1187,7 +1270,7 @@ button, input, textarea, select {
   flex-shrink: 0;
   color: var(--text-3);
   font-size: 10px;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   letter-spacing: 0.02em;
 }
 
@@ -1218,7 +1301,7 @@ button, input, textarea, select {
 
 /* ── Selection ── */
 ::selection {
-  background: rgba(255, 107, 107, 0.20);
+  background: rgba(var(--accent-rgb), 0.20);
   color: var(--text-1);
 }
 
@@ -1282,7 +1365,7 @@ button, input, textarea, select {
   display: inline-flex;
   gap: 4px;
   font-size: 10px;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   flex-shrink: 0;
 }
 .git-ahead { color: var(--success); }
@@ -1472,18 +1555,18 @@ button, input, textarea, select {
 .git-status {
   font-size: 10px;
   font-weight: 600;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   padding: 1px 5px;
   border-radius: 3px;
   flex-shrink: 0;
   line-height: 1;
 }
-.git-status-added { color: var(--success); background: rgba(52, 211, 153, 0.1); }
-.git-status-modified { color: var(--warning); background: rgba(251, 191, 36, 0.1); }
-.git-status-deleted { color: var(--danger); background: rgba(248, 113, 113, 0.1); }
-.git-status-renamed { color: var(--info); background: rgba(96, 165, 250, 0.1); }
+.git-status-added { color: var(--success); background: rgba(var(--success-rgb), 0.1); }
+.git-status-modified { color: var(--warning); background: rgba(var(--warning-rgb), 0.1); }
+.git-status-deleted { color: var(--danger); background: rgba(var(--danger-rgb), 0.1); }
+.git-status-renamed { color: var(--info); background: rgba(var(--info-rgb), 0.1); }
 .git-status-untracked { color: var(--text-3); background: rgba(115, 115, 115, 0.15); }
-.git-status-conflicted { color: var(--danger); background: rgba(248, 113, 113, 0.15); font-weight: 700; }
+.git-status-conflicted { color: var(--danger); background: rgba(var(--danger-rgb), 0.15); font-weight: 700; }
 
 /* Stage/unstage button */
 .git-stage-btn {
@@ -1574,7 +1657,7 @@ button, input, textarea, select {
 }
 .git-diff-line {
   display: flex;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.7;
   min-height: 19px;
@@ -1617,8 +1700,8 @@ button, input, textarea, select {
 .git-diff-del .git-diff-line-num { color: var(--danger); opacity: 0.4; }
 .git-diff-del .git-diff-line-content { color: var(--diff-del-text); }
 .git-diff-hunk {
-  background: rgba(96, 165, 250, 0.04);
-  border-top: 1px solid rgba(96, 165, 250, 0.1);
+  background: rgba(var(--info-rgb), 0.04);
+  border-top: 1px solid rgba(var(--info-rgb), 0.1);
   min-height: 0;
   height: 24px;
 }
@@ -1792,7 +1875,7 @@ button, input, textarea, select {
 }
 
 /* Modified count chip (reuses existing .chip pattern in the accordion header) */
-.chip-modified { color: var(--warning); background: rgba(251, 191, 36, 0.08); }
+.chip-modified { color: var(--warning); background: rgba(var(--warning-rgb), 0.08); }
 
 /* Empty state */
 .git-empty {
@@ -1880,7 +1963,7 @@ button, input, textarea, select {
   font-size: 11px;
   color: var(--danger);
   border-top: 1px solid var(--border);
-  background: rgba(248, 113, 113, 0.06);
+  background: rgba(var(--danger-rgb), 0.06);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1979,8 +2062,8 @@ button, input, textarea, select {
 }
 .git-badge-warning {
   color: rgb(251, 191, 36);
-  border: 1px solid rgba(251, 191, 36, 0.2);
-  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(var(--warning-rgb), 0.2);
+  background: rgba(var(--warning-rgb), 0.08);
 }
 .git-badge-muted {
   color: var(--text-3);
@@ -1990,7 +2073,7 @@ button, input, textarea, select {
 
 /* Worktree path */
 .git-worktree-path {
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-3);
   overflow: hidden;
@@ -2013,7 +2096,7 @@ button, input, textarea, select {
   background: var(--wash-05);
 }
 .git-commit-hash {
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--accent);
   flex-shrink: 0;
@@ -2097,7 +2180,7 @@ button, input, textarea, select {
 }
 
 .git-sync-counter {
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-3);
 }
@@ -2108,7 +2191,7 @@ button, input, textarea, select {
 
 .git-action-menu-item-danger:hover {
   color: var(--danger);
-  background: rgba(248, 113, 113, 0.1);
+  background: rgba(var(--danger-rgb), 0.1);
 }
 
 .git-action-menu-divider {
@@ -2128,7 +2211,7 @@ button, input, textarea, select {
 
 .git-action-menu-item-danger-hover:not(:disabled):hover {
   color: var(--danger);
-  background: rgba(248, 113, 113, 0.1);
+  background: rgba(var(--danger-rgb), 0.1);
 }
 
 /* Chat/Terminal content area */
@@ -2235,7 +2318,7 @@ button, input, textarea, select {
   flex-shrink: 0;
   color: var(--warning);
   font-size: 11px;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   white-space: nowrap;
 }
 
@@ -2469,9 +2552,9 @@ button, input, textarea, select {
   justify-content: center;
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
-  background: rgba(248, 113, 113, 0.11);
+  background: rgba(var(--danger-rgb), 0.11);
   box-shadow:
-    inset 0 0 0 1px rgba(248, 113, 113, 0.14),
+    inset 0 0 0 1px rgba(var(--danger-rgb), 0.14),
     0 0 0 1px rgba(0, 0, 0, 0.34);
   animation: workspace-snap-preview-in var(--duration-fast) var(--ease-out);
 }
@@ -2755,7 +2838,7 @@ button, input, textarea, select {
 }
 
 .file-explorer-row.selected {
-  background: rgba(255, 107, 107, 0.08);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
 .file-explorer-row.selected::before {
@@ -2795,12 +2878,12 @@ button, input, textarea, select {
   font-family: var(--font-mono);
   padding: 1px 4px;
   height: 20px;
-  box-shadow: 0 0 0 1px rgba(255, 107, 107, 0.2);
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.2);
 }
 
 .file-explorer-inline-input input.error {
   border-color: var(--danger);
-  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.3);
+  box-shadow: 0 0 0 1px rgba(var(--danger-rgb), 0.3);
 }
 
 /* Multi-select action bar */
@@ -2852,12 +2935,12 @@ button, input, textarea, select {
 
 .file-explorer-select-bar .select-btn-danger {
   color: var(--danger);
-  border-color: rgba(248, 113, 113, 0.2);
+  border-color: rgba(var(--danger-rgb), 0.2);
 }
 
 .file-explorer-select-bar .select-btn-danger:hover {
-  background: rgba(248, 113, 113, 0.1);
-  border-color: rgba(248, 113, 113, 0.3);
+  background: rgba(var(--danger-rgb), 0.1);
+  border-color: rgba(var(--danger-rgb), 0.3);
 }
 
 /* Editor layout with collapsible explorer */
@@ -3197,8 +3280,8 @@ button, input, textarea, select {
 
 .terminal-error-banner {
   padding: 6px 10px;
-  border-top: 1px solid rgba(248, 113, 113, 0.15);
-  background: rgba(248, 113, 113, 0.08);
+  border-top: 1px solid rgba(var(--danger-rgb), 0.15);
+  background: rgba(var(--danger-rgb), 0.08);
   color: var(--danger);
   font-size: 11px;
   flex-shrink: 0;
@@ -3213,7 +3296,7 @@ button, input, textarea, select {
   background: var(--bg-2);
   font-size: 10.5px;
   color: var(--text-3);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
 }
 
 .terminal-meta-bar-path {
@@ -3288,7 +3371,7 @@ button, input, textarea, select {
   height: 8px;
   border-radius: 999px;
   background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.18);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.18);
   z-index: 2;
   pointer-events: none;
 }
@@ -3312,7 +3395,7 @@ button, input, textarea, select {
   height: 7px;
   border-radius: 999px;
   background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.14);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.14);
   flex-shrink: 0;
 }
 
@@ -3349,17 +3432,17 @@ button, input, textarea, select {
 .terminal-broadcast-btn-active {
   color: var(--accent) !important;
   background: var(--accent-dim) !important;
-  border-color: rgba(255, 107, 107, 0.22) !important;
+  border-color: rgba(var(--accent-rgb), 0.22) !important;
 }
 
 .terminal-leaf-pane-broadcasting::after {
-  border-color: rgba(255, 107, 107, 0.5);
+  border-color: rgba(var(--accent-rgb), 0.5);
   animation: broadcast-pulse 2s ease-in-out infinite;
 }
 
 @keyframes broadcast-pulse {
-  0%, 100% { border-color: rgba(255, 107, 107, 0.5); }
-  50% { border-color: rgba(255, 107, 107, 0.85); }
+  0%, 100% { border-color: rgba(var(--accent-rgb), 0.5); }
+  50% { border-color: rgba(var(--accent-rgb), 0.85); }
 }
 
 .terminal-broadcast-banner {
@@ -3368,7 +3451,7 @@ button, input, textarea, select {
   gap: 6px;
   padding: 3px 10px;
   background: var(--accent-dim);
-  border-bottom: 1px solid rgba(255, 107, 107, 0.15);
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.15);
   color: var(--accent);
   font-size: 10px;
   font-weight: 500;
@@ -3394,7 +3477,7 @@ button, input, textarea, select {
 
 .terminal-broadcast-banner-close:hover {
   opacity: 1;
-  background: rgba(255, 107, 107, 0.15);
+  background: rgba(var(--accent-rgb), 0.15);
 }
 
 /* ── Multi-Launch mode (inside new-tab dropdown) ── */
@@ -3540,7 +3623,7 @@ button, input, textarea, select {
   background: var(--accent-dim);
 }
 .tnd-option-card-active:hover {
-  background: rgba(255, 107, 107, 0.14);
+  background: rgba(var(--accent-rgb), 0.14);
 }
 
 .tnd-option-icon {
@@ -3556,7 +3639,7 @@ button, input, textarea, select {
   transition: all var(--duration-fast) var(--ease-out);
 }
 .tnd-option-card-active .tnd-option-icon {
-  background: rgba(255, 107, 107, 0.15);
+  background: rgba(var(--accent-rgb), 0.15);
   color: var(--accent);
 }
 
@@ -3685,8 +3768,8 @@ button, input, textarea, select {
 .grid-preview-cell {
   flex: 1;
   border-radius: 2px;
-  background: rgba(255, 107, 107, 0.08);
-  border: 1px solid rgba(255, 107, 107, 0.15);
+  background: rgba(var(--accent-rgb), 0.08);
+  border: 1px solid rgba(var(--accent-rgb), 0.15);
   min-width: 0;
 }
 
@@ -3732,7 +3815,7 @@ button, input, textarea, select {
 
 .sb-rail-btn-active {
   color: var(--accent);
-  background: rgba(255, 107, 107, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
 }
 
 .sb-rail-divider {
@@ -3818,7 +3901,7 @@ button, input, textarea, select {
 }
 
 .shell-pin-btn-active:hover {
-  background: rgba(255, 107, 107, 0.15);
+  background: rgba(var(--accent-rgb), 0.15);
   color: var(--accent);
 }
 
@@ -4019,7 +4102,7 @@ button, input, textarea, select {
 
 .sb-thread-active {
   color: var(--accent);
-  background: rgba(255, 107, 107, 0.06);
+  background: rgba(var(--accent-rgb), 0.06);
 }
 
 .sb-thread-active::before {
@@ -4109,8 +4192,8 @@ button, input, textarea, select {
   align-items: center;
   gap: 8px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 107, 107, 0.06);
-  border: 1px solid rgba(255, 107, 107, 0.12);
+  background: rgba(var(--accent-rgb), 0.06);
+  border: 1px solid rgba(var(--accent-rgb), 0.12);
   color: var(--accent);
   font-size: 12.5px;
   font-weight: 500;
@@ -4120,9 +4203,9 @@ button, input, textarea, select {
 }
 
 .sb-new-thread-btn:hover {
-  background: rgba(255, 107, 107, 0.1);
-  border-color: rgba(255, 107, 107, 0.2);
-  box-shadow: 0 0 16px rgba(255, 107, 107, 0.06);
+  background: rgba(var(--accent-rgb), 0.1);
+  border-color: rgba(var(--accent-rgb), 0.2);
+  box-shadow: 0 0 16px rgba(var(--accent-rgb), 0.06);
 }
 
 /* Open project button */
@@ -4256,8 +4339,8 @@ button, input, textarea, select {
 }
 
 .update-dlg-icon--error {
-  background: rgba(248, 113, 113, 0.08);
-  border: 1px solid rgba(248, 113, 113, 0.15);
+  background: rgba(var(--danger-rgb), 0.08);
+  border: 1px solid rgba(var(--danger-rgb), 0.15);
   color: var(--danger);
 }
 
@@ -4283,8 +4366,8 @@ button, input, textarea, select {
 }
 
 .update-dlg-btn-accent:hover {
-  background: rgba(255, 107, 107, 0.14);
-  border-color: rgba(255, 107, 107, 0.35);
+  background: rgba(var(--accent-rgb), 0.14);
+  border-color: rgba(var(--accent-rgb), 0.35);
   box-shadow: var(--accent-glow);
 }
 
@@ -4300,7 +4383,7 @@ button, input, textarea, select {
   width: 40%;
   height: 100%;
   border-radius: 2px;
-  background: linear-gradient(90deg, var(--accent), rgba(255, 107, 107, 0.3), var(--accent));
+  background: linear-gradient(90deg, var(--accent), rgba(var(--accent-rgb), 0.3), var(--accent));
   background-size: 200% 100%;
   animation: shimmer 1.5s ease-in-out infinite;
 }
@@ -4361,6 +4444,12 @@ button, input, textarea, select {
               box-shadow var(--duration-fast) var(--ease-out);
 }
 
+.chat-composer-surface {
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--supporting-bg);
+}
+
 .chat-input-box:focus-within {
   border-color: var(--border-accent);
   box-shadow: var(--accent-glow);
@@ -4389,7 +4478,7 @@ button, input, textarea, select {
   align-items: center;
   gap: 7px;
   padding: 7px 10px;
-  background: rgba(251, 191, 36, 0.06);
+  background: rgba(var(--warning-rgb), 0.06);
   border-bottom: 1px solid var(--wash-05);
 }
 
@@ -4414,7 +4503,7 @@ button, input, textarea, select {
   font-size: 10.5px;
   font-weight: 500;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(52, 211, 153, 0.2);
+  border: 1px solid rgba(var(--success-rgb), 0.2);
   background: transparent;
   color: var(--success);
   cursor: pointer;
@@ -4423,8 +4512,8 @@ button, input, textarea, select {
 }
 
 .approval-trust-btn:hover {
-  background: rgba(52, 211, 153, 0.08);
-  border-color: rgba(52, 211, 153, 0.35);
+  background: rgba(var(--success-rgb), 0.08);
+  border-color: rgba(var(--success-rgb), 0.35);
 }
 
 .approval-rows {
@@ -4459,7 +4548,7 @@ button, input, textarea, select {
   margin-top: 3px;
   font-size: 11px;
   color: var(--text-3);
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4526,12 +4615,12 @@ button, input, textarea, select {
 .approval-btn-deny {
   background: transparent;
   color: var(--danger);
-  border-color: rgba(248, 113, 113, 0.15);
+  border-color: rgba(var(--danger-rgb), 0.15);
 }
 
 .approval-btn-deny:hover {
-  background: rgba(248, 113, 113, 0.08);
-  border-color: rgba(248, 113, 113, 0.3);
+  background: rgba(var(--danger-rgb), 0.08);
+  border-color: rgba(var(--danger-rgb), 0.3);
 }
 
 /* Cancel — ghost */
@@ -4559,7 +4648,7 @@ button, input, textarea, select {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: rgba(251, 191, 36, 0.06);
+  background: rgba(var(--warning-rgb), 0.06);
   border-bottom: 1px solid var(--wash-05);
 }
 
@@ -4581,7 +4670,7 @@ button, input, textarea, select {
 
 .acard-type {
   font-size: 10px;
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   padding: 1px 6px;
   border-radius: 3px;
   background: var(--wash-05);
@@ -4610,7 +4699,7 @@ button, input, textarea, select {
   border-radius: 4px;
   background: var(--code-bg);
   border: 1px solid var(--border);
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-2);
@@ -4643,7 +4732,7 @@ button, input, textarea, select {
   border-radius: 4px;
   background: var(--code-bg);
   border: 1px solid var(--border);
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-3);
@@ -4696,7 +4785,7 @@ button, input, textarea, select {
   font-size: 11px;
   line-height: 1.5;
   padding: 8px 10px;
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   resize: vertical;
 }
 
@@ -4747,7 +4836,7 @@ button, input, textarea, select {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
 }
 
 /* ── Toasts ── */
@@ -4892,8 +4981,8 @@ button, input, textarea, select {
   width: 44px;
   height: 44px;
   border-radius: var(--radius-md);
-  background: rgba(248, 113, 113, 0.1);
-  border: 1px solid rgba(248, 113, 113, 0.15);
+  background: rgba(var(--danger-rgb), 0.1);
+  border: 1px solid rgba(var(--danger-rgb), 0.15);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5164,7 +5253,7 @@ button, input, textarea, select {
   background: var(--code-bg);
   color: var(--text-1);
   padding: 14px;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -5271,7 +5360,7 @@ button, input, textarea, select {
   display: grid;
   place-items: center;
   background: var(--accent-dim);
-  border: 1px solid rgba(255, 107, 107, 0.12);
+  border: 1px solid rgba(var(--accent-rgb), 0.12);
   color: var(--accent);
   flex-shrink: 0;
 }
@@ -5300,7 +5389,7 @@ button, input, textarea, select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   letter-spacing: -0.02em;
 }
 
@@ -5424,7 +5513,7 @@ button, input, textarea, select {
 }
 
 .ws-prop-mono {
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: -0.02em;
 }
@@ -5472,7 +5561,7 @@ button, input, textarea, select {
   width: 46px;
   padding: 3px 4px;
   font-size: 11.5px;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   text-align: center;
   background: var(--bg-3);
   border: 1px solid var(--border);
@@ -5484,7 +5573,7 @@ button, input, textarea, select {
 
 .ws-depth-input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.06);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.06);
 }
 
 /* ── Repo list ── */
@@ -5499,7 +5588,7 @@ button, input, textarea, select {
 .ws-repos-toolbar-count {
   font-size: 10.5px;
   color: var(--text-3);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
 }
 
 .ws-repos-toolbar-actions {
@@ -5552,7 +5641,7 @@ button, input, textarea, select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   letter-spacing: -0.02em;
 }
 
@@ -5634,7 +5723,7 @@ button, input, textarea, select {
 .ws-footer-meta {
   font-size: 10.5px;
   color: var(--text-3);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
 }
 
 .ws-footer-actions {
@@ -5645,13 +5734,13 @@ button, input, textarea, select {
 
 /* ── Accent button variant ── */
 .ws-prop-btn-accent {
-  background: rgba(255, 107, 107, 0.08);
-  border-color: rgba(255, 107, 107, 0.15);
+  background: rgba(var(--accent-rgb), 0.08);
+  border-color: rgba(var(--accent-rgb), 0.15);
   color: var(--accent);
 }
 .ws-prop-btn-accent:hover {
-  background: rgba(255, 107, 107, 0.14);
-  border-color: rgba(255, 107, 107, 0.25);
+  background: rgba(var(--accent-rgb), 0.14);
+  border-color: rgba(var(--accent-rgb), 0.25);
   color: var(--accent);
 }
 
@@ -5764,8 +5853,8 @@ button, input, textarea, select {
 }
 
 .ntf-setup-card[data-needs-action="true"] {
-  border-color: rgba(251, 191, 36, 0.18);
-  background: rgba(251, 191, 36, 0.04);
+  border-color: rgba(var(--warning-rgb), 0.18);
+  background: rgba(var(--warning-rgb), 0.04);
 }
 
 .ntf-setup-left {
@@ -5792,7 +5881,7 @@ button, input, textarea, select {
   margin-top: 6px;
   font-size: 10px;
   color: var(--text-3);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   letter-spacing: -0.02em;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5830,8 +5919,8 @@ button, input, textarea, select {
 }
 
 .ntf-setup-btn[data-primary="true"]:hover {
-  background: rgba(255, 107, 107, 0.16);
-  border-color: rgba(255, 107, 107, 0.28);
+  background: rgba(var(--accent-rgb), 0.16);
+  border-color: rgba(var(--accent-rgb), 0.28);
 }
 
 .ntf-setup-btn:disabled {
@@ -6056,12 +6145,12 @@ button, input, textarea, select {
 
 .wss-icon-btn-active:hover {
   color: var(--accent);
-  background: rgba(255, 107, 107, 0.15);
+  background: rgba(var(--accent-rgb), 0.15);
 }
 
 .wss-icon-btn-danger:hover {
   color: var(--danger);
-  background: rgba(248, 113, 113, 0.1);
+  background: rgba(var(--danger-rgb), 0.1);
 }
 
 .wss-icon-btn:disabled {
@@ -6139,7 +6228,7 @@ button, input, textarea, select {
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 11px;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   color: var(--text-1);
   transition: border-color var(--duration-fast) var(--ease-out),
               background var(--duration-fast) var(--ease-out);
@@ -6272,7 +6361,7 @@ button, input, textarea, select {
   width: 100%;
   min-height: 180px;
   padding: 10px 12px;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-1);
@@ -6286,7 +6375,7 @@ button, input, textarea, select {
 .wss-editor:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.06);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.06);
 }
 
 /* Confirm */
@@ -6295,9 +6384,9 @@ button, input, textarea, select {
   flex-direction: column;
   gap: 10px;
   padding: 12px;
-  border: 1px solid rgba(248, 113, 113, 0.15);
+  border: 1px solid rgba(var(--danger-rgb), 0.15);
   border-radius: var(--radius-md);
-  background: rgba(248, 113, 113, 0.04);
+  background: rgba(var(--danger-rgb), 0.04);
   font-size: 12px;
   color: var(--text-1);
 }
@@ -6318,7 +6407,7 @@ button, input, textarea, select {
 }
 
 .wss-danger-btn:hover {
-  background: rgba(248, 113, 113, 0.08) !important;
+  background: rgba(var(--danger-rgb), 0.08) !important;
 }
 
 /* Footer */
@@ -6334,7 +6423,7 @@ button, input, textarea, select {
 .wss-footer-status {
   font-size: 10.5px;
   color: var(--text-3);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
 }
 
 .wss-footer-actions {
@@ -6495,7 +6584,7 @@ button, input, textarea, select {
   border-right: 1px solid var(--border);
   white-space: nowrap;
   flex-shrink: 0;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   transition: background var(--duration-fast) var(--ease-out),
               color var(--duration-fast) var(--ease-out);
 }
@@ -6582,7 +6671,7 @@ button, input, textarea, select {
 .editor-tab-action.active {
   border-color: var(--border-active);
   color: var(--accent);
-  background: rgba(255, 107, 107, 0.08);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
 .cm-editor {
@@ -6684,7 +6773,7 @@ button, input, textarea, select {
   padding: 0 6px;
   font-size: 10px;
   color: var(--text-2);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   user-select: none;
   white-space: nowrap;
 }
@@ -6702,7 +6791,7 @@ button, input, textarea, select {
 
 .git-diff-editor-callout {
   border-bottom: 1px solid var(--border);
-  background: rgba(251, 191, 36, 0.05);
+  background: rgba(var(--warning-rgb), 0.05);
 }
 
 .git-editor-empty-state {
@@ -6738,7 +6827,7 @@ button, input, textarea, select {
   background: var(--bg-2);
   font-size: 11px;
   color: var(--text-2);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
 }
 
 .git-diff-editor-pane-label {
@@ -6769,15 +6858,15 @@ button, input, textarea, select {
 }
 
 .cm-git-diff-line-added {
-  background: rgba(52, 211, 153, 0.1);
+  background: rgba(var(--success-rgb), 0.1);
 }
 
 .cm-git-diff-line-removed {
-  background: rgba(248, 113, 113, 0.1);
+  background: rgba(var(--danger-rgb), 0.1);
 }
 
 .cm-git-diff-line-changed {
-  background: rgba(251, 191, 36, 0.12);
+  background: rgba(var(--warning-rgb), 0.12);
 }
 
 .cm-git-diff-line-active {
@@ -6786,11 +6875,11 @@ button, input, textarea, select {
 }
 
 .cm-git-diff-line-active-pane-base {
-  background: rgba(248, 113, 113, 0.18);
+  background: rgba(var(--danger-rgb), 0.18);
 }
 
 .cm-git-diff-line-active-pane-modified {
-  background: rgba(52, 211, 153, 0.22);
+  background: rgba(var(--success-rgb), 0.22);
 }
 
 /* ── Chat Attachments ──────────────────────────────────────────────── */
@@ -6858,7 +6947,7 @@ button, input, textarea, select {
   flex-shrink: 0;
   font-size: 10px;
   color: var(--text-3);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
 }
 
 .chat-attachment-chip-remove {
@@ -6878,7 +6967,7 @@ button, input, textarea, select {
 }
 
 .chat-attachment-chip-remove:hover {
-  background: rgba(248, 113, 113, 0.15);
+  background: rgba(var(--danger-rgb), 0.15);
   color: var(--danger);
 }
 
@@ -6912,7 +7001,7 @@ button, input, textarea, select {
 
 .chat-input-box-tool-input {
   border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
-  box-shadow: 0 0 0 1px rgba(255, 107, 107, 0.08);
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.08);
 }
 
 .chat-tool-input-panel {
@@ -6983,15 +7072,15 @@ button, input, textarea, select {
 }
 
 .chat-tool-input-option-active {
-  border-color: rgba(255, 107, 107, 0.28);
-  background: rgba(255, 107, 107, 0.12);
+  border-color: rgba(var(--accent-rgb), 0.28);
+  background: rgba(var(--accent-rgb), 0.12);
   color: var(--text-1);
-  box-shadow: inset 0 0 0 1px rgba(255, 107, 107, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.08);
 }
 
 .chat-tool-input-option-active:hover {
-  border-color: rgba(255, 107, 107, 0.28);
-  background: rgba(255, 107, 107, 0.12);
+  border-color: rgba(var(--accent-rgb), 0.28);
+  background: rgba(var(--accent-rgb), 0.12);
   color: var(--text-1);
 }
 
@@ -7313,7 +7402,7 @@ button, input, textarea, select {
 }
 
 .oc-agent-option-meta {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
 }
 
 .oc-agent-option-check {
@@ -7480,7 +7569,7 @@ button, input, textarea, select {
 }
 
 .chat-context-percent {
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 9.5px;
   min-width: 22px;
   text-align: right;
@@ -7593,7 +7682,7 @@ button, input, textarea, select {
 .slash-menu-item-active .slash-menu-item-icon,
 .slash-menu-item:hover .slash-menu-item-icon {
   color: var(--accent);
-  background: rgba(255, 107, 107, 0.08);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
 .slash-menu-item-text {
@@ -7621,7 +7710,7 @@ button, input, textarea, select {
   align-items: center;
   padding: 2px 6px;
   border-radius: 4px;
-  background: rgba(255, 107, 107, 0.08);
+  background: rgba(var(--accent-rgb), 0.08);
   color: var(--accent);
   font-size: 9.5px;
   font-weight: 600;
@@ -7872,13 +7961,13 @@ button, input, textarea, select {
 }
 
 .chat-command-panel-toggle-active {
-  background: rgba(255, 107, 107, 0.1);
+  background: rgba(var(--accent-rgb), 0.1);
   color: var(--accent);
   font-weight: 600;
 }
 
 .chat-command-panel-toggle-active:hover {
-  background: rgba(255, 107, 107, 0.14);
+  background: rgba(var(--accent-rgb), 0.14);
   color: var(--accent);
 }
 
@@ -8148,7 +8237,7 @@ button, input, textarea, select {
 }
 
 .hp-tile-native:hover .hp-tile-icon {
-  border-color: rgba(255, 107, 107, 0.3);
+  border-color: rgba(var(--accent-rgb), 0.3);
 }
 
 .hp-tile-body {
@@ -8181,7 +8270,7 @@ button, input, textarea, select {
   letter-spacing: 0.05em;
   color: var(--accent);
   background: var(--accent-dim);
-  border: 1px solid rgba(255, 107, 107, 0.12);
+  border: 1px solid rgba(var(--accent-rgb), 0.12);
 }
 
 .hp-tile-desc {
@@ -8209,7 +8298,7 @@ button, input, textarea, select {
 
 .hp-tile-version {
   font-size: 10px;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   color: var(--text-3);
 }
 
@@ -8267,7 +8356,7 @@ button, input, textarea, select {
 }
 
 .hp-btn-launch:hover {
-  background: rgba(255, 107, 107, 0.15);
+  background: rgba(var(--accent-rgb), 0.15);
   box-shadow: var(--accent-glow);
 }
 
@@ -8312,7 +8401,7 @@ button, input, textarea, select {
   padding: 10px 12px;
   font-size: 10.5px;
   line-height: 1.5;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   background: var(--wash-02);
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
@@ -8331,8 +8420,8 @@ button, input, textarea, select {
   gap: 10px;
   padding: 10px 14px;
   border-radius: var(--radius-sm);
-  background: rgba(248, 113, 113, 0.06);
-  border: 1px solid rgba(248, 113, 113, 0.15);
+  background: rgba(var(--danger-rgb), 0.06);
+  border: 1px solid rgba(var(--danger-rgb), 0.15);
 }
 
 .hp-error p {
@@ -8766,7 +8855,7 @@ button, input, textarea, select {
 .mp-trigger-effort {
   font-size: 9px;
   font-weight: 600;
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   letter-spacing: 0.02em;
   padding: 1px 5px;
   border-radius: 99px;
@@ -9058,7 +9147,7 @@ button, input, textarea, select {
 .mp-model-search-count {
   color: var(--text-3);
   font-size: 10px;
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
 }
 
 .mp-empty {
@@ -9364,7 +9453,7 @@ button, input, textarea, select {
   margin: 0;
   font-size: 11px;
   color: var(--text-3);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -9480,7 +9569,7 @@ button, input, textarea, select {
 }
 
 .wsp-mono {
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -9542,7 +9631,7 @@ button, input, textarea, select {
 .wsp-repo-path {
   font-size: 10px;
   color: var(--text-3);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

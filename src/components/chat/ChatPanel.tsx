@@ -1291,9 +1291,9 @@ function MessageRowView({
         alignItems: isUser ? "flex-end" : "flex-start",
         maxWidth: "100%",
         borderRadius: "var(--radius-md)",
-        outline: isHighlighted ? "2px solid rgba(255, 107, 107, 0.35)" : "none",
+        outline: isHighlighted ? "2px solid rgba(var(--accent-rgb), 0.35)" : "none",
         boxShadow: isHighlighted
-          ? "0 10px 28px rgba(255, 107, 107, 0.12)"
+          ? "0 10px 28px rgba(var(--accent-rgb), 0.12)"
           : "none",
         transition:
           "outline-color var(--duration-normal) var(--ease-out), box-shadow var(--duration-normal) var(--ease-out)",
@@ -1306,8 +1306,8 @@ function MessageRowView({
               maxWidth: "75%",
               padding: "10px 14px",
               borderRadius: "var(--radius-md)",
-              background: "rgba(255, 107, 107, 0.09)",
-              border: "1px solid rgba(255, 107, 107, 0.16)",
+              background: "rgba(var(--accent-rgb), 0.09)",
+              border: "1px solid rgba(var(--accent-rgb), 0.16)",
               fontSize: 13,
               lineHeight: 1.6,
               whiteSpace: "pre-wrap",
@@ -4740,7 +4740,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 <span
                   style={{
                     fontSize: 11,
-                    fontFamily: '"JetBrains Mono", monospace',
+                    fontFamily: '"Geist Mono", ui-monospace, monospace',
                     color: "var(--warning)",
                     whiteSpace: "nowrap",
                     flexShrink: 0,
@@ -4897,7 +4897,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 <span
                   style={{
                     fontSize: 11,
-                    fontFamily: '"JetBrains Mono", monospace',
+                    fontFamily: '"Geist Mono", ui-monospace, monospace',
                     color: "var(--warning)",
                     whiteSpace: "nowrap",
                     flexShrink: 0,
@@ -4968,7 +4968,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
             visibility: (layoutMode === "terminal" || layoutMode === "editor") ? "hidden" : "visible",
             display: "flex",
             flexDirection: "column",
-            outline: isFileDropOver ? "2px dashed rgba(96, 165, 250, 0.7)" : "none",
+            outline: isFileDropOver ? "2px dashed rgba(var(--info-rgb), 0.7)" : "none",
             outlineOffset: isFileDropOver ? "-8px" : undefined,
           }}
         >
@@ -4978,8 +4978,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   position: "absolute",
                   inset: 12,
                   borderRadius: "var(--radius-md)",
-                  border: "1px solid rgba(96, 165, 250, 0.45)",
-                  background: "rgba(96, 165, 250, 0.08)",
+                  border: "1px solid rgba(var(--info-rgb), 0.45)",
+                  background: "rgba(var(--info-rgb), 0.08)",
                   color: "var(--text-1)",
                   fontSize: 13,
                   fontWeight: 600,
@@ -5111,8 +5111,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               gap: 6,
               padding: "6px 10px",
               borderRadius: "var(--radius-sm)",
-              border: streaming ? "1px solid rgba(96, 165, 250, 0.25)" : "1px solid var(--border)",
-              background: streaming ? "rgba(96, 165, 250, 0.08)" : "var(--bg-2)",
+              border: streaming ? "1px solid rgba(var(--info-rgb), 0.25)" : "1px solid var(--border)",
+              background: streaming ? "rgba(var(--info-rgb), 0.08)" : "var(--bg-2)",
               color: streaming ? "var(--info)" : "var(--text-2)",
               fontSize: 11.5,
               cursor: "pointer",
@@ -5138,12 +5138,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
             </div>
 
             {/* ── Input Area ── */}
-            <div
-              style={{
-                padding: "8px 14px 10px",
-                borderTop: "1px solid var(--border)",
-              }}
-            >
+            <div className="chat-composer-surface">
         <form
           onSubmit={onSubmit}
           style={{
@@ -5902,9 +5897,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     style={{
                       padding: "5px 10px",
                       borderRadius: "var(--radius-sm)",
-                      background: "rgba(248, 113, 113, 0.10)",
+                      background: "rgba(var(--danger-rgb), 0.10)",
                       color: "var(--danger)",
-                      border: "1px solid rgba(248, 113, 113, 0.2)",
+                      border: "1px solid rgba(var(--danger-rgb), 0.2)",
                       fontSize: 12,
                       fontWeight: 600,
                       cursor: "pointer",
@@ -6045,8 +6040,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     marginTop: 8,
                     padding: "8px 12px",
                     borderRadius: "var(--radius-sm)",
-                    background: "rgba(248, 113, 113, 0.06)",
-                    border: "1px solid rgba(248, 113, 113, 0.15)",
+                    background: "rgba(var(--danger-rgb), 0.06)",
+                    border: "1px solid rgba(var(--danger-rgb), 0.15)",
                     color: "var(--danger)",
                     fontSize: 12,
                   }}

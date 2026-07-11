@@ -358,10 +358,10 @@ export function PowerSettingsModal() {
             padding: "14px 16px",
             borderRadius: "var(--radius-md)",
             background: keepAwakeEnabled
-              ? "rgba(255, 107, 107, 0.06)"
+              ? "rgba(var(--accent-rgb), 0.06)"
               : "var(--wash-03)",
             border: keepAwakeEnabled
-              ? "1px solid rgba(255, 107, 107, 0.14)"
+              ? "1px solid rgba(var(--accent-rgb), 0.14)"
               : "1px solid var(--wash-06)",
             transition: "all var(--duration-normal) var(--ease-out)",
             marginBottom: 6,
@@ -629,10 +629,10 @@ export function PowerSettingsModal() {
                           fontWeight: 500,
                           borderRadius: "var(--radius-sm)",
                           border: isActive
-                            ? "1px solid rgba(255, 107, 107, 0.25)"
+                            ? "1px solid rgba(var(--accent-rgb), 0.25)"
                             : "1px solid var(--wash-08)",
                           background: isActive
-                            ? "rgba(255, 107, 107, 0.10)"
+                            ? "rgba(var(--accent-rgb), 0.10)"
                             : "var(--wash-03)",
                           color: isActive ? "var(--accent)" : "var(--text-2)",
                           cursor: disabled ? "not-allowed" : "pointer",
@@ -649,10 +649,10 @@ export function PowerSettingsModal() {
                   {(() => {
                     const isCustomActive = hasCustomTime(customHours, customMinutes);
                     const customBorder = isCustomActive
-                      ? "1px solid rgba(255, 107, 107, 0.25)"
+                      ? "1px solid rgba(var(--accent-rgb), 0.25)"
                       : "1px solid var(--wash-08)";
                     const customBg = isCustomActive
-                      ? "rgba(255, 107, 107, 0.10)"
+                      ? "rgba(var(--accent-rgb), 0.10)"
                       : "var(--wash-03)";
                     const inputColor = isCustomActive ? "var(--accent)" : "var(--text-2)";
                     const inputStyle = {
@@ -918,10 +918,10 @@ function RadioPill({
         fontWeight: 500,
         borderRadius: "var(--radius-sm)",
         border: checked
-          ? "1px solid rgba(255, 107, 107, 0.25)"
+          ? "1px solid rgba(var(--accent-rgb), 0.25)"
           : "1px solid var(--wash-1)",
         background: checked
-          ? "rgba(255, 107, 107, 0.08)"
+          ? "rgba(var(--accent-rgb), 0.08)"
           : "transparent",
         color: checked ? "var(--accent)" : "var(--text-2)",
         cursor: disabled ? "not-allowed" : "pointer",
