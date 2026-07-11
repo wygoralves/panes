@@ -523,7 +523,7 @@ export function GitWorktreesView({ repo, onError }: Props) {
                     {wt.headSha && (
                       <span
                         style={{
-                          fontFamily: '"JetBrains Mono", monospace',
+                          fontFamily: '"Geist Mono", ui-monospace, monospace',
                           fontSize: 11,
                           flexShrink: 0,
                         }}

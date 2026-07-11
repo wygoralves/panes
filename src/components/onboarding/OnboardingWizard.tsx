@@ -37,6 +37,7 @@ import { useOnboardingStore } from "../../stores/onboardingStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { getHarnessIcon } from "../shared/HarnessLogos";
+import { PanesLockup } from "../shared/PanesBrand";
 import type {
   DependencyReport,
   EngineHealth,
@@ -209,7 +210,7 @@ function InstallLogView({
         padding: "10px 12px",
         fontSize: 11,
         lineHeight: 1.5,
-        fontFamily: '"JetBrains Mono", monospace',
+        fontFamily: '"Geist Mono", ui-monospace, monospace',
         background: "var(--bg-2)",
         borderRadius: "var(--radius-sm)",
         border: "1px solid var(--border)",
@@ -297,7 +298,7 @@ function WorkflowCard({
           ? "1px solid var(--border-accent)"
           : "1px solid var(--border)",
         background: active
-          ? "rgba(255, 107, 107, 0.04)"
+          ? "rgba(var(--accent-rgb), 0.04)"
           : "var(--bg-2)",
         display: "flex",
         flexDirection: "column" as const,
@@ -359,7 +360,7 @@ function ChatEngineCard({
           ? "1px solid var(--border-accent)"
           : "1px solid var(--border)",
         background: selected
-          ? "rgba(255, 107, 107, 0.04)"
+          ? "rgba(var(--accent-rgb), 0.04)"
           : "var(--bg-2)",
         animation: "ob-card-cascade 200ms var(--ease-out) both",
         animationDelay: `${index * 40}ms`,
@@ -462,7 +463,7 @@ function ProviderRow({
           {description}
         </p>
         {harness.version ? (
-          <span style={{ fontSize: 10, color: "var(--text-3)", fontFamily: '"JetBrains Mono", monospace' }}>
+          <span style={{ fontSize: 10, color: "var(--text-3)", fontFamily: '"Geist Mono", ui-monospace, monospace' }}>
             {harness.version}
           </span>
         ) : null}
@@ -621,7 +622,7 @@ function ReadinessEngineRow({
           {health?.details ?? t("chatReadiness.status.pending")}
         </p>
         {health?.version ? (
-          <span style={{ fontSize: 10, color: "var(--text-3)", fontFamily: '"JetBrains Mono", monospace', marginTop: 4, display: "inline-block" }}>
+          <span style={{ fontSize: 10, color: "var(--text-3)", fontFamily: '"Geist Mono", ui-monospace, monospace', marginTop: 4, display: "inline-block" }}>
             v{health.version}
           </span>
         ) : null}
@@ -690,7 +691,7 @@ function WorkspaceRow({
           ? "1px solid var(--border-accent)"
           : "1px solid var(--border)",
         background: selected
-          ? "rgba(255, 107, 107, 0.04)"
+          ? "rgba(var(--accent-rgb), 0.04)"
           : "var(--bg-2)",
       }}
     >
@@ -709,7 +710,7 @@ function WorkspaceRow({
           fontSize: 11,
           color: "var(--text-3)",
           lineHeight: 1.3,
-          fontFamily: '"JetBrains Mono", monospace',
+          fontFamily: '"Geist Mono", ui-monospace, monospace',
           wordBreak: "break-word",
         }}
       >
@@ -1061,12 +1062,7 @@ export function OnboardingWizard() {
                   animation: "ob-greeting-logo 500ms var(--ease-out) both",
                 }}
               >
-                <svg viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg" width={56} height={56} style={{ color: "var(--text-1)" }}>
-                  <rect x="10" y="36" width="94" height="94" stroke="currentColor" strokeWidth="6" />
-                  <rect x="36" y="10" width="94" height="94" stroke="currentColor" strokeWidth="6" />
-                  <rect x="23" y="23" width="94" height="94" stroke="currentColor" strokeWidth="6" />
-                  <rect x="50" y="50" width="40" height="40" fill="var(--accent)" />
-                </svg>
+                <PanesLockup width={154} />
               </div>
 
               {/* Divider line */}

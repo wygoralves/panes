@@ -46,7 +46,7 @@ const darkVoidTheme = EditorView.theme(
       height: "100%",
     },
     ".cm-scroller": {
-      fontFamily: '"JetBrains Mono", monospace',
+      fontFamily: '"Geist Mono", ui-monospace, monospace',
       fontSize: "13px",
       lineHeight: "1.6",
     },
@@ -61,7 +61,7 @@ const darkVoidTheme = EditorView.theme(
       borderLeftWidth: "2px",
     },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
-      backgroundColor: "rgba(255, 107, 107, 0.12) !important",
+      backgroundColor: "rgba(var(--accent-rgb), 0.12) !important",
     },
     ".cm-activeLineGutter": {
       backgroundColor: "var(--wash-04)",
@@ -74,14 +74,14 @@ const darkVoidTheme = EditorView.theme(
       fontSize: "11px",
     },
     ".cm-matchingBracket": {
-      backgroundColor: "rgba(255, 107, 107, 0.18)",
+      backgroundColor: "rgba(var(--accent-rgb), 0.18)",
       outline: "none",
     },
     ".cm-searchMatch": {
-      backgroundColor: "rgba(251, 191, 36, 0.2)",
+      backgroundColor: "rgba(var(--warning-rgb), 0.2)",
     },
     ".cm-searchMatch.cm-searchMatch-selected": {
-      backgroundColor: "rgba(251, 191, 36, 0.35)",
+      backgroundColor: "rgba(var(--warning-rgb), 0.35)",
     },
     ".cm-panels": {
       background: "var(--bg-2)",
@@ -95,7 +95,7 @@ const darkVoidTheme = EditorView.theme(
       alignItems: "center",
       background: "var(--bg-2)",
       fontSize: "12px",
-      fontFamily: '"Sora", system-ui, sans-serif',
+      fontFamily: '"Geist", system-ui, sans-serif',
     },
     ".cm-search label": {
       display: "inline-flex",
@@ -117,7 +117,7 @@ const darkVoidTheme = EditorView.theme(
       background: "var(--bg-3)",
       color: "var(--text-1)",
       fontSize: "12px",
-      fontFamily: '"JetBrains Mono", monospace',
+      fontFamily: '"Geist Mono", ui-monospace, monospace',
       minWidth: "140px",
       outline: "none",
       transition: "border-color 120ms ease",
@@ -137,7 +137,7 @@ const darkVoidTheme = EditorView.theme(
       fontSize: "11px",
       cursor: "pointer",
       transition: "all 120ms ease",
-      fontFamily: '"Sora", system-ui, sans-serif',
+      fontFamily: '"Geist", system-ui, sans-serif',
     },
     ".cm-button:hover": {
       background: "var(--bg-4)",

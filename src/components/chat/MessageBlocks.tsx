@@ -402,7 +402,7 @@ function MessageDiffBlock({ block }: { block: DiffBlock }) {
           </span>
         )}
         {(adds > 0 || dels > 0) && (
-          <span style={{ fontSize: 10, fontFamily: '"JetBrains Mono", monospace', display: "flex", gap: 5, flexShrink: 0 }}>
+          <span style={{ fontSize: 10, fontFamily: '"Geist Mono", ui-monospace, monospace', display: "flex", gap: 5, flexShrink: 0 }}>
             {adds > 0 && <span style={{ color: "var(--success)" }}>+{adds}</span>}
             {dels > 0 && <span style={{ color: "var(--danger)" }}>-{dels}</span>}
           </span>
@@ -810,7 +810,7 @@ function ActionBlockView({
               className="action-output-error"
               style={{
                 borderTop: outputChunks.length > 0 || outputTruncated
-                  ? "1px solid rgba(248, 113, 113, 0.2)" : undefined,
+                  ? "1px solid rgba(var(--danger-rgb), 0.2)" : undefined,
               }}
             >
               <LinkifiedPlainText text={String(block.result.error)} />
@@ -1161,10 +1161,10 @@ function ApprovalCard({
   let decisionBackground = "rgba(148,163,184,0.12)";
   let decisionColor = "var(--text-2)";
   if (block.decision === "decline" || block.decision === "cancel") {
-    decisionBackground = "rgba(248,113,113,0.12)";
+    decisionBackground = "rgba(var(--danger-rgb), 0.12)";
     decisionColor = "var(--danger)";
   } else if (block.decision === "accept" || block.decision === "accept_for_session") {
-    decisionBackground = "rgba(52,211,153,0.12)";
+    decisionBackground = "rgba(var(--success-rgb), 0.12)";
     decisionColor = "var(--success)";
   }
 
@@ -1474,7 +1474,7 @@ function renderSingleBlock(
             borderBottom: "1px solid var(--border)",
             fontSize: 11,
             color: "var(--text-3)",
-            fontFamily: '"JetBrains Mono", monospace',
+            fontFamily: '"Geist Mono", ui-monospace, monospace',
           }}
         >
           <FileCode2 size={12} style={{ opacity: 0.5 }} />
@@ -1489,7 +1489,7 @@ function renderSingleBlock(
             padding: "12px 14px",
             fontSize: 12.5,
             lineHeight: 1.6,
-            fontFamily: '"JetBrains Mono", monospace',
+            fontFamily: '"Geist Mono", ui-monospace, monospace',
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
             overflow: "auto",
