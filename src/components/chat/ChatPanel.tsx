@@ -5925,11 +5925,11 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     borderRadius: "50%",
                     background:
                       activeWorkspaceId && input.trim()
-                        ? "var(--accent)"
+                        ? "var(--accent-fill)"
                         : "var(--bg-4)",
                     color:
                       activeWorkspaceId && input.trim()
-                        ? "var(--bg-0)"
+                        ? "var(--on-accent-icon)"
                         : "var(--text-3)",
                     cursor: activeWorkspaceId && input.trim() ? "pointer" : "default",
                     display: "flex",
