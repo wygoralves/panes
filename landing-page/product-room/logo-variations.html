@@ -1,0 +1,1410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panes logo explorations</title>
+  <meta name="description" content="Logo, wordmark, and color directions for Panes, built from pane, tab, workspace, and session geometry.">
+  <style>
+    @font-face {
+      font-family: "Geist";
+      src: url("./fonts/geist-latin.woff2") format("woff2");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+    }
+
+    @font-face {
+      font-family: "Geist Mono";
+      src: url("./fonts/geist-mono-latin.woff2") format("woff2");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+    }
+
+    :root {
+      --page: oklch(0.075 0.006 286);
+      --surface: oklch(0.115 0.007 286);
+      --raised: oklch(0.155 0.009 286);
+      --line: oklch(0.27 0.01 286);
+      --line-strong: oklch(0.38 0.011 286);
+      --ink: oklch(0.96 0.003 286);
+      --muted: oklch(0.7 0.006 286);
+      --faint: oklch(0.52 0.007 286);
+      --accent: oklch(0.72 0.16 26);
+      --light: oklch(0.96 0.002 286);
+      --light-line: oklch(0.83 0.006 286);
+      --light-ink: oklch(0.14 0.008 286);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-width: 320px;
+      background: var(--page);
+    }
+
+    body {
+      min-width: 320px;
+      min-height: 100vh;
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button,
+    a {
+      color: inherit;
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+      cursor: pointer;
+    }
+
+    a {
+      text-decoration: none;
+    }
+
+    button:focus-visible,
+    a:focus-visible,
+    article:focus-visible {
+      outline: 2px solid oklch(0.82 0.1 26);
+      outline-offset: 4px;
+    }
+
+    .shell {
+      width: min(calc(100% - 48px), 1440px);
+      margin-inline: auto;
+    }
+
+    header {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid oklch(1 0 0 / 0.07);
+    }
+
+    .header-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .brand img {
+      width: 20px;
+      height: 20px;
+    }
+
+    .back-link {
+      color: var(--muted);
+      font-size: 12px;
+      transition: color 160ms ease;
+    }
+
+    .back-link:hover {
+      color: var(--ink);
+    }
+
+    main {
+      padding: clamp(72px, 9vw, 128px) 0 120px;
+    }
+
+    .intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 0.55fr);
+      align-items: end;
+      gap: clamp(40px, 8vw, 120px);
+      margin-bottom: clamp(64px, 8vw, 108px);
+    }
+
+    h1 {
+      max-width: 900px;
+      margin: 0;
+      font-size: clamp(3rem, 6vw, 5.7rem);
+      font-weight: 520;
+      letter-spacing: -0.04em;
+      line-height: 0.98;
+      text-wrap: balance;
+    }
+
+    .intro-copy p {
+      max-width: 620px;
+      margin: 26px 0 0;
+      color: var(--muted);
+      font-size: clamp(1rem, 1.4vw, 1.16rem);
+      line-height: 1.62;
+      text-wrap: pretty;
+    }
+
+    .principles {
+      display: grid;
+      gap: 18px;
+      margin: 0;
+    }
+
+    .principles div {
+      display: grid;
+      grid-template-columns: 86px 1fr;
+      gap: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .principles dt {
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 620;
+    }
+
+    .principles dd {
+      margin: 0;
+      color: var(--faint);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .baseline {
+      min-height: 94px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 28px;
+      margin-bottom: 28px;
+      padding: 22px 24px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: oklch(0.095 0.007 286);
+    }
+
+    .baseline img {
+      width: 48px;
+      height: 48px;
+    }
+
+    .baseline strong,
+    .baseline span {
+      display: block;
+    }
+
+    .baseline strong {
+      font-size: 15px;
+      font-weight: 620;
+    }
+
+    .baseline span {
+      margin-top: 5px;
+      color: var(--faint);
+      font-size: 12px;
+    }
+
+    .baseline code {
+      color: var(--faint);
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 11px;
+    }
+
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 20px;
+    }
+
+    .concept {
+      grid-column: span 6;
+      min-height: 560px;
+      display: flex;
+      overflow: hidden;
+      flex-direction: column;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--surface);
+      transition: border-color 180ms ease;
+    }
+
+    .concept:hover,
+    .concept:focus-within {
+      border-color: var(--line-strong);
+    }
+
+    .concept.featured {
+      grid-column: 1 / -1;
+      min-height: 620px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+    }
+
+    .concept:nth-child(2),
+    .concept:nth-child(5) {
+      grid-column: span 5;
+    }
+
+    .concept:nth-child(3),
+    .concept:nth-child(4) {
+      grid-column: span 7;
+    }
+
+    .concept:nth-child(6) {
+      grid-column: 1 / -1;
+    }
+
+    .concept-stage {
+      min-height: 354px;
+      display: grid;
+      place-items: center;
+      padding: 42px;
+      background: oklch(0.085 0.006 286);
+    }
+
+    .featured .concept-stage {
+      min-height: 620px;
+    }
+
+    .concept-stage svg {
+      width: min(62%, 280px);
+      height: auto;
+      overflow: visible;
+    }
+
+    .featured .concept-stage svg {
+      width: min(54%, 340px);
+    }
+
+    .concept-body {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      padding: 28px;
+    }
+
+    .featured .concept-body {
+      justify-content: center;
+      padding: clamp(36px, 5vw, 72px);
+    }
+
+    .concept-heading {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .concept h2 {
+      margin: 0;
+      font-size: clamp(1.6rem, 2.6vw, 2.6rem);
+      font-weight: 540;
+      letter-spacing: -0.035em;
+      line-height: 1.05;
+    }
+
+    .concept-number {
+      color: var(--faint);
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 11px;
+    }
+
+    .concept-description {
+      max-width: 520px;
+      margin: 16px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .fit-note {
+      margin: 20px 0 0;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 580;
+    }
+
+    .lockup {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      margin-top: 30px;
+      font-size: 24px;
+      font-weight: 650;
+      letter-spacing: -0.025em;
+    }
+
+    .lockup .mark-slot {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+    }
+
+    .lockup svg {
+      width: 34px;
+      height: 34px;
+    }
+
+    .tests {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: auto;
+      padding-top: 30px;
+    }
+
+    .test-surface {
+      min-height: 92px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 15px;
+      border-radius: 10px;
+    }
+
+    .test-surface.dark {
+      background: oklch(0.06 0.005 286);
+    }
+
+    .test-surface.light {
+      background: var(--light);
+      color: var(--light-ink);
+    }
+
+    .test-surface svg {
+      width: 46px;
+      height: 46px;
+    }
+
+    .test-surface .mini {
+      display: grid;
+      place-items: center;
+    }
+
+    .test-surface .mini:nth-child(2) svg {
+      width: 30px;
+      height: 30px;
+    }
+
+    .test-surface .mini:nth-child(3) svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .test-surface.light svg {
+      --mark-ink: var(--light-ink);
+      --mark-bg: var(--light);
+    }
+
+    .concept-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      margin-top: 20px;
+    }
+
+    .concept-footer span {
+      color: var(--faint);
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 10px;
+    }
+
+    .copy-button {
+      min-height: 38px;
+      padding-inline: 14px;
+      border-radius: 999px;
+      background: oklch(0.18 0.009 286);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 580;
+      transition: background 160ms ease, color 160ms ease;
+    }
+
+    .copy-button:hover {
+      background: oklch(0.23 0.01 286);
+      color: var(--ink);
+    }
+
+    .mark {
+      --mark-ink: var(--ink);
+      --mark-accent: var(--accent);
+      --mark-bg: oklch(0.085 0.006 286);
+      color: var(--mark-ink);
+    }
+
+    .mark [data-accent] {
+      fill: var(--mark-accent);
+      stroke: var(--mark-accent);
+    }
+
+    .mark [data-bg] {
+      fill: var(--mark-bg);
+    }
+
+    .exploration-section {
+      margin-top: clamp(72px, 9vw, 120px);
+      padding-top: clamp(56px, 7vw, 88px);
+      border-top: 1px solid var(--line);
+    }
+
+    .section-intro {
+      display: grid;
+      grid-template-columns: minmax(0, 0.8fr) minmax(300px, 0.5fr);
+      align-items: end;
+      gap: clamp(36px, 8vw, 112px);
+      margin-bottom: 42px;
+    }
+
+    .section-intro h2 {
+      max-width: 760px;
+      margin: 0;
+      font-size: clamp(2.4rem, 4vw, 4.3rem);
+      font-weight: 520;
+      letter-spacing: -0.04em;
+      line-height: 1;
+      text-wrap: balance;
+    }
+
+    .section-intro p {
+      max-width: 620px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .round-two-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .compact-concept {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--surface);
+    }
+
+    .compact-stage {
+      min-height: 300px;
+      display: grid;
+      place-items: center;
+      background: oklch(0.085 0.006 286);
+    }
+
+    .compact-stage svg {
+      width: 116px;
+      height: 116px;
+    }
+
+    .compact-body {
+      min-height: 174px;
+      padding: 22px;
+    }
+
+    .compact-body h3 {
+      margin: 0;
+      font-size: 19px;
+      font-weight: 570;
+      letter-spacing: -0.025em;
+    }
+
+    .compact-body p {
+      margin: 11px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .compact-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-top: 22px;
+      color: var(--faint);
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 10px;
+    }
+
+    .wordmark-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .wordmark-card {
+      min-height: 282px;
+      display: flex;
+      flex-direction: column;
+      padding: clamp(24px, 3vw, 38px);
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--surface);
+    }
+
+    .wordmark-display {
+      min-height: 126px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      white-space: nowrap;
+    }
+
+    .wordmark-display .wordmark-symbol {
+      width: 50px;
+      height: 50px;
+      display: grid;
+      flex: 0 0 auto;
+      place-items: center;
+    }
+
+    .wordmark-display .wordmark-symbol svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .wordmark-text {
+      display: inline-block;
+      color: var(--ink);
+      font-size: clamp(2.55rem, 5vw, 4.8rem);
+      line-height: 0.9;
+    }
+
+    .wordmark-a {
+      font-weight: 640;
+      letter-spacing: -0.065em;
+    }
+
+    .wordmark-b {
+      font-weight: 430;
+      letter-spacing: -0.075em;
+      text-transform: lowercase;
+    }
+
+    .wordmark-c {
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: clamp(2.2rem, 4.25vw, 4rem);
+      font-weight: 510;
+      letter-spacing: -0.055em;
+      text-transform: lowercase;
+    }
+
+    .wordmark-c .wordmark-dot {
+      color: var(--accent);
+    }
+
+    .wordmark-d {
+      font-size: clamp(2rem, 4vw, 3.65rem);
+      font-weight: 580;
+      letter-spacing: 0.085em;
+      text-transform: uppercase;
+    }
+
+    .wordmark-e {
+      color: transparent;
+      font-weight: 650;
+      letter-spacing: -0.055em;
+      -webkit-text-stroke: 1.6px var(--ink);
+    }
+
+    .wordmark-e .filled-letter {
+      color: var(--ink);
+      -webkit-text-stroke: 0;
+    }
+
+    .wordmark-f {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 0.035em;
+      font-weight: 590;
+      letter-spacing: -0.06em;
+    }
+
+    .custom-p {
+      position: relative;
+      width: 0.64em;
+      height: 0.82em;
+      display: inline-block;
+      flex: 0 0 auto;
+      border: 0.075em solid currentColor;
+      border-right: 0;
+      border-radius: 0.18em 0 0 0.18em;
+      transform: translateY(0.04em);
+    }
+
+    .custom-p::before {
+      content: "";
+      position: absolute;
+      top: -0.075em;
+      left: 0.22em;
+      width: 0.43em;
+      height: 0.47em;
+      border: 0.075em solid currentColor;
+      border-left: 0;
+      border-radius: 0 0.2em 0.2em 0;
+    }
+
+    .custom-p::after {
+      content: "";
+      position: absolute;
+      top: -0.14em;
+      left: 0.13em;
+      width: 0.3em;
+      height: 0.12em;
+      border-radius: 999px;
+      background: var(--accent);
+    }
+
+    .wordmark-info {
+      display: grid;
+      grid-template-columns: 118px 1fr;
+      gap: 20px;
+      margin-top: auto;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+    }
+
+    .wordmark-info strong {
+      font-size: 12px;
+      font-weight: 620;
+    }
+
+    .wordmark-info span {
+      color: var(--faint);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .color-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .color-card {
+      --candidate: var(--accent);
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--surface);
+    }
+
+    .color-card[data-color="violet"] {
+      --candidate: oklch(0.72 0.17 292);
+    }
+
+    .color-card[data-color="blue"] {
+      --candidate: oklch(0.75 0.14 245);
+    }
+
+    .color-card[data-color="mint"] {
+      --candidate: oklch(0.79 0.14 157);
+    }
+
+    .color-card[data-color="amber"] {
+      --candidate: oklch(0.8 0.14 76);
+    }
+
+    .color-card[data-color="mono"] {
+      --candidate: var(--ink);
+    }
+
+    .color-card[data-color="mono"] .color-preview svg {
+      --mark-accent: var(--mark-ink);
+    }
+
+    .color-preview {
+      min-height: 238px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      background: oklch(0.065 0.006 286);
+    }
+
+    .color-preview > div {
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    .color-preview > div:last-child {
+      background: var(--light);
+      color: var(--light-ink);
+    }
+
+    .color-preview svg {
+      width: 72px;
+      height: 72px;
+      --mark-accent: var(--candidate);
+    }
+
+    .color-preview > div:last-child svg {
+      --mark-ink: var(--light-ink);
+      --mark-bg: var(--light);
+    }
+
+    .color-info {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 13px;
+      padding: 18px 20px;
+    }
+
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: var(--candidate);
+      box-shadow: 0 0 0 1px oklch(1 0 0 / 0.14);
+    }
+
+    .color-info strong {
+      font-size: 13px;
+      font-weight: 610;
+    }
+
+    .color-info code {
+      color: var(--faint);
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 10px;
+    }
+
+    .specimen {
+      margin-top: clamp(72px, 9vw, 120px);
+      padding-top: clamp(56px, 7vw, 88px);
+      border-top: 1px solid var(--line);
+    }
+
+    .specimen h2 {
+      max-width: 720px;
+      margin: 0;
+      font-size: clamp(2.4rem, 4vw, 4.3rem);
+      font-weight: 520;
+      letter-spacing: -0.04em;
+      line-height: 1;
+      text-wrap: balance;
+    }
+
+    .specimen p {
+      max-width: 660px;
+      margin: 22px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .comparison {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 1px;
+      overflow: hidden;
+      margin-top: 42px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--line);
+    }
+
+    .comparison-cell {
+      min-height: 190px;
+      display: grid;
+      place-items: center;
+      gap: 14px;
+      padding: 26px 16px;
+      background: var(--surface);
+      text-align: center;
+    }
+
+    .comparison-cell svg {
+      width: 54px;
+      height: 54px;
+    }
+
+    .comparison-cell .mark {
+      --mark-accent: var(--ink);
+    }
+
+    .comparison-cell span {
+      color: var(--faint);
+      font-size: 11px;
+    }
+
+    footer {
+      min-height: 80px;
+      display: flex;
+      align-items: center;
+      border-top: 1px solid oklch(1 0 0 / 0.07);
+      color: var(--faint);
+      font-size: 11px;
+    }
+
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 5;
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      padding-inline: 16px;
+      border-radius: 999px;
+      background: var(--ink);
+      color: var(--page);
+      font-size: 12px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px);
+      transition: opacity 180ms ease, transform 180ms cubic-bezier(0.25, 1, 0.5, 1);
+    }
+
+    .toast.is-visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 980px) {
+      .intro {
+        grid-template-columns: 1fr;
+      }
+
+      .principles {
+        max-width: 620px;
+      }
+
+      .concept,
+      .concept:nth-child(n) {
+        grid-column: 1 / -1;
+      }
+
+      .concept.featured {
+        grid-template-columns: 1fr;
+      }
+
+      .featured .concept-stage {
+        min-height: 430px;
+      }
+
+      .comparison {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .section-intro {
+        grid-template-columns: 1fr;
+      }
+
+      .round-two-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .color-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 620px) {
+      .shell {
+        width: min(calc(100% - 28px), 1440px);
+      }
+
+      main {
+        padding-top: 68px;
+        padding-bottom: 80px;
+      }
+
+      .intro {
+        gap: 40px;
+        margin-bottom: 56px;
+      }
+
+      h1 {
+        font-size: clamp(2.65rem, 13vw, 4rem);
+      }
+
+      .baseline {
+        grid-template-columns: auto 1fr;
+      }
+
+      .baseline code {
+        display: none;
+      }
+
+      .concept,
+      .concept.featured {
+        min-height: 0;
+      }
+
+      .concept-stage,
+      .featured .concept-stage {
+        min-height: 340px;
+        padding: 32px;
+      }
+
+      .concept-stage svg,
+      .featured .concept-stage svg {
+        width: min(70%, 230px);
+      }
+
+      .concept-body,
+      .featured .concept-body {
+        padding: 24px;
+      }
+
+      .tests {
+        grid-template-columns: 1fr;
+      }
+
+      .comparison {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .comparison-cell {
+        min-height: 150px;
+      }
+
+      .round-two-grid,
+      .wordmark-grid,
+      .color-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .compact-stage {
+        min-height: 260px;
+      }
+
+      .wordmark-card {
+        min-height: 248px;
+      }
+
+      .wordmark-display {
+        min-height: 112px;
+        gap: 15px;
+      }
+
+      .wordmark-display .wordmark-symbol {
+        width: 38px;
+        height: 38px;
+      }
+
+      .wordmark-info {
+        grid-template-columns: 1fr;
+        gap: 7px;
+      }
+
+      .footer-inner {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 22px 0;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner shell">
+      <a class="brand" href="./index.html" aria-label="Back to Panes landing page">
+        <img src="../icon.svg?v=3" alt="">
+        <span>Panes</span>
+      </a>
+      <a class="back-link" href="./index.html">View landing page</a>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="intro" aria-labelledby="page-title">
+      <div class="intro-copy">
+        <h1 id="page-title">A mark built from the product.</h1>
+        <p>Ten symbol directions, six wordmark voices, and six color systems built from Panes’ rounded workspaces, overlaid tabs, active sessions, and split surfaces.</p>
+      </div>
+      <dl class="principles">
+        <div><dt>Specific</dt><dd>Recognizable as Panes without relying on an agent sparkle or terminal glyph.</dd></div>
+        <div><dt>Compact</dt><dd>Readable at 16px in a sidebar, dock, browser tab, and release artifact.</dd></div>
+        <div><dt>Systematic</dt><dd>Works in one color first, then accepts a restrained signal color for the active state.</dd></div>
+      </dl>
+    </section>
+
+    <section class="baseline" aria-label="Current Panes logo">
+      <img src="../logo.svg?v=3" alt="Current Panes mark">
+      <div>
+        <strong>Current mark</strong>
+        <span>Three square frames and a coral core. Useful baseline, but too rigid for the new rounded pane language.</span>
+      </div>
+      <code>logo.svg</code>
+    </section>
+
+    <section class="gallery" aria-label="New logo directions">
+      <article class="concept featured" tabindex="0" data-concept="Nested workspace">
+        <div class="concept-stage">
+          <svg class="mark source-mark" viewBox="0 0 64 64" role="img" aria-label="Nested Workspace logo">
+            <rect x="7" y="10" width="50" height="45" rx="11" fill="none" stroke="currentColor" stroke-width="4"/>
+            <path d="M23 11.5V53.5" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+            <rect x="18" y="6" width="32" height="13" rx="6.5" data-bg stroke="currentColor" stroke-width="4"/>
+            <rect x="24" y="10.5" width="9" height="4" rx="2" data-accent stroke="none"/>
+          </svg>
+        </div>
+        <div class="concept-body">
+          <div class="concept-heading"><h2>Nested Workspace</h2><span class="concept-number">A</span></div>
+          <p class="concept-description">The sidebar and main pane share one rounded shell, while a session tab overlays the top edge. This is the closest translation of the product’s distinctive workspace geometry.</p>
+          <p class="fit-note">Strongest match for the landing page</p>
+          <div class="lockup"><span class="mark-slot"></span><span>Panes</span></div>
+          <div class="tests"><div class="test-surface dark"></div><div class="test-surface light"></div></div>
+          <div class="concept-footer"><span>workspace · sidebar · tab</span><button class="copy-button" type="button">Copy SVG</button></div>
+        </div>
+      </article>
+
+      <article class="concept" tabindex="0" data-concept="Offset panes">
+        <div class="concept-stage">
+          <svg class="mark source-mark" viewBox="0 0 64 64" role="img" aria-label="Offset Panes logo">
+            <rect x="9" y="18" width="35" height="35" rx="8" fill="none" stroke="currentColor" stroke-width="4"/>
+            <rect x="20" y="8" width="35" height="35" rx="8" data-bg stroke="currentColor" stroke-width="4"/>
+            <path d="M20 23H44V43H28C23.6 43 20 39.4 20 35V23Z" fill="none" stroke="currentColor" stroke-width="4"/>
+            <rect x="26" y="17" width="8" height="8" rx="3" data-accent stroke="none"/>
+          </svg>
+        </div>
+        <div class="concept-body">
+          <div class="concept-heading"><h2>Offset Panes</h2><span class="concept-number">B</span></div>
+          <p class="concept-description">A softer evolution of the current mark. Overlapping workspaces remain familiar, but the shared center becomes an active pane instead of a square target.</p>
+          <div class="lockup"><span class="mark-slot"></span><span>Panes</span></div>
+          <div class="tests"><div class="test-surface dark"></div><div class="test-surface light"></div></div>
+          <div class="concept-footer"><span>continuity · layers</span><button class="copy-button" type="button">Copy SVG</button></div>
+        </div>
+      </article>
+
+      <article class="concept" tabindex="0" data-concept="Pane P">
+        <div class="concept-stage">
+          <svg class="mark source-mark" viewBox="0 0 64 64" role="img" aria-label="Pane P logo">
+            <path d="M15 54V17C15 12.6 18.6 9 23 9H41C47.6 9 53 14.4 53 21V28C53 34.6 47.6 40 41 40H25" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M26 20H40C42.8 20 45 22.2 45 25C45 27.8 42.8 30 40 30H26V20Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/>
+            <circle cx="15" cy="45" r="4" data-accent stroke="none"/>
+          </svg>
+        </div>
+        <div class="concept-body">
+          <div class="concept-heading"><h2>Pane P</h2><span class="concept-number">C</span></div>
+          <p class="concept-description">A compact monogram with a vertical workspace rail and a contained pane. The coral node reads as the active task in the rail.</p>
+          <div class="lockup"><span class="mark-slot"></span><span>Panes</span></div>
+          <div class="tests"><div class="test-surface dark"></div><div class="test-surface light"></div></div>
+          <div class="concept-footer"><span>monogram · task rail</span><button class="copy-button" type="button">Copy SVG</button></div>
+        </div>
+      </article>
+
+      <article class="concept" tabindex="0" data-concept="Split focus">
+        <div class="concept-stage">
+          <svg class="mark source-mark" viewBox="0 0 64 64" role="img" aria-label="Split Focus logo">
+            <rect x="8" y="8" width="48" height="48" rx="12" fill="none" stroke="currentColor" stroke-width="4"/>
+            <path d="M26 10V54M28 27H54" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+            <rect x="34" y="34" width="14" height="14" rx="5" data-accent stroke="none"/>
+          </svg>
+        </div>
+        <div class="concept-body">
+          <div class="concept-heading"><h2>Split Focus</h2><span class="concept-number">D</span></div>
+          <p class="concept-description">One window, three surfaces, one active pane. It communicates the cockpit model immediately and stays legible at small sizes.</p>
+          <div class="lockup"><span class="mark-slot"></span><span>Panes</span></div>
+          <div class="tests"><div class="test-surface dark"></div><div class="test-surface light"></div></div>
+          <div class="concept-footer"><span>cockpit · active pane</span><button class="copy-button" type="button">Copy SVG</button></div>
+        </div>
+      </article>
+
+      <article class="concept" tabindex="0" data-concept="Session fold">
+        <div class="concept-stage">
+          <svg class="mark source-mark" viewBox="0 0 64 64" role="img" aria-label="Session Fold logo">
+            <rect x="8" y="15" width="39" height="39" rx="10" fill="none" stroke="currentColor" stroke-width="4"/>
+            <rect x="18" y="8" width="38" height="38" rx="10" data-bg stroke="currentColor" stroke-width="4"/>
+            <path d="M18 21H56" fill="none" stroke="currentColor" stroke-width="4"/>
+            <rect x="25" y="14" width="10" height="4" rx="2" data-accent stroke="none"/>
+          </svg>
+        </div>
+        <div class="concept-body">
+          <div class="concept-heading"><h2>Session Fold</h2><span class="concept-number">E</span></div>
+          <p class="concept-description">Two sessions share one frame. The tab line preserves the product reference while the overlap suggests parallel agents and worktrees.</p>
+          <div class="lockup"><span class="mark-slot"></span><span>Panes</span></div>
+          <div class="tests"><div class="test-surface dark"></div><div class="test-surface light"></div></div>
+          <div class="concept-footer"><span>sessions · worktrees</span><button class="copy-button" type="button">Copy SVG</button></div>
+        </div>
+      </article>
+
+      <article class="concept" tabindex="0" data-concept="Continuous pane">
+        <div class="concept-stage">
+          <svg class="mark source-mark" viewBox="0 0 64 64" role="img" aria-label="Continuous Pane logo">
+            <path d="M16 52V18C16 13.6 19.6 10 24 10H43C47.4 10 51 13.6 51 18V31C51 35.4 47.4 39 43 39H27V26H42" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M27 39V52" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+            <circle cx="51" cy="47" r="5" data-accent stroke="none"/>
+          </svg>
+        </div>
+        <div class="concept-body">
+          <div class="concept-heading"><h2>Continuous Pane</h2><span class="concept-number">F</span></div>
+          <p class="concept-description">A single route moves through rail, pane, and active task. It is the most abstract option and the easiest to reproduce in one color.</p>
+          <div class="lockup"><span class="mark-slot"></span><span>Panes</span></div>
+          <div class="tests"><div class="test-surface dark"></div><div class="test-surface light"></div></div>
+          <div class="concept-footer"><span>flow · one-color</span><button class="copy-button" type="button">Copy SVG</button></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="exploration-section" aria-labelledby="round-two-title">
+      <div class="section-intro">
+        <h2 id="round-two-title">Push past the obvious pane.</h2>
+        <p>A second round moves away from stacked windows. These options use a docked session, an open rail, parallel worktrees, and a focused center so the set covers both literal and abstract territory.</p>
+      </div>
+      <div class="round-two-grid">
+        <article class="compact-concept" data-concept="Docked session">
+          <div class="compact-stage">
+            <svg class="mark extended-mark" viewBox="0 0 64 64" role="img" aria-label="Docked Session logo">
+              <rect x="8" y="8" width="48" height="43" rx="12" fill="none" stroke="currentColor" stroke-width="5"/>
+              <path d="M24 10.5V48.5" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+              <rect x="20" y="43" width="30" height="13" rx="6.5" data-bg stroke="currentColor" stroke-width="4"/>
+              <rect x="27" y="47.5" width="9" height="4" rx="2" data-accent stroke="none"/>
+            </svg>
+          </div>
+          <div class="compact-body">
+            <h3>Docked Session</h3>
+            <p>The session moves to the lower edge, turning the product geometry into a compact, asymmetric stamp.</p>
+            <div class="compact-meta"><span>G</span><span>window · dock</span></div>
+          </div>
+        </article>
+
+        <article class="compact-concept" data-concept="Open rail">
+          <div class="compact-stage">
+            <svg class="mark extended-mark" viewBox="0 0 64 64" role="img" aria-label="Open Rail logo">
+              <path d="M48 11H22C15.4 11 10 16.4 10 23V43C10 49.6 15.4 55 22 55H48" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+              <path d="M26 12V54" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+              <path d="M38 22H54V44H38" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="47" cy="33" r="4" data-accent stroke="none"/>
+            </svg>
+          </div>
+          <div class="compact-body">
+            <h3>Open Rail</h3>
+            <p>An open workspace and a focused pane form a subtle P without turning the whole identity into a monogram.</p>
+            <div class="compact-meta"><span>H</span><span>rail · open pane</span></div>
+          </div>
+        </article>
+
+        <article class="compact-concept" data-concept="Parallel worktrees">
+          <div class="compact-stage">
+            <svg class="mark extended-mark" viewBox="0 0 64 64" role="img" aria-label="Parallel Worktrees logo">
+              <rect x="9" y="9" width="17" height="46" rx="8.5" fill="none" stroke="currentColor" stroke-width="5"/>
+              <rect x="38" y="9" width="17" height="46" rx="8.5" fill="none" stroke="currentColor" stroke-width="5"/>
+              <path d="M25.5 25H38.5M25.5 39H38.5" fill="none" stroke="currentColor" stroke-width="5"/>
+              <rect x="28" y="28" width="8" height="8" rx="3" data-accent stroke="none"/>
+            </svg>
+          </div>
+          <div class="compact-body">
+            <h3>Parallel Worktrees</h3>
+            <p>Two independent rails stay connected through a shared task. It carries the multi-agent story without using an agent logo.</p>
+            <div class="compact-meta"><span>I</span><span>agents · worktrees</span></div>
+          </div>
+        </article>
+
+        <article class="compact-concept" data-concept="Inset focus">
+          <div class="compact-stage">
+            <svg class="mark extended-mark" viewBox="0 0 64 64" role="img" aria-label="Inset Focus logo">
+              <path d="M27 9H20C13.9 9 9 13.9 9 20V27M37 9H44C50.1 9 55 13.9 55 20V27M55 37V44C55 50.1 50.1 55 44 55H37M27 55H20C13.9 55 9 50.1 9 44V37" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+              <rect x="22" y="22" width="20" height="20" rx="7" fill="none" stroke="currentColor" stroke-width="5"/>
+              <rect x="29" y="29" width="6" height="6" rx="2" data-accent stroke="none"/>
+            </svg>
+          </div>
+          <div class="compact-body">
+            <h3>Inset Focus</h3>
+            <p>A quiet frame holds one active surface. This is the least literal direction and the strongest candidate for a small app icon.</p>
+            <div class="compact-meta"><span>J</span><span>focus · active pane</span></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="exploration-section" aria-labelledby="wordmark-title">
+      <div class="section-intro">
+        <h2 id="wordmark-title">The name can carry more character.</h2>
+        <p>These keep the symbol constant so only the voice of “Panes” changes. The range moves from a quiet product wordmark to a custom first letter that borrows the overlaid tab.</p>
+      </div>
+      <div class="wordmark-grid">
+        <article class="wordmark-card">
+          <div class="wordmark-display"><span class="wordmark-symbol"></span><span class="wordmark-text wordmark-a">Panes</span></div>
+          <div class="wordmark-info"><strong>Compact grotesk</strong><span>Dense and confident. The safest pairing with the detailed Nested Workspace mark.</span></div>
+        </article>
+        <article class="wordmark-card">
+          <div class="wordmark-display"><span class="wordmark-symbol"></span><span class="wordmark-text wordmark-b">Panes</span></div>
+          <div class="wordmark-info"><strong>Quiet lowercase</strong><span>Softer and more conversational. It makes the product feel less like developer infrastructure.</span></div>
+        </article>
+        <article class="wordmark-card">
+          <div class="wordmark-display"><span class="wordmark-symbol"></span><span class="wordmark-text wordmark-c">panes<span class="wordmark-dot">.</span></span></div>
+          <div class="wordmark-info"><strong>Mono signal</strong><span>Closer to the interface typography. Best if the identity should feel native to the cockpit.</span></div>
+        </article>
+        <article class="wordmark-card">
+          <div class="wordmark-display"><span class="wordmark-symbol"></span><span class="wordmark-text wordmark-d">Panes</span></div>
+          <div class="wordmark-info"><strong>Wide system</strong><span>More architectural and detached. It gives the compact mark more room to lead.</span></div>
+        </article>
+        <article class="wordmark-card">
+          <div class="wordmark-display"><span class="wordmark-symbol"></span><span class="wordmark-text wordmark-e">P<span class="filled-letter">a</span>nes</span></div>
+          <div class="wordmark-info"><strong>Outline rail</strong><span>An outlined wordmark echoes the product frame while one filled pane keeps the name readable.</span></div>
+        </article>
+        <article class="wordmark-card">
+          <div class="wordmark-display"><span class="wordmark-text wordmark-f"><span class="custom-p" aria-hidden="true"></span><span>anes</span></span></div>
+          <div class="wordmark-info"><strong>Tab P</strong><span>A custom first letter carries the rail and tab geometry, so the wordmark can work without a separate symbol.</span></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="exploration-section" aria-labelledby="color-title">
+      <div class="section-intro">
+        <h2 id="color-title">Coral is one signal, not the identity.</h2>
+        <p>Each candidate is shown on the same mark across dark and light surfaces. The neutral structure stays fixed, so the accent can be judged by clarity, tone, and how naturally it fits the landing page.</p>
+      </div>
+      <div class="color-grid">
+        <article class="color-card" data-color="coral"><div class="color-preview"><div class="color-mark-slot"></div><div class="color-mark-slot"></div></div><div class="color-info"><span class="swatch"></span><strong>Signal coral</strong><code>oklch 72 16 26</code></div></article>
+        <article class="color-card" data-color="violet"><div class="color-preview"><div class="color-mark-slot"></div><div class="color-mark-slot"></div></div><div class="color-info"><span class="swatch"></span><strong>Electric violet</strong><code>oklch 72 17 292</code></div></article>
+        <article class="color-card" data-color="blue"><div class="color-preview"><div class="color-mark-slot"></div><div class="color-mark-slot"></div></div><div class="color-info"><span class="swatch"></span><strong>Mineral blue</strong><code>oklch 75 14 245</code></div></article>
+        <article class="color-card" data-color="mint"><div class="color-preview"><div class="color-mark-slot"></div><div class="color-mark-slot"></div></div><div class="color-info"><span class="swatch"></span><strong>Terminal mint</strong><code>oklch 79 14 157</code></div></article>
+        <article class="color-card" data-color="amber"><div class="color-preview"><div class="color-mark-slot"></div><div class="color-mark-slot"></div></div><div class="color-info"><span class="swatch"></span><strong>Warm amber</strong><code>oklch 80 14 76</code></div></article>
+        <article class="color-card" data-color="mono"><div class="color-preview"><div class="color-mark-slot"></div><div class="color-mark-slot"></div></div><div class="color-info"><span class="swatch"></span><strong>Monochrome</strong><code>ink only</code></div></article>
+      </div>
+    </section>
+
+    <section class="specimen" aria-labelledby="compare-title">
+      <h2 id="compare-title">Read them at product scale.</h2>
+      <p>The best mark should remain distinct beside a 12px navigation label, inside a 20px sidebar slot, and without the coral accent.</p>
+      <div class="comparison" aria-label="Small-size logo comparison"></div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="footer-inner shell"><span>Panes logo explorations</span><span>Built from the product’s pane geometry</span></div>
+  </footer>
+
+  <div class="toast" role="status" aria-live="polite">SVG copied</div>
+
+  <script>
+    document.querySelectorAll(".concept").forEach(function (concept) {
+      var source = concept.querySelector(".source-mark");
+      var lockupSlot = concept.querySelector(".mark-slot");
+      var testSurfaces = concept.querySelectorAll(".test-surface");
+
+      if (source && lockupSlot) {
+        var lockupMark = source.cloneNode(true);
+        lockupMark.removeAttribute("role");
+        lockupMark.removeAttribute("aria-label");
+        lockupMark.setAttribute("aria-hidden", "true");
+        lockupSlot.appendChild(lockupMark);
+      }
+
+      testSurfaces.forEach(function (surface) {
+        [46, 30, 18].forEach(function (size) {
+          var slot = document.createElement("span");
+          slot.className = "mini";
+          var mark = source.cloneNode(true);
+          mark.removeAttribute("role");
+          mark.removeAttribute("aria-label");
+          mark.setAttribute("aria-hidden", "true");
+          mark.setAttribute("width", String(size));
+          mark.setAttribute("height", String(size));
+          slot.appendChild(mark);
+          surface.appendChild(slot);
+        });
+      });
+
+      var button = concept.querySelector(".copy-button");
+      if (button && source) {
+        button.addEventListener("click", function () {
+          var svgText = source.outerHTML.replace(' class="mark source-mark"', '');
+          copyText(svgText, button);
+        });
+      }
+    });
+
+    var recommendedMark = document.querySelector(".featured .source-mark");
+
+    document.querySelectorAll(".wordmark-symbol").forEach(function (slot) {
+      var mark = recommendedMark.cloneNode(true);
+      mark.removeAttribute("role");
+      mark.removeAttribute("aria-label");
+      mark.setAttribute("aria-hidden", "true");
+      slot.appendChild(mark);
+    });
+
+    document.querySelectorAll(".color-mark-slot").forEach(function (slot) {
+      var mark = recommendedMark.cloneNode(true);
+      mark.removeAttribute("role");
+      mark.removeAttribute("aria-label");
+      mark.setAttribute("aria-hidden", "true");
+      slot.appendChild(mark);
+    });
+
+    var comparison = document.querySelector(".comparison");
+    document.querySelectorAll(".concept, .compact-concept").forEach(function (concept) {
+      var source = concept.querySelector(".source-mark, .extended-mark");
+      var cell = document.createElement("div");
+      cell.className = "comparison-cell";
+      var mark = source.cloneNode(true);
+      mark.removeAttribute("role");
+      mark.removeAttribute("aria-label");
+      mark.setAttribute("aria-hidden", "true");
+      var label = document.createElement("span");
+      label.textContent = concept.getAttribute("data-concept");
+      cell.appendChild(mark);
+      cell.appendChild(label);
+      comparison.appendChild(cell);
+    });
+
+    function copyText(text, button) {
+      var complete = function () {
+        var toast = document.querySelector(".toast");
+        toast.textContent = button.closest(".concept").getAttribute("data-concept") + " SVG copied";
+        toast.classList.add("is-visible");
+        button.textContent = "Copied";
+        window.setTimeout(function () {
+          toast.classList.remove("is-visible");
+          button.textContent = "Copy SVG";
+        }, 1600);
+      };
+
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(complete).catch(function () {
+          fallbackCopy(text, complete);
+        });
+      } else {
+        fallbackCopy(text, complete);
+      }
+    }
+
+    function fallbackCopy(text, complete) {
+      var area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+      complete();
+    }
+  </script>
+</body>
+</html>
