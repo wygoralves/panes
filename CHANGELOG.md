@@ -1,5 +1,24 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.60.0...vnull) (2026-07-11)
+
+### Features
+
+* add landing light theme and refresh product mockup ([71531a7](https://github.com/wygoralves/panes/commit/71531a789d8e93774de6acbc00ce3832c2387665))
+* add Panes brand system and assets ([55df8af](https://github.com/wygoralves/panes/commit/55df8afcd25c3e4c566c1bc71032a46f8b1517b2))
+* apply brand identity to desktop app ([f5c8828](https://github.com/wygoralves/panes/commit/f5c8828c1aafac8208a3feb199fccc3f3f819aea))
+* publish redesigned Panes landing page ([efd9b4d](https://github.com/wygoralves/panes/commit/efd9b4deb9ff7ddf6b8ca8d78806d841ecbcd5a0))
+* refine layered workspace surfaces ([4a1d043](https://github.com/wygoralves/panes/commit/4a1d04382b6ad4b8416b88f5218fe668b2d4ebdc))
+* replace Panes application icons ([a3623a2](https://github.com/wygoralves/panes/commit/a3623a27823a78dbd97778a20fedeb65973e97d4))
+
+### Bug Fixes
+
+* clarify OpenCode chat support ([0f4bc73](https://github.com/wygoralves/panes/commit/0f4bc736e44d8541fc5a12875dc83d62e04d5f83))
+* match Antigravity product icon color ([3180535](https://github.com/wygoralves/panes/commit/31805358c5258f7164a2853619fca41e0910ceb0))
+* polish landing themes and bilingual copy ([f81b73e](https://github.com/wygoralves/panes/commit/f81b73ef6bcfc1e81ecb4809051effdc4e4135aa))
+* refine theme contrast and shell spacing ([09e1143](https://github.com/wygoralves/panes/commit/09e11430b5c7001d738979d11c8d5a75205ff554))
+* use official Antigravity CLI logo ([ea7a5d2](https://github.com/wygoralves/panes/commit/ea7a5d2599cb047eb33e8fa905f80c2c2e1bb0bf))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.59.1...vnull) (2026-07-06)
 
 ### Features
