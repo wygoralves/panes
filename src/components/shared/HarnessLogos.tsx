@@ -31,16 +31,25 @@ function GeminiCliLogo({ size = 18 }: { size?: number }) {
   );
 }
 
-/* Official Antigravity CLI logomark */
+/* Official Antigravity CLI silhouette, rendered in the product icon color */
 function AntigravityLogo({ size = 18 }: { size?: number }) {
   return (
-    <img
-      src={antigravityLogo}
-      alt=""
+    <span
       aria-hidden="true"
-      width={size}
-      height={size}
-      style={{ display: "block", objectFit: "contain" }}
+      style={{
+        width: size,
+        height: size,
+        display: "block",
+        background: "currentColor",
+        maskImage: `url(${antigravityLogo})`,
+        maskPosition: "center",
+        maskRepeat: "no-repeat",
+        maskSize: "contain",
+        WebkitMaskImage: `url(${antigravityLogo})`,
+        WebkitMaskPosition: "center",
+        WebkitMaskRepeat: "no-repeat",
+        WebkitMaskSize: "contain",
+      }}
     />
   );
 }
