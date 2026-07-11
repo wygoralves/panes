@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import antigravityLogo from "../../assets/harness/antigravity-cli.png";
+
 /* ─── SVG logo components ─── */
 
 /* OpenAI logomark */
@@ -29,13 +31,26 @@ function GeminiCliLogo({ size = 18 }: { size?: number }) {
   );
 }
 
-/* Antigravity CLI: floating dot above an orbit arc */
+/* Official Antigravity CLI silhouette, rendered in the product icon color */
 function AntigravityLogo({ size = 18 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 2a1.5 1.5 0 0 1 1.5 1.5V6a1.5 1.5 0 0 1-3 0V3.5A1.5 1.5 0 0 1 12 2Z" />
-      <path d="M12 22c-5.523 0-10-3.582-10-8 0-3.31 3.14-6.146 7.5-7.32a1 1 0 1 1 .53 1.928C6.6 9.66 4 11.86 4 14c0 3.09 3.582 6 8 6s8-2.91 8-6c0-2.14-2.6-4.34-6.03-5.392a1 1 0 1 1 .53-1.928C18.86 7.854 22 10.69 22 14c0 4.418-4.477 8-10 8Z" />
-    </svg>
+    <span
+      aria-hidden="true"
+      style={{
+        width: size,
+        height: size,
+        display: "block",
+        background: "currentColor",
+        maskImage: `url(${antigravityLogo})`,
+        maskPosition: "center",
+        maskRepeat: "no-repeat",
+        maskSize: "contain",
+        WebkitMaskImage: `url(${antigravityLogo})`,
+        WebkitMaskPosition: "center",
+        WebkitMaskRepeat: "no-repeat",
+        WebkitMaskSize: "contain",
+      }}
+    />
   );
 }
 

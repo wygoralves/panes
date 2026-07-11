@@ -187,7 +187,7 @@ export function GitStashView({ repo, onError }: Props) {
                   >
                     <span
                       style={{
-                        fontFamily: '"JetBrains Mono", monospace',
+                        fontFamily: '"Geist Mono", ui-monospace, monospace',
                         fontSize: 11,
                         color: "var(--accent)",
                         flexShrink: 0,

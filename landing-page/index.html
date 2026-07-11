@@ -1,90 +1,103 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-US">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Panes | The Agent Development Environment</title>
-  <meta name="description" content="Your agents write the code. You need a cockpit. Chat, terminal, git, and approvals in one native window. Engine-agnostic, open-source, built with Rust.">
-  <meta property="og:title" content="Panes | The Agent Development Environment">
-  <meta property="og:description" content="Your agents write the code. You need a cockpit. Chat, terminal, git, and approvals in one native window.">
+  <title>Panes | The cockpit for agent-led software work</title>
+  <meta name="description" content="Run Codex, Claude, CLI agents, Git, terminals, and worktrees in one local desktop cockpit.">
+  <meta property="og:title" content="Panes | The cockpit for agent-led software work">
+  <meta property="og:description" content="Run Codex, Claude, CLI agents, Git, terminals, and worktrees in one local desktop cockpit.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://panesade.com">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Panes | The Agent Development Environment">
-  <meta name="twitter:description" content="Your agents write the code. You need a cockpit. Chat, terminal, git, and approvals in one native window.">
-  <link rel="alternate" hreflang="en" href="https://panesade.com/?lang=en">
-  <link rel="alternate" hreflang="pt-BR" href="https://panesade.com/?lang=pt-BR">
-  <link rel="alternate" hreflang="x-default" href="https://panesade.com/">
-  <link rel="icon" href="icon.svg?v=3" type="image/svg+xml">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <meta name="twitter:title" content="Panes | The cockpit for agent-led software work">
+  <meta name="twitter:description" content="Run Codex, Claude, CLI agents, Git, terminals, and worktrees in one local desktop cockpit.">
+  <script>
+    (function () {
+      var savedTheme = null;
+      try {
+        savedTheme = window.localStorage.getItem("panes.landing.theme");
+      } catch (error) {
+      }
+      var prefersLight = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+      document.documentElement.dataset.theme = savedTheme === "light" || savedTheme === "dark"
+        ? savedTheme
+        : prefersLight ? "light" : "dark";
+    }());
+  </script>
+  <link rel="icon" href="/product-room/panes-app-icon.svg?v=1" type="image/svg+xml">
   <link rel="dns-prefetch" href="https://unpkg.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Sora:wght@300;400;500;600;700&display=swap">
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="/style.css?v=7">
+  <link rel="stylesheet" href="/product-room/product-room.css?v=34">
   <script src="https://unpkg.com/lucide@0.460.0" defer></script>
-  <script src="i18n.js?v=2" defer></script>
 </head>
-<body>
-
+<body class="prm-page">
   <a href="#main-content" class="skip-link">Skip to main content</a>
+  <svg class="prm-logo-sprite" aria-hidden="true">
+    <symbol id="prm-logo-codex" viewBox="0 0 24 24">
+      <path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855l-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023l-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135l-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.795.795 0 0 0-.393.681zm1.097-2.365l2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z" />
+    </symbol>
+    <symbol id="prm-logo-factory" viewBox="0 0 200 200">
+      <g transform="translate(0,200) scale(0.1,-0.1)"><path d="M730 1667c-13-7-36-30-52-52-30-45-89-193-108-273-6-28-15-54-19-57-5-2-32 5-61 16-73 28-129 23-150-13-13-25-13-34 3-95 9-38 43-120 75-183 31-63 57-118 57-123 0-5-27-23-59-40-77-41-102-73-85-110 23-50 128-106 283-151 47-14 90-27 95-31 6-3 2-29-10-62-22-64-25-123-7-141 18-18 98-14 163 8 32 11 100 42 153 70 52 27 100 50 106 50 7 0 17-15 24-34 7-18 26-52 42-75 73-100 147-24 229 234 18 55 35 103 39 107 4 4 36-2 71-12 34-11 73-20 86-20 88 0 67 153-49 359-20 34-36 68-36 75 0 7 22 23 49 35 177 84 123 167-169 262-63 20-115 40-115 45 0 5 9 39 19 76 11 38 16 78 12 93-17 66-120 52-306-42-68-35-127-63-130-63-3 0-19 27-34 61-25 52-66 99-85 99-3 0-17-6-31-13zm448-145c2-12-4-46-13-75-30-94-138-337-149-337-6 0-34 78-63 173-42 141-49 174-38 185 7 8 50 29 96 48 101 41 162 43 167 6zm-390-64c40-68 155-354 147-368-4-6-35 6-78 30-40 23-112 61-161 86-88 45-88 46-83 79 7 45 70 178 96 204 31 31 44 26 79-31zm543-87c77-26 130-55 158-85 20-22 22-28 11-42-32-37-395-193-412-176-5 5 7 37 30 78 21 38 60 108 86 157 26 48 53 87 60 87 7 0 37-8 67-19zm-715-227c140-52 269-112 269-125 0-7-74-34-174-64l-174-52-39 83c-43 93-60 180-37 195 17 10 42 5 155-37zm879-115c38-80 61-168 51-194-10-27-77-13-224 46-162 66-227 98-216 109 5 4 63 24 129 44 66 19 138 42 160 50 22 8 46 15 53 15 7 1 28-31 47-70zm-583-95c4-3-11-36-31-72-21-37-60-109-87-159-27-51-55-93-62-93-7 0-48 14-91 30-89 34-158 87-148 113 8 20 116 76 272 138 122 49 137 53 147 43zm318-100c88-48 160-90 160-94 0-16-39-119-63-167-28-54-61-85-82-77-19 8-69 107-130 259-52 128-63 165-50 165 3 0 78-39 165-86zm-221 4c8-29 31-106 51-171 32-99 36-120 24-131-21-21-158-76-207-82-79-11-80 22-2 215 63 159 94 221 108 221 8 0 19-22 26-52z" /></g>
+    </symbol>
+    <symbol id="prm-logo-opencode" viewBox="0 0 240 300">
+      <path d="M180 240H60V120H180V240Z" opacity="0.4" /><path d="M180 60H60V240H180V60ZM240 300H0V0H240V300Z" />
+    </symbol>
+    <symbol id="prm-logo-kilo" viewBox="0 0 32 32">
+      <path d="M23,26v-2h3v-5l-2-2h-4v2h-3v5l2,2h4ZM20,20h3v3h-3v-3Z" /><rect x="12" y="17" width="3" height="3" /><polygon points="26 12 23 12 23 9 20 6 17 6 17 9 20 9 20 12 17 12 17 15 26 15 26 12" /><path d="M0,0v32h32V0H0ZM29,29H3V3h26v26Z" /><polygon points="15 26 15 23 9 23 9 17 6 17 6 23.1875 8.8125 26 15 26" /><rect x="12" y="6" width="3" height="3" /><polygon points="9 12 12 12 12 15 15 15 15 12 12 9 9 9 9 6 6 6 6 15 9 15 9 12" />
+    </symbol>
+    <symbol id="prm-logo-kiro" viewBox="0 0 20 24">
+      <path d="M3.80081 18.5661C1.32306 24.0572 6.59904 25.434 10.4904 22.2205C11.6339 25.8242 15.926 23.1361 17.4652 20.3445C20.8578 14.1915 19.4877 7.91459 19.1361 6.61988C16.7244 -2.20972 4.67055 -2.21852 2.59581 6.6649C2.11136 8.21946 2.10284 9.98752 1.82846 11.8233C1.69011 12.749 1.59258 13.3398 1.23436 14.3135C1.02841 14.8733 0.745043 15.3704 0.299833 16.2082C-0.391594 17.5095 -0.0998802 20.021 3.46397 18.7186V18.7195L3.80081 18.5661Z" /><path class="prm-logo-cutout" d="M10.9614 10.4413C9.97202 10.4413 9.82422 9.25893 9.82422 8.55407C9.82422 7.91791 9.93824 7.4124 10.1542 7.09197C10.3441 6.81003 10.6158 6.66699 10.9614 6.66699C11.3071 6.66699 11.6036 6.81228 11.8128 7.09892C12.0511 7.42554 12.177 7.92861 12.177 8.55407C12.177 9.73591 11.7226 10.4413 10.9616 10.4413H10.9614Z" /><path class="prm-logo-cutout" d="M15.0318 10.4413C14.0423 10.4413 13.8945 9.25893 13.8945 8.55407C13.8945 7.91791 14.0086 7.4124 14.2245 7.09197C14.4144 6.81003 14.6861 6.66699 15.0318 6.66699C15.3774 6.66699 15.6739 6.81228 15.8831 7.09892C16.1214 7.42554 16.2474 7.92861 16.2474 8.55407C16.2474 9.73591 15.793 10.4413 15.0319 10.4413H15.0318Z" />
+    </symbol>
+  </svg>
 
-  <!-- Navigation -->
-  <nav class="nav" id="nav" aria-label="Main navigation">
-    <div class="nav-inner container">
-      <a href="#" class="nav-logo">
-        <img src="logo.svg?v=3" alt="Panes" class="nav-logo-img">
-        <span>Panes</span>
+  <header class="prm-header">
+    <div class="prm-header-inner prm-shell">
+      <a href="#" class="prm-brand" aria-label="Panes home">
+        <img class="prm-theme-asset prm-theme-asset-dark" src="/product-room/panes-lockup-on-dark.svg?v=1" alt="panes">
+        <img class="prm-theme-asset prm-theme-asset-light" src="/product-room/panes-lockup-on-light.svg?v=1" alt="panes">
       </a>
-      <div class="nav-links" id="nav-links">
-        <a href="#integrations">Integrations</a>
-        <a href="#product">Features</a>
-        <a href="https://github.com/wygoralves/panes" target="_blank" rel="noopener">
-          <i data-lucide="github" style="width:16px;height:16px;" aria-hidden="true"></i>
-          <span>GitHub</span>
-        </a>
-      </div>
-      <button class="nav-hamburger" id="nav-hamburger" aria-label="Toggle navigation menu" aria-expanded="false">
-        <span></span><span></span><span></span>
-      </button>
-      <div class="nav-actions">
-        <div class="lang-switcher" id="lang-switcher" role="radiogroup" aria-label="Language selector">
-          <button type="button" class="lang-switcher-btn" data-set-locale="en" role="radio" aria-checked="true" lang="en">EN</button>
-          <button type="button" class="lang-switcher-btn" data-set-locale="pt-BR" role="radio" aria-checked="false" lang="pt-BR">PT-BR</button>
+      <nav class="prm-nav" aria-label="Main navigation">
+        <a href="#product">Product</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#agents">Agents</a>
+        <a href="#download">Download</a>
+      </nav>
+      <div class="prm-header-actions">
+        <button type="button" class="prm-theme-toggle" aria-label="Use light theme" aria-pressed="false" title="Use light theme" onclick="window.panesLandingTheme && window.panesLandingTheme.toggle()">
+          <i class="prm-theme-icon prm-theme-icon-light" data-lucide="sun" aria-hidden="true"></i>
+          <i class="prm-theme-icon prm-theme-icon-dark" data-lucide="moon" aria-hidden="true"></i>
+        </button>
+        <div class="prm-locale-switcher" role="group" aria-label="Language selector">
+          <button type="button" class="prm-locale-option" data-locale="en-US" lang="en-US" aria-pressed="true" aria-label="Use English (United States)">EN</button>
+          <button type="button" class="prm-locale-option" data-locale="pt-BR" lang="pt-BR" aria-pressed="false" aria-label="Usar português (Brasil)">PT</button>
         </div>
-        <a href="https://github.com/wygoralves/panes/releases/latest" class="btn-download" id="nav-download">
-          <svg class="os-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-          <span>Download</span>
+        <a href="https://github.com/wygoralves/panes" class="prm-header-github" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/wygoralves/panes/releases/latest" class="prm-header-download" aria-label="Download">
+          <span class="prm-header-download-label">Download</span>
+          <span aria-hidden="true">↓</span>
         </a>
       </div>
     </div>
-  </nav>
+  </header>
 
   <main id="main-content">
-
-  <!-- ════════════ Hero ════════════ -->
-  <section class="hero" aria-label="Introduction">
-    <div class="container hero-container">
-      <h1 class="hero-title anim-hero" style="--d:1">
-        Your agents write the code.<br>
-        <span class="hero-title-dim">You need a cockpit.</span>
-      </h1>
-
-      <p class="hero-subtitle anim-hero" style="--d:3">
-        Chat, terminal, git, and approvals in one native window.<br>
-        Engine-agnostic, open-source, built for the agent era.
-      </p>
-
-      <div class="hero-actions anim-hero" style="--d:5">
-        <a href="https://github.com/wygoralves/panes/releases/latest" class="btn-primary" id="hero-download">
-          <svg class="os-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-          <span>Download for macOS</span>
-        </a>
+    <section class="prm-hero prm-shell" aria-labelledby="prm-title">
+      <div class="prm-hero-copy">
+        <h1 id="prm-title"><span>Run every agent.</span><span>Stay in control.</span></h1>
+        <p>Agent chat, terminals, Git, search, and worktrees in one native desktop app for engineers coordinating agents all day.</p>
+        <div class="prm-hero-actions">
+          <a href="https://github.com/wygoralves/panes" class="prm-secondary" target="_blank" rel="noopener">View GitHub</a>
+          <a href="https://github.com/wygoralves/panes/releases/latest" class="prm-primary">
+            <span class="js-download-label">Download for macOS</span>
+            <span aria-hidden="true">↓</span>
+          </a>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <!-- ═══ The Living Mockup ═══ -->
-    <div class="container">
-      <div class="mockup-wrapper anim-hero" style="--d:7" aria-hidden="true">
+    <section class="prm-workspace prm-shell" id="product" aria-label="Interactive Panes workspace preview">
+      <div class="prm-workspace-canvas">
         <div class="app-frame">
           <div class="window-controls">
             <div class="win-btn win-close"></div>
@@ -94,37 +107,56 @@
 
           <!-- SIDEBAR -->
           <div class="sidebar">
-            <div class="sb-section">Projects</div>
+            <div class="prm-sidebar-actions">
+              <div><i data-lucide="plus"></i><span>New thread</span><kbd>⌘↵N</kbd></div>
+              <div><i data-lucide="command"></i><span>Commands</span><kbd>⌘K</kbd></div>
+              <div><i data-lucide="search"></i><span>Search</span><kbd>⌘⇧F</kbd></div>
+              <div><i data-lucide="terminal"></i><span>Agents</span></div>
+            </div>
+
+            <div class="sb-section prm-workspaces-label"><span>Workspaces</span><span>+</span></div>
 
             <div class="sb-project">
+              <div class="sb-project-header"><i data-lucide="chevron-right" class="icon"></i><i data-lucide="folder-git-2" class="icon"></i><span>wygg</span><b>2</b></div>
+            </div>
+
+            <div class="sb-project is-open">
               <div class="sb-project-header">
                 <i data-lucide="chevron-down" class="icon" style="width:12px;opacity:0.4"></i>
                 <i data-lucide="folder-git-2" class="icon" style="color:var(--accent);width:14px;"></i>
                 <span>panes</span>
+                <b>37</b>
               </div>
               <div class="sb-thread-list">
-                <div class="sb-thread active"><span>Refactor git integration</span></div>
-                <div class="sb-thread"><span>Add dark mode tokens</span></div>
+                <div class="sb-thread active"><span>Fix git push failures</span><small>2m</small></div>
+                <div class="sb-thread"><span>Review release workflow</span><small>2m</small></div>
+                <div class="sb-thread"><span>Clean up agent output</span><small>4m</small></div>
               </div>
+            </div>
+
+            <div class="sb-project">
+              <div class="sb-project-header"><i data-lucide="chevron-right" class="icon"></i><i data-lucide="folder-git-2" class="icon"></i><span>page2prompt</span><b>1</b></div>
             </div>
 
             <div class="sb-project">
               <div class="sb-project-header">
                 <i data-lucide="chevron-right" class="icon" style="width:12px;opacity:0.4"></i>
                 <i data-lucide="folder-git-2" class="icon" style="width:14px;"></i>
-                <span>api-service</span>
+                <span>gestur</span>
+                <b>1</b>
               </div>
             </div>
           </div>
 
           <!-- CONTENT CARD -->
-          <div class="content-card" data-active-view="split">
+          <div class="content-card" data-active-view="chat">
           <div class="main-area">
             <div class="top-bar">
-              <span class="top-bar-path">panes / feat/error-handling</span>
+              <span class="top-bar-path">panes&nbsp;&nbsp;/&nbsp;&nbsp;<strong>Fix git push failures</strong></span>
+              <span class="prm-topbar-change">+1 file</span>
               <div class="layout-mode-pill">
-                <div class="lm-btn" data-view="chat"><i data-lucide="message-square" class="icon"></i></div>
-                <div class="lm-btn lm-active" data-view="split"><i data-lucide="monitor" class="icon"></i></div>
+                <div class="lm-btn lm-active" data-view="chat"><i data-lucide="message-square" class="icon"></i></div>
+                <div class="lm-btn" data-view="split"><i data-lucide="monitor" class="icon"></i></div>
                 <div class="lm-btn" data-view="terminal"><i data-lucide="square-terminal" class="icon"></i></div>
                 <div class="lm-btn" data-view="editor"><i data-lucide="file-pen" class="icon"></i></div>
               </div>
@@ -133,7 +165,7 @@
             <div class="mockup-views">
 
               <!-- ── VIEW: Split (default) ── -->
-              <div class="mockup-view workspace-split-col mockup-view-active" data-view="split">
+              <div class="mockup-view workspace-split-col" data-view="split">
                 <!-- Chat -->
                 <div class="chat-panel">
                   <div class="messages">
@@ -147,7 +179,7 @@
                         <span>Codex</span>
                       </div>
                       <div class="msg-bubble">
-                        I'll add robust error handling with exponential backoff retry.
+                        I’ll add bounded retries with exponential backoff and preserve the original push error.
                         <div class="code-block">
                           <div class="code-header">src/git/repo.rs</div>
                           <div class="code-body">
@@ -181,7 +213,7 @@
                         <div class="v-toolbar-divider"></div>
                         <button class="v-toolbar-btn v-toolbar-btn-bordered v-model-picker" aria-label="Model">
                           <svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" style="opacity:0.7;"><path d="M14.949 6.547a3.94 3.94 0 0 0-.348-3.273 4.11 4.11 0 0 0-4.4-1.934A4.1 4.1 0 0 0 8.423.2 4.15 4.15 0 0 0 6.305.086a4.1 4.1 0 0 0-1.891.948 4.04 4.04 0 0 0-1.158 1.753 4.1 4.1 0 0 0-1.563.679A4 4 0 0 0 .554 4.72a3.99 3.99 0 0 0 .502 4.731 3.94 3.94 0 0 0 .346 3.274 4.11 4.11 0 0 0 4.402 1.933c.382.425.852.764 1.377.995.526.231 1.095.35 1.67.346 1.78.002 3.358-1.132 3.901-2.804a4.1 4.1 0 0 0 1.563-.68 4 4 0 0 0 1.14-1.253 3.99 3.99 0 0 0-.506-4.716z"/></svg>
-                          <span>Codex &middot; 5.3</span>
+                          <span>Codex &middot; 5.6 Sol</span>
                           <span class="v-effort-badge">XHigh</span>
                         </button>
                         <div class="v-toolbar-divider"></div>
@@ -234,7 +266,7 @@
               </div>
 
               <!-- ── VIEW: Chat only ── -->
-              <div class="mockup-view" data-view="chat">
+              <div class="mockup-view mockup-view-active" data-view="chat">
                 <div class="chat-panel">
                   <div class="messages">
                     <div class="msg-row user">
@@ -247,23 +279,14 @@
                         <span>Codex</span>
                       </div>
                       <div class="msg-bubble">
-                        I'll add robust error handling with exponential backoff retry.
-                        <div class="code-block">
-                          <div class="code-header">src/git/repo.rs</div>
-                          <div class="code-body">
-                            <span class="syntax-k">pub async fn</span> <span class="syntax-f">push_with_retry</span>(&amp;<span class="syntax-k">self</span>) {<br>
-                            &nbsp;&nbsp;<span class="syntax-k">for</span> attempt <span class="syntax-k">in</span> <span class="syntax-n">0</span>..<span class="syntax-n">3</span> {<br>
-                            &nbsp;&nbsp;&nbsp;&nbsp;<span class="syntax-k">match self</span>.<span class="syntax-f">push</span>().<span class="syntax-f">await</span> {<br>
-                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="syntax-n">Ok</span>(_) => <span class="syntax-k">return</span>,<br>
-                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="syntax-n">Err</span>(e) => <span class="syntax-f">sleep</span>(<span class="syntax-n">2</span>.pow(attempt)),<br>
-                            &nbsp;&nbsp;&nbsp;&nbsp;}<br>
-                            &nbsp;&nbsp;}<br>
-                            }
-                          </div>
-                        </div>
-                        <div class="thinking-dots">
-                          <span></span><span></span><span></span>
-                        </div>
+                        I found the failure path in git push. I’m adding bounded retries, preserving the original error, and covering the backoff behavior.
+                        <div class="prm-action-summary"><span><i data-lucide="layers-3"></i> 8 actions completed</span><small>4 edits · 4 commands</small></div>
+                        The change is ready. The targeted tests and cargo check both pass.
+                        <div class="prm-action-summary"><span><i data-lucide="circle-check"></i> 14 tests passed</span><small>12s</small></div>
+                        The diff is limited to the push path and its tests. No unrelated files changed.
+                        <div class="prm-action-summary"><span><i data-lucide="file-diff"></i> 2 files changed</span><small>+12&nbsp;&nbsp;-3</small></div>
+                        The branch is clean and ready for review.
+                        <div class="prm-action-summary"><span><i data-lucide="git-commit-horizontal"></i> Ready for review</span><small>feat/error-handling</small></div>
                       </div>
                     </div>
                   </div>
@@ -281,7 +304,7 @@
                         <div class="v-toolbar-divider"></div>
                         <button class="v-toolbar-btn v-toolbar-btn-bordered v-model-picker" aria-label="Model">
                           <svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" style="opacity:0.7;"><path d="M14.949 6.547a3.94 3.94 0 0 0-.348-3.273 4.11 4.11 0 0 0-4.4-1.934A4.1 4.1 0 0 0 8.423.2 4.15 4.15 0 0 0 6.305.086a4.1 4.1 0 0 0-1.891.948 4.04 4.04 0 0 0-1.158 1.753 4.1 4.1 0 0 0-1.563.679A4 4 0 0 0 .554 4.72a3.99 3.99 0 0 0 .502 4.731 3.94 3.94 0 0 0 .346 3.274 4.11 4.11 0 0 0 4.402 1.933c.382.425.852.764 1.377.995.526.231 1.095.35 1.67.346 1.78.002 3.358-1.132 3.901-2.804a4.1 4.1 0 0 0 1.563-.68 4 4 0 0 0 1.14-1.253 3.99 3.99 0 0 0-.506-4.716z"/></svg>
-                          <span>Codex &middot; 5.3</span>
+                          <span>Codex &middot; 5.6 Sol</span>
                           <span class="v-effort-badge">XHigh</span>
                         </button>
                         <div class="v-toolbar-divider"></div>
@@ -316,7 +339,7 @@
                 <div class="mv-term-header">
                   <span class="mv-broadcast-badge">
                     <i data-lucide="radio" style="width:9px;height:9px;"></i>
-                    Broadcasting &middot; 4 worktrees
+                    Broadcast input &middot; 4 worktrees
                   </span>
                 </div>
                 <div class="mv-term-grid">
@@ -351,11 +374,11 @@
                   <div class="mv-term-pane">
                     <div class="mv-term-pane-header">
                       <i data-lucide="square-terminal" style="width:10px;height:10px;opacity:0.5;"></i>
-                      <span class="mv-agent-name">Gemini CLI</span>
-                      <span class="mv-wt-badge">wt/gemini-1</span>
+                      <span class="mv-agent-name">Antigravity CLI</span>
+                      <span class="mv-wt-badge">wt/antigravity-1</span>
                     </div>
                     <div class="mv-term-pane-body">
-                      <span style="color:var(--accent);">~/panes</span> gemini "Optimize queries"<br>
+                      <span style="color:var(--accent);">~/panes</span> antigravity "Optimize queries"<br>
                       <span style="color:var(--text-3);">✓ Scanning db/queries.rs...</span><br>
                       <span style="color:var(--success);">↳ Rewriting N+1 queries</span><span class="typing-cursor"></span>
                     </div>
@@ -411,665 +434,757 @@
           <!-- GIT PANEL -->
           <div class="git-panel">
             <div class="git-header">
-              <i data-lucide="git-branch" class="icon" style="width:12px;color:var(--text-3);"></i>
-              <span class="git-branch-name">feat/error-handling</span>
-              <span class="git-badge">&uarr;1</span>
+              <i data-lucide="file-diff" class="icon"></i>
+              <span class="git-branch-name">Changes</span>
+              <i data-lucide="chevron-down" class="icon"></i>
+              <span class="prm-git-branch"><i data-lucide="git-branch"></i> main</span>
             </div>
 
-            <div class="git-section-label">Unstaged (2)</div>
-            <div class="git-dir-group">
-              <div class="git-dir-label">
-                <i data-lucide="chevron-down" class="icon" style="width:10px;opacity:0.35;"></i>
-                <span>src/</span>
-              </div>
-              <div class="git-file-row git-file-indented">
-                <i data-lucide="file-code" class="icon" style="width:12px;opacity:0.4;"></i>
-                <span>git/repo.rs</span>
-                <span class="git-file-status modified">M</span>
-                <span class="git-file-action">+</span>
-              </div>
-              <div class="git-file-row git-file-indented">
-                <i data-lucide="file-code" class="icon" style="width:12px;opacity:0.4;"></i>
-                <span>commands/git.rs</span>
-                <span class="git-file-status modified">M</span>
-                <span class="git-file-action">+</span>
-              </div>
-            </div>
-
-            <div class="git-section-label">Staged (1)</div>
-            <div class="git-file-row">
-              <i data-lucide="file-code" class="icon" style="width:12px;opacity:0.4;"></i>
-              <span>src/lib.rs</span>
+            <div class="prm-changes-toolbar"><span><i data-lucide="chevron-down"></i> Changes&nbsp;&nbsp;1</span><span>↶&nbsp;&nbsp; + Stage all</span></div>
+            <div class="prm-change-repo"><i data-lucide="chevron-down"></i><span>landing-page</span></div>
+            <div class="git-file-row prm-change-file">
+              <i data-lucide="file-code" class="icon"></i>
+              <span>product-room.css</span>
               <span class="git-file-status added">A</span>
-            </div>
-
-            <div class="git-commit-area">
-              <textarea class="git-commit-input" placeholder="Commit message..." readonly tabindex="-1">feat: add push retry with backoff</textarea>
-              <div class="git-commit-btn">Commit</div>
             </div>
           </div>
           </div><!-- /content-card -->
         </div>
       </div>
-    </div>
-  </section>
-
-  <!-- ════════════ Integration Strip ════════════ -->
-  <section class="integrations" id="integrations" aria-label="Supported integrations">
-    <div class="container">
-      <div class="integrations-strip-wrapper reveal">
-        <div class="strip-label">Works with your favorite agents</div>
-        <div class="strip">
-
-          <a href="https://github.com/openai/codex" target="_blank" rel="noopener" class="strip-item">
-            <div class="strip-item-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" fill-rule="evenodd"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855l-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023l-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135l-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.795.795 0 0 0-.393.681zm1.097-2.365l2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z"/></svg>
-            </div>
-            <span>Codex CLI</span>
-          </a>
-
-          <div class="strip-divider"></div>
-
-          <a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank" rel="noopener" class="strip-item">
-            <div class="strip-item-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" fill-rule="evenodd"><path d="M13.827 3.52h3.603L24 20.48h-3.603l-6.57-16.96zm-7.258 0h3.767L16.906 20.48h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm1.94 5.027-2.2 5.698h4.404l-2.203-5.698z"/></svg>
-            </div>
-            <span>Claude Code</span>
-          </a>
-
-          <div class="strip-divider"></div>
-
-          <a href="https://github.com/google-gemini/gemini-cli" target="_blank" rel="noopener" class="strip-item">
-            <div class="strip-item-icon" aria-hidden="true">
-              <svg viewBox="0 0 100 100" width="16" height="16" fill="currentColor"><path d="M50 0C50 25 75 50 100 50C75 50 50 75 50 100C50 75 25 50 0 50C25 50 50 25 50 0Z"/></svg>
-            </div>
-            <span>Gemini CLI</span>
-          </a>
-
-          <div class="strip-divider"></div>
-
-          <a href="https://factory.ai" target="_blank" rel="noopener" class="strip-item">
-            <div class="strip-item-icon" aria-hidden="true">
-              <svg viewBox="0 0 200 200" width="18" height="18" fill="currentColor"><g transform="translate(0,200) scale(0.1,-0.1)"><path d="M730 1667c-13-7-36-30-52-52-30-45-89-193-108-273-6-28-15-54-19-57-5-2-32 5-61 16-73 28-129 23-150-13-13-25-13-34 3-95 9-38 43-120 75-183 31-63 57-118 57-123 0-5-27-23-59-40-77-41-102-73-85-110 23-50 128-106 283-151 47-14 90-27 95-31 6-3 2-29-10-62-22-64-25-123-7-141 18-18 98-14 163 8 32 11 100 42 153 70 52 27 100 50 106 50 7 0 17-15 24-34 7-18 26-52 42-75 73-100 147-24 229 234 18 55 35 103 39 107 4 4 36-2 71-12 34-11 73-20 86-20 88 0 67 153-49 359-20 34-36 68-36 75 0 7 22 23 49 35 177 84 123 167-169 262-63 20-115 40-115 45 0 5 9 39 19 76 11 38 16 78 12 93-17 66-120 52-306-42-68-35-127-63-130-63-3 0-19 27-34 61-25 52-66 99-85 99-3 0-17-6-31-13zm448-145c2-12-4-46-13-75-30-94-138-337-149-337-6 0-34 78-63 173-42 141-49 174-38 185 7 8 50 29 96 48 101 41 162 43 167 6zm-390-64c40-68 155-354 147-368-4-6-35 6-78 30-40 23-112 61-161 86-88 45-88 46-83 79 7 45 70 178 96 204 31 31 44 26 79-31zm543-87c77-26 130-55 158-85 20-22 22-28 11-42-32-37-395-193-412-176-5 5 7 37 30 78 21 38 60 108 86 157 26 48 53 87 60 87 7 0 37-8 67-19zm-715-227c140-52 269-112 269-125 0-7-74-34-174-64l-174-52-39 83c-43 93-60 180-37 195 17 10 42 5 155-37zm879-115c38-80 61-168 51-194-10-27-77-13-224 46-162 66-227 98-216 109 5 4 63 24 129 44 66 19 138 42 160 50 22 8 46 15 53 15 7 1 28-31 47-70zm-583-95c4-3-11-36-31-72-21-37-60-109-87-159-27-51-55-93-62-93-7 0-48 14-91 30-89 34-158 87-148 113 8 20 116 76 272 138 122 49 137 53 147 43zm318-100c88-48 160-90 160-94 0-16-39-119-63-167-28-54-61-85-82-77-19 8-69 107-130 259-52 128-63 165-50 165 3 0 78-39 165-86zm-221 4c8-29 31-106 51-171 32-99 36-120 24-131-21-21-158-76-207-82-79-11-80 22-2 215 63 159 94 221 108 221 8 0 19-22 26-52z"/></g></svg>
-            </div>
-            <span>Factory Droid</span>
-          </a>
-
-          <div class="strip-divider"></div>
-
-          <a href="https://opencode.ai" target="_blank" rel="noopener" class="strip-item">
-            <div class="strip-item-icon" aria-hidden="true">
-              <svg viewBox="0 0 240 300" width="14" height="18" fill="currentColor"><path d="M180 240H60V120H180V240Z" opacity="0.4"/><path d="M180 60H60V240H180V60ZM240 300H0V0H240V300Z"/></svg>
-            </div>
-            <span>OpenCode</span>
-          </a>
-
-          <div class="strip-divider"></div>
-
-          <a href="https://kilocode.ai" target="_blank" rel="noopener" class="strip-item">
-            <div class="strip-item-icon" aria-hidden="true">
-              <svg viewBox="0 0 32 32" width="16" height="16" fill="currentColor"><path d="M23,26v-2h3v-5l-2-2h-4v2h-3v5l2,2h4ZM20,20h3v3h-3v-3Z"/><rect x="12" y="17" width="3" height="3"/><polygon points="26 12 23 12 23 9 20 6 17 6 17 9 20 9 20 12 17 12 17 15 26 15 26 12"/><path d="M0,0v32h32V0H0ZM29,29H3V3h26v26Z"/><polygon points="15 26 15 23 9 23 9 17 6 17 6 23.1875 8.8125 26 15 26"/><rect x="12" y="6" width="3" height="3"/><polygon points="9 12 12 12 12 15 15 15 15 12 12 9 9 9 9 6 6 6 6 15 9 15 9 12"/></svg>
-            </div>
-            <span>Kilo Code</span>
-          </a>
-
-          <div class="strip-divider"></div>
-
-          <a href="https://kiro.dev" target="_blank" rel="noopener" class="strip-item">
-            <div class="strip-item-icon" aria-hidden="true">
-              <svg viewBox="0 0 20 24" width="14" height="17" fill="currentColor"><path d="M3.80081 18.5661C1.32306 24.0572 6.59904 25.434 10.4904 22.2205C11.6339 25.8242 15.926 23.1361 17.4652 20.3445C20.8578 14.1915 19.4877 7.91459 19.1361 6.61988C16.7244 -2.20972 4.67055 -2.21852 2.59581 6.6649C2.11136 8.21946 2.10284 9.98752 1.82846 11.8233C1.69011 12.749 1.59258 13.3398 1.23436 14.3135C1.02841 14.8733 0.745043 15.3704 0.299833 16.2082C-0.391594 17.5095 -0.0998802 20.021 3.46397 18.7186V18.7195L3.80081 18.5661Z"/><path d="M10.9614 10.4413C9.97202 10.4413 9.82422 9.25893 9.82422 8.55407C9.82422 7.91791 9.93824 7.4124 10.1542 7.09197C10.3441 6.81003 10.6158 6.66699 10.9614 6.66699C11.3071 6.66699 11.6036 6.81228 11.8128 7.09892C12.0511 7.42554 12.177 7.92861 12.177 8.55407C12.177 9.73591 11.7226 10.4413 10.9616 10.4413H10.9614Z" fill="black"/><path d="M15.0318 10.4413C14.0423 10.4413 13.8945 9.25893 13.8945 8.55407C13.8945 7.91791 14.0086 7.4124 14.2245 7.09197C14.4144 6.81003 14.6861 6.66699 15.0318 6.66699C15.3774 6.66699 15.6739 6.81228 15.8831 7.09892C16.1214 7.42554 16.2474 7.92861 16.2474 8.55407C16.2474 9.73591 15.793 10.4413 15.0319 10.4413H15.0318Z" fill="black"/></svg>
-            </div>
-            <span>Kiro</span>
-          </a>
-
+      <div class="prm-mobile-workspace" role="img" aria-label="A simplified Panes task showing one prompt, a Codex response, passing tests, and a follow-up composer">
+        <div class="prm-mobile-appbar" aria-hidden="true">
+          <span class="prm-mobile-mark" aria-hidden="true">
+            <img class="prm-theme-asset prm-theme-asset-dark" src="/product-room/panes-mark-on-dark.svg?v=1" alt="">
+            <img class="prm-theme-asset prm-theme-asset-light" src="/product-room/panes-mark-on-light.svg?v=1" alt="">
+          </span>
+          <span><b>panes</b><i>/</i> Fix git push failures</span>
+          <small>+1 file</small>
         </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ════════════ Product Story ════════════ -->
-  <section class="product-story" id="product" aria-labelledby="product-heading">
-    <div class="container">
-
-      <!-- Scene 1: Agent Chat -->
-      <div class="story-scene reveal">
-        <div class="story-text">
-          <h2 id="product-heading">Talk to any agent.</h2>
-          <p>Native chat for Codex and Claude through their SDKs. Built-in terminal harness for CLI agents like Gemini CLI, Factory Droid, OpenCode, and more. Pick the right engine for the task and go.</p>
-        </div>
-        <div class="story-visual">
-          <div class="vignette v-chatpanel">
-            <!-- Top bar: breadcrumb + layout mode switcher -->
-            <div class="v-topbar">
-              <div class="v-breadcrumb">
-                <span class="v-breadcrumb-dim">my-project</span>
-                <span class="v-breadcrumb-sep">/</span>
-                <span class="v-breadcrumb-title">Review auth middleware</span>
-              </div>
-              <div class="v-layout-switcher">
-                <button class="v-layout-btn v-layout-btn-active" aria-label="Chat">
-                  <i data-lucide="message-square" style="width:12px;height:12px;"></i>
-                </button>
-                <button class="v-layout-btn" aria-label="Split">
-                  <i data-lucide="monitor" style="width:12px;height:12px;"></i>
-                </button>
-                <button class="v-layout-btn" aria-label="Terminal">
-                  <i data-lucide="square-terminal" style="width:12px;height:12px;"></i>
-                </button>
-                <button class="v-layout-btn" aria-label="Editor">
-                  <i data-lucide="file-pen" style="width:12px;height:12px;"></i>
-                </button>
-              </div>
+        <div class="prm-mobile-surface" aria-hidden="true">
+          <div class="prm-mobile-thread">
+            <div class="prm-mobile-prompt">Add retry logic to git push.</div>
+            <div class="prm-mobile-agent">
+              <span class="prm-provider-mark codex"><svg class="prm-provider-logo"><use href="#prm-logo-codex"></use></svg></span>
+              <strong>Codex</strong>
             </div>
-
-            <!-- Messages area -->
-            <div class="v-chat">
-              <!-- User message: right-aligned, coral tint -->
-              <div class="v-msg-user">Review the auth middleware for security issues</div>
-
-              <!-- AI message: full-width, bg-2 background -->
-              <div class="v-msg-ai">
-                <div class="v-ai-tag">
-                  <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" fill-rule="evenodd" style="opacity:0.5;" aria-hidden="true"><path d="M13.827 3.52h3.603L24 20.48h-3.603l-6.57-16.96zm-7.258 0h3.767L16.906 20.48h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm1.94 5.027-2.2 5.698h4.404l-2.203-5.698z"/></svg>
-                  Claude
-                </div>
-                <div class="v-finding">
-                  <span class="v-severity v-severity-high">HIGH</span>
-                  <span>Token expiry not validated on decode</span>
-                </div>
-                <div class="v-code">
-                  <div class="v-code-bar">src/middleware/auth.rs:47</div>
-                  <div class="v-code-body">
-                    <span class="v-diff-del">- <span class="syntax-k">let</span> claims = <span class="syntax-f">decode</span>(token);</span><br>
-                    <span class="v-diff-add">+ <span class="syntax-k">let</span> claims = <span class="syntax-f">decode</span>(token)</span><br>
-                    <span class="v-diff-add">+     .<span class="syntax-f">validate_exp</span>(<span class="syntax-n">true</span>)?;</span>
-                  </div>
-                </div>
-                <div class="v-thinking"><span></span><span></span><span></span></div>
-              </div>
+            <p>I found the failure path and added bounded retries without changing the rest of the push flow.</p>
+            <div class="prm-mobile-proof">
+              <span><i data-lucide="circle-check"></i><strong>Ready for review</strong></span>
+              <small>14 tests&nbsp;&nbsp;·&nbsp;&nbsp;2 files</small>
             </div>
-
-            <!-- Input box -->
-            <div class="v-input-box">
-              <div class="v-input-text">Ask for follow-up changes</div>
-              <div class="v-input-toolbar">
-                <button class="v-toolbar-btn" aria-label="Attach">
-                  <i data-lucide="plus" style="width:12px;height:12px;"></i>
-                </button>
-                <button class="v-toolbar-btn v-toolbar-btn-bordered" aria-label="Plan mode">
-                  <i data-lucide="list-checks" style="width:12px;height:12px;"></i>
-                  <span>Plan</span>
-                </button>
-                <div class="v-toolbar-divider"></div>
-                <button class="v-toolbar-btn v-toolbar-btn-bordered v-model-picker" aria-label="Model">
-                  <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" fill-rule="evenodd" style="opacity:0.6;" aria-hidden="true"><path d="M13.827 3.52h3.603L24 20.48h-3.603l-6.57-16.96zm-7.258 0h3.767L16.906 20.48h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm1.94 5.027-2.2 5.698h4.404l-2.203-5.698z"/></svg>
-                  <span>Claude &middot; Opus</span>
-                  <span class="v-effort-badge">High</span>
-                </button>
-                <div class="v-toolbar-divider"></div>
-                <button class="v-toolbar-btn v-toolbar-btn-bordered" aria-label="Permissions">
-                  <i data-lucide="shield" style="width:11px;height:11px;"></i>
-                  <span>Standard</span>
-                </button>
-                <div class="v-toolbar-spacer"></div>
-                <button class="v-send-btn" aria-label="Send">
-                  <i data-lucide="send" style="width:13px;height:13px;"></i>
-                </button>
-              </div>
-            </div>
-
-            <!-- Status bar -->
-            <div class="v-status-bar">
-              <div class="v-status-section">
-                <i data-lucide="zap" style="width:10px;height:10px;opacity:0.6;"></i>
-                <span>Context</span>
-                <div class="v-status-progress">
-                  <div class="v-status-progress-fill" style="width:35%;"></div>
-                </div>
-                <span class="v-status-percent">35%</span>
-              </div>
-              <span class="v-status-dot">&middot;</span>
-              <div class="v-status-section">
-                <i data-lucide="clock" style="width:10px;height:10px;opacity:0.6;"></i>
-                <span>5h left</span>
-                <div class="v-status-progress">
-                  <div class="v-status-progress-fill v-status-fill-info" style="width:72%;"></div>
-                </div>
-                <span class="v-status-percent">72%</span>
-              </div>
-              <span class="v-status-dot">&middot;</span>
-              <div class="v-status-section v-status-branch">
-                <i data-lucide="git-branch" style="width:10px;height:10px;opacity:0.5;"></i>
-                <span>refactor/auth-jwt</span>
-              </div>
+          </div>
+          <div class="prm-mobile-composer">
+            <span>Ask for follow-up changes</span>
+            <div>
+              <span><i data-lucide="plus"></i></span>
+              <span class="prm-mobile-model"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M14.949 6.547a3.94 3.94 0 0 0-.348-3.273 4.11 4.11 0 0 0-4.4-1.934A4.1 4.1 0 0 0 8.423.2 4.15 4.15 0 0 0 6.305.086a4.1 4.1 0 0 0-1.891.948 4.04 4.04 0 0 0-1.158 1.753 4.1 4.1 0 0 0-1.563.679A4 4 0 0 0 .554 4.72a3.99 3.99 0 0 0 .502 4.731 3.94 3.94 0 0 0 .346 3.274 4.11 4.11 0 0 0 4.402 1.933c.382.425.852.764 1.377.995.526.231 1.095.35 1.67.346 1.78.002 3.358-1.132 3.901-2.804a4.1 4.1 0 0 0 1.563-.68 4 4 0 0 0 1.14-1.253 3.99 3.99 0 0 0-.506-4.716z"/></svg> Codex &middot; 5.6 Sol</span>
+              <span class="prm-mobile-send"><i data-lucide="send"></i></span>
             </div>
           </div>
         </div>
       </div>
+    </section>
 
-      <!-- Scene 2: Git -->
-      <div class="story-scene story-scene-flip reveal">
-        <div class="story-text">
-          <h2>Git without the alt-tab.</h2>
-          <p>Review diffs, stage changes, and commit directly from the agent's output. Agents branch, stash, and push. You approve with full context.</p>
+    <section class="prm-handoff" id="workflow">
+      <div class="prm-shell">
+        <div class="prm-section-heading">
+          <h2>From prompt to review-ready change.</h2>
+          <p>Panes keeps the conversation, commands, diff, and approval trail together in one workspace.</p>
         </div>
-        <div class="story-visual">
-          <div class="vignette v-git">
-            <div class="v-git-header">
-              <i data-lucide="git-branch" style="width:12px;height:12px;color:var(--text-3);"></i>
-              <span class="v-git-branch">refactor/auth-jwt</span>
-              <span class="v-git-up">&uarr;3</span>
+        <div class="prm-steps">
+          <article>
+            <div class="prm-step-visual prm-step-agents" aria-hidden="true">
+              <div class="prm-step-bar"><strong>New pane</strong><span>Agent</span></div>
+              <div class="prm-step-agent is-selected">
+                <span class="prm-provider-mark codex"><svg class="prm-provider-logo"><use href="#prm-logo-codex"></use></svg></span>
+                <span><strong>Codex</strong><small>Native chat</small></span>
+                <span>Selected</span>
+              </div>
+              <div class="prm-step-agent">
+                <span class="prm-provider-mark claude"><img class="prm-provider-logo" src="data:image/png;base64,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" alt="" decoding="async"></span>
+                <span><strong>Claude</strong><small>Native chat</small></span>
+                <span>⌘ 2</span>
+              </div>
+              <div class="prm-step-agent">
+                <span class="prm-provider-mark terminal">›_</span>
+                <span><strong>CLI agent</strong><small>Terminal session</small></span>
+                <span>⌘ 3</span>
+              </div>
             </div>
-            <div class="v-git-label">Unstaged (2)</div>
-            <div class="v-git-file">
-              <i data-lucide="file-code" style="width:11px;height:11px;opacity:0.4;"></i>
-              <span>src/middleware/auth.rs</span>
-              <span class="v-status-m">M</span>
+            <h3>Choose the right agent</h3>
+            <p>Use native chat for Codex, Claude, and OpenCode, or launch a supported CLI agent in the terminal.</p>
+          </article>
+          <article>
+            <div class="prm-step-visual prm-step-stream" aria-hidden="true">
+              <div class="prm-step-bar"><strong>Live activity</strong><span>Running</span></div>
+              <div class="prm-activity-row"><i data-lucide="file-search"></i><span><strong>Read</strong><small>src/git/repo.rs</small></span><span>4 files</span></div>
+              <div class="prm-activity-row"><i data-lucide="square-terminal"></i><span><strong>Ran</strong><small>cargo test git::</small></span><span class="is-pass">Passed</span></div>
+              <div class="prm-activity-row"><i data-lucide="git-compare-arrows"></i><span><strong>Changed</strong><small>retry and backoff</small></span><span>2 files</span></div>
             </div>
-            <div class="v-git-file">
-              <i data-lucide="file-code" style="width:11px;height:11px;opacity:0.4;"></i>
-              <span>src/config.rs</span>
-              <span class="v-status-m">M</span>
+            <h3>Track every action</h3>
+            <p>Files read, commands run, terminal output, and Git state remain visible while the task runs.</p>
+          </article>
+          <article>
+            <div class="prm-step-visual prm-step-ship" aria-hidden="true">
+              <div class="prm-step-bar"><strong>Review changes</strong><span>feat/retry</span></div>
+              <div class="prm-ship-summary"><span><strong>2</strong> files</span><span class="is-added">+12</span><span class="is-removed">-3</span></div>
+              <div class="prm-ship-file"><span>src/git/repo.rs</span><span>M</span></div>
+              <div class="prm-ship-footer"><span><i data-lucide="circle-check"></i> Tests passed</span><strong>Commit</strong></div>
             </div>
-            <div class="v-git-label">Staged (1)</div>
-            <div class="v-git-file v-git-file-staged">
-              <i data-lucide="file-code" style="width:11px;height:11px;opacity:0.4;"></i>
-              <span>Cargo.toml</span>
-              <span class="v-status-m">M</span>
+            <h3>Review and commit</h3>
+            <p>Review the diff, approve sensitive commands, then stage and commit without leaving the task.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="prm-agents" id="agents">
+      <div class="prm-shell prm-agents-layout">
+        <div class="prm-agents-copy">
+          <h2>Bring the agents you already use.</h2>
+          <p>Use Codex, Claude, and OpenCode in native chat. Launch Antigravity CLI, Factory Droid, Kilo Code, and Kiro in terminal panes.</p>
+        </div>
+
+        <div class="prm-agent-field" data-prm-motion role="img" aria-label="Codex, Claude, Antigravity CLI, Factory Droid, OpenCode, Kilo Code, and Kiro orbiting one shared Panes workspace">
+          <div class="prm-agent-core" aria-hidden="true">
+            <img src="/product-room/panes-app-icon.svg?v=1" alt="">
+            <strong>One workspace.</strong>
+            <span>Repo context stays in the middle.</span>
+          </div>
+          <div class="prm-agent-orbit is-codex" aria-hidden="true"><span class="prm-provider-mark codex"><svg class="prm-provider-logo"><use href="#prm-logo-codex"></use></svg></span><strong>Codex</strong></div>
+          <div class="prm-agent-orbit is-claude" aria-hidden="true"><span class="prm-provider-mark claude"><img class="prm-provider-logo" src="data:image/png;base64,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" alt="" decoding="async"></span><strong>Claude</strong></div>
+          <div class="prm-agent-orbit is-antigravity" aria-hidden="true"><span class="prm-provider-mark antigravity"><img class="prm-provider-logo" src="/product-room/antigravity-cli.png?v=1" alt="" loading="lazy" decoding="async"></span><strong>Antigravity CLI</strong></div>
+          <div class="prm-agent-orbit is-droid" aria-hidden="true"><span class="prm-provider-mark droid"><svg class="prm-provider-logo"><use href="#prm-logo-factory"></use></svg></span><strong>Factory Droid</strong></div>
+          <div class="prm-agent-orbit is-opencode" aria-hidden="true"><span class="prm-provider-mark opencode"><svg class="prm-provider-logo"><use href="#prm-logo-opencode"></use></svg></span><strong>OpenCode</strong></div>
+          <div class="prm-agent-orbit is-kilo" aria-hidden="true"><span class="prm-provider-mark kilo"><svg class="prm-provider-logo"><use href="#prm-logo-kilo"></use></svg></span><strong>Kilo Code</strong></div>
+          <div class="prm-agent-orbit is-kiro" aria-hidden="true"><span class="prm-provider-mark kiro"><svg class="prm-provider-logo"><use href="#prm-logo-kiro"></use></svg></span><strong>Kiro</strong></div>
+          <p class="prm-agent-context" aria-hidden="true">Chat&nbsp;&nbsp;·&nbsp;&nbsp; Terminal&nbsp;&nbsp;·&nbsp;&nbsp; Git&nbsp;&nbsp;·&nbsp;&nbsp; Editor&nbsp;&nbsp;·&nbsp;&nbsp; Worktrees</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="prm-capabilities" id="capabilities">
+      <div class="prm-shell">
+        <div class="prm-work-heading">
+          <div class="prm-work-title">
+            <h2>One cockpit for the work around the code.</h2>
+            <p>Chat, terminal output, and changes stay attached to the same task.</p>
+          </div>
+        </div>
+
+        <div class="prm-cockpit-stage" data-prm-motion role="img" aria-label="One Panes task holding an agent conversation, terminal test run, and review-ready code changes">
+          <div class="prm-cockpit-chat" aria-hidden="true">
+            <div class="prm-cockpit-title">
+              <span class="prm-provider-mark codex"><svg class="prm-provider-logo"><use href="#prm-logo-codex"></use></svg></span>
+              <span><strong>Auth hardening</strong><small>feat/error-handling</small></span>
             </div>
-            <div class="v-git-commit-area">
-              <div class="v-git-input">refactor: migrate auth to JWT tokens</div>
-              <div class="v-git-commit-btn">Commit</div>
+            <div class="prm-cockpit-prompt">Audit the auth flow. Fix the refresh race, then prove it with tests.</div>
+            <div class="prm-cockpit-answer">
+              <strong>Codex</strong>
+              <p>I found the refresh race and isolated it to two files. The fix is ready. All targeted tests pass.</p>
             </div>
+          </div>
+
+          <div class="prm-cockpit-terminal" aria-hidden="true">
+            <div><span>Test run</span><strong>14 passed</strong></div>
+            <p><b>$</b> cargo test auth::refresh</p>
+            <p>test result: <strong>ok</strong>. 14 passed; 0 failed</p>
+          </div>
+
+          <div class="prm-cockpit-review" aria-hidden="true">
+            <div class="prm-cockpit-review-title"><span><i data-lucide="circle-check"></i></span><h3>Ready to review</h3></div>
+            <p>The diff, test results, and branch are ready for review.</p>
+            <div class="prm-cockpit-totals"><span><strong>2</strong> files</span><span><strong>14</strong> tests</span></div>
+            <div class="prm-cockpit-file"><span>src/auth/session.rs</span><b>+8&nbsp;&nbsp;-2</b></div>
+            <div class="prm-cockpit-file"><span>tests/auth_refresh.rs</span><b>+4&nbsp;&nbsp;-1</b></div>
+            <div class="prm-cockpit-review-foot"><span>feat/error-handling</span><strong>Review changes</strong></div>
           </div>
         </div>
       </div>
+    </section>
 
-      <!-- Scene 3: Multi-Repo -->
-      <div class="story-scene reveal">
-        <div class="story-text">
-          <h2>Every repo, one workspace.</h2>
-          <p>Open any folder, auto-detect nested git repos. Manage monorepos and multi-service architectures with context-aware chat threads per repo.</p>
-        </div>
-        <div class="story-visual">
-          <div class="vignette v-repos">
-            <div class="v-repos-label">Projects</div>
-            <div class="v-repo-item">
-              <i data-lucide="chevron-down" style="width:11px;height:11px;opacity:0.4;"></i>
-              <i data-lucide="folder-git-2" style="width:13px;height:13px;color:var(--accent);"></i>
-              <span class="v-repo-name">checkout-api</span>
-              <span class="v-repo-branch">main</span>
-            </div>
-            <div class="v-repo-thread v-repo-thread-active">Optimize search query</div>
-            <div class="v-repo-thread">Add rate limiting</div>
-            <div class="v-repo-item v-repo-nested">
-              <i data-lucide="chevron-down" style="width:11px;height:11px;opacity:0.4;"></i>
-              <i data-lucide="folder-git-2" style="width:13px;height:13px;color:var(--accent);"></i>
-              <span class="v-repo-name">storefront</span>
-              <span class="v-repo-branch">redesign/cart</span>
-            </div>
-            <div class="v-repo-item v-repo-nested">
-              <i data-lucide="chevron-right" style="width:11px;height:11px;opacity:0.4;"></i>
-              <i data-lucide="folder-git-2" style="width:13px;height:13px;"></i>
-              <span class="v-repo-name">shared-types</span>
-              <span class="v-repo-branch">main</span>
-            </div>
-          </div>
-        </div>
+    <section class="prm-final prm-shell" id="download">
+      <div>
+        <h2>Open a repo. Keep every agent under control.</h2>
+        <p>Free, open source, and local-first.</p>
       </div>
-
-      <!-- Scene 4: Multi-Agent Broadcast -->
-      <div class="story-scene story-scene-flip reveal">
-        <div class="story-text">
-          <h2>Race agents side by side.</h2>
-          <p>Launch multiple CLI agents into split panes. Broadcast the same prompt to all of them at once. Optionally give each agent its own git worktree so they never collide.</p>
-        </div>
-        <div class="story-visual">
-          <div class="vignette v-broadcast">
-            <div class="v-broadcast-header">
-              <span class="v-broadcast-title">Multi-launch</span>
-            </div>
-            <div class="v-broadcast-body">
-              <!-- Harness steppers -->
-              <div class="v-harness-row">
-                <div class="v-harness-label">
-                  <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" fill-rule="evenodd" style="opacity:0.7;" aria-hidden="true"><path d="M13.827 3.52h3.603L24 20.48h-3.603l-6.57-16.96zm-7.258 0h3.767L16.906 20.48h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm1.94 5.027-2.2 5.698h4.404l-2.203-5.698z"/></svg>
-                  <span>Claude Code</span>
-                </div>
-                <div class="v-stepper">
-                  <button class="v-stepper-btn" aria-label="Decrease">
-                    <i data-lucide="minus" style="width:9px;height:9px;"></i>
-                  </button>
-                  <span class="v-stepper-val v-stepper-val-active">2</span>
-                  <button class="v-stepper-btn" aria-label="Increase">
-                    <i data-lucide="plus" style="width:9px;height:9px;"></i>
-                  </button>
-                </div>
-              </div>
-              <div class="v-harness-row">
-                <div class="v-harness-label">
-                  <svg viewBox="0 0 100 100" width="13" height="13" fill="currentColor" style="opacity:0.7;" aria-hidden="true"><path d="M50 0C50 25 75 50 100 50C75 50 50 75 50 100C50 75 25 50 0 50C25 50 50 25 50 0Z"/></svg>
-                  <span>Gemini CLI</span>
-                </div>
-                <div class="v-stepper">
-                  <button class="v-stepper-btn" aria-label="Decrease">
-                    <i data-lucide="minus" style="width:9px;height:9px;"></i>
-                  </button>
-                  <span class="v-stepper-val v-stepper-val-active">1</span>
-                  <button class="v-stepper-btn" aria-label="Increase">
-                    <i data-lucide="plus" style="width:9px;height:9px;"></i>
-                  </button>
-                </div>
-              </div>
-
-              <div class="v-broadcast-divider"></div>
-
-              <!-- Grid preview -->
-              <div class="v-grid-preview">
-                <div class="v-grid-cell"></div>
-                <div class="v-grid-cell"></div>
-                <div class="v-grid-cell"></div>
-              </div>
-
-              <!-- Option cards -->
-              <div class="v-option-cards">
-                <div class="v-option-card v-option-card-active">
-                  <div class="v-option-icon">
-                    <i data-lucide="radio" style="width:13px;height:13px;"></i>
-                  </div>
-                  <div class="v-option-text">
-                    <span class="v-option-title">Broadcast input</span>
-                    <span class="v-option-desc">Type once, send to all panes</span>
-                  </div>
-                  <div class="v-option-toggle v-option-toggle-on">
-                    <div class="v-option-toggle-dot"></div>
-                  </div>
-                </div>
-                <div class="v-option-card v-option-card-active">
-                  <div class="v-option-icon">
-                    <i data-lucide="git-branch" style="width:13px;height:13px;"></i>
-                  </div>
-                  <div class="v-option-text">
-                    <span class="v-option-title">Git worktrees</span>
-                    <span class="v-option-desc">Each agent gets its own branch</span>
-                  </div>
-                  <div class="v-option-toggle v-option-toggle-on">
-                    <div class="v-option-toggle-dot"></div>
-                  </div>
-                </div>
-              </div>
-
-              <button class="v-launch-btn">Launch 3</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Scene 5: Workspace Startup Presets -->
-      <div class="story-scene reveal">
-        <div class="story-text">
-          <h2>Your workspace, ready on open.</h2>
-          <p>Configure startup presets: default view, terminal groups, agent assignments, split layouts, and broadcast mode. Open a project and everything is already set up.</p>
-        </div>
-        <div class="story-visual">
-          <div class="vignette v-startup">
-            <div class="v-startup-header">
-              <div class="v-startup-icon">
-                <i data-lucide="settings-2" style="width:15px;height:15px;"></i>
-              </div>
-              <div class="v-startup-header-text">
-                <span class="v-startup-title">Startup preset</span>
-                <span class="v-startup-subtitle">Configure what happens when you open this workspace</span>
-              </div>
-            </div>
-            <div class="v-startup-body">
-              <!-- Default view -->
-              <div class="v-startup-section">
-                <span class="v-startup-label">Default view</span>
-                <div class="v-startup-view-pills">
-                  <span class="v-startup-pill">Chat</span>
-                  <span class="v-startup-pill v-startup-pill-active">Split</span>
-                  <span class="v-startup-pill">Terminal</span>
-                  <span class="v-startup-pill">Editor</span>
-                </div>
-              </div>
-
-              <!-- Terminal group -->
-              <div class="v-startup-group-card">
-                <div class="v-startup-group-header">
-                  <i data-lucide="rows-2" style="width:11px;height:11px;opacity:0.5;"></i>
-                  <span class="v-startup-group-name">Claude Code</span>
-                  <div class="v-startup-group-badges">
-                    <span class="v-startup-badge">2 panes</span>
-                    <span class="v-startup-badge v-startup-badge-accent">
-                      <i data-lucide="radio" style="width:8px;height:8px;"></i>
-                      <span>broadcast</span>
-                    </span>
-                  </div>
-                </div>
-                <div class="v-startup-sessions">
-                  <div class="v-startup-session">
-                    <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" fill-rule="evenodd" style="opacity:0.5;" aria-hidden="true"><path d="M13.827 3.52h3.603L24 20.48h-3.603l-6.57-16.96zm-7.258 0h3.767L16.906 20.48h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm1.94 5.027-2.2 5.698h4.404l-2.203-5.698z"/></svg>
-                    <span>claude-code</span>
-                    <span class="v-startup-session-cwd">./backend</span>
-                  </div>
-                  <div class="v-startup-session">
-                    <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" fill-rule="evenodd" style="opacity:0.5;" aria-hidden="true"><path d="M13.827 3.52h3.603L24 20.48h-3.603l-6.57-16.96zm-7.258 0h3.767L16.906 20.48h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm1.94 5.027-2.2 5.698h4.404l-2.203-5.698z"/></svg>
-                    <span>claude-code</span>
-                    <span class="v-startup-session-cwd">./frontend</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Second group -->
-              <div class="v-startup-group-card">
-                <div class="v-startup-group-header">
-                  <i data-lucide="rows-2" style="width:11px;height:11px;opacity:0.5;"></i>
-                  <span class="v-startup-group-name">Gemini CLI</span>
-                  <div class="v-startup-group-badges">
-                    <span class="v-startup-badge">1 pane</span>
-                  </div>
-                </div>
-                <div class="v-startup-sessions">
-                  <div class="v-startup-session">
-                    <svg viewBox="0 0 100 100" width="11" height="11" fill="currentColor" style="opacity:0.5;" aria-hidden="true"><path d="M50 0C50 25 75 50 100 50C75 50 50 75 50 100C50 75 25 50 0 50C25 50 50 25 50 0Z"/></svg>
-                    <span>gemini-cli</span>
-                    <span class="v-startup-session-cwd">.</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-    </div>
-  </section>
-
-  <!-- ════════════ Manifesto ════════════ -->
-  <section class="manifesto" aria-label="Product philosophy">
-    <div class="container">
-      <div class="manifesto-inner reveal">
-        <div class="manifesto-rule"></div>
-        <p class="manifesto-text">
-          IDEs were designed for writing code. But you barely write code anymore. You orchestrate, review, and approve. <strong>Panes is the cockpit for that workflow.</strong>
-        </p>
-        <div class="manifesto-visual">
-          <div class="m-panes-row">
-
-            <div class="m-pane">
-              <div class="m-pane-card m-pane-chat">
-                <div class="m-msg m-msg-user">Add caching to the search endpoint</div>
-                <div class="m-msg m-msg-ai">I'll use Redis with a 5-minute TTL and cache invalidation on writes.<span class="m-cursor"></span></div>
-              </div>
-              <span class="m-pane-label">orchestrate</span>
-            </div>
-
-            <div class="m-pane">
-              <div class="m-pane-card m-pane-diff">
-                <div class="m-diff-file">src/routes/search.rs</div>
-                <div class="m-dl m-del"><span class="m-ln">22</span>- let results = db.query(q);</div>
-                <div class="m-dl m-add"><span class="m-ln">22</span>+ let results = cache.get_or(q, ||</div>
-                <div class="m-dl m-add"><span class="m-ln">23</span>+   db.query(q), ttl: 300);</div>
-                <div class="m-dl m-ctx"><span class="m-ln">24</span>    Ok(Json(results))</div>
-              </div>
-              <span class="m-pane-label">review</span>
-            </div>
-
-            <div class="m-pane">
-              <div class="m-pane-card m-pane-approve">
-                <div class="m-approve-prompt">claude wants to run:</div>
-                <div class="m-approve-cmd">npm run deploy --prod</div>
-                <div class="m-approve-actions">
-                  <div class="m-approve-btn m-approve-allow">Allow</div>
-                  <div class="m-approve-btn m-approve-deny">Deny</div>
-                </div>
-              </div>
-              <span class="m-pane-label">approve</span>
-            </div>
-
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ════════════ CTA ════════════ -->
-  <section class="cta" aria-label="Download">
-    <div class="container">
-      <div class="cta-content reveal">
-        <h2 class="cta-title">Ready to start?</h2>
-        <p class="cta-subtitle">Download, open a folder, start chatting.<br>Free and open-source.</p>
-        <div class="cta-actions">
-          <a href="https://github.com/wygoralves/panes/releases/latest" class="btn-primary" id="cta-download">
-            <svg class="os-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-            <span>Download for macOS</span>
-          </a>
-        </div>
-      </div>
-    </div>
-  </section>
-
+      <a href="https://github.com/wygoralves/panes/releases/latest" class="prm-primary">
+        <span class="js-download-label">Download for macOS</span>
+        <span aria-hidden="true">↓</span>
+      </a>
+    </section>
   </main>
 
-  <!-- ════════════ Footer ════════════ -->
-  <footer class="footer">
-    <div class="container">
-      <div class="footer-row">
-        <div class="footer-brand-name">
-          <img src="logo.svg?v=3" alt="Panes">
-          <span>Panes</span>
-        </div>
-        <span class="footer-copy">&copy; 2026 Panes. MIT License.</span>
-        <div class="footer-links">
-          <a href="https://github.com/wygoralves/panes" target="_blank" rel="noopener">GitHub</a>
-          <a href="https://twitter.com/panesagent" target="_blank" rel="noopener">Twitter</a>
-        </div>
-      </div>
+  <footer class="prm-footer">
+    <div class="prm-shell">
+      <span class="prm-footer-wordmark" aria-label="panes">
+        <img class="prm-theme-asset prm-theme-asset-dark" src="/product-room/panes-wordmark-on-dark.svg?v=1" alt="">
+        <img class="prm-theme-asset prm-theme-asset-light" src="/product-room/panes-wordmark-on-light.svg?v=1" alt="">
+      </span>
+      <span>Local-first desktop cockpit for agent-led software work.</span>
+      <a href="https://github.com/wygoralves/panes" target="_blank" rel="noopener">GitHub</a>
     </div>
   </footer>
 
   <script>
-    // Wait for deferred Lucide to load
-    document.addEventListener('DOMContentLoaded', function() {
-      if (typeof lucide !== 'undefined') {
+    document.addEventListener("DOMContentLoaded", function () {
+      if (typeof lucide !== "undefined") {
         lucide.createIcons();
+      }
+
+      var localeContent = {
+        "en-US": {
+          title: "Panes | The cockpit for agent-led software work",
+          description: "Run Codex, Claude, CLI agents, Git, terminals, and worktrees in one local desktop cockpit.",
+          languageLabel: "Language selector",
+          useEnglish: "Use English (United States)",
+          usePortuguese: "Use Portuguese (Brazil)",
+          useLightTheme: "Use light theme",
+          useDarkTheme: "Use dark theme"
+        },
+        "pt-BR": {
+          title: "Panes | O cockpit para software feito com agentes",
+          description: "Use Codex, Claude, agentes de CLI, Git, terminais e worktrees em um único cockpit desktop local.",
+          languageLabel: "Seletor de idioma",
+          useEnglish: "Usar inglês (Estados Unidos)",
+          usePortuguese: "Usar português (Brasil)",
+          useLightTheme: "Usar tema claro",
+          useDarkTheme: "Usar tema escuro"
+        }
+      };
+
+      var portugueseText = {
+        "Skip to main content": "Pular para o conteúdo principal",
+        "Product": "Produto",
+        "Workflow": "Fluxo",
+        "Agents": "Agentes",
+        "Download": "Baixar",
+        "Run every agent.": "Rode todos os agentes.",
+        "Stay in control.": "Tudo sob controle.",
+        "Agent chat, terminals, Git, search, and worktrees in one native desktop app for engineers coordinating agents all day.": "Chat com agentes, terminais, Git, busca e worktrees em um app desktop nativo para quem coordena agentes o dia todo.",
+        "View GitHub": "Ver no GitHub",
+        "New thread": "Nova thread",
+        "Commands": "Comandos",
+        "Search": "Buscar",
+        "Workspaces": "Workspaces",
+        "Broadcast input · 4 worktrees": "Entrada compartilhada · 4 worktrees",
+        "claude \"Refactor auth module\"": "claude \"Refatorar módulo de autenticação\"",
+        "✓ Reading src/auth/mod.rs...": "✓ Lendo src/auth/mod.rs...",
+        "✓ Analyzing dependencies...": "✓ Analisando dependências...",
+        "↳ Writing refactored auth": "↳ Aplicando a refatoração de autenticação",
+        "claude \"Add rate limiting\"": "claude \"Limitar requisições\"",
+        "✓ Reading src/middleware...": "✓ Lendo src/middleware...",
+        "↳ Inserting rate limiter": "↳ Adicionando limitador de requisições",
+        "antigravity \"Optimize queries\"": "antigravity \"Otimizar consultas\"",
+        "✓ Scanning db/queries.rs...": "✓ Analisando db/queries.rs...",
+        "↳ Rewriting N+1 queries": "↳ Reescrevendo consultas N+1",
+        "codex \"Write tests\"": "codex \"Escrever testes\"",
+        "✓ Discovering test targets...": "✓ Identificando testes...",
+        "↳ Generating unit tests": "↳ Gerando testes unitários",
+        "Fix git push failures": "Corrigir falhas no git push",
+        "Review release workflow": "Revisar fluxo de release",
+        "Clean up agent output": "Limpar saída do agente",
+        "Add error handling to the git push command with retry logic.": "Adicione tratamento de erros ao git push com novas tentativas.",
+        "+1 file": "+1 arquivo",
+        "I’ll add bounded retries with exponential backoff and preserve the original push error.": "Vou adicionar tentativas limitadas com backoff exponencial e preservar o erro original do git push.",
+        "Ask for follow-up changes": "Peça ajustes adicionais",
+        "Plan": "Planejar",
+        "Standard": "Padrão",
+        "Compiling panes-core": "Compilando panes-core",
+        "Finished": "Concluído",
+        "I found the failure path in git push. I’m adding bounded retries, preserving the original error, and covering the backoff behavior.": "Encontrei a falha no git push. Estou adicionando tentativas limitadas, preservando o erro original e cobrindo o comportamento do backoff.",
+        "8 actions completed": "8 ações concluídas",
+        "4 edits · 4 commands": "4 edições · 4 comandos",
+        "The change is ready. The targeted tests and cargo check both pass.": "A alteração está pronta. Os testes específicos e o cargo check passaram.",
+        "14 tests passed": "14 testes passaram",
+        "The diff is limited to the push path and its tests. No unrelated files changed.": "O diff está limitado ao fluxo de push e aos testes relacionados. Nenhum arquivo fora do escopo foi alterado.",
+        "2 files changed": "2 arquivos alterados",
+        "The branch is clean and ready for review.": "A branch está limpa e pronta para revisão.",
+        "Ready for review": "Pronto para revisão",
+        "Changes": "Alterações",
+        "Changes\u00a0\u00a01": "Alterações 1",
+        "↶\u00a0\u00a0 + Stage all": "↶  + Adicionar tudo ao stage",
+        "Add retry logic to git push.": "Adicione novas tentativas ao git push.",
+        "I found the failure path and added bounded retries without changing the rest of the push flow.": "Encontrei a falha e adicionei tentativas limitadas sem alterar o restante do fluxo de push.",
+        "14 tests\u00a0\u00a0·\u00a0\u00a02 files": "14 testes  ·  2 arquivos",
+        "From prompt to review-ready change.": "Do prompt à mudança pronta para revisão.",
+        "Panes keeps the conversation, commands, diff, and approval trail together in one workspace.": "O Panes mantém a conversa, os comandos, o diff e o histórico de aprovações juntos no mesmo workspace.",
+        "New pane": "Novo painel",
+        "Agent": "Agente",
+        "Native chat": "Chat nativo",
+        "Selected": "Selecionado",
+        "CLI agent": "Agente de CLI",
+        "Terminal session": "Sessão de terminal",
+        "Choose the right agent": "Escolha o agente certo",
+        "Use native chat for Codex, Claude, and OpenCode, or launch a supported CLI agent in the terminal.": "Use o chat nativo com Codex, Claude e OpenCode ou execute um agente de CLI compatível no terminal.",
+        "Live activity": "Atividade em tempo real",
+        "Running": "Em execução",
+        "Read": "Leu",
+        "Ran": "Executou",
+        "Passed": "Passou",
+        "Changed": "Alterou",
+        "4 files": "4 arquivos",
+        "2 files": "2 arquivos",
+        "retry and backoff": "tentativas e backoff",
+        "Track every action": "Acompanhe cada ação",
+        "Files read, commands run, terminal output, and Git state remain visible while the task runs.": "Arquivos lidos, comandos executados, saída do terminal e estado do Git permanecem visíveis durante a tarefa.",
+        "Review changes": "Revisar alterações",
+        "Tests passed": "Testes passaram",
+        "Commit": "Criar commit",
+        "Review and commit": "Revise e faça o commit",
+        "Review the diff, approve sensitive commands, then stage and commit without leaving the task.": "Revise o diff, aprove comandos sensíveis e faça stage e commit sem sair da tarefa.",
+        "Bring the agents you already use.": "Traga os agentes que você já usa.",
+        "Use Codex, Claude, and OpenCode in native chat. Launch Antigravity CLI, Factory Droid, Kilo Code, and Kiro in terminal panes.": "Use Codex, Claude e OpenCode no chat nativo. Execute Antigravity CLI, Factory Droid, Kilo Code e Kiro em painéis de terminal.",
+        "One workspace.": "Um workspace.",
+        "Repo context stays in the middle.": "O contexto do repositório fica no centro.",
+        "One cockpit for the work around the code.": "Um cockpit além do código.",
+        "Chat, terminal output, and changes stay attached to the same task.": "Chat, saída do terminal e alterações continuam ligados à mesma tarefa.",
+        "Auth hardening": "Reforço de autenticação",
+        "Audit the auth flow. Fix the refresh race, then prove it with tests.": "Audite o fluxo de autenticação. Corrija a condição de corrida na renovação da sessão e comprove a correção com testes.",
+        "I found the refresh race and isolated it to two files. The fix is ready. All targeted tests pass.": "Encontrei a condição de corrida na renovação da sessão e a isolei em dois arquivos. A correção está pronta e todos os testes específicos passaram.",
+        "Test run": "Execução de testes",
+        "14 passed": "14 passaram",
+        "test result:": "resultado:",
+        ". 14 passed; 0 failed": ". 14 passaram; 0 falharam",
+        "Ready to review": "Pronto para revisão",
+        "The diff, test results, and branch are ready for review.": "O diff, os resultados dos testes e a branch estão prontos para revisão.",
+        "files": "arquivos",
+        "tests": "testes",
+        "Open a repo. Keep every agent under control.": "Abra um repositório. Mantenha cada agente sob controle.",
+        "Free, open source, and local-first.": "Grátis, código aberto e local-first.",
+        "Local-first desktop cockpit for agent-led software work.": "Cockpit desktop local-first para trabalhar com agentes de código."
+      };
+
+      var ariaPortuguese = {
+        "Panes home": "Página inicial do Panes",
+        "Main navigation": "Navegação principal",
+        "Interactive Panes workspace preview": "Prévia interativa do espaço de trabalho do Panes",
+        "A simplified Panes task showing one prompt, a Codex response, passing tests, and a follow-up composer": "Uma tarefa simplificada do Panes com um prompt, uma resposta do Codex, testes aprovados e um campo de acompanhamento",
+        "Codex, Claude, Antigravity CLI, Factory Droid, OpenCode, Kilo Code, and Kiro orbiting one shared Panes workspace": "Codex, Claude, Antigravity CLI, Factory Droid, OpenCode, Kilo Code e Kiro ao redor de um workspace compartilhado no Panes",
+        "One Panes task holding an agent conversation, terminal test run, and review-ready code changes": "Uma tarefa do Panes com conversa do agente, execução de testes no terminal e alterações prontas para revisão",
+        "Attach": "Anexar",
+        "Plan mode": "Modo de planejamento",
+        "Model": "Modelo",
+        "Permissions": "Permissões",
+        "Send": "Enviar",
+        "Download": "Baixar"
+      };
+
+      var platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
+      var normalized = platform.toLowerCase();
+      var platformLabel = normalized.includes("win") ? "Windows" : normalized.includes("linux") ? "Linux" : "macOS";
+      var localizedTextNodes = [];
+      var textWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      while (textWalker.nextNode()) {
+        var textNode = textWalker.currentNode;
+        var parentElement = textNode.parentElement;
+        if (!parentElement || parentElement.closest("script, style, .prm-locale-switcher, .js-download-label")) {
+          continue;
+        }
+        var originalValue = textNode.nodeValue;
+        var textKey = originalValue.trim();
+        if (textKey && Object.prototype.hasOwnProperty.call(portugueseText, textKey)) {
+          var keyStart = originalValue.indexOf(textKey);
+          localizedTextNodes.push({
+            node: textNode,
+            key: textKey,
+            prefix: originalValue.slice(0, keyStart),
+            suffix: originalValue.slice(keyStart + textKey.length)
+          });
+        }
+      }
+
+      var localizedAriaElements = Array.from(document.querySelectorAll("[aria-label]")).filter(function (element) {
+        return !element.closest(".prm-locale-switcher");
+      }).map(function (element) {
+        return { element: element, label: element.getAttribute("aria-label") };
+      });
+
+      function setMetaContent(selector, value) {
+        var element = document.querySelector(selector);
+        if (element) {
+          element.setAttribute("content", value);
+        }
+      }
+
+      function storeLocale(locale) {
+        try {
+          window.localStorage.setItem("panes.locale", locale);
+        } catch (error) {
+        }
+      }
+
+      function getStoredLocale() {
+        try {
+          return window.localStorage.getItem("panes.locale");
+        } catch (error) {
+          return null;
+        }
+      }
+
+      function getStoredTheme() {
+        try {
+          return window.localStorage.getItem("panes.landing.theme");
+        } catch (error) {
+          return null;
+        }
+      }
+
+      function storeTheme(theme) {
+        try {
+          window.localStorage.setItem("panes.landing.theme", theme);
+        } catch (error) {
+        }
+      }
+
+      function updateThemeToggle() {
+        var themeToggle = document.querySelector(".prm-theme-toggle");
+        if (!themeToggle) {
+          return;
+        }
+        var locale = document.documentElement.dataset.locale === "pt-BR" ? "pt-BR" : "en-US";
+        var isLight = document.documentElement.dataset.theme === "light";
+        var label = isLight ? localeContent[locale].useDarkTheme : localeContent[locale].useLightTheme;
+        themeToggle.setAttribute("aria-label", label);
+        themeToggle.setAttribute("title", label);
+        themeToggle.setAttribute("aria-pressed", String(isLight));
+      }
+
+      function applyTheme(theme, persist) {
+        var selectedTheme = theme === "light" ? "light" : "dark";
+        document.documentElement.dataset.theme = selectedTheme;
+        updateThemeToggle();
+        if (persist) {
+          storeTheme(selectedTheme);
+        }
+      }
+
+      window.panesLandingTheme = {
+        toggle: function () {
+          applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light", true);
+        }
+      };
+
+      function applyLocale(locale, persist) {
+        var selectedLocale = locale === "pt-BR" ? "pt-BR" : "en-US";
+        var content = localeContent[selectedLocale];
+        var isPortuguese = selectedLocale === "pt-BR";
+
+        document.documentElement.lang = selectedLocale;
+        document.documentElement.dataset.locale = selectedLocale;
+        document.title = content.title;
+        setMetaContent('meta[name="description"]', content.description);
+        setMetaContent('meta[property="og:title"]', content.title);
+        setMetaContent('meta[property="og:description"]', content.description);
+        setMetaContent('meta[name="twitter:title"]', content.title);
+        setMetaContent('meta[name="twitter:description"]', content.description);
+
+        localizedTextNodes.forEach(function (entry) {
+          var translated = isPortuguese ? portugueseText[entry.key] : entry.key;
+          entry.node.nodeValue = entry.prefix + translated + entry.suffix;
+        });
+
+        localizedAriaElements.forEach(function (entry) {
+          var translated = isPortuguese && ariaPortuguese[entry.label] ? ariaPortuguese[entry.label] : entry.label;
+          entry.element.setAttribute("aria-label", translated);
+        });
+
+        document.querySelectorAll(".js-download-label").forEach(function (element) {
+          element.textContent = (isPortuguese ? "Baixar para " : "Download for ") + platformLabel;
+        });
+
+        var localeSwitcher = document.querySelector(".prm-locale-switcher");
+        if (localeSwitcher) {
+          localeSwitcher.setAttribute("aria-label", content.languageLabel);
+        }
+        document.querySelectorAll(".prm-locale-option").forEach(function (button) {
+          var isActive = button.getAttribute("data-locale") === selectedLocale;
+          button.setAttribute("aria-pressed", String(isActive));
+          button.classList.toggle("is-active", isActive);
+          button.setAttribute("aria-label", button.getAttribute("data-locale") === "en-US" ? content.useEnglish : content.usePortuguese);
+        });
+        updateThemeToggle();
+
+        if (persist) {
+          storeLocale(selectedLocale);
+        }
+      }
+
+      var storedLocale = getStoredLocale();
+      var browserLocale = (navigator.languages && navigator.languages[0]) || navigator.language || "en-US";
+      var initialLocale = storedLocale === "pt-BR" || storedLocale === "en-US" ? storedLocale : browserLocale.toLowerCase().startsWith("pt") ? "pt-BR" : "en-US";
+      document.querySelectorAll(".prm-locale-option").forEach(function (button) {
+        button.addEventListener("click", function () {
+          applyLocale(button.getAttribute("data-locale"), true);
+        });
+      });
+      applyLocale(initialLocale, false);
+
+      var savedTheme = getStoredTheme();
+      var systemTheme = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      var initialTheme = savedTheme === "light" || savedTheme === "dark" ? savedTheme : systemTheme;
+      applyTheme(initialTheme, false);
+
+      if (savedTheme !== "light" && savedTheme !== "dark" && window.matchMedia) {
+        window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", function (event) {
+          applyTheme(event.matches ? "light" : "dark", false);
+        });
+      }
+
+      var pageHeader = document.querySelector(".prm-header");
+      if (pageHeader) {
+        var previousScrollY = Math.max(window.scrollY, 0);
+        var scrollDirection = 0;
+        var directionTravel = 0;
+        var headerFrame = 0;
+
+        function updateHeader() {
+          var currentScrollY = Math.max(window.scrollY, 0);
+          var delta = currentScrollY - previousScrollY;
+          var nextDirection = delta === 0 ? scrollDirection : delta > 0 ? 1 : -1;
+
+          if (nextDirection !== scrollDirection) {
+            scrollDirection = nextDirection;
+            directionTravel = Math.abs(delta);
+          } else {
+            directionTravel += Math.abs(delta);
+          }
+
+          pageHeader.classList.toggle("is-scrolled", currentScrollY > 10);
+
+          if (currentScrollY <= 10) {
+            pageHeader.classList.remove("is-hidden");
+            directionTravel = 0;
+          } else if (scrollDirection < 0 && directionTravel >= 6) {
+            pageHeader.classList.remove("is-hidden");
+            directionTravel = 0;
+          } else if (scrollDirection > 0 && currentScrollY > 96 && directionTravel >= 24) {
+            pageHeader.classList.add("is-hidden");
+            directionTravel = 0;
+          }
+
+          previousScrollY = currentScrollY;
+          headerFrame = 0;
+        }
+
+        window.addEventListener("scroll", function () {
+          if (!headerFrame) {
+            headerFrame = window.requestAnimationFrame(updateHeader);
+          }
+        }, { passive: true });
+
+        pageHeader.addEventListener("focusin", function () {
+          pageHeader.classList.remove("is-hidden");
+        });
+
+        updateHeader();
+      }
+
+      var motionSections = document.querySelectorAll("[data-prm-motion]");
+      var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+      if (motionSections.length && !reducedMotion.matches && "IntersectionObserver" in window) {
+        document.documentElement.classList.add("prm-motion-ready");
+        var motionObserver = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("is-in-view");
+              window.setTimeout(function (target) {
+                target.classList.add("is-hover-ready");
+              }, 760, entry.target);
+              motionObserver.unobserve(entry.target);
+            }
+          });
+        }, { threshold: 0.24 });
+
+        motionSections.forEach(function (section) {
+          motionObserver.observe(section);
+        });
       } else {
-        // Lucide loaded with defer, may fire after DOMContentLoaded
-        var lucideScript = document.querySelector('script[src*="lucide"]');
-        if (lucideScript) {
-          lucideScript.addEventListener('load', function() { lucide.createIcons(); });
-        }
-      }
-    });
-
-    // Hamburger menu
-    var hamburger = document.getElementById('nav-hamburger');
-    var navLinks = document.getElementById('nav-links');
-    if (hamburger && navLinks) {
-      hamburger.addEventListener('click', function() {
-        var isOpen = navLinks.classList.toggle('open');
-        hamburger.classList.toggle('open', isOpen);
-        hamburger.setAttribute('aria-expanded', String(isOpen));
-      });
-    }
-
-    // OS detection
-    var platform = navigator.platform.toLowerCase();
-    var isWindows = platform.includes('win');
-    var isLinux = platform.includes('linux');
-
-    if (isWindows) {
-      var windowsIcon = '<svg class="os-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 12V6.75l6-1.32v6.48L3 12zm17-9v8.75l-10 .08V5.21L20 3zm-10 9.04l10-.08V21l-10-1.91V12.04zM3 12.5l6 .09v6.72l-6-1.09V12.5z"/></svg>';
-      document.querySelectorAll('#nav-download, #hero-download, #cta-download').forEach(function(el) {
-        el.innerHTML = windowsIcon + '<span>Download for Windows</span>';
-      });
-    } else if (isLinux) {
-      var linuxIcon = '<svg class="os-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>';
-      document.querySelectorAll('#nav-download, #hero-download, #cta-download').forEach(function(el) {
-        el.innerHTML = linuxIcon + '<span>Download for Linux</span>';
-      });
-    }
-
-    // Nav scroll
-    var nav = document.getElementById('nav');
-    var ticking = false;
-    window.addEventListener('scroll', function() {
-      if (!ticking) {
-        requestAnimationFrame(function() {
-          nav.classList.toggle('scrolled', window.scrollY > 40);
-          ticking = false;
+        motionSections.forEach(function (section) {
+          section.classList.add("is-in-view");
+          section.classList.add("is-hover-ready");
         });
-        ticking = true;
       }
-    }, { passive: true });
 
-    // Scroll reveals
-    var revealObserver = new IntersectionObserver(function(entries) {
-      entries.forEach(function(entry) {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('in-view');
-          revealObserver.unobserve(entry.target);
+      function bindChipAvoidance(container) {
+        if (!container || reducedMotion.matches || !window.matchMedia("(pointer: fine) and (min-width: 761px)").matches) {
+          return;
         }
-      });
-    }, { threshold: 0.08, rootMargin: '0px 0px -40px 0px' });
 
-    document.querySelectorAll('.reveal').forEach(function(el) {
-      revealObserver.observe(el);
-    });
-
-    if (window.panesLandingI18n && typeof window.panesLandingI18n.init === 'function') {
-      window.panesLandingI18n.init();
-    }
-
-    // Mark mockup as booted after initial animations (~2s) so view-switching is instant
-    var appFrame = document.querySelector('.app-frame');
-    if (appFrame) setTimeout(function() { appFrame.classList.add('booted'); }, 2000);
-
-    // View switcher in mockup
-    var viewBtns = document.querySelectorAll('.layout-mode-pill .lm-btn[data-view]');
-    var contentCard = document.querySelector('.content-card');
-    viewBtns.forEach(function(btn) {
-      btn.style.cursor = 'pointer';
-      btn.addEventListener('click', function() {
-        var view = btn.getAttribute('data-view');
-        // Mark as booted immediately on first interaction
-        if (appFrame) appFrame.classList.add('booted');
-        // Update active button
-        viewBtns.forEach(function(b) { b.classList.remove('lm-active'); });
-        btn.classList.add('lm-active');
-        // Switch view
-        document.querySelectorAll('.mockup-view').forEach(function(v) {
-          v.classList.remove('mockup-view-active');
+        var chips = Array.from(container.querySelectorAll(".prm-agent-orbit"));
+        var states = chips.map(function (chip) {
+          return { chip: chip, currentX: 0, currentY: 0, targetX: 0, targetY: 0 };
         });
-        var target = document.querySelector('.mockup-view[data-view="' + view + '"]');
-        if (target) target.classList.add('mockup-view-active');
-        // Update data attribute for any remaining view-specific styles
-        if (contentCard) contentCard.setAttribute('data-active-view', view);
+        var frame = 0;
+        var activeIndex = -1;
+
+        function setTargets(pointerX, pointerY) {
+          var closestIndex = -1;
+          var closestDistance = 92;
+          var closestDeltaX = 0;
+          var closestDeltaY = 0;
+
+          states.forEach(function (state, index) {
+            state.targetX = 0;
+            state.targetY = 0;
+            var chipCenterX = state.chip.offsetLeft + state.chip.offsetWidth / 2;
+            var chipCenterY = state.chip.offsetTop + state.chip.offsetHeight / 2;
+            var deltaX = chipCenterX - pointerX;
+            var deltaY = chipCenterY - pointerY;
+            var distance = Math.hypot(deltaX, deltaY);
+            if (distance < closestDistance) {
+              closestDistance = distance;
+              closestIndex = index;
+              closestDeltaX = deltaX;
+              closestDeltaY = deltaY;
+            }
+          });
+
+          states.forEach(function (state) {
+            state.chip.classList.remove("is-avoiding");
+          });
+          activeIndex = closestIndex;
+
+          if (closestIndex >= 0) {
+            var directionLength = Math.max(closestDistance, 0.001);
+            var strength = Math.pow(1 - closestDistance / 92, 1.7) * 9;
+            var activeState = states[closestIndex];
+            activeState.targetX = closestDeltaX / directionLength * strength;
+            activeState.targetY = closestDeltaY / directionLength * strength;
+            activeState.chip.classList.add("is-avoiding");
+          }
+        }
+
+        function renderFrame() {
+          var settled = true;
+          states.forEach(function (state) {
+            state.currentX += (state.targetX - state.currentX) * 0.14;
+            state.currentY += (state.targetY - state.currentY) * 0.14;
+            state.chip.style.setProperty("--hover-x", state.currentX.toFixed(2) + "px");
+            state.chip.style.setProperty("--hover-y", state.currentY.toFixed(2) + "px");
+            state.chip.style.setProperty("--hover-r", (state.currentX * 0.018).toFixed(2) + "deg");
+            if (Math.abs(state.targetX - state.currentX) >= 0.015 || Math.abs(state.targetY - state.currentY) >= 0.015) {
+              settled = false;
+            }
+          });
+
+          if (!settled) {
+            frame = window.requestAnimationFrame(renderFrame);
+          } else {
+            frame = 0;
+            if (activeIndex < 0) {
+              container.classList.remove("is-chip-active");
+              states.forEach(function (state) {
+                state.chip.classList.remove("is-avoiding");
+              });
+            }
+          }
+        }
+
+        container.addEventListener("pointermove", function (event) {
+          var bounds = container.getBoundingClientRect();
+          setTargets(event.clientX - bounds.left, event.clientY - bounds.top);
+          container.classList.add("is-chip-active");
+          if (!frame) {
+            frame = window.requestAnimationFrame(renderFrame);
+          }
+        });
+
+        function releaseChips() {
+          activeIndex = -1;
+          states.forEach(function (state) {
+            state.targetX = 0;
+            state.targetY = 0;
+          });
+          if (!frame) {
+            frame = window.requestAnimationFrame(renderFrame);
+          }
+        }
+
+        container.addEventListener("pointerleave", releaseChips);
+        window.addEventListener("pointermove", function (event) {
+          if (!container.contains(event.target) && container.classList.contains("is-chip-active")) {
+            releaseChips();
+          }
+        }, { passive: true });
+        window.addEventListener("blur", releaseChips);
+      }
+
+      var agentField = document.querySelector(".prm-agent-field");
+      if (agentField) {
+        bindChipAvoidance(agentField);
+      }
+
+      function bindCockpitHover(stage) {
+        if (!stage || reducedMotion.matches || !window.matchMedia("(pointer: fine) and (min-width: 761px)").matches) {
+          return;
+        }
+
+        var panels = Array.from(stage.querySelectorAll(".prm-cockpit-chat, .prm-cockpit-terminal, .prm-cockpit-review"));
+        var activePanel = null;
+
+        function setActivePanel(nextPanel) {
+          if (nextPanel === activePanel) {
+            return;
+          }
+          if (activePanel) {
+            activePanel.classList.remove("is-hovered");
+          }
+          activePanel = nextPanel;
+          if (activePanel) {
+            activePanel.classList.add("is-hovered");
+          }
+        }
+
+        stage.addEventListener("pointermove", function (event) {
+          var panel = event.target.closest(".prm-cockpit-chat, .prm-cockpit-terminal, .prm-cockpit-review");
+          setActivePanel(panel && stage.contains(panel) ? panel : null);
+        });
+        stage.addEventListener("pointerleave", function () {
+          setActivePanel(null);
+        });
+        window.addEventListener("blur", function () {
+          setActivePanel(null);
+        });
+      }
+
+      var cockpitStage = document.querySelector(".prm-cockpit-stage");
+      if (cockpitStage) {
+        bindCockpitHover(cockpitStage);
+      }
+
+      var appFrame = document.querySelector(".app-frame");
+      if (appFrame) {
+        window.setTimeout(function () {
+          appFrame.classList.add("booted");
+        }, 2000);
+      }
+
+      var viewButtons = document.querySelectorAll(".layout-mode-pill .lm-btn[data-view]");
+      var contentCard = document.querySelector(".content-card");
+      viewButtons.forEach(function (button) {
+        button.addEventListener("click", function () {
+          var view = button.getAttribute("data-view");
+          if (appFrame) {
+            appFrame.classList.add("booted");
+          }
+          viewButtons.forEach(function (item) {
+            item.classList.remove("lm-active");
+          });
+          button.classList.add("lm-active");
+          document.querySelectorAll(".mockup-view").forEach(function (item) {
+            item.classList.remove("mockup-view-active");
+          });
+          var target = document.querySelector('.mockup-view[data-view="' + view + '"]');
+          if (target) {
+            target.classList.add("mockup-view-active");
+          }
+          if (contentCard) {
+            contentCard.setAttribute("data-active-view", view);
+          }
+        });
       });
     });
-
   </script>
-
 </body>
 </html>
