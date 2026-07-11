@@ -1,42 +1,61 @@
-<svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <filter id="noise">
-      <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="4" stitchTiles="stitch"/>
-      <feColorMatrix type="matrix" values="1 0 0 0 0, 0 1 0 0 0, 0 0 1 0 0, 0 0 0 0.05 0" />
-    </filter>
-
-    <filter id="coreGlow" x="-50%" y="-50%" width="200%" height="200%">
-      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.8"/>
-      <feDropShadow dx="0" dy="0" stdDeviation="24" flood-color="#FF6B6B" flood-opacity="0.5"/>
-    </filter>
-
-    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#181818" />
-      <stop offset="100%" stop-color="#050505" />
-    </linearGradient>
-
-    <linearGradient id="rimLight" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="rgba(255, 255, 255, 0.25)" />
-      <stop offset="15%" stop-color="rgba(255, 255, 255, 0.03)" />
-      <stop offset="80%" stop-color="rgba(0, 0, 0, 0)" />
-      <stop offset="100%" stop-color="rgba(0, 0, 0, 0.8)" />
-    </linearGradient>
-    <clipPath id="squircle">
-      <rect x="32" y="32" width="448" height="448" rx="100"/>
+    <clipPath id="shellClip">
+      <rect x="96" y="96" width="832" height="832" rx="190"/>
     </clipPath>
+    <linearGradient id="shell" x1="150" y1="122" x2="874" y2="914" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#24242D"/>
+      <stop offset="0.58" stop-color="#111116"/>
+      <stop offset="1" stop-color="#09090C"/>
+    </linearGradient>
+    <linearGradient id="shellEdge" x1="180" y1="112" x2="836" y2="914" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5A5A67"/>
+      <stop offset="0.35" stop-color="#303039"/>
+      <stop offset="1" stop-color="#18181D"/>
+    </linearGradient>
+    <linearGradient id="glyph" x1="320" y1="276" x2="674" y2="770" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="0.55" stop-color="#F4F4F7"/>
+      <stop offset="1" stop-color="#D9D9DF"/>
+    </linearGradient>
+    <linearGradient id="mint" x1="557" y1="546" x2="674" y2="684" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#91E9B9"/>
+      <stop offset="0.54" stop-color="#61D596"/>
+      <stop offset="1" stop-color="#2DAA6D"/>
+    </linearGradient>
+    <filter id="shellShadow" x="44" y="44" width="936" height="968" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="24" stdDeviation="24" flood-color="#000000" flood-opacity="0.46"/>
+    </filter>
+    <filter id="surfaceNoise" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.72" numOctaves="2" seed="11"/>
+      <feColorMatrix type="saturate" values="0"/>
+      <feComponentTransfer>
+        <feFuncA type="table" tableValues="0 0.055"/>
+      </feComponentTransfer>
+    </filter>
+    <filter id="glyphShadow" x="220" y="218" width="604" height="604" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000000" flood-opacity="0.42"/>
+    </filter>
+    <filter id="mintShadow" x="512" y="512" width="218" height="226" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#000000" flood-opacity="0.38"/>
+    </filter>
   </defs>
 
-  <g clip-path="url(#squircle)">
-    <rect x="32" y="32" width="448" height="448" rx="100" fill="url(#bgGrad)" />
-    <rect x="32" y="32" width="448" height="448" rx="100" filter="url(#noise)" style="pointer-events: none;" />
-    <rect x="33" y="33" width="446" height="446" rx="99" fill="none" stroke="url(#rimLight)" stroke-width="2" />
+  <g filter="url(#shellShadow)">
+    <rect x="96" y="96" width="832" height="832" rx="190" fill="url(#shell)"/>
+    <g clip-path="url(#shellClip)">
+      <rect x="96" y="96" width="832" height="832" fill="#FFFFFF" filter="url(#surfaceNoise)" opacity="0.6"/>
+    </g>
+    <rect x="100" y="100" width="824" height="824" rx="186" stroke="url(#shellEdge)" stroke-width="8"/>
+  </g>
 
-    <circle cx="256" cy="256" r="140" fill="#FF6B6B" filter="blur(64px)" opacity="0.1" />
+  <g filter="url(#glyphShadow)" stroke="url(#glyph)">
+    <rect x="262" y="262" width="500" height="500" rx="125" stroke-width="48"/>
+    <path d="M450 278V746M470 460H746" stroke-width="48" stroke-linecap="round"/>
+  </g>
 
-    <rect x="106" y="170" width="236" height="236" fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linejoin="miter" />
-    <rect x="170" y="106" width="236" height="236" fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linejoin="miter" />
-    <rect x="138" y="138" width="236" height="236" fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linejoin="miter" />
-
-    <rect x="206" y="206" width="100" height="100" fill="#FF6B6B" filter="url(#coreGlow)"/>
+  <g filter="url(#mintShadow)">
+    <rect x="536" y="536" width="146" height="146" rx="50" fill="url(#mint)"/>
+    <path d="M566 548H620C646 548 667 569 667 595" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="4" stroke-linecap="round"/>
   </g>
 </svg>
