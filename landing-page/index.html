@@ -12,10 +12,23 @@
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="Panes | The cockpit for agent-led software work">
   <meta name="twitter:description" content="Run Codex, Claude, terminal harnesses, git, and worktrees from one local desktop cockpit.">
+  <script>
+    (function () {
+      var savedTheme = null;
+      try {
+        savedTheme = window.localStorage.getItem("panes.landing.theme");
+      } catch (error) {
+      }
+      var prefersLight = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+      document.documentElement.dataset.theme = savedTheme === "light" || savedTheme === "dark"
+        ? savedTheme
+        : prefersLight ? "light" : "dark";
+    }());
+  </script>
   <link rel="icon" href="/product-room/panes-app-icon.svg?v=1" type="image/svg+xml">
   <link rel="dns-prefetch" href="https://unpkg.com">
   <link rel="stylesheet" href="/style.css?v=7">
-  <link rel="stylesheet" href="/product-room/product-room.css?v=25">
+  <link rel="stylesheet" href="/product-room/product-room.css?v=29">
   <script src="https://unpkg.com/lucide@0.460.0" defer></script>
 </head>
 <body class="prm-page">
@@ -41,7 +54,8 @@
   <header class="prm-header">
     <div class="prm-header-inner prm-shell">
       <a href="#" class="prm-brand" aria-label="Panes home">
-        <img src="/product-room/panes-lockup-on-dark.svg?v=1" alt="panes">
+        <img class="prm-theme-asset prm-theme-asset-dark" src="/product-room/panes-lockup-on-dark.svg?v=1" alt="panes">
+        <img class="prm-theme-asset prm-theme-asset-light" src="/product-room/panes-lockup-on-light.svg?v=1" alt="panes">
       </a>
       <nav class="prm-nav" aria-label="Main navigation">
         <a href="#product">Product</a>
@@ -50,13 +64,19 @@
         <a href="#download">Download</a>
       </nav>
       <div class="prm-header-actions">
+        <button type="button" class="prm-theme-toggle" aria-label="Use light theme" aria-pressed="false" title="Use light theme" onclick="window.panesLandingTheme && window.panesLandingTheme.toggle()">
+          <i class="prm-theme-icon prm-theme-icon-light" data-lucide="sun" aria-hidden="true"></i>
+          <i class="prm-theme-icon prm-theme-icon-dark" data-lucide="moon" aria-hidden="true"></i>
+        </button>
         <div class="prm-locale-switcher" role="group" aria-label="Language selector">
           <button type="button" class="prm-locale-option" data-locale="en-US" lang="en-US" aria-pressed="true" aria-label="Use English (United States)">EN</button>
-          <span aria-hidden="true">·</span>
           <button type="button" class="prm-locale-option" data-locale="pt-BR" lang="pt-BR" aria-pressed="false" aria-label="Usar português (Brasil)">PT</button>
         </div>
         <a href="https://github.com/wygoralves/panes" class="prm-header-github" target="_blank" rel="noopener">GitHub</a>
-        <a href="https://github.com/wygoralves/panes/releases/latest" class="prm-header-download">Download</a>
+        <a href="https://github.com/wygoralves/panes/releases/latest" class="prm-header-download" aria-label="Download">
+          <span class="prm-header-download-label">Download</span>
+          <span aria-hidden="true">↓</span>
+        </a>
       </div>
     </div>
   </header>
@@ -97,11 +117,7 @@
             <div class="sb-section prm-workspaces-label"><span>Workspaces</span><span>+</span></div>
 
             <div class="sb-project">
-              <div class="sb-project-header"><i data-lucide="chevron-right" class="icon"></i><i data-lucide="folder-git-2" class="icon"></i><span>customer-frontend</span><b>2</b></div>
-            </div>
-
-            <div class="sb-project">
-              <div class="sb-project-header"><i data-lucide="chevron-right" class="icon"></i><i data-lucide="folder-git-2" class="icon"></i><span>searchatlas</span><b>1</b></div>
+              <div class="sb-project-header"><i data-lucide="chevron-right" class="icon"></i><i data-lucide="folder-git-2" class="icon"></i><span>wygg</span><b>2</b></div>
             </div>
 
             <div class="sb-project is-open">
@@ -119,10 +135,14 @@
             </div>
 
             <div class="sb-project">
+              <div class="sb-project-header"><i data-lucide="chevron-right" class="icon"></i><i data-lucide="folder-git-2" class="icon"></i><span>page2prompt</span><b>1</b></div>
+            </div>
+
+            <div class="sb-project">
               <div class="sb-project-header">
                 <i data-lucide="chevron-right" class="icon" style="width:12px;opacity:0.4"></i>
                 <i data-lucide="folder-git-2" class="icon" style="width:14px;"></i>
-                <span>report-generator</span>
+                <span>gestur</span>
                 <b>1</b>
               </div>
             </div>
@@ -433,7 +453,10 @@
       </div>
       <div class="prm-mobile-workspace" role="img" aria-label="A simplified Panes task showing one prompt, a Codex response, passing tests, and a follow-up composer">
         <div class="prm-mobile-appbar" aria-hidden="true">
-          <img src="/product-room/panes-mark-on-dark.svg?v=1" alt="">
+          <span class="prm-mobile-mark" aria-hidden="true">
+            <img class="prm-theme-asset prm-theme-asset-dark" src="/product-room/panes-mark-on-dark.svg?v=1" alt="">
+            <img class="prm-theme-asset prm-theme-asset-light" src="/product-room/panes-mark-on-light.svg?v=1" alt="">
+          </span>
           <span><b>panes</b><i>/</i> Fix git push retries</span>
           <small>+1 file</small>
         </div>
@@ -594,7 +617,10 @@
 
   <footer class="prm-footer">
     <div class="prm-shell">
-      <img class="prm-footer-wordmark" src="/product-room/panes-wordmark-on-dark.svg?v=1" alt="panes">
+      <span class="prm-footer-wordmark" aria-label="panes">
+        <img class="prm-theme-asset prm-theme-asset-dark" src="/product-room/panes-wordmark-on-dark.svg?v=1" alt="">
+        <img class="prm-theme-asset prm-theme-asset-light" src="/product-room/panes-wordmark-on-light.svg?v=1" alt="">
+      </span>
       <span>Local-first desktop cockpit for agent-led software work.</span>
       <a href="https://github.com/wygoralves/panes" target="_blank" rel="noopener">GitHub</a>
     </div>
@@ -612,14 +638,18 @@
           description: "Run Codex, Claude, terminal harnesses, git, and worktrees from one local desktop cockpit.",
           languageLabel: "Language selector",
           useEnglish: "Use English (United States)",
-          usePortuguese: "Use Portuguese (Brazil)"
+          usePortuguese: "Use Portuguese (Brazil)",
+          useLightTheme: "Use light theme",
+          useDarkTheme: "Use dark theme"
         },
         "pt-BR": {
           title: "Panes | O cockpit para software feito com agentes",
           description: "Execute Codex, Claude, agentes de terminal, git e worktrees em um único cockpit desktop local.",
           languageLabel: "Seletor de idioma",
           useEnglish: "Usar inglês (Estados Unidos)",
-          usePortuguese: "Usar português (Brasil)"
+          usePortuguese: "Usar português (Brasil)",
+          useLightTheme: "Usar tema claro",
+          useDarkTheme: "Usar tema escuro"
         }
       };
 
@@ -722,7 +752,8 @@
         "Plan mode": "Modo de planejamento",
         "Model": "Modelo",
         "Permissions": "Permissões",
-        "Send": "Enviar"
+        "Send": "Enviar",
+        "Download": "Baixar"
       };
 
       var platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
@@ -777,6 +808,49 @@
         }
       }
 
+      function getStoredTheme() {
+        try {
+          return window.localStorage.getItem("panes.landing.theme");
+        } catch (error) {
+          return null;
+        }
+      }
+
+      function storeTheme(theme) {
+        try {
+          window.localStorage.setItem("panes.landing.theme", theme);
+        } catch (error) {
+        }
+      }
+
+      function updateThemeToggle() {
+        var themeToggle = document.querySelector(".prm-theme-toggle");
+        if (!themeToggle) {
+          return;
+        }
+        var locale = document.documentElement.dataset.locale === "pt-BR" ? "pt-BR" : "en-US";
+        var isLight = document.documentElement.dataset.theme === "light";
+        var label = isLight ? localeContent[locale].useDarkTheme : localeContent[locale].useLightTheme;
+        themeToggle.setAttribute("aria-label", label);
+        themeToggle.setAttribute("title", label);
+        themeToggle.setAttribute("aria-pressed", String(isLight));
+      }
+
+      function applyTheme(theme, persist) {
+        var selectedTheme = theme === "light" ? "light" : "dark";
+        document.documentElement.dataset.theme = selectedTheme;
+        updateThemeToggle();
+        if (persist) {
+          storeTheme(selectedTheme);
+        }
+      }
+
+      window.panesLandingTheme = {
+        toggle: function () {
+          applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light", true);
+        }
+      };
+
       function applyLocale(locale, persist) {
         var selectedLocale = locale === "pt-BR" ? "pt-BR" : "en-US";
         var content = localeContent[selectedLocale];
@@ -815,6 +889,7 @@
           button.classList.toggle("is-active", isActive);
           button.setAttribute("aria-label", button.getAttribute("data-locale") === "en-US" ? content.useEnglish : content.usePortuguese);
         });
+        updateThemeToggle();
 
         if (persist) {
           storeLocale(selectedLocale);
@@ -830,6 +905,17 @@
         });
       });
       applyLocale(initialLocale, false);
+
+      var savedTheme = getStoredTheme();
+      var systemTheme = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      var initialTheme = savedTheme === "light" || savedTheme === "dark" ? savedTheme : systemTheme;
+      applyTheme(initialTheme, false);
+
+      if (savedTheme !== "light" && savedTheme !== "dark" && window.matchMedia) {
+        window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", function (event) {
+          applyTheme(event.matches ? "light" : "dark", false);
+        });
+      }
 
       var pageHeader = document.querySelector(".prm-header");
       if (pageHeader) {
