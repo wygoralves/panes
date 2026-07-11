@@ -111,16 +111,16 @@ export interface XtermThemeColors {
 
 const XTERM_THEMES: Record<ThemeMode, XtermThemeColors> = {
   dark: {
-    background: "#050505",
-    foreground: "#f5f5f5",
-    cursor: "#FF6B6B",
-    selectionBackground: "rgba(255, 107, 107, 0.28)",
+    background: "#010102",
+    foreground: "#FAFAFB",
+    cursor: "#61D596",
+    selectionBackground: "rgba(97, 213, 150, 0.24)",
   },
   light: {
-    background: "#f1f2f4",
-    foreground: "#17181c",
-    cursor: "#cc3333",
-    selectionBackground: "rgba(204, 51, 51, 0.22)",
+    background: "#ECECEF",
+    foreground: "#18181C",
+    cursor: "#006D40",
+    selectionBackground: "rgba(0, 109, 64, 0.18)",
   },
 };
 

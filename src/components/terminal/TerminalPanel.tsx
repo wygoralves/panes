@@ -2125,7 +2125,7 @@ function createCachedTerminal(
     convertEol: false,
     cursorBlink: true,
     cursorInactiveStyle: "none",
-    fontFamily: '"JetBrains Mono", monospace',
+    fontFamily: '"Geist Mono", ui-monospace, monospace',
     fontSize: terminalFontSizePreferenceLoaded
       ? terminalFontSizePreference
       : DEFAULT_TERMINAL_FONT_SIZE,

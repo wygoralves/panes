@@ -61,6 +61,7 @@ import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag
 import { createAndActivateWorkspaceThread } from "../../lib/newThreadActions";
 import { UpdateDialog } from "../onboarding/UpdateDialog";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
+import { PanesMark } from "../shared/PanesBrand";
 import { WorkspaceMoreMenu } from "../workspace/WorkspaceMoreMenu";
 import { normalizeSidebarCollapsedState } from "./sidebarCollapseState";
 import type { Thread, Workspace } from "../../types";
@@ -911,7 +912,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  background: "var(--wash-06)",
+                  background: "var(--segmented-bg)",
                   borderRadius: 6,
                   padding: 2,
                   gap: 2,
@@ -937,9 +938,9 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                         borderRadius: 4,
                         border: "none",
                         cursor: "pointer",
-                        background: active ? "var(--accent)" : "transparent",
-                        color: active ? "#fff" : "var(--text-3)",
-                        boxShadow: "none",
+                        background: active ? "var(--selection-bg)" : "transparent",
+                        color: active ? "var(--selection-fg)" : "var(--text-3)",
+                        boxShadow: active ? "inset 0 0 0 1px var(--selection-border)" : "none",
                         transition: "background 0.15s, color 0.15s, box-shadow 0.15s",
                       }}
                     >
@@ -958,7 +959,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  background: "var(--wash-06)",
+                  background: "var(--segmented-bg)",
                   borderRadius: 6,
                   padding: 2,
                   gap: 2,
@@ -976,10 +977,12 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                       borderRadius: 4,
                       border: "none",
                       cursor: "pointer",
-                      background: activeLocale === locale ? "var(--accent)" : "transparent",
-                      color: activeLocale === locale ? "#fff" : "var(--text-3)",
+                      background: activeLocale === locale ? "var(--selection-bg)" : "transparent",
+                      color: activeLocale === locale ? "var(--selection-fg)" : "var(--text-3)",
                       fontWeight: activeLocale === locale ? 500 : 400,
-                      boxShadow: "none",
+                      boxShadow: activeLocale === locale
+                        ? "inset 0 0 0 1px var(--selection-border)"
+                        : "none",
                       transition: "background 0.15s, color 0.15s, box-shadow 0.15s",
                     }}
                   >
@@ -1091,7 +1094,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                     width: 6,
                     height: 6,
                     borderRadius: "50%",
-                    background: "var(--accent)",
+                    background: "var(--accent-indicator)",
+                    boxShadow: "0 0 0 1px var(--accent)",
                     flexShrink: 0,
                   }}
                 />
@@ -1149,8 +1153,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             padding: "8px 12px",
             fontSize: 12,
             color: "var(--danger)",
-            borderTop: "1px solid rgba(248, 113, 113, 0.15)",
-            background: "rgba(248, 113, 113, 0.06)",
+            borderTop: "1px solid rgba(var(--danger-rgb), 0.15)",
+            background: "rgba(var(--danger-rgb), 0.06)",
           }}
         >
           {error}
@@ -1225,12 +1229,7 @@ function CollapsedRail({
             background: "transparent",
           }}
         >
-          <svg viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg" width="20" height="20" style={{ color: "var(--text-1)" }}>
-            <rect x="10" y="36" width="94" height="94" stroke="currentColor" strokeWidth="6"/>
-            <rect x="36" y="10" width="94" height="94" stroke="currentColor" strokeWidth="6"/>
-            <rect x="23" y="23" width="94" height="94" stroke="currentColor" strokeWidth="6"/>
-            <rect x="50" y="50" width="40" height="40" fill="var(--accent)"/>
-          </svg>
+          <PanesMark size={20} />
         </button>
       </div>
 

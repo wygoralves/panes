@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panes wordmark refinement</title>
+  <meta name="description" content="Wordmark directions for Panes using the Split Focus mark and terminal mint.">
+  <style>
+    @font-face {
+      font-family: "Geist";
+      src: url("./fonts/geist-latin.woff2") format("woff2");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+    }
+
+    @font-face {
+      font-family: "Geist Mono";
+      src: url("./fonts/geist-mono-latin.woff2") format("woff2");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+    }
+
+    :root {
+      --page: oklch(0.066 0.006 286);
+      --surface: oklch(0.105 0.007 286);
+      --surface-soft: oklch(0.085 0.006 286);
+      --line: oklch(0.25 0.01 286);
+      --line-strong: oklch(0.36 0.012 286);
+      --ink: oklch(0.965 0.003 286);
+      --muted: oklch(0.7 0.006 286);
+      --faint: oklch(0.5 0.007 286);
+      --mint: oklch(0.79 0.14 157);
+      --mint-dark: oklch(0.23 0.055 157);
+      --paper: oklch(0.965 0.002 286);
+      --paper-ink: oklch(0.14 0.008 286);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-width: 320px;
+      background: var(--page);
+    }
+
+    body {
+      min-width: 320px;
+      min-height: 100vh;
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    a:focus-visible {
+      outline: 2px solid var(--mint);
+      outline-offset: 4px;
+    }
+
+    .shell {
+      width: min(calc(100% - 48px), 1440px);
+      margin-inline: auto;
+    }
+
+    header {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid oklch(1 0 0 / 0.07);
+    }
+
+    .header-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand {
+      font-size: 14px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+
+    .header-links {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .header-links a:hover {
+      color: var(--ink);
+    }
+
+    main {
+      padding: clamp(76px, 9vw, 132px) 0 128px;
+    }
+
+    .intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 0.5fr);
+      align-items: end;
+      gap: clamp(48px, 9vw, 136px);
+      margin-bottom: clamp(72px, 9vw, 120px);
+    }
+
+    h1 {
+      max-width: 930px;
+      margin: 0;
+      font-size: clamp(3.2rem, 6.2vw, 6rem);
+      font-weight: 510;
+      letter-spacing: -0.04em;
+      line-height: 0.96;
+      text-wrap: balance;
+    }
+
+    .intro-copy p,
+    .section-copy p {
+      max-width: 650px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.65;
+      text-wrap: pretty;
+    }
+
+    .intro-copy p + p {
+      margin-top: 16px;
+      color: var(--faint);
+      font-size: 12px;
+    }
+
+    .mark {
+      --mark-ink: var(--ink);
+      --mark-accent: var(--mint);
+      color: var(--mark-ink);
+    }
+
+    .mark [data-accent] {
+      fill: var(--mark-accent);
+      stroke: var(--mark-accent);
+    }
+
+    .locked-system {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+      min-height: 440px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--surface);
+    }
+
+    .locked-stage {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: clamp(24px, 4vw, 54px);
+      padding: clamp(44px, 7vw, 90px);
+      background: var(--surface-soft);
+    }
+
+    .locked-stage svg {
+      width: clamp(76px, 9vw, 126px);
+      height: auto;
+      flex: 0 0 auto;
+    }
+
+    .locked-stage span {
+      font-family: "Proxima Nova Alt", "Proxima Nova", "Geist", sans-serif;
+      font-size: clamp(4rem, 8vw, 8rem);
+      font-weight: 560;
+      letter-spacing: -0.035em;
+      line-height: 0.85;
+    }
+
+    .locked-copy {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: clamp(34px, 5vw, 68px);
+    }
+
+    .locked-copy h2 {
+      margin: 0;
+      font-size: clamp(2rem, 3vw, 3.1rem);
+      font-weight: 540;
+      letter-spacing: -0.035em;
+      line-height: 1.02;
+    }
+
+    .locked-copy p {
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .locked-parts {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-top: 28px;
+      color: var(--faint);
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 10px;
+    }
+
+    .locked-parts i {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--mint);
+    }
+
+    .section {
+      margin-top: clamp(76px, 10vw, 136px);
+      padding-top: clamp(56px, 7vw, 88px);
+      border-top: 1px solid var(--line);
+    }
+
+    .section-copy {
+      display: grid;
+      grid-template-columns: minmax(0, 0.85fr) minmax(300px, 0.5fr);
+      align-items: end;
+      gap: clamp(40px, 8vw, 120px);
+      margin-bottom: 34px;
+    }
+
+    .section-copy h2 {
+      max-width: 780px;
+      margin: 0;
+      font-size: clamp(2.5rem, 4.4vw, 4.6rem);
+      font-weight: 510;
+      letter-spacing: -0.04em;
+      line-height: 0.98;
+      text-wrap: balance;
+    }
+
+    .specimen-list {
+      border-top: 1px solid var(--line);
+    }
+
+    .specimen {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(420px, 0.75fr);
+      align-items: stretch;
+      min-height: 238px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .specimen-main {
+      display: flex;
+      align-items: center;
+      gap: clamp(20px, 3vw, 40px);
+      padding: clamp(30px, 4vw, 54px) 0;
+    }
+
+    .specimen-main svg {
+      width: clamp(46px, 5vw, 70px);
+      height: auto;
+      flex: 0 0 auto;
+    }
+
+    .wordmark {
+      min-width: 0;
+      font-size: clamp(3.65rem, 7vw, 7.6rem);
+      font-weight: 560;
+      letter-spacing: -0.04em;
+      line-height: 0.82;
+      white-space: nowrap;
+    }
+
+    .font-proxima .wordmark {
+      font-family: "Proxima Nova Alt", "Proxima Nova", "Geist", sans-serif;
+    }
+
+    .font-museo .wordmark {
+      font-family: "Museo Sans", "Geist", sans-serif;
+      font-weight: 540;
+      letter-spacing: -0.04em;
+    }
+
+    .font-seravek .wordmark {
+      font-family: "Seravek", "Geist", sans-serif;
+      font-weight: 560;
+      letter-spacing: -0.04em;
+    }
+
+    .font-galvji .wordmark {
+      font-family: "Galvji", "Geist", sans-serif;
+      font-weight: 560;
+      letter-spacing: -0.04em;
+    }
+
+    .font-skia .wordmark {
+      font-family: "Skia", "Geist", sans-serif;
+      font-weight: 560;
+      letter-spacing: -0.04em;
+    }
+
+    .font-pt .wordmark {
+      font-family: "PT Sans", "Geist", sans-serif;
+      font-weight: 560;
+      letter-spacing: -0.035em;
+    }
+
+    .specimen-context {
+      display: grid;
+      grid-template-rows: 1fr 1fr;
+      border-left: 1px solid var(--line);
+    }
+
+    .context-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 22px 28px;
+      background: var(--surface);
+    }
+
+    .context-row + .context-row {
+      border-top: 1px solid var(--line);
+    }
+
+    .context-row span:first-child {
+      color: var(--faint);
+      font-size: 11px;
+    }
+
+    .context-lockup {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 20px;
+      font-weight: 560;
+      letter-spacing: -0.035em;
+    }
+
+    .context-lockup svg {
+      width: 22px;
+      height: 22px;
+      --mark-accent: var(--mint);
+    }
+
+    .context-row:last-child .context-lockup {
+      font-size: 15px;
+    }
+
+    .context-row:last-child .context-lockup svg {
+      width: 17px;
+      height: 17px;
+    }
+
+    .font-note {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 24px;
+      padding: 18px 0 22px;
+      color: var(--faint);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .font-note strong {
+      color: var(--muted);
+      font-weight: 620;
+    }
+
+    .custom-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .custom-card {
+      min-height: 390px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: clamp(26px, 3vw, 38px);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--surface);
+    }
+
+    .custom-lockup {
+      min-height: 180px;
+      display: flex;
+      align-items: center;
+      gap: 0.09em;
+      font-family: "Proxima Nova Alt", "Proxima Nova", "Geist", sans-serif;
+      font-size: clamp(3.4rem, 6vw, 6.1rem);
+      font-weight: 560;
+      letter-spacing: -0.04em;
+      line-height: 0.85;
+      white-space: nowrap;
+    }
+
+    .custom-lockup svg {
+      width: 0.72em;
+      height: 0.72em;
+      flex: 0 0 auto;
+    }
+
+    .split-p-glyph {
+      position: relative;
+      width: 0.58em;
+      height: 0.82em;
+      display: inline-block;
+      flex: 0 0 auto;
+      transform: translateY(0.09em);
+    }
+
+    .split-p-glyph::before {
+      content: "";
+      position: absolute;
+      top: 0.12em;
+      bottom: 0;
+      left: 0;
+      width: 0.065em;
+      border-radius: 999px;
+      background: currentColor;
+    }
+
+    .split-p-glyph::after {
+      content: "";
+      position: absolute;
+      top: 0.12em;
+      left: 0;
+      width: 0.54em;
+      height: 0.47em;
+      border: 0.065em solid currentColor;
+      border-radius: 0.19em;
+    }
+
+    .split-p-glyph i {
+      position: absolute;
+      top: 0.31em;
+      right: 0.1em;
+      z-index: 1;
+      width: 0.14em;
+      height: 0.14em;
+      border-radius: 0.045em;
+      background: var(--mint);
+    }
+
+    .lowercase-lockup {
+      font-family: "Museo Sans", "Geist", sans-serif;
+      font-weight: 540;
+      letter-spacing: -0.04em;
+    }
+
+    .signal-a {
+      position: relative;
+      width: 0.58em;
+      height: 0.57em;
+      display: inline-block;
+      margin-inline: 0.03em 0.02em;
+      border: 0.065em solid currentColor;
+      border-radius: 0.23em;
+      transform: translateY(0.03em);
+    }
+
+    .signal-a::before {
+      content: "";
+      position: absolute;
+      right: -0.065em;
+      bottom: -0.065em;
+      width: 0.065em;
+      height: 0.37em;
+      border-radius: 999px;
+      background: currentColor;
+    }
+
+    .signal-a::after {
+      content: "";
+      position: absolute;
+      right: 0.095em;
+      bottom: 0.095em;
+      width: 0.13em;
+      height: 0.13em;
+      border-radius: 0.045em;
+      background: var(--mint);
+    }
+
+    .open-lockup {
+      font-family: "Galvji", "Geist", sans-serif;
+      font-weight: 560;
+      letter-spacing: -0.04em;
+    }
+
+    .open-lockup .open-p {
+      position: relative;
+      display: inline-block;
+      color: transparent;
+      -webkit-text-stroke: 0.035em var(--ink);
+    }
+
+    .open-lockup .open-p::after {
+      content: "";
+      position: absolute;
+      top: 0.05em;
+      left: 0.31em;
+      width: 0.22em;
+      height: 0.065em;
+      border-radius: 999px;
+      background: var(--mint);
+    }
+
+    .custom-card h3 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 570;
+      letter-spacing: -0.03em;
+    }
+
+    .custom-card p {
+      margin: 11px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.58;
+    }
+
+    .product-strip {
+      display: grid;
+      grid-template-columns: minmax(220px, 0.5fr) repeat(3, minmax(0, 1fr));
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--line);
+      gap: 1px;
+    }
+
+    .strip-copy,
+    .strip-sample {
+      min-height: 190px;
+      background: var(--surface);
+    }
+
+    .strip-copy {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 24px;
+    }
+
+    .strip-copy strong {
+      font-size: 14px;
+      font-weight: 620;
+    }
+
+    .strip-copy span {
+      color: var(--faint);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .strip-sample {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 24px;
+    }
+
+    .strip-sample svg {
+      width: 34px;
+      height: 34px;
+    }
+
+    .strip-sample span {
+      font-size: clamp(2rem, 3.2vw, 3.25rem);
+      font-weight: 560;
+      letter-spacing: -0.04em;
+      line-height: 0.9;
+    }
+
+    .strip-sample.font-proxima span {
+      font-family: "Proxima Nova Alt", "Proxima Nova", "Geist", sans-serif;
+    }
+
+    .strip-sample.font-galvji span {
+      font-family: "Galvji", "Geist", sans-serif;
+    }
+
+    footer {
+      min-height: 80px;
+      display: flex;
+      align-items: center;
+      border-top: 1px solid oklch(1 0 0 / 0.07);
+      color: var(--faint);
+      font-size: 11px;
+    }
+
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    @media (max-width: 1080px) {
+      .intro,
+      .section-copy {
+        grid-template-columns: 1fr;
+      }
+
+      .locked-system {
+        grid-template-columns: 1fr;
+      }
+
+      .specimen {
+        grid-template-columns: 1fr;
+      }
+
+      .specimen-context {
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: none;
+        border-top: 1px solid var(--line);
+        border-left: 0;
+      }
+
+      .context-row + .context-row {
+        border-top: 0;
+        border-left: 1px solid var(--line);
+      }
+
+      .custom-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .product-strip {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .strip-copy {
+        grid-column: 1 / -1;
+        min-height: 120px;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        width: min(calc(100% - 28px), 1440px);
+      }
+
+      .header-links a:first-child {
+        display: none;
+      }
+
+      main {
+        padding-top: 68px;
+        padding-bottom: 84px;
+      }
+
+      h1 {
+        font-size: clamp(2.85rem, 14vw, 4.3rem);
+      }
+
+      .locked-system {
+        min-height: 0;
+      }
+
+      .locked-stage {
+        min-height: 300px;
+        gap: 20px;
+        padding: 38px 24px;
+      }
+
+      .locked-stage span {
+        font-size: clamp(3.2rem, 16vw, 5.4rem);
+      }
+
+      .specimen-main {
+        gap: 17px;
+      }
+
+      .wordmark {
+        font-size: clamp(3rem, 17vw, 5.6rem);
+      }
+
+      .specimen-context {
+        grid-template-columns: 1fr;
+      }
+
+      .context-row + .context-row {
+        border-top: 1px solid var(--line);
+        border-left: 0;
+      }
+
+      .font-note {
+        grid-template-columns: 1fr;
+        gap: 6px;
+      }
+
+      .custom-card {
+        min-height: 340px;
+      }
+
+      .custom-lockup {
+        font-size: clamp(3.2rem, 17vw, 5.2rem);
+      }
+
+      .product-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .strip-copy {
+        grid-column: auto;
+      }
+
+      .strip-sample {
+        min-height: 150px;
+      }
+
+      .footer-inner {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 22px 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner shell">
+      <a class="brand" href="./index.html">panes</a>
+      <nav class="header-links" aria-label="Exploration links">
+        <a href="./logo-shortlist.html">View identity shortlist</a>
+        <a href="./index.html">View landing page</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="intro" aria-labelledby="page-title">
+      <h1 id="page-title">Lock the mark. Solve the name.</h1>
+      <div class="intro-copy">
+        <p>Split Focus and terminal mint stay fixed throughout this round. Every wordmark now uses a lowercase “p”, so the typeface, spacing, and custom letters are the only variables.</p>
+        <p>The goal is a wordmark that feels calm, mechanical, and compact without falling into generic developer-tool typography.</p>
+      </div>
+    </section>
+
+    <section class="locked-system" aria-labelledby="locked-title">
+      <div class="locked-stage"><span data-mark></span><span>panes</span></div>
+      <div class="locked-copy">
+        <h2 id="locked-title">The fixed foundation</h2>
+        <p>Split Focus explains the cockpit and gives us a strong app icon. Mint becomes the active surface instead of coloring the entire identity.</p>
+        <div class="locked-parts"><i></i><span>Split Focus · terminal mint</span></div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="fonts-title">
+      <div class="section-copy">
+        <h2 id="fonts-title">Six typefaces with a reason to be here.</h2>
+        <p>The range stays within sturdy grotesks and engineered sans serifs already installed on this Mac. Each candidate has a different rhythm in the “a”, “n”, and “s”, and every row includes product-scale tests.</p>
+      </div>
+      <div class="specimen-list" id="specimen-list"></div>
+    </section>
+
+    <section class="section" aria-labelledby="custom-title">
+      <div class="section-copy">
+        <h2 id="custom-title">Three ways to make it ours.</h2>
+        <p>These treatments modify the word itself. They can survive without a separate symbol, which makes them useful for the site header, app title bar, and narrow release assets.</p>
+      </div>
+      <div class="custom-grid">
+        <article class="custom-card">
+          <div class="custom-lockup"><span data-mark></span><span>panes</span></div>
+          <div><h3>Lowercase lockup</h3><p>The symbol stays separate while the name becomes quieter and more approachable. This is the least disruptive direction.</p></div>
+        </article>
+        <article class="custom-card">
+          <div class="custom-lockup"><span class="split-p-glyph" aria-hidden="true"><i></i></span><span>anes</span></div>
+          <div><h3>Split p</h3><p>A custom lowercase p carries the pane and mint active surface while its descender keeps the word reading naturally.</p></div>
+        </article>
+        <article class="custom-card">
+          <div class="custom-lockup lowercase-lockup"><span>p</span><span class="signal-a" aria-label="a"></span><span>nes</span></div>
+          <div><h3>Signal a</h3><p>Lowercase makes the name quieter while a custom “a” holds the active pane. The brand cue appears inside the word instead of before it.</p></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="shortlist-title">
+      <div class="section-copy">
+        <h2 id="shortlist-title">The strongest starting points.</h2>
+        <p>Proxima Nova Alt is the most balanced stock face. Galvji feels more engineered. The custom split p has the greatest chance of becoming uniquely Panes after a proper vector lettering pass.</p>
+      </div>
+      <div class="product-strip">
+        <div class="strip-copy"><strong>Compare at header scale</strong><span>Same mark, same mint, same optical size.</span></div>
+        <div class="strip-sample font-proxima"><span data-mark></span><span>panes</span></div>
+        <div class="strip-sample font-galvji"><span data-mark></span><span>panes</span></div>
+        <div class="strip-sample"><span class="split-p-glyph" aria-hidden="true"><i></i></span><span style="font-family: 'Proxima Nova Alt', 'Proxima Nova', 'Geist', sans-serif;">anes</span></div>
+      </div>
+    </section>
+  </main>
+
+  <footer><div class="footer-inner shell"><span>Panes wordmark refinement</span><span>Split Focus · terminal mint</span></div></footer>
+
+  <template id="split-focus-mark">
+    <svg class="mark" viewBox="0 0 64 64" role="img" aria-label="Split Focus logo">
+      <rect x="8" y="8" width="48" height="48" rx="12" fill="none" stroke="currentColor" stroke-width="4"/>
+      <path d="M26 10V54M28 27H54" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+      <rect x="34" y="34" width="14" height="14" rx="5" data-accent stroke="none"/>
+    </svg>
+  </template>
+
+  <script>
+    function markNode() {
+      var fragment = document.querySelector("#split-focus-mark").content.cloneNode(true);
+      var mark = fragment.querySelector("svg");
+      mark.removeAttribute("role");
+      mark.removeAttribute("aria-label");
+      mark.setAttribute("aria-hidden", "true");
+      return mark;
+    }
+
+    document.querySelectorAll("[data-mark]").forEach(function (slot) {
+      slot.appendChild(markNode());
+    });
+
+    var typefaces = [
+      { className: "font-proxima", name: "Proxima Nova Alt", note: "Balanced", detail: "Sturdy without looking industrial. Its broad rhythm gives the dense Split Focus mark enough room." },
+      { className: "font-museo", name: "Museo Sans", note: "Soft", detail: "Rounded joins and open counters make the lockup friendlier without turning it into a consumer-app identity." },
+      { className: "font-seravek", name: "Seravek", note: "Calm", detail: "Quiet proportions and a humanist rhythm reduce the visual severity of the cockpit symbol." },
+      { className: "font-galvji", name: "Galvji", note: "Engineered", detail: "Mechanical curves and compact spacing connect naturally with the divided window geometry." },
+      { className: "font-skia", name: "Skia", note: "Distinct", detail: "The unusual curves create a more ownable silhouette. It is the riskiest stock option in this round." },
+      { className: "font-pt", name: "PT Sans", note: "Utilitarian", detail: "Clear and sturdy at small sizes, with more personality than a default system grotesk." }
+    ];
+
+    var list = document.querySelector("#specimen-list");
+    typefaces.forEach(function (face) {
+      var article = document.createElement("article");
+      article.className = "specimen " + face.className;
+
+      var left = document.createElement("div");
+      var main = document.createElement("div");
+      main.className = "specimen-main";
+      main.appendChild(markNode());
+      var word = document.createElement("span");
+      word.className = "wordmark";
+      word.textContent = "panes";
+      main.appendChild(word);
+      var note = document.createElement("div");
+      note.className = "font-note";
+      note.innerHTML = "<strong>" + face.name + " · " + face.note + "</strong><span>" + face.detail + "</span>";
+      left.appendChild(main);
+      left.appendChild(note);
+
+      var context = document.createElement("div");
+      context.className = "specimen-context";
+      ["Site header", "App sidebar"].forEach(function (label) {
+        var row = document.createElement("div");
+        row.className = "context-row";
+        var name = document.createElement("span");
+        name.textContent = label;
+        var lockup = document.createElement("span");
+        lockup.className = "context-lockup";
+        lockup.appendChild(markNode());
+        var lockupText = document.createElement("span");
+        lockupText.textContent = "panes";
+        lockup.appendChild(lockupText);
+        row.appendChild(name);
+        row.appendChild(lockup);
+        context.appendChild(row);
+      });
+
+      article.appendChild(left);
+      article.appendChild(context);
+      list.appendChild(article);
+    });
+  </script>
+</body>
+</html>

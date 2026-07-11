@@ -20,18 +20,19 @@
   --text-code: #d4d4d4;
   --text-term: #999999;
 
-  --accent: #FF6B6B;
-  --accent-dim: rgba(255, 107, 107, 0.08);
-  --accent-glow: rgba(255, 107, 107, 0.15);
+  --accent: #61D596;
+  --accent-on: #021409;
+  --accent-dim: rgba(97, 213, 150, 0.08);
+  --accent-glow: rgba(97, 213, 150, 0.15);
 
-  --success: #34d399;
-  --danger: #f87171;
-  --warning: #fbbf24;
-  --info: #60a5fa;
+  --success: #61D596;
+  --danger: #F9776E;
+  --warning: #F1B047;
+  --info: #57B6FF;
 
   --border: rgba(255, 255, 255, 0.06);
   --border-hover: rgba(255, 255, 255, 0.12);
-  --border-accent: rgba(255, 107, 107, 0.20);
+  --border-accent: rgba(97, 213, 150, 0.20);
 
   --glass: rgba(9, 9, 11, 0.85);
   --glass-border: rgba(255, 255, 255, 0.06);
@@ -88,7 +89,7 @@ img { display: block; max-width: 100%; }
   z-index: 10000;
   padding: 8px 16px;
   background: var(--accent);
-  color: #050505;
+  color: var(--accent-on);
   font-size: 14px;
   font-weight: 600;
   border-radius: var(--radius-sm);
@@ -224,14 +225,15 @@ button:focus-visible {
   padding: 8px 18px;
   font-size: 13px;
   font-weight: 600;
-  color: #000;
-  background: var(--text-1);
+  color: var(--accent-on);
+  background: var(--accent);
   border-radius: var(--radius-sm);
   transition: transform 0.15s var(--ease-out-expo), box-shadow 0.2s;
 }
 .btn-download:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 20px rgba(255, 255, 255, 0.15);
+  background: #88DDAB;
+  box-shadow: 0 4px 20px rgba(97, 213, 150, 0.2);
 }
 .btn-download:active { transform: translateY(0); }
 
@@ -368,7 +370,7 @@ button:focus-visible {
   padding: 14px 28px;
   font-size: 15px;
   font-weight: 600;
-  color: #050505;
+  color: var(--accent-on);
   background: var(--accent);
   border-radius: var(--radius-md);
   transition: all 0.2s var(--ease-out-expo);
@@ -376,7 +378,7 @@ button:focus-visible {
 .btn-primary:hover {
   transform: translateY(-2px);
   filter: brightness(1.1);
-  box-shadow: 0 6px 24px rgba(255, 107, 107, 0.25);
+  box-shadow: 0 6px 24px rgba(97, 213, 150, 0.25);
 }
 .btn-primary:active { transform: translateY(0); }
 
@@ -1125,7 +1127,7 @@ button:focus-visible {
   margin-top: 6px;
   font-size: 11px;
   font-weight: 600;
-  color: #050505;
+  color: var(--accent-on);
   background: var(--accent);
   border-radius: var(--radius-sm);
   text-align: center;
@@ -1338,14 +1340,14 @@ button:focus-visible {
   min-height: 0;
 }
 
-/* User message — coral-tinted, right-aligned */
+/* User message, accent-tinted and right-aligned */
 .v-msg-user {
   align-self: flex-end;
   max-width: 75%;
   padding: 10px 14px;
   border-radius: var(--radius-md);
-  background: rgba(255, 107, 107, 0.06);
-  border: 1px solid rgba(255, 107, 107, 0.10);
+  background: rgba(97, 213, 150, 0.06);
+  border: 1px solid rgba(97, 213, 150, 0.10);
   font-size: 12px;
   color: var(--text-1);
   line-height: 1.6;
@@ -1444,13 +1446,13 @@ button:focus-visible {
   border-radius: 50%;
   border: none;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-on);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  box-shadow: 0 0 12px rgba(255, 107, 107, 0.15);
+  box-shadow: 0 0 12px rgba(97, 213, 150, 0.15);
 }
 
 /* Status bar */
@@ -1486,7 +1488,7 @@ button:focus-visible {
   background: var(--accent);
 }
 
-.v-status-fill-info { background: #60a5fa; }
+.v-status-fill-info { background: var(--info); }
 
 .v-status-percent {
   font-family: var(--font-mono);
@@ -1547,20 +1549,20 @@ button:focus-visible {
 }
 
 .v-severity-high {
-  color: #f87171;
+  color: var(--danger);
   background: rgba(248, 113, 113, 0.1);
   border: 1px solid rgba(248, 113, 113, 0.2);
 }
 
 .v-severity-med {
-  color: #fbbf24;
+  color: var(--warning);
   background: rgba(251, 191, 36, 0.08);
   border: 1px solid rgba(251, 191, 36, 0.18);
 }
 
 /* Inline diff lines in vignette code */
 .v-diff-del {
-  color: #f87171;
+  color: var(--danger);
   display: block;
   margin: 0 -12px;
   padding: 0 12px;
@@ -1568,7 +1570,7 @@ button:focus-visible {
 }
 
 .v-diff-add {
-  color: #34d399;
+  color: var(--success);
   display: block;
   margin: 0 -12px;
   padding: 0 12px;
@@ -1680,7 +1682,7 @@ button:focus-visible {
   padding: 6px;
   font-size: 11px;
   font-weight: 600;
-  color: #050505;
+  color: var(--accent-on);
   background: var(--accent);
   border-radius: var(--radius-sm);
   text-align: center;
@@ -1882,7 +1884,7 @@ button:focus-visible {
 }
 
 .v-option-card-active .v-option-icon {
-  background: rgba(255, 107, 107, 0.15);
+  background: rgba(97, 213, 150, 0.15);
   color: var(--accent);
 }
 
@@ -1941,7 +1943,7 @@ button:focus-visible {
   padding: 8px 12px;
   border-radius: var(--radius-sm);
   background: var(--accent);
-  color: #0c0d13;
+  color: var(--accent-on);
   font-size: 11.5px;
   font-weight: 600;
   font-family: inherit;
@@ -1970,7 +1972,7 @@ button:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 107, 107, 0.12);
+  background: rgba(97, 213, 150, 0.12);
   color: var(--accent);
   flex-shrink: 0;
 }
@@ -2260,8 +2262,8 @@ button:focus-visible {
 }
 
 .m-ctx { color: var(--text-3); }
-.m-del { color: #f87171; background: rgba(248, 113, 113, 0.06); }
-.m-add { color: #34d399; background: rgba(52, 211, 153, 0.06); }
+.m-del { color: var(--danger); background: rgba(249, 119, 110, 0.06); }
+.m-add { color: var(--success); background: rgba(97, 213, 150, 0.06); }
 
 /* Approve pane */
 .m-pane-approve {

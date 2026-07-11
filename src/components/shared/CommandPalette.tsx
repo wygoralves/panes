@@ -2341,7 +2341,7 @@ export function CommandPalette({ open, onClose }: Props) {
         return (
           <span style={STYLES.modeBadge}>
             {labels[subFlow.type]}
-            <span style={{ color: "rgba(255,107,107,0.35)" }}>{"\u00B7"}</span>
+            <span style={{ color: "rgba(var(--accent-rgb), 0.35)" }}>{"\u00B7"}</span>
             {scopedRepo.name}
           </span>
         );

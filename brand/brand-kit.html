@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panes brand kit</title>
+  <meta name="description" content="The Panes brand system, app icon, logo assets, typography, color palette, and product UI tokens.">
+  <link rel="stylesheet" href="./tokens.css">
+  <style>
+    @font-face {
+      font-family: "Geist";
+      src: url("../landing-page/product-room/fonts/geist-latin.woff2") format("woff2");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+    }
+
+    @font-face {
+      font-family: "Geist Mono";
+      src: url("../landing-page/product-room/fonts/geist-mono-latin.woff2") format("woff2");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-width: 320px;
+      background: var(--panes-canvas);
+    }
+
+    body {
+      min-width: 320px;
+      min-height: 100vh;
+      margin: 0;
+      background: var(--panes-canvas);
+      color: var(--panes-text-primary);
+      font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    a:focus-visible {
+      outline: 2px solid var(--panes-focus-ring);
+      outline-offset: 4px;
+    }
+
+    .shell {
+      width: min(calc(100% - 48px), 1440px);
+      margin-inline: auto;
+    }
+
+    header {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid var(--panes-divider);
+    }
+
+    .header-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .header-lockup {
+      width: 104px;
+      height: auto;
+    }
+
+    .header-links {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      color: var(--panes-text-tertiary);
+      font-size: 12px;
+    }
+
+    .header-links a:hover {
+      color: var(--panes-text-primary);
+    }
+
+    main {
+      padding: clamp(76px, 9vw, 132px) 0 128px;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      max-width: 920px;
+      margin-bottom: 0;
+      font-size: clamp(3.3rem, 6.2vw, 6rem);
+      font-weight: 510;
+      letter-spacing: -0.04em;
+      line-height: 0.96;
+      text-wrap: balance;
+    }
+
+    .intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 0.48fr);
+      align-items: end;
+      gap: clamp(48px, 9vw, 136px);
+      margin-bottom: clamp(64px, 8vw, 104px);
+    }
+
+    .intro-copy p,
+    .section-copy p {
+      max-width: 650px;
+      margin-bottom: 0;
+      color: var(--panes-text-secondary);
+      font-size: 15px;
+      line-height: 1.65;
+      text-wrap: pretty;
+    }
+
+    .intro-copy p + p {
+      margin-top: 16px;
+      color: var(--panes-text-tertiary);
+      font-size: 12px;
+    }
+
+    .hero-system {
+      min-height: 560px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(340px, 0.8fr);
+      overflow: hidden;
+      border: 1px solid var(--panes-border);
+      border-radius: 16px;
+      background: var(--panes-pane);
+    }
+
+    .hero-lockup {
+      display: grid;
+      place-items: center;
+      padding: clamp(48px, 8vw, 108px);
+      background: var(--panes-neutral-950);
+    }
+
+    .hero-lockup img {
+      width: min(70%, 560px);
+      height: auto;
+    }
+
+    .hero-icon {
+      display: grid;
+      place-items: center;
+      padding: 48px;
+      background: var(--panes-neutral-850);
+    }
+
+    .hero-icon img {
+      width: min(74%, 310px);
+      height: auto;
+    }
+
+    .section {
+      margin-top: clamp(80px, 10vw, 144px);
+      padding-top: clamp(56px, 7vw, 88px);
+      border-top: 1px solid var(--panes-border);
+    }
+
+    .section-copy {
+      display: grid;
+      grid-template-columns: minmax(0, 0.85fr) minmax(300px, 0.5fr);
+      align-items: end;
+      gap: clamp(40px, 8vw, 120px);
+      margin-bottom: 42px;
+    }
+
+    .section-copy h2 {
+      max-width: 800px;
+      margin-bottom: 0;
+      font-size: clamp(2.5rem, 4.4vw, 4.6rem);
+      font-weight: 510;
+      letter-spacing: -0.04em;
+      line-height: 0.98;
+      text-wrap: balance;
+    }
+
+    .icon-stage {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr);
+      overflow: hidden;
+      border: 1px solid var(--panes-border);
+      border-radius: 16px;
+      background: var(--panes-pane);
+    }
+
+    .icon-large {
+      min-height: 540px;
+      display: grid;
+      place-items: center;
+      padding: 64px;
+      background: var(--panes-neutral-850);
+    }
+
+    .icon-large img {
+      width: min(68%, 380px);
+      height: auto;
+    }
+
+    .icon-scales {
+      display: grid;
+      grid-template-rows: repeat(3, 1fr);
+    }
+
+    .scale-row {
+      display: grid;
+      grid-template-columns: 100px 1fr;
+      align-items: center;
+      gap: 24px;
+      padding: 28px 34px;
+      background: var(--panes-surface);
+    }
+
+    .scale-row + .scale-row {
+      border-top: 1px solid var(--panes-border);
+    }
+
+    .scale-row span {
+      color: var(--panes-text-tertiary);
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 10px;
+    }
+
+    .scale-row img {
+      width: var(--icon-size);
+      height: var(--icon-size);
+    }
+
+    .logo-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .logo-cell {
+      min-height: 280px;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      overflow: hidden;
+      border: 1px solid var(--panes-border);
+      border-radius: 16px;
+      background: var(--panes-pane);
+    }
+
+    .logo-cell.light {
+      background: var(--panes-neutral-50);
+      color: var(--panes-neutral-800);
+    }
+
+    .logo-preview {
+      display: grid;
+      place-items: center;
+      padding: 48px;
+    }
+
+    .logo-preview img {
+      width: min(64%, 320px);
+      max-height: 112px;
+    }
+
+    .logo-caption {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 16px 20px;
+      border-top: 1px solid var(--panes-border);
+      color: var(--panes-text-tertiary);
+      font-size: 11px;
+    }
+
+    .logo-cell.light .logo-caption {
+      border-color: var(--panes-neutral-200);
+      color: var(--panes-neutral-500);
+    }
+
+    .logo-caption code {
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 10px;
+    }
+
+    .palette-block + .palette-block {
+      margin-top: 42px;
+    }
+
+    .palette-heading {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 28px;
+      margin-bottom: 16px;
+    }
+
+    .palette-heading h3 {
+      margin-bottom: 0;
+      font-size: 20px;
+      font-weight: 570;
+      letter-spacing: -0.03em;
+    }
+
+    .palette-heading p {
+      margin-bottom: 0;
+      color: var(--panes-text-tertiary);
+      font-size: 12px;
+    }
+
+    .swatch-ramp {
+      display: grid;
+      grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
+      overflow: hidden;
+      border: 1px solid var(--panes-border);
+      border-radius: 14px;
+    }
+
+    .swatch {
+      min-height: 152px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 14px;
+      background: var(--swatch);
+      color: var(--label, var(--panes-neutral-50));
+    }
+
+    .swatch span,
+    .swatch code {
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 9px;
+    }
+
+    .swatch code {
+      opacity: 0.7;
+    }
+
+    .support-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .support-color {
+      min-height: 210px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 22px;
+      border-radius: 14px;
+      background: var(--color);
+      color: var(--panes-neutral-950);
+    }
+
+    .support-color strong {
+      font-size: 16px;
+      font-weight: 650;
+    }
+
+    .support-color div {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 10px;
+    }
+
+    .token-table {
+      overflow: hidden;
+      margin-top: 42px;
+      border: 1px solid var(--panes-border);
+      border-radius: 14px;
+    }
+
+    .token-row {
+      display: grid;
+      grid-template-columns: minmax(170px, 0.7fr) minmax(220px, 1fr) minmax(220px, 1fr);
+      min-height: 64px;
+      background: var(--panes-border);
+      gap: 1px;
+    }
+
+    .token-row + .token-row {
+      margin-top: 1px;
+    }
+
+    .token-row > div {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 18px;
+      background: var(--panes-surface);
+      font-size: 12px;
+    }
+
+    .token-row code {
+      color: var(--panes-text-tertiary);
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 10px;
+    }
+
+    .token-dot {
+      width: 14px;
+      height: 14px;
+      flex: 0 0 auto;
+      border-radius: 4px;
+      background: var(--dot);
+      box-shadow: 0 0 0 1px var(--panes-border-strong);
+    }
+
+    .ui-previews {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .ui-preview {
+      --preview-canvas: var(--panes-neutral-950);
+      --preview-sidebar: var(--panes-neutral-850);
+      --preview-pane: var(--panes-neutral-900);
+      --preview-surface: var(--panes-neutral-850);
+      --preview-hover: var(--panes-neutral-800);
+      --preview-border: var(--panes-neutral-700);
+      --preview-text: var(--panes-neutral-50);
+      --preview-muted: var(--panes-neutral-400);
+      min-height: 510px;
+      overflow: hidden;
+      border: 1px solid var(--panes-border);
+      border-radius: 16px;
+      background: var(--preview-canvas);
+      color: var(--preview-text);
+    }
+
+    .ui-preview.light {
+      --preview-canvas: var(--panes-neutral-50);
+      --preview-sidebar: var(--panes-neutral-100);
+      --preview-pane: var(--panes-neutral-0);
+      --preview-surface: var(--panes-neutral-50);
+      --preview-hover: var(--panes-neutral-100);
+      --preview-border: var(--panes-neutral-200);
+      --preview-text: var(--panes-neutral-800);
+      --preview-muted: var(--panes-neutral-500);
+    }
+
+    .preview-topbar {
+      min-height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--preview-border);
+      font-size: 11px;
+    }
+
+    .preview-topbar img {
+      width: 78px;
+      height: auto;
+    }
+
+    .preview-topbar span {
+      color: var(--preview-muted);
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 9px;
+    }
+
+    .preview-shell {
+      min-height: 464px;
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      gap: 7px;
+      padding: 7px;
+    }
+
+    .preview-sidebar,
+    .preview-main {
+      overflow: hidden;
+      border: 1px solid var(--preview-border);
+      border-radius: 10px;
+      background: var(--preview-pane);
+    }
+
+    .preview-sidebar {
+      padding: 12px 9px;
+      background: var(--preview-sidebar);
+    }
+
+    .preview-nav-item {
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 9px;
+      border-radius: 7px;
+      color: var(--preview-muted);
+      font-size: 10px;
+    }
+
+    .preview-nav-item.active {
+      background: var(--panes-mint-950);
+      color: var(--panes-mint-300);
+    }
+
+    .light .preview-nav-item.active {
+      background: var(--panes-mint-50);
+      color: var(--panes-mint-700);
+    }
+
+    .preview-nav-item i {
+      width: 6px;
+      height: 6px;
+      border-radius: 2px;
+      background: currentColor;
+    }
+
+    .preview-main {
+      display: grid;
+      grid-template-rows: 42px 1fr;
+    }
+
+    .preview-tabs {
+      display: flex;
+      align-items: end;
+      gap: 4px;
+      padding: 0 8px;
+      border-bottom: 1px solid var(--preview-border);
+    }
+
+    .preview-tab {
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      padding: 0 11px;
+      border: 1px solid var(--preview-border);
+      border-bottom: 0;
+      border-radius: 8px 8px 0 0;
+      color: var(--preview-muted);
+      font-size: 9px;
+    }
+
+    .preview-tab.active {
+      background: var(--preview-surface);
+      color: var(--preview-text);
+    }
+
+    .preview-content {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 116px;
+    }
+
+    .preview-thread {
+      padding: 18px;
+    }
+
+    .preview-line {
+      height: 7px;
+      margin-bottom: 10px;
+      border-radius: 999px;
+      background: var(--preview-hover);
+    }
+
+    .preview-line:nth-child(2) {
+      width: 76%;
+    }
+
+    .preview-line:nth-child(3) {
+      width: 88%;
+    }
+
+    .preview-status {
+      min-height: 62px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin: 22px 0;
+      padding: 12px;
+      border: 1px solid var(--preview-border);
+      border-radius: 9px;
+      color: var(--preview-muted);
+      font-size: 9px;
+    }
+
+    .preview-status strong {
+      color: var(--panes-mint-400);
+      font-weight: 620;
+    }
+
+    .preview-changes {
+      padding: 14px 11px;
+      border-left: 1px solid var(--preview-border);
+      color: var(--preview-muted);
+      font-size: 9px;
+    }
+
+    .preview-change {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .preview-change i {
+      width: 7px;
+      height: 7px;
+      border-radius: 2px;
+      background: var(--panes-mint-400);
+    }
+
+    .type-system {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.1fr);
+      overflow: hidden;
+      border: 1px solid var(--panes-border);
+      border-radius: 16px;
+    }
+
+    .type-wordmark,
+    .type-ui {
+      min-height: 420px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: clamp(30px, 4vw, 54px);
+      background: var(--panes-pane);
+    }
+
+    .type-wordmark {
+      border-right: 1px solid var(--panes-border);
+    }
+
+    .type-wordmark img {
+      width: min(84%, 420px);
+      height: auto;
+    }
+
+    .type-ui h3 {
+      margin-bottom: 16px;
+      font-size: clamp(2.2rem, 4vw, 4.4rem);
+      font-weight: 540;
+      letter-spacing: -0.04em;
+      line-height: 0.98;
+    }
+
+    .type-ui p,
+    .type-wordmark p {
+      max-width: 520px;
+      margin-bottom: 0;
+      color: var(--panes-text-secondary);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .mono-sample {
+      margin-top: 24px;
+      color: var(--panes-mint-300);
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 12px;
+    }
+
+    .asset-list {
+      overflow: hidden;
+      border: 1px solid var(--panes-border);
+      border-radius: 14px;
+    }
+
+    .asset-row {
+      min-height: 64px;
+      display: grid;
+      grid-template-columns: minmax(220px, 0.8fr) 1fr auto;
+      align-items: center;
+      gap: 24px;
+      padding: 14px 18px;
+      background: var(--panes-surface);
+    }
+
+    .asset-row + .asset-row {
+      border-top: 1px solid var(--panes-border);
+    }
+
+    .asset-row strong {
+      font-size: 12px;
+      font-weight: 620;
+    }
+
+    .asset-row code {
+      color: var(--panes-text-tertiary);
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 10px;
+    }
+
+    .asset-row a {
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 13px;
+      border-radius: 999px;
+      background: var(--panes-neutral-800);
+      color: var(--panes-text-secondary);
+      font-size: 10px;
+    }
+
+    .asset-row a:hover {
+      background: var(--panes-neutral-700);
+      color: var(--panes-text-primary);
+    }
+
+    footer {
+      min-height: 80px;
+      display: flex;
+      align-items: center;
+      border-top: 1px solid var(--panes-divider);
+      color: var(--panes-text-tertiary);
+      font-size: 11px;
+    }
+
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    @media (max-width: 1080px) {
+      .intro,
+      .section-copy,
+      .hero-system,
+      .icon-stage,
+      .type-system {
+        grid-template-columns: 1fr;
+      }
+
+      .type-wordmark {
+        border-right: 0;
+        border-bottom: 1px solid var(--panes-border);
+      }
+
+      .support-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .swatch-ramp {
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+      }
+
+      .ui-previews {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        width: min(calc(100% - 28px), 1440px);
+      }
+
+      .header-links a:first-child {
+        display: none;
+      }
+
+      main {
+        padding-top: 68px;
+        padding-bottom: 84px;
+      }
+
+      h1 {
+        font-size: clamp(2.85rem, 14vw, 4.3rem);
+      }
+
+      .hero-system,
+      .icon-stage {
+        min-height: 0;
+      }
+
+      .hero-lockup,
+      .hero-icon,
+      .icon-large {
+        min-height: 310px;
+        padding: 38px 28px;
+      }
+
+      .logo-grid,
+      .support-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .swatch-ramp {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .swatch {
+        min-height: 124px;
+      }
+
+      .token-row {
+        grid-template-columns: 1fr;
+      }
+
+      .preview-shell {
+        grid-template-columns: 98px 1fr;
+      }
+
+      .preview-content {
+        grid-template-columns: 1fr;
+      }
+
+      .preview-changes {
+        display: none;
+      }
+
+      .asset-row {
+        grid-template-columns: 1fr auto;
+        gap: 8px 16px;
+      }
+
+      .asset-row code {
+        grid-column: 1 / -1;
+        grid-row: 2;
+      }
+
+      .footer-inner {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 22px 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner shell">
+      <a href="../landing-page/product-room/index.html"><img class="header-lockup" src="./assets/panes-lockup-on-dark.svg" alt="panes"></a>
+      <nav class="header-links" aria-label="Brand kit navigation">
+        <a href="../landing-page/product-room/wordmark-refinement.html">View wordmark round</a>
+        <a href="#assets">Download assets</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="intro" aria-labelledby="page-title">
+      <h1 id="page-title">The Panes system.</h1>
+      <div class="intro-copy">
+        <p>Split Focus gives Panes a recognizable window. Terminal mint marks the active surface. A lowercase Proxima Nova wordmark keeps the identity compact and approachable.</p>
+        <p>This kit separates brand assets from product UI tokens so both can evolve without losing the relationship between them.</p>
+      </div>
+    </section>
+
+    <section class="hero-system" aria-label="Panes brand lockup and app icon">
+      <div class="hero-lockup"><img src="./assets/panes-lockup-on-dark.svg" alt="panes logo"></div>
+      <div class="hero-icon"><img src="./app-icon/panes-512.png" alt="Panes app icon"></div>
+    </section>
+
+    <section class="section" aria-labelledby="icon-title">
+      <div class="section-copy">
+        <h2 id="icon-title">One icon from dock to title bar.</h2>
+        <p>The app icon uses a solid dark squircle, a neutral Split Focus mark, and one mint active pane. There is no texture, gradient, or glow to fight the symbol at small sizes.</p>
+      </div>
+      <div class="icon-stage">
+        <div class="icon-large"><img src="./app-icon/panes-1024.png" alt="Panes app icon at full size"></div>
+        <div class="icon-scales">
+          <div class="scale-row" style="--icon-size: 128px;"><span>128 px</span><img src="./app-icon/panes-128.png" alt=""></div>
+          <div class="scale-row" style="--icon-size: 64px;"><span>64 px</span><img src="./app-icon/panes-64.png" alt=""></div>
+          <div class="scale-row" style="--icon-size: 32px;"><span>32 px</span><img src="./app-icon/panes-32.png" alt=""></div>
+        </div>
+      </div>
+
+      <div class="logo-grid">
+        <article class="logo-cell"><div class="logo-preview"><img src="./assets/panes-lockup-on-dark.svg" alt="Panes logo on dark"></div><div class="logo-caption"><span>Primary dark lockup</span><code>panes-lockup-on-dark.svg</code></div></article>
+        <article class="logo-cell light"><div class="logo-preview"><img src="./assets/panes-lockup-on-light.svg" alt="Panes logo on light"></div><div class="logo-caption"><span>Primary light lockup</span><code>panes-lockup-on-light.svg</code></div></article>
+        <article class="logo-cell"><div class="logo-preview"><img style="width: 86px;" src="./assets/panes-mark-on-dark.svg" alt="Panes mark on dark"></div><div class="logo-caption"><span>Mark on dark</span><code>panes-mark-on-dark.svg</code></div></article>
+        <article class="logo-cell light"><div class="logo-preview"><img style="width: 86px;" src="./assets/panes-mark-on-light.svg" alt="Panes mark on light"></div><div class="logo-caption"><span>Mark on light</span><code>panes-mark-on-light.svg</code></div></article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="palette-title">
+      <div class="section-copy">
+        <h2 id="palette-title">A palette for the product, not only the logo.</h2>
+        <p>Neutral values carry the cockpit. Mint marks active and connected states. Blue, violet, amber, and coral keep information, agents, warnings, and errors distinct.</p>
+      </div>
+
+      <div class="palette-block">
+        <div class="palette-heading"><h3>Panes neutral</h3><p>Canvas, panes, elevation, borders, icons, and text.</p></div>
+        <div class="swatch-ramp" style="--columns: 12;">
+          <div class="swatch" style="--swatch:#FAFAFB;--label:#18181C;"><span>50</span><code>#FAFAFB</code></div>
+          <div class="swatch" style="--swatch:#ECECEF;--label:#18181C;"><span>100</span><code>#ECECEF</code></div>
+          <div class="swatch" style="--swatch:#D4D4D7;--label:#18181C;"><span>200</span><code>#D4D4D7</code></div>
+          <div class="swatch" style="--swatch:#B1B1B4;--label:#18181C;"><span>300</span><code>#B1B1B4</code></div>
+          <div class="swatch" style="--swatch:#89898D;--label:#18181C;"><span>400</span><code>#89898D</code></div>
+          <div class="swatch" style="--swatch:#636367;"><span>500</span><code>#636367</code></div>
+          <div class="swatch" style="--swatch:#47474C;"><span>600</span><code>#47474C</code></div>
+          <div class="swatch" style="--swatch:#2D2D32;"><span>700</span><code>#2D2D32</code></div>
+          <div class="swatch" style="--swatch:#18181C;"><span>800</span><code>#18181C</code></div>
+          <div class="swatch" style="--swatch:#0D0D11;"><span>850</span><code>#0D0D11</code></div>
+          <div class="swatch" style="--swatch:#040406;"><span>900</span><code>#040406</code></div>
+          <div class="swatch" style="--swatch:#010102;"><span>950</span><code>#010102</code></div>
+        </div>
+      </div>
+
+      <div class="palette-block">
+        <div class="palette-heading"><h3>Terminal mint</h3><p>Active, selected, connected, and focus states.</p></div>
+        <div class="swatch-ramp" style="--columns: 11;">
+          <div class="swatch" style="--swatch:#E8FBEE;--label:#18181C;"><span>50</span><code>#E8FBEE</code></div>
+          <div class="swatch" style="--swatch:#CEF3DB;--label:#18181C;"><span>100</span><code>#CEF3DB</code></div>
+          <div class="swatch" style="--swatch:#ACE8C3;--label:#18181C;"><span>200</span><code>#ACE8C3</code></div>
+          <div class="swatch" style="--swatch:#88DDAB;--label:#18181C;"><span>300</span><code>#88DDAB</code></div>
+          <div class="swatch" style="--swatch:#61D596;--label:#18181C;"><span>400</span><code>#61D596</code></div>
+          <div class="swatch" style="--swatch:#33B978;--label:#021409;"><span>500</span><code>#33B978</code></div>
+          <div class="swatch" style="--swatch:#02955A;"><span>600</span><code>#02955A</code></div>
+          <div class="swatch" style="--swatch:#006D40;"><span>700</span><code>#006D40</code></div>
+          <div class="swatch" style="--swatch:#014A2A;"><span>800</span><code>#014A2A</code></div>
+          <div class="swatch" style="--swatch:#042917;"><span>900</span><code>#042917</code></div>
+          <div class="swatch" style="--swatch:#021409;"><span>950</span><code>#021409</code></div>
+        </div>
+      </div>
+
+      <div class="palette-block">
+        <div class="palette-heading"><h3>Supporting roles</h3><p>Keep these tied to meaning instead of decoration.</p></div>
+        <div class="support-grid">
+          <div class="support-color" style="--color:#57B6FF;"><strong>Running and info</strong><div><span>Mineral blue</span><code>#57B6FF</code></div></div>
+          <div class="support-color" style="--color:#A88DFF;"><strong>Agent and model</strong><div><span>Electric violet</span><code>#A88DFF</code></div></div>
+          <div class="support-color" style="--color:#F1B047;"><strong>Pending and warning</strong><div><span>Warm amber</span><code>#F1B047</code></div></div>
+          <div class="support-color" style="--color:#F9776E;"><strong>Error and destructive</strong><div><span>Signal coral</span><code>#F9776E</code></div></div>
+        </div>
+      </div>
+
+      <div class="token-table" aria-label="Core semantic token mapping">
+        <div class="token-row"><div><strong>Role</strong></div><div><strong>Dark theme</strong></div><div><strong>Light theme</strong></div></div>
+        <div class="token-row"><div><code>canvas</code></div><div><span class="token-dot" style="--dot:#010102;"></span>#010102</div><div><span class="token-dot" style="--dot:#FAFAFB;"></span>#FAFAFB</div></div>
+        <div class="token-row"><div><code>pane</code></div><div><span class="token-dot" style="--dot:#040406;"></span>#040406</div><div><span class="token-dot" style="--dot:#FFFFFF;"></span>#FFFFFF</div></div>
+        <div class="token-row"><div><code>surface-active</code></div><div><span class="token-dot" style="--dot:#021409;"></span>#021409</div><div><span class="token-dot" style="--dot:#E8FBEE;"></span>#E8FBEE</div></div>
+        <div class="token-row"><div><code>text-primary</code></div><div><span class="token-dot" style="--dot:#FAFAFB;"></span>#FAFAFB</div><div><span class="token-dot" style="--dot:#18181C;"></span>#18181C</div></div>
+        <div class="token-row"><div><code>accent</code></div><div><span class="token-dot" style="--dot:#61D596;"></span>#61D596</div><div><span class="token-dot" style="--dot:#006D40;"></span>#006D40</div></div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="ui-title">
+      <div class="section-copy">
+        <h2 id="ui-title">Tokens inside the cockpit.</h2>
+        <p>The mint selection is intentionally quiet. Most of the interface stays neutral so code, status, and agent states retain their meaning.</p>
+      </div>
+      <div class="ui-previews">
+        <article class="ui-preview">
+          <div class="preview-topbar"><img src="./assets/panes-lockup-on-dark.svg" alt="panes"><span>dark theme</span></div>
+          <div class="preview-shell">
+            <aside class="preview-sidebar"><div class="preview-nav-item"><i></i>New thread</div><div class="preview-nav-item"><i></i>Search</div><div class="preview-nav-item active"><i></i>panes</div><div class="preview-nav-item"><i></i>report-generator</div></aside>
+            <div class="preview-main"><div class="preview-tabs"><span class="preview-tab active">Agent session</span><span class="preview-tab">Changes</span></div><div class="preview-content"><div class="preview-thread"><div class="preview-line"></div><div class="preview-line"></div><div class="preview-line"></div><div class="preview-status"><span>17 actions completed</span><strong>connected</strong></div><div class="preview-line"></div><div class="preview-line"></div></div><aside class="preview-changes">Changes<div class="preview-change"><span>landing-page</span><i></i></div></aside></div></div>
+          </div>
+        </article>
+        <article class="ui-preview light">
+          <div class="preview-topbar"><img src="./assets/panes-lockup-on-light.svg" alt="panes"><span>light theme</span></div>
+          <div class="preview-shell">
+            <aside class="preview-sidebar"><div class="preview-nav-item"><i></i>New thread</div><div class="preview-nav-item"><i></i>Search</div><div class="preview-nav-item active"><i></i>panes</div><div class="preview-nav-item"><i></i>report-generator</div></aside>
+            <div class="preview-main"><div class="preview-tabs"><span class="preview-tab active">Agent session</span><span class="preview-tab">Changes</span></div><div class="preview-content"><div class="preview-thread"><div class="preview-line"></div><div class="preview-line"></div><div class="preview-line"></div><div class="preview-status"><span>17 actions completed</span><strong style="color:#006D40;">connected</strong></div><div class="preview-line"></div><div class="preview-line"></div></div><aside class="preview-changes">Changes<div class="preview-change"><span>landing-page</span><i></i></div></aside></div></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="type-title">
+      <div class="section-copy">
+        <h2 id="type-title">Brand type and product type have different jobs.</h2>
+        <p>Proxima Nova appears only in the outlined wordmark. Geist remains the application typeface, and Geist Mono remains reserved for code, commands, hashes, and compact metadata.</p>
+      </div>
+      <div class="type-system">
+        <div class="type-wordmark"><img src="./assets/panes-wordmark-on-dark.svg" alt="panes wordmark"><p>Proxima Nova Alt Bold, lowercase, converted to portable vector outlines. Do not typeset the wordmark manually inside the app.</p></div>
+        <div class="type-ui"><div><h3>One cockpit for work around the code.</h3><p>Geist carries navigation, conversation, changes, approvals, and settings. Use weight and scale before adding another typeface.</p><div class="mono-sample">cargo test · 397 tests · worktree clean</div></div><p>Geist 400 to 650 · Geist Mono 400 to 600</p></div>
+      </div>
+    </section>
+
+    <section class="section" id="assets" aria-labelledby="assets-title">
+      <div class="section-copy">
+        <h2 id="assets-title">Ready-to-use files.</h2>
+        <p>These source files now feed the product theme, shell branding, terminal colors, favicon, and Tauri icon bundle. Keep this directory as the editable source for future brand adjustments.</p>
+      </div>
+      <div class="asset-list">
+        <div class="asset-row"><strong>Dark horizontal lockup</strong><code>brand/assets/panes-lockup-on-dark.svg</code><a href="./assets/panes-lockup-on-dark.svg" download>Download SVG</a></div>
+        <div class="asset-row"><strong>Light horizontal lockup</strong><code>brand/assets/panes-lockup-on-light.svg</code><a href="./assets/panes-lockup-on-light.svg" download>Download SVG</a></div>
+        <div class="asset-row"><strong>Dark mark</strong><code>brand/assets/panes-mark-on-dark.svg</code><a href="./assets/panes-mark-on-dark.svg" download>Download SVG</a></div>
+        <div class="asset-row"><strong>Light mark</strong><code>brand/assets/panes-mark-on-light.svg</code><a href="./assets/panes-mark-on-light.svg" download>Download SVG</a></div>
+        <div class="asset-row"><strong>macOS icon</strong><code>brand/app-icon/panes.icns</code><a href="./app-icon/panes.icns" download>Download ICNS</a></div>
+        <div class="asset-row"><strong>Windows icon</strong><code>brand/app-icon/panes.ico</code><a href="./app-icon/panes.ico" download>Download ICO</a></div>
+        <div class="asset-row"><strong>1024px app icon</strong><code>brand/app-icon/panes-1024.png</code><a href="./app-icon/panes-1024.png" download>Download PNG</a></div>
+        <div class="asset-row"><strong>CSS tokens</strong><code>brand/tokens.css</code><a href="./tokens.css" download>Download CSS</a></div>
+        <div class="asset-row"><strong>JSON tokens</strong><code>brand/tokens.json</code><a href="./tokens.json" download>Download JSON</a></div>
+        <div class="asset-row"><strong>App integration map</strong><code>brand/APP_INTEGRATION.md</code><a href="./APP_INTEGRATION.md" download>Download guide</a></div>
+        <div class="asset-row"><strong>Brand kit README</strong><code>brand/README.md</code><a href="./README.md" download>Download README</a></div>
+      </div>
+    </section>
+  </main>
+
+  <footer><div class="footer-inner shell"><span>Panes brand kit · July 2026</span><span>Split Focus · terminal mint · Proxima Nova</span></div></footer>
+</body>
+</html>
