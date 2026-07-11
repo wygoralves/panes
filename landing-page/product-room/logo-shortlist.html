@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panes identity shortlist</title>
+  <meta name="description" content="A focused comparison of three Panes logo directions, six wordmark typefaces, and six accent colors.">
+  <style>
+    @font-face {
+      font-family: "Geist";
+      src: url("./fonts/geist-latin.woff2") format("woff2");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+    }
+
+    @font-face {
+      font-family: "Geist Mono";
+      src: url("./fonts/geist-mono-latin.woff2") format("woff2");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+    }
+
+    :root {
+      --page: oklch(0.07 0.006 286);
+      --surface: oklch(0.105 0.007 286);
+      --surface-raised: oklch(0.14 0.008 286);
+      --line: oklch(0.25 0.01 286);
+      --line-strong: oklch(0.36 0.012 286);
+      --ink: oklch(0.965 0.003 286);
+      --muted: oklch(0.69 0.006 286);
+      --faint: oklch(0.5 0.007 286);
+      --paper: oklch(0.965 0.002 286);
+      --paper-ink: oklch(0.14 0.008 286);
+      --coral: oklch(0.72 0.16 26);
+      --violet: oklch(0.72 0.17 292);
+      --blue: oklch(0.75 0.14 245);
+      --mint: oklch(0.79 0.14 157);
+      --amber: oklch(0.8 0.14 76);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-width: 320px;
+      background: var(--page);
+    }
+
+    body {
+      min-width: 320px;
+      min-height: 100vh;
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    a:focus-visible {
+      outline: 2px solid var(--violet);
+      outline-offset: 4px;
+    }
+
+    .shell {
+      width: min(calc(100% - 48px), 1440px);
+      margin-inline: auto;
+    }
+
+    header {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid oklch(1 0 0 / 0.07);
+    }
+
+    .header-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand {
+      font-size: 14px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+
+    .header-links {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .header-links a:hover {
+      color: var(--ink);
+    }
+
+    main {
+      padding: clamp(76px, 9vw, 132px) 0 128px;
+    }
+
+    .intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 0.48fr);
+      align-items: end;
+      gap: clamp(48px, 9vw, 136px);
+      margin-bottom: clamp(72px, 9vw, 120px);
+    }
+
+    h1 {
+      max-width: 900px;
+      margin: 0;
+      font-size: clamp(3.2rem, 6.2vw, 6rem);
+      font-weight: 510;
+      letter-spacing: -0.045em;
+      line-height: 0.96;
+      text-wrap: balance;
+    }
+
+    .intro p,
+    .section-copy p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.65;
+      text-wrap: pretty;
+    }
+
+    .intro p + p {
+      margin-top: 16px;
+      color: var(--faint);
+      font-size: 12px;
+    }
+
+    .section {
+      margin-top: clamp(76px, 10vw, 136px);
+      padding-top: clamp(56px, 7vw, 88px);
+      border-top: 1px solid var(--line);
+    }
+
+    .section:first-of-type {
+      margin-top: 0;
+      padding-top: 0;
+      border-top: 0;
+    }
+
+    .section-copy {
+      display: grid;
+      grid-template-columns: minmax(0, 0.85fr) minmax(300px, 0.5fr);
+      align-items: end;
+      gap: clamp(40px, 8vw, 120px);
+      margin-bottom: 42px;
+    }
+
+    .section-copy h2 {
+      max-width: 780px;
+      margin: 0;
+      font-size: clamp(2.5rem, 4.4vw, 4.6rem);
+      font-weight: 510;
+      letter-spacing: -0.04em;
+      line-height: 0.98;
+      text-wrap: balance;
+    }
+
+    .mark {
+      --mark-ink: var(--ink);
+      --mark-accent: var(--coral);
+      --mark-bg: var(--page);
+      color: var(--mark-ink);
+    }
+
+    .mark [data-accent] {
+      fill: var(--mark-accent);
+      stroke: var(--mark-accent);
+    }
+
+    .mark [data-bg] {
+      fill: var(--mark-bg);
+    }
+
+    .shortlist {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .logo-card {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--surface);
+    }
+
+    .logo-stage {
+      min-height: 390px;
+      display: grid;
+      place-items: center;
+      background: oklch(0.082 0.006 286);
+    }
+
+    .logo-stage svg {
+      width: min(42%, 170px);
+      height: auto;
+    }
+
+    .logo-card-body {
+      padding: 26px;
+    }
+
+    .logo-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .logo-title h3 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 560;
+      letter-spacing: -0.035em;
+    }
+
+    .logo-title span {
+      color: var(--faint);
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 10px;
+    }
+
+    .logo-card-body p {
+      min-height: 62px;
+      margin: 13px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.58;
+    }
+
+    .logo-tests {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 22px;
+    }
+
+    .logo-test {
+      min-height: 82px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 13px;
+      border-radius: 9px;
+      background: oklch(0.055 0.005 286);
+    }
+
+    .logo-test.light {
+      background: var(--paper);
+      color: var(--paper-ink);
+    }
+
+    .logo-test svg {
+      width: 36px;
+      height: 36px;
+    }
+
+    .logo-test svg:last-child {
+      width: 18px;
+      height: 18px;
+    }
+
+    .logo-test.light svg {
+      --mark-ink: var(--paper-ink);
+      --mark-bg: var(--paper);
+    }
+
+    .type-table {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--line);
+    }
+
+    .type-row {
+      display: grid;
+      grid-template-columns: 170px repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--line);
+    }
+
+    .type-row + .type-row {
+      margin-top: 1px;
+    }
+
+    .type-name,
+    .type-sample {
+      min-height: 148px;
+      background: var(--surface);
+    }
+
+    .type-name {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 22px;
+    }
+
+    .type-name strong {
+      font-size: 13px;
+      font-weight: 620;
+    }
+
+    .type-name span {
+      color: var(--faint);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .type-sample {
+      display: flex;
+      align-items: center;
+      gap: clamp(12px, 2vw, 22px);
+      padding: 24px;
+    }
+
+    .type-sample svg {
+      width: 36px;
+      height: 36px;
+      flex: 0 0 auto;
+      --mark-accent: var(--ink);
+    }
+
+    .wordmark {
+      min-width: 0;
+      color: var(--ink);
+      font-size: clamp(2rem, 3.4vw, 3.6rem);
+      line-height: 0.9;
+      white-space: nowrap;
+    }
+
+    .font-geist .wordmark {
+      font-family: "Geist", sans-serif;
+      font-weight: 640;
+      letter-spacing: -0.065em;
+    }
+
+    .font-avenir .wordmark {
+      font-family: "Avenir Next", Avenir, sans-serif;
+      font-weight: 600;
+      letter-spacing: -0.055em;
+    }
+
+    .font-futura .wordmark {
+      font-family: Futura, sans-serif;
+      font-weight: 500;
+      letter-spacing: -0.055em;
+    }
+
+    .font-din .wordmark {
+      font-family: "DIN Alternate", "Arial Narrow", sans-serif;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+    }
+
+    .font-iowan .wordmark {
+      font-family: "Iowan Old Style", Georgia, serif;
+      font-weight: 600;
+      letter-spacing: -0.06em;
+    }
+
+    .font-jetbrains .wordmark {
+      font-family: "JetBrainsMono Nerd Font", "Geist Mono", monospace;
+      font-size: clamp(1.65rem, 2.7vw, 3rem);
+      font-weight: 520;
+      letter-spacing: -0.075em;
+      text-transform: lowercase;
+    }
+
+    .color-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .color-card {
+      --candidate: var(--coral);
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--surface);
+    }
+
+    .color-card[data-color="violet"] {
+      --candidate: var(--violet);
+    }
+
+    .color-card[data-color="blue"] {
+      --candidate: var(--blue);
+    }
+
+    .color-card[data-color="mint"] {
+      --candidate: var(--mint);
+    }
+
+    .color-card[data-color="amber"] {
+      --candidate: var(--amber);
+    }
+
+    .color-card[data-color="mono"] {
+      --candidate: var(--ink);
+    }
+
+    .color-stage {
+      min-height: 250px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: clamp(20px, 4vw, 48px);
+      background: oklch(0.06 0.005 286);
+    }
+
+    .color-stage svg {
+      width: 62px;
+      height: 62px;
+      --mark-accent: var(--candidate);
+    }
+
+    .color-stage svg:nth-child(2) {
+      width: 52px;
+      height: 52px;
+    }
+
+    .color-stage svg:nth-child(3) {
+      width: 58px;
+      height: 58px;
+    }
+
+    .color-info {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 13px;
+      padding: 18px 20px;
+    }
+
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: var(--candidate);
+      box-shadow: 0 0 0 1px oklch(1 0 0 / 0.14);
+    }
+
+    .color-info strong {
+      font-size: 13px;
+      font-weight: 610;
+    }
+
+    .color-info code {
+      color: var(--faint);
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 10px;
+    }
+
+    .systems {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .system-card {
+      --system-accent: var(--violet);
+      min-height: 440px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      overflow: hidden;
+      padding: clamp(26px, 3vw, 38px);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--surface);
+    }
+
+    .system-card[data-system="native"] {
+      --system-accent: var(--coral);
+    }
+
+    .system-card[data-system="technical"] {
+      --system-accent: var(--blue);
+    }
+
+    .system-lockup {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      min-height: 160px;
+    }
+
+    .system-lockup svg {
+      width: 58px;
+      height: 58px;
+      flex: 0 0 auto;
+      --mark-accent: var(--system-accent);
+    }
+
+    .system-lockup .wordmark {
+      font-size: clamp(2.4rem, 4vw, 4rem);
+    }
+
+    .system-card h3 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 570;
+      letter-spacing: -0.03em;
+    }
+
+    .system-card p {
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.58;
+    }
+
+    .system-parts {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-top: 28px;
+      color: var(--faint);
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 10px;
+    }
+
+    .system-parts i {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--system-accent);
+    }
+
+    footer {
+      min-height: 80px;
+      display: flex;
+      align-items: center;
+      border-top: 1px solid oklch(1 0 0 / 0.07);
+      color: var(--faint);
+      font-size: 11px;
+    }
+
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    @media (max-width: 1080px) {
+      .intro,
+      .section-copy {
+        grid-template-columns: 1fr;
+      }
+
+      .shortlist,
+      .systems {
+        grid-template-columns: 1fr;
+      }
+
+      .logo-card {
+        display: grid;
+        grid-template-columns: minmax(300px, 0.8fr) minmax(0, 1fr);
+      }
+
+      .type-row {
+        grid-template-columns: 138px repeat(3, minmax(0, 1fr));
+      }
+
+      .type-sample {
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: center;
+      }
+
+      .color-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        width: min(calc(100% - 28px), 1440px);
+      }
+
+      .header-links a:first-child {
+        display: none;
+      }
+
+      main {
+        padding-top: 68px;
+        padding-bottom: 84px;
+      }
+
+      h1 {
+        font-size: clamp(2.85rem, 14vw, 4.3rem);
+      }
+
+      .logo-card {
+        display: block;
+      }
+
+      .logo-stage {
+        min-height: 300px;
+      }
+
+      .type-table {
+        overflow: visible;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+      }
+
+      .type-row {
+        grid-template-columns: 1fr;
+        gap: 1px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+      }
+
+      .type-row + .type-row {
+        margin-top: 12px;
+      }
+
+      .type-name {
+        min-height: 76px;
+      }
+
+      .type-sample {
+        min-height: 104px;
+        flex-direction: row;
+        align-items: center;
+      }
+
+      .color-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .color-stage {
+        min-height: 220px;
+      }
+
+      .system-card {
+        min-height: 360px;
+      }
+
+      .footer-inner {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 22px 0;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner shell">
+      <a class="brand" href="./index.html">Panes</a>
+      <nav class="header-links" aria-label="Exploration links">
+        <a href="./logo-variations.html">View broad exploration</a>
+        <a href="./index.html">View landing page</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="intro" aria-labelledby="page-title">
+      <h1 id="page-title">Three marks. The rest is a system.</h1>
+      <div>
+        <p>Inset Focus, Continuous Pane, and Split Focus are the strongest candidates from the first round. This page separates symbol, typeface, and color so each decision can be judged on its own.</p>
+        <p>All marks are tested in one color first. Accent is treated as an active state, not structural support.</p>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="marks-title">
+      <div class="section-copy">
+        <h2 id="marks-title">The symbol shortlist.</h2>
+        <p>Each mark has a different center of gravity. Inset Focus is iconic, Continuous Pane is ownable, and Split Focus explains the product most directly.</p>
+      </div>
+      <div class="shortlist">
+        <article class="logo-card" data-logo-card="inset">
+          <div class="logo-stage" data-logo="inset"></div>
+          <div class="logo-card-body">
+            <div class="logo-title"><h3>Inset Focus</h3><span>iconic</span></div>
+            <p>Four outer corners frame one active surface. It has the clearest silhouette and survives the smallest product slots.</p>
+            <div class="logo-tests"><div class="logo-test" data-logo-pair="inset"></div><div class="logo-test light" data-logo-pair="inset"></div></div>
+          </div>
+        </article>
+        <article class="logo-card" data-logo-card="continuous">
+          <div class="logo-stage" data-logo="continuous"></div>
+          <div class="logo-card-body">
+            <div class="logo-title"><h3>Continuous Pane</h3><span>ownable</span></div>
+            <p>One route forms the rail, pane, and active task. It carries the most motion and has the most distinctive profile.</p>
+            <div class="logo-tests"><div class="logo-test" data-logo-pair="continuous"></div><div class="logo-test light" data-logo-pair="continuous"></div></div>
+          </div>
+        </article>
+        <article class="logo-card" data-logo-card="split">
+          <div class="logo-stage" data-logo="split"></div>
+          <div class="logo-card-body">
+            <div class="logo-title"><h3>Split Focus</h3><span>literal</span></div>
+            <p>One rounded cockpit contains a rail and two work surfaces. It communicates Panes before the name appears.</p>
+            <div class="logo-tests"><div class="logo-test" data-logo-pair="split"></div><div class="logo-test light" data-logo-pair="split"></div></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="type-title">
+      <div class="section-copy">
+        <h2 id="type-title">Six voices for the same name.</h2>
+        <p>Every typeface is paired with all three marks. This keeps a good symbol from rescuing a weak wordmark and makes the differences in tone easier to see.</p>
+      </div>
+      <div class="type-table" id="type-table"></div>
+    </section>
+
+    <section class="section" aria-labelledby="color-title">
+      <div class="section-copy">
+        <h2 id="color-title">Color should behave like a signal.</h2>
+        <p>The accent occupies only the active node or surface. Violet and mineral blue sit most naturally in the new landing page. Coral stays warmer and more urgent. Monochrome proves the marks can stand without color.</p>
+      </div>
+      <div class="color-grid" id="color-grid"></div>
+    </section>
+
+    <section class="section" aria-labelledby="systems-title">
+      <div class="section-copy">
+        <h2 id="systems-title">Three complete identity directions.</h2>
+        <p>These are not final recommendations. They show how the same product can feel calm, native to the interface, or more explicitly technical by changing the combination rather than redesigning every part.</p>
+      </div>
+      <div class="systems">
+        <article class="system-card font-avenir" data-system="calm">
+          <div class="system-lockup"><span data-logo="inset"></span><span class="wordmark">Panes</span></div>
+          <div><h3>Calm and iconic</h3><p>Inset Focus with Avenir Next and electric violet. Soft geometry, clear silhouette, and less developer-tool severity.</p><div class="system-parts"><i></i><span>Inset Focus · Avenir Next · violet</span></div></div>
+        </article>
+        <article class="system-card font-geist" data-system="native">
+          <div class="system-lockup"><span data-logo="continuous"></span><span class="wordmark">Panes</span></div>
+          <div><h3>Native to Panes</h3><p>Continuous Pane with Geist and signal coral. This keeps the strongest connection to the current interface while making the symbol more ownable.</p><div class="system-parts"><i></i><span>Continuous Pane · Geist · coral</span></div></div>
+        </article>
+        <article class="system-card font-din" data-system="technical">
+          <div class="system-lockup"><span data-logo="split"></span><span class="wordmark">Panes</span></div>
+          <div><h3>Technical and explicit</h3><p>Split Focus with DIN Alternate and mineral blue. It explains the cockpit quickly and feels closest to a professional developer utility.</p><div class="system-parts"><i></i><span>Split Focus · DIN Alternate · blue</span></div></div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer><div class="footer-inner shell"><span>Panes identity shortlist</span><span>3 marks · 6 typefaces · 6 colors</span></div></footer>
+
+  <template id="logo-inset">
+    <svg class="mark" viewBox="0 0 64 64" role="img" aria-label="Inset Focus logo">
+      <path d="M27 9H20C13.9 9 9 13.9 9 20V27M37 9H44C50.1 9 55 13.9 55 20V27M55 37V44C55 50.1 50.1 55 44 55H37M27 55H20C13.9 55 9 50.1 9 44V37" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+      <rect x="22" y="22" width="20" height="20" rx="7" fill="none" stroke="currentColor" stroke-width="5"/>
+      <rect x="29" y="29" width="6" height="6" rx="2" data-accent stroke="none"/>
+    </svg>
+  </template>
+
+  <template id="logo-continuous">
+    <svg class="mark" viewBox="0 0 64 64" role="img" aria-label="Continuous Pane logo">
+      <path d="M16 52V18C16 13.6 19.6 10 24 10H43C47.4 10 51 13.6 51 18V31C51 35.4 47.4 39 43 39H27V26H42" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M27 39V52" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+      <circle cx="51" cy="47" r="5" data-accent stroke="none"/>
+    </svg>
+  </template>
+
+  <template id="logo-split">
+    <svg class="mark" viewBox="0 0 64 64" role="img" aria-label="Split Focus logo">
+      <rect x="8" y="8" width="48" height="48" rx="12" fill="none" stroke="currentColor" stroke-width="4"/>
+      <path d="M26 10V54M28 27H54" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+      <rect x="34" y="34" width="14" height="14" rx="5" data-accent stroke="none"/>
+    </svg>
+  </template>
+
+  <script>
+    var logos = ["inset", "continuous", "split"];
+
+    function logoNode(name, decorative) {
+      var fragment = document.querySelector("#logo-" + name).content.cloneNode(true);
+      var svg = fragment.querySelector("svg");
+      if (decorative) {
+        svg.removeAttribute("role");
+        svg.removeAttribute("aria-label");
+        svg.setAttribute("aria-hidden", "true");
+      }
+      return svg;
+    }
+
+    document.querySelectorAll("[data-logo]").forEach(function (slot) {
+      slot.appendChild(logoNode(slot.getAttribute("data-logo"), true));
+    });
+
+    document.querySelectorAll("[data-logo-pair]").forEach(function (slot) {
+      var name = slot.getAttribute("data-logo-pair");
+      slot.appendChild(logoNode(name, true));
+      slot.appendChild(logoNode(name, true));
+    });
+
+    var typefaces = [
+      { className: "font-geist", name: "Geist", note: "current product voice" },
+      { className: "font-avenir", name: "Avenir Next", note: "soft and composed" },
+      { className: "font-futura", name: "Futura", note: "geometric and direct" },
+      { className: "font-din", name: "DIN Alternate", note: "compact and technical" },
+      { className: "font-iowan", name: "Iowan Old Style", note: "editorial contrast" },
+      { className: "font-jetbrains", name: "JetBrains Mono", note: "interface native" }
+    ];
+
+    var typeTable = document.querySelector("#type-table");
+    typefaces.forEach(function (face) {
+      var row = document.createElement("article");
+      row.className = "type-row " + face.className;
+      var name = document.createElement("div");
+      name.className = "type-name";
+      name.innerHTML = "<strong>" + face.name + "</strong><span>" + face.note + "</span>";
+      row.appendChild(name);
+      logos.forEach(function (logo) {
+        var sample = document.createElement("div");
+        sample.className = "type-sample";
+        sample.appendChild(logoNode(logo, true));
+        var wordmark = document.createElement("span");
+        wordmark.className = "wordmark";
+        wordmark.textContent = "Panes";
+        sample.appendChild(wordmark);
+        row.appendChild(sample);
+      });
+      typeTable.appendChild(row);
+    });
+
+    var colors = [
+      { key: "coral", name: "Signal coral", value: "72 16 26" },
+      { key: "violet", name: "Electric violet", value: "72 17 292" },
+      { key: "blue", name: "Mineral blue", value: "75 14 245" },
+      { key: "mint", name: "Terminal mint", value: "79 14 157" },
+      { key: "amber", name: "Warm amber", value: "80 14 76" },
+      { key: "mono", name: "Monochrome", value: "ink only" }
+    ];
+
+    var colorGrid = document.querySelector("#color-grid");
+    colors.forEach(function (color) {
+      var card = document.createElement("article");
+      card.className = "color-card";
+      card.setAttribute("data-color", color.key);
+      var stage = document.createElement("div");
+      stage.className = "color-stage";
+      logos.forEach(function (logo) {
+        stage.appendChild(logoNode(logo, true));
+      });
+      var info = document.createElement("div");
+      info.className = "color-info";
+      info.innerHTML = "<span class=\"swatch\"></span><strong>" + color.name + "</strong><code>" + color.value + "</code>";
+      card.appendChild(stage);
+      card.appendChild(info);
+      colorGrid.appendChild(card);
+    });
+  </script>
+</body>
+</html>
