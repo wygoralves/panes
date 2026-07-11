@@ -65,6 +65,9 @@
 
   /* Accent */
   --accent: var(--brand-mint-400);
+  --accent-fill: var(--brand-mint-400);
+  --accent-fill-hover: var(--brand-mint-300);
+  --accent-indicator: var(--brand-mint-400);
   --accent-rgb: 97, 213, 150;
   --accent-dim: rgba(var(--accent-rgb), 0.10);
   --accent-glow: none;
@@ -73,6 +76,7 @@
 
   /* Semantic */
   --success: var(--brand-mint-500);
+  --success-indicator: var(--brand-mint-400);
   --success-rgb: 51, 185, 120;
   --danger: var(--brand-coral);
   --danger-rgb: 249, 119, 110;
@@ -86,6 +90,14 @@
   --divider: var(--wash-05);
   --border-active: var(--wash-26);
   --border-accent: rgba(var(--accent-rgb), 0.22);
+  --focus-ring: var(--accent);
+  --focus-ring-shadow: 0 0 0 1px var(--focus-ring);
+  --selection-bg: var(--brand-mint-950);
+  --selection-fg: var(--accent);
+  --selection-border: var(--border-accent);
+  --segmented-bg: var(--bg-2);
+  --toggle-fill: var(--brand-mint-400);
+  --toggle-thumb: var(--brand-mint-950);
 
   /* Glass */
   --glass-bg: rgba(1, 1, 2, 0.78);
@@ -97,6 +109,7 @@
 
   /* Frosted popover surface (command palette and similar floating cards) */
   --popover-bg: rgba(13, 13, 17, 0.96);
+  --modal-backdrop-bg: rgba(0, 0, 0, 0.60);
 
   /* Floating scrim chip (pane close/split buttons overlaid on content) */
   --floating-chip-bg: rgba(0, 0, 0, 0.48);
@@ -108,9 +121,6 @@
   /* Onboarding wizard full-screen takeover backdrop */
   --ob-backdrop-bg: rgba(0, 0, 0, 0.85);
   --ob-footer-fade: rgba(0, 0, 0, 0.9);
-
-  /* Model picker engine rail vignette (gradient end stop) */
-  --mp-rail-fade-end: rgba(15, 15, 15, 0.6);
 
   /* Git diff added/deleted line text (distinct from the gutter icon color) */
   --diff-add-text: #b5f5c8;
@@ -133,11 +143,11 @@
   --supporting-bg: var(--brand-neutral-850);
   --sidebar-bg: var(--supporting-bg);
   --content-bg: var(--brand-neutral-900);
-  --content-top-margin: 8px;
-  --content-inset: 8px;
+  --content-top-margin: 14px;
+  --content-inset: 14px;
   --content-radius: var(--radius-lg);
   --content-border: var(--wash-08);
-  --content-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+  --content-shadow: var(--shadow-content);
   --panel-header-height: 48px;
   --linux-forehead-height: 36px;
   --linux-window-control-size: 28px;
@@ -159,6 +169,17 @@
 
   /* Text drawn on top of accent-filled surfaces (buttons, launch chips) */
   --on-accent: var(--brand-mint-950);
+  --on-accent-icon: var(--brand-mint-950);
+  --on-danger: var(--brand-neutral-950);
+
+  /* Elevation */
+  --shadow-content: 0 2px 8px rgba(0, 0, 0, 0.24);
+  --shadow-popover: 0 4px 8px rgba(0, 0, 0, 0.32);
+  --shadow-modal: 0 6px 8px rgba(0, 0, 0, 0.42);
+  --shadow-drag: 0 4px 8px rgba(0, 0, 0, 0.28);
+  --shadow-flyout-left: 4px 0 8px rgba(0, 0, 0, 0.28);
+  --shadow-flyout-right: -4px 0 8px rgba(0, 0, 0, 0.28);
+  --shadow-control: 0 1px 3px rgba(0, 0, 0, 0.40);
 
   /* Overlay washes: translucent white tints used for hover/active states
      on dark surfaces. Flipped to translucent black under the light theme. */
@@ -189,7 +210,7 @@
   --hljs-keyword: #ff7b72;
   --hljs-string: #a5d6ff;
   --hljs-number: #79c0ff;
-  --hljs-comment: #484f58;
+  --hljs-comment: var(--brand-neutral-400);
   --hljs-function: #d2a8ff;
   --hljs-built-in: #ffa657;
   --hljs-meta: #8b949e;
@@ -208,7 +229,7 @@
   --cm-def-variable: #82aaff;
   --cm-string: #c3e88d;
   --cm-special-string: #f07178;
-  --cm-comment: #546e7a;
+  --cm-comment: var(--brand-neutral-400);
   --cm-invalid: #ff5370;
 }
 
@@ -220,23 +241,29 @@
   --bg-0: var(--brand-neutral-0);
   --bg-1: var(--brand-neutral-0);
   --bg-2: var(--brand-neutral-50);
-  --bg-3: var(--brand-neutral-100);
-  --bg-4: var(--brand-neutral-200);
-  --bg-5: var(--brand-neutral-300);
+  --bg-3: var(--brand-neutral-50);
+  --bg-4: var(--brand-neutral-100);
+  --bg-5: var(--brand-neutral-200);
 
   --text-1: var(--brand-neutral-800);
   --text-2: var(--brand-neutral-600);
   --text-3: var(--brand-neutral-500);
 
   --accent: var(--brand-mint-700);
+  --accent-fill: var(--brand-mint-700);
+  --accent-fill-hover: var(--brand-mint-800);
+  --accent-indicator: var(--brand-mint-500);
   --accent-rgb: 0, 109, 64;
   --accent-dim: rgba(var(--accent-rgb), 0.08);
   --accent-glow: none;
   --accent-2: #6e4fc1;
   --accent-2-dim: rgba(110, 79, 193, 0.10);
   --on-accent: #ffffff;
+  --on-accent-icon: #ffffff;
+  --on-danger: #ffffff;
 
   --success: var(--brand-mint-700);
+  --success-indicator: var(--brand-mint-500);
   --success-rgb: 0, 109, 64;
   --danger: #bd413d;
   --danger-rgb: 189, 65, 61;
@@ -249,9 +276,17 @@
   --divider: rgba(0, 0, 0, 0.06);
   --border-active: rgba(0, 0, 0, 0.28);
   --border-accent: rgba(var(--accent-rgb), 0.26);
+  --focus-ring: var(--brand-mint-600);
+  --selection-bg: var(--brand-mint-50);
+  --selection-fg: var(--accent);
+  --selection-border: var(--border-accent);
+  --segmented-bg: var(--brand-neutral-0);
+  --toggle-fill: var(--brand-mint-600);
+  --toggle-thumb: var(--brand-neutral-0);
 
   --glass-bg: rgba(255, 255, 255, 0.75);
   --glass-border: rgba(0, 0, 0, 0.08);
+  --modal-backdrop-bg: rgba(0, 0, 0, 0.32);
 
   --code-bg: var(--brand-neutral-100);
 
@@ -261,7 +296,6 @@
   --overlay-chip-bg-subtle: rgba(255, 255, 255, 0.85);
   --ob-backdrop-bg: rgba(255, 255, 255, 0.85);
   --ob-footer-fade: rgba(255, 255, 255, 0.9);
-  --mp-rail-fade-end: rgba(220, 222, 226, 0.6);
   --diff-add-text: var(--success);
   --diff-del-text: var(--danger);
   --diff-overlay-bg: rgba(255, 255, 255, 0.92);
@@ -270,7 +304,14 @@
   --sidebar-bg: var(--supporting-bg);
   --content-bg: var(--brand-neutral-0);
   --content-border: rgba(0, 0, 0, 0.08);
-  --content-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  --shadow-content: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-popover: 0 3px 8px rgba(0, 0, 0, 0.10);
+  --shadow-modal: 0 4px 8px rgba(0, 0, 0, 0.12);
+  --shadow-drag: 0 3px 8px rgba(0, 0, 0, 0.10);
+  --shadow-flyout-left: 4px 0 8px rgba(0, 0, 0, 0.08);
+  --shadow-flyout-right: -4px 0 8px rgba(0, 0, 0, 0.08);
+  --shadow-control: 0 1px 3px rgba(0, 0, 0, 0.16);
+  --content-shadow: var(--shadow-content);
 
   --block-error-bg: rgba(var(--danger-rgb), 0.08);
   --block-error-border: rgba(var(--danger-rgb), 0.22);
@@ -310,7 +351,7 @@
   --hljs-keyword: #cf222e;
   --hljs-string: #0a3069;
   --hljs-number: #0550ae;
-  --hljs-comment: #6e7781;
+  --hljs-comment: var(--brand-neutral-500);
   --hljs-function: #8250df;
   --hljs-built-in: #953800;
   --hljs-meta: #57606a;
@@ -327,7 +368,7 @@
   --cm-def-variable: #4078f2;
   --cm-string: #50a14f;
   --cm-special-string: #ca1243;
-  --cm-comment: #8a919c;
+  --cm-comment: var(--brand-neutral-500);
   --cm-invalid: #e45649;
 }
 
@@ -469,7 +510,7 @@ button, input, textarea, select {
 .resize-handle:hover,
 .resize-handle[data-resize-handle-active] {
   width: 2px;
-  background: var(--accent);
+  background: var(--accent-fill);
   box-shadow: var(--accent-glow);
 }
 
@@ -489,7 +530,7 @@ button, input, textarea, select {
 .resize-handle-vertical:hover,
 .resize-handle-vertical[data-resize-handle-active] {
   height: 2px;
-  background: var(--accent);
+  background: var(--accent-fill);
   box-shadow: var(--accent-glow);
 }
 
@@ -522,7 +563,7 @@ button, input, textarea, select {
 }
 .sidebar-resize-handle:hover,
 .sidebar-resize-handle.dragging {
-  background: var(--accent);
+  background: var(--accent-fill);
   box-shadow: var(--accent-glow);
 }
 
@@ -781,11 +822,12 @@ button, input, textarea, select {
 }
 
 .btn-primary {
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--on-accent);
   font-weight: 600;
 }
 .btn-primary:hover {
+  background: var(--accent-fill-hover);
   box-shadow: var(--accent-glow);
   transform: translateY(-0.5px);
 }
@@ -1222,7 +1264,7 @@ button, input, textarea, select {
   border-radius: var(--radius-md);
   background: var(--bg-3);
   border: 1px solid var(--border-active);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--wash-04);
+  box-shadow: var(--shadow-popover);
   animation: dropdown-in var(--duration-fast) var(--ease-out) both;
 }
 
@@ -1400,8 +1442,8 @@ button, input, textarea, select {
 .git-toolbar-btn:focus-visible,
 .shell-pin-btn:focus-visible,
 .git-flyout-trigger:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: -1px;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 .git-toolbar-btn:disabled {
   opacity: 0.45;
@@ -1433,11 +1475,13 @@ button, input, textarea, select {
 .git-flyout-trigger::after {
   content: "";
   position: absolute;
-  top: 18px;
+  top: 50%;
   right: 4px;
-  bottom: 18px;
   width: 1px;
-  background: var(--wash-08);
+  height: 32px;
+  transform: translateY(-50%);
+  opacity: 0;
+  background: var(--accent-fill);
   transition: background var(--duration-fast) var(--ease-out),
               opacity var(--duration-fast) var(--ease-out);
 }
@@ -1452,7 +1496,7 @@ button, input, textarea, select {
 .git-flyout-trigger:hover::after,
 .git-flyout-trigger:focus-visible::after,
 .git-flyout-trigger-active::after {
-  background: var(--accent);
+  opacity: 1;
 }
 
 .git-flyout-wrapper {
@@ -1661,7 +1705,7 @@ button, input, textarea, select {
 }
 .git-diff-resize-handle:hover,
 .git-diff-resize-handle-active {
-  background: var(--accent);
+  background: var(--accent-fill);
   box-shadow: var(--accent-glow);
 }
 .git-diff-line {
@@ -2153,7 +2197,7 @@ button, input, textarea, select {
   border-radius: var(--radius-sm);
   background: var(--bg-3);
   border: 1px solid var(--border-active);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--wash-04);
+  box-shadow: var(--shadow-popover);
   z-index: 9999;
   animation: dropdown-in var(--duration-fast) var(--ease-out) both;
 }
@@ -2355,7 +2399,7 @@ button, input, textarea, select {
   color: var(--text-1);
   font-size: 12px;
   font-weight: 600;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+  box-shadow: var(--shadow-drag);
 }
 
 .workspace-pane-surface-dragging,
@@ -2422,7 +2466,7 @@ button, input, textarea, select {
 .workspace-pane-resize-handle-v:active,
 .workspace-pane-resize-handle-h:hover,
 .workspace-pane-resize-handle-h:active {
-  background: var(--accent);
+  background: var(--accent-fill);
 }
 
 .workspace-pane-leaf {
@@ -2725,7 +2769,7 @@ button, input, textarea, select {
 .layout-resize-handle-vertical:hover,
 .layout-resize-handle-vertical:active {
   height: 2px;
-  background: var(--accent);
+  background: var(--accent-fill);
 }
 
 /* File explorer panel */
@@ -2857,7 +2901,7 @@ button, input, textarea, select {
   top: 0;
   bottom: 0;
   width: 2px;
-  background: var(--accent);
+  background: var(--accent-fill);
 }
 
 .file-explorer-row.context-active {
@@ -3018,7 +3062,7 @@ button, input, textarea, select {
 .editor-explorer-resize-handle:hover,
 .editor-explorer-resize-handle:active {
   width: 2px;
-  background: var(--accent);
+  background: var(--accent-fill);
 }
 
 /* Terminal panel */
@@ -3333,7 +3377,7 @@ button, input, textarea, select {
 }
 .terminal-split-handle-v::after { content: ""; position: absolute; inset: 0 -2px; }
 .terminal-split-handle-v:hover,
-.terminal-split-handle-v:active { background: var(--accent); }
+.terminal-split-handle-v:active { background: var(--accent-fill); }
 
 .terminal-split-handle-h {
   height: 4px;
@@ -3345,7 +3389,7 @@ button, input, textarea, select {
 }
 .terminal-split-handle-h::after { content: ""; position: absolute; inset: -2px 0; }
 .terminal-split-handle-h:hover,
-.terminal-split-handle-h:active { background: var(--accent); }
+.terminal-split-handle-h:active { background: var(--accent-fill); }
 
 .terminal-leaf-pane {
   position: relative;
@@ -3379,8 +3423,8 @@ button, input, textarea, select {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.18);
+  background: var(--accent-indicator);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 3px rgba(var(--accent-rgb), 0.18);
   z-index: 2;
   pointer-events: none;
 }
@@ -3403,8 +3447,8 @@ button, input, textarea, select {
   width: 7px;
   height: 7px;
   border-radius: 999px;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.14);
+  background: var(--accent-indicator);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 3px rgba(var(--accent-rgb), 0.14);
   flex-shrink: 0;
 }
 
@@ -3413,7 +3457,7 @@ button, input, textarea, select {
   z-index: 10;
   opacity: 0.85;
   background: var(--wash-06);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-drag);
   transition: none !important;
 }
 
@@ -3689,7 +3733,7 @@ button, input, textarea, select {
   transition: background var(--duration-fast) var(--ease-out);
 }
 .tnd-option-toggle-on {
-  background: var(--accent);
+  background: var(--toggle-fill);
 }
 .tnd-option-toggle-dot {
   position: absolute;
@@ -3703,7 +3747,7 @@ button, input, textarea, select {
 }
 .tnd-option-toggle-on .tnd-option-toggle-dot {
   left: 12px;
-  background: var(--bg-0);
+  background: var(--toggle-thumb);
 }
 
 /* ── Repo selector under worktree card ─────────────────────── */
@@ -3732,7 +3776,7 @@ button, input, textarea, select {
   width: 100%;
   padding: 8px 12px;
   border-radius: var(--radius-sm);
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--on-accent);
   font-size: 11.5px;
   font-weight: 600;
@@ -3745,6 +3789,7 @@ button, input, textarea, select {
   justify-content: center;
 }
 .tnd-launch-btn:hover {
+  background: var(--accent-fill-hover);
   box-shadow: var(--accent-glow);
   transform: translateY(-0.5px);
 }
@@ -3860,14 +3905,14 @@ button, input, textarea, select {
   width: 260px;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--border);
-  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.4), 2px 0 8px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-flyout-left);
   transform: translateX(-100%);
 }
 
 .shell-flyout-right {
   background: var(--content-bg);
   border-left: 1px solid var(--border);
-  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.34), -2px 0 8px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-flyout-right);
   transform: translateX(100%);
 }
 
@@ -4117,7 +4162,7 @@ button, input, textarea, select {
 .sb-thread-active::before {
   content: none;
   transform: translateY(-50%);
-  background: var(--accent);
+  background: var(--accent-fill);
   border-radius: 50%;
 }
 
@@ -4326,7 +4371,7 @@ button, input, textarea, select {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--accent-fill);
   border: 1.5px solid var(--bg-1);
   pointer-events: none;
 }
@@ -4460,8 +4505,8 @@ button, input, textarea, select {
 }
 
 .chat-input-box:focus-within {
-  border-color: var(--border-accent);
-  box-shadow: var(--accent-glow);
+  border-color: var(--focus-ring);
+  box-shadow: var(--focus-ring-shadow);
 }
 
 .chat-toolbar-divider {
@@ -4538,7 +4583,7 @@ button, input, textarea, select {
   gap: 8px;
   padding: 8px;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--wash-03);
   animation: fade-in var(--duration-fast) var(--ease-out) both;
 }
 
@@ -4594,17 +4639,13 @@ button, input, textarea, select {
 
 /* Allow — primary */
 .approval-btn-allow {
-  background: var(--accent);
-  color: #080808;
+  background: var(--accent-fill);
+  color: var(--on-accent);
   font-weight: 600;
 }
 
-:root[data-theme="light"] .approval-btn-allow {
-  color: var(--on-accent);
-}
-
 .approval-btn-allow:hover {
-  filter: brightness(1.1);
+  background: var(--accent-fill-hover);
 }
 
 /* Allow session / Allow + policy — secondary, text-only */
@@ -4948,7 +4989,7 @@ button, input, textarea, select {
   position: fixed;
   inset: 0;
   z-index: 10000;
-  background: rgba(0, 0, 0, 0.60);
+  background: var(--modal-backdrop-bg);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   display: flex;
@@ -4962,11 +5003,11 @@ button, input, textarea, select {
   max-width: calc(100vw - 48px);
   padding: 24px;
   border-radius: var(--radius-lg);
-  background: rgba(8, 8, 8, 0.85);
+  background: var(--popover-bg);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--border-active);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--wash-04);
+  box-shadow: var(--shadow-modal);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -5037,7 +5078,7 @@ button, input, textarea, select {
   font-weight: 600;
   cursor: pointer;
   background: var(--danger);
-  color: var(--on-accent);
+  color: var(--on-danger);
   transition: all var(--duration-fast) var(--ease-out);
 }
 
@@ -5061,7 +5102,7 @@ button, input, textarea, select {
   border-radius: var(--radius-lg);
   background: var(--bg-2);
   border: 1px solid var(--border);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7);
+  box-shadow: var(--shadow-modal);
   animation: confirm-dialog-in 200ms var(--ease-out) both;
   display: flex;
   flex-direction: column;
@@ -5076,7 +5117,7 @@ button, input, textarea, select {
   border-radius: var(--radius-lg);
   background: var(--bg-2);
   border: 1px solid var(--border);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7);
+  box-shadow: var(--shadow-modal);
   animation: confirm-dialog-in 200ms var(--ease-out) both;
   display: flex;
   flex-direction: column;
@@ -5341,9 +5382,7 @@ button, input, textarea, select {
   border-radius: var(--radius-lg);
   background: var(--bg-2);
   border: 1px solid var(--wash-08);
-  box-shadow:
-    0 32px 80px rgba(0, 0, 0, 0.85),
-    0 0 0 1px var(--wash-03);
+  box-shadow: var(--shadow-modal);
   animation: ws-enter 220ms var(--ease-out) both;
   display: flex;
   flex-direction: column;
@@ -5687,7 +5726,7 @@ button, input, textarea, select {
 }
 
 .ws-toggle input:checked + .ws-toggle-track {
-  background: var(--accent);
+  background: var(--toggle-fill);
 }
 
 .ws-toggle-thumb {
@@ -5696,18 +5735,17 @@ button, input, textarea, select {
   left: 2px;
   width: 12px;
   height: 12px;
-  /* Always a light knob, on-track or off-track, in either theme: the
-     universal toggle-switch convention. Only the track color communicates
-     on/off and theme. */
+  /* The checked state swaps to the accent's contrast color below. */
   background: #f5f5f5;
   border-radius: 50%;
   transition: transform var(--duration-fast) var(--ease-out);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-control);
   pointer-events: none;
 }
 
 .ws-toggle input:checked ~ .ws-toggle-thumb {
   transform: translateX(12px);
+  background: var(--toggle-thumb);
 }
 
 .ws-repo-empty {
@@ -7161,14 +7199,14 @@ button, input, textarea, select {
 }
 
 .chat-tool-input-btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--on-accent);
   box-shadow: var(--accent-glow);
 }
 
 .chat-tool-input-btn-primary:hover {
-  background: color-mix(in srgb, var(--accent) 88%, white);
+  background: var(--accent-fill-hover);
 }
 
 .chat-tool-input-btn-primary:disabled {
@@ -7284,8 +7322,8 @@ button, input, textarea, select {
   border-radius: 99px;
   font-size: 9px;
   font-weight: 600;
-  background: var(--accent);
-  color: var(--bg-0);
+  background: var(--accent-fill);
+  color: var(--on-accent);
 }
 
 .oc-agent-root {
@@ -7343,9 +7381,7 @@ button, input, textarea, select {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-3);
-  box-shadow:
-    0 16px 48px rgba(0, 0, 0, 0.65),
-    0 0 0 1px var(--wash-04);
+  box-shadow: var(--shadow-popover);
   animation: mp-enter 150ms var(--ease-out) both;
 }
 
@@ -7386,8 +7422,9 @@ button, input, textarea, select {
 }
 
 .oc-agent-option-active {
-  background: var(--bg-4);
-  color: var(--text-1);
+  background: var(--selection-bg);
+  color: var(--selection-fg);
+  box-shadow: inset 0 0 0 1px var(--selection-border);
 }
 
 .oc-agent-option-copy {
@@ -7424,8 +7461,8 @@ button, input, textarea, select {
   padding: 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-1) 92%, black);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+  background: var(--bg-3);
+  box-shadow: var(--shadow-popover);
   backdrop-filter: blur(18px);
 }
 
@@ -7564,7 +7601,7 @@ button, input, textarea, select {
 .chat-context-progress-fill {
   height: 100%;
   border-radius: 2px;
-  background: var(--accent);
+  background: var(--accent-fill);
   transition: width var(--duration-normal) var(--ease-out);
   min-width: 0;
 }
@@ -7631,7 +7668,7 @@ button, input, textarea, select {
   border-radius: 12px;
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-2) 80%, var(--bg-1));
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--wash-04) inset;
+  box-shadow: var(--shadow-popover);
   backdrop-filter: blur(18px);
   overflow-y: auto;
   max-height: 300px;
@@ -7886,13 +7923,13 @@ button, input, textarea, select {
 }
 
 .chat-command-panel-btn-primary {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  border-color: var(--accent-fill);
 }
 
 .chat-command-panel-btn-primary:hover {
-  background: color-mix(in srgb, var(--accent) 88%, white);
+  background: var(--accent-fill-hover);
 }
 
 .chat-command-panel-btn-primary:disabled {
@@ -8464,7 +8501,7 @@ button, input, textarea, select {
   border-radius: var(--radius-md);
   background: var(--bg-1);
   border: 1px solid var(--border);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--wash-04);
+  box-shadow: var(--shadow-popover);
   z-index: 100;
   animation: fade-in 0.1s ease-out;
 }
@@ -8597,9 +8634,7 @@ button, input, textarea, select {
   border-radius: var(--radius-lg);
   background: var(--bg-3);
   border: 1px solid var(--border);
-  box-shadow:
-    0 16px 48px rgba(0, 0, 0, 0.65),
-    0 0 0 1px var(--wash-04);
+  box-shadow: var(--shadow-popover);
   overflow: hidden;
   animation: pp-enter 150ms var(--ease-out) both;
 }
@@ -8623,7 +8658,7 @@ button, input, textarea, select {
   width: 148px;
   flex-shrink: 0;
   padding: 8px 0;
-  background: linear-gradient(to bottom, var(--bg-2), var(--mp-rail-fade-end));
+  background: var(--bg-2);
   border-right: 1px solid var(--border);
 }
 
@@ -8658,8 +8693,9 @@ button, input, textarea, select {
 }
 
 .pp-rail-item-active {
-  background: var(--bg-4);
-  color: var(--text-1);
+  background: var(--selection-bg);
+  color: var(--selection-fg);
+  box-shadow: inset 0 0 0 1px var(--selection-border);
 }
 
 .pp-rail-item-icon {
@@ -8771,8 +8807,9 @@ button, input, textarea, select {
 }
 
 .pp-option-selected {
-  background: var(--bg-4);
-  color: var(--text-1);
+  background: var(--selection-bg);
+  color: var(--selection-fg);
+  box-shadow: inset 0 0 0 1px var(--selection-border);
 }
 
 .pp-option-copy {
@@ -8904,9 +8941,7 @@ button, input, textarea, select {
   border-radius: var(--radius-lg);
   background: var(--bg-3);
   border: 1px solid var(--border);
-  box-shadow:
-    0 16px 48px rgba(0, 0, 0, 0.65),
-    0 0 0 1px var(--wash-04);
+  box-shadow: var(--shadow-popover);
   overflow: hidden;
   animation: mp-enter 150ms var(--ease-out) both;
 }
@@ -8924,7 +8959,7 @@ button, input, textarea, select {
   width: 120px;
   flex-shrink: 0;
   padding: 8px 0;
-  background: linear-gradient(to bottom, var(--bg-2), var(--mp-rail-fade-end));
+  background: var(--bg-2);
   border-right: 1px solid var(--border);
 }
 
@@ -8959,8 +8994,9 @@ button, input, textarea, select {
 }
 
 .mp-rail-engine-active {
-  background: var(--bg-4);
-  color: var(--text-1);
+  background: var(--selection-bg);
+  color: var(--selection-fg);
+  box-shadow: inset 0 0 0 1px var(--selection-border);
 }
 
 .mp-rail-engine-icon {
@@ -8987,7 +9023,8 @@ button, input, textarea, select {
 }
 
 .mp-rail-dot-ok {
-  background: var(--success);
+  background: var(--success-indicator);
+  box-shadow: 0 0 0 1px var(--success);
 }
 
 .mp-rail-dot-err {
@@ -9080,14 +9117,18 @@ button, input, textarea, select {
     color var(--duration-fast) var(--ease-out);
 }
 
-.mp-provider-row:hover,
-.mp-provider-row-active {
-  background: var(--wash-05);
+.mp-provider-row:hover {
+  background: var(--bg-4);
   color: var(--text-1);
 }
 
+.mp-provider-row-active {
+  background: var(--selection-bg);
+  color: var(--selection-fg);
+}
+
 .mp-provider-row-selected {
-  border-color: var(--border-active);
+  border-color: var(--selection-border);
 }
 
 .mp-provider-name {
@@ -9185,8 +9226,8 @@ button, input, textarea, select {
 }
 
 .mp-model-selected {
-  background: var(--bg-4);
-  border-color: var(--border-active);
+  background: var(--selection-bg);
+  border-color: var(--selection-border);
 }
 
 .mp-model-btn {
@@ -9261,7 +9302,7 @@ button, input, textarea, select {
   align-items: center;
   min-height: 15px;
   padding: 0 4px;
-  border: 1px solid color-mix(in srgb, var(--border-active) 28%, var(--border-subtle));
+  border: 1px solid var(--divider);
   border-radius: var(--radius-xs);
   color: var(--text-3);
   background: color-mix(in srgb, var(--bg-2) 22%, transparent);
@@ -9305,7 +9346,8 @@ button, input, textarea, select {
   display: flex;
   align-items: center;
   gap: 2px;
-  background: var(--wash-04);
+  background: var(--segmented-bg);
+  border: 1px solid var(--divider);
   border-radius: 99px;
   padding: 2px;
   min-width: 0;
@@ -9330,13 +9372,14 @@ button, input, textarea, select {
 }
 
 .mp-model-option-pill-active {
-  background: var(--accent-dim);
-  color: var(--accent);
+  background: var(--selection-bg);
+  color: var(--selection-fg);
+  box-shadow: inset 0 0 0 1px var(--selection-border);
 }
 
 .mp-model-option-pill-active:hover {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
+  background: var(--selection-bg);
+  color: var(--selection-fg);
 }
 
 /* Legacy section toggle */

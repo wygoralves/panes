@@ -470,8 +470,9 @@ export function GitWorktreesView({ repo, onError }: Props) {
                 <span
                   className="git-branch-current-dot"
                   style={{
-                    background: wt.isMain ? "var(--accent)" : "transparent",
+                    background: wt.isMain ? "var(--accent-indicator)" : "transparent",
                     border: wt.isMain ? "none" : "1px solid var(--border)",
+                    boxShadow: wt.isMain ? "0 0 0 1px var(--accent)" : "none",
                   }}
                 />
 

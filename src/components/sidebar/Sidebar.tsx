@@ -912,7 +912,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  background: "var(--wash-06)",
+                  background: "var(--segmented-bg)",
                   borderRadius: 6,
                   padding: 2,
                   gap: 2,
@@ -938,9 +938,9 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                         borderRadius: 4,
                         border: "none",
                         cursor: "pointer",
-                        background: active ? "var(--accent)" : "transparent",
-                        color: active ? "#fff" : "var(--text-3)",
-                        boxShadow: "none",
+                        background: active ? "var(--selection-bg)" : "transparent",
+                        color: active ? "var(--selection-fg)" : "var(--text-3)",
+                        boxShadow: active ? "inset 0 0 0 1px var(--selection-border)" : "none",
                         transition: "background 0.15s, color 0.15s, box-shadow 0.15s",
                       }}
                     >
@@ -959,7 +959,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  background: "var(--wash-06)",
+                  background: "var(--segmented-bg)",
                   borderRadius: 6,
                   padding: 2,
                   gap: 2,
@@ -977,10 +977,12 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                       borderRadius: 4,
                       border: "none",
                       cursor: "pointer",
-                      background: activeLocale === locale ? "var(--accent)" : "transparent",
-                      color: activeLocale === locale ? "#fff" : "var(--text-3)",
+                      background: activeLocale === locale ? "var(--selection-bg)" : "transparent",
+                      color: activeLocale === locale ? "var(--selection-fg)" : "var(--text-3)",
                       fontWeight: activeLocale === locale ? 500 : 400,
-                      boxShadow: "none",
+                      boxShadow: activeLocale === locale
+                        ? "inset 0 0 0 1px var(--selection-border)"
+                        : "none",
                       transition: "background 0.15s, color 0.15s, box-shadow 0.15s",
                     }}
                   >
@@ -1092,7 +1094,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                     width: 6,
                     height: 6,
                     borderRadius: "50%",
-                    background: "var(--accent)",
+                    background: "var(--accent-indicator)",
+                    boxShadow: "0 0 0 1px var(--accent)",
                     flexShrink: 0,
                   }}
                 />
