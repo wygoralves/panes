@@ -9,6 +9,7 @@ import type {
   AttachmentBlock,
   ChatAttachment,
   ChatInputItem,
+  ChatProviderUsage,
   ContentBlock,
   ContextUsage,
   MentionBlock,
@@ -31,6 +32,7 @@ interface ChatState {
   status: ThreadStatus;
   streaming: boolean;
   usageLimits: ContextUsage | null;
+  usageLimitsLoading: boolean;
   error?: string;
   unlisten?: () => void;
   setActiveThread: (threadId: string | null) => Promise<void>;
@@ -278,11 +280,6 @@ function enqueueStreamEvent(queue: StreamEvent[], event: StreamEvent) {
     event.type === "DiffUpdated" &&
     previous.scope === event.scope
   ) {
-    queue[queue.length - 1] = event;
-    return;
-  }
-
-  if (previous.type === "UsageLimitsUpdated" && event.type === "UsageLimitsUpdated") {
     queue[queue.length - 1] = event;
     return;
   }
@@ -1142,6 +1139,9 @@ function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimit
   const contextPercentRaw = usage.context_window_percent;
   const fiveHourPercentRaw = usage.five_hour_percent;
   const weeklyPercentRaw = usage.weekly_percent;
+  const fableWeeklyPercentRaw = usage.fable_weekly_percent;
+  const opusWeeklyPercentRaw = usage.opus_weekly_percent;
+  const sonnetWeeklyPercentRaw = usage.sonnet_weekly_percent;
 
   const currentTokens =
     typeof currentTokensRaw === "number" ? Math.max(0, Math.round(currentTokensRaw)) : null;
@@ -1161,7 +1161,10 @@ function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimit
     hasContextMetrics ||
     typeof contextPercentRaw === "number" ||
     typeof fiveHourPercentRaw === "number" ||
-    typeof weeklyPercentRaw === "number";
+    typeof weeklyPercentRaw === "number" ||
+    typeof fableWeeklyPercentRaw === "number" ||
+    typeof opusWeeklyPercentRaw === "number" ||
+    typeof sonnetWeeklyPercentRaw === "number";
   if (!hasAnyMetric) {
     return null;
   }
@@ -1184,8 +1187,102 @@ function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimit
       contextPercent === null ? null : Math.max(0, Math.min(100, contextPercent)),
     windowFiveHourPercent: toRemainingPercent(fiveHourPercentRaw),
     windowWeeklyPercent: toRemainingPercent(weeklyPercentRaw),
+    windowFableWeeklyPercent: toRemainingPercent(fableWeeklyPercentRaw),
+    windowOpusWeeklyPercent: toRemainingPercent(opusWeeklyPercentRaw),
+    windowSonnetWeeklyPercent: toRemainingPercent(sonnetWeeklyPercentRaw),
     windowFiveHourResetsAt: toIsoTimestamp(usage.five_hour_resets_at),
     windowWeeklyResetsAt: toIsoTimestamp(usage.weekly_resets_at),
+    windowFableWeeklyResetsAt: toIsoTimestamp(usage.fable_weekly_resets_at),
+    windowOpusWeeklyResetsAt: toIsoTimestamp(usage.opus_weekly_resets_at),
+    windowSonnetWeeklyResetsAt: toIsoTimestamp(usage.sonnet_weekly_resets_at),
+  };
+}
+
+function mapProviderUsage(provider: ChatProviderUsage | undefined): ContextUsage | null {
+  if (!provider?.available || provider.windows.length === 0) {
+    return null;
+  }
+
+  const usage: ContextUsage = {
+    currentTokens: null,
+    maxContextTokens: null,
+    contextPercent: null,
+    windowFiveHourPercent: null,
+    windowWeeklyPercent: null,
+    windowFableWeeklyPercent: null,
+    windowOpusWeeklyPercent: null,
+    windowSonnetWeeklyPercent: null,
+    windowFiveHourResetsAt: null,
+    windowWeeklyResetsAt: null,
+    windowFableWeeklyResetsAt: null,
+    windowOpusWeeklyResetsAt: null,
+    windowSonnetWeeklyResetsAt: null,
+  };
+
+  for (const window of provider.windows) {
+    const remainingPercent = Math.max(0, Math.min(100, 100 - Math.round(window.usedPercent)));
+    const resetsAt = toIsoTimestamp(window.resetsAt);
+    switch (window.kind) {
+      case "five_hour":
+        usage.windowFiveHourPercent = remainingPercent;
+        usage.windowFiveHourResetsAt = resetsAt;
+        break;
+      case "weekly":
+        usage.windowWeeklyPercent = remainingPercent;
+        usage.windowWeeklyResetsAt = resetsAt;
+        break;
+      case "fable_weekly":
+        usage.windowFableWeeklyPercent = remainingPercent;
+        usage.windowFableWeeklyResetsAt = resetsAt;
+        break;
+      case "opus_weekly":
+        usage.windowOpusWeeklyPercent = remainingPercent;
+        usage.windowOpusWeeklyResetsAt = resetsAt;
+        break;
+      case "sonnet_weekly":
+        usage.windowSonnetWeeklyPercent = remainingPercent;
+        usage.windowSonnetWeeklyResetsAt = resetsAt;
+        break;
+    }
+  }
+
+  return usage;
+}
+
+function mergeUsageLimits(
+  previous: ContextUsage | null,
+  update: ContextUsage | null,
+): ContextUsage | null {
+  if (!update) {
+    return previous;
+  }
+  if (!previous) {
+    return update;
+  }
+
+  return {
+    currentTokens: update.currentTokens ?? previous.currentTokens,
+    maxContextTokens: update.maxContextTokens ?? previous.maxContextTokens,
+    contextPercent: update.contextPercent ?? previous.contextPercent,
+    windowFiveHourPercent:
+      update.windowFiveHourPercent ?? previous.windowFiveHourPercent,
+    windowWeeklyPercent: update.windowWeeklyPercent ?? previous.windowWeeklyPercent,
+    windowFableWeeklyPercent:
+      update.windowFableWeeklyPercent ?? previous.windowFableWeeklyPercent,
+    windowOpusWeeklyPercent:
+      update.windowOpusWeeklyPercent ?? previous.windowOpusWeeklyPercent,
+    windowSonnetWeeklyPercent:
+      update.windowSonnetWeeklyPercent ?? previous.windowSonnetWeeklyPercent,
+    windowFiveHourResetsAt:
+      update.windowFiveHourResetsAt ?? previous.windowFiveHourResetsAt,
+    windowWeeklyResetsAt:
+      update.windowWeeklyResetsAt ?? previous.windowWeeklyResetsAt,
+    windowFableWeeklyResetsAt:
+      update.windowFableWeeklyResetsAt ?? previous.windowFableWeeklyResetsAt,
+    windowOpusWeeklyResetsAt:
+      update.windowOpusWeeklyResetsAt ?? previous.windowOpusWeeklyResetsAt,
+    windowSonnetWeeklyResetsAt:
+      update.windowSonnetWeeklyResetsAt ?? previous.windowSonnetWeeklyResetsAt,
   };
 }
 
@@ -1539,6 +1636,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   status: "idle",
   streaming: false,
   usageLimits: null,
+  usageLimitsLoading: false,
   setActiveThread: async (threadId) => {
     const currentThreadId = get().threadId;
     const currentUnlisten = get().unlisten;
@@ -1592,6 +1690,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streaming: false,
         status: "idle",
         usageLimits: null,
+        usageLimitsLoading: false,
         unlisten: undefined,
       });
       return;
@@ -1673,10 +1772,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
             let nextStreaming = state.streaming;
             let nextStatus = state.status;
             let nextUsageLimits = state.usageLimits;
+            let nextUsageLimitsLoading = state.usageLimitsLoading;
             let hydrationRecalcRequired = false;
             for (const queuedEvent of batch) {
               if (queuedEvent.type === "UsageLimitsUpdated") {
-                nextUsageLimits = mapUsageLimitsFromEvent(queuedEvent);
+                nextUsageLimits = mergeUsageLimits(
+                  nextUsageLimits,
+                  mapUsageLimitsFromEvent(queuedEvent),
+                );
+                nextUsageLimitsLoading = false;
                 continue;
               }
               const previousLength = nextMessages.length;
@@ -1703,7 +1807,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
               nextMessages === state.messages &&
               nextStatus === state.status &&
               nextStreaming === state.streaming &&
-              nextUsageLimits === state.usageLimits
+              nextUsageLimits === state.usageLimits &&
+              nextUsageLimitsLoading === state.usageLimitsLoading
             ) {
               return state;
             }
@@ -1714,6 +1819,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               status: nextStatus,
               streaming: nextStreaming,
               usageLimits: nextUsageLimits,
+              usageLimitsLoading: nextUsageLimitsLoading,
             };
           });
         } finally {
@@ -1810,6 +1916,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
 
+      const restoredEngineId = activeThread?.engineId ??
+        messages.find((message) => message.turnEngineId)?.turnEngineId ??
+        null;
+      const shouldRefreshUsageLimits =
+        messages.some((message) => message.role === "user") &&
+        (restoredEngineId === "codex" || restoredEngineId === "claude");
+
       set({
         threadId,
         messages,
@@ -1822,7 +1935,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streaming: isThreadStatusStreaming(threadStatus),
         status: threadStatus,
         usageLimits: null,
+        usageLimitsLoading: shouldRefreshUsageLimits,
       });
+
+      if (shouldRefreshUsageLimits) {
+        const refreshRestoredUsageLimits = async () => {
+          try {
+            const providers = await ipc.getChatProviderUsage();
+            const providerUsage = mapProviderUsage(
+              providers.find((provider) => provider.engineId === restoredEngineId),
+            );
+            if (bindSeq !== activeThreadBindSeq || get().threadId !== threadId) {
+              return;
+            }
+            set((state) => ({
+              usageLimits: mergeUsageLimits(state.usageLimits, providerUsage),
+              usageLimitsLoading: false,
+            }));
+          } catch {
+            if (bindSeq === activeThreadBindSeq && get().threadId === threadId) {
+              set({ usageLimitsLoading: false });
+            }
+          }
+        };
+        void refreshRestoredUsageLimits();
+      }
     } catch (error) {
       if (bindSeq !== activeThreadBindSeq) {
         return;
@@ -1835,6 +1972,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         loadingOlderMessages: false,
         olderLoadBlockedUntil: 0,
         usageLimits: null,
+        usageLimitsLoading: false,
         error: String(error),
       });
     }

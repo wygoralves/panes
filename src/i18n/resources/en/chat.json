@@ -327,6 +327,8 @@
     "trustWorkspace": "Trust workspace",
     "dropFiles": "Drop files to attach",
     "attachFiles": "Attach files",
+    "sendMessage": "Send message",
+    "sendingMessage": "Sending message",
     "sendFollowUp": "Send follow-up",
     "enablePlanMode": "Enable plan mode (Shift+Tab)",
     "disablePlanMode": "Disable plan mode (Shift+Tab)",
@@ -505,7 +507,12 @@
     "context": "Context left",
     "windowFiveHoursLeft": "5h left",
     "windowWeeklyLeft": "Weekly left",
+    "windowFableWeeklyLeft": "Fable weekly left",
+    "windowOpusWeeklyLeft": "Opus weekly left",
+    "windowSonnetWeeklyLeft": "Sonnet weekly left",
     "resets": "resets {{time}}",
+    "usageAwaitingFirstMessage": "Send a message to load usage limits",
+    "usageLoading": "Loading usage limits...",
     "usageUnavailable": "Usage limits unavailable from server"
   },
   "slashCommands": {

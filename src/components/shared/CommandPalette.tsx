@@ -838,7 +838,7 @@ const STYLES = {
     position: "fixed" as const,
     inset: 0,
     zIndex: 10001,
-    background: "rgba(0, 0, 0, 0.55)",
+    background: "var(--modal-backdrop-bg)",
     backdropFilter: "blur(16px)",
     WebkitBackdropFilter: "blur(16px)",
     display: "flex",
@@ -854,9 +854,7 @@ const STYLES = {
     gridTemplateRows: "auto 1fr auto",
     borderRadius: "var(--radius-lg)",
     background: "var(--popover-bg)",
-    boxShadow:
-      "0 0 0 1px var(--wash-08), " +
-      "0 24px 68px rgba(0, 0, 0, 0.55)",
+    boxShadow: "var(--shadow-modal)",
     animation: "slide-up 180ms cubic-bezier(0.16, 1, 0.3, 1) both",
   },
   inputRow: {

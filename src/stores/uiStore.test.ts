@@ -35,7 +35,9 @@ describe("uiStore focus mode", () => {
       focusMode: false,
       focusModeSnapshot: null,
       activeView: "chat",
+      settingsSection: "overview",
       settingsWorkspaceId: null,
+      usageLimitsModalOpen: false,
       commandPaletteOpen: false,
       commandPaletteLaunch: COMMAND_PALETTE_DEFAULT_LAUNCH,
       messageFocusTarget: null,
@@ -178,6 +180,46 @@ describe("uiStore focus mode", () => {
     expect(useUiStore.getState()).toMatchObject({
       commandPaletteOpen: false,
       commandPaletteLaunch: COMMAND_PALETTE_DEFAULT_LAUNCH,
+    });
+  });
+
+  it("opens global settings without discarding the selected workspace", () => {
+    useUiStore.setState({ settingsWorkspaceId: "workspace-1" });
+
+    useUiStore.getState().openSettings();
+
+    expect(useUiStore.getState()).toMatchObject({
+      activeView: "settings",
+      settingsSection: "overview",
+      settingsWorkspaceId: "workspace-1",
+    });
+  });
+
+  it("opens workspace settings at the general section", () => {
+    useUiStore.getState().openWorkspaceSettings("workspace-2");
+
+    expect(useUiStore.getState()).toMatchObject({
+      activeView: "settings",
+      settingsSection: "workspace-general",
+      settingsWorkspaceId: "workspace-2",
+    });
+  });
+
+  it("opens and closes usage limits without changing the active view", () => {
+    useUiStore.setState({ activeView: "chat" });
+
+    useUiStore.getState().openUsageLimitsModal();
+
+    expect(useUiStore.getState()).toMatchObject({
+      activeView: "chat",
+      usageLimitsModalOpen: true,
+    });
+
+    useUiStore.getState().closeUsageLimitsModal();
+
+    expect(useUiStore.getState()).toMatchObject({
+      activeView: "chat",
+      usageLimitsModalOpen: false,
     });
   });
 });

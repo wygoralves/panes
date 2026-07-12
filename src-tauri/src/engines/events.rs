@@ -256,6 +256,12 @@ pub struct UsageLimitsSnapshot {
     pub context_window_percent: Option<u8>,
     pub five_hour_percent: Option<u8>,
     pub weekly_percent: Option<u8>,
+    pub fable_weekly_percent: Option<u8>,
+    pub opus_weekly_percent: Option<u8>,
+    pub sonnet_weekly_percent: Option<u8>,
     pub five_hour_resets_at: Option<i64>,
     pub weekly_resets_at: Option<i64>,
+    pub fable_weekly_resets_at: Option<i64>,
+    pub opus_weekly_resets_at: Option<i64>,
+    pub sonnet_weekly_resets_at: Option<i64>,
 }

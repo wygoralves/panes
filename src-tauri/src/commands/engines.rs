@@ -8,8 +8,8 @@ use tokio::process::Command;
 use crate::runtime_env;
 use crate::{
     models::{
-        CodexAppDto, CodexSkillDto, EngineCheckResultDto, EngineHealthDto, EngineInfoDto,
-        OpenCodeRuntimeCatalogDto,
+        ChatProviderUsageDto, CodexAppDto, CodexSkillDto, EngineCheckResultDto, EngineHealthDto,
+        EngineInfoDto, OpenCodeRuntimeCatalogDto,
     },
     process_utils,
     state::AppState,
@@ -18,6 +18,13 @@ use crate::{
 #[tauri::command]
 pub async fn list_engines(state: State<'_, AppState>) -> Result<Vec<EngineInfoDto>, String> {
     state.engines.list_engines().await.map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn get_chat_provider_usage(
+    state: State<'_, AppState>,
+) -> Result<Vec<ChatProviderUsageDto>, String> {
+    Ok(state.engines.chat_provider_usage().await)
 }
 
 #[tauri::command]

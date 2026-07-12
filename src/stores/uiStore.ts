@@ -19,7 +19,18 @@ interface FocusModeSnapshot {
   showGitPanel: boolean;
 }
 
-type ActiveView = "chat" | "harnesses" | "workspace-settings";
+export type ActiveView = "chat" | "harnesses" | "settings";
+export type SettingsSection =
+  | "overview"
+  | "appearance"
+  | "terminal"
+  | "notifications"
+  | "usage"
+  | "power"
+  | "about"
+  | "workspace-general"
+  | "workspace-repos"
+  | "workspace-startup";
 
 interface UiState {
   showSidebar: boolean;
@@ -30,7 +41,9 @@ interface UiState {
   focusMode: boolean;
   focusModeSnapshot: FocusModeSnapshot | null;
   activeView: ActiveView;
+  settingsSection: SettingsSection;
   settingsWorkspaceId: string | null;
+  usageLimitsModalOpen: boolean;
   commandPaletteOpen: boolean;
   commandPaletteLaunch: CommandPaletteLaunchState;
   messageFocusTarget: MessageFocusTarget | null;
@@ -47,7 +60,12 @@ interface UiState {
   setFocusMode: (enabled: boolean) => void;
   toggleFocusMode: () => void;
   setActiveView: (view: ActiveView) => void;
+  setSettingsSection: (section: SettingsSection) => void;
+  setSettingsWorkspaceId: (workspaceId: string | null) => void;
+  openSettings: (workspaceId?: string | null, section?: SettingsSection) => void;
   openWorkspaceSettings: (workspaceId: string) => void;
+  openUsageLimitsModal: () => void;
+  closeUsageLimitsModal: () => void;
   setMessageFocusTarget: (target: { threadId: string; messageId: string }) => void;
   clearMessageFocusTarget: () => void;
 }
@@ -87,7 +105,9 @@ export const useUiStore = create<UiState>((set) => ({
   commandPaletteOpen: false,
   commandPaletteLaunch: COMMAND_PALETTE_DEFAULT_LAUNCH,
   activeView: "chat",
+  settingsSection: "overview",
   settingsWorkspaceId: null,
+  usageLimitsModalOpen: false,
   messageFocusTarget: null,
   openCommandPalette: (launch) =>
     set({
@@ -216,9 +236,24 @@ export const useUiStore = create<UiState>((set) => ({
       });
     }
   },
-  openWorkspaceSettings: (workspaceId) => {
-    set({ activeView: "workspace-settings", settingsWorkspaceId: workspaceId });
+  setSettingsSection: (section) => set({ settingsSection: section }),
+  setSettingsWorkspaceId: (workspaceId) => set({ settingsWorkspaceId: workspaceId }),
+  openSettings: (workspaceId = null, section = "overview") => {
+    set((state) => ({
+      activeView: "settings",
+      settingsSection: section,
+      settingsWorkspaceId: workspaceId ?? state.settingsWorkspaceId,
+    }));
   },
+  openWorkspaceSettings: (workspaceId) => {
+    set({
+      activeView: "settings",
+      settingsSection: "workspace-general",
+      settingsWorkspaceId: workspaceId,
+    });
+  },
+  openUsageLimitsModal: () => set({ usageLimitsModalOpen: true }),
+  closeUsageLimitsModal: () => set({ usageLimitsModalOpen: false }),
   setMessageFocusTarget: (target) =>
     set({
       messageFocusTarget: {

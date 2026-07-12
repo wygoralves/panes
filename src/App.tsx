@@ -5,6 +5,7 @@ import { OnboardingWizard } from "./components/onboarding/OnboardingWizard";
 import { ToastContainer } from "./components/shared/ToastContainer";
 import { PowerSettingsModal } from "./components/shared/PowerSettingsModal";
 import { TerminalNotificationSettingsModal } from "./components/shared/TerminalNotificationSettingsModal";
+import { UsageLimitsModal } from "./components/settings/UsageLimitsModal";
 import { t } from "./i18n";
 import { useUpdateStore } from "./stores/updateStore";
 import {
@@ -567,6 +568,7 @@ export function App() {
       <CommandPalette open={commandPaletteOpen} onClose={closeCommandPalette} />
       <PowerSettingsModal />
       <TerminalNotificationSettingsModal />
+      <UsageLimitsModal />
       <OnboardingWizard />
       <ToastContainer />
     </div>

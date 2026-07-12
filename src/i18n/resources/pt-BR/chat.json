@@ -327,6 +327,8 @@
     "trustWorkspace": "Confiar no workspace",
     "dropFiles": "Solte arquivos para anexar",
     "attachFiles": "Anexar arquivos",
+    "sendMessage": "Enviar mensagem",
+    "sendingMessage": "Enviando mensagem",
     "sendFollowUp": "Enviar acompanhamento",
     "enablePlanMode": "Ativar modo de plano (Shift+Tab)",
     "disablePlanMode": "Desativar modo de plano (Shift+Tab)",
@@ -505,7 +507,12 @@
     "context": "Contexto restante",
     "windowFiveHoursLeft": "5h restantes",
     "windowWeeklyLeft": "Semana restante",
+    "windowFableWeeklyLeft": "Semana Fable restante",
+    "windowOpusWeeklyLeft": "Semana Opus restante",
+    "windowSonnetWeeklyLeft": "Semana Sonnet restante",
     "resets": "reinicia {{time}}",
+    "usageAwaitingFirstMessage": "Envie uma mensagem para carregar os limites de uso",
+    "usageLoading": "Carregando limites de uso...",
     "usageUnavailable": "Limites de uso indisponíveis no servidor"
   },
   "slashCommands": {
