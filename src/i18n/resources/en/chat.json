@@ -314,7 +314,7 @@
     "custom": "Custom",
     "presets": {
       "inherit": { "label": "Auto", "description": "Follow the repo trust policy." },
-      "read-only": { "label": "Read only", "description": "Inspect and answer. Every write or command asks." },
+      "read-only": { "label": "Read only", "description": "Inspect and answer. Safe reads run; nothing changes without your approval." },
       "ask": { "label": "Ask to act", "description": "Reads are free. Edits and commands ask first." },
       "auto": { "label": "Auto in workspace", "description": "Works freely inside the workspace sandbox. Asks only to leave it." },
       "full": { "label": "Full autonomy", "description": "Never asks. Full disk and network access." }
@@ -322,6 +322,7 @@
     "mapsTo": "Maps to {{engine}}",
     "claudeFullNote": "Claude has no full-access sandbox in Panes; full autonomy keeps workspace write.",
     "openCodeNote": "OpenCode exposes approvals only; sandbox and network are not configurable.",
+    "codexExternalSandboxNote": "Codex is running in external sandbox mode; Panes cannot restrict the filesystem here, so approvals gate changes instead.",
     "defaultForNewThreads": "Default for new threads",
     "advanced": "Advanced",
     "backToPresets": "Presets",
