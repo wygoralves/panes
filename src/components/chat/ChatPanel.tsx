@@ -118,6 +118,7 @@ import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { shouldSubmitChatInput } from "./chatInputShortcuts";
 import type {
+  ActionType,
   ApprovalBlock,
   ApprovalResponse,
   ChatAttachment,
@@ -250,6 +251,21 @@ export function canUseApprovalDecisionActions(
   details?: Record<string, unknown>,
 ): boolean {
   return engineId !== "opencode" || !isOpenCodeQuestionApproval(details);
+}
+
+function approvalRowIcon(actionType: ActionType) {
+  switch (actionType) {
+    case "command":
+      return <SquareTerminal size={13} />;
+    case "file_write":
+    case "file_edit":
+    case "file_delete":
+      return <FilePen size={13} />;
+    case "git":
+      return <GitBranch size={13} />;
+    default:
+      return <Shield size={13} />;
+  }
 }
 
 export function buildPermissionApprovalResponseForEngine(
@@ -5646,19 +5662,22 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       className="chat-approval-row"
                     >
                       <div className="approval-row-info">
-                        <div
-                          className="approval-row-summary"
-                          title={approval.summary}
-                        >
-                          {approval.summary}
-                        </div>
-                        {(command || reason) && (
+                        <div className="approval-row-head">
+                          <span className="approval-row-icon">
+                            {approvalRowIcon(approval.actionType)}
+                          </span>
                           <div
-                            className="approval-row-detail"
-                            title={command ?? reason}
+                            className="approval-row-summary"
+                            title={approval.summary}
                           >
-                            {command ?? reason}
+                            {approval.summary}
                           </div>
+                        </div>
+                        {command && (
+                          <div className="approval-row-command">{command}</div>
+                        )}
+                        {reason && (
+                          <div className="approval-row-reason">{reason}</div>
                         )}
                       </div>
 

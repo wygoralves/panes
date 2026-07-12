@@ -4834,7 +4834,7 @@ button, input, textarea, select {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 9px 10px;
+  padding: 10px 11px;
   border-radius: var(--radius-md);
   background: var(--bg-2);
   border: 1px solid var(--warning-border);
@@ -4843,24 +4843,51 @@ button, input, textarea, select {
 
 .approval-row-info {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.approval-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.approval-row-icon {
+  display: inline-flex;
+  color: var(--warning);
+  flex-shrink: 0;
 }
 
 .approval-row-summary {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-1);
   line-height: 1.35;
+  min-width: 0;
 }
 
-.approval-row-detail {
-  margin-top: 3px;
+.approval-row-command {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-2);
+  background: var(--code-bg);
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  padding: 7px 9px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 96px;
+  overflow-y: auto;
+}
+
+.approval-row-reason {
   font-size: 11px;
   color: var(--text-3);
-  font-family: var(--font-mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  line-height: 1.4;
+  line-height: 1.45;
 }
 
 .approval-row-hint {
@@ -4872,7 +4899,8 @@ button, input, textarea, select {
 .approval-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 /* Spacer between allow-group and deny-group */
@@ -4882,9 +4910,9 @@ button, input, textarea, select {
 
 .approval-btn {
   padding: 4px 12px;
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 500;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all var(--duration-fast) var(--ease-out);
   white-space: nowrap;
@@ -4902,17 +4930,16 @@ button, input, textarea, select {
   background: var(--accent-fill-hover);
 }
 
-/* Allow session / Allow + policy — secondary, text-only */
+/* Allow session / Allow + policy — secondary outline */
 .approval-btn-session {
   background: transparent;
   color: var(--text-2);
-  border-color: var(--wash-1);
+  border-color: var(--border-active);
 }
 
 .approval-btn-session:hover {
-  color: var(--text-1);
-  background: var(--wash-05);
-  border-color: var(--wash-18);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 /* Deny — red text, no border until hover */
