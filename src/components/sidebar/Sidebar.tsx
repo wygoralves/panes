@@ -91,6 +91,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const setActiveView = useUiStore((state) => state.setActiveView);
   const openSettings = useUiStore((state) => state.openSettings);
   const openWorkspaceSettings = useUiStore((state) => state.openWorkspaceSettings);
+  const openUsageLimitsModal = useUiStore((state) => state.openUsageLimitsModal);
   const openCommandPalette = useUiStore((state) => state.openCommandPalette);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
   const updateStatus = useUpdateStore((s) => s.status);
@@ -634,7 +635,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               className="git-action-menu-item"
               onClick={() => {
                 closeSettingsMenu();
-                openSettings(activeWorkspaceId, "usage");
+                openUsageLimitsModal();
               }}
             >
               <Gauge size={14} style={{ opacity: 0.5, flexShrink: 0 }} />

@@ -37,6 +37,7 @@ describe("uiStore focus mode", () => {
       activeView: "chat",
       settingsSection: "overview",
       settingsWorkspaceId: null,
+      usageLimitsModalOpen: false,
       commandPaletteOpen: false,
       commandPaletteLaunch: COMMAND_PALETTE_DEFAULT_LAUNCH,
       messageFocusTarget: null,
@@ -201,6 +202,24 @@ describe("uiStore focus mode", () => {
       activeView: "settings",
       settingsSection: "workspace-general",
       settingsWorkspaceId: "workspace-2",
+    });
+  });
+
+  it("opens and closes usage limits without changing the active view", () => {
+    useUiStore.setState({ activeView: "chat" });
+
+    useUiStore.getState().openUsageLimitsModal();
+
+    expect(useUiStore.getState()).toMatchObject({
+      activeView: "chat",
+      usageLimitsModalOpen: true,
+    });
+
+    useUiStore.getState().closeUsageLimitsModal();
+
+    expect(useUiStore.getState()).toMatchObject({
+      activeView: "chat",
+      usageLimitsModalOpen: false,
     });
   });
 });

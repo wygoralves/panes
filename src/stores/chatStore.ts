@@ -9,6 +9,7 @@ import type {
   AttachmentBlock,
   ChatAttachment,
   ChatInputItem,
+  ChatProviderUsage,
   ContentBlock,
   ContextUsage,
   MentionBlock,
@@ -31,6 +32,7 @@ interface ChatState {
   status: ThreadStatus;
   streaming: boolean;
   usageLimits: ContextUsage | null;
+  usageLimitsLoading: boolean;
   error?: string;
   unlisten?: () => void;
   setActiveThread: (threadId: string | null) => Promise<void>;
@@ -1196,6 +1198,57 @@ function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimit
   };
 }
 
+function mapProviderUsage(provider: ChatProviderUsage | undefined): ContextUsage | null {
+  if (!provider?.available || provider.windows.length === 0) {
+    return null;
+  }
+
+  const usage: ContextUsage = {
+    currentTokens: null,
+    maxContextTokens: null,
+    contextPercent: null,
+    windowFiveHourPercent: null,
+    windowWeeklyPercent: null,
+    windowFableWeeklyPercent: null,
+    windowOpusWeeklyPercent: null,
+    windowSonnetWeeklyPercent: null,
+    windowFiveHourResetsAt: null,
+    windowWeeklyResetsAt: null,
+    windowFableWeeklyResetsAt: null,
+    windowOpusWeeklyResetsAt: null,
+    windowSonnetWeeklyResetsAt: null,
+  };
+
+  for (const window of provider.windows) {
+    const remainingPercent = Math.max(0, Math.min(100, 100 - Math.round(window.usedPercent)));
+    const resetsAt = toIsoTimestamp(window.resetsAt);
+    switch (window.kind) {
+      case "five_hour":
+        usage.windowFiveHourPercent = remainingPercent;
+        usage.windowFiveHourResetsAt = resetsAt;
+        break;
+      case "weekly":
+        usage.windowWeeklyPercent = remainingPercent;
+        usage.windowWeeklyResetsAt = resetsAt;
+        break;
+      case "fable_weekly":
+        usage.windowFableWeeklyPercent = remainingPercent;
+        usage.windowFableWeeklyResetsAt = resetsAt;
+        break;
+      case "opus_weekly":
+        usage.windowOpusWeeklyPercent = remainingPercent;
+        usage.windowOpusWeeklyResetsAt = resetsAt;
+        break;
+      case "sonnet_weekly":
+        usage.windowSonnetWeeklyPercent = remainingPercent;
+        usage.windowSonnetWeeklyResetsAt = resetsAt;
+        break;
+    }
+  }
+
+  return usage;
+}
+
 function mergeUsageLimits(
   previous: ContextUsage | null,
   update: ContextUsage | null,
@@ -1583,6 +1636,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   status: "idle",
   streaming: false,
   usageLimits: null,
+  usageLimitsLoading: false,
   setActiveThread: async (threadId) => {
     const currentThreadId = get().threadId;
     const currentUnlisten = get().unlisten;
@@ -1636,6 +1690,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streaming: false,
         status: "idle",
         usageLimits: null,
+        usageLimitsLoading: false,
         unlisten: undefined,
       });
       return;
@@ -1717,6 +1772,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             let nextStreaming = state.streaming;
             let nextStatus = state.status;
             let nextUsageLimits = state.usageLimits;
+            let nextUsageLimitsLoading = state.usageLimitsLoading;
             let hydrationRecalcRequired = false;
             for (const queuedEvent of batch) {
               if (queuedEvent.type === "UsageLimitsUpdated") {
@@ -1724,6 +1780,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   nextUsageLimits,
                   mapUsageLimitsFromEvent(queuedEvent),
                 );
+                nextUsageLimitsLoading = false;
                 continue;
               }
               const previousLength = nextMessages.length;
@@ -1750,7 +1807,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
               nextMessages === state.messages &&
               nextStatus === state.status &&
               nextStreaming === state.streaming &&
-              nextUsageLimits === state.usageLimits
+              nextUsageLimits === state.usageLimits &&
+              nextUsageLimitsLoading === state.usageLimitsLoading
             ) {
               return state;
             }
@@ -1761,6 +1819,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               status: nextStatus,
               streaming: nextStreaming,
               usageLimits: nextUsageLimits,
+              usageLimitsLoading: nextUsageLimitsLoading,
             };
           });
         } finally {
@@ -1857,6 +1916,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
 
+      const restoredEngineId = activeThread?.engineId ??
+        messages.find((message) => message.turnEngineId)?.turnEngineId ??
+        null;
+      const shouldRefreshUsageLimits =
+        messages.some((message) => message.role === "user") &&
+        (restoredEngineId === "codex" || restoredEngineId === "claude");
+
       set({
         threadId,
         messages,
@@ -1869,7 +1935,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streaming: isThreadStatusStreaming(threadStatus),
         status: threadStatus,
         usageLimits: null,
+        usageLimitsLoading: shouldRefreshUsageLimits,
       });
+
+      if (shouldRefreshUsageLimits) {
+        const refreshRestoredUsageLimits = async () => {
+          try {
+            const providers = await ipc.getChatProviderUsage();
+            const providerUsage = mapProviderUsage(
+              providers.find((provider) => provider.engineId === restoredEngineId),
+            );
+            if (bindSeq !== activeThreadBindSeq || get().threadId !== threadId) {
+              return;
+            }
+            set((state) => ({
+              usageLimits: mergeUsageLimits(state.usageLimits, providerUsage),
+              usageLimitsLoading: false,
+            }));
+          } catch {
+            if (bindSeq === activeThreadBindSeq && get().threadId === threadId) {
+              set({ usageLimitsLoading: false });
+            }
+          }
+        };
+        void refreshRestoredUsageLimits();
+      }
     } catch (error) {
       if (bindSeq !== activeThreadBindSeq) {
         return;
@@ -1882,6 +1972,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         loadingOlderMessages: false,
         olderLoadBlockedUntil: 0,
         usageLimits: null,
+        usageLimitsLoading: false,
         error: String(error),
       });
     }

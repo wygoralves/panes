@@ -1667,6 +1667,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     hydrateActionOutput,
     streaming,
     usageLimits,
+    usageLimitsLoading,
     error,
     setActiveThread: bindChatThread,
     threadId,
@@ -1684,6 +1685,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       hydrateActionOutput: state.hydrateActionOutput,
       streaming: state.streaming,
       usageLimits: state.usageLimits,
+      usageLimitsLoading: state.usageLimitsLoading,
       error: state.error,
       setActiveThread: state.setActiveThread,
       threadId: state.threadId,
@@ -6286,7 +6288,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               ) : (
                 <div className="chat-context-section">
                   <Clock size={10} />
-                  <span>{t(resolveUsageStatusKey(hasUserMessage, streaming))}</span>
+                  <span>
+                    {t(resolveUsageStatusKey(hasUserMessage, streaming || usageLimitsLoading))}
+                  </span>
                 </div>
               )
             )}

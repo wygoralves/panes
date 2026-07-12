@@ -5,9 +5,9 @@ export type UsageStatusKey =
 
 export function resolveUsageStatusKey(
   hasUserMessage: boolean,
-  streaming: boolean,
+  loading: boolean,
 ): UsageStatusKey {
   if (!hasUserMessage) return "status.usageAwaitingFirstMessage";
-  if (streaming) return "status.usageLoading";
+  if (loading) return "status.usageLoading";
   return "status.usageUnavailable";
 }
