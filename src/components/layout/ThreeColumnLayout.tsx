@@ -4,7 +4,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { Sidebar } from "../sidebar/Sidebar";
 import { ActiveWorkspacePaneShell } from "../workspace/WorkspacePaneShell";
 import { HarnessPanel } from "../onboarding/HarnessPanel";
-import { WorkspaceSettingsPage } from "../workspace/WorkspaceSettingsPage";
+import { SettingsPage } from "../settings/SettingsPage";
 import { GitPanel } from "../git/GitPanel";
 import { usesCustomWindowFrame } from "../../lib/windowActions";
 import { useUiStore } from "../../stores/uiStore";
@@ -64,9 +64,10 @@ export function ThreeColumnLayout() {
   const activeView = useUiStore((state) => state.activeView);
   const customWindowFrame = usesCustomWindowFrame();
 
-  const sidebarDocked = showSidebar && sidebarPinned;
-  const gitPanelDocked = showGitPanel && gitPanelPinned;
-  const fullBleedContent = focusMode || !showSidebar;
+  const settingsActive = activeView === "settings";
+  const sidebarDocked = showSidebar && sidebarPinned && !settingsActive;
+  const gitPanelDocked = showGitPanel && gitPanelPinned && !settingsActive;
+  const fullBleedContent = focusMode || !showSidebar || settingsActive;
   const showFocusDragStrip = focusMode && !showSidebar && !gitPanelDocked && !customWindowFrame;
 
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
@@ -233,8 +234,8 @@ export function ThreeColumnLayout() {
   const mainContent = (
     activeView === "harnesses" ? (
       <HarnessPanel />
-    ) : activeView === "workspace-settings" ? (
-      <WorkspaceSettingsPage />
+    ) : activeView === "settings" ? (
+      <SettingsPage />
     ) : (
       <ActiveWorkspacePaneShell />
     )
@@ -243,7 +244,7 @@ export function ThreeColumnLayout() {
   return (
     <div className="layout-root">
       {/* Unpinned sidebar — collapsed rail + hover flyout */}
-      {showSidebar && !sidebarPinned && <Sidebar />}
+      {showSidebar && !sidebarPinned && !settingsActive && <Sidebar />}
 
       {/* Pinned sidebar */}
       {sidebarDocked && (
@@ -320,7 +321,7 @@ export function ThreeColumnLayout() {
           </div>
         )}
 
-        {showGitPanel && !gitPanelPinned ? (
+        {showGitPanel && !gitPanelPinned && !settingsActive ? (
           <GitFlyoutContext.Provider value={gitFlyoutContextValue}>
             <button
               ref={gitTriggerRef}
