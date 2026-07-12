@@ -8804,6 +8804,20 @@ button.chat-context-section:hover {
   color: var(--text-3);
 }
 
+.hp-tile-flags {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid rgba(var(--accent-rgb), 0.12);
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .hp-tile-action {
   flex-shrink: 0;
   opacity: 0;
@@ -8877,6 +8891,59 @@ button.chat-context-section:hover {
   color: var(--text-1);
   border-color: var(--border);
   background: var(--wash-04);
+}
+
+/* Launch settings modal */
+
+.hp-args-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hp-args-field > span {
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.hp-args-input {
+  width: 100%;
+  padding: 6px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-1);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.hp-args-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.hp-args-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+}
+
+.hp-args-preview > span {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.hp-args-preview > code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-2);
+  background: var(--wash-03);
+  border: 1px solid var(--wash-06);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  overflow-wrap: anywhere;
 }
 
 /* Install log */

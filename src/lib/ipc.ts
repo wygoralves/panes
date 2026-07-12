@@ -633,6 +633,10 @@ export const ipc = {
     invoke<InstallResult>("install_harness", { harnessId }),
   launchHarness: (harnessId: string) =>
     invoke<string>("launch_harness", { harnessId }),
+  getHarnessLaunchArgs: () =>
+    invoke<Record<string, string>>("get_harness_launch_args"),
+  setHarnessLaunchArgs: (harnessId: string, args: string) =>
+    invoke<string>("set_harness_launch_args", { harnessId, args }),
 };
 
 export async function listenThreadEvents(

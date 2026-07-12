@@ -1,13 +1,20 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
+use crate::config::app_config::AppConfig;
 use crate::models::{HarnessInfo, HarnessReport, InstallProgressEvent, InstallResult};
 use crate::process_utils;
 use crate::runtime_env;
+use crate::state::AppState;
+
+fn err_to_string(error: impl std::fmt::Display) -> String {
+    error.to_string()
+}
 
 const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -250,9 +257,80 @@ pub async fn launch_harness(harness_id: String) -> Result<String, String> {
         .iter()
         .find(|h| h.id == harness_id)
         .ok_or_else(|| format!("unknown harness: {harness_id}"))?;
+    let base_command = def.command;
 
-    // Return the command name so the frontend can write it into a terminal session
-    Ok(def.command.to_string())
+    // Return the command line so the frontend can write it into a terminal session
+    tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let config = AppConfig::load_or_create().map_err(err_to_string)?;
+        Ok(compose_launch_command(
+            base_command,
+            config.harness_launch_args(&harness_id),
+        ))
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+/// Launch args are written raw into a PTY, so strip control characters (a
+/// newline would submit extra shell commands) and collapse runs of whitespace.
+fn sanitize_launch_args(args: &str) -> String {
+    args.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn compose_launch_command(base: &str, extra_args: Option<&str>) -> String {
+    let args = extra_args.map(sanitize_launch_args).unwrap_or_default();
+    if args.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base} {args}")
+    }
+}
+
+#[tauri::command]
+pub async fn get_harness_launch_args() -> Result<BTreeMap<String, String>, String> {
+    tokio::task::spawn_blocking(|| -> Result<BTreeMap<String, String>, String> {
+        let config = AppConfig::load_or_create().map_err(err_to_string)?;
+        Ok(config.harnesses.launch_args)
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn set_harness_launch_args(
+    state: State<'_, AppState>,
+    harness_id: String,
+    args: String,
+) -> Result<String, String> {
+    if !HARNESSES.iter().any(|h| h.id == harness_id) {
+        return Err(format!("unknown harness: {harness_id}"));
+    }
+
+    let config_write_lock = state.config_write_lock.clone();
+    let _guard = config_write_lock.lock_owned().await;
+
+    tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let sanitized = sanitize_launch_args(&args);
+        AppConfig::mutate(|config| {
+            if sanitized.is_empty() {
+                config.harnesses.launch_args.remove(&harness_id);
+            } else {
+                config
+                    .harnesses
+                    .launch_args
+                    .insert(harness_id.clone(), sanitized.clone());
+            }
+            Ok(sanitized)
+        })
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(err_to_string)?
 }
 
 // ---------------------------------------------------------------------------
@@ -669,5 +747,29 @@ mod tests {
             npm_package_from_install_args(&["install", "-g", "opencode-ai"]),
             Some("opencode-ai")
         );
+    }
+
+    #[test]
+    fn compose_launch_command_appends_configured_args() {
+        assert_eq!(compose_launch_command("codex", None), "codex");
+        assert_eq!(
+            compose_launch_command("codex", Some("--yolo")),
+            "codex --yolo"
+        );
+        assert_eq!(
+            compose_launch_command("claude", Some("  --dangerously-skip-permissions  ")),
+            "claude --dangerously-skip-permissions"
+        );
+        assert_eq!(compose_launch_command("codex", Some("   ")), "codex");
+    }
+
+    #[test]
+    fn sanitize_launch_args_strips_control_characters() {
+        assert_eq!(
+            sanitize_launch_args("--yolo\nwhoami\r--flag"),
+            "--yolo whoami --flag"
+        );
+        assert_eq!(sanitize_launch_args("--a\t--b"), "--a --b");
+        assert_eq!(sanitize_launch_args("\u{1b}[31m--x"), "[31m--x");
     }
 }
