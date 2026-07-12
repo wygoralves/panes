@@ -17,11 +17,15 @@ function ToastItem({
   id,
   variant,
   message,
+  title,
+  action,
   duration,
 }: {
   id: string;
   variant: "success" | "error" | "warning" | "info";
   message: string;
+  title?: string;
+  action?: { label: string; onClick: () => void };
   duration: number;
 }) {
   const { t } = useTranslation("common");
@@ -49,6 +53,11 @@ function ToastItem({
     };
   }, [duration, dismiss]);
 
+  const handleAction = useCallback(() => {
+    action?.onClick();
+    dismiss();
+  }, [action, dismiss]);
+
   const Icon = ICONS[variant];
 
   return (
@@ -59,7 +68,19 @@ function ToastItem({
     >
       <div className="toast-accent" />
       <Icon size={16} className="toast-icon" />
-      <span className="toast-message">{message}</span>
+      {title || action ? (
+        <div className="toast-content">
+          {title && <span className="toast-title">{title}</span>}
+          <span className="toast-message">{message}</span>
+          {action && (
+            <button type="button" className="toast-action" onClick={handleAction}>
+              {action.label}
+            </button>
+          )}
+        </div>
+      ) : (
+        <span className="toast-message">{message}</span>
+      )}
       <button className="toast-dismiss" onClick={dismiss} aria-label={t("actions.dismiss")}>
         <X size={12} />
       </button>
@@ -80,6 +101,8 @@ export function ToastContainer() {
           id={t.id}
           variant={t.variant}
           message={t.message}
+          title={t.title}
+          action={t.action}
           duration={t.duration}
         />
       ))}
