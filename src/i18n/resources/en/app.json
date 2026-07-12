@@ -40,6 +40,7 @@
     "workspaceFallback": "Workspace",
     "noThreads": "No threads",
     "untitledThread": "Untitled thread",
+    "needsApproval": "Needs approval",
     "archiveThread": "Archive thread",
     "showMore": "Show {{count}} more",
     "archived": "Archived",
