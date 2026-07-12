@@ -282,11 +282,6 @@ function enqueueStreamEvent(queue: StreamEvent[], event: StreamEvent) {
     return;
   }
 
-  if (previous.type === "UsageLimitsUpdated" && event.type === "UsageLimitsUpdated") {
-    queue[queue.length - 1] = event;
-    return;
-  }
-
   queue.push(event);
 }
 
@@ -1142,6 +1137,9 @@ function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimit
   const contextPercentRaw = usage.context_window_percent;
   const fiveHourPercentRaw = usage.five_hour_percent;
   const weeklyPercentRaw = usage.weekly_percent;
+  const fableWeeklyPercentRaw = usage.fable_weekly_percent;
+  const opusWeeklyPercentRaw = usage.opus_weekly_percent;
+  const sonnetWeeklyPercentRaw = usage.sonnet_weekly_percent;
 
   const currentTokens =
     typeof currentTokensRaw === "number" ? Math.max(0, Math.round(currentTokensRaw)) : null;
@@ -1161,7 +1159,10 @@ function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimit
     hasContextMetrics ||
     typeof contextPercentRaw === "number" ||
     typeof fiveHourPercentRaw === "number" ||
-    typeof weeklyPercentRaw === "number";
+    typeof weeklyPercentRaw === "number" ||
+    typeof fableWeeklyPercentRaw === "number" ||
+    typeof opusWeeklyPercentRaw === "number" ||
+    typeof sonnetWeeklyPercentRaw === "number";
   if (!hasAnyMetric) {
     return null;
   }
@@ -1184,8 +1185,51 @@ function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimit
       contextPercent === null ? null : Math.max(0, Math.min(100, contextPercent)),
     windowFiveHourPercent: toRemainingPercent(fiveHourPercentRaw),
     windowWeeklyPercent: toRemainingPercent(weeklyPercentRaw),
+    windowFableWeeklyPercent: toRemainingPercent(fableWeeklyPercentRaw),
+    windowOpusWeeklyPercent: toRemainingPercent(opusWeeklyPercentRaw),
+    windowSonnetWeeklyPercent: toRemainingPercent(sonnetWeeklyPercentRaw),
     windowFiveHourResetsAt: toIsoTimestamp(usage.five_hour_resets_at),
     windowWeeklyResetsAt: toIsoTimestamp(usage.weekly_resets_at),
+    windowFableWeeklyResetsAt: toIsoTimestamp(usage.fable_weekly_resets_at),
+    windowOpusWeeklyResetsAt: toIsoTimestamp(usage.opus_weekly_resets_at),
+    windowSonnetWeeklyResetsAt: toIsoTimestamp(usage.sonnet_weekly_resets_at),
+  };
+}
+
+function mergeUsageLimits(
+  previous: ContextUsage | null,
+  update: ContextUsage | null,
+): ContextUsage | null {
+  if (!update) {
+    return previous;
+  }
+  if (!previous) {
+    return update;
+  }
+
+  return {
+    currentTokens: update.currentTokens ?? previous.currentTokens,
+    maxContextTokens: update.maxContextTokens ?? previous.maxContextTokens,
+    contextPercent: update.contextPercent ?? previous.contextPercent,
+    windowFiveHourPercent:
+      update.windowFiveHourPercent ?? previous.windowFiveHourPercent,
+    windowWeeklyPercent: update.windowWeeklyPercent ?? previous.windowWeeklyPercent,
+    windowFableWeeklyPercent:
+      update.windowFableWeeklyPercent ?? previous.windowFableWeeklyPercent,
+    windowOpusWeeklyPercent:
+      update.windowOpusWeeklyPercent ?? previous.windowOpusWeeklyPercent,
+    windowSonnetWeeklyPercent:
+      update.windowSonnetWeeklyPercent ?? previous.windowSonnetWeeklyPercent,
+    windowFiveHourResetsAt:
+      update.windowFiveHourResetsAt ?? previous.windowFiveHourResetsAt,
+    windowWeeklyResetsAt:
+      update.windowWeeklyResetsAt ?? previous.windowWeeklyResetsAt,
+    windowFableWeeklyResetsAt:
+      update.windowFableWeeklyResetsAt ?? previous.windowFableWeeklyResetsAt,
+    windowOpusWeeklyResetsAt:
+      update.windowOpusWeeklyResetsAt ?? previous.windowOpusWeeklyResetsAt,
+    windowSonnetWeeklyResetsAt:
+      update.windowSonnetWeeklyResetsAt ?? previous.windowSonnetWeeklyResetsAt,
   };
 }
 
@@ -1676,7 +1720,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             let hydrationRecalcRequired = false;
             for (const queuedEvent of batch) {
               if (queuedEvent.type === "UsageLimitsUpdated") {
-                nextUsageLimits = mapUsageLimitsFromEvent(queuedEvent);
+                nextUsageLimits = mergeUsageLimits(
+                  nextUsageLimits,
+                  mapUsageLimitsFromEvent(queuedEvent),
+                );
                 continue;
               }
               const previousLength = nextMessages.length;

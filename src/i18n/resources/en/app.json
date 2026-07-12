@@ -48,6 +48,7 @@
     "nothingArchived": "Nothing archived.",
     "settings": "Settings",
     "manage": "Manage",
+    "usageLimits": "Usage limits",
     "aboutUpdates": "About and updates",
     "engineSetup": "Get started",
     "checkUpdates": "Check for updates",
@@ -524,6 +525,7 @@
       "appearance": "Appearance",
       "terminal": "Terminal",
       "notifications": "Notifications",
+      "usage": "Usage limits",
       "power": "Power and wake",
       "about": "About and updates"
     },
@@ -543,6 +545,10 @@
       "notifications": {
         "title": "Notifications",
         "description": "Choose when Panes alerts you about completed chat replies and terminal agents."
+      },
+      "usage": {
+        "title": "Usage limits",
+        "description": "Review the current account limits reported by connected chat providers."
       },
       "power": {
         "title": "Power and wake",
@@ -587,6 +593,23 @@
       "interfaceDescription": "Theme changes apply to chat, terminal, Git, and editor surfaces.",
       "themeDescription": "Use a fixed theme or follow the operating system.",
       "languageDescription": "Used across navigation, dialogs, and status messages."
+    },
+    "usage": {
+      "providerLimits": "Connected provider limits",
+      "providerLimitsDescription": "Percentages come directly from each provider and refresh every minute.",
+      "connected": "Account usage available",
+      "unavailable": "Usage data unavailable. Check that this provider is signed in with a subscription account.",
+      "loading": "Loading provider usage limits",
+      "loadFailed": "Provider usage limits could not be loaded.",
+      "percentLeft": "{{percent}}% left",
+      "resets": "Resets {{time}}",
+      "windows": {
+        "fiveHour": "5 hour limit",
+        "weekly": "Weekly limit",
+        "fableWeekly": "Fable weekly limit",
+        "opusWeekly": "Opus weekly limit",
+        "sonnetWeekly": "Sonnet weekly limit"
+      }
     },
     "terminal": {
       "display": "Text and rendering",

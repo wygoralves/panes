@@ -19,6 +19,7 @@ import {
   Terminal,
   Rocket,
   RefreshCw,
+  Gauge,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -627,6 +628,17 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             >
               <Settings size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
               {t("app:sidebar.settings")}
+            </button>
+            <button
+              type="button"
+              className="git-action-menu-item"
+              onClick={() => {
+                closeSettingsMenu();
+                openSettings(activeWorkspaceId, "usage");
+              }}
+            >
+              <Gauge size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+              {t("app:sidebar.usageLimits")}
             </button>
             <div className="git-action-menu-divider" />
             <button

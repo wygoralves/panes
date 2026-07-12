@@ -25,6 +25,7 @@ export type SettingsSection =
   | "appearance"
   | "terminal"
   | "notifications"
+  | "usage"
   | "power"
   | "about"
   | "workspace-general"

@@ -337,8 +337,55 @@ describe("chatStore send", () => {
       contextPercent: 90,
       windowFiveHourPercent: 83,
       windowWeeklyPercent: 58,
+      windowFableWeeklyPercent: null,
+      windowOpusWeeklyPercent: null,
+      windowSonnetWeeklyPercent: null,
       windowFiveHourResetsAt: null,
       windowWeeklyResetsAt: null,
+      windowFableWeeklyResetsAt: null,
+      windowOpusWeeklyResetsAt: null,
+      windowSonnetWeeklyResetsAt: null,
+    });
+
+    vi.useRealTimers();
+  });
+
+  it("merges generic and model-specific Claude usage windows", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    streamHandler!({
+      type: "UsageLimitsUpdated",
+      usage: { five_hour_percent: 10, five_hour_resets_at: 1_740_000_000 },
+    });
+    streamHandler!({
+      type: "UsageLimitsUpdated",
+      usage: { weekly_percent: 20, weekly_resets_at: 1_740_100_000 },
+    });
+    streamHandler!({
+      type: "UsageLimitsUpdated",
+      usage: {
+        fable_weekly_percent: 35,
+        fable_weekly_resets_at: 1_740_200_000,
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(useChatStore.getState().usageLimits).toMatchObject({
+      windowFiveHourPercent: 90,
+      windowWeeklyPercent: 80,
+      windowFableWeeklyPercent: 65,
+      windowFiveHourResetsAt: "2025-02-19T21:20:00.000Z",
+      windowWeeklyResetsAt: "2025-02-21T01:06:40.000Z",
+      windowFableWeeklyResetsAt: "2025-02-22T04:53:20.000Z",
     });
 
     vi.useRealTimers();

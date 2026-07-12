@@ -507,7 +507,12 @@
     "context": "Contexto restante",
     "windowFiveHoursLeft": "5h restantes",
     "windowWeeklyLeft": "Semana restante",
+    "windowFableWeeklyLeft": "Semana Fable restante",
+    "windowOpusWeeklyLeft": "Semana Opus restante",
+    "windowSonnetWeeklyLeft": "Semana Sonnet restante",
     "resets": "reinicia {{time}}",
+    "usageAwaitingFirstMessage": "Envie uma mensagem para carregar os limites de uso",
+    "usageLoading": "Carregando limites de uso...",
     "usageUnavailable": "Limites de uso indisponíveis no servidor"
   },
   "slashCommands": {

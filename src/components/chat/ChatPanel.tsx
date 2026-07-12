@@ -69,6 +69,7 @@ import {
 } from "./planModePrompt";
 import { buildComposerRuntimeSnapshot } from "./composerRuntime";
 import { resolveReasoningEffortForModel } from "./reasoningEffort";
+import { resolveUsageStatusKey } from "./usageStatus";
 import { ToolInputQuestionnaire } from "./ToolInputQuestionnaire";
 import {
   buildPermissionsApprovalResponse,
@@ -1581,6 +1582,26 @@ function usagePercentToWidth(percent: number | null): string {
   return `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
 }
 
+function usageProgressLevelClass(percent: number | null): string {
+  if (typeof percent !== "number" || !Number.isFinite(percent)) {
+    return "";
+  }
+  if (percent <= 10) return " chat-context-progress-fill-critical";
+  if (percent <= 25) return " chat-context-progress-fill-warning";
+  return "";
+}
+
+function resolveClaudeModelFamily(model: EngineModel | null): "fable" | "opus" | "sonnet" | null {
+  if (!model) {
+    return null;
+  }
+  const identity = `${model.id} ${model.displayName} ${model.description}`.toLowerCase();
+  if (identity.includes("fable")) return "fable";
+  if (identity.includes("opus")) return "opus";
+  if (identity.includes("sonnet")) return "sonnet";
+  return null;
+}
+
 interface ChatPanelProps {
   embedded?: boolean;
 }
@@ -1860,6 +1881,38 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const selectedModel = useMemo(
     () => availableModels.find((model) => model.id === selectedModelId) ?? availableModels[0] ?? null,
     [availableModels, selectedModelId],
+  );
+  const selectedClaudeWeeklyUsage = useMemo(() => {
+    if (selectedEngineId !== "claude" || !usageLimits) {
+      return null;
+    }
+
+    switch (resolveClaudeModelFamily(selectedModel)) {
+      case "fable":
+        return {
+          label: t("status.windowFableWeeklyLeft"),
+          percent: usageLimits.windowFableWeeklyPercent,
+          resetsAt: usageLimits.windowFableWeeklyResetsAt,
+        };
+      case "opus":
+        return {
+          label: t("status.windowOpusWeeklyLeft"),
+          percent: usageLimits.windowOpusWeeklyPercent,
+          resetsAt: usageLimits.windowOpusWeeklyResetsAt,
+        };
+      case "sonnet":
+        return {
+          label: t("status.windowSonnetWeeklyLeft"),
+          percent: usageLimits.windowSonnetWeeklyPercent,
+          resetsAt: usageLimits.windowSonnetWeeklyResetsAt,
+        };
+      default:
+        return null;
+    }
+  }, [selectedEngineId, selectedModel, t, usageLimits]);
+  const hasUserMessage = useMemo(
+    () => messages.some((message) => message.role === "user"),
+    [messages],
   );
   const selectedModelSupportsPersonality = selectedEngineId === "codex" &&
     selectedModel?.supportsPersonality === true;
@@ -6140,15 +6193,15 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
           {/* Bottom status bar with context usage */}
           <div className="chat-status-bar">
-            {messages.length > 0 && selectedEngineId === "codex" && (
+            {(isCodexEngine || selectedEngineId === "claude") && (
               usageLimits ? (
-                <>
+                <div className="chat-status-usage">
                   <div className="chat-context-section">
                     <Zap size={10} />
                     <span>{t("status.context")}</span>
                     <div className="chat-context-progress">
                       <div
-                        className="chat-context-progress-fill"
+                        className={`chat-context-progress-fill${usageProgressLevelClass(usageLimits.contextPercent)}`}
                         style={{ width: usagePercentToWidth(usageLimits.contextPercent) }}
                       />
                     </div>
@@ -6164,7 +6217,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     <span>{t("status.windowFiveHoursLeft")}</span>
                     <div className="chat-context-progress">
                       <div
-                        className="chat-context-progress-fill chat-context-progress-fill-5h"
+                        className={`chat-context-progress-fill${usageProgressLevelClass(usageLimits.windowFiveHourPercent)}`}
                         style={{ width: usagePercentToWidth(usageLimits.windowFiveHourPercent) }}
                       />
                     </div>
@@ -6187,7 +6240,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     <span>{t("status.windowWeeklyLeft")}</span>
                     <div className="chat-context-progress">
                       <div
-                        className="chat-context-progress-fill chat-context-progress-fill-weekly"
+                        className={`chat-context-progress-fill${usageProgressLevelClass(usageLimits.windowWeeklyPercent)}`}
                         style={{ width: usagePercentToWidth(usageLimits.windowWeeklyPercent) }}
                       />
                     </div>
@@ -6202,16 +6255,41 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       </span>
                     )}
                   </div>
-                </>
+
+                  {selectedClaudeWeeklyUsage && (
+                    <>
+                      <span className="chat-context-divider">&middot;</span>
+
+                      <div className="chat-context-section">
+                        <Clock size={10} />
+                        <span>{selectedClaudeWeeklyUsage.label}</span>
+                        <div className="chat-context-progress">
+                          <div
+                            className={`chat-context-progress-fill${usageProgressLevelClass(selectedClaudeWeeklyUsage.percent)}`}
+                            style={{ width: usagePercentToWidth(selectedClaudeWeeklyUsage.percent) }}
+                          />
+                        </div>
+                        <span className="chat-context-percent">
+                          {formatUsagePercent(selectedClaudeWeeklyUsage.percent)}
+                        </span>
+                        {selectedClaudeWeeklyUsage.resetsAt && (
+                          <span className="chat-context-reset">
+                            {t("status.resets", {
+                              time: formatResetTime(t, selectedClaudeWeeklyUsage.resetsAt),
+                            })}
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
               ) : (
                 <div className="chat-context-section">
                   <Clock size={10} />
-                  <span>{t("status.usageUnavailable")}</span>
+                  <span>{t(resolveUsageStatusKey(hasUserMessage, streaming))}</span>
                 </div>
               )
             )}
-
-            <div style={{ flex: 1 }} />
 
             {/* Branch */}
             {gitStatus?.branch && (

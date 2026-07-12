@@ -48,6 +48,7 @@
     "nothingArchived": "Nada arquivado.",
     "settings": "Configurações",
     "manage": "Gerenciar",
+    "usageLimits": "Limites de uso",
     "aboutUpdates": "Sobre e atualizações",
     "engineSetup": "Começar",
     "checkUpdates": "Verificar atualizações",
@@ -524,6 +525,7 @@
       "appearance": "Aparência",
       "terminal": "Terminal",
       "notifications": "Notificações",
+      "usage": "Limites de uso",
       "power": "Energia e suspensão",
       "about": "Sobre e atualizações"
     },
@@ -543,6 +545,10 @@
       "notifications": {
         "title": "Notificações",
         "description": "Escolha quando o Panes alerta sobre respostas concluídas e agentes no terminal."
+      },
+      "usage": {
+        "title": "Limites de uso",
+        "description": "Confira os limites atuais informados pelas contas conectadas dos provedores de chat."
       },
       "power": {
         "title": "Energia e suspensão",
@@ -587,6 +593,23 @@
       "interfaceDescription": "Mudanças de tema se aplicam ao chat, terminal, Git e editor.",
       "themeDescription": "Use um tema fixo ou acompanhe o sistema operacional.",
       "languageDescription": "Usado na navegação, diálogos e mensagens de status."
+    },
+    "usage": {
+      "providerLimits": "Limites dos provedores conectados",
+      "providerLimitsDescription": "As porcentagens vêm diretamente de cada provedor e são atualizadas a cada minuto.",
+      "connected": "Uso da conta disponível",
+      "unavailable": "Dados de uso indisponíveis. Verifique se o provedor está conectado a uma conta com assinatura.",
+      "loading": "Carregando limites de uso dos provedores",
+      "loadFailed": "Não foi possível carregar os limites de uso dos provedores.",
+      "percentLeft": "{{percent}}% restantes",
+      "resets": "Reinicia {{time}}",
+      "windows": {
+        "fiveHour": "Limite de 5 horas",
+        "weekly": "Limite semanal",
+        "fableWeekly": "Limite semanal do Fable",
+        "opusWeekly": "Limite semanal do Opus",
+        "sonnetWeekly": "Limite semanal do Sonnet"
+      }
     },
     "terminal": {
       "display": "Texto e renderização",
