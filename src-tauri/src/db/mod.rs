@@ -129,9 +129,40 @@ impl Database {
         ensure_workspace_startup_columns(&conn)?;
         ensure_runtime_columns(&conn)?;
         ensure_messages_audit_columns(&conn)?;
+        backfill_assistant_message_content(&conn)?;
         repair_normalized_workspace_and_repo_paths(&mut conn)?;
         Ok(())
     }
+}
+
+/// Assistant messages used to keep content NULL forever (text only ever landed
+/// in blocks_json), so the FTS triggers never indexed them and global search
+/// could not find assistant replies. Populate content from the text blocks for
+/// rows written before the fix; the UPDATE fires the FTS triggers, which
+/// re-index the rows.
+fn backfill_assistant_message_content(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute(
+        "UPDATE messages
+         SET content = (
+           SELECT group_concat(json_extract(block.value, '$.content'), char(10) || char(10))
+           FROM json_each(messages.blocks_json) AS block
+           WHERE json_extract(block.value, '$.type') = 'text'
+             AND TRIM(COALESCE(json_extract(block.value, '$.content'), '')) <> ''
+         )
+         WHERE role = 'assistant'
+           AND content IS NULL
+           AND blocks_json IS NOT NULL
+           AND json_valid(blocks_json)
+           AND EXISTS (
+             SELECT 1
+             FROM json_each(messages.blocks_json) AS block
+             WHERE json_extract(block.value, '$.type') = 'text'
+               AND TRIM(COALESCE(json_extract(block.value, '$.content'), '')) <> ''
+           )",
+        [],
+    )
+    .context("failed to backfill assistant message content for search indexing")?;
+    Ok(())
 }
 
 fn configure_connection(conn: &Connection) -> anyhow::Result<()> {
