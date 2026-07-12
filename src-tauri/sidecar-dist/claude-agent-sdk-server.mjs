@@ -2,16 +2,39 @@
 // Bridges the Claude Agent SDK to a stdio-based JSON-line protocol for Panes.
 
 import { readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 let queryFn;
+let sdkVersion = null;
+let bundledClaudeCodeVersion = null;
 const sdkModuleSpecifier = process.env.CLAUDE_AGENT_SDK_MODULE;
 try {
   const sdk = sdkModuleSpecifier
     ? await import(sdkModuleSpecifier)
     : await import("@anthropic-ai/claude-agent-sdk");
   queryFn = sdk.query;
+
+  try {
+    const sdkEntryPath = sdkModuleSpecifier
+      ? sdkModuleSpecifier.startsWith("file:")
+        ? fileURLToPath(sdkModuleSpecifier)
+        : sdkModuleSpecifier
+      : fileURLToPath(import.meta.resolve("@anthropic-ai/claude-agent-sdk"));
+    const sdkPackage = JSON.parse(
+      await readFile(path.join(path.dirname(sdkEntryPath), "package.json"), "utf8"),
+    );
+    sdkVersion = typeof sdkPackage.version === "string" ? sdkPackage.version : null;
+    bundledClaudeCodeVersion =
+      typeof sdkPackage.claudeCodeVersion === "string"
+        ? sdkPackage.claudeCodeVersion
+        : null;
+  } catch {
+    // Runtime metadata is diagnostic only. Model discovery can continue without it.
+  }
 } catch (err) {
   process.stdout.write(
     JSON.stringify({
@@ -28,6 +51,15 @@ const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
 const activeQueries = new Map();
 const pendingApprovals = new Map();
 let shuttingDown = false;
+const claudeCodeExecutable = process.env.PANES_CLAUDE_CODE_EXECUTABLE?.trim() || null;
+const execFileAsync = promisify(execFile);
+const claudeUsageUrl =
+  process.env.PANES_CLAUDE_USAGE_URL?.trim() || "https://api.anthropic.com/api/oauth/usage";
+const claudeUsageFetchDisabled = ["1", "true", "yes"].includes(
+  String(process.env.PANES_DISABLE_CLAUDE_USAGE_FETCH || "").toLowerCase(),
+);
+const CLAUDE_USAGE_CACHE_TTL_MS = 60_000;
+let claudeUsageCache = null;
 const MAX_ATTACHMENTS_PER_TURN = 10;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_ATTACHMENT_CHARS = 40_000;
@@ -801,31 +833,267 @@ function buildRateLimitUsageSnapshot(message) {
     return null;
   }
 
+  const rateLimitType = String(rateLimitInfo.rateLimitType || "");
+  const utilization = Number.isFinite(rateLimitInfo.utilization)
+    ? Math.max(0, Math.round(rateLimitInfo.utilization * 100))
+    : null;
+  const resetsAt = Number.isFinite(rateLimitInfo.resetsAt)
+    ? Math.round(rateLimitInfo.resetsAt)
+    : null;
+  const isFableWeeklyLimit =
+    rateLimitType === "seven_day_overage_included" || rateLimitType === "seven_day_fable";
+
   const usage = {
     currentTokens: null,
     maxContextTokens: null,
     contextWindowPercent: null,
-    fiveHourPercent:
-      rateLimitInfo.rateLimitType === "five_hour" && Number.isFinite(rateLimitInfo.utilization)
-        ? Math.max(0, Math.round(rateLimitInfo.utilization * 100))
-        : null,
-    weeklyPercent:
-      String(rateLimitInfo.rateLimitType || "").startsWith("seven_day") &&
-      Number.isFinite(rateLimitInfo.utilization)
-        ? Math.max(0, Math.round(rateLimitInfo.utilization * 100))
-        : null,
-    fiveHourResetsAt:
-      Number.isFinite(rateLimitInfo.resetsAt) && rateLimitInfo.rateLimitType === "five_hour"
-        ? Math.round(rateLimitInfo.resetsAt)
-        : null,
-    weeklyResetsAt:
-      Number.isFinite(rateLimitInfo.resetsAt) &&
-      String(rateLimitInfo.rateLimitType || "").startsWith("seven_day")
-        ? Math.round(rateLimitInfo.resetsAt)
-        : null,
+    fiveHourPercent: rateLimitType === "five_hour" ? utilization : null,
+    weeklyPercent: rateLimitType === "seven_day" ? utilization : null,
+    fableWeeklyPercent: isFableWeeklyLimit ? utilization : null,
+    opusWeeklyPercent: rateLimitType === "seven_day_opus" ? utilization : null,
+    sonnetWeeklyPercent: rateLimitType === "seven_day_sonnet" ? utilization : null,
+    fiveHourResetsAt: rateLimitType === "five_hour" ? resetsAt : null,
+    weeklyResetsAt: rateLimitType === "seven_day" ? resetsAt : null,
+    fableWeeklyResetsAt: isFableWeeklyLimit ? resetsAt : null,
+    opusWeeklyResetsAt: rateLimitType === "seven_day_opus" ? resetsAt : null,
+    sonnetWeeklyResetsAt: rateLimitType === "seven_day_sonnet" ? resetsAt : null,
   };
 
   return Object.values(usage).some((value) => value !== null) ? usage : null;
+}
+
+function toUsagePercent(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  return Math.max(0, Math.min(100, Math.round(numeric)));
+}
+
+function toUnixTimestamp(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 10_000_000_000 ? Math.round(value / 1000) : Math.round(value);
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return null;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? Math.round(timestamp / 1000) : null;
+}
+
+function readUsageWindow(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const percent = toUsagePercent(value.utilization ?? value.percent ?? value.used_percentage);
+  if (percent === null) {
+    return null;
+  }
+  return {
+    percent,
+    resetsAt: toUnixTimestamp(value.resets_at ?? value.resetsAt),
+  };
+}
+
+function buildUsageApiSnapshot(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const snapshot = {
+    currentTokens: null,
+    maxContextTokens: null,
+    contextWindowPercent: null,
+    fiveHourPercent: null,
+    weeklyPercent: null,
+    fableWeeklyPercent: null,
+    opusWeeklyPercent: null,
+    sonnetWeeklyPercent: null,
+    fiveHourResetsAt: null,
+    weeklyResetsAt: null,
+    fableWeeklyResetsAt: null,
+    opusWeeklyResetsAt: null,
+    sonnetWeeklyResetsAt: null,
+  };
+
+  const assignWindow = (prefix, window) => {
+    if (!window) return;
+    snapshot[`${prefix}Percent`] = window.percent;
+    snapshot[`${prefix}ResetsAt`] = window.resetsAt;
+  };
+
+  assignWindow("fiveHour", readUsageWindow(payload.five_hour));
+  assignWindow("weekly", readUsageWindow(payload.seven_day));
+  assignWindow(
+    "fableWeekly",
+    readUsageWindow(payload.seven_day_overage_included ?? payload.seven_day_fable),
+  );
+  assignWindow("opusWeekly", readUsageWindow(payload.seven_day_opus));
+  assignWindow("sonnetWeekly", readUsageWindow(payload.seven_day_sonnet));
+
+  if (Array.isArray(payload.limits)) {
+    for (const limit of payload.limits) {
+      const window = readUsageWindow(limit);
+      if (!window) continue;
+      if (limit.kind === "session") {
+        assignWindow("fiveHour", window);
+        continue;
+      }
+      if (limit.kind === "weekly_all") {
+        assignWindow("weekly", window);
+        continue;
+      }
+      if (limit.kind !== "weekly_scoped") continue;
+
+      const modelName = String(
+        limit.scope?.model?.display_name || limit.scope?.model?.id || "",
+      ).toLowerCase();
+      if (modelName.includes("fable")) {
+        assignWindow("fableWeekly", window);
+      } else if (modelName.includes("opus")) {
+        assignWindow("opusWeekly", window);
+      } else if (modelName.includes("sonnet")) {
+        assignWindow("sonnetWeekly", window);
+      }
+    }
+  }
+
+  return Object.values(snapshot).some((value) => value !== null) ? snapshot : null;
+}
+
+async function readClaudeOauthAccessToken() {
+  const environmentToken = process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
+  if (environmentToken) {
+    return environmentToken;
+  }
+
+  if (process.platform === "darwin") {
+    try {
+      const { stdout } = await execFileAsync(
+        "/usr/bin/security",
+        ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
+        { encoding: "utf8", timeout: 2_000, maxBuffer: 1024 * 1024 },
+      );
+      const credentials = JSON.parse(stdout);
+      const token = credentials?.claudeAiOauth?.accessToken;
+      if (typeof token === "string" && token.trim().length > 0) {
+        return token.trim();
+      }
+    } catch {
+      // Fall through to the credentials file used on Linux and Windows.
+    }
+  }
+
+  try {
+    const homeDirectory = process.env.HOME || process.env.USERPROFILE;
+    if (!homeDirectory) return null;
+    const configDirectory =
+      process.env.CLAUDE_CONFIG_DIR?.trim() || path.join(homeDirectory, ".claude");
+    const credentials = JSON.parse(
+      await readFile(path.join(configDirectory, ".credentials.json"), "utf8"),
+    );
+    const token = credentials?.claudeAiOauth?.accessToken;
+    return typeof token === "string" && token.trim().length > 0 ? token.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchClaudeUsageSnapshot() {
+  if (claudeUsageFetchDisabled) {
+    return null;
+  }
+  const now = Date.now();
+  if (claudeUsageCache && claudeUsageCache.expiresAt > now) {
+    return claudeUsageCache.snapshot;
+  }
+
+  const token = await readClaudeOauthAccessToken();
+  if (!token) {
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch(claudeUsageUrl, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "anthropic-beta": "oauth-2025-04-20",
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const snapshot = buildUsageApiSnapshot(await response.json());
+    if (snapshot) {
+      claudeUsageCache = {
+        expiresAt: now + CLAUDE_USAGE_CACHE_TTL_MS,
+        snapshot,
+      };
+    }
+    return snapshot;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function inferClaudeContextWindowTokens(model) {
+  const normalized = String(model || "").toLowerCase();
+  const millionTokenMatch = normalized.match(/\[(\d+)m\]/);
+  if (millionTokenMatch) {
+    return Number(millionTokenMatch[1]) * 1_000_000;
+  }
+  return 200_000;
+}
+
+function buildContextUsageSnapshot(streamEvent, model) {
+  if (streamEvent?.type !== "message_start") {
+    return null;
+  }
+
+  const rawUsage = streamEvent.message?.usage;
+  if (!rawUsage || typeof rawUsage !== "object" || Array.isArray(rawUsage)) {
+    return null;
+  }
+
+  const inputTokenFields = [
+    rawUsage.input_tokens,
+    rawUsage.cache_creation_input_tokens,
+    rawUsage.cache_read_input_tokens,
+  ];
+  const currentTokens = inputTokenFields.reduce((total, value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? total + Math.max(0, numeric) : total;
+  }, 0);
+  if (currentTokens <= 0) {
+    return null;
+  }
+
+  const maxContextTokens = inferClaudeContextWindowTokens(model);
+  const remainingPercent = Math.max(
+    0,
+    Math.min(100, Math.round(((maxContextTokens - currentTokens) / maxContextTokens) * 100)),
+  );
+
+  return {
+    currentTokens: null,
+    maxContextTokens: null,
+    contextWindowPercent: remainingPercent,
+    fiveHourPercent: null,
+    weeklyPercent: null,
+    fableWeeklyPercent: null,
+    opusWeeklyPercent: null,
+    sonnetWeeklyPercent: null,
+    fiveHourResetsAt: null,
+    weeklyResetsAt: null,
+    fableWeeklyResetsAt: null,
+    opusWeeklyResetsAt: null,
+    sonnetWeeklyResetsAt: null,
+  };
 }
 
 function buildStatusNotice(message) {
@@ -986,6 +1254,62 @@ function allowWriteRootsForSandbox(sandboxMode, writableRoots) {
   return writableRoots;
 }
 
+function applyClaudeRuntime(options) {
+  if (claudeCodeExecutable) {
+    options.pathToClaudeCodeExecutable = claudeCodeExecutable;
+  }
+  return options;
+}
+
+async function* holdModelDiscoveryOpen() {
+  await new Promise(() => {});
+}
+
+async function handleListModels(req) {
+  const { id, params = {} } = req;
+  const options = applyClaudeRuntime({
+    cwd: params.cwd || process.cwd(),
+    settingSources: [],
+  });
+  const query = queryFn({ prompt: holdModelDiscoveryOpen(), options });
+
+  try {
+    const models = await query.supportedModels();
+    emit({
+      id,
+      type: "models",
+      models: Array.isArray(models) ? models : [],
+      runtimeSource: claudeCodeExecutable ? "system" : "bundled",
+      runtimeExecutable: claudeCodeExecutable || undefined,
+      sdkVersion: sdkVersion || undefined,
+      bundledClaudeCodeVersion: bundledClaudeCodeVersion || undefined,
+    });
+  } catch (error) {
+    emit({
+      id,
+      type: "error",
+      message: `Failed to discover Claude models: ${error.message || String(error)}`,
+      recoverable: true,
+    });
+  } finally {
+    query.close?.();
+  }
+}
+
+async function handleUsageLimits(req) {
+  const usage = await fetchClaudeUsageSnapshot();
+  if (usage) {
+    emit({ id: req.id, type: "usage_limits_updated", usage });
+    return;
+  }
+  emit({
+    id: req.id,
+    type: "error",
+    message: "Claude usage limits are unavailable for the current account.",
+    recoverable: true,
+  });
+}
+
 async function handleQuery(req) {
   const { id, params = {} } = req;
   const {
@@ -1025,7 +1349,7 @@ async function handleQuery(req) {
     const normalizedSandboxMode = normalizeSandboxMode(sandboxMode);
     const normalizedWritableRoots = normalizeWritableRoots(sessionCwd, writableRoots);
 
-    const options = {
+    const options = applyClaudeRuntime({
       cwd: sessionCwd,
       additionalDirectories: additionalDirectoriesForSandbox(
         sessionCwd,
@@ -1193,7 +1517,7 @@ async function handleQuery(req) {
         },
       ],
       },
-    };
+    });
 
     if (model) options.model = model;
     if (systemPrompt) options.systemPrompt = systemPrompt;
@@ -1214,6 +1538,11 @@ async function handleQuery(req) {
     );
     const query = queryFn({ prompt: promptInput, options });
     context.query = query;
+    void fetchClaudeUsageSnapshot().then((usage) => {
+      if (usage && activeQueries.has(id)) {
+        emit({ id, type: "usage_limits_updated", usage });
+      }
+    });
 
     for await (const message of query) {
       if (context.cancelled) {
@@ -1280,6 +1609,14 @@ async function handleQuery(req) {
       } else if (message.type === "stream_event") {
         const streamEvent = message.event;
         updateTokenUsageFromStreamEvent(context, streamEvent);
+        const contextUsage = buildContextUsageSnapshot(streamEvent, model);
+        if (contextUsage) {
+          emit({
+            id,
+            type: "usage_limits_updated",
+            usage: contextUsage,
+          });
+        }
 
         if (streamEvent?.type === "content_block_start") {
           const block = streamEvent.content_block;
@@ -1470,7 +1807,25 @@ rl.on("line", (line) => {
   }
 
   if (req.method === "version") {
-    emit({ id: req.id, type: "version", version: "1.0.0" });
+    emit({
+      id: req.id,
+      type: "version",
+      version: "1.0.0",
+      runtimeSource: claudeCodeExecutable ? "system" : "bundled",
+      runtimeExecutable: claudeCodeExecutable || undefined,
+      sdkVersion: sdkVersion || undefined,
+      bundledClaudeCodeVersion: bundledClaudeCodeVersion || undefined,
+    });
+    return;
+  }
+
+  if (req.method === "list_models") {
+    void handleListModels(req);
+    return;
+  }
+
+  if (req.method === "get_usage_limits") {
+    void handleUsageLimits(req);
     return;
   }
 
