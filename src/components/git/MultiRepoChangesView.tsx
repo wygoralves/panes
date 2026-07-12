@@ -28,6 +28,7 @@ import {
 import {
   buildDirectoryFileMap,
   buildTreeRows,
+  getFileDisplayName,
   getStatusLabel,
   getStatusClass,
 } from "./gitChangesUtils";
@@ -544,7 +545,7 @@ function RepoAccordionSection({
 
   function onDiscardFile(filePath: string) {
     if (loadingKey !== null) return;
-    const fileName = filePath.split("/").pop() ?? filePath;
+    const fileName = getFileDisplayName(filePath);
     setDiscardPrompt({
       title: t("changes.discardChanges"),
       message: t("changes.discardPrompts.fileMessage", { name: fileName }),
@@ -555,7 +556,7 @@ function RepoAccordionSection({
   function onDiscardDirectory(dirPath: string) {
     const directoryFiles = unstagedDirectoryFiles.get(dirPath) ?? [];
     if (directoryFiles.length === 0 || loadingKey !== null) return;
-    const dirName = dirPath.split("/").pop() ?? dirPath;
+    const dirName = getFileDisplayName(dirPath);
     setDiscardPrompt({
       title: t("changes.discardChanges"),
       message: t("changes.discardPrompts.directoryMessage", {

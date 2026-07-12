@@ -22,6 +22,7 @@ import { showWorkspaceEditorForDirectFileOpen } from "../../lib/workspacePaneNav
 import {
   buildDirectoryFileMap,
   buildTreeRows,
+  getFileDisplayName,
   getStatusLabel,
   getStatusClass,
 } from "./gitChangesUtils";
@@ -74,7 +75,7 @@ export function DiffPanel({
             padding: "8px 12px",
             fontSize: 11.5,
             color: "var(--text-3)",
-            background: "rgba(250, 204, 21, 0.05)",
+            background: "var(--warning-surface)",
           }}
         >
           {t("changes.diff.previewTruncated", {
@@ -298,7 +299,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
 
   function onDiscardFile(filePath: string) {
     if (loadingKey !== null) return;
-    const fileName = filePath.split("/").pop() ?? filePath;
+    const fileName = getFileDisplayName(filePath);
     setDiscardPrompt({
       title: t("changes.discardChanges"),
       message: t("changes.discardPrompts.fileMessage", { name: fileName }),
@@ -309,7 +310,7 @@ export function GitChangesView({ repo, showDiff, onError }: Props) {
   function onDiscardDirectory(dirPath: string) {
     const directoryFiles = unstagedDirectoryFiles.get(dirPath) ?? [];
     if (directoryFiles.length === 0 || loadingKey !== null) return;
-    const dirName = dirPath.split("/").pop() ?? dirPath;
+    const dirName = getFileDisplayName(dirPath);
     setDiscardPrompt({
       title: t("changes.discardChanges"),
       message: t("changes.discardPrompts.directoryMessage", {

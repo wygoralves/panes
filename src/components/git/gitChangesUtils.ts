@@ -29,6 +29,12 @@ export interface FileRow {
 
 export type TreeRow = DirectoryRow | FileRow;
 
+export function getFileDisplayName(path: string): string {
+  // Untracked directories come from git status with a trailing slash
+  // (e.g. "newdir/"), so a plain split("/").pop() yields an empty name.
+  return path.split("/").filter(Boolean).pop() ?? path;
+}
+
 export function buildDirectoryFileMap(
   files: GitFileStatus[],
 ): Map<string, string[]> {
@@ -111,7 +117,7 @@ export function buildTreeRows(
         type: "file",
         key: `${section}:file:${file.path}`,
         file,
-        name: file.path.split("/").pop() ?? file.path,
+        name: getFileDisplayName(file.path),
         path: file.path,
         depth,
       });

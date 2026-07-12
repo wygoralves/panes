@@ -433,6 +433,16 @@ pub fn discard_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
     let mut untracked = Vec::new();
 
     for f in files {
+        // Porcelain with --untracked-files=normal collapses a fully-untracked
+        // new folder into a single "newdir/" entry. git2's status_file errors
+        // on the trailing slash and .unwrap_or(Status::empty()) would misfile it
+        // as tracked, so `git checkout -- newdir/` fails and aborts the whole
+        // batch. Route directory entries straight to `git clean` instead.
+        if f.ends_with('/') {
+            untracked.push(f.as_str());
+            continue;
+        }
+
         let path = std::path::Path::new(f);
         let status = repo.status_file(path).unwrap_or(Status::empty());
         if status.contains(Status::WT_NEW) {
@@ -629,7 +639,10 @@ pub fn checkout_git_branch(
     is_remote: bool,
 ) -> anyhow::Result<()> {
     if is_remote {
-        match run_git(repo_path, &["checkout", "--track", branch_name]) {
+        match run_git(
+            repo_path,
+            &["checkout", "--track", "--end-of-options", branch_name],
+        ) {
             Ok(_) => return Ok(()),
             Err(error) => {
                 let error_message = error.to_string();
@@ -643,12 +656,13 @@ pub fn checkout_git_branch(
             .split_once('/')
             .map(|(_, value)| value)
             .unwrap_or(branch_name);
-        run_git(repo_path, &["checkout", local_name])
+        run_git(repo_path, &["checkout", "--end-of-options", local_name])
             .context("failed to checkout existing local branch")?;
         return Ok(());
     }
 
-    run_git(repo_path, &["checkout", branch_name]).context("failed to checkout branch")?;
+    run_git(repo_path, &["checkout", "--end-of-options", branch_name])
+        .context("failed to checkout branch")?;
     Ok(())
 }
 
@@ -1686,12 +1700,114 @@ mod tests {
     use std::fs;
 
     use super::{
-        build_diff_preview, get_workspace_file_tree_page, is_diff_preview_metadata_line,
-        parse_porcelain_v1_status, search_workspace_files, truncate_utf8_prefix, FileTreeCache,
-        GIT_DIFF_PREVIEW_MAX_BYTES, GIT_DIFF_PREVIEW_MAX_LINES,
+        build_diff_preview, checkout_git_branch, discard_files, get_workspace_file_tree_page,
+        is_diff_preview_metadata_line, parse_porcelain_v1_status, run_git, search_workspace_files,
+        truncate_utf8_prefix, FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES,
+        GIT_DIFF_PREVIEW_MAX_LINES,
     };
     use crate::models::FileTreeEntryDto;
     use uuid::Uuid;
+
+    struct TempRepo {
+        path: std::path::PathBuf,
+        // Spawning git races with tests that point the process-global PATH at
+        // an empty temp dir (runtime_env's env-mutating tests); hold the
+        // shared env lock for the lifetime of the repo.
+        _env_guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl TempRepo {
+        fn init() -> Self {
+            let env_guard = crate::process_utils::test_env_lock()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let path = std::env::temp_dir().join(format!("panes-git-test-{}", Uuid::new_v4()));
+            fs::create_dir_all(&path).expect("create temp repo dir");
+            let path_str = path.to_str().expect("utf-8 temp path");
+            run_git(path_str, &["init", "--initial-branch=main"]).expect("git init");
+            run_git(path_str, &["config", "user.email", "test@example.com"]).expect("config email");
+            run_git(path_str, &["config", "user.name", "Test"]).expect("config name");
+            Self {
+                path,
+                _env_guard: env_guard,
+            }
+        }
+
+        fn path_str(&self) -> &str {
+            self.path.to_str().expect("utf-8 temp path")
+        }
+
+        fn write(&self, rel: &str, contents: &str) {
+            let full = self.path.join(rel);
+            if let Some(parent) = full.parent() {
+                fs::create_dir_all(parent).expect("create parent dir");
+            }
+            fs::write(full, contents).expect("write file");
+        }
+
+        fn read(&self, rel: &str) -> String {
+            fs::read_to_string(self.path.join(rel)).expect("read file")
+        }
+
+        fn commit_all(&self, message: &str) {
+            run_git(self.path_str(), &["add", "-A"]).expect("git add");
+            run_git(self.path_str(), &["commit", "-m", message]).expect("git commit");
+        }
+    }
+
+    impl Drop for TempRepo {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn checkout_does_not_force_discard_for_dash_prefixed_branch() {
+        let repo = TempRepo::init();
+        repo.write("a.txt", "committed\n");
+        repo.commit_all("init");
+
+        // Craft a ref literally named "-f" the way a malicious clone could ship
+        // it, bypassing `git branch`'s name validation.
+        let head = run_git(repo.path_str(), &["rev-parse", "HEAD"]).expect("rev-parse");
+        repo.write(".git/refs/heads/-f", head.trim());
+
+        // Uncommitted work in the tree.
+        repo.write("a.txt", "committed\nDIRTY\n");
+
+        // Before the fix this ran `git checkout -f`, silently wiping the tree.
+        let _ = checkout_git_branch(repo.path_str(), "-f", false);
+
+        assert!(
+            repo.read("a.txt").contains("DIRTY"),
+            "uncommitted change must survive checkout of a dash-prefixed ref"
+        );
+    }
+
+    #[test]
+    fn discard_all_handles_untracked_directory_and_tracked_file_together() {
+        let repo = TempRepo::init();
+        repo.write("tracked.txt", "original\n");
+        repo.commit_all("init");
+
+        // A modified tracked file plus a brand-new untracked folder — porcelain
+        // reports the folder as a single "newdir/" entry with a trailing slash.
+        repo.write("tracked.txt", "modified\n");
+        repo.write("newdir/inner.txt", "new\n");
+
+        let files = vec!["tracked.txt".to_string(), "newdir/".to_string()];
+        discard_files(repo.path_str(), &files).expect("discard should not error on untracked dir");
+
+        assert_eq!(
+            repo.read("tracked.txt"),
+            "original\n",
+            "tracked file must be reverted"
+        );
+        assert!(
+            !repo.path.join("newdir").exists(),
+            "untracked directory must be removed"
+        );
+    }
 
     #[test]
     fn parses_porcelain_status_branch_and_file_states() {
