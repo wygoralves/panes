@@ -82,7 +82,7 @@ const lockupSvg = ({ markFile, wordmarkFile }) => {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg viewBox="0 0 276 64" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
   <svg x="0" y="0" width="64" height="64" viewBox="0 0 64 64">${markBody}</svg>
-  <svg x="84" y="-8" width="182" height="80" viewBox="0 0 711 311.796875">${wordmarkBody}</svg>
+  <svg x="84" y="-18" width="182" height="80" viewBox="0 0 711 311.796875">${wordmarkBody}</svg>
 </svg>
 `;
 };

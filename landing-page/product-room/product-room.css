@@ -64,6 +64,7 @@
   --prm-selection: #021409;
   --prm-selection-ink: #61d596;
   --prm-line-soft: rgb(255 255 255 / 0.08);
+  --prm-divider: rgb(255 255 255 / 0.05);
   --prm-wash: rgb(255 255 255 / 0.055);
   --prm-control: #0d0d11;
   --prm-control-hover: #18181c;
@@ -121,6 +122,7 @@
   --prm-selection: #e8fbee;
   --prm-selection-ink: #006d40;
   --prm-line-soft: rgb(0 0 0 / 0.08);
+  --prm-divider: rgb(0 0 0 / 0.05);
   --prm-wash: rgb(0 0 0 / 0.05);
   --prm-control: #ffffff;
   --prm-control-hover: #ececef;
@@ -216,6 +218,7 @@ body.prm-page {
   position: relative;
   display: inline-flex;
   align-items: center;
+  transform: translateY(1px);
 }
 
 .prm-brand img {
@@ -242,6 +245,7 @@ body.prm-page {
   gap: 28px;
   color: var(--prm-muted);
   font-size: 12px;
+  transform: translateY(-1px);
 }
 
 .prm-nav a {
@@ -257,6 +261,7 @@ body.prm-page {
   align-items: center;
   gap: 8px;
   margin-left: auto;
+  transform: translateY(-1px);
 }
 
 .prm-theme-toggle {
@@ -362,6 +367,7 @@ body.prm-page {
 }
 
 .prm-page .prm-header-download {
+  gap: 8px;
   background: var(--prm-accent);
   color: var(--accent-on);
 }
@@ -520,7 +526,7 @@ body.prm-page {
   display: flex;
   flex-direction: column;
   padding: 6px 10px 12px;
-  border-bottom: 1px solid var(--prm-line-soft);
+  border-bottom: 1px solid var(--prm-divider);
 }
 
 .prm-sidebar-actions > div {
@@ -608,12 +614,12 @@ body.prm-page {
 
 .prm-workspace-canvas .top-bar,
 .prm-workspace-canvas .git-header {
-  border-color: var(--prm-line);
+  border-color: var(--prm-divider);
   background: var(--bg-content);
 }
 
 .prm-workspace-canvas .term-tabs {
-  border-color: var(--prm-line);
+  border-color: var(--prm-divider);
   background: var(--bg-terminal);
 }
 
@@ -622,7 +628,7 @@ body.prm-page {
 }
 
 .prm-workspace-canvas .top-bar {
-  border-bottom: 1px solid var(--prm-line);
+  border-bottom: 1px solid var(--prm-divider);
 }
 
 .prm-workspace-canvas .top-bar-path strong {
@@ -640,7 +646,7 @@ body.prm-page {
 .prm-workspace-canvas .chat-input,
 .prm-workspace-canvas .chat-status-bar-mock,
 .prm-workspace-canvas .git-commit-area {
-  border-color: var(--prm-line);
+  border-color: var(--prm-divider);
 }
 
 .prm-workspace-canvas .v-input-box,
@@ -661,6 +667,7 @@ body.prm-page {
 
 .prm-workspace-canvas .git-panel {
   width: 300px;
+  border-left-color: var(--prm-divider);
   background: var(--bg-content);
 }
 
@@ -1148,10 +1155,7 @@ body.prm-page {
   border-radius: 999px;
   background: oklch(0.15 0.009 286 / 0.9);
   box-shadow: inset 0 0 0 1px oklch(1 0 0 / 0.09), 0 12px 34px oklch(0.02 0.006 286 / 0.28);
-  backdrop-filter: blur(12px);
   transform: translate3d(var(--hover-x), var(--hover-y), 0) rotate(var(--hover-r));
-  transition: opacity 720ms cubic-bezier(0.16, 1, 0.3, 1), filter 720ms cubic-bezier(0.16, 1, 0.3, 1), transform 720ms cubic-bezier(0.16, 1, 0.3, 1), background 180ms ease, box-shadow 180ms ease;
-  transition-delay: calc(var(--motion-order) * 48ms);
 }
 
 .prm-agent-orbit .prm-provider-mark {
@@ -1244,6 +1248,8 @@ body.prm-page {
 }
 
 .prm-agent-field.is-in-view .prm-agent-orbit {
+  transition: opacity 720ms cubic-bezier(0.16, 1, 0.3, 1), filter 720ms cubic-bezier(0.16, 1, 0.3, 1), transform 720ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition-delay: calc(var(--motion-order) * 48ms);
   animation: prm-agent-drift var(--drift-duration, 4.2s) ease-in-out calc(420ms + var(--motion-order) * 38ms) infinite alternate;
 }
 

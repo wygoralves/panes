@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockUiState = vi.hoisted(() => {
   const state = {
     showExplorer: false,
-    activeView: "harnesses" as "chat" | "harnesses" | "workspace-settings",
-    setActiveView: vi.fn((view: "chat" | "harnesses" | "workspace-settings") => {
+    activeView: "harnesses" as "chat" | "harnesses" | "settings",
+    setActiveView: vi.fn((view: "chat" | "harnesses" | "settings") => {
       state.activeView = view;
     }),
     setExplorerOpen: vi.fn((open: boolean) => {

@@ -15,6 +15,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { TFunction } from "i18next";
 import {
   Send,
+  Loader2,
   Square,
   GitBranch,
   Brain,
@@ -68,6 +69,7 @@ import {
 } from "./planModePrompt";
 import { buildComposerRuntimeSnapshot } from "./composerRuntime";
 import { resolveReasoningEffortForModel } from "./reasoningEffort";
+import { resolveUsageStatusKey } from "./usageStatus";
 import { ToolInputQuestionnaire } from "./ToolInputQuestionnaire";
 import {
   buildPermissionsApprovalResponse,
@@ -118,6 +120,35 @@ import type {
 const MESSAGE_VIRTUALIZATION_THRESHOLD = 40;
 const MESSAGE_ESTIMATED_ROW_HEIGHT = 220;
 const MESSAGE_ROW_GAP = 12;
+
+function createPendingSubmissionMessage(
+  threadId: string,
+  text: string,
+  attachments: ChatAttachment[],
+  planMode: boolean,
+): Message {
+  const blocks: ContentBlock[] = attachments.map((attachment) => ({
+    type: "attachment",
+    fileName: attachment.fileName,
+    filePath: attachment.filePath,
+    sizeBytes: attachment.sizeBytes,
+    mimeType: attachment.mimeType,
+  }));
+  blocks.push({ type: "text", content: text, planMode: planMode || undefined });
+
+  return {
+    id: `pending-${crypto.randomUUID()}`,
+    threadId,
+    role: "user",
+    content: text,
+    blocks,
+    status: "completed",
+    schemaVersion: 1,
+    createdAt: new Date().toISOString(),
+    hydration: "full",
+    hasDeferredContent: false,
+  };
+}
 const MESSAGE_OVERSCAN_PX = 700;
 const LazyTerminalPanel = lazy(() =>
   import("../terminal/TerminalPanel").then((module) => ({
@@ -1551,6 +1582,26 @@ function usagePercentToWidth(percent: number | null): string {
   return `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
 }
 
+function usageProgressLevelClass(percent: number | null): string {
+  if (typeof percent !== "number" || !Number.isFinite(percent)) {
+    return "";
+  }
+  if (percent <= 10) return " chat-context-progress-fill-critical";
+  if (percent <= 25) return " chat-context-progress-fill-warning";
+  return "";
+}
+
+function resolveClaudeModelFamily(model: EngineModel | null): "fable" | "opus" | "sonnet" | null {
+  if (!model) {
+    return null;
+  }
+  const identity = `${model.id} ${model.displayName} ${model.description}`.toLowerCase();
+  if (identity.includes("fable")) return "fable";
+  if (identity.includes("opus")) return "opus";
+  if (identity.includes("sonnet")) return "sonnet";
+  return null;
+}
+
 interface ChatPanelProps {
   embedded?: boolean;
 }
@@ -1561,6 +1612,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   renderStartedAtRef.current = performance.now();
 
   const [input, setInput] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingSubmission, setPendingSubmission] = useState<Message | null>(null);
+  const isSubmittingRef = useRef(false);
   const inputHistoryRef = useRef<string[]>([]);
   const inputHistCursorRef = useRef(-1);
   const inputLiveDraftRef = useRef("");
@@ -1613,6 +1667,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     hydrateActionOutput,
     streaming,
     usageLimits,
+    usageLimitsLoading,
     error,
     setActiveThread: bindChatThread,
     threadId,
@@ -1630,6 +1685,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       hydrateActionOutput: state.hydrateActionOutput,
       streaming: state.streaming,
       usageLimits: state.usageLimits,
+      usageLimitsLoading: state.usageLimitsLoading,
       error: state.error,
       setActiveThread: state.setActiveThread,
       threadId: state.threadId,
@@ -1752,6 +1808,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     outputSchemaText: string;
     customApprovalPolicyText: string;
     openCodeAgent: string;
+    reasoningConfigured: boolean;
     restorePlanModeOnCancel: boolean;
   } | null>(null);
   const [planImplementationPrompt, setPlanImplementationPrompt] = useState<{
@@ -1826,6 +1883,38 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const selectedModel = useMemo(
     () => availableModels.find((model) => model.id === selectedModelId) ?? availableModels[0] ?? null,
     [availableModels, selectedModelId],
+  );
+  const selectedClaudeWeeklyUsage = useMemo(() => {
+    if (selectedEngineId !== "claude" || !usageLimits) {
+      return null;
+    }
+
+    switch (resolveClaudeModelFamily(selectedModel)) {
+      case "fable":
+        return {
+          label: t("status.windowFableWeeklyLeft"),
+          percent: usageLimits.windowFableWeeklyPercent,
+          resetsAt: usageLimits.windowFableWeeklyResetsAt,
+        };
+      case "opus":
+        return {
+          label: t("status.windowOpusWeeklyLeft"),
+          percent: usageLimits.windowOpusWeeklyPercent,
+          resetsAt: usageLimits.windowOpusWeeklyResetsAt,
+        };
+      case "sonnet":
+        return {
+          label: t("status.windowSonnetWeeklyLeft"),
+          percent: usageLimits.windowSonnetWeeklyPercent,
+          resetsAt: usageLimits.windowSonnetWeeklyResetsAt,
+        };
+      default:
+        return null;
+    }
+  }, [selectedEngineId, selectedModel, t, usageLimits]);
+  const hasUserMessage = useMemo(
+    () => messages.some((message) => message.role === "user"),
+    [messages],
   );
   const selectedModelSupportsPersonality = selectedEngineId === "codex" &&
     selectedModel?.supportsPersonality === true;
@@ -3138,6 +3227,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }, [messages, autoScrollLocked, scrollViewportToBottom]);
 
   useEffect(() => {
+    if (!pendingSubmission || autoScrollLocked) {
+      return;
+    }
+    scrollViewportToBottom("auto");
+  }, [autoScrollLocked, pendingSubmission, scrollViewportToBottom]);
+
+  useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || !threadId || !hasOlderMessages || loadingOlderMessages) {
       return;
@@ -3850,20 +3946,20 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     }
   }
 
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
-    if (!input.trim() || !activeWorkspaceId) return;
+  async function submitMessage(): Promise<boolean> {
+    if (!input.trim() || !activeWorkspaceId) return false;
+    const preflightStartedAt = performance.now();
     const text = input.trim();
     const currentAttachments = [...attachments];
 
     if (streaming) {
       if (!canSteerActiveTurn) {
-        return;
+        return false;
       }
 
       const activeThreadId = threadId ?? activeThread?.id ?? null;
       if (!activeThreadId) {
-        return;
+        return false;
       }
 
       const inputItems = await resolveCodexInputItems(text, "codex");
@@ -3886,12 +3982,12 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         setInput("");
         setAttachments([]);
       }
-      return;
+      return steered;
     }
 
     const composerRuntime = resolveComposerRuntimeSelection();
     if (!composerRuntime) {
-      return;
+      return false;
     }
     const submitEngineId = composerRuntime.engineId;
     const submitModelId = composerRuntime.modelId;
@@ -3919,6 +4015,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       activeThreadModelMatch
         ? threadId
         : null;
+    let createdThread = false;
 
     if (!targetThreadId) {
       const createdThreadId = await createThread({
@@ -3936,9 +4033,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           : t("panel.workspaceChatTitle"),
       });
       if (!createdThreadId) {
-        return;
+        return false;
       }
       targetThreadId = createdThreadId;
+      createdThread = true;
       manualThreadBindTargetRef.current = createdThreadId;
       try {
         await bindChatThread(createdThreadId);
@@ -3986,25 +4084,47 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           outputSchemaText,
           customApprovalPolicyText,
           openCodeAgent: selectedOpenCodeAgentRef.current,
+          reasoningConfigured: createdThread,
           restorePlanModeOnCancel: false,
         });
-        return;
+        return true;
       }
     }
 
-    await ipc.setThreadReasoningEffort(
-      targetThreadId,
-      submitReasoningEffort,
-      submitModelId,
-    );
-    setThreadReasoningEffortLocal(targetThreadId, submitReasoningEffort);
-    if (!(await applyCodexConfigToThread(targetThreadId))) {
-      return;
+    if (!createdThread) {
+      await ipc.setThreadReasoningEffort(
+        targetThreadId,
+        submitReasoningEffort,
+        submitModelId,
+      );
     }
-    if (!(await applyOpenCodeConfigToThread(targetThreadId))) {
-      return;
+    setThreadReasoningEffortLocal(targetThreadId, submitReasoningEffort);
+
+    const needsNewThreadCodexConfig =
+      submitEngineId === "codex" &&
+      (selectedPersonality !== "inherit" ||
+        outputSchemaText.trim().length > 0 ||
+        customApprovalPolicyText.trim().length > 0);
+    if (!createdThread || needsNewThreadCodexConfig) {
+      if (!(await applyCodexConfigToThread(targetThreadId))) {
+        return false;
+      }
+    }
+
+    const needsNewThreadOpenCodeConfig =
+      submitEngineId === "opencode" && selectedOpenCodeAgentRef.current !== "build";
+    if (!createdThread || needsNewThreadOpenCodeConfig) {
+      if (!(await applyOpenCodeConfigToThread(targetThreadId))) {
+        return false;
+      }
     }
     setThreadLastModelLocal(targetThreadId, submitModelId);
+
+    recordPerfMetric("chat.send.preflight.ms", performance.now() - preflightStartedAt, {
+      engineId: submitEngineId,
+      modelId: submitModelId,
+      createdThread,
+    });
 
     const sent = await send(text, {
       threadIdOverride: targetThreadId,
@@ -4029,17 +4149,69 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       setInput("");
       setAttachments([]);
     }
+    return sent;
+  }
+
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!input.trim() || !activeWorkspaceId || isSubmittingRef.current) {
+      return;
+    }
+
+    const submittedText = input.trim();
+    const submittedAttachments = [...attachments];
+    if (!streaming) {
+      setPendingSubmission(
+        createPendingSubmissionMessage(
+          threadId ?? activeThread?.id ?? "pending",
+          submittedText,
+          submittedAttachments,
+          planMode,
+        ),
+      );
+    }
+
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+    const submission = submitMessage();
+    setInput("");
+    setAttachments([]);
+    try {
+      const accepted = await submission;
+      if (!accepted) {
+        setInput(submittedText);
+        setAttachments(submittedAttachments);
+      }
+    } catch (error) {
+      setInput(submittedText);
+      setAttachments(submittedAttachments);
+      throw error;
+    } finally {
+      setPendingSubmission(null);
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
+    }
   }
 
   async function executeWorkspaceOptInSend() {
     const prompt = workspaceOptInPrompt;
     if (!prompt) return;
+    setPendingSubmission(
+      createPendingSubmissionMessage(
+        prompt.threadId,
+        prompt.text,
+        prompt.attachments,
+        prompt.planMode,
+      ),
+    );
     setWorkspaceOptInPrompt(null);
 
     try {
       await ipc.confirmWorkspaceThread(prompt.threadId, prompt.threadPaths);
 
-      await ipc.setThreadReasoningEffort(prompt.threadId, prompt.effort, prompt.modelId);
+      if (!prompt.reasoningConfigured) {
+        await ipc.setThreadReasoningEffort(prompt.threadId, prompt.effort, prompt.modelId);
+      }
       setThreadReasoningEffortLocal(prompt.threadId, prompt.effort);
       if (!(await applyCodexConfigToThread(prompt.threadId, {
         engineId: prompt.engineId,
@@ -4086,6 +4258,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     } catch {
       setInput(prompt.text);
       setAttachments(prompt.attachments);
+    } finally {
+      setPendingSubmission(null);
     }
   }
 
@@ -4136,6 +4310,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           outputSchemaText: prompt.outputSchemaText,
           customApprovalPolicyText: prompt.customApprovalPolicyText,
           openCodeAgent: prompt.openCodeAgent,
+          reasoningConfigured: false,
           restorePlanModeOnCancel: true,
         });
         return;
@@ -4209,9 +4384,15 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }
 
   function dismissWorkspaceOptInPrompt() {
-    if (workspaceOptInPrompt?.restorePlanModeOnCancel) {
+    const prompt = workspaceOptInPrompt;
+    if (prompt?.restorePlanModeOnCancel) {
       setPlanMode(true);
     }
+    if (prompt) {
+      setInput(prompt.text);
+      setAttachments(prompt.attachments);
+    }
+    setPendingSubmission(null);
     setWorkspaceOptInPrompt(null);
   }
 
@@ -4978,8 +5159,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   position: "absolute",
                   inset: 12,
                   borderRadius: "var(--radius-md)",
-                  border: "1px solid rgba(var(--info-rgb), 0.45)",
-                  background: "rgba(var(--info-rgb), 0.08)",
+                  border: "1px solid var(--info-border)",
+                  background: "var(--info-surface)",
                   color: "var(--text-1)",
                   fontSize: 13,
                   fontWeight: 600,
@@ -5003,7 +5184,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 padding: "20px 24px",
               }}
             >
-        {messages.length === 0 ? (
+        {messages.length === 0 && !pendingSubmission ? (
           <div
             className="animate-fade-in"
             style={{
@@ -5094,6 +5275,48 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           </div>
         )}
 
+        {pendingSubmission && !streaming && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              marginTop: messages.length > 0 ? MESSAGE_ROW_GAP : 0,
+            }}
+          >
+            <MessageRow
+              message={pendingSubmission}
+              index={messages.length}
+              isHighlighted={false}
+              assistantLabel=""
+              assistantEngineId=""
+              onApproval={handleApproval}
+              onLoadActionOutput={handleLoadActionOutput}
+            />
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                alignSelf: "flex-start",
+                gap: 7,
+                padding: "4px 14px 8px",
+                color: "var(--text-3)",
+                fontSize: 12,
+              }}
+            >
+              <Loader2
+                size={12}
+                className="chat-send-spinner"
+                aria-hidden="true"
+                style={{ color: "var(--info)" }}
+              />
+              <span>{t("panel.sendingMessage")}</span>
+            </div>
+          </div>
+        )}
+
         {autoScrollLocked && messages.length > 0 && (
           <button
             type="button"
@@ -5111,12 +5334,12 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               gap: 6,
               padding: "6px 10px",
               borderRadius: "var(--radius-sm)",
-              border: streaming ? "1px solid rgba(var(--info-rgb), 0.25)" : "1px solid var(--border)",
-              background: streaming ? "rgba(var(--info-rgb), 0.08)" : "var(--bg-2)",
+              border: streaming ? "1px solid var(--info-border)" : "1px solid var(--border)",
+              background: streaming ? "var(--info-surface)" : "var(--bg-2)",
               color: streaming ? "var(--info)" : "var(--text-2)",
               fontSize: 11.5,
               cursor: "pointer",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
+              boxShadow: "var(--shadow-popover)",
               zIndex: 2,
             }}
           >
@@ -5897,9 +6120,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     style={{
                       padding: "5px 10px",
                       borderRadius: "var(--radius-sm)",
-                      background: "rgba(var(--danger-rgb), 0.10)",
+                      background: "var(--danger-surface)",
                       color: "var(--danger)",
-                      border: "1px solid rgba(var(--danger-rgb), 0.2)",
+                      border: "1px solid var(--danger-border)",
                       fontSize: 12,
                       fontWeight: 600,
                       cursor: "pointer",
@@ -5916,9 +6139,22 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 {(!streaming || canSteerActiveTurn) && !showSpecialInputComposer && (
                 <button
                   type="submit"
-                  disabled={!activeWorkspaceId || !input.trim()}
-                  title={streaming ? t("panel.sendFollowUp") : undefined}
-                  aria-label={streaming ? t("panel.sendFollowUp") : undefined}
+                  disabled={!activeWorkspaceId || !input.trim() || isSubmitting}
+                  title={
+                    isSubmitting
+                      ? t("panel.sendingMessage")
+                      : streaming
+                        ? t("panel.sendFollowUp")
+                        : t("panel.sendMessage")
+                  }
+                  aria-label={
+                    isSubmitting
+                      ? t("panel.sendingMessage")
+                      : streaming
+                        ? t("panel.sendFollowUp")
+                        : t("panel.sendMessage")
+                  }
+                  aria-busy={isSubmitting}
                   style={{
                     width: 30,
                     height: 30,
@@ -5931,7 +6167,11 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       activeWorkspaceId && input.trim()
                         ? "var(--on-accent-icon)"
                         : "var(--text-3)",
-                    cursor: activeWorkspaceId && input.trim() ? "pointer" : "default",
+                    cursor: isSubmitting
+                      ? "wait"
+                      : activeWorkspaceId && input.trim()
+                        ? "pointer"
+                        : "default",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -5942,7 +6182,11 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         : "none",
                   }}
                 >
-                  <Send size={13} />
+                  {isSubmitting ? (
+                    <Loader2 size={13} className="chat-send-spinner" aria-hidden="true" />
+                  ) : (
+                    <Send size={13} aria-hidden="true" />
+                  )}
                 </button>
                 )}
               </div>
@@ -5951,15 +6195,15 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
           {/* Bottom status bar with context usage */}
           <div className="chat-status-bar">
-            {messages.length > 0 && selectedEngineId === "codex" && (
+            {(isCodexEngine || selectedEngineId === "claude") && (
               usageLimits ? (
-                <>
+                <div className="chat-status-usage">
                   <div className="chat-context-section">
                     <Zap size={10} />
                     <span>{t("status.context")}</span>
                     <div className="chat-context-progress">
                       <div
-                        className="chat-context-progress-fill"
+                        className={`chat-context-progress-fill${usageProgressLevelClass(usageLimits.contextPercent)}`}
                         style={{ width: usagePercentToWidth(usageLimits.contextPercent) }}
                       />
                     </div>
@@ -5975,7 +6219,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     <span>{t("status.windowFiveHoursLeft")}</span>
                     <div className="chat-context-progress">
                       <div
-                        className="chat-context-progress-fill chat-context-progress-fill-5h"
+                        className={`chat-context-progress-fill${usageProgressLevelClass(usageLimits.windowFiveHourPercent)}`}
                         style={{ width: usagePercentToWidth(usageLimits.windowFiveHourPercent) }}
                       />
                     </div>
@@ -5998,7 +6242,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     <span>{t("status.windowWeeklyLeft")}</span>
                     <div className="chat-context-progress">
                       <div
-                        className="chat-context-progress-fill chat-context-progress-fill-weekly"
+                        className={`chat-context-progress-fill${usageProgressLevelClass(usageLimits.windowWeeklyPercent)}`}
                         style={{ width: usagePercentToWidth(usageLimits.windowWeeklyPercent) }}
                       />
                     </div>
@@ -6013,16 +6257,43 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       </span>
                     )}
                   </div>
-                </>
+
+                  {selectedClaudeWeeklyUsage && (
+                    <>
+                      <span className="chat-context-divider">&middot;</span>
+
+                      <div className="chat-context-section">
+                        <Clock size={10} />
+                        <span>{selectedClaudeWeeklyUsage.label}</span>
+                        <div className="chat-context-progress">
+                          <div
+                            className={`chat-context-progress-fill${usageProgressLevelClass(selectedClaudeWeeklyUsage.percent)}`}
+                            style={{ width: usagePercentToWidth(selectedClaudeWeeklyUsage.percent) }}
+                          />
+                        </div>
+                        <span className="chat-context-percent">
+                          {formatUsagePercent(selectedClaudeWeeklyUsage.percent)}
+                        </span>
+                        {selectedClaudeWeeklyUsage.resetsAt && (
+                          <span className="chat-context-reset">
+                            {t("status.resets", {
+                              time: formatResetTime(t, selectedClaudeWeeklyUsage.resetsAt),
+                            })}
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
               ) : (
                 <div className="chat-context-section">
                   <Clock size={10} />
-                  <span>{t("status.usageUnavailable")}</span>
+                  <span>
+                    {t(resolveUsageStatusKey(hasUserMessage, streaming || usageLimitsLoading))}
+                  </span>
                 </div>
               )
             )}
-
-            <div style={{ flex: 1 }} />
 
             {/* Branch */}
             {gitStatus?.branch && (
@@ -6040,8 +6311,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     marginTop: 8,
                     padding: "8px 12px",
                     borderRadius: "var(--radius-sm)",
-                    background: "rgba(var(--danger-rgb), 0.06)",
-                    border: "1px solid rgba(var(--danger-rgb), 0.15)",
+                    background: "var(--danger-surface)",
+                    border: "1px solid var(--danger-border)",
                     color: "var(--danger)",
                     fontSize: 12,
                   }}

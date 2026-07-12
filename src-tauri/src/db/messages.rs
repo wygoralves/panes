@@ -298,12 +298,17 @@ pub fn update_assistant_blocks_json(
 ) -> anyhow::Result<()> {
     let conn = db.connect()?;
     let normalized_blocks_json = normalize_blocks_json_for_message(&conn, message_id, blocks_json)?;
+    // Mirror the text blocks into the content column: the messages_fts
+    // triggers index only content, so leaving it NULL keeps assistant replies
+    // out of global search.
+    let searchable_text = extract_searchable_text_from_blocks(&normalized_blocks_json);
     conn.execute(
         "UPDATE messages
-     SET blocks_json = ?1, status = ?2, turn_model_id = COALESCE(?3, turn_model_id)
-     WHERE id = ?4",
+     SET blocks_json = ?1, content = ?2, status = ?3, turn_model_id = COALESCE(?4, turn_model_id)
+     WHERE id = ?5",
         params![
             normalized_blocks_json,
+            searchable_text,
             status.as_str(),
             turn_model_id,
             message_id
@@ -311,6 +316,24 @@ pub fn update_assistant_blocks_json(
     )
     .context("failed to update assistant blocks")?;
     Ok(())
+}
+
+fn extract_searchable_text_from_blocks(blocks_json: &str) -> Option<String> {
+    let blocks: Value = serde_json::from_str(blocks_json).ok()?;
+    let parts: Vec<&str> = blocks
+        .as_array()?
+        .iter()
+        .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|block| block.get("content").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|content| !content.is_empty())
+        .collect();
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
 }
 
 pub fn update_assistant_status(
@@ -1221,6 +1244,67 @@ mod tests {
 
         let results = search_messages(&db, &workspace_id, "foo:bar baz(");
         assert!(results.is_ok());
+    }
+
+    #[test]
+    fn search_messages_finds_assistant_text_after_blocks_update() {
+        let db = test_db();
+        let workspace_id = test_workspace(&db);
+        let thread =
+            threads::create_thread(&db, &workspace_id, None, "codex", "gpt-5.3-codex", "test")
+                .unwrap();
+        let message = insert_assistant_placeholder(&db, &thread.id, None, None, None).unwrap();
+
+        let blocks = json!([
+            { "type": "thinking", "content": "planning the reply" },
+            { "type": "text", "content": "the flux capacitor needs recalibration" }
+        ]);
+        update_assistant_blocks_json(
+            &db,
+            &message.id,
+            &blocks.to_string(),
+            MessageStatusDto::Completed,
+            None,
+        )
+        .unwrap();
+
+        let results = search_messages(&db, &workspace_id, "capacitor").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].message_id, message.id);
+        assert!(results[0].snippet.contains("flux capacitor"));
+    }
+
+    #[test]
+    fn migrations_backfill_assistant_content_for_legacy_rows() {
+        let db = test_db();
+        let workspace_id = test_workspace(&db);
+        let thread =
+            threads::create_thread(&db, &workspace_id, None, "codex", "gpt-5.3-codex", "test")
+                .unwrap();
+        let message = insert_assistant_placeholder(&db, &thread.id, None, None, None).unwrap();
+
+        // Simulate a row written before the fix: blocks_json holds the reply,
+        // content stays NULL.
+        let blocks = json!([
+            { "type": "text", "content": "legacy assistant reply about quasars" }
+        ]);
+        let conn = db.connect().unwrap();
+        conn.execute(
+            "UPDATE messages SET blocks_json = ?1, status = 'completed' WHERE id = ?2",
+            params![blocks.to_string(), message.id],
+        )
+        .unwrap();
+        drop(conn);
+
+        assert!(search_messages(&db, &workspace_id, "quasars")
+            .unwrap()
+            .is_empty());
+
+        db.run_migrations().expect("failed to rerun migrations");
+
+        let results = search_messages(&db, &workspace_id, "quasars").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].message_id, message.id);
     }
 
     #[test]

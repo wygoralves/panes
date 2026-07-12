@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ApprovalResponse, StreamEvent } from "../types";
+import type { ApprovalResponse, ChatProviderUsage, StreamEvent } from "../types";
 
 const mockIpc = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   steerMessage: vi.fn(),
   getThreadMessagesWindow: vi.fn(),
+  getChatProviderUsage: vi.fn(),
   getActionOutput: vi.fn(),
   respondApproval: vi.fn(),
   syncThreadFromEngine: vi.fn(),
@@ -42,6 +43,7 @@ describe("chatStore send", () => {
       messages: [],
       nextCursor: null,
     });
+    mockIpc.getChatProviderUsage.mockResolvedValue([]);
     mockIpc.getActionOutput.mockResolvedValue({
       found: true,
       outputChunks: [],
@@ -84,6 +86,7 @@ describe("chatStore send", () => {
       status: "idle",
       streaming: false,
       usageLimits: null,
+      usageLimitsLoading: false,
       error: undefined,
       unlisten: undefined,
     });
@@ -337,11 +340,129 @@ describe("chatStore send", () => {
       contextPercent: 90,
       windowFiveHourPercent: 83,
       windowWeeklyPercent: 58,
+      windowFableWeeklyPercent: null,
+      windowOpusWeeklyPercent: null,
+      windowSonnetWeeklyPercent: null,
       windowFiveHourResetsAt: null,
       windowWeeklyResetsAt: null,
+      windowFableWeeklyResetsAt: null,
+      windowOpusWeeklyResetsAt: null,
+      windowSonnetWeeklyResetsAt: null,
     });
 
     vi.useRealTimers();
+  });
+
+  it("merges generic and model-specific Claude usage windows", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    streamHandler!({
+      type: "UsageLimitsUpdated",
+      usage: { five_hour_percent: 10, five_hour_resets_at: 1_740_000_000 },
+    });
+    streamHandler!({
+      type: "UsageLimitsUpdated",
+      usage: { weekly_percent: 20, weekly_resets_at: 1_740_100_000 },
+    });
+    streamHandler!({
+      type: "UsageLimitsUpdated",
+      usage: {
+        fable_weekly_percent: 35,
+        fable_weekly_resets_at: 1_740_200_000,
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(useChatStore.getState().usageLimits).toMatchObject({
+      windowFiveHourPercent: 90,
+      windowWeeklyPercent: 80,
+      windowFableWeeklyPercent: 65,
+      windowFiveHourResetsAt: "2025-02-19T21:20:00.000Z",
+      windowWeeklyResetsAt: "2025-02-21T01:06:40.000Z",
+      windowFableWeeklyResetsAt: "2025-02-22T04:53:20.000Z",
+    });
+
+    vi.useRealTimers();
+  });
+
+  it("refreshes provider limits when binding a restored conversation", async () => {
+    const usageRequest = deferred<ChatProviderUsage[]>();
+    mockIpc.getChatProviderUsage.mockReturnValueOnce(usageRequest.promise);
+    mockIpc.getThreadMessagesWindow.mockResolvedValueOnce({
+      messages: [
+        {
+          id: "user-restored",
+          threadId: "thread-1",
+          role: "user",
+          content: "continue the work",
+          blocks: [{ type: "text", content: "continue the work" }],
+          schemaVersion: 1,
+          status: "completed",
+          tokenUsage: null,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      nextCursor: null,
+    });
+    useThreadStore.setState({
+      threads: [
+        {
+          id: "thread-1",
+          workspaceId: "workspace-1",
+          repoId: null,
+          engineId: "claude",
+          modelId: "fable",
+          engineThreadId: "engine-thread-1",
+          engineMetadata: {},
+          title: "Restored thread",
+          status: "idle",
+          messageCount: 1,
+          totalTokens: 0,
+          createdAt: new Date().toISOString(),
+          lastActivityAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    expect(useChatStore.getState()).toMatchObject({
+      usageLimits: null,
+      usageLimitsLoading: true,
+    });
+
+    usageRequest.resolve([
+      {
+        engineId: "claude",
+        name: "Claude",
+        available: true,
+        windows: [
+          { kind: "five_hour", usedPercent: 20, resetsAt: 1_740_000_000 },
+          { kind: "weekly", usedPercent: 35, resetsAt: 1_740_100_000 },
+          { kind: "fable_weekly", usedPercent: 45, resetsAt: 1_740_200_000 },
+        ],
+      },
+    ]);
+
+    await vi.waitFor(() => {
+      expect(useChatStore.getState().usageLimitsLoading).toBe(false);
+    });
+    expect(useChatStore.getState().usageLimits).toMatchObject({
+      contextPercent: null,
+      windowFiveHourPercent: 80,
+      windowWeeklyPercent: 65,
+      windowFableWeeklyPercent: 55,
+      windowFiveHourResetsAt: "2025-02-19T21:20:00.000Z",
+    });
   });
 
   it("preserves stdin action output chunks from streamed events", async () => {

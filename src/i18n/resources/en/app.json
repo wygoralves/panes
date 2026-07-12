@@ -47,6 +47,9 @@
     "restoreThread": "Restore thread",
     "nothingArchived": "Nothing archived.",
     "settings": "Settings",
+    "manage": "Manage",
+    "usageLimits": "Usage limits",
+    "aboutUpdates": "About and updates",
     "engineSetup": "Get started",
     "checkUpdates": "Check for updates",
     "preferences": "Preferences",
@@ -503,6 +506,152 @@
       "pathCopied": "Path copied",
       "pathsCopied": "{{count}} paths copied",
       "openExternalFailed": "Failed to open file in the default app"
+    }
+  },
+  "settingsPage": {
+    "title": "Settings",
+    "navigationLabel": "Settings navigation",
+    "searchPlaceholder": "Find a setting",
+    "noResults": "No settings found.",
+    "backToPanes": "Back to Panes",
+    "versionUnavailable": "Version unavailable",
+    "editingWorkspace": "Editing workspace",
+    "groups": {
+      "panes": "Panes",
+      "workspace": "Workspace"
+    },
+    "nav": {
+      "overview": "Overview",
+      "appearance": "Appearance",
+      "terminal": "Terminal",
+      "notifications": "Notifications",
+      "usage": "Usage limits",
+      "power": "Power and wake",
+      "about": "About and updates"
+    },
+    "sections": {
+      "overview": {
+        "title": "Settings",
+        "description": "Control Panes, terminal sessions, agent alerts, and the current workspace from one place."
+      },
+      "appearance": {
+        "title": "Appearance",
+        "description": "Choose how Panes looks and which language it uses."
+      },
+      "terminal": {
+        "title": "Terminal",
+        "description": "Set defaults for terminal sessions created in Panes."
+      },
+      "notifications": {
+        "title": "Notifications",
+        "description": "Choose when Panes alerts you about completed chat replies and terminal agents."
+      },
+      "usage": {
+        "title": "Usage limits",
+        "description": "Review the current account limits reported by connected chat providers."
+      },
+      "power": {
+        "title": "Power and wake",
+        "description": "Keep the computer available while agents and terminal jobs are running."
+      },
+      "about": {
+        "title": "About and updates",
+        "description": "View the installed Panes version and manage application updates."
+      },
+      "workspace-general": {
+        "title": "Workspace general",
+        "description": "Control how Panes opens and scans the selected workspace."
+      },
+      "workspace-repos": {
+        "title": "Repositories",
+        "description": "Choose which repositories appear in Git tools and how much access each repository permits."
+      },
+      "workspace-startup": {
+        "title": "Startup layout",
+        "description": "Choose which surfaces and terminal sessions Panes restores when this workspace opens."
+      }
+    },
+    "overview": {
+      "setupTitle": "Terminal alerts need setup",
+      "setupDescription": "Install the Claude Code or Codex hooks to receive completed turn alerts from Panes terminals.",
+      "reviewSetup": "Review setup",
+      "quickControls": "Quick controls",
+      "quickControlsDescription": "The settings most likely to change during a working session.",
+      "keepAwakeRemaining": "Active for {{time}}",
+      "keepAwakeActive": "Active until you turn it off",
+      "keepAwakeOff": "Off",
+      "notificationsOff": "All alerts are off",
+      "terminalSummary": "{{size}}px font and shared rendering preferences",
+      "currentWorkspace": "Current workspace",
+      "noWorkspace": "Open a workspace to manage workspace settings.",
+      "workspaceGeneralDescription": "Path, repository discovery, and workspace information",
+      "repositoriesDescription": "Trust levels, Git visibility, and remotes",
+      "startupDescription": "Default view, terminal tabs, panes, and worktrees"
+    },
+    "appearance": {
+      "interface": "Interface",
+      "interfaceDescription": "Theme changes apply to chat, terminal, Git, and editor surfaces.",
+      "themeDescription": "Use a fixed theme or follow the operating system.",
+      "languageDescription": "Used across navigation, dialogs, and status messages."
+    },
+    "usage": {
+      "providerLimits": "Connected provider limits",
+      "providerLimitsDescription": "Percentages come directly from each provider and refresh every minute.",
+      "connected": "Account usage available",
+      "unavailable": "Usage data unavailable. Check that this provider is signed in with a subscription account.",
+      "loading": "Loading provider usage limits",
+      "loadFailed": "Provider usage limits could not be loaded.",
+      "percentLeft": "{{percent}}% left",
+      "resets": "Resets {{time}}",
+      "windows": {
+        "fiveHour": "5 hour limit",
+        "weekly": "Weekly limit",
+        "fableWeekly": "Fable weekly limit",
+        "opusWeekly": "Opus weekly limit",
+        "sonnetWeekly": "Sonnet weekly limit"
+      }
+    },
+    "terminal": {
+      "display": "Text and rendering",
+      "displayDescription": "These preferences apply to every Panes terminal.",
+      "fontDescription": "Adjust terminal text without changing the rest of the interface.",
+      "acceleratedDescription": "Use WebGL for smoother output in active terminal sessions.",
+      "previewOutput": "TypeScript check completed with no errors."
+    },
+    "power": {
+      "options": "Power behavior",
+      "optionsDescription": "Configure display, battery, session, and lid-close behavior.",
+      "displaySummary": "Control display sleep and screen saver prevention.",
+      "sourceSummary": "Pause on battery or below a chosen battery level.",
+      "advancedSummary": "Set session duration and lid-close behavior.",
+      "configure": "Configure power options",
+      "sessionDescription": "Choose how long Keep Awake stays active.",
+      "durationDescription": "Stop automatically after a preset or custom duration.",
+      "customDurationDescription": "Enter the number of hours and minutes.",
+      "loading": "Loading power settings..."
+    },
+    "about": {
+      "application": "Application",
+      "applicationDescription": "Version and update information for this Panes installation.",
+      "installedVersion": "Installed version",
+      "installedVersionDescription": "The version of Panes currently running on this device.",
+      "automaticTitle": "Automatic updates",
+      "automaticDescription": "Panes checks for updates automatically. You can also check at any time.",
+      "upToDateTitle": "Panes is up to date",
+      "lastChecked": "Last checked {{time}}",
+      "checkingTitle": "Checking for updates",
+      "checkingDescription": "Looking for a newer version of Panes.",
+      "downloadingTitle": "Downloading update",
+      "preparingDownload": "Preparing the update download.",
+      "downloadingProgress": "Downloaded {{downloaded}} of {{total}} ({{percent}}%).",
+      "downloadingUnknown": "Downloaded {{downloaded}}. The server did not provide a total size.",
+      "installingTitle": "Installing update",
+      "installingDescription": "Download complete. Panes is applying the update.",
+      "installing": "Installing...",
+      "readyTitle": "Restarting Panes",
+      "readyDescription": "The update is installed and Panes is restarting.",
+      "checkForUpdates": "Check for updates",
+      "checking": "Checking..."
     }
   },
   "notificationSettings": {

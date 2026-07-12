@@ -7,6 +7,7 @@ import {
   Plus,
   FolderGit2,
   MessageSquare,
+  Cog,
   ChevronDown,
   ChevronRight,
   Archive,
@@ -16,16 +17,9 @@ import {
   PanelLeftOpen,
   Search,
   Terminal,
-  Check,
   Rocket,
   RefreshCw,
-  PillBottle,
-  BellRing,
-  Globe,
-  Minus,
-  Moon,
-  Sun,
-  Monitor,
+  Gauge,
 } from "lucide-react";
 import { useChatStore } from "../../stores/chatStore";
 import { useThreadStore } from "../../stores/threadStore";
@@ -33,33 +27,9 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useOnboardingStore } from "../../stores/onboardingStore";
 import { useUpdateStore } from "../../stores/updateStore";
-import { canToggleKeepAwake, useKeepAwakeStore } from "../../stores/keepAwakeStore";
-import { useTerminalNotificationSettingsStore } from "../../stores/terminalNotificationSettingsStore";
-import { useThemeStore } from "../../stores/themeStore";
-import { toast } from "../../stores/toastStore";
-import { ipc } from "../../lib/ipc";
 import { formatRelativeTime } from "../../lib/formatters";
-import {
-  emitTerminalAcceleratedRenderingChanged,
-  getTerminalAcceleratedRenderingPreferenceVersion,
-} from "../../lib/terminalRenderingSettings";
-import {
-  clampTerminalFontSize,
-  DEFAULT_TERMINAL_FONT_SIZE,
-  emitTerminalFontSizeChanged,
-  getTerminalFontSizePreferenceVersion,
-  MAX_TERMINAL_FONT_SIZE,
-  MIN_TERMINAL_FONT_SIZE,
-} from "../../lib/terminalFontSizeSettings";
-import {
-  normalizeAppLocale,
-  SUPPORTED_APP_LOCALES,
-  type AppLocale,
-} from "../../lib/locale";
-import { THEME_PREFERENCES, type ThemePreference } from "../../lib/theme";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { createAndActivateWorkspaceThread } from "../../lib/newThreadActions";
-import { UpdateDialog } from "../onboarding/UpdateDialog";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { PanesMark } from "../shared/PanesBrand";
 import { WorkspaceMoreMenu } from "../workspace/WorkspaceMoreMenu";
@@ -119,24 +89,14 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const toggleSidebarPin = useUiStore((state) => state.toggleSidebarPin);
   const activeView = useUiStore((state) => state.activeView);
   const setActiveView = useUiStore((state) => state.setActiveView);
+  const openSettings = useUiStore((state) => state.openSettings);
   const openWorkspaceSettings = useUiStore((state) => state.openWorkspaceSettings);
+  const openUsageLimitsModal = useUiStore((state) => state.openUsageLimitsModal);
   const openCommandPalette = useUiStore((state) => state.openCommandPalette);
   const bindChatThread = useChatStore((s) => s.setActiveThread);
   const updateStatus = useUpdateStore((s) => s.status);
   const updateSnoozed = useUpdateStore((s) => s.snoozed);
-  const keepAwakeState = useKeepAwakeStore((s) => s.state);
-  const keepAwakeLoading = useKeepAwakeStore((s) => s.loading);
-  const toggleKeepAwake = useKeepAwakeStore((s) => s.toggle);
-  const openPowerSettings = useKeepAwakeStore((s) => s.openPowerSettings);
-  const terminalNotificationSettings = useTerminalNotificationSettingsStore((s) => s.settings);
-  const terminalNotificationLoading = useTerminalNotificationSettingsStore((s) => s.loading);
-  const terminalNotificationLoadedOnce = useTerminalNotificationSettingsStore((s) => s.loadedOnce);
-  const terminalNotificationUpdatingChatEnabled = useTerminalNotificationSettingsStore((s) => s.updatingChatEnabled);
-  const terminalNotificationUpdatingTerminalEnabled = useTerminalNotificationSettingsStore((s) => s.updatingTerminalEnabled);
-  const toggleTerminalNotifications = useTerminalNotificationSettingsStore((s) => s.toggle);
-  const openTerminalNotificationSettings = useTerminalNotificationSettingsStore((s) => s.openModal);
   const hasUpdate = updateStatus === "available" && !updateSnoozed;
-  const keepAwakeAvailable = canToggleKeepAwake(keepAwakeState);
 
   const projects = useMemo<ProjectGroup[]>(
     () =>
@@ -153,7 +113,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   );
   const [showAll, setShowAll] = useState<Record<string, boolean>>({});
   const [archivedOpen, setArchivedOpen] = useState(false);
-  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const [archiveWorkspacePrompt, setArchiveWorkspacePrompt] = useState<{
     workspace: Workspace;
   } | null>(null);
@@ -162,15 +121,9 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   } | null>(null);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [settingsMenuPos, setSettingsMenuPos] = useState({ top: 0, left: 0 });
-  const [terminalAcceleratedRendering, setTerminalAcceleratedRendering] = useState(true);
-  const [terminalFontSize, setTerminalFontSizeState] = useState(DEFAULT_TERMINAL_FONT_SIZE);
-  const [updatingTerminalFontSize, setUpdatingTerminalFontSize] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const previousSyncedActiveWorkspaceIdRef = useRef<string | null>(activeWorkspaceId);
-  const activeLocale = normalizeAppLocale(i18n.language);
-  const themePreference = useThemeStore((s) => s.preference);
-  const setThemePreference = useThemeStore((s) => s.setPreference);
 
   const closeSettingsMenu = useCallback(() => setSettingsMenuOpen(false), []);
 
@@ -195,43 +148,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       document.removeEventListener("keydown", onKeyDown, true);
     };
   }, [settingsMenuOpen, closeSettingsMenu]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const requestVersion = getTerminalAcceleratedRenderingPreferenceVersion();
-    ipc
-      .getTerminalAcceleratedRendering()
-      .then((enabled) => {
-        if (
-          !cancelled &&
-          getTerminalAcceleratedRenderingPreferenceVersion() === requestVersion
-        ) {
-          setTerminalAcceleratedRendering(enabled);
-        }
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const requestVersion = getTerminalFontSizePreferenceVersion();
-    ipc
-      .getTerminalFontSize()
-      .then((fontSize) => {
-        if (!cancelled && getTerminalFontSizePreferenceVersion() === requestVersion) {
-          setTerminalFontSizeState(fontSize);
-        }
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const archivedThreads = useMemo(
     () =>
@@ -335,55 +251,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     await restoreThread(thread.id);
   }
 
-  async function onLocaleSelect(locale: AppLocale) {
-    if (locale === activeLocale) return;
-
-    try {
-      const savedLocale = await ipc.setAppLocale(locale);
-      await i18n.changeLanguage(savedLocale);
-      toast.info(t("common:language.changed"));
-    } catch {
-      toast.error(t("app:sidebar.languageFailed"));
-    }
-  }
-
-  async function onThemeSelect(theme: ThemePreference) {
-    if (theme === themePreference) return;
-
-    const ok = await setThemePreference(theme);
-    if (!ok) {
-      toast.error(t("app:sidebar.themeFailed"));
-    }
-  }
-
-  async function onToggleTerminalAcceleratedRendering() {
-    const nextValue = !terminalAcceleratedRendering;
-
-    try {
-      const saved = await ipc.setTerminalAcceleratedRendering(nextValue);
-      setTerminalAcceleratedRendering(saved);
-      emitTerminalAcceleratedRenderingChanged(saved);
-    } catch {
-      toast.error(t("app:sidebar.terminalAcceleratedRenderingFailed"));
-    }
-  }
-
-  async function onChangeTerminalFontSize(delta: number) {
-    const nextValue = clampTerminalFontSize(terminalFontSize + delta);
-    if (nextValue === terminalFontSize || updatingTerminalFontSize) return;
-
-    setUpdatingTerminalFontSize(true);
-    try {
-      const saved = await ipc.setTerminalFontSize(nextValue);
-      setTerminalFontSizeState(saved);
-      emitTerminalFontSizeChanged(saved);
-    } catch {
-      toast.error(t("app:sidebar.terminalFontSizeFailed"));
-    } finally {
-      setUpdatingTerminalFontSize(false);
-    }
-  }
-
   function getWorkspaceLabel(workspace: Workspace) {
     return workspace.name || workspace.rootPath.split("/").pop() || t("app:sidebar.workspaceFallback");
   }
@@ -391,53 +258,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   function getThreadLabel(thread: Thread) {
     return thread.title?.trim() || t("app:sidebar.untitledThread");
   }
-
-  const keepAwakeDescription = useMemo(() => {
-    if (!keepAwakeState) {
-      return t("app:sidebar.keepAwakeDescription");
-    }
-    if (!keepAwakeState?.supported) {
-      return t("app:sidebar.keepAwakeUnsupported");
-    }
-    if (keepAwakeState.enabled && !keepAwakeState.active) {
-      return t("app:sidebar.keepAwakeInactive");
-    }
-    if (
-      keepAwakeState.enabled &&
-      keepAwakeState.active &&
-      keepAwakeState.supportsClosedDisplay === false &&
-      keepAwakeState.closedDisplayActive === false
-    ) {
-      return t("app:sidebar.keepAwakeLimited");
-    }
-    return t("app:sidebar.keepAwakeDescription");
-  }, [keepAwakeState, t]);
-  const terminalNotificationDescription = useMemo(() => {
-    if (!terminalNotificationLoadedOnce || !terminalNotificationSettings) {
-      return t("app:sidebar.terminalNotificationsDescription");
-    }
-    if (terminalNotificationSettings.chatEnabled && terminalNotificationSettings.terminalEnabled) {
-      return t("app:sidebar.terminalNotificationsEnabledAll");
-    }
-    if (terminalNotificationSettings.chatEnabled) {
-      return t("app:sidebar.terminalNotificationsEnabledChat");
-    }
-    if (terminalNotificationSettings.terminalEnabled) {
-      return t("app:sidebar.terminalNotificationsEnabledTerminal");
-    }
-    if (terminalNotificationSettings.terminalSetupComplete) {
-      return t("app:sidebar.terminalNotificationsReady");
-    }
-    return t("app:sidebar.terminalNotificationsDescription");
-  }, [terminalNotificationLoadedOnce, terminalNotificationSettings, t]);
-
-  const terminalNotificationAnyEnabled =
-    (terminalNotificationSettings?.chatEnabled ?? false)
-    || (terminalNotificationSettings?.terminalEnabled ?? false);
-  const terminalNotificationBusy =
-    (terminalNotificationLoading && !terminalNotificationLoadedOnce)
-    || terminalNotificationUpdatingChatEnabled
-    || terminalNotificationUpdatingTerminalEnabled;
 
   return (
     <div
@@ -755,6 +575,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
           ref={settingsTriggerRef}
           type="button"
           className="sb-settings-btn"
+          aria-expanded={settingsMenuOpen}
           onClick={() => {
             if (settingsMenuOpen) {
               closeSettingsMenu();
@@ -768,10 +589,11 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
           }}
         >
           <span style={{ position: "relative", display: "inline-flex" }}>
-            <Settings size={14} style={{ opacity: 0.5 }} />
+            <Cog size={15} />
             {hasUpdate && <span className="sb-update-dot" />}
           </span>
-          {t("app:sidebar.settings")}
+          {t("app:sidebar.manage")}
+          <ChevronDown size={12} style={{ marginLeft: "auto", opacity: 0.5 }} />
         </button>
         <button
           type="button"
@@ -797,273 +619,29 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               minWidth: 260,
             }}
           >
-            {/* ── Preferences ── */}
-            <div
-              style={{
-                padding: "6px 12px 4px",
-                fontSize: 10,
-                color: "var(--text-3)",
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-              }}
-            >
-              {t("app:sidebar.preferences")}
-            </div>
-            <div
-              className="git-action-menu-item"
-              style={{
-                justifyContent: "space-between",
-                opacity: keepAwakeLoading || !keepAwakeAvailable ? 0.5 : 1,
-              }}
-            >
-              <button
-                type="button"
-                title={keepAwakeDescription}
-                onClick={() => openPowerSettings()}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  color: "inherit",
-                  padding: 0,
-                  flex: 1,
-                  minWidth: 0,
-                }}
-              >
-                <PillBottle size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
-                {t("app:sidebar.keepAwake")}
-              </button>
-              <label
-                className="ws-toggle"
-                title={keepAwakeDescription}
-                onClick={(e) => e.stopPropagation()}
-                style={{ cursor: keepAwakeLoading || !keepAwakeAvailable ? "not-allowed" : undefined }}
-              >
-                <input
-                  type="checkbox"
-                  checked={keepAwakeState?.enabled ?? false}
-                  disabled={keepAwakeLoading || !keepAwakeAvailable}
-                  onChange={() => void toggleKeepAwake()}
-                />
-                <span className="ws-toggle-track" />
-                <span className="ws-toggle-thumb" />
-              </label>
-            </div>
-            <div
-              className="git-action-menu-item"
-              style={{
-                justifyContent: "space-between",
-                opacity:
-                  terminalNotificationBusy
-                    ? 0.75
-                    : 1,
-              }}
-            >
-              <button
-                type="button"
-                title={terminalNotificationDescription}
-                onClick={() => openTerminalNotificationSettings()}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  color: "inherit",
-                  padding: 0,
-                  flex: 1,
-                  minWidth: 0,
-                }}
-              >
-                <BellRing size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
-                {t("app:sidebar.terminalNotifications")}
-              </button>
-              <label
-                className="ws-toggle"
-                title={terminalNotificationDescription}
-                onClick={(e) => e.stopPropagation()}
-                style={{
-                  cursor:
-                    terminalNotificationBusy
-                      ? "wait"
-                      : undefined,
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={terminalNotificationAnyEnabled}
-                  disabled={terminalNotificationBusy}
-                  onChange={() => { void toggleTerminalNotifications(); }}
-                />
-                <span className="ws-toggle-track" />
-                <span className="ws-toggle-thumb" />
-              </label>
-            </div>
-            <div className="git-action-menu-item" style={{ justifyContent: "space-between", cursor: "default" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Sun size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
-                {t("app:sidebar.theme")}
-              </span>
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  background: "var(--segmented-bg)",
-                  borderRadius: 6,
-                  padding: 2,
-                  gap: 2,
-                }}
-              >
-                {THEME_PREFERENCES.map((theme) => {
-                  const ThemeIcon = theme === "dark" ? Moon : theme === "light" ? Sun : Monitor;
-                  const active = themePreference === theme;
-                  return (
-                    <button
-                      key={theme}
-                      type="button"
-                      title={t(`app:sidebar.theme_${theme}`)}
-                      aria-label={t(`app:sidebar.theme_${theme}`)}
-                      onClick={() => { void onThemeSelect(theme); }}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        width: 24,
-                        height: 22,
-                        padding: 0,
-                        borderRadius: 4,
-                        border: "none",
-                        cursor: "pointer",
-                        background: active ? "var(--selection-bg)" : "transparent",
-                        color: active ? "var(--selection-fg)" : "var(--text-3)",
-                        boxShadow: active ? "inset 0 0 0 1px var(--selection-border)" : "none",
-                        transition: "background 0.15s, color 0.15s, box-shadow 0.15s",
-                      }}
-                    >
-                      <ThemeIcon size={12} />
-                    </button>
-                  );
-                })}
-              </span>
-            </div>
-            <div className="git-action-menu-item" style={{ justifyContent: "space-between", cursor: "default" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Globe size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
-                {t("common:language.label")}
-              </span>
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  background: "var(--segmented-bg)",
-                  borderRadius: 6,
-                  padding: 2,
-                  gap: 2,
-                }}
-              >
-                {SUPPORTED_APP_LOCALES.map((locale) => (
-                  <button
-                    key={locale}
-                    type="button"
-                    onClick={() => { void onLocaleSelect(locale); }}
-                    style={{
-                      fontSize: 11,
-                      lineHeight: 1,
-                      padding: "3px 8px",
-                      borderRadius: 4,
-                      border: "none",
-                      cursor: "pointer",
-                      background: activeLocale === locale ? "var(--selection-bg)" : "transparent",
-                      color: activeLocale === locale ? "var(--selection-fg)" : "var(--text-3)",
-                      fontWeight: activeLocale === locale ? 500 : 400,
-                      boxShadow: activeLocale === locale
-                        ? "inset 0 0 0 1px var(--selection-border)"
-                        : "none",
-                      transition: "background 0.15s, color 0.15s, box-shadow 0.15s",
-                    }}
-                  >
-                    {locale === "en" ? "EN-US" : "PT-BR"}
-                  </button>
-                ))}
-              </span>
-            </div>
-
-            <div className="git-action-menu-divider" />
-            <div
-              style={{
-                padding: "6px 10px 4px",
-                fontSize: 11,
-                color: "var(--text-3)",
-                textTransform: "uppercase",
-                letterSpacing: "0.06em",
-              }}
-            >
-              {t("app:sidebar.terminal")}
-            </div>
             <button
               type="button"
               className="git-action-menu-item"
-              style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
               onClick={() => {
-                void onToggleTerminalAcceleratedRendering();
+                closeSettingsMenu();
+                openSettings(activeWorkspaceId);
               }}
             >
-              <span>{t("app:sidebar.terminalAcceleratedRendering")}</span>
-              {terminalAcceleratedRendering ? <Check size={12} /> : null}
+              <Settings size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+              {t("app:sidebar.settings")}
             </button>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "6px 10px",
-                gap: 8,
+            <button
+              type="button"
+              className="git-action-menu-item"
+              onClick={() => {
+                closeSettingsMenu();
+                openUsageLimitsModal();
               }}
             >
-              <span style={{ fontSize: 12 }}>{t("app:sidebar.terminalFontSize")}</span>
-              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <button
-                  type="button"
-                  className="wss-icon-btn"
-                  aria-label={t("app:sidebar.terminalFontSizeDecrease")}
-                  disabled={updatingTerminalFontSize || terminalFontSize <= MIN_TERMINAL_FONT_SIZE}
-                  onClick={() => {
-                    void onChangeTerminalFontSize(-1);
-                  }}
-                >
-                  <Minus size={12} />
-                </button>
-                <span
-                  style={{
-                    minWidth: 20,
-                    textAlign: "center",
-                    fontSize: 11,
-                    color: "var(--text-2)",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {terminalFontSize}
-                </span>
-                <button
-                  type="button"
-                  className="wss-icon-btn"
-                  aria-label={t("app:sidebar.terminalFontSizeIncrease")}
-                  disabled={updatingTerminalFontSize || terminalFontSize >= MAX_TERMINAL_FONT_SIZE}
-                  onClick={() => {
-                    void onChangeTerminalFontSize(1);
-                  }}
-                >
-                  <Plus size={12} />
-                </button>
-              </span>
-            </div>
+              <Gauge size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+              {t("app:sidebar.usageLimits")}
+            </button>
             <div className="git-action-menu-divider" />
-
-            {/* ── Actions ── */}
             <button
               type="button"
               className="git-action-menu-item"
@@ -1081,12 +659,12 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               style={{ justifyContent: "space-between" }}
               onClick={() => {
                 closeSettingsMenu();
-                setUpdateDialogOpen(true);
+                openSettings(activeWorkspaceId, "about");
               }}
             >
               <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <RefreshCw size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
-                {t("app:sidebar.checkUpdates")}
+                {t("app:sidebar.aboutUpdates")}
               </span>
               {hasUpdate && (
                 <span
@@ -1104,8 +682,6 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
           </div>,
           document.body,
         )}
-
-      <UpdateDialog open={updateDialogOpen} onClose={() => setUpdateDialogOpen(false)} />
 
       {createPortal(
         <ConfirmDialog
@@ -1153,8 +729,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             padding: "8px 12px",
             fontSize: 12,
             color: "var(--danger)",
-            borderTop: "1px solid rgba(var(--danger-rgb), 0.15)",
-            background: "rgba(var(--danger-rgb), 0.06)",
+            borderTop: "1px solid var(--danger-border)",
+            background: "var(--danger-surface)",
           }}
         >
           {error}
@@ -1184,6 +760,7 @@ function CollapsedRail({
   const hasUpdate = useUpdateStore((s) => s.status === "available" && !s.snoozed);
   const activeView = useUiStore((s) => s.activeView);
   const setActiveView = useUiStore((s) => s.setActiveView);
+  const openSettings = useUiStore((s) => s.openSettings);
   const openCommandPalette = useUiStore((s) => s.openCommandPalette);
 
   async function onNewThread() {
@@ -1310,9 +887,10 @@ function CollapsedRail({
       {/* Settings at bottom */}
       <button
         type="button"
-        className="sb-rail-btn"
+        className={`sb-rail-btn ${activeView === "settings" ? "sb-rail-btn-active" : ""}`}
         title={t("sidebar.settings")}
         style={{ marginBottom: 8 }}
+        onClick={() => openSettings(activeWorkspaceId)}
       >
         <Settings size={15} />
         {hasUpdate && <span className="sb-update-dot" />}

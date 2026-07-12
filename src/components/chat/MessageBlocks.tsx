@@ -798,7 +798,7 @@ function ActionBlockView({
             <div style={{
               margin: 0, padding: "5px 12px",
               borderTop: outputChunks.length > 0 ? "1px solid var(--border)" : undefined,
-              background: "rgba(148, 163, 184, 0.06)",
+              background: "var(--neutral-surface)",
               fontSize: 10.5, color: "var(--text-3)",
             }}>
               {t("messageBlocks.outputTruncated")}
@@ -810,7 +810,7 @@ function ActionBlockView({
               className="action-output-error"
               style={{
                 borderTop: outputChunks.length > 0 || outputTruncated
-                  ? "1px solid rgba(var(--danger-rgb), 0.2)" : undefined,
+                  ? "1px solid var(--danger-border)" : undefined,
               }}
             >
               <LinkifiedPlainText text={String(block.result.error)} />
@@ -1158,13 +1158,13 @@ function ApprovalCard({
     decisionLabel = t("messageBlocks.approval.decision.approved");
   }
 
-  let decisionBackground = "rgba(148,163,184,0.12)";
+  let decisionBackground = "var(--neutral-surface)";
   let decisionColor = "var(--text-2)";
   if (block.decision === "decline" || block.decision === "cancel") {
-    decisionBackground = "rgba(var(--danger-rgb), 0.12)";
+    decisionBackground = "var(--danger-surface)";
     decisionColor = "var(--danger)";
   } else if (block.decision === "accept" || block.decision === "accept_for_session") {
-    decisionBackground = "rgba(var(--success-rgb), 0.12)";
+    decisionBackground = "var(--success-surface)";
     decisionColor = "var(--success)";
   }
 

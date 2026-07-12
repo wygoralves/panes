@@ -20,3 +20,13 @@ pub fn configure_tokio_command(command: &mut tokio::process::Command) {
 
 #[cfg(not(target_os = "windows"))]
 pub fn configure_tokio_command(_command: &mut tokio::process::Command) {}
+
+/// Serializes tests that mutate process-global environment variables (PATH,
+/// HOME, ...) against tests that spawn subprocesses. env mutation is
+/// process-wide, so a parallel test spawning `git` while another test points
+/// PATH at an empty temp dir fails with ENOENT.
+#[cfg(test)]
+pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}

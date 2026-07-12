@@ -1004,7 +1004,7 @@ mod tests {
     use super::*;
     use std::{
         ffi::{OsStr, OsString},
-        sync::{Mutex, OnceLock},
+        sync::Mutex,
         time::{SystemTime, UNIX_EPOCH},
     };
     use uuid::Uuid;
@@ -1014,8 +1014,7 @@ mod tests {
     }
 
     fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+        crate::process_utils::test_env_lock()
     }
 
     struct PathEnvGuard {

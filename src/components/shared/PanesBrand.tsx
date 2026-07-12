@@ -62,3 +62,31 @@ export function PanesLockup({ width = 136, title = "Panes" }: { width?: number; 
     </span>
   );
 }
+
+export function PanesWordmark({ width = 91, title = "Panes" }: { width?: number; title?: string }) {
+  const fullLockupWidth = width * (276 / 182);
+  const wordmarkOffset = width * (84 / 182);
+  const height = width * (64 / 182);
+
+  return (
+    <span
+      className="panes-brand-wordmark"
+      style={{ width, height }}
+      role="img"
+      aria-label={title}
+    >
+      <img
+        className="panes-brand-lockup-dark"
+        src={lockupOnDark}
+        alt=""
+        style={{ width: fullLockupWidth, transform: `translateX(-${wordmarkOffset}px)` }}
+      />
+      <img
+        className="panes-brand-lockup-light"
+        src={lockupOnLight}
+        alt=""
+        style={{ width: fullLockupWidth, transform: `translateX(-${wordmarkOffset}px)` }}
+      />
+    </span>
+  );
+}

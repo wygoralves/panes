@@ -1100,6 +1100,15 @@ impl OpenCodeEngine {
         models
     }
 
+    pub async fn runtime_model_fallback(&self) -> Vec<ModelInfo> {
+        self.state
+            .lock()
+            .await
+            .runtime_model_cache
+            .clone()
+            .unwrap_or_else(|| self.models())
+    }
+
     pub async fn runtime_catalog(&self, cwd: &str) -> Result<OpenCodeRuntimeCatalogDto> {
         let server = self.ensure_server(cwd).await?;
         let result = async {

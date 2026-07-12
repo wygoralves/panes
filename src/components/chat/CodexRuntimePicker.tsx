@@ -652,8 +652,8 @@ export function CodexRuntimePicker({
                           style={{
                             padding: 10,
                             borderRadius: 10,
-                            background: "rgba(245, 158, 11, 0.10)",
-                            border: "1px solid rgba(245, 158, 11, 0.22)",
+                            background: "var(--warning-surface)",
+                            border: "1px solid var(--warning-border)",
                           }}
                         >
                           <div style={{ color: "var(--text-1)", fontSize: 11, fontWeight: 600 }}>

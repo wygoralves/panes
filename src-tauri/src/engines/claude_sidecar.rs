@@ -30,6 +30,8 @@ use super::{
 };
 
 const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+const CLAUDE_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(12);
+const CLAUDE_RUNTIME_INFO_TIMEOUT: Duration = Duration::from_secs(5);
 const ARCHIVED_CLAUDE_SDK_NODE_MODULES: &str = "claude-sdk-node_modules.tar.gz";
 const SIDECAR_EVENT_BUFFER_CAPACITY: usize = 1024;
 
@@ -117,6 +119,18 @@ enum SidecarEvent {
         id: Option<String>,
         usage: SidecarUsageLimits,
     },
+    Models {
+        id: Option<String>,
+        models: Vec<SidecarModelInfo>,
+        #[serde(rename = "runtimeSource")]
+        runtime_source: Option<String>,
+        #[serde(rename = "runtimeExecutable")]
+        runtime_executable: Option<String>,
+        #[serde(rename = "sdkVersion")]
+        sdk_version: Option<String>,
+        #[serde(rename = "bundledClaudeCodeVersion")]
+        bundled_claude_code_version: Option<String>,
+    },
     Error {
         id: Option<String>,
         message: String,
@@ -128,8 +142,15 @@ enum SidecarEvent {
     },
     Version {
         id: Option<String>,
-        #[serde(rename = "version")]
-        _version: String,
+        version: String,
+        #[serde(rename = "runtimeSource")]
+        runtime_source: Option<String>,
+        #[serde(rename = "runtimeExecutable")]
+        runtime_executable: Option<String>,
+        #[serde(rename = "sdkVersion")]
+        sdk_version: Option<String>,
+        #[serde(rename = "bundledClaudeCodeVersion")]
+        bundled_claude_code_version: Option<String>,
     },
 }
 
@@ -149,6 +170,7 @@ impl SidecarEvent {
             | SidecarEvent::TurnCompleted { id, .. }
             | SidecarEvent::Notice { id, .. }
             | SidecarEvent::UsageLimitsUpdated { id, .. }
+            | SidecarEvent::Models { id, .. }
             | SidecarEvent::Error { id, .. }
             | SidecarEvent::Version { id, .. } => id.as_deref(),
         }
@@ -170,8 +192,35 @@ struct SidecarUsageLimits {
     context_window_percent: Option<u8>,
     five_hour_percent: Option<u8>,
     weekly_percent: Option<u8>,
+    fable_weekly_percent: Option<u8>,
+    opus_weekly_percent: Option<u8>,
+    sonnet_weekly_percent: Option<u8>,
     five_hour_resets_at: Option<i64>,
     weekly_resets_at: Option<i64>,
+    fable_weekly_resets_at: Option<i64>,
+    opus_weekly_resets_at: Option<i64>,
+    sonnet_weekly_resets_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SidecarModelInfo {
+    value: String,
+    display_name: String,
+    description: String,
+    #[serde(default)]
+    supports_effort: bool,
+    #[serde(default)]
+    supported_effort_levels: Vec<String>,
+    resolved_model: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ClaudeRuntimeInfo {
+    runtime_source: Option<String>,
+    runtime_executable: Option<String>,
+    sdk_version: Option<String>,
+    bundled_claude_code_version: Option<String>,
 }
 
 // ── Transport ─────────────────────────────────────────────────────────
@@ -204,6 +253,15 @@ impl ClaudeTransport {
         }
         if let Some(module_specifier) = sdk_module_specifier {
             command.env("CLAUDE_AGENT_SDK_MODULE", module_specifier);
+        }
+        if let Some(claude_executable) = resolve_system_claude_executable() {
+            log::info!(
+                "claude sidecar: using system Claude Code runtime at {}",
+                claude_executable.display()
+            );
+            command.env("PANES_CLAUDE_CODE_EXECUTABLE", claude_executable);
+        } else {
+            log::info!("claude sidecar: system Claude Code not found, using bundled runtime");
         }
         let mut child = command
             .arg(&sidecar_path)
@@ -492,6 +550,8 @@ struct ClaudeState {
     transport: Option<Arc<ClaudeTransport>>,
     threads: HashMap<String, ThreadConfig>,
     resource_dir: Option<PathBuf>,
+    runtime_model_cache: Option<Vec<ModelInfo>>,
+    runtime_info: Option<ClaudeRuntimeInfo>,
 }
 
 #[derive(Default)]
@@ -629,6 +689,185 @@ impl ClaudeSidecarEngine {
             || normalized.contains("refresh your credentials")
     }
 
+    pub async fn list_models_runtime(&self) -> Vec<ModelInfo> {
+        match self.fetch_models_from_runtime().await {
+            Ok(models) if !models.is_empty() => {
+                let models = with_legacy_claude_models(models);
+                let mut state = self.state.lock().await;
+                state.runtime_model_cache = Some(models.clone());
+                models
+            }
+            Ok(_) => self.runtime_model_fallback().await,
+            Err(error) => {
+                log::warn!(
+                    "failed to discover Claude models from the active runtime, using fallback: {error}"
+                );
+                self.runtime_model_fallback().await
+            }
+        }
+    }
+
+    pub async fn runtime_model_fallback(&self) -> Vec<ModelInfo> {
+        let state = self.state.lock().await;
+        state
+            .runtime_model_cache
+            .clone()
+            .unwrap_or_else(|| self.models())
+    }
+
+    pub async fn usage_limits_snapshot(&self) -> anyhow::Result<super::UsageLimitsSnapshot> {
+        let transport = self.ensure_transport().await?;
+        let request_id = Uuid::new_v4().to_string();
+        let mut receiver = transport.subscribe();
+        transport
+            .send_command(&serde_json::json!({
+                "id": request_id,
+                "method": "get_usage_limits",
+            }))
+            .await?;
+
+        timeout(Duration::from_secs(7), async {
+            loop {
+                match receiver.recv().await {
+                    Ok(SidecarEvent::UsageLimitsUpdated { id, usage })
+                        if id.as_deref() == Some(request_id.as_str()) =>
+                    {
+                        return Ok(super::UsageLimitsSnapshot {
+                            current_tokens: usage.current_tokens,
+                            max_context_tokens: usage.max_context_tokens,
+                            context_window_percent: usage.context_window_percent,
+                            five_hour_percent: usage.five_hour_percent,
+                            weekly_percent: usage.weekly_percent,
+                            fable_weekly_percent: usage.fable_weekly_percent,
+                            opus_weekly_percent: usage.opus_weekly_percent,
+                            sonnet_weekly_percent: usage.sonnet_weekly_percent,
+                            five_hour_resets_at: usage.five_hour_resets_at,
+                            weekly_resets_at: usage.weekly_resets_at,
+                            fable_weekly_resets_at: usage.fable_weekly_resets_at,
+                            opus_weekly_resets_at: usage.opus_weekly_resets_at,
+                            sonnet_weekly_resets_at: usage.sonnet_weekly_resets_at,
+                        });
+                    }
+                    Ok(SidecarEvent::Error { id, message, .. })
+                        if id.as_deref() == Some(request_id.as_str()) =>
+                    {
+                        anyhow::bail!(message);
+                    }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => {
+                        anyhow::bail!("Claude sidecar closed while reading usage limits");
+                    }
+                }
+            }
+        })
+        .await
+        .context("timed out reading Claude usage limits")?
+    }
+
+    async fn fetch_models_from_runtime(&self) -> anyhow::Result<Vec<ModelInfo>> {
+        let transport = self.ensure_transport().await?;
+        let request_id = Uuid::new_v4().to_string();
+        let mut receiver = transport.subscribe();
+        transport
+            .send_command(&serde_json::json!({
+                "id": request_id,
+                "method": "list_models",
+                "params": {},
+            }))
+            .await?;
+
+        timeout(CLAUDE_MODEL_DISCOVERY_TIMEOUT, async {
+            loop {
+                match receiver.recv().await {
+                    Ok(SidecarEvent::Models {
+                        id,
+                        models,
+                        runtime_source,
+                        runtime_executable,
+                        sdk_version,
+                        bundled_claude_code_version,
+                    }) if id.as_deref() == Some(request_id.as_str()) => {
+                        let mut state = self.state.lock().await;
+                        state.runtime_info = Some(ClaudeRuntimeInfo {
+                            runtime_source,
+                            runtime_executable,
+                            sdk_version,
+                            bundled_claude_code_version,
+                        });
+                        return Ok(map_claude_models(models));
+                    }
+                    Ok(SidecarEvent::Error { id, message, .. })
+                        if id.as_deref() == Some(request_id.as_str()) =>
+                    {
+                        anyhow::bail!(message);
+                    }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => {
+                        anyhow::bail!("Claude sidecar closed during model discovery");
+                    }
+                }
+            }
+        })
+        .await
+        .context("timed out discovering Claude models")?
+    }
+
+    async fn runtime_info(&self) -> anyhow::Result<ClaudeRuntimeInfo> {
+        if let Some(runtime_info) = self.state.lock().await.runtime_info.clone() {
+            return Ok(runtime_info);
+        }
+
+        let transport = self.ensure_transport().await?;
+        let request_id = Uuid::new_v4().to_string();
+        let mut receiver = transport.subscribe();
+        transport
+            .send_command(&serde_json::json!({
+                "id": request_id,
+                "method": "version",
+            }))
+            .await?;
+
+        let runtime_info = timeout(CLAUDE_RUNTIME_INFO_TIMEOUT, async {
+            loop {
+                match receiver.recv().await {
+                    Ok(SidecarEvent::Version {
+                        id,
+                        version,
+                        runtime_source,
+                        runtime_executable,
+                        sdk_version,
+                        bundled_claude_code_version,
+                    }) if id.as_deref() == Some(request_id.as_str()) => {
+                        log::debug!("claude sidecar protocol version: {version}");
+                        return Ok(ClaudeRuntimeInfo {
+                            runtime_source,
+                            runtime_executable,
+                            sdk_version,
+                            bundled_claude_code_version,
+                        });
+                    }
+                    Ok(SidecarEvent::Error { id, message, .. })
+                        if id.as_deref() == Some(request_id.as_str()) =>
+                    {
+                        anyhow::bail!(message);
+                    }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => {
+                        anyhow::bail!("Claude sidecar closed while reading runtime information");
+                    }
+                }
+            }
+        })
+        .await
+        .context("timed out reading Claude runtime information")??;
+
+        self.state.lock().await.runtime_info = Some(runtime_info.clone());
+        Ok(runtime_info)
+    }
+
     pub async fn health_report(&self) -> ClaudeHealthReport {
         let resource_dir = {
             let state = self.state.lock().await;
@@ -638,6 +877,16 @@ impl ClaudeSidecarEngine {
         let node_available = node_resolution.executable.is_some();
         let sidecar_exists = ClaudeTransport::resolve_sidecar_path(resource_dir.as_ref()).is_ok();
         let api_key_set = std::env::var("ANTHROPIC_API_KEY").is_ok();
+        let system_claude = resolve_system_claude_executable();
+        let system_claude_version = match system_claude.as_deref() {
+            Some(executable) => probe_claude_version(executable).await,
+            None => None,
+        };
+        let runtime_info = if node_available && sidecar_exists {
+            self.runtime_info().await.ok()
+        } else {
+            None
+        };
 
         let mut checks = Vec::new();
         let mut warnings = Vec::new();
@@ -663,6 +912,22 @@ impl ClaudeSidecarEngine {
             warnings.push("Agent SDK sidecar script not found".to_string());
         }
 
+        if let Some(claude_path) = system_claude.as_ref() {
+            checks.push(format!(
+                "System Claude Code runtime resolved at `{}`",
+                claude_path.display()
+            ));
+        } else if sidecar_exists {
+            checks.push("Using the Claude Code runtime bundled with the Agent SDK".to_string());
+        }
+
+        if let Some(sdk_version) = runtime_info
+            .as_ref()
+            .and_then(|runtime| runtime.sdk_version.as_deref())
+        {
+            checks.push(format!("Claude Agent SDK version: {sdk_version}"));
+        }
+
         if api_key_set {
             checks.push("ANTHROPIC_API_KEY is set".to_string());
         } else {
@@ -677,16 +942,56 @@ impl ClaudeSidecarEngine {
         }
 
         let available = node_available && sidecar_exists;
+        let runtime_source = runtime_info
+            .as_ref()
+            .and_then(|runtime| runtime.runtime_source.as_deref())
+            .unwrap_or(if system_claude.is_some() {
+                "system"
+            } else {
+                "bundled"
+            });
+        let runtime_version = if runtime_source == "system" {
+            system_claude_version.clone()
+        } else {
+            runtime_info
+                .as_ref()
+                .and_then(|runtime| runtime.bundled_claude_code_version.clone())
+        };
+        let runtime_path = runtime_info
+            .as_ref()
+            .and_then(|runtime| runtime.runtime_executable.as_deref())
+            .or_else(|| system_claude.as_deref().and_then(Path::to_str));
+        let runtime_details = match (
+            runtime_source,
+            runtime_version.as_deref(),
+            runtime_path,
+            runtime_info
+                .as_ref()
+                .and_then(|runtime| runtime.sdk_version.as_deref()),
+        ) {
+            ("system", Some(version), Some(path), Some(sdk_version)) => {
+                format!("Claude Code {version} from `{path}` via Agent SDK {sdk_version}")
+            }
+            ("system", Some(version), _, Some(sdk_version)) => {
+                format!("Claude Code {version} from the system runtime via Agent SDK {sdk_version}")
+            }
+            ("system", Some(version), _, _) => {
+                format!("Claude Code {version} from the system runtime")
+            }
+            ("bundled", Some(version), _, Some(sdk_version)) => {
+                format!("Bundled Claude Code {version} via Agent SDK {sdk_version}")
+            }
+            ("bundled", _, _, Some(sdk_version)) => {
+                format!("Bundled Claude Code runtime via Agent SDK {sdk_version}")
+            }
+            _ => "Claude Agent SDK engine is ready".to_string(),
+        };
 
         ClaudeHealthReport {
             available,
-            version: if available {
-                Some("agent-sdk".to_string())
-            } else {
-                None
-            },
+            version: available.then_some(runtime_version).flatten(),
             details: if available {
-                "Claude Agent SDK engine is ready".to_string()
+                runtime_details
             } else if !node_available {
                 node_unavailable_details(&node_resolution)
             } else if !sidecar_exists {
@@ -846,6 +1151,302 @@ fn executable_augmented_path(executable: &Path) -> Option<OsString> {
     )
 }
 
+fn paths_match(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+
+    match (left.canonicalize().ok(), right.canonicalize().ok()) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn resolve_system_claude_executable() -> Option<PathBuf> {
+    if std::env::var("PANES_CLAUDE_CODE_USE_BUNDLED")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        return None;
+    }
+
+    if let Some(explicit) = std::env::var_os("PANES_CLAUDE_CODE_EXECUTABLE") {
+        let explicit = PathBuf::from(explicit);
+        if runtime_env::is_executable_file(&explicit) {
+            return Some(explicit);
+        }
+    }
+
+    let shim_dir = runtime_env::app_data_dir().join("bin");
+    let mut path_entries = runtime_env::augmented_path_entries();
+    path_entries.retain(|entry| !paths_match(entry, &shim_dir));
+    let search_path = std::env::join_paths(path_entries).ok()?;
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    which::which_in("claude", Some(search_path), cwd).ok()
+}
+
+async fn probe_claude_version(executable: &Path) -> Option<String> {
+    let mut command = Command::new(executable);
+    process_utils::configure_tokio_command(&mut command);
+    let output = timeout(Duration::from_secs(5), command.arg("--version").output())
+        .await
+        .ok()?
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_string)
+}
+
+fn effort_description(effort: &str) -> String {
+    match effort {
+        "low" => "Quick, efficient responses",
+        "medium" => "Balanced reasoning",
+        "high" => "Deep, thorough reasoning",
+        "xhigh" => "Extended exploration for agentic coding",
+        "max" => "Highest available reasoning effort",
+        _ => "Claude runtime effort level",
+    }
+    .to_string()
+}
+
+fn claude_model_info(
+    id: &str,
+    display_name: &str,
+    description: &str,
+    hidden: bool,
+    is_default: bool,
+    default_reasoning_effort: &str,
+    supported_reasoning_efforts: &[&str],
+) -> ModelInfo {
+    ModelInfo {
+        id: id.to_string(),
+        display_name: display_name.to_string(),
+        description: description.to_string(),
+        hidden,
+        is_default,
+        upgrade: None,
+        availability_nux: None,
+        upgrade_info: None,
+        input_modalities: vec!["text".to_string(), "image".to_string()],
+        attachment_modalities: vec!["text".to_string(), "image".to_string()],
+        limits: None,
+        supports_personality: false,
+        default_reasoning_effort: default_reasoning_effort.to_string(),
+        supported_reasoning_efforts: supported_reasoning_efforts
+            .iter()
+            .map(|reasoning_effort| ReasoningEffortOption {
+                reasoning_effort: (*reasoning_effort).to_string(),
+                description: effort_description(reasoning_effort),
+            })
+            .collect(),
+    }
+}
+
+fn legacy_claude_models() -> Vec<ModelInfo> {
+    vec![
+        claude_model_info(
+            "claude-opus-4-7",
+            "Claude Opus 4.7",
+            "Legacy model retained for existing threads",
+            true,
+            false,
+            "xhigh",
+            &["low", "medium", "high", "xhigh", "max"],
+        ),
+        claude_model_info(
+            "claude-opus-4-6",
+            "Claude Opus 4.6",
+            "Legacy model retained for existing threads",
+            true,
+            false,
+            "high",
+            &["low", "medium", "high"],
+        ),
+        claude_model_info(
+            "claude-sonnet-4-6",
+            "Claude Sonnet 4.6",
+            "Legacy model retained for existing threads",
+            true,
+            false,
+            "medium",
+            &["low", "medium", "high"],
+        ),
+        claude_model_info(
+            "claude-haiku-4-5",
+            "Claude Haiku 4.5",
+            "Legacy model retained for existing threads",
+            true,
+            false,
+            "low",
+            &["low", "medium", "high"],
+        ),
+    ]
+}
+
+fn with_legacy_claude_models(mut models: Vec<ModelInfo>) -> Vec<ModelInfo> {
+    for legacy_model in legacy_claude_models() {
+        if !models.iter().any(|model| model.id == legacy_model.id) {
+            models.push(legacy_model);
+        }
+    }
+    models
+}
+
+fn default_effort_for_claude_model(
+    model: &SidecarModelInfo,
+    supported_efforts: &[String],
+) -> String {
+    if supported_efforts.is_empty() {
+        return String::new();
+    }
+
+    let identity = format!(
+        "{} {} {} {}",
+        model.value,
+        model.display_name,
+        model.description,
+        model.resolved_model.as_deref().unwrap_or_default()
+    )
+    .to_lowercase();
+    let preferred = if identity.contains("haiku") {
+        "low"
+    } else if identity.contains("sonnet") {
+        "medium"
+    } else {
+        "high"
+    };
+
+    supported_efforts
+        .iter()
+        .find(|effort| effort.as_str() == preferred)
+        .or_else(|| {
+            supported_efforts
+                .iter()
+                .find(|effort| effort.as_str() == "medium")
+        })
+        .or_else(|| supported_efforts.first())
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn inferred_claude_model_name(model: &SidecarModelInfo) -> String {
+    let identity = format!(
+        "{} {} {}",
+        model.description,
+        model.resolved_model.as_deref().unwrap_or_default(),
+        model.value
+    )
+    .to_lowercase();
+
+    if identity.contains("fable") {
+        "Fable"
+    } else if identity.contains("opus") {
+        "Opus"
+    } else if identity.contains("sonnet") {
+        "Sonnet"
+    } else if identity.contains("haiku") {
+        "Haiku"
+    } else {
+        "Claude"
+    }
+    .to_string()
+}
+
+fn map_claude_model(model: SidecarModelInfo) -> Option<ModelInfo> {
+    let id = model.value.trim().to_string();
+    if id.is_empty() {
+        return None;
+    }
+
+    let supported_efforts = if model.supports_effort {
+        model
+            .supported_effort_levels
+            .iter()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+            .fold(Vec::new(), |mut efforts, effort| {
+                if !efforts.contains(&effort) {
+                    efforts.push(effort);
+                }
+                efforts
+            })
+    } else {
+        Vec::new()
+    };
+    let default_reasoning_effort = default_effort_for_claude_model(&model, &supported_efforts);
+
+    let display_name = if id == "default"
+        && model
+            .display_name
+            .trim()
+            .to_lowercase()
+            .starts_with("default")
+    {
+        inferred_claude_model_name(&model)
+    } else {
+        model.display_name.trim().to_string()
+    };
+
+    Some(ModelInfo {
+        display_name,
+        description: model.description.trim().to_string(),
+        hidden: false,
+        is_default: id == "default",
+        upgrade: None,
+        availability_nux: None,
+        upgrade_info: None,
+        input_modalities: vec!["text".to_string(), "image".to_string()],
+        attachment_modalities: vec!["text".to_string(), "image".to_string()],
+        limits: None,
+        supports_personality: false,
+        default_reasoning_effort,
+        supported_reasoning_efforts: supported_efforts
+            .into_iter()
+            .map(|reasoning_effort| ReasoningEffortOption {
+                description: effort_description(&reasoning_effort),
+                reasoning_effort,
+            })
+            .collect(),
+        id,
+    })
+}
+
+fn map_claude_models(models: Vec<SidecarModelInfo>) -> Vec<ModelInfo> {
+    let default_resolved_model = models
+        .iter()
+        .find(|model| model.value.trim() == "default")
+        .and_then(|model| model.resolved_model.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let concrete_default_id = default_resolved_model.and_then(|resolved_model| {
+        models
+            .iter()
+            .find(|model| {
+                model.value.trim() != "default"
+                    && model.resolved_model.as_deref().map(str::trim) == Some(resolved_model)
+            })
+            .map(|model| model.value.trim().to_string())
+    });
+
+    models
+        .into_iter()
+        .filter(|model| !(model.value.trim() == "default" && concrete_default_id.is_some()))
+        .filter_map(map_claude_model)
+        .map(|mut model| {
+            if concrete_default_id.as_deref() == Some(model.id.as_str()) {
+                model.is_default = true;
+            }
+            model
+        })
+        .collect()
+}
+
 async fn detect_node_via_login_shell() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -939,132 +1540,15 @@ impl Engine for ClaudeSidecarEngine {
     }
 
     fn models(&self) -> Vec<ModelInfo> {
-        vec![
-            ModelInfo {
-                id: "claude-opus-4-7".to_string(),
-                display_name: "Claude Opus 4.7".to_string(),
-                description: "Most intelligent model for agents and coding".to_string(),
-                hidden: false,
-                is_default: false,
-                upgrade: None,
-                availability_nux: None,
-                upgrade_info: None,
-                input_modalities: vec!["text".to_string(), "image".to_string()],
-                attachment_modalities: vec!["text".to_string(), "image".to_string()],
-                limits: None,
-                supports_personality: false,
-                default_reasoning_effort: "xhigh".to_string(),
-                supported_reasoning_efforts: vec![
-                    ReasoningEffortOption {
-                        reasoning_effort: "low".to_string(),
-                        description: "Quick, efficient responses".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "medium".to_string(),
-                        description: "Balanced reasoning".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "high".to_string(),
-                        description: "Deep, thorough reasoning".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "xhigh".to_string(),
-                        description: "Extended exploration for agentic coding".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "max".to_string(),
-                        description: "Absolute highest capability, no constraints".to_string(),
-                    },
-                ],
-            },
-            ModelInfo {
-                id: "claude-opus-4-6".to_string(),
-                display_name: "Claude Opus 4.6".to_string(),
-                description: "Previous generation flagship for agents and coding".to_string(),
-                hidden: false,
-                is_default: false,
-                upgrade: Some("claude-opus-4-7".to_string()),
-                availability_nux: None,
-                upgrade_info: None,
-                input_modalities: vec!["text".to_string(), "image".to_string()],
-                attachment_modalities: vec!["text".to_string(), "image".to_string()],
-                limits: None,
-                supports_personality: false,
-                default_reasoning_effort: "high".to_string(),
-                supported_reasoning_efforts: vec![
-                    ReasoningEffortOption {
-                        reasoning_effort: "low".to_string(),
-                        description: "Quick, efficient responses".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "medium".to_string(),
-                        description: "Balanced reasoning".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "high".to_string(),
-                        description: "Deep, thorough reasoning".to_string(),
-                    },
-                ],
-            },
-            ModelInfo {
-                id: "claude-sonnet-4-6".to_string(),
-                display_name: "Claude Sonnet 4.6".to_string(),
-                description: "Best balance of speed and intelligence".to_string(),
-                hidden: false,
-                is_default: true,
-                upgrade: Some("claude-opus-4-7".to_string()),
-                availability_nux: None,
-                upgrade_info: None,
-                input_modalities: vec!["text".to_string(), "image".to_string()],
-                attachment_modalities: vec!["text".to_string(), "image".to_string()],
-                limits: None,
-                supports_personality: false,
-                default_reasoning_effort: "medium".to_string(),
-                supported_reasoning_efforts: vec![
-                    ReasoningEffortOption {
-                        reasoning_effort: "low".to_string(),
-                        description: "Quick, efficient responses".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "medium".to_string(),
-                        description: "Balanced reasoning".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "high".to_string(),
-                        description: "Deep, thorough reasoning".to_string(),
-                    },
-                ],
-            },
-            ModelInfo {
-                id: "claude-haiku-4-5".to_string(),
-                display_name: "Claude Haiku 4.5".to_string(),
-                description: "Fastest and most cost-effective".to_string(),
-                hidden: false,
-                is_default: false,
-                upgrade: Some("claude-sonnet-4-6".to_string()),
-                availability_nux: None,
-                upgrade_info: None,
-                input_modalities: vec!["text".to_string(), "image".to_string()],
-                attachment_modalities: vec!["text".to_string(), "image".to_string()],
-                limits: None,
-                supports_personality: false,
-                default_reasoning_effort: "low".to_string(),
-                supported_reasoning_efforts: vec![
-                    ReasoningEffortOption {
-                        reasoning_effort: "low".to_string(),
-                        description: "Quick, efficient responses".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "medium".to_string(),
-                        description: "Balanced reasoning".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "high".to_string(),
-                        description: "Thorough reasoning".to_string(),
-                    },
-                ],
-            },
-        ]
+        with_legacy_claude_models(vec![claude_model_info(
+            "default",
+            "Claude",
+            "Model selected by the active Claude Code runtime",
+            false,
+            true,
+            "",
+            &[],
+        )])
     }
 
     async fn is_available(&self) -> bool {
@@ -1418,8 +1902,16 @@ impl Engine for ClaudeSidecarEngine {
                                                 context_window_percent: usage.context_window_percent,
                                                 five_hour_percent: usage.five_hour_percent,
                                                 weekly_percent: usage.weekly_percent,
+                                                fable_weekly_percent: usage.fable_weekly_percent,
+                                                opus_weekly_percent: usage.opus_weekly_percent,
+                                                sonnet_weekly_percent: usage.sonnet_weekly_percent,
                                                 five_hour_resets_at: usage.five_hour_resets_at,
                                                 weekly_resets_at: usage.weekly_resets_at,
+                                                fable_weekly_resets_at: usage
+                                                    .fable_weekly_resets_at,
+                                                opus_weekly_resets_at: usage.opus_weekly_resets_at,
+                                                sonnet_weekly_resets_at: usage
+                                                    .sonnet_weekly_resets_at,
                                             },
                                         })
                                         .await
@@ -1458,7 +1950,9 @@ impl Engine for ClaudeSidecarEngine {
                                         .await
                                         .ok();
                                 }
-                                SidecarEvent::Ready | SidecarEvent::Version { .. } => {}
+                                SidecarEvent::Ready
+                                | SidecarEvent::Models { .. }
+                                | SidecarEvent::Version { .. } => {}
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -1704,6 +2198,8 @@ mod tests {
             "usage": {
                 "fiveHourPercent": 87,
                 "fiveHourResetsAt": 1740000000,
+                "fableWeeklyPercent": 40,
+                "fableWeeklyResetsAt": 1740100000,
             },
         }))
         .expect("usage_limits_updated should deserialize");
@@ -1712,9 +2208,195 @@ mod tests {
             SidecarEvent::UsageLimitsUpdated { usage, .. } => {
                 assert_eq!(usage.five_hour_percent, Some(87));
                 assert_eq!(usage.five_hour_resets_at, Some(1_740_000_000));
+                assert_eq!(usage.fable_weekly_percent, Some(40));
+                assert_eq!(usage.fable_weekly_resets_at, Some(1_740_100_000));
             }
             other => panic!("unexpected event variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn maps_runtime_model_aliases_and_effort_levels() {
+        let model = map_claude_model(SidecarModelInfo {
+            value: "claude-fable-5[1m]".to_string(),
+            display_name: "Fable".to_string(),
+            description: "Fable 5".to_string(),
+            supports_effort: true,
+            supported_effort_levels: vec![
+                "low".to_string(),
+                "medium".to_string(),
+                "high".to_string(),
+                "xhigh".to_string(),
+                "max".to_string(),
+            ],
+            resolved_model: Some("claude-fable-5".to_string()),
+        })
+        .expect("runtime model should map");
+
+        assert_eq!(model.id, "claude-fable-5[1m]");
+        assert_eq!(model.display_name, "Fable");
+        assert_eq!(model.default_reasoning_effort, "high");
+        assert_eq!(
+            model
+                .supported_reasoning_efforts
+                .iter()
+                .map(|effort| effort.reasoning_effort.as_str())
+                .collect::<Vec<_>>(),
+            vec!["low", "medium", "high", "xhigh", "max"]
+        );
+    }
+
+    #[test]
+    fn collapses_default_alias_into_matching_concrete_model() {
+        let models = map_claude_models(vec![
+            SidecarModelInfo {
+                value: "default".to_string(),
+                display_name: "Default (recommended)".to_string(),
+                description: "Opus 4.8 with 1M context".to_string(),
+                supports_effort: true,
+                supported_effort_levels: vec!["high".to_string()],
+                resolved_model: Some("claude-opus-4-8[1m]".to_string()),
+            },
+            SidecarModelInfo {
+                value: "opus[1m]".to_string(),
+                display_name: "Opus".to_string(),
+                description: "Opus 4.8 with 1M context".to_string(),
+                supports_effort: true,
+                supported_effort_levels: vec!["high".to_string()],
+                resolved_model: Some("claude-opus-4-8[1m]".to_string()),
+            },
+            SidecarModelInfo {
+                value: "sonnet".to_string(),
+                display_name: "Sonnet".to_string(),
+                description: "Sonnet 5".to_string(),
+                supports_effort: true,
+                supported_effort_levels: vec!["medium".to_string()],
+                resolved_model: Some("claude-sonnet-5".to_string()),
+            },
+        ]);
+
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.display_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Opus", "Sonnet"]
+        );
+        assert!(models[0].is_default);
+        assert!(!models[1].is_default);
+    }
+
+    #[test]
+    fn renames_unresolved_default_alias_to_inferred_family() {
+        let model = map_claude_model(SidecarModelInfo {
+            value: "default".to_string(),
+            display_name: "Default (recommended)".to_string(),
+            description: "Opus 4.6, most capable for complex work".to_string(),
+            supports_effort: true,
+            supported_effort_levels: vec!["high".to_string()],
+            resolved_model: None,
+        })
+        .expect("default model should map");
+
+        assert_eq!(model.id, "default");
+        assert_eq!(model.display_name, "Opus");
+        assert!(model.is_default);
+    }
+
+    #[test]
+    fn runtime_models_without_effort_support_do_not_invent_effort_levels() {
+        let model = map_claude_model(SidecarModelInfo {
+            value: "haiku".to_string(),
+            display_name: "Haiku".to_string(),
+            description: "Fastest for quick answers".to_string(),
+            supports_effort: false,
+            supported_effort_levels: vec!["low".to_string()],
+            resolved_model: None,
+        })
+        .expect("runtime model should map");
+
+        assert!(model.default_reasoning_effort.is_empty());
+        assert!(model.supported_reasoning_efforts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn runtime_model_fallback_prefers_cached_catalog() {
+        let engine = ClaudeSidecarEngine::default();
+        let cached = vec![ModelInfo {
+            id: "claude-fable-5[1m]".to_string(),
+            display_name: "Fable".to_string(),
+            description: "Fable 5".to_string(),
+            hidden: false,
+            is_default: false,
+            upgrade: None,
+            availability_nux: None,
+            upgrade_info: None,
+            input_modalities: vec!["text".to_string(), "image".to_string()],
+            attachment_modalities: vec!["text".to_string(), "image".to_string()],
+            limits: None,
+            supports_personality: false,
+            default_reasoning_effort: "high".to_string(),
+            supported_reasoning_efforts: Vec::new(),
+        }];
+        engine.state.lock().await.runtime_model_cache = Some(cached.clone());
+
+        assert_eq!(
+            engine
+                .runtime_model_fallback()
+                .await
+                .into_iter()
+                .map(|model| model.id)
+                .collect::<Vec<_>>(),
+            cached.into_iter().map(|model| model.id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn fallback_catalog_preserves_legacy_thread_model_ids() {
+        let models = ClaudeSidecarEngine::default().models();
+        let default_model = models
+            .iter()
+            .find(|model| model.id == "default")
+            .expect("fallback catalog should retain the runtime default");
+
+        assert!(default_model.is_default);
+        assert!(!default_model.hidden);
+
+        for legacy_id in [
+            "claude-opus-4-7",
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+        ] {
+            let legacy_model = models
+                .iter()
+                .find(|model| model.id == legacy_id)
+                .unwrap_or_else(|| panic!("fallback catalog should retain {legacy_id}"));
+            assert!(legacy_model.hidden);
+            assert!(!legacy_model.is_default);
+        }
+    }
+
+    #[test]
+    fn discovered_legacy_model_is_not_duplicated_or_hidden() {
+        let discovered = claude_model_info(
+            "claude-sonnet-4-6",
+            "Sonnet",
+            "Discovered from the active runtime",
+            false,
+            true,
+            "medium",
+            &["low", "medium", "high"],
+        );
+        let models = with_legacy_claude_models(vec![discovered]);
+        let matching_models = models
+            .iter()
+            .filter(|model| model.id == "claude-sonnet-4-6")
+            .collect::<Vec<_>>();
+
+        assert_eq!(matching_models.len(), 1);
+        assert!(!matching_models[0].hidden);
+        assert!(matching_models[0].is_default);
     }
 
     #[test]
