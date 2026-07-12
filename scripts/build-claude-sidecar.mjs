@@ -1,7 +1,9 @@
-import { cp, mkdir, readFile, readdir, rm } from "node:fs/promises";
+import { cp, mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+
+import { stageClaudeSdkPlatformAssets } from "./claude-sidecar-staging.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
@@ -26,30 +28,7 @@ const sdkDistPackageDir = path.join(
   "@anthropic-ai",
   "claude-agent-sdk",
 );
-const ripgrepVendorDir = path.join(sdkDistPackageDir, "vendor", "ripgrep");
 const linuxSdkArchiveFile = path.join(outDir, "claude-sdk-node_modules.tar.gz");
-
-function resolveRipgrepTargets() {
-  const targetPlatform = process.env.PANES_CLAUDE_SDK_PLATFORM ?? process.platform;
-  const targetArch = process.env.PANES_CLAUDE_SDK_ARCH ?? process.arch;
-
-  if (targetPlatform === "darwin") {
-    // The release job builds a universal macOS bundle, so keep both darwin targets.
-    return new Set(["arm64-darwin", "x64-darwin"]);
-  }
-
-  if (targetPlatform === "linux") {
-    return new Set([targetArch === "arm64" ? "arm64-linux" : "x64-linux"]);
-  }
-
-  if (targetPlatform === "win32") {
-    return new Set([targetArch === "arm64" ? "arm64-win32" : "x64-win32"]);
-  }
-
-  throw new Error(
-    `Unsupported Claude SDK staging target for ripgrep vendor assets: ${targetPlatform}/${targetArch}`,
-  );
-}
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -75,28 +54,6 @@ function run(command, args, options = {}) {
       );
     });
   });
-}
-
-async function pruneUnusedRipgrepVendors() {
-  const keepTargets = resolveRipgrepTargets();
-  const entries = await readdir(ripgrepVendorDir, { withFileTypes: true });
-
-  await Promise.all(
-    entries.map(async (entry) => {
-      if (!entry.isDirectory() || keepTargets.has(entry.name)) {
-        return;
-      }
-
-      await rm(path.join(ripgrepVendorDir, entry.name), {
-        recursive: true,
-        force: true,
-      });
-    }),
-  );
-
-  console.log(
-    `Staged Claude SDK ripgrep vendor assets for ${Array.from(keepTargets).join(", ")}.`,
-  );
 }
 
 async function archiveLinuxSdkNodeModules() {
@@ -129,7 +86,13 @@ await cp(sdkPackageDir, sdkDistNodeModulesDir, {
   force: true,
 });
 
-await pruneUnusedRipgrepVendors();
+await stageClaudeSdkPlatformAssets({
+  sdkDistNodeModulesDir,
+  sdkDistPackageDir,
+  targetPlatform: process.env.PANES_CLAUDE_SDK_PLATFORM ?? process.platform,
+  targetArch: process.env.PANES_CLAUDE_SDK_ARCH ?? process.arch,
+  targetLibc: process.env.PANES_CLAUDE_SDK_LIBC ?? "glibc",
+});
 await archiveLinuxSdkNodeModules();
 
 const output = await readFile(outFile, "utf8");

@@ -419,7 +419,12 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
+        if: matrix.platform != 'macos-15'
         run: pnpm install --frozen-lockfile
+
+      - name: Install dependencies for universal macOS
+        if: matrix.platform == 'macos-15'
+        run: pnpm install --frozen-lockfile --config.supportedArchitectures.os=darwin --config.supportedArchitectures.cpu=x64 --config.supportedArchitectures.cpu=arm64
 
       - name: Build platform Claude sidecar assets
         run: pnpm run build:claude-sidecar
