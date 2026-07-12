@@ -10273,7 +10273,7 @@ button, input, textarea, select {
   min-height: 128px;
   margin-top: 12px;
   padding: 16px 18px;
-  color: var(--brand-neutral-100);
+  color: var(--brand-neutral-50);
   background: var(--brand-neutral-950);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -10296,8 +10296,25 @@ button, input, textarea, select {
   height: 1em;
   display: inline-block;
   vertical-align: -0.15em;
-  background: var(--brand-neutral-300);
+  background: var(--brand-mint-400);
   opacity: 0.8;
+}
+
+:root[data-theme="light"] .usp-terminal-preview {
+  color: var(--brand-neutral-800);
+  background: var(--brand-neutral-100);
+}
+
+:root[data-theme="light"] .usp-terminal-preview span {
+  color: var(--brand-mint-700);
+}
+
+:root[data-theme="light"] .usp-terminal-preview p {
+  color: var(--brand-neutral-600);
+}
+
+:root[data-theme="light"] .usp-terminal-preview i {
+  background: var(--brand-mint-700);
 }
 
 .usp-status {
