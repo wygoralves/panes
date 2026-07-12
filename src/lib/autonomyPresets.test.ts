@@ -108,6 +108,55 @@ describe("detectAutonomyPreset", () => {
   });
 });
 
+describe("codex external sandbox mode", () => {
+  const options = { codexExternalSandbox: true };
+
+  it("leaves the sandbox on inherit for the constrained rungs", () => {
+    expect(autonomyPresetPatch("read-only", "codex", options).sandboxMode).toBe("inherit");
+    expect(autonomyPresetPatch("ask", "codex", options).sandboxMode).toBe("inherit");
+    expect(autonomyPresetPatch("auto", "codex", options).sandboxMode).toBe("inherit");
+    expect(autonomyPresetPatch("full", "codex", options).sandboxMode).toBe(
+      "danger-full-access",
+    );
+  });
+
+  it("round-trips detection with the same flag", () => {
+    for (const preset of availableAutonomyPresets("codex")) {
+      const patch = autonomyPresetPatch(preset, "codex", options);
+      expect(
+        detectAutonomyPreset(
+          "codex",
+          {
+            approvalPolicy: patch.approvalPolicy,
+            sandboxMode: patch.sandboxMode ?? "inherit",
+            networkPolicy: patch.networkPolicy ?? "inherit",
+          },
+          options,
+        ),
+      ).toBe(preset);
+    }
+  });
+
+  it("never issues a request with a blocked sandbox override", () => {
+    for (const preset of availableAutonomyPresets("codex")) {
+      const request = autonomyPresetExecutionPolicyRequest(preset, "codex", options);
+      if (request) {
+        expect(request.sandboxMode).not.toBe("read-only");
+        expect(request.sandboxMode).not.toBe("workspace-write");
+      }
+    }
+  });
+
+  it("does not change claude or opencode mappings", () => {
+    expect(autonomyPresetPatch("ask", "claude", options)).toEqual(
+      autonomyPresetPatch("ask", "claude"),
+    );
+    expect(autonomyPresetPatch("full", "opencode", options)).toEqual(
+      autonomyPresetPatch("full", "opencode"),
+    );
+  });
+});
+
 describe("autonomyPresetExecutionPolicyRequest", () => {
   it("returns null for inherit", () => {
     expect(autonomyPresetExecutionPolicyRequest("inherit", "codex")).toBeNull();

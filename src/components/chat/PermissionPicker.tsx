@@ -46,6 +46,7 @@ interface PermissionPickerProps {
   customPolicyCount?: number;
   engineId?: ChatEngineId;
   presetValue?: AutonomyPresetId | null;
+  codexExternalSandbox?: boolean;
   onPresetChange?: (preset: AutonomyPresetId) => void;
   defaultPreset?: AutonomyPresetId | null;
   onDefaultPresetChange?: (preset: AutonomyPresetId | null) => void;
@@ -107,6 +108,7 @@ export function PermissionPicker({
   customPolicyCount = 0,
   engineId,
   presetValue,
+  codexExternalSandbox = false,
   onPresetChange,
   defaultPreset,
   onDefaultPresetChange,
@@ -343,7 +345,9 @@ export function PermissionPicker({
     if (!presetsAvailable || !engineId) {
       return [];
     }
-    const patch = autonomyPresetPatch(presetValue ?? "inherit", engineId);
+    const patch = autonomyPresetPatch(presetValue ?? "inherit", engineId, {
+      codexExternalSandbox,
+    });
     const rows: Array<{ key: string; label: string; hot: boolean }> = [
       {
         key: resolvedApprovalTitle,
@@ -370,6 +374,7 @@ export function PermissionPicker({
     return rows;
   }, [
     approvalOptions,
+    codexExternalSandbox,
     engineId,
     networkOptions,
     presetValue,

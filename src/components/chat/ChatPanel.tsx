@@ -71,6 +71,7 @@ import {
   isAutonomyPresetId,
 } from "../../lib/autonomyPresets";
 import type { AutonomyPresetId } from "../../lib/autonomyPresets";
+import { codexUsesExternalSandbox } from "../../lib/codexSandbox";
 import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { isMacDesktop, usesCustomWindowFrame } from "../../lib/windowActions";
@@ -510,26 +511,6 @@ function getThreadNetworkPolicyOptions(
       description: t("policy.networkRestrictedDescription"),
     },
   ];
-}
-
-function isCodexExternalSandboxWarning(message?: string): boolean {
-  if (typeof message !== "string") {
-    return false;
-  }
-
-  const normalized = message.toLowerCase();
-  return normalized.includes("external sandbox mode");
-}
-
-function codexUsesExternalSandbox(health: Record<string, EngineHealth>): boolean {
-  const codexHealth = health.codex;
-  if (!codexHealth?.available) {
-    return false;
-  }
-
-  return (codexHealth.warnings ?? []).some((warning) =>
-    isCodexExternalSandboxWarning(warning),
-  );
 }
 
 const IMAGE_ATTACHMENT_EXTENSIONS = new Set([
@@ -2246,17 +2227,22 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const activeThreadAutonomyPreset = useMemo(
     () =>
       activeThreadAutonomyEngineId
-        ? detectAutonomyPreset(activeThreadAutonomyEngineId, {
-            approvalPolicy: activeThreadApprovalPolicy,
-            sandboxMode: activeThreadSandboxMode,
-            networkPolicy: readThreadStoredNetworkPolicyValue(activeThread),
-          })
+        ? detectAutonomyPreset(
+            activeThreadAutonomyEngineId,
+            {
+              approvalPolicy: activeThreadApprovalPolicy,
+              sandboxMode: activeThreadSandboxMode,
+              networkPolicy: readThreadStoredNetworkPolicyValue(activeThread),
+            },
+            { codexExternalSandbox: codexExternalSandboxActive },
+          )
         : undefined,
     [
       activeThread,
       activeThreadApprovalPolicy,
       activeThreadAutonomyEngineId,
       activeThreadSandboxMode,
+      codexExternalSandboxActive,
     ],
   );
   const fullAutonomyArmed = activeThreadAutonomyPreset === "full";
@@ -4597,7 +4583,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       return;
     }
     void onThreadExecutionPolicyChange(
-      autonomyPresetPatch(preset, activeThreadAutonomyEngineId) as ThreadExecutionPolicyPatch,
+      autonomyPresetPatch(preset, activeThreadAutonomyEngineId, {
+        codexExternalSandbox: codexExternalSandboxActive,
+      }) as ThreadExecutionPolicyPatch,
     );
   }
 
@@ -4643,7 +4631,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
     if (stopAsking && activeThreadAutonomyEngineId) {
       await onThreadExecutionPolicyChange(
-        autonomyPresetPatch("full", activeThreadAutonomyEngineId) as ThreadExecutionPolicyPatch,
+        autonomyPresetPatch("full", activeThreadAutonomyEngineId, {
+          codexExternalSandbox: codexExternalSandboxActive,
+        }) as ThreadExecutionPolicyPatch,
       );
     }
   }
@@ -6173,6 +6163,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   <PermissionPicker
                     engineId={activeThreadAutonomyEngineId}
                     presetValue={activeThreadAutonomyPreset}
+                    codexExternalSandbox={codexExternalSandboxActive}
                     onPresetChange={
                       activeThreadAutonomyEngineId ? onAutonomyPresetChange : undefined
                     }
@@ -6375,12 +6366,6 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
           {/* Bottom status bar with context usage */}
           <div className="chat-status-bar">
-            {fullAutonomyArmed && (
-              <span className="chat-status-armed">
-                <Zap size={10} />
-                {t("autonomy.armedStatus")}
-              </span>
-            )}
             {(isCodexEngine || selectedEngineId === "claude") && (
               usageLimits ? (
                 <div className="chat-status-usage">
