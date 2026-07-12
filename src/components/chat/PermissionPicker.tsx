@@ -365,8 +365,9 @@ export function PermissionPicker({
         <span className="pp-trigger-icon">
           <Shield size={12} />
         </span>
-        <span className="pp-trigger-label">{t("permissionPicker.title")}</span>
-        {trustOption ? <span className="pp-trigger-pill">{trustOption.label}</span> : null}
+        <span className="pp-trigger-label">
+          {trustOption ? trustOption.label : t("permissionPicker.title")}
+        </span>
         {customPolicyCount > 0 ? (
           <span className="pp-trigger-pill pp-trigger-pill-accent">{t("permissionPicker.custom")}</span>
         ) : null}
