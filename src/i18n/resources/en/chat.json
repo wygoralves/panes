@@ -327,6 +327,8 @@
     "trustWorkspace": "Trust workspace",
     "dropFiles": "Drop files to attach",
     "attachFiles": "Attach files",
+    "sendMessage": "Send message",
+    "sendingMessage": "Sending message",
     "sendFollowUp": "Send follow-up",
     "enablePlanMode": "Enable plan mode (Shift+Tab)",
     "disablePlanMode": "Disable plan mode (Shift+Tab)",
