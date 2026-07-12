@@ -24,5 +24,9 @@
   },
   "labels": {
     "settings": "Settings"
+  },
+  "diff": {
+    "unchangedLines_one": "{{count}} unchanged line",
+    "unchangedLines_other": "{{count}} unchanged lines"
   }
 }

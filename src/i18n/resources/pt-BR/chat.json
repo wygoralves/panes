@@ -316,7 +316,6 @@
     "workspaceChatTitle": "Chat do workspace",
     "repoChatTitle": "Chat de {{name}}",
     "renameThread": "Clique para renomear a thread",
-    "approvalBannerTitle": "Aprovações pendentes",
     "respondInCard": "Responda no card de aprovação abaixo.",
     "respondInCustomCard": "Esta solicitação exige JSON personalizado. Responda no card de aprovação abaixo.",
     "claudeApprovalUnsupported": "Esse tipo de approval do Claude ainda não é suportado no Panes.",
@@ -416,8 +415,20 @@
       "planImplementationThreadUnavailable": "A thread original de planejamento não está mais disponível. Reabra a thread e tente novamente.",
       "invalidOutputSchema": "O schema de saída deve ser um objeto ou booleano JSON Schema válido: {{error}}",
       "invalidCustomApprovalPolicy": "A política de aprovação estruturada deve ser um objeto JSON.",
-      "invalidCustomApprovalPolicyWithError": "A política de aprovação estruturada contém JSON inválido: {{error}}"
-    }
+      "invalidCustomApprovalPolicyWithError": "A política de aprovação estruturada contém JSON inválido: {{error}}",
+      "fastToggleFailed": "Não foi possível alterar o nível de serviço",
+      "retry": "Tentar novamente"
+    },
+    "approvalBannerTitleCount_one": "{{count}} aprovação pendente",
+    "approvalBannerTitleCount_other": "{{count}} aprovações pendentes",
+    "editResend": "Editar e reenviar",
+    "attachShort": "Anexar",
+    "emptyScopeRepo": "As mensagens rodam em {{repo}}",
+    "emptyScopeRepoBranch": "As mensagens rodam em {{repo}} no branch {{branch}}",
+    "emptySuggestionSummarize": "Resumir as mudanças recentes",
+    "emptySuggestionTests": "Corrigir o teste que está falhando",
+    "emptyHintCommands": "comandos",
+    "emptyHintSlash": "ações de barra"
   },
   "messageBlocks": {
     "diffFallback": "diff ({{scope}})",
@@ -425,7 +436,6 @@
     "parsingDiff": "Analisando diff...",
     "noChanges": "Sem alterações",
     "thinking": "Raciocínio",
-    "thinkingDone": "Pensou por {{seconds}}s",
     "actionStatus": {
       "done": "Concluído",
       "running": "Em andamento",
@@ -440,19 +450,27 @@
     },
     "outputTruncated": "Mostrando apenas a saída mais recente da ação (blocos anteriores truncados por desempenho).",
     "actionGroup": {
-      "summary_one": "{{count}} ação concluída",
-      "summary_other": "{{count}} ações concluídas",
+      "summary_one": "{{count}} ação",
+      "summary_other": "{{count}} ações",
       "errorCount_one": "{{count}} erro",
       "errorCount_other": "{{count}} erros",
       "types": {
-        "command": "cmd",
-        "file_read": "leitura",
-        "file_write": "escrita",
-        "file_edit": "edição",
-        "file_delete": "excl.",
-        "git": "git",
-        "search": "busca",
-        "other": "outro"
+        "command_one": "{{count}} comando",
+        "command_other": "{{count}} comandos",
+        "file_read_one": "{{count}} leitura",
+        "file_read_other": "{{count}} leituras",
+        "file_write_one": "{{count}} escrita",
+        "file_write_other": "{{count}} escritas",
+        "file_edit_one": "{{count}} edição",
+        "file_edit_other": "{{count}} edições",
+        "file_delete_one": "{{count}} exclusão",
+        "file_delete_other": "{{count}} exclusões",
+        "git_one": "{{count}} git",
+        "git_other": "{{count}} git",
+        "search_one": "{{count}} busca",
+        "search_other": "{{count}} buscas",
+        "other_one": "{{count}} outro",
+        "other_other": "{{count}} outros"
       }
     },
     "approval": {
@@ -497,7 +515,14 @@
       "nextQuestion": "Próxima pergunta",
       "otherAnswerPlaceholder": "Outra resposta (opcional)",
       "sendAnswers": "Enviar respostas"
-    }
+    },
+    "thought": "Pensou",
+    "thinkingDuration": "{{seconds}}s",
+    "output": "saída",
+    "copyOutput": "Copiar saída",
+    "expandOutput": "Expandir saída",
+    "collapseOutput": "Recolher saída",
+    "openInEditor": "Abrir no editor"
   },
   "status": {
     "now": "agora",
@@ -513,7 +538,9 @@
     "resets": "reinicia {{time}}",
     "usageAwaitingFirstMessage": "Envie uma mensagem para carregar os limites de uso",
     "usageLoading": "Carregando limites de uso...",
-    "usageUnavailable": "Limites de uso indisponíveis no servidor"
+    "usageUnavailable": "Limites de uso indisponíveis no servidor",
+    "openUsageLimits": "Abrir limites de uso",
+    "contextRingTitle": "Contexto restante: {{percent}}. Abrir limites de uso."
   },
   "slashCommands": {
     "panels": {

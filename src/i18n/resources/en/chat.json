@@ -316,7 +316,6 @@
     "workspaceChatTitle": "Workspace Chat",
     "repoChatTitle": "{{name}} Chat",
     "renameThread": "Click to rename thread",
-    "approvalBannerTitle": "Pending approvals",
     "respondInCard": "Respond in the approval card below.",
     "respondInCustomCard": "This request requires custom JSON. Respond in the approval card below.",
     "claudeApprovalUnsupported": "This Claude approval type is not supported in Panes yet.",
@@ -416,8 +415,20 @@
       "planImplementationThreadUnavailable": "The original planning thread is no longer available. Reopen the thread and try again.",
       "invalidOutputSchema": "Output schema must be valid JSON Schema object or boolean: {{error}}",
       "invalidCustomApprovalPolicy": "Structured approval policy must be a JSON object.",
-      "invalidCustomApprovalPolicyWithError": "Structured approval policy is invalid JSON: {{error}}"
-    }
+      "invalidCustomApprovalPolicyWithError": "Structured approval policy is invalid JSON: {{error}}",
+      "fastToggleFailed": "Couldn't change the service tier",
+      "retry": "Retry"
+    },
+    "approvalBannerTitleCount_one": "{{count}} pending approval",
+    "approvalBannerTitleCount_other": "{{count}} pending approvals",
+    "editResend": "Edit and resend",
+    "attachShort": "Attach",
+    "emptyScopeRepo": "Messages run against {{repo}}",
+    "emptyScopeRepoBranch": "Messages run against {{repo}} on branch {{branch}}",
+    "emptySuggestionSummarize": "Summarize recent changes",
+    "emptySuggestionTests": "Fix the failing test",
+    "emptyHintCommands": "commands",
+    "emptyHintSlash": "slash actions"
   },
   "messageBlocks": {
     "diffFallback": "diff ({{scope}})",
@@ -425,7 +436,6 @@
     "parsingDiff": "Parsing diff...",
     "noChanges": "No changes",
     "thinking": "Thinking",
-    "thinkingDone": "Thought for {{seconds}}s",
     "actionStatus": {
       "done": "Done",
       "running": "Running",
@@ -440,19 +450,27 @@
     },
     "outputTruncated": "Showing latest action output only (older chunks truncated for performance).",
     "actionGroup": {
-      "summary_one": "{{count}} action completed",
-      "summary_other": "{{count}} actions completed",
+      "summary_one": "{{count}} action",
+      "summary_other": "{{count}} actions",
       "errorCount_one": "{{count}} error",
       "errorCount_other": "{{count}} errors",
       "types": {
-        "command": "cmd",
-        "file_read": "read",
-        "file_write": "write",
-        "file_edit": "edit",
-        "file_delete": "del",
-        "git": "git",
-        "search": "search",
-        "other": "other"
+        "command_one": "{{count}} command",
+        "command_other": "{{count}} commands",
+        "file_read_one": "{{count}} read",
+        "file_read_other": "{{count}} reads",
+        "file_write_one": "{{count}} write",
+        "file_write_other": "{{count}} writes",
+        "file_edit_one": "{{count}} edit",
+        "file_edit_other": "{{count}} edits",
+        "file_delete_one": "{{count}} delete",
+        "file_delete_other": "{{count}} deletes",
+        "git_one": "{{count}} git",
+        "git_other": "{{count}} git",
+        "search_one": "{{count}} search",
+        "search_other": "{{count}} searches",
+        "other_one": "{{count}} other",
+        "other_other": "{{count}} other"
       }
     },
     "approval": {
@@ -497,7 +515,14 @@
       "nextQuestion": "Next question",
       "otherAnswerPlaceholder": "Other answer (optional)",
       "sendAnswers": "Send answers"
-    }
+    },
+    "thought": "Thought",
+    "thinkingDuration": "{{seconds}}s",
+    "output": "output",
+    "copyOutput": "Copy output",
+    "expandOutput": "Expand output",
+    "collapseOutput": "Collapse output",
+    "openInEditor": "Open in editor"
   },
   "status": {
     "now": "now",
@@ -513,7 +538,9 @@
     "resets": "resets {{time}}",
     "usageAwaitingFirstMessage": "Send a message to load usage limits",
     "usageLoading": "Loading usage limits...",
-    "usageUnavailable": "Usage limits unavailable from server"
+    "usageUnavailable": "Usage limits unavailable from server",
+    "openUsageLimits": "Open usage limits",
+    "contextRingTitle": "Context left: {{percent}}. Open usage limits."
   },
   "slashCommands": {
     "panels": {
