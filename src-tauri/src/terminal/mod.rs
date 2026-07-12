@@ -14,7 +14,7 @@ mod osc_notifications;
 
 use anyhow::Context;
 use chrono::Utc;
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::RwLock;
@@ -54,7 +54,13 @@ struct TerminalSessionHandle {
     io_counters: TerminalSessionIoCounters,
     replay_seq: AtomicU64,
     replay_state: Mutex<TerminalReplayState>,
-    process: Mutex<TerminalProcess>,
+    // writer, master, and child each get their own lock: a write_all blocked on
+    // a full PTY buffer must not wedge resize/kill/shutdown, and kill delivery
+    // goes through the cloned killer so it never waits behind child.wait().
+    writer: Mutex<Box<dyn Write + Send>>,
+    master: Mutex<Box<dyn MasterPty + Send>>,
+    child: Mutex<Box<dyn Child + Send>>,
+    child_killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
 }
 
 #[derive(Default)]
@@ -104,12 +110,6 @@ struct TerminalSessionIoCounters {
     output_buffer_bytes: AtomicU64,
     output_buffer_peak_bytes: AtomicU64,
     output_buffer_trimmed_bytes: AtomicU64,
-}
-
-struct TerminalProcess {
-    master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
-    child: Box<dyn Child + Send>,
 }
 
 struct SpawnedSession {
@@ -1161,12 +1161,11 @@ impl TerminalSessionHandle {
 
     fn write(&self, data: &str) -> anyhow::Result<()> {
         let started_at = Instant::now();
-        let mut process = self
-            .process
-            .lock()
-            .map_err(|_| anyhow::anyhow!("terminal process lock poisoned"))?;
-        process
+        let mut writer = self
             .writer
+            .lock()
+            .map_err(|_| anyhow::anyhow!("terminal writer lock poisoned"))?;
+        writer
             .write_all(data.as_bytes())
             .context("failed writing to terminal stdin")?;
         let write_duration_ms = started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
@@ -1197,12 +1196,11 @@ impl TerminalSessionHandle {
 
     fn write_raw(&self, data: &[u8]) -> anyhow::Result<()> {
         let started_at = Instant::now();
-        let mut process = self
-            .process
-            .lock()
-            .map_err(|_| anyhow::anyhow!("terminal process lock poisoned"))?;
-        process
+        let mut writer = self
             .writer
+            .lock()
+            .map_err(|_| anyhow::anyhow!("terminal writer lock poisoned"))?;
+        writer
             .write_all(data)
             .context("failed writing bytes to terminal stdin")?;
         let write_duration_ms = started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
@@ -1238,12 +1236,11 @@ impl TerminalSessionHandle {
         pixel_width: u16,
         pixel_height: u16,
     ) -> anyhow::Result<()> {
-        let process = self
-            .process
-            .lock()
-            .map_err(|_| anyhow::anyhow!("terminal process lock poisoned"))?;
-        process
+        let master = self
             .master
+            .lock()
+            .map_err(|_| anyhow::anyhow!("terminal master lock poisoned"))?;
+        master
             .resize(PtySize {
                 rows: rows.max(1),
                 cols: cols.max(1),
@@ -1251,7 +1248,7 @@ impl TerminalSessionHandle {
                 pixel_height,
             })
             .context("failed resizing terminal pty")?;
-        drop(process);
+        drop(master);
 
         match self
             .diagnostics
@@ -1293,10 +1290,10 @@ impl TerminalSessionHandle {
     }
 
     fn wait_for_exit(&self) -> ExitPayload {
-        let mut process = match self
-            .process
+        let mut child = match self
+            .child
             .lock()
-            .map_err(|_| anyhow::anyhow!("terminal process lock poisoned"))
+            .map_err(|_| anyhow::anyhow!("terminal child lock poisoned"))
         {
             Ok(guard) => guard,
             Err(error) => {
@@ -1304,7 +1301,7 @@ impl TerminalSessionHandle {
                 return ExitPayload::default();
             }
         };
-        match process.child.wait() {
+        match child.wait() {
             Ok(status) => ExitPayload {
                 code: Some(status.exit_code() as i32),
                 signal: None,
@@ -1317,30 +1314,24 @@ impl TerminalSessionHandle {
     }
 
     fn kill_and_wait(&self) -> ExitPayload {
-        let mut process = match self
-            .process
+        // Kill through the cloned killer instead of the child handle: the child
+        // lock may be held by wait_for_exit, and the writer may be blocked on a
+        // full PTY buffer. The kill unblocks both.
+        match self
+            .child_killer
             .lock()
-            .map_err(|_| anyhow::anyhow!("terminal process lock poisoned"))
+            .map_err(|_| anyhow::anyhow!("terminal child killer lock poisoned"))
         {
-            Ok(guard) => guard,
+            Ok(mut killer) => {
+                if let Err(error) = killer.kill() {
+                    log::warn!("failed killing terminal process: {error}");
+                }
+            }
             Err(error) => {
                 log::warn!("unable to stop terminal session: {error}");
-                return ExitPayload::default();
-            }
-        };
-        if let Err(error) = process.child.kill() {
-            log::warn!("failed killing terminal process: {error}");
-        }
-        match process.child.wait() {
-            Ok(status) => ExitPayload {
-                code: Some(status.exit_code() as i32),
-                signal: None,
-            },
-            Err(error) => {
-                log::warn!("failed waiting for terminal process after kill: {error}");
-                ExitPayload::default()
             }
         }
+        self.wait_for_exit()
     }
 }
 
@@ -1432,6 +1423,7 @@ fn spawn_session(
     // process_id() returns None on platforms where the PID is unavailable;
     // in that case terminal_foreground_process will gracefully return None.
     let shell_pid = child.process_id();
+    let child_killer = child.clone_killer();
     drop(pair.slave);
 
     let reader = pair
@@ -1460,11 +1452,10 @@ fn spawn_session(
         io_counters: TerminalSessionIoCounters::default(),
         replay_seq: AtomicU64::new(0),
         replay_state: Mutex::new(TerminalReplayState::default()),
-        process: Mutex::new(TerminalProcess {
-            master: pair.master,
-            writer,
-            child,
-        }),
+        writer: Mutex::new(writer),
+        master: Mutex::new(pair.master),
+        child: Mutex::new(child),
+        child_killer: Mutex::new(child_killer),
     });
 
     Ok(SpawnedSession { session, reader })
