@@ -65,6 +65,12 @@ import { useGitStore } from "../../stores/gitStore";
 import { useTerminalStore, type LayoutMode } from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
+import {
+  autonomyPresetPatch,
+  detectAutonomyPreset,
+  isAutonomyPresetId,
+} from "../../lib/autonomyPresets";
+import type { AutonomyPresetId } from "../../lib/autonomyPresets";
 import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { isMacDesktop, usesCustomWindowFrame } from "../../lib/windowActions";
@@ -2231,6 +2237,46 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       : undefined;
   const activeThreadSandboxMode = readThreadSandboxModeValue(activeThread);
   const activeThreadNetworkPolicy = readThreadNetworkPolicyValue(activeThread);
+  const activeThreadAutonomyEngineId =
+    activeThread?.engineId === "codex" ||
+    activeThread?.engineId === "claude" ||
+    activeThread?.engineId === "opencode"
+      ? activeThread.engineId
+      : undefined;
+  const activeThreadAutonomyPreset = useMemo(
+    () =>
+      activeThreadAutonomyEngineId
+        ? detectAutonomyPreset(activeThreadAutonomyEngineId, {
+            approvalPolicy: activeThreadApprovalPolicy,
+            sandboxMode: activeThreadSandboxMode,
+            networkPolicy: readThreadStoredNetworkPolicyValue(activeThread),
+          })
+        : undefined,
+    [
+      activeThread,
+      activeThreadApprovalPolicy,
+      activeThreadAutonomyEngineId,
+      activeThreadSandboxMode,
+    ],
+  );
+  const fullAutonomyArmed = activeThreadAutonomyPreset === "full";
+  const [defaultAutonomyPreset, setDefaultAutonomyPreset] =
+    useState<AutonomyPresetId | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    void ipc
+      .getDefaultAutonomyPreset()
+      .then((preset) => {
+        if (!disposed && isAutonomyPresetId(preset)) {
+          setDefaultAutonomyPreset(preset);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+    };
+  }, []);
   const activeThreadCapabilities = useMemo(
     () => resolveEngineCapabilities(activeThread?.engineId, activeThreadEngineInfo?.capabilities),
     [activeThread?.engineId, activeThreadEngineInfo?.capabilities],
@@ -4546,6 +4592,62 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     }
   }
 
+  function onAutonomyPresetChange(preset: AutonomyPresetId) {
+    if (!activeThreadAutonomyEngineId) {
+      return;
+    }
+    void onThreadExecutionPolicyChange(
+      autonomyPresetPatch(preset, activeThreadAutonomyEngineId) as ThreadExecutionPolicyPatch,
+    );
+  }
+
+  async function onDefaultAutonomyPresetChange(preset: AutonomyPresetId | null) {
+    const previous = defaultAutonomyPreset;
+    setDefaultAutonomyPreset(preset);
+    try {
+      await ipc.setDefaultAutonomyPreset(preset);
+    } catch (error) {
+      setDefaultAutonomyPreset(previous);
+      toast.error(t("autonomy.defaultSaveFailed", { error: String(error) }));
+    }
+  }
+
+  async function allowAllPendingApprovals(stopAsking: boolean) {
+    const engineId = activeThread?.engineId;
+    const rows = pendingApprovalBannerRows.filter((approval) => {
+      const details = approval.details ?? {};
+      if (!canUseApprovalDecisionActions(engineId, details)) {
+        return false;
+      }
+      if (isRequestUserInputApproval(details)) {
+        return false;
+      }
+      if (requiresCustomApprovalPayload(details)) {
+        return false;
+      }
+      if (shouldShowClaudeUnsupportedApproval(details, true, engineId === "claude")) {
+        return false;
+      }
+      return true;
+    });
+
+    for (const approval of rows) {
+      const details = approval.details ?? {};
+      await respondApproval(
+        approval.approvalId,
+        isPermissionsRequestApproval(details)
+          ? buildPermissionApprovalResponseForEngine(engineId, details, "accept")
+          : { decision: "accept" },
+      );
+    }
+
+    if (stopAsking && activeThreadAutonomyEngineId) {
+      await onThreadExecutionPolicyChange(
+        autonomyPresetPatch("full", activeThreadAutonomyEngineId) as ThreadExecutionPolicyPatch,
+      );
+    }
+  }
+
   function startThreadTitleEdit() {
     if (!activeThread) {
       return;
@@ -5426,6 +5528,28 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   })}
                 </span>
                 <span className="approval-header-spacer" />
+                {pendingApprovalBannerRows.length > 1 &&
+                  activeThreadApprovalDecisionCapabilities.includes("accept") && (
+                    <>
+                      <button
+                        type="button"
+                        className="approval-batch-btn"
+                        onClick={() => void allowAllPendingApprovals(false)}
+                      >
+                        {t("autonomy.allowAll")}
+                      </button>
+                      {activeThreadAutonomyEngineId && (
+                        <button
+                          type="button"
+                          className="approval-batch-btn approval-batch-btn-warn"
+                          onClick={() => void allowAllPendingApprovals(true)}
+                          title={t("autonomy.presets.full.description")}
+                        >
+                          {t("autonomy.allowAllStopAsking")}
+                        </button>
+                      )}
+                    </>
+                  )}
                 {activeRepo && activeRepo.trustLevel !== "trusted" && (
                   <button
                     type="button"
@@ -5690,7 +5814,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
           {/* Input container */}
           <div
-            className={`chat-input-box ${activePlanMode && !showSpecialInputComposer ? "chat-input-box-plan" : ""} ${showSpecialInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
+            className={`chat-input-box ${activePlanMode && !showSpecialInputComposer ? "chat-input-box-plan" : ""} ${fullAutonomyArmed && !activePlanMode && !showSpecialInputComposer ? "chat-input-box-armed" : ""} ${showSpecialInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
             onPaste={handleInputPaste}
           >
             {showPendingToolInputComposer && pendingToolInputApproval ? (
@@ -6047,6 +6171,15 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 <>
                   <div className="chat-toolbar-divider" />
                   <PermissionPicker
+                    engineId={activeThreadAutonomyEngineId}
+                    presetValue={activeThreadAutonomyPreset}
+                    onPresetChange={
+                      activeThreadAutonomyEngineId ? onAutonomyPresetChange : undefined
+                    }
+                    defaultPreset={defaultAutonomyPreset}
+                    onDefaultPresetChange={(preset) =>
+                      void onDefaultAutonomyPresetChange(preset)
+                    }
                     trustScopeLabel={
                       activeRepo
                         ? t("panel.repoAccess")
@@ -6242,6 +6375,12 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
           {/* Bottom status bar with context usage */}
           <div className="chat-status-bar">
+            {fullAutonomyArmed && (
+              <span className="chat-status-armed">
+                <Zap size={10} />
+                {t("autonomy.armedStatus")}
+              </span>
+            )}
             {(isCodexEngine || selectedEngineId === "claude") && (
               usageLimits ? (
                 <div className="chat-status-usage">
