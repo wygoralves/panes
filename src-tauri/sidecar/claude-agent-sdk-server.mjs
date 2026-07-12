@@ -8,6 +8,21 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+const nodeMajorVersion = Number(process.versions.node.split(".")[0]);
+if (
+  nodeMajorVersion < 20 ||
+  typeof Symbol.dispose !== "symbol" ||
+  typeof Symbol.asyncDispose !== "symbol"
+) {
+  process.stdout.write(
+    JSON.stringify({
+      type: "error",
+      message: `Claude requires Node.js 20 or newer with explicit resource management support. Panes resolved Node.js ${process.versions.node}.`,
+    }) + "\n",
+  );
+  process.exit(1);
+}
+
 let queryFn;
 let sdkVersion = null;
 let bundledClaudeCodeVersion = null;
