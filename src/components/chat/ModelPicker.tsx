@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, ChevronRight, Search } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  FileX2,
+  Image as ImageIcon,
+  Paperclip,
+  Search,
+} from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useEngineStore } from "../../stores/engineStore";
@@ -182,6 +191,7 @@ export function formatCompactTokenLimit(tokens?: number | null): string | null {
 interface ModelMetadataChip {
   label: string;
   title?: string;
+  icon?: "vision" | "pdf" | "files" | "no-files";
 }
 
 export function modelMetadataChips(
@@ -194,15 +204,15 @@ export function modelMetadataChips(
   );
 
   if (attachmentModalities.has("image")) {
-    chips.push({ label: t("modelPicker.metadata.vision") });
+    chips.push({ label: t("modelPicker.metadata.vision"), icon: "vision" });
   }
   if (attachmentModalities.has("pdf")) {
-    chips.push({ label: t("modelPicker.metadata.pdf") });
+    chips.push({ label: t("modelPicker.metadata.pdf"), icon: "pdf" });
   }
   if (attachmentModalities.has("text")) {
-    chips.push({ label: t("modelPicker.metadata.files") });
+    chips.push({ label: t("modelPicker.metadata.files"), icon: "files" });
   } else if ((model.attachmentModalities ?? []).length === 0) {
-    chips.push({ label: t("modelPicker.metadata.noFiles") });
+    chips.push({ label: t("modelPicker.metadata.noFiles"), icon: "no-files" });
   }
 
   const contextLimit = formatCompactTokenLimit(model.limits?.contextTokens);
@@ -224,6 +234,39 @@ export function modelMetadataChips(
   }
 
   return chips;
+}
+
+function modelMetadataIcon(icon: ModelMetadataChip["icon"]) {
+  switch (icon) {
+    case "vision":
+      return <ImageIcon size={11} aria-hidden="true" />;
+    case "pdf":
+      return <FileText size={11} aria-hidden="true" />;
+    case "files":
+      return <Paperclip size={11} aria-hidden="true" />;
+    case "no-files":
+      return <FileX2 size={11} aria-hidden="true" />;
+    default:
+      return null;
+  }
+}
+
+function ModelMetadata({ chips }: { chips: ModelMetadataChip[] }) {
+  return (
+    <span className="mp-model-meta">
+      {chips.map((chip) => (
+        <span
+          key={chip.label}
+          className={`mp-model-meta-chip${chip.icon ? " mp-model-meta-icon" : ""}`}
+          title={chip.title ?? chip.label}
+          role={chip.icon ? "img" : undefined}
+          aria-label={chip.icon ? chip.label : undefined}
+        >
+          {chip.icon ? modelMetadataIcon(chip.icon) : chip.label}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 function shouldShowModelDescription(engineId: string, model: EngineModel): boolean {
@@ -258,6 +301,10 @@ function effortDisplayLabel(t: TFunction<"chat">, effort: string): string {
     case "max": return t("modelPicker.effort.max");
     default: return effort.charAt(0).toUpperCase() + effort.slice(1);
   }
+}
+
+export function shouldUseCompactEffortLabels(effortCount: number): boolean {
+  return effortCount >= 5;
 }
 
 /* ── Component ── */
@@ -683,6 +730,7 @@ function ModelRow({
   const { t } = useTranslation("chat");
   const efforts = model.supportedReasoningEfforts ?? [];
   const showControls = efforts.length > 0;
+  const useCompactEffortLabels = shouldUseCompactEffortLabels(efforts.length);
   const metadataChips = modelMetadataChips(t, model);
   const showMetadataChips = isSelected;
   const showDescription = shouldShowModelDescription(engineId, model);
@@ -708,19 +756,13 @@ function ModelRow({
             {model.isDefault && (
               <span className="mp-model-default">{t("modelPicker.default")}</span>
             )}
+            {showMetadataChips && !showControls && metadataChips.length > 0 ? (
+              <ModelMetadata chips={metadataChips} />
+            ) : null}
           </div>
           {showDescription && (
             <span className="mp-model-desc">{model.description}</span>
           )}
-          {showMetadataChips && metadataChips.length > 0 ? (
-            <span className="mp-model-meta">
-              {metadataChips.map((chip) => (
-                <span key={chip.label} className="mp-model-meta-chip" title={chip.title}>
-                  {chip.label}
-                </span>
-              ))}
-            </span>
-          ) : null}
         </div>
         {isSelected && (
           <Check size={13} className="mp-model-check" />
@@ -729,21 +771,27 @@ function ModelRow({
 
       {isSelected && showControls && (
         <div className="mp-model-controls">
-          {efforts.length > 0 ? (
+          <div className="mp-model-controls-header">
             <span className="mp-model-controls-label">{t("modelPicker.thinking")}</span>
-          ) : null}
+            {metadataChips.length > 0 ? <ModelMetadata chips={metadataChips} /> : null}
+          </div>
           <div className="mp-model-option-pills">
             {efforts.map((opt) => {
               const active = opt.reasoningEffort === selectedEffort;
+              const fullLabel = effortDisplayLabel(t, opt.reasoningEffort);
               return (
                 <button
                   key={opt.reasoningEffort}
                   type="button"
                   className={`mp-model-option-pill${active ? " mp-model-option-pill-active" : ""}`}
                   onClick={() => onEffortChange(opt.reasoningEffort)}
-                  title={opt.description}
+                  aria-label={fullLabel}
+                  aria-pressed={active}
+                  title={`${fullLabel}: ${opt.description}`}
                 >
-                  {effortDisplayLabel(t, opt.reasoningEffort)}
+                  {useCompactEffortLabels
+                    ? shortEffortLabel(t, opt.reasoningEffort)
+                    : fullLabel}
                 </button>
                 );
               })}
