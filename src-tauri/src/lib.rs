@@ -322,6 +322,8 @@ pub fn run() {
             commands::harness::check_harnesses,
             commands::harness::install_harness,
             commands::harness::launch_harness,
+            commands::harness::get_harness_launch_args,
+            commands::harness::set_harness_launch_args,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

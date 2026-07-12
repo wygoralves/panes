@@ -11,11 +11,15 @@ interface HarnessStore {
   preferredInstallMethod: string | null;
   error: string | null;
   loadedOnce: boolean;
+  launchArgs: Record<string, string>;
+  launchArgsLoaded: boolean;
 
   scan: () => Promise<void>;
   ensureScanned: () => Promise<void>;
   launch: (harnessId: string) => Promise<string | null>;
   getInstalledHarnesses: () => HarnessInfo[];
+  loadLaunchArgs: () => Promise<void>;
+  saveLaunchArgs: (harnessId: string, args: string) => Promise<boolean>;
 }
 
 let pendingHarnessScan: Promise<void> | null = null;
@@ -66,6 +70,8 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
   preferredInstallMethod: null,
   error: null,
   loadedOnce: false,
+  launchArgs: {},
+  launchArgsLoaded: false,
 
   scan: async () => requestHarnessScan(set, get),
 
@@ -87,5 +93,30 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
   getInstalledHarnesses: () => {
     const { harnesses } = get();
     return harnesses.filter((h) => h.found);
+  },
+
+  loadLaunchArgs: async () => {
+    try {
+      const launchArgs = await ipc.getHarnessLaunchArgs();
+      set({ launchArgs, launchArgsLoaded: true });
+    } catch {
+      set({ launchArgsLoaded: true });
+    }
+  },
+
+  saveLaunchArgs: async (harnessId: string, args: string) => {
+    try {
+      const saved = await ipc.setHarnessLaunchArgs(harnessId, args);
+      const launchArgs = { ...get().launchArgs };
+      if (saved) {
+        launchArgs[harnessId] = saved;
+      } else {
+        delete launchArgs[harnessId];
+      }
+      set({ launchArgs });
+      return true;
+    } catch {
+      return false;
+    }
   },
 }));
