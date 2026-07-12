@@ -10116,6 +10116,63 @@ button, input, textarea, select {
   min-width: 0;
 }
 
+.usage-limits-modal {
+  width: min(560px, calc(100vw - 40px));
+  max-height: calc(100vh - 48px);
+}
+
+.usage-limits-modal-content {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.usage-limits-modal-header {
+  align-items: center;
+}
+
+.usage-limits-modal-header > div:not(.usage-limits-modal-actions) {
+  min-width: 0;
+  flex: 1;
+}
+
+.usage-limits-modal-icon {
+  color: var(--text-2);
+  background: var(--wash-04);
+  border-color: var(--border);
+}
+
+.usage-limits-modal-description {
+  margin: 3px 0 0;
+  max-width: 48ch;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.usage-limits-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.usage-limits-modal-actions .ws-close {
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+
+.usage-limits-modal-divider {
+  margin: 14px 20px 0;
+}
+
+.usage-limits-modal-body {
+  min-height: 0;
+  padding: 16px 20px 20px;
+  overflow-y: auto;
+}
+
 .usp-usage-provider {
   padding: 14px 15px;
 }
@@ -10209,16 +10266,100 @@ button, input, textarea, select {
 }
 
 .usp-usage-loading {
-  padding: 18px 15px;
-  display: grid;
-  gap: 12px;
+  animation: pulse-soft 1.6s var(--ease-out) infinite;
 }
 
-.usp-usage-loading span {
-  width: min(100%, 420px);
-  height: 44px;
+.usp-usage-skeleton-provider {
+  padding: 14px 15px;
+}
+
+.usp-usage-skeleton-provider + .usp-usage-skeleton-provider {
+  border-top: 1px solid var(--divider);
+}
+
+.usp-usage-skeleton-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 32px;
+}
+
+.usp-usage-skeleton-icon,
+.usp-usage-skeleton-name,
+.usp-usage-skeleton-status,
+.usp-usage-skeleton-heading > span,
+.usp-usage-skeleton-progress,
+.usp-usage-skeleton-reset {
+  display: block;
+  background: var(--bg-4);
+}
+
+.usp-usage-skeleton-icon {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
   border-radius: var(--radius-sm);
-  background: var(--bg-3);
+}
+
+.usp-usage-skeleton-copy {
+  display: grid;
+  gap: 5px;
+  flex: 1;
+}
+
+.usp-usage-skeleton-name {
+  width: 88px;
+  height: 9px;
+  border-radius: var(--radius-pill);
+}
+
+.usp-usage-skeleton-status {
+  width: 148px;
+  max-width: 70%;
+  height: 7px;
+  border-radius: var(--radius-pill);
+}
+
+.usp-usage-skeleton-windows {
+  margin: 14px 0 0 44px;
+  display: grid;
+  gap: 13px;
+}
+
+.usp-usage-skeleton-window {
+  display: block;
+  height: 34px;
+}
+
+.usp-usage-skeleton-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.usp-usage-skeleton-heading > span {
+  width: 92px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+}
+
+.usp-usage-skeleton-heading > span:last-child {
+  width: 52px;
+}
+
+.usp-usage-skeleton-progress {
+  width: 100%;
+  height: 4px;
+  margin-top: 7px;
+  border-radius: var(--radius-pill);
+}
+
+.usp-usage-skeleton-reset {
+  width: 104px;
+  height: 6px;
+  margin-top: 5px;
+  border-radius: var(--radius-pill);
 }
 
 .usp-usage-empty {
@@ -10774,14 +10915,54 @@ button, input, textarea, select {
     align-items: center;
   }
 
-  .usp-usage-window-list {
+  .usp-usage-window-list,
+  .usp-usage-skeleton-windows {
     margin-left: 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .usage-limits-modal {
+    animation: none;
+  }
+
+  .usp-usage-loading {
+    animation: none;
+  }
+
   .usp-usage-progress > span {
     transition: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .usage-limits-modal {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+  }
+
+  .usage-limits-modal-header {
+    padding: 16px 16px 0;
+  }
+
+  .usage-limits-modal-divider {
+    margin-right: 16px;
+    margin-left: 16px;
+  }
+
+  .usage-limits-modal-body {
+    padding: 14px 16px 16px;
+  }
+
+  .usage-limits-modal-actions .usage-limits-refresh {
+    width: 28px;
+    padding-right: 0;
+    padding-left: 0;
+    justify-content: center;
+  }
+
+  .usage-limits-modal-actions .usage-limits-refresh span {
+    display: none;
   }
 }
 
