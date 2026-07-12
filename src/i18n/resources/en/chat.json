@@ -325,7 +325,6 @@
     "defaultForNewThreads": "Default for new threads",
     "advanced": "Advanced",
     "backToPresets": "Presets",
-    "armedStatus": "Full autonomy: never asks, full disk and network",
     "allowAll": "Allow all",
     "allowAllStopAsking": "Allow all & stop asking",
     "approvalToastTitle": "{{engine}} needs approval",

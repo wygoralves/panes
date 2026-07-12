@@ -5160,20 +5160,6 @@ button, input, textarea, select {
   gap: 5px;
 }
 
-.chat-status-armed {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 1px 7px;
-  border-radius: 99px;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--warning);
-  background: var(--warning-surface);
-  border: 1px solid var(--warning-border);
-  white-space: nowrap;
-}
-
 .chat-status-branch {
   display: flex;
   align-items: center;
@@ -9444,6 +9430,10 @@ button.chat-context-section:hover {
 .pp-preset-option {
   align-items: flex-start;
   gap: 9px;
+}
+
+.pp-preset-option .pp-option-copy {
+  flex: 1;
 }
 
 .pp-preset-icon {

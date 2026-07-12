@@ -14,6 +14,15 @@ export interface AutonomyPresetPatch {
   networkPolicy?: "inherit" | "enabled" | "restricted";
 }
 
+export interface AutonomyPresetOptions {
+  /**
+   * Codex rejects read-only and workspace-write sandbox overrides while Panes
+   * runs in external sandbox mode; presets then leave the sandbox on inherit
+   * and steer through the approval policy alone.
+   */
+  codexExternalSandbox?: boolean;
+}
+
 export const AUTONOMY_PRESET_IDS: readonly AutonomyPresetId[] = [
   "inherit",
   "read-only",
@@ -47,6 +56,7 @@ export function availableAutonomyPresets(engineId: ChatEngineId): AutonomyPreset
 export function autonomyPresetPatch(
   preset: AutonomyPresetId,
   engineId: ChatEngineId,
+  options?: AutonomyPresetOptions,
 ): AutonomyPresetPatch {
   if (engineId === "opencode") {
     switch (preset) {
@@ -81,13 +91,26 @@ export function autonomyPresetPatch(
     }
   }
 
+  const externalSandbox = options?.codexExternalSandbox === true;
   switch (preset) {
     case "read-only":
-      return { approvalPolicy: "untrusted", sandboxMode: "read-only", networkPolicy: "restricted" };
+      return {
+        approvalPolicy: "untrusted",
+        sandboxMode: externalSandbox ? "inherit" : "read-only",
+        networkPolicy: "restricted",
+      };
     case "ask":
-      return { approvalPolicy: "on-request", sandboxMode: "workspace-write", networkPolicy: "restricted" };
+      return {
+        approvalPolicy: "on-request",
+        sandboxMode: externalSandbox ? "inherit" : "workspace-write",
+        networkPolicy: "restricted",
+      };
     case "auto":
-      return { approvalPolicy: "on-failure", sandboxMode: "workspace-write", networkPolicy: "enabled" };
+      return {
+        approvalPolicy: "on-failure",
+        sandboxMode: externalSandbox ? "inherit" : "workspace-write",
+        networkPolicy: "enabled",
+      };
     case "full":
       return { approvalPolicy: "never", sandboxMode: "danger-full-access", networkPolicy: "enabled" };
     default:
@@ -102,6 +125,7 @@ export function autonomyPresetPatch(
 export function detectAutonomyPreset(
   engineId: ChatEngineId,
   snapshot: AutonomyPolicySnapshot,
+  options?: AutonomyPresetOptions,
 ): AutonomyPresetId | null {
   if (engineId === "opencode") {
     switch (snapshot.approvalPolicy) {
@@ -132,7 +156,7 @@ export function detectAutonomyPreset(
     if (engineId === "codex" && preset === "full") {
       continue;
     }
-    const patch = autonomyPresetPatch(preset, engineId);
+    const patch = autonomyPresetPatch(preset, engineId, options);
     if (
       patch.approvalPolicy === snapshot.approvalPolicy &&
       patch.sandboxMode === snapshot.sandboxMode &&
@@ -152,6 +176,7 @@ export function detectAutonomyPreset(
 export function autonomyPresetExecutionPolicyRequest(
   preset: AutonomyPresetId,
   engineId: ChatEngineId,
+  options?: AutonomyPresetOptions,
 ): {
   approvalPolicy?: unknown;
   sandboxMode?: string | null;
@@ -161,7 +186,7 @@ export function autonomyPresetExecutionPolicyRequest(
     return null;
   }
 
-  const patch = autonomyPresetPatch(preset, engineId);
+  const patch = autonomyPresetPatch(preset, engineId, options);
   if (engineId === "opencode") {
     return { approvalPolicy: patch.approvalPolicy };
   }

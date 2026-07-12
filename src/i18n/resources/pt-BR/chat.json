@@ -325,7 +325,6 @@
     "defaultForNewThreads": "Padrão para novas conversas",
     "advanced": "Avançado",
     "backToPresets": "Presets",
-    "armedStatus": "Autonomia total: nunca pergunta, disco e rede completos",
     "allowAll": "Permitir tudo",
     "allowAllStopAsking": "Permitir tudo e parar de perguntar",
     "approvalToastTitle": "{{engine}} precisa de aprovação",
