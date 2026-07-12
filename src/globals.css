@@ -84,6 +84,19 @@
   --warning-rgb: 241, 176, 71;
   --info: var(--brand-blue);
   --info-rgb: 87, 182, 255;
+  --success-surface: var(--brand-mint-950);
+  --success-surface-strong: var(--brand-mint-900);
+  --success-border: color-mix(in oklch, var(--success) 32%, var(--success-surface));
+  --danger-surface: #1a0706;
+  --danger-surface-strong: color-mix(in oklch, var(--danger) 18%, var(--danger-surface));
+  --danger-border: color-mix(in oklch, var(--danger) 32%, var(--danger-surface));
+  --warning-surface: #160b00;
+  --warning-surface-strong: color-mix(in oklch, var(--warning) 18%, var(--warning-surface));
+  --warning-border: color-mix(in oklch, var(--warning) 32%, var(--warning-surface));
+  --info-surface: #020e1b;
+  --info-border: color-mix(in oklch, var(--info) 32%, var(--info-surface));
+  --neutral-surface: var(--brand-neutral-850);
+  --neutral-border: var(--brand-neutral-700);
 
   /* Borders */
   --border: var(--wash-16);
@@ -262,19 +275,32 @@
   --on-accent-icon: #ffffff;
   --on-danger: #ffffff;
 
-  --success: var(--brand-mint-700);
+  --success: oklch(51.6% 0.112 154.7);
   --success-indicator: var(--brand-mint-500);
-  --success-rgb: 0, 109, 64;
+  --success-rgb: 35, 122, 74;
   --danger: #bd413d;
   --danger-rgb: 189, 65, 61;
-  --warning: #935c00;
-  --warning-rgb: 147, 92, 0;
+  --warning: oklch(52.3% 0.101 77.1);
+  --warning-rgb: 138, 97, 22;
   --info: #006eb8;
   --info-rgb: 0, 110, 184;
+  --success-surface: var(--brand-mint-50);
+  --success-surface-strong: var(--brand-mint-100);
+  --success-border: var(--brand-mint-200);
+  --danger-surface: #ffedeb;
+  --danger-surface-strong: color-mix(in oklch, var(--danger) 12%, var(--danger-surface));
+  --danger-border: color-mix(in oklch, var(--danger) 24%, var(--danger-surface));
+  --warning-surface: #faf0e3;
+  --warning-surface-strong: color-mix(in oklch, var(--warning) 12%, var(--warning-surface));
+  --warning-border: color-mix(in oklch, var(--warning) 24%, var(--warning-surface));
+  --info-surface: #e7f4ff;
+  --info-border: color-mix(in oklch, var(--info) 24%, var(--info-surface));
+  --neutral-surface: var(--brand-neutral-50);
+  --neutral-border: var(--brand-neutral-200);
 
-  --border: rgba(0, 0, 0, 0.16);
+  --border: rgba(0, 0, 0, 0.12);
   --divider: rgba(0, 0, 0, 0.06);
-  --border-active: rgba(0, 0, 0, 0.28);
+  --border-active: rgba(0, 0, 0, 0.22);
   --border-accent: rgba(var(--accent-rgb), 0.26);
   --focus-ring: var(--brand-mint-600);
   --selection-bg: var(--brand-mint-50);
@@ -286,9 +312,9 @@
 
   --glass-bg: rgba(255, 255, 255, 0.75);
   --glass-border: rgba(0, 0, 0, 0.08);
-  --modal-backdrop-bg: rgba(0, 0, 0, 0.32);
+  --modal-backdrop-bg: rgba(24, 24, 28, 0.24);
 
-  --code-bg: var(--brand-neutral-100);
+  --code-bg: var(--brand-neutral-50);
 
   --popover-bg: rgba(255, 255, 255, 0.95);
   --floating-chip-bg: rgba(255, 255, 255, 0.85);
@@ -300,7 +326,7 @@
   --diff-del-text: var(--danger);
   --diff-overlay-bg: rgba(255, 255, 255, 0.92);
 
-  --supporting-bg: var(--brand-neutral-100);
+  --supporting-bg: var(--brand-neutral-50);
   --sidebar-bg: var(--supporting-bg);
   --content-bg: var(--brand-neutral-0);
   --content-border: rgba(0, 0, 0, 0.08);
@@ -320,31 +346,29 @@
   --block-steer-bg: rgba(var(--accent-rgb), 0.06);
   --block-steer-border: rgba(var(--accent-rgb), 0.18);
 
-  /* Overlay washes flip polarity: translucent black instead of white, at a
-     higher opacity than a literal flip would give, since a black wash on a
-     light surface reads fainter than the same opacity white wash reads on a
-     dark surface. */
-  --wash-015: rgba(0,0,0,.03);
-  --wash-02: rgba(0,0,0,.04);
-  --wash-025: rgba(0,0,0,.045);
-  --wash-03: rgba(0,0,0,.05);
-  --wash-04: rgba(0,0,0,.065);
-  --wash-045: rgba(0,0,0,.07);
-  --wash-05: rgba(0,0,0,.08);
-  --wash-06: rgba(0,0,0,.09);
-  --wash-07: rgba(0,0,0,.1);
-  --wash-08: rgba(0,0,0,.11);
-  --wash-09: rgba(0,0,0,.13);
-  --wash-1: rgba(0,0,0,.14);
-  --wash-11: rgba(0,0,0,.15);
-  --wash-12: rgba(0,0,0,.16);
-  --wash-14: rgba(0,0,0,.19);
-  --wash-15: rgba(0,0,0,.2);
-  --wash-16: rgba(0,0,0,.21);
-  --wash-18: rgba(0,0,0,.24);
-  --wash-2: rgba(0,0,0,.27);
-  --wash-24: rgba(0,0,0,.32);
-  --wash-26: rgba(0,0,0,.34);
+  /* Light-theme washes stay close to their named opacity so hover and
+     selected states remain visible without turning large rows gray. */
+  --wash-015: rgba(0,0,0,.015);
+  --wash-02: rgba(0,0,0,.02);
+  --wash-025: rgba(0,0,0,.025);
+  --wash-03: rgba(0,0,0,.03);
+  --wash-04: rgba(0,0,0,.04);
+  --wash-045: rgba(0,0,0,.045);
+  --wash-05: rgba(0,0,0,.05);
+  --wash-06: rgba(0,0,0,.06);
+  --wash-07: rgba(0,0,0,.07);
+  --wash-08: rgba(0,0,0,.08);
+  --wash-09: rgba(0,0,0,.09);
+  --wash-1: rgba(0,0,0,.1);
+  --wash-11: rgba(0,0,0,.11);
+  --wash-12: rgba(0,0,0,.12);
+  --wash-14: rgba(0,0,0,.14);
+  --wash-15: rgba(0,0,0,.15);
+  --wash-16: rgba(0,0,0,.16);
+  --wash-18: rgba(0,0,0,.18);
+  --wash-2: rgba(0,0,0,.2);
+  --wash-24: rgba(0,0,0,.22);
+  --wash-26: rgba(0,0,0,.24);
 
   /* Markdown / chat code-fence syntax colors (light, GitHub-Light-inspired) */
   --hljs-fg: #24292f;
@@ -406,6 +430,18 @@ button, input, textarea, select {
 .panes-brand-lockup img {
   grid-area: 1 / 1;
   width: 100%;
+  height: auto;
+  display: block;
+}
+
+.panes-brand-wordmark {
+  display: inline-grid;
+  overflow: hidden;
+}
+
+.panes-brand-wordmark img {
+  grid-area: 1 / 1;
+  max-width: none;
   height: auto;
   display: block;
 }
@@ -475,7 +511,7 @@ button, input, textarea, select {
 }
 
 .glass-subtle {
-  background: rgba(10, 10, 10, 0.65);
+  background: var(--glass-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border);
@@ -653,8 +689,8 @@ button, input, textarea, select {
 }
 
 .linux-window-control-close:hover {
-  background: rgba(var(--danger-rgb), 0.14);
-  border-color: rgba(var(--danger-rgb), 0.12);
+  background: var(--danger-surface-strong);
+  border-color: var(--danger-border);
   color: #fca5a5;
 }
 
@@ -852,13 +888,13 @@ button, input, textarea, select {
 
 .btn-danger-ghost {
   color: var(--danger);
-  border: 1px solid rgba(var(--danger-rgb), 0.22);
+  border: 1px solid var(--danger-border);
   border-radius: var(--radius-sm);
-  background: rgba(var(--danger-rgb), 0.06);
+  background: var(--danger-surface);
 }
 .btn-danger-ghost:hover {
-  background: rgba(var(--danger-rgb), 0.12);
-  border-color: rgba(var(--danger-rgb), 0.4);
+  background: var(--danger-surface-strong);
+  border-color: var(--danger);
 }
 
 .btn-cancel-ghost {
@@ -1233,8 +1269,11 @@ button, input, textarea, select {
 }
 
 .dropdown-trigger-label {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: left;
   white-space: nowrap;
 }
 
@@ -1249,6 +1288,7 @@ button, input, textarea, select {
 
 .dropdown-chevron {
   flex-shrink: 0;
+  margin-left: 6px;
   opacity: 0.5;
   transition: transform var(--duration-fast) var(--ease-out);
 }
@@ -1607,19 +1647,22 @@ button, input, textarea, select {
 /* Status badge */
 .git-status {
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 650;
   font-family: var(--font-mono);
-  padding: 1px 5px;
-  border-radius: 3px;
+  min-width: 18px;
+  padding: 2px 5px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
   flex-shrink: 0;
   line-height: 1;
+  text-align: center;
 }
-.git-status-added { color: var(--success); background: rgba(var(--success-rgb), 0.1); }
-.git-status-modified { color: var(--warning); background: rgba(var(--warning-rgb), 0.1); }
-.git-status-deleted { color: var(--danger); background: rgba(var(--danger-rgb), 0.1); }
-.git-status-renamed { color: var(--info); background: rgba(var(--info-rgb), 0.1); }
-.git-status-untracked { color: var(--text-3); background: rgba(115, 115, 115, 0.15); }
-.git-status-conflicted { color: var(--danger); background: rgba(var(--danger-rgb), 0.15); font-weight: 700; }
+.git-status-added { color: var(--success); background: var(--success-surface); border-color: var(--success-border); }
+.git-status-modified { color: var(--warning); background: var(--warning-surface); border-color: var(--warning-border); }
+.git-status-deleted { color: var(--danger); background: var(--danger-surface); border-color: var(--danger-border); }
+.git-status-renamed { color: var(--info); background: var(--info-surface); border-color: var(--info-border); }
+.git-status-untracked { color: var(--text-3); background: var(--neutral-surface); border-color: var(--neutral-border); }
+.git-status-conflicted { color: var(--danger); background: var(--danger-surface-strong); border-color: var(--danger-border); font-weight: 700; }
 
 /* Stage/unstage button */
 .git-stage-btn {
@@ -1741,20 +1784,20 @@ button, input, textarea, select {
   color: var(--text-2);
 }
 .git-diff-add {
-  background: rgba(46, 160, 67, 0.08);
+  background: var(--success-surface);
 }
 .git-diff-add .git-diff-gutter { color: var(--success); opacity: 0.7; }
 .git-diff-add .git-diff-line-num { color: var(--success); opacity: 0.4; }
 .git-diff-add .git-diff-line-content { color: var(--diff-add-text); }
 .git-diff-del {
-  background: rgba(248, 81, 73, 0.08);
+  background: var(--danger-surface);
 }
 .git-diff-del .git-diff-gutter { color: var(--danger); opacity: 0.7; }
 .git-diff-del .git-diff-line-num { color: var(--danger); opacity: 0.4; }
 .git-diff-del .git-diff-line-content { color: var(--diff-del-text); }
 .git-diff-hunk {
-  background: rgba(var(--info-rgb), 0.04);
-  border-top: 1px solid rgba(var(--info-rgb), 0.1);
+  background: var(--info-surface);
+  border-top: 1px solid var(--info-border);
   min-height: 0;
   height: 24px;
 }
@@ -1928,7 +1971,14 @@ button, input, textarea, select {
 }
 
 /* Modified count chip (reuses existing .chip pattern in the accordion header) */
-.chip-modified { color: var(--warning); background: rgba(var(--warning-rgb), 0.08); }
+.chip-modified {
+  padding: 1px 5px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-xs);
+  color: var(--warning);
+  background: var(--warning-surface);
+  line-height: 1.2;
+}
 
 /* Empty state */
 .git-empty {
@@ -2016,7 +2066,7 @@ button, input, textarea, select {
   font-size: 11px;
   color: var(--danger);
   border-top: 1px solid var(--border);
-  background: rgba(var(--danger-rgb), 0.06);
+  background: var(--danger-surface);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2114,9 +2164,9 @@ button, input, textarea, select {
   background: var(--accent-dim);
 }
 .git-badge-warning {
-  color: rgb(251, 191, 36);
-  border: 1px solid rgba(var(--warning-rgb), 0.2);
-  background: rgba(var(--warning-rgb), 0.08);
+  color: var(--warning);
+  border: 1px solid var(--warning-border);
+  background: var(--warning-surface);
 }
 .git-badge-muted {
   color: var(--text-3);
@@ -2244,7 +2294,7 @@ button, input, textarea, select {
 
 .git-action-menu-item-danger:hover {
   color: var(--danger);
-  background: rgba(var(--danger-rgb), 0.1);
+  background: var(--danger-surface);
 }
 
 .git-action-menu-divider {
@@ -2264,7 +2314,7 @@ button, input, textarea, select {
 
 .git-action-menu-item-danger-hover:not(:disabled):hover {
   color: var(--danger);
-  background: rgba(var(--danger-rgb), 0.1);
+  background: var(--danger-surface);
 }
 
 /* Chat/Terminal content area */
@@ -2605,9 +2655,9 @@ button, input, textarea, select {
   justify-content: center;
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
-  background: rgba(var(--danger-rgb), 0.11);
+  background: var(--accent-dim);
   box-shadow:
-    inset 0 0 0 1px rgba(var(--danger-rgb), 0.14),
+    inset 0 0 0 1px var(--border-accent),
     0 0 0 1px rgba(0, 0, 0, 0.34);
   animation: workspace-snap-preview-in var(--duration-fast) var(--ease-out);
 }
@@ -2988,12 +3038,12 @@ button, input, textarea, select {
 
 .file-explorer-select-bar .select-btn-danger {
   color: var(--danger);
-  border-color: rgba(var(--danger-rgb), 0.2);
+  border-color: var(--danger-border);
 }
 
 .file-explorer-select-bar .select-btn-danger:hover {
-  background: rgba(var(--danger-rgb), 0.1);
-  border-color: rgba(var(--danger-rgb), 0.3);
+  background: var(--danger-surface);
+  border-color: var(--danger);
 }
 
 /* Editor layout with collapsible explorer */
@@ -3333,8 +3383,8 @@ button, input, textarea, select {
 
 .terminal-error-banner {
   padding: 6px 10px;
-  border-top: 1px solid rgba(var(--danger-rgb), 0.15);
-  background: rgba(var(--danger-rgb), 0.08);
+  border-top: 1px solid var(--danger-border);
+  background: var(--danger-surface);
   color: var(--danger);
   font-size: 11px;
   flex-shrink: 0;
@@ -4393,8 +4443,8 @@ button, input, textarea, select {
 }
 
 .update-dlg-icon--error {
-  background: rgba(var(--danger-rgb), 0.08);
-  border: 1px solid rgba(var(--danger-rgb), 0.15);
+  background: var(--danger-surface);
+  border: 1px solid var(--danger-border);
   color: var(--danger);
 }
 
@@ -4532,7 +4582,7 @@ button, input, textarea, select {
   align-items: center;
   gap: 7px;
   padding: 7px 10px;
-  background: rgba(var(--warning-rgb), 0.06);
+  background: var(--warning-surface);
   border-bottom: 1px solid var(--wash-05);
 }
 
@@ -4557,7 +4607,7 @@ button, input, textarea, select {
   font-size: 10.5px;
   font-weight: 500;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(var(--success-rgb), 0.2);
+  border: 1px solid var(--success-border);
   background: transparent;
   color: var(--success);
   cursor: pointer;
@@ -4566,8 +4616,8 @@ button, input, textarea, select {
 }
 
 .approval-trust-btn:hover {
-  background: rgba(var(--success-rgb), 0.08);
-  border-color: rgba(var(--success-rgb), 0.35);
+  background: var(--success-surface);
+  border-color: var(--success);
 }
 
 .approval-rows {
@@ -4665,12 +4715,12 @@ button, input, textarea, select {
 .approval-btn-deny {
   background: transparent;
   color: var(--danger);
-  border-color: rgba(var(--danger-rgb), 0.15);
+  border-color: var(--danger-border);
 }
 
 .approval-btn-deny:hover {
-  background: rgba(var(--danger-rgb), 0.08);
-  border-color: rgba(var(--danger-rgb), 0.3);
+  background: var(--danger-surface);
+  border-color: var(--danger);
 }
 
 /* Cancel — ghost */
@@ -4698,7 +4748,7 @@ button, input, textarea, select {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: rgba(var(--warning-rgb), 0.06);
+  background: var(--warning-surface);
   border-bottom: 1px solid var(--wash-05);
 }
 
@@ -5031,8 +5081,8 @@ button, input, textarea, select {
   width: 44px;
   height: 44px;
   border-radius: var(--radius-md);
-  background: rgba(var(--danger-rgb), 0.1);
-  border: 1px solid rgba(var(--danger-rgb), 0.15);
+  background: var(--danger-surface);
+  border: 1px solid var(--danger-border);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5900,8 +5950,8 @@ button, input, textarea, select {
 }
 
 .ntf-setup-card[data-needs-action="true"] {
-  border-color: rgba(var(--warning-rgb), 0.18);
-  background: rgba(var(--warning-rgb), 0.04);
+  border-color: var(--warning-border);
+  background: var(--warning-surface);
 }
 
 .ntf-setup-left {
@@ -6197,7 +6247,7 @@ button, input, textarea, select {
 
 .wss-icon-btn-danger:hover {
   color: var(--danger);
-  background: rgba(var(--danger-rgb), 0.1);
+  background: var(--danger-surface);
 }
 
 .wss-icon-btn:disabled {
@@ -6431,9 +6481,9 @@ button, input, textarea, select {
   flex-direction: column;
   gap: 10px;
   padding: 12px;
-  border: 1px solid rgba(var(--danger-rgb), 0.15);
+  border: 1px solid var(--danger-border);
   border-radius: var(--radius-md);
-  background: rgba(var(--danger-rgb), 0.04);
+  background: var(--danger-surface);
   font-size: 12px;
   color: var(--text-1);
 }
@@ -6454,7 +6504,7 @@ button, input, textarea, select {
 }
 
 .wss-danger-btn:hover {
-  background: rgba(var(--danger-rgb), 0.08) !important;
+  background: var(--danger-surface) !important;
 }
 
 /* Footer */
@@ -6838,7 +6888,7 @@ button, input, textarea, select {
 
 .git-diff-editor-callout {
   border-bottom: 1px solid var(--border);
-  background: rgba(var(--warning-rgb), 0.05);
+  background: var(--warning-surface);
 }
 
 .git-editor-empty-state {
@@ -6905,15 +6955,15 @@ button, input, textarea, select {
 }
 
 .cm-git-diff-line-added {
-  background: rgba(var(--success-rgb), 0.1);
+  background: var(--success-surface);
 }
 
 .cm-git-diff-line-removed {
-  background: rgba(var(--danger-rgb), 0.1);
+  background: var(--danger-surface);
 }
 
 .cm-git-diff-line-changed {
-  background: rgba(var(--warning-rgb), 0.12);
+  background: var(--warning-surface-strong);
 }
 
 .cm-git-diff-line-active {
@@ -6922,11 +6972,11 @@ button, input, textarea, select {
 }
 
 .cm-git-diff-line-active-pane-base {
-  background: rgba(var(--danger-rgb), 0.18);
+  background: var(--danger-surface-strong);
 }
 
 .cm-git-diff-line-active-pane-modified {
-  background: rgba(var(--success-rgb), 0.22);
+  background: var(--success-surface-strong);
 }
 
 /* ── Chat Attachments ──────────────────────────────────────────────── */
@@ -7014,7 +7064,7 @@ button, input, textarea, select {
 }
 
 .chat-attachment-chip-remove:hover {
-  background: rgba(var(--danger-rgb), 0.15);
+  background: var(--danger-surface-strong);
   color: var(--danger);
 }
 
@@ -8466,8 +8516,8 @@ button, input, textarea, select {
   gap: 10px;
   padding: 10px 14px;
   border-radius: var(--radius-sm);
-  background: rgba(var(--danger-rgb), 0.06);
-  border: 1px solid rgba(var(--danger-rgb), 0.15);
+  background: var(--danger-surface);
+  border: 1px solid var(--danger-border);
 }
 
 .hp-error p {
