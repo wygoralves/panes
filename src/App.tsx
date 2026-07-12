@@ -10,6 +10,7 @@ import { t } from "./i18n";
 import { useUpdateStore } from "./stores/updateStore";
 import {
   ipc,
+  listenChatApprovalRequested,
   listenChatTurnFinished,
   listenEngineRuntimeUpdated,
   listenMenuAction,
@@ -229,6 +230,77 @@ export function App() {
         await ipc.showAgentNotification(title, body);
       } catch (error) {
         console.warn(`Failed to show chat notification for thread ${event.threadId}:`, error);
+      }
+    }).then((fn) => {
+      if (disposed) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listenChatApprovalRequested(async (event) => {
+      useThreadStore.getState().markThreadAwaitingApproval(event.threadId);
+
+      const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+      const activeThreadId = useThreadStore.getState().activeThreadId;
+      const viewingThread =
+        document.hasFocus()
+        && activeWorkspaceId === event.workspaceId
+        && activeThreadId === event.threadId;
+      if (viewingThread) {
+        return;
+      }
+
+      const engineName = resolveAgentDisplayName(event.engineId);
+      toast.warning(event.summary, {
+        title: t("chat:autonomy.approvalToastTitle", { engine: engineName }),
+        action: {
+          label: t("chat:autonomy.openThread"),
+          onClick: () => {
+            void (async () => {
+              const uiStore = useUiStore.getState();
+              if (uiStore.activeView !== "chat") {
+                uiStore.setActiveView("chat");
+              }
+              if (useWorkspaceStore.getState().activeWorkspaceId !== event.workspaceId) {
+                await useWorkspaceStore.getState().setActiveWorkspace(event.workspaceId);
+              }
+              const thread = useThreadStore
+                .getState()
+                .threads.find((candidate) => candidate.id === event.threadId);
+              useWorkspaceStore
+                .getState()
+                .setActiveRepo(thread?.repoId ?? null, { remember: false });
+              useThreadStore.getState().setActiveThread(event.threadId);
+              await useChatStore.getState().setActiveThread(event.threadId);
+            })();
+          },
+        },
+      });
+
+      const notificationStore = useTerminalNotificationSettingsStore.getState();
+      const settings = notificationStore.settings ?? await notificationStore.load();
+      if (!settings?.chatEnabled || document.hasFocus()) {
+        return;
+      }
+
+      const title = event.threadTitle.trim() || engineName;
+      try {
+        await ipc.showAgentNotification(title, event.summary);
+      } catch (error) {
+        console.warn(`Failed to show approval notification for thread ${event.threadId}:`, error);
       }
     }).then((fn) => {
       if (disposed) {

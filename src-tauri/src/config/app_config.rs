@@ -48,6 +48,10 @@ pub struct GeneralConfig {
     pub terminal_notifications: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notification_sound: Option<String>,
+    /// Autonomy preset applied to newly created chat threads
+    /// (`read-only` | `ask` | `auto` | `full`); `None` follows repo trust.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_autonomy_preset: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,6 +110,7 @@ impl Default for GeneralConfig {
             chat_notifications: None,
             terminal_notifications: None,
             notification_sound: None,
+            default_autonomy_preset: None,
         }
     }
 }

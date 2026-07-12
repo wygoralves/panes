@@ -258,6 +258,8 @@ pub fn run() {
             commands::app::set_terminal_accelerated_rendering,
             commands::app::get_terminal_font_size,
             commands::app::set_terminal_font_size,
+            commands::app::get_default_autonomy_preset,
+            commands::app::set_default_autonomy_preset,
             commands::app::get_agent_notification_settings,
             commands::app::set_chat_notifications_enabled,
             commands::app::set_terminal_notifications_enabled,

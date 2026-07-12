@@ -6,6 +6,10 @@ import {
   type NewThreadServiceTier,
 } from "../lib/newThreadRuntime";
 import { resolvePreferredOnboardingChatSelection } from "../lib/onboarding";
+import {
+  autonomyPresetExecutionPolicyRequest,
+  isAutonomyPresetId,
+} from "../lib/autonomyPresets";
 import type { Thread } from "../types";
 import { useChatComposerStore } from "./chatComposerStore";
 import { useEngineStore } from "./engineStore";
@@ -62,6 +66,7 @@ interface ThreadState {
   ) => Promise<Thread | null>;
   setActiveThread: (threadId: string | null) => void;
   applyThreadUpdateLocal: (thread: Thread) => boolean;
+  markThreadAwaitingApproval: (threadId: string) => void;
   setThreadReasoningEffortLocal: (threadId: string, reasoningEffort: string | null) => void;
   setThreadLastModelLocal: (threadId: string, modelId: string | null) => void;
 }
@@ -189,7 +194,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     set({ loading: true, error: undefined });
 
     try {
-      const created = await ipc.createThread(
+      let created = await ipc.createThread(
         workspaceId,
         repoId,
         effectiveRuntime.engineId,
@@ -198,6 +203,21 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
         effectiveRuntime.reasoningEffort,
         effectiveRuntime.serviceTier,
       );
+
+      try {
+        const defaultPreset = await ipc.getDefaultAutonomyPreset();
+        if (isAutonomyPresetId(defaultPreset)) {
+          const request = autonomyPresetExecutionPolicyRequest(
+            defaultPreset,
+            created.engineId,
+          );
+          if (request) {
+            created = await ipc.setThreadExecutionPolicy(created.id, request);
+          }
+        }
+      } catch {
+        // The thread still works on trust defaults if the preset cannot apply.
+      }
 
       const existingWorkspaceThreads = get().threadsByWorkspace[workspaceId] ?? [];
       const workspaceThreads = [created, ...existingWorkspaceThreads.filter((thread) => thread.id !== created.id)];
@@ -671,6 +691,25 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
 
     return applied;
   },
+  markThreadAwaitingApproval: (threadId) =>
+    set((state) => {
+      const updateThread = (thread: Thread) =>
+        thread.id === threadId && thread.status !== "awaiting_approval"
+          ? { ...thread, status: "awaiting_approval" as const }
+          : thread;
+
+      const threadsByWorkspace = Object.entries(state.threadsByWorkspace).reduce<
+        Record<string, Thread[]>
+      >((acc, [workspaceId, threads]) => {
+        acc[workspaceId] = threads.map(updateThread);
+        return acc;
+      }, {});
+
+      return {
+        threadsByWorkspace,
+        threads: flattenThreadsByWorkspace(threadsByWorkspace),
+      };
+    }),
   setThreadReasoningEffortLocal: (threadId, reasoningEffort) =>
     set((state) => {
       const updateThread = (thread: Thread) =>
