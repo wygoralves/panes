@@ -6,6 +6,10 @@ const BEL: u8 = 0x07;
 const ESC: u8 = 0x1b;
 const OSC_SOURCE: &str = "terminal-osc";
 const OSC_TITLE: &str = "Terminal";
+// Upper bound for a buffered OSC sequence. An unterminated OSC (a program that
+// emits ESC ] and never a terminator) would otherwise swallow all subsequent
+// output and grow the buffers without limit.
+const OSC_MAX_BUFFERED_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalOscNotification {
@@ -99,6 +103,17 @@ impl TerminalOscNotificationParser {
 
     fn consume_osc_byte(&mut self, byte: u8, result: &mut TerminalOscParseResult) {
         self.osc_raw.push(byte);
+
+        if self.osc_raw.len() > OSC_MAX_BUFFERED_BYTES {
+            // Give up on parsing an oversized sequence: flush everything seen
+            // so far downstream and let the rest stream through as ordinary
+            // output so the terminal stays live and memory stays bounded.
+            result.passthrough.append(&mut self.osc_raw);
+            self.osc_content.clear();
+            self.in_osc = false;
+            self.osc_pending_escape = false;
+            return;
+        }
 
         if self.osc_pending_escape {
             self.osc_pending_escape = false;
@@ -414,5 +429,27 @@ mod tests {
 
         assert_eq!(result.passthrough, input);
         assert!(result.notifications.is_empty());
+    }
+
+    #[test]
+    fn unterminated_osc_stops_buffering_at_cap() {
+        let mut parser = TerminalOscNotificationParser::default();
+        let payload = vec![b'a'; OSC_MAX_BUFFERED_BYTES * 2];
+
+        let mut input = b"\x1b]9;".to_vec();
+        input.extend_from_slice(&payload);
+        let result = parser.consume(&input);
+
+        // Everything must reach the passthrough once the cap trips; nothing
+        // may stay buffered inside the parser.
+        assert_eq!(result.passthrough.len(), input.len());
+        assert!(result.notifications.is_empty());
+        assert!(!parser.in_osc);
+        assert!(parser.osc_raw.is_empty());
+        assert!(parser.osc_content.is_empty());
+
+        // Later output flows through untouched.
+        let after = parser.consume(b"still alive");
+        assert_eq!(after.passthrough, b"still alive");
     }
 }
