@@ -8,6 +8,7 @@ import {
   getOpenCodeProviderId,
   groupOpenCodeModels,
   modelMetadataChips,
+  shouldUseCompactEffortLabels,
 } from "./ModelPicker";
 
 function makeModel(id: string, hidden = false): EngineModel {
@@ -26,6 +27,12 @@ function makeModel(id: string, hidden = false): EngineModel {
 }
 
 describe("OpenCode model provider grouping", () => {
+  it("uses compact labels when a model exposes five or more effort levels", () => {
+    expect(shouldUseCompactEffortLabels(4)).toBe(false);
+    expect(shouldUseCompactEffortLabels(5)).toBe(true);
+    expect(shouldUseCompactEffortLabels(7)).toBe(true);
+  });
+
   it("reads the provider from the slug and unwraps OpenRouter broker models", () => {
     expect(getOpenCodeProviderId("openai/gpt-5")).toBe("openai");
     expect(getOpenCodeProviderId("openrouter/anthropic/claude-sonnet-4.5")).toBe(
@@ -116,5 +123,12 @@ describe("OpenCode model provider grouping", () => {
         },
       }).map((chip) => chip.label),
     ).toEqual(["Vision", "PDF", "Files", "400K ctx", "128K out"]);
+
+    expect(
+      modelMetadataChips(t, {
+        ...makeModel("openrouter/openai/gpt-5"),
+        attachmentModalities: ["text", "image", "pdf"],
+      }).map((chip) => chip.icon),
+    ).toEqual(["vision", "pdf", "files"]);
   });
 });
