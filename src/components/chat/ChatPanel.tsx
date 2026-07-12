@@ -5578,7 +5578,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       {activeThreadAutonomyEngineId && (
                         <button
                           type="button"
-                          className="approval-batch-btn approval-batch-btn-warn"
+                          className="approval-batch-btn"
                           onClick={() => void allowAllPendingApprovals(true)}
                           title={t("autonomy.presets.full.description")}
                         >
