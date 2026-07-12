@@ -452,6 +452,19 @@ export interface EngineInfo {
   capabilities: EngineCapabilities;
 }
 
+export interface ChatProviderUsage {
+  engineId: string;
+  name: string;
+  available: boolean;
+  windows: ChatProviderUsageWindow[];
+}
+
+export interface ChatProviderUsageWindow {
+  kind: "five_hour" | "weekly" | "fable_weekly" | "opus_weekly" | "sonnet_weekly";
+  usedPercent: number;
+  resetsAt: number | null;
+}
+
 export interface EngineCapabilities {
   permissionModes: string[];
   sandboxModes: string[];
@@ -1216,8 +1229,14 @@ export interface UsageLimitsUpdatedEvent {
     context_window_percent?: number | null;
     five_hour_percent?: number | null;
     weekly_percent?: number | null;
+    fable_weekly_percent?: number | null;
+    opus_weekly_percent?: number | null;
+    sonnet_weekly_percent?: number | null;
     five_hour_resets_at?: number | null;
     weekly_resets_at?: number | null;
+    fable_weekly_resets_at?: number | null;
+    opus_weekly_resets_at?: number | null;
+    sonnet_weekly_resets_at?: number | null;
   };
 }
 
@@ -1292,6 +1311,12 @@ export interface ContextUsage {
   contextPercent: number | null;
   windowFiveHourPercent: number | null;
   windowWeeklyPercent: number | null;
+  windowFableWeeklyPercent: number | null;
+  windowOpusWeeklyPercent: number | null;
+  windowSonnetWeeklyPercent: number | null;
   windowFiveHourResetsAt: string | null;
   windowWeeklyResetsAt: string | null;
+  windowFableWeeklyResetsAt: string | null;
+  windowOpusWeeklyResetsAt: string | null;
+  windowSonnetWeeklyResetsAt: string | null;
 }

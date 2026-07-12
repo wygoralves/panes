@@ -10,6 +10,7 @@ import type {
   ChatAttachment,
   ChatEngineId,
   ChatInputItem,
+  ChatProviderUsage,
   CodexApprovalsReviewer,
   CodexReviewDelivery,
   CodexReviewTarget,
@@ -340,6 +341,8 @@ export const ipc = {
     invoke<Thread>("compact_codex_thread", { threadId }),
   deleteThread: (threadId: string) => invoke<void>("delete_thread", { threadId }),
   listEngines: () => invoke<EngineInfo[]>("list_engines"),
+  getChatProviderUsage: () =>
+    invoke<ChatProviderUsage[]>("get_chat_provider_usage"),
   engineHealth: (engineId: string) => invoke<EngineHealth>("engine_health", { engineId }),
   prewarmEngine: (engineId: string) => invoke<void>("prewarm_engine", { engineId }),
   runEngineCheck: (engineId: string, command: string) =>

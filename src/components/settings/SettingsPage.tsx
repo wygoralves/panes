@@ -14,6 +14,7 @@ import {
   FolderGit2,
   GitBranch,
   Globe2,
+  Gauge,
   LayoutGrid,
   LockKeyhole,
   Minus,
@@ -60,6 +61,7 @@ import { getHarnessIcon } from "../shared/HarnessLogos";
 import { Dropdown } from "../shared/Dropdown";
 import { PanesMark, PanesWordmark } from "../shared/PanesBrand";
 import { WorkspaceSettingsPage } from "../workspace/WorkspaceSettingsPage";
+import { UsageLimitsSettings } from "./UsageLimitsSettings";
 import type {
   PowerSettingsInput,
   TerminalNotificationIntegrationId,
@@ -310,6 +312,7 @@ export function SettingsPage() {
       { id: "appearance" as const, icon: <Palette size={15} />, label: t("app:settingsPage.nav.appearance") },
       { id: "terminal" as const, icon: <TerminalSquare size={15} />, label: t("app:settingsPage.nav.terminal") },
       { id: "notifications" as const, icon: <BellRing size={15} />, label: t("app:settingsPage.nav.notifications") },
+      { id: "usage" as const, icon: <Gauge size={15} />, label: t("app:settingsPage.nav.usage") },
       { id: "power" as const, icon: <Zap size={15} />, label: t("app:settingsPage.nav.power") },
       { id: "about" as const, icon: <BadgeInfo size={15} />, label: t("app:settingsPage.nav.about") },
       { id: "workspace-general" as const, icon: <FolderGit2 size={15} />, label: t("workspace:nav.general") },
@@ -851,6 +854,8 @@ export function SettingsPage() {
               </section>
             </>
           ) : null}
+
+          {section === "usage" ? <UsageLimitsSettings /> : null}
 
           {section === "power" ? (
             <>
