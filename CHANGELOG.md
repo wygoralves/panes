@@ -1,5 +1,31 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.61.0...vnull) (2026-07-12)
+
+### Features
+
+* add unified fullscreen settings ([b79d1f1](https://github.com/wygoralves/panes/commit/b79d1f18743af4714fc0a4aecbb79643005a9efa))
+* add usage limits to chat and Manage ([b0c3a0c](https://github.com/wygoralves/panes/commit/b0c3a0c0a5d5e67004cd0201d940d1a4b4ee2447))
+* discover runtime models and provider limits ([4c8ef3a](https://github.com/wygoralves/panes/commit/4c8ef3a883377b1fd126378b35cd5190415a4a85))
+* track application update progress ([9fde64f](https://github.com/wygoralves/panes/commit/9fde64f0ff83e166c3288ef100e19ddeeb6dc333))
+
+### Bug Fixes
+
+* avoid terminal process lock contention ([5aada51](https://github.com/wygoralves/panes/commit/5aada5192533e175a020e1f9300e6ceebc7708d7))
+* bound unterminated terminal OSC sequences ([0cafd52](https://github.com/wygoralves/panes/commit/0cafd52117ba1bb102dff4c185fbaae0c9465062))
+* fit model controls in narrow panes ([4423053](https://github.com/wygoralves/panes/commit/4423053d638b2fb832170024131e6f3796a59bbe))
+* harden Git checkout and discard flows ([f9978e7](https://github.com/wygoralves/panes/commit/f9978e7b78de6b3bce96f4f0fd2e98e9775daa85))
+* index assistant replies in global search ([494f6c4](https://github.com/wygoralves/panes/commit/494f6c474c31803897a3061c98e5fdfe38888630))
+* match terminal preview to app theme ([7079304](https://github.com/wygoralves/panes/commit/70793045cbfac6eaa07355ce2fd92381d2f93ce9))
+* polish landing page motion and alignment ([f2a88cb](https://github.com/wygoralves/panes/commit/f2a88cb93b4b6decff0b721d5830d8affc78d191))
+* preserve legacy Claude thread models ([58246f1](https://github.com/wygoralves/panes/commit/58246f13e3fc934d5a2c6602fad6fd92ae197923))
+* require explicit Codex sandbox denials ([cbc79d5](https://github.com/wygoralves/panes/commit/cbc79d5002459ef38ae4b25b4f4f3b77e06a20b0))
+* restore and present provider usage limits ([14df530](https://github.com/wygoralves/panes/commit/14df5302d1dcbbafc49ebcd764ed67774d914974))
+
+### Performance Improvements
+
+* make chat submissions responsive ([ab8c204](https://github.com/wygoralves/panes/commit/ab8c204093c21225ca9e18f9e5cc4f5c06b948cd))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.60.0...vnull) (2026-07-11)
 
 ### Features
