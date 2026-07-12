@@ -470,31 +470,73 @@ impl EngineManager {
         self.claude.set_resource_dir(resource_dir);
     }
 
-    pub async fn list_engines(&self) -> anyhow::Result<Vec<EngineInfoDto>> {
-        let codex_models = match timeout(Duration::from_secs(4), self.codex.list_models_runtime())
-            .await
-        {
+    async fn load_codex_models(&self) -> Vec<ModelInfo> {
+        match timeout(Duration::from_secs(4), self.codex.list_models_runtime()).await {
             Ok(models) => models,
             Err(_) => {
                 log::warn!(
-                        "timed out loading codex runtime models; falling back to cached or static model catalog"
-                    );
+                    "timed out loading codex runtime models; falling back to cached or static model catalog"
+                );
                 self.codex.runtime_model_fallback().await
             }
-        };
-        let claude_models = self.claude.models();
-        let opencode_models = match timeout(
-            Duration::from_secs(4),
-            self.opencode.list_models_runtime(),
-        )
-        .await
-        {
+        }
+    }
+
+    async fn load_claude_models(&self) -> Vec<ModelInfo> {
+        match timeout(Duration::from_secs(12), self.claude.list_models_runtime()).await {
+            Ok(models) => models,
+            Err(_) => {
+                log::warn!(
+                    "timed out loading Claude runtime models, falling back to the cached or default catalog"
+                );
+                self.claude.runtime_model_fallback().await
+            }
+        }
+    }
+
+    async fn load_opencode_models(&self) -> Vec<ModelInfo> {
+        match timeout(Duration::from_secs(4), self.opencode.list_models_runtime()).await {
             Ok(models) => models,
             Err(_) => {
                 log::warn!("timed out loading opencode runtime models; falling back to static model catalog");
                 self.opencode.models()
             }
+        }
+    }
+
+    pub async fn models_for_validation(
+        &self,
+        engine_id: &str,
+        requested_model_id: &str,
+    ) -> anyhow::Result<Vec<ModelInfo>> {
+        let cached_models = match engine_id {
+            "codex" => self.codex.runtime_model_fallback().await,
+            "claude" => self.claude.runtime_model_fallback().await,
+            "opencode" => self.opencode.runtime_model_fallback().await,
+            _ => anyhow::bail!("unsupported engine_id {engine_id}"),
         };
+
+        if cached_models
+            .iter()
+            .any(|model| model.id == requested_model_id)
+        {
+            return Ok(cached_models);
+        }
+
+        Ok(match engine_id {
+            "codex" => self.load_codex_models().await,
+            "claude" => self.load_claude_models().await,
+            "opencode" => self.load_opencode_models().await,
+            _ => unreachable!(),
+        })
+    }
+
+    pub async fn list_engines(&self) -> anyhow::Result<Vec<EngineInfoDto>> {
+        let (codex_models, claude_models, opencode_models) = tokio::join!(
+            self.load_codex_models(),
+            self.load_claude_models(),
+            self.load_opencode_models(),
+        );
 
         Ok(vec![
             EngineInfoDto {
@@ -516,6 +558,17 @@ impl EngineManager {
                 capabilities: map_engine_capabilities(capabilities_for_engine(self.opencode.id())),
             },
         ])
+    }
+
+    pub async fn chat_provider_usage(&self) -> Vec<crate::models::ChatProviderUsageDto> {
+        let (codex, claude) = tokio::join!(
+            self.codex.usage_limits_snapshot(),
+            self.claude.usage_limits_snapshot(),
+        );
+        vec![
+            map_provider_usage("codex", "Codex", codex),
+            map_provider_usage("claude", "Claude", claude),
+        ]
     }
 
     pub async fn health(&self, engine_id: &str) -> anyhow::Result<EngineHealthDto> {
@@ -906,6 +959,60 @@ impl EngineManager {
     }
 }
 
+fn map_provider_usage(
+    engine_id: &str,
+    name: &str,
+    result: anyhow::Result<UsageLimitsSnapshot>,
+) -> crate::models::ChatProviderUsageDto {
+    let Ok(usage) = result else {
+        return crate::models::ChatProviderUsageDto {
+            engine_id: engine_id.to_string(),
+            name: name.to_string(),
+            available: false,
+            windows: Vec::new(),
+        };
+    };
+
+    let mut windows = Vec::new();
+    let mut push_window = |kind: &str, percent: Option<u8>, resets_at: Option<i64>| {
+        if let Some(used_percent) = percent {
+            windows.push(crate::models::ChatProviderUsageWindowDto {
+                kind: kind.to_string(),
+                used_percent,
+                resets_at,
+            });
+        }
+    };
+    push_window(
+        "five_hour",
+        usage.five_hour_percent,
+        usage.five_hour_resets_at,
+    );
+    push_window("weekly", usage.weekly_percent, usage.weekly_resets_at);
+    push_window(
+        "fable_weekly",
+        usage.fable_weekly_percent,
+        usage.fable_weekly_resets_at,
+    );
+    push_window(
+        "opus_weekly",
+        usage.opus_weekly_percent,
+        usage.opus_weekly_resets_at,
+    );
+    push_window(
+        "sonnet_weekly",
+        usage.sonnet_weekly_percent,
+        usage.sonnet_weekly_resets_at,
+    );
+
+    crate::models::ChatProviderUsageDto {
+        engine_id: engine_id.to_string(),
+        name: name.to_string(),
+        available: !windows.is_empty(),
+        windows,
+    }
+}
+
 fn map_model_info(model: ModelInfo) -> EngineModelDto {
     EngineModelDto {
         id: model.id,
@@ -987,6 +1094,27 @@ mod tests {
     fn validate_engine_sandbox_mode_rejects_unsupported_claude_full_access() {
         assert!(validate_engine_sandbox_mode("claude", Some("danger-full-access")).is_err());
         assert!(validate_engine_sandbox_mode("claude", Some("workspace-write")).is_ok());
+    }
+
+    #[test]
+    fn provider_usage_keeps_generic_and_fable_weekly_windows_separate() {
+        let provider = map_provider_usage(
+            "claude",
+            "Claude",
+            Ok(UsageLimitsSnapshot {
+                five_hour_percent: Some(12),
+                weekly_percent: Some(46),
+                fable_weekly_percent: Some(76),
+                ..UsageLimitsSnapshot::default()
+            }),
+        );
+
+        assert!(provider.available);
+        assert_eq!(provider.windows.len(), 3);
+        assert_eq!(provider.windows[1].kind, "weekly");
+        assert_eq!(provider.windows[1].used_percent, 46);
+        assert_eq!(provider.windows[2].kind, "fable_weekly");
+        assert_eq!(provider.windows[2].used_percent, 76);
     }
 
     #[test]

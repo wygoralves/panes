@@ -37,7 +37,7 @@ use super::{
     ApprovalRequestRoute, CodexRemoteThreadSummary, Engine, EngineEvent, EngineThread,
     ImportedThreadMessage, ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo,
     ReasoningEffortOption, SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment,
-    TurnCompletionStatus, TurnInput, TurnInputItem,
+    TurnCompletionStatus, TurnInput, TurnInputItem, UsageLimitsSnapshot,
 };
 
 const INITIALIZE_METHODS: &[&str] = &["initialize"];
@@ -1077,6 +1077,21 @@ impl Engine for CodexEngine {
 }
 
 impl CodexEngine {
+    pub async fn usage_limits_snapshot(&self) -> anyhow::Result<UsageLimitsSnapshot> {
+        let transport = self.ensure_ready_transport().await?;
+        let snapshot = request_with_fallback(
+            transport.as_ref(),
+            ACCOUNT_RATE_LIMITS_READ_METHODS,
+            serde_json::Value::Null,
+            Duration::from_secs(5),
+        )
+        .await?;
+        let mut mapper = TurnEventMapper::default();
+        match mapper.map_rate_limits_snapshot(&snapshot) {
+            Some(EngineEvent::UsageLimitsUpdated { usage }) => Ok(usage),
+            _ => anyhow::bail!("Codex did not return account usage limits"),
+        }
+    }
     pub fn subscribe_runtime_events(&self) -> broadcast::Receiver<CodexRuntimeEvent> {
         self.runtime_events.subscribe()
     }

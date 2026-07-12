@@ -6,6 +6,7 @@ use crate::{
     db,
     engines::validate_engine_sandbox_mode,
     engines::CodexRemoteThreadSummary,
+    engines::ModelInfo,
     engines::OpenCodeRemoteSessionSummary,
     engines::SandboxPolicy,
     engines::ThreadSyncSnapshot,
@@ -379,29 +380,36 @@ async fn validate_model_for_engine(
         return Err("model id cannot be empty".to_string());
     }
 
-    if let Ok(engines) = state.engines.list_engines().await {
-        if let Some(engine) = engines.iter().find(|engine| engine.id == engine_id) {
-            if engine
-                .models
-                .iter()
-                .any(|model| model.id == normalized_model_id)
-            {
-                return Ok(normalized_model_id.to_string());
-            }
+    let models = state
+        .engines
+        .models_for_validation(engine_id, normalized_model_id)
+        .await
+        .ok();
 
-            let available = engine
-                .models
-                .iter()
-                .map(|model| model.id.clone())
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(format!(
-                "model `{normalized_model_id}` is not supported by engine `{engine_id}`. available models: {available}"
-            ));
-        }
+    validate_model_for_engine_from_catalog(engine_id, normalized_model_id, models.as_deref())
+}
+
+fn validate_model_for_engine_from_catalog(
+    engine_id: &str,
+    normalized_model_id: &str,
+    models: Option<&[ModelInfo]>,
+) -> Result<String, String> {
+    let Some(models) = models else {
+        return Ok(normalized_model_id.to_string());
+    };
+
+    if models.iter().any(|model| model.id == normalized_model_id) {
+        return Ok(normalized_model_id.to_string());
     }
 
-    Ok(normalized_model_id.to_string())
+    let available = models
+        .iter()
+        .map(|model| model.id.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "model `{normalized_model_id}` is not supported by engine `{engine_id}`. available models: {available}"
+    ))
 }
 
 async fn resolve_thread_cwd(state: &AppState, thread: &ThreadDto) -> Result<String, String> {
@@ -683,21 +691,6 @@ async fn create_thread_inner(
     reasoning_effort: Option<String>,
     service_tier: Option<String>,
 ) -> Result<ThreadDto, String> {
-    let effective_model_id = validate_model_for_engine(state, &engine_id, model_id.trim()).await?;
-    let normalized_reasoning_effort = reasoning_effort
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_lowercase);
-    let validated_reasoning_effort =
-        if let Some(requested_effort) = normalized_reasoning_effort.as_deref() {
-            Some(
-                validate_reasoning_effort(state, &engine_id, &effective_model_id, requested_effort)
-                    .await?,
-            )
-        } else {
-            None
-        };
     let normalized_service_tier = if engine_id == "codex" {
         normalize_thread_service_tier(service_tier)?
     } else {
@@ -710,7 +703,35 @@ async fn create_thread_inner(
         }
         None
     };
-
+    let normalized_model_id = model_id.trim();
+    if normalized_model_id.is_empty() {
+        return Err("model id cannot be empty".to_string());
+    }
+    let validation_models = state
+        .engines
+        .models_for_validation(&engine_id, normalized_model_id)
+        .await
+        .ok();
+    let effective_model_id = validate_model_for_engine_from_catalog(
+        &engine_id,
+        normalized_model_id,
+        validation_models.as_deref(),
+    )?;
+    let normalized_reasoning_effort = reasoning_effort
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_lowercase);
+    let validated_reasoning_effort =
+        if let Some(requested_effort) = normalized_reasoning_effort.as_deref() {
+            Some(validate_reasoning_effort_from_catalog(
+                &effective_model_id,
+                requested_effort,
+                validation_models.as_deref(),
+            )?)
+        } else {
+            None
+        };
     let metadata = if validated_reasoning_effort.is_some() || normalized_service_tier.is_some() {
         let mut object = serde_json::Map::new();
         if let Some(value) = validated_reasoning_effort {
@@ -1708,6 +1729,20 @@ async fn validate_reasoning_effort(
     model_id: &str,
     requested_effort: &str,
 ) -> Result<String, String> {
+    let models = state
+        .engines
+        .models_for_validation(engine_id, model_id)
+        .await
+        .ok();
+
+    validate_reasoning_effort_from_catalog(model_id, requested_effort, models.as_deref())
+}
+
+fn validate_reasoning_effort_from_catalog(
+    model_id: &str,
+    requested_effort: &str,
+    models: Option<&[ModelInfo]>,
+) -> Result<String, String> {
     const KNOWN_REASONING_EFFORTS: &[&str] =
         &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
     if !KNOWN_REASONING_EFFORTS.contains(&requested_effort) {
@@ -1717,33 +1752,30 @@ async fn validate_reasoning_effort(
         ));
     }
 
-    if let Ok(engines) = state.engines.list_engines().await {
-        if let Some(engine) = engines.iter().find(|engine| engine.id == engine_id) {
-            if let Some(model) = engine.models.iter().find(|model| model.id == model_id) {
-                if let Some(option) = model
-                    .supported_reasoning_efforts
-                    .iter()
-                    .find(|option| option.reasoning_effort == requested_effort)
-                {
-                    return Ok(option.reasoning_effort.clone());
-                }
+    let Some(model) = models.and_then(|items| items.iter().find(|model| model.id == model_id))
+    else {
+        return Ok(requested_effort.to_string());
+    };
 
-                let supported = model
-                    .supported_reasoning_efforts
-                    .iter()
-                    .map(|option| option.reasoning_effort.clone())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-
-                return Err(format!(
-                    "reasoning effort `{requested_effort}` is not supported by model `{}`. supported values: {}",
-                    model.id, supported
-                ));
-            }
-        }
+    if let Some(option) = model
+        .supported_reasoning_efforts
+        .iter()
+        .find(|option| option.reasoning_effort == requested_effort)
+    {
+        return Ok(option.reasoning_effort.clone());
     }
 
-    Ok(requested_effort.to_string())
+    let supported = model
+        .supported_reasoning_efforts
+        .iter()
+        .map(|option| option.reasoning_effort.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    Err(format!(
+        "reasoning effort `{requested_effort}` is not supported by model `{}`. supported values: {}",
+        model.id, supported
+    ))
 }
 
 async fn validate_model_for_thread_engine(
