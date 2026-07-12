@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -31,13 +33,15 @@ class SidecarHarness {
     timer: ReturnType<typeof setTimeout>;
   }> = [];
 
-  constructor(scenario: unknown) {
+  constructor(scenario: unknown, env: Record<string, string> = {}) {
     this.child = spawn(process.execPath, [sidecarScriptPath], {
       cwd: repoRoot,
       env: {
         ...process.env,
         CLAUDE_AGENT_SDK_MODULE: mockSdkModulePath,
         CLAUDE_AGENT_SDK_MOCK_SCENARIO: JSON.stringify(scenario),
+        PANES_DISABLE_CLAUDE_USAGE_FETCH: "1",
+        ...env,
       },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -171,8 +175,8 @@ function makeErrorResult(
 
 let activeHarness: SidecarHarness | null = null;
 
-async function spawnHarness(scenario: unknown) {
-  activeHarness = new SidecarHarness(scenario);
+async function spawnHarness(scenario: unknown, env: Record<string, string> = {}) {
+  activeHarness = new SidecarHarness(scenario, env);
   await activeHarness.waitFor((event) => event.type === "ready");
   return activeHarness;
 }
@@ -193,6 +197,46 @@ function parseObservationResults(harness: SidecarHarness, queryId: string) {
 }
 
 describe("claude-agent-sdk-server sidecar", () => {
+  it("discovers the model catalog from the selected Claude runtime", async () => {
+    const harness = await spawnHarness(
+      {
+        models: [
+          {
+            value: "claude-fable-5[1m]",
+            resolvedModel: "claude-fable-5",
+            displayName: "Fable",
+            description: "Fable 5",
+            supportsEffort: true,
+            supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+          },
+        ],
+      },
+      { PANES_CLAUDE_CODE_EXECUTABLE: "/tmp/claude-current" },
+    );
+
+    harness.send({
+      id: "models-current",
+      method: "list_models",
+      params: { cwd: repoRoot },
+    });
+
+    const event = await harness.waitFor(
+      (candidate) => candidate.id === "models-current" && candidate.type === "models",
+    );
+
+    expect(event).toMatchObject({
+      runtimeSource: "system",
+      runtimeExecutable: "/tmp/claude-current",
+      models: [
+        {
+          value: "claude-fable-5[1m]",
+          displayName: "Fable",
+          supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+        },
+      ],
+    });
+  });
+
   it("denies Write in read-only mode even when writableRoots are present", async () => {
     const harness = await spawnHarness({
       steps: [
@@ -540,6 +584,165 @@ describe("claude-agent-sdk-server sidecar", () => {
       },
       stopReason: "end_turn",
     });
+  });
+
+  it("keeps the Fable weekly limit separate and reports Fable context", async () => {
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "yield",
+          message: {
+            type: "rate_limit_event",
+            rate_limit_info: {
+              rateLimitType: "seven_day",
+              utilization: 0.25,
+              resetsAt: 1_740_000_000,
+            },
+          },
+        },
+        {
+          type: "yield",
+          message: {
+            type: "rate_limit_event",
+            rate_limit_info: {
+              rateLimitType: "seven_day_overage_included",
+              utilization: 0.4,
+              resetsAt: 1_740_100_000,
+            },
+          },
+        },
+        {
+          type: "yield",
+          message: {
+            type: "stream_event",
+            event: {
+              type: "message_start",
+              message: {
+                usage: {
+                  input_tokens: 25_000,
+                  cache_creation_input_tokens: 5_000,
+                  cache_read_input_tokens: 20_000,
+                  output_tokens: 0,
+                },
+              },
+            },
+          },
+        },
+        {
+          type: "yield",
+          message: makeSuccessResult({
+            session_id: "session-fable-usage",
+            usage: { input_tokens: 25_000, output_tokens: 10 },
+          }),
+        },
+      ],
+    });
+
+    harness.send({
+      id: "query-fable-usage",
+      method: "query",
+      params: {
+        prompt: "surface Fable usage",
+        cwd: repoRoot,
+        model: "claude-fable-5[1m]",
+      },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-fable-usage" && event.type === "turn_completed",
+    );
+
+    const usageEvents = harness.events.filter(
+      (event) => event.id === "query-fable-usage" && event.type === "usage_limits_updated",
+    );
+    expect(usageEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          usage: expect.objectContaining({
+            weeklyPercent: 25,
+            fableWeeklyPercent: null,
+          }),
+        }),
+        expect.objectContaining({
+          usage: expect.objectContaining({
+            weeklyPercent: null,
+            fableWeeklyPercent: 40,
+            fableWeeklyResetsAt: 1_740_100_000,
+          }),
+        }),
+        expect.objectContaining({
+          usage: expect.objectContaining({ contextWindowPercent: 95 }),
+        }),
+      ]),
+    );
+  });
+
+  it("loads current Claude usage including the scoped Fable weekly limit", async () => {
+    let authorizationHeader = "";
+    const usageServer = createServer((request, response) => {
+      authorizationHeader = String(request.headers.authorization || "");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          five_hour: {
+            utilization: 12,
+            resets_at: "2026-07-12T07:30:00Z",
+          },
+          seven_day: {
+            utilization: 46,
+            resets_at: "2026-07-13T12:00:00Z",
+          },
+          limits: [
+            {
+              kind: "weekly_scoped",
+              percent: 76,
+              resets_at: "2026-07-13T12:00:00Z",
+              scope: { model: { display_name: "Fable" } },
+            },
+          ],
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => usageServer.listen(0, "127.0.0.1", resolve));
+    const address = usageServer.address() as AddressInfo;
+
+    try {
+      const harness = await spawnHarness(
+        { steps: [] },
+        {
+          CLAUDE_CODE_OAUTH_TOKEN: "test-oauth-token",
+          PANES_DISABLE_CLAUDE_USAGE_FETCH: "0",
+          PANES_CLAUDE_USAGE_URL: `http://127.0.0.1:${address.port}/api/oauth/usage`,
+        },
+      );
+
+      harness.send({
+        id: "current-usage",
+        method: "get_usage_limits",
+      });
+
+      const usageEvent = await harness.waitFor(
+        (event) =>
+          event.id === "current-usage" &&
+          event.type === "usage_limits_updated" &&
+          (event.usage as Record<string, unknown>)?.fableWeeklyPercent === 76,
+      );
+
+      expect(authorizationHeader).toBe("Bearer test-oauth-token");
+      expect(usageEvent).toMatchObject({
+        usage: {
+          fiveHourPercent: 12,
+          weeklyPercent: 46,
+          fableWeeklyPercent: 76,
+          fableWeeklyResetsAt: 1_783_944_000,
+        },
+      });
+    } finally {
+      await activeHarness?.close();
+      await new Promise<void>((resolve, reject) =>
+        usageServer.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
 
   it("uses tool_response and emits action output deltas", async () => {

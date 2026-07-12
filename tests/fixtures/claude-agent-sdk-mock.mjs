@@ -67,6 +67,11 @@ export function query({ options }) {
         continue;
       }
 
+      if (step.type === "delay") {
+        await new Promise((resolve) => setTimeout(resolve, step.durationMs ?? 0));
+        continue;
+      }
+
       if (step.type === "hook") {
         await runHooks(options, step.hook, step.input);
         continue;
@@ -101,6 +106,17 @@ export function query({ options }) {
   iterator.close = () => {
     closed = true;
   };
+  iterator.supportedModels = async () => clone(
+    scenario.models ?? [
+      {
+        value: "default",
+        displayName: "Default (recommended)",
+        description: "Default Claude model",
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "medium", "high"],
+      },
+    ],
+  );
 
   return iterator;
 }

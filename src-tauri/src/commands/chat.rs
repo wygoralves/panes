@@ -4098,6 +4098,10 @@ fn resolve_reasoning_effort_for_model(
     model: &EngineModelDto,
     requested_effort: Option<&str>,
 ) -> Option<String> {
+    if model.supported_reasoning_efforts.is_empty() {
+        return None;
+    }
+
     let normalized_requested = normalize_reasoning_effort_value(requested_effort);
     if let Some(requested) = normalized_requested.as_ref() {
         if model
@@ -5297,6 +5301,31 @@ mod tests {
                 Some("high"),
             ),
             Some("high".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_reasoning_effort_omits_effort_for_unsupported_models() {
+        let model = EngineModelDto {
+            id: "haiku".to_string(),
+            display_name: "Haiku".to_string(),
+            description: String::new(),
+            hidden: false,
+            is_default: false,
+            upgrade: None,
+            availability_nux: None,
+            upgrade_info: None,
+            input_modalities: vec!["text".to_string(), "image".to_string()],
+            attachment_modalities: vec!["text".to_string(), "image".to_string()],
+            limits: None,
+            supports_personality: false,
+            default_reasoning_effort: "low".to_string(),
+            supported_reasoning_efforts: Vec::new(),
+        };
+
+        assert_eq!(
+            resolve_reasoning_effort_for_model(&model, Some("high")),
+            None
         );
     }
 

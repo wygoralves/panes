@@ -255,6 +255,23 @@ pub struct EngineInfoDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ChatProviderUsageDto {
+    pub engine_id: String,
+    pub name: String,
+    pub available: bool,
+    pub windows: Vec<ChatProviderUsageWindowDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatProviderUsageWindowDto {
+    pub kind: String,
+    pub used_percent: u8,
+    pub resets_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EngineCapabilitiesDto {
     #[serde(default)]
     pub permission_modes: Vec<String>,
