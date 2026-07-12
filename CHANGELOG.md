@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.62.1...vnull) (2026-07-12)
+
+### Bug Fixes
+
+* stage native agent runtime packages ([a0f483f](https://github.com/wygoralves/panes/commit/a0f483ff88d5c77970b1841e23ff3ddf8f65dcac))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.62.0...vnull) (2026-07-12)
 
 ### Bug Fixes
