@@ -689,7 +689,6 @@ export function ModelPicker({
             {browsingEngine?.id !== "opencode" ? (
               <div className="mp-models-header">
                 <span className="mp-models-title">{t("modelPicker.models")}</span>
-                <span className="mp-models-count">{activeModels.length}</span>
               </div>
             ) : null}
 
