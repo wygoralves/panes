@@ -61,7 +61,7 @@ const darkVoidTheme = EditorView.theme(
       borderLeftWidth: "2px",
     },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
-      backgroundColor: "rgba(var(--accent-rgb), 0.12) !important",
+      backgroundColor: "var(--selection-bg) !important",
     },
     ".cm-activeLineGutter": {
       backgroundColor: "var(--wash-04)",
@@ -74,14 +74,14 @@ const darkVoidTheme = EditorView.theme(
       fontSize: "11px",
     },
     ".cm-matchingBracket": {
-      backgroundColor: "rgba(var(--accent-rgb), 0.18)",
+      backgroundColor: "var(--selection-bg)",
       outline: "none",
     },
     ".cm-searchMatch": {
-      backgroundColor: "rgba(var(--warning-rgb), 0.2)",
+      backgroundColor: "var(--warning-surface)",
     },
     ".cm-searchMatch.cm-searchMatch-selected": {
-      backgroundColor: "rgba(var(--warning-rgb), 0.35)",
+      backgroundColor: "var(--warning-surface-strong)",
     },
     ".cm-panels": {
       background: "var(--bg-2)",
