@@ -34,8 +34,8 @@ use super::{
     codex_event_mapper::TurnEventMapper,
     codex_protocol::{raw_value_to_value, IncomingMessage},
     codex_transport::CodexTransport,
-    ActionResult, ApprovalRequestRoute, CodexRemoteThreadSummary, Engine, EngineEvent,
-    EngineThread, ImportedThreadMessage, ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo,
+    ApprovalRequestRoute, CodexRemoteThreadSummary, Engine, EngineEvent, EngineThread,
+    ImportedThreadMessage, ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo,
     ReasoningEffortOption, SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment,
     TurnCompletionStatus, TurnInput, TurnInputItem,
 };
@@ -4281,27 +4281,6 @@ fn is_transport_or_protocol_error(value: &str) -> bool {
         || value.contains("invalid request")
 }
 
-fn is_opaque_action_failure(result: &ActionResult) -> bool {
-    let has_output = result
-        .output
-        .as_deref()
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false);
-    if has_output {
-        return false;
-    }
-
-    match result.error.as_deref() {
-        None => true,
-        Some(error) => {
-            let normalized = error.trim().to_lowercase();
-            normalized == "action failed with status `failed`"
-                || normalized == "action failed with status 'failed'"
-                || normalized == "action failed with status failed"
-        }
-    }
-}
-
 fn sandbox_policy_network_enabled(policy: &serde_json::Value) -> bool {
     match policy.get("networkAccess") {
         Some(serde_json::Value::Bool(value)) => *value,
@@ -4312,8 +4291,13 @@ fn sandbox_policy_network_enabled(policy: &serde_json::Value) -> bool {
 
 fn event_indicates_sandbox_denial(event: &EngineEvent) -> bool {
     match event {
+        // Only an explicit sandbox signature may flip the session to
+        // externalSandbox (danger-full-access). Opaque failures (empty output,
+        // synthesized "Action failed with status `failed`") are routinely
+        // produced by benign non-zero commands, so treating them as denials
+        // silently disabled codex's own sandbox for every later turn.
         EngineEvent::ActionCompleted { result, .. } if !result.success => {
-            let explicit_denial = result
+            result
                 .error
                 .as_deref()
                 .map(is_sandbox_denied_error)
@@ -4322,17 +4306,7 @@ fn event_indicates_sandbox_denial(event: &EngineEvent) -> bool {
                     .output
                     .as_deref()
                     .map(is_sandbox_denied_error)
-                    .unwrap_or(false);
-            if explicit_denial {
-                return true;
-            }
-            if is_opaque_action_failure(result) {
-                log::warn!(
-                    "forcing externalSandbox fallback after opaque failed action (no diagnostic payload)"
-                );
-                return true;
-            }
-            false
+                    .unwrap_or(false)
         }
         EngineEvent::Error { message, .. } => is_sandbox_denied_error(message),
         _ => false,
@@ -6730,6 +6704,7 @@ fn is_known_codex_notification_method(normalized_method: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engines::ActionResult;
     use serde_json::{json, Value};
 
     #[test]
@@ -7420,29 +7395,37 @@ mod tests {
     }
 
     #[test]
-    fn opaque_action_failure_detects_generic_failed_status() {
-        let result = ActionResult {
-            success: false,
-            output: None,
-            error: Some("Action failed with status `failed`".to_string()),
-            diff: None,
-            duration_ms: 52,
+    fn sandbox_denial_ignores_opaque_action_failures() {
+        let event = EngineEvent::ActionCompleted {
+            action_id: "action-1".to_string(),
+            result: ActionResult {
+                success: false,
+                output: None,
+                error: Some("Action failed with status `failed`".to_string()),
+                diff: None,
+                duration_ms: 52,
+            },
         };
 
-        assert!(is_opaque_action_failure(&result));
+        assert!(!event_indicates_sandbox_denial(&event));
     }
 
     #[test]
-    fn opaque_action_failure_ignores_failures_with_output() {
-        let result = ActionResult {
-            success: false,
-            output: Some("zsh:1: command not found: pnpm\n".to_string()),
-            error: Some("Action failed with status `failed`".to_string()),
-            diff: None,
-            duration_ms: 52,
+    fn sandbox_denial_requires_explicit_sandbox_signature() {
+        let event = EngineEvent::ActionCompleted {
+            action_id: "action-1".to_string(),
+            result: ActionResult {
+                success: false,
+                output: None,
+                error: Some(
+                    "sandbox denied: operation not permitted while writing /etc/hosts".to_string(),
+                ),
+                diff: None,
+                duration_ms: 52,
+            },
         };
 
-        assert!(!is_opaque_action_failure(&result));
+        assert!(event_indicates_sandbox_denial(&event));
     }
 
     #[test]
