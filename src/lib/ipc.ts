@@ -641,6 +641,8 @@ export const ipc = {
     invoke<string | null>("get_default_autonomy_preset"),
   setDefaultAutonomyPreset: (preset: string | null) =>
     invoke<string | null>("set_default_autonomy_preset", { preset }),
+  codexUsesExternalSandbox: () =>
+    invoke<boolean>("codex_uses_external_sandbox"),
 };
 
 export async function listenThreadEvents(

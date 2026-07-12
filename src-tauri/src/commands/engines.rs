@@ -28,6 +28,11 @@ pub async fn get_chat_provider_usage(
 }
 
 #[tauri::command]
+pub async fn codex_uses_external_sandbox(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.engines.codex_uses_external_sandbox().await)
+}
+
+#[tauri::command]
 pub async fn engine_health(
     state: State<'_, AppState>,
     engine_id: String,

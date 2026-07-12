@@ -10,7 +10,6 @@ import {
   autonomyPresetExecutionPolicyRequest,
   isAutonomyPresetId,
 } from "../lib/autonomyPresets";
-import { codexUsesExternalSandbox } from "../lib/codexSandbox";
 import type { Thread } from "../types";
 import { useChatComposerStore } from "./chatComposerStore";
 import { useEngineStore } from "./engineStore";
@@ -208,14 +207,14 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       try {
         const defaultPreset = await ipc.getDefaultAutonomyPreset();
         if (isAutonomyPresetId(defaultPreset)) {
+          const codexExternalSandbox =
+            created.engineId === "codex"
+              ? await ipc.codexUsesExternalSandbox().catch(() => false)
+              : false;
           const request = autonomyPresetExecutionPolicyRequest(
             defaultPreset,
             created.engineId,
-            {
-              codexExternalSandbox: codexUsesExternalSandbox(
-                useEngineStore.getState().health,
-              ),
-            },
+            { codexExternalSandbox },
           );
           if (request) {
             created = await ipc.setThreadExecutionPolicy(created.id, request);
