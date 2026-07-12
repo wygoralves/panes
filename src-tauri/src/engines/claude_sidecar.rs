@@ -692,6 +692,7 @@ impl ClaudeSidecarEngine {
     pub async fn list_models_runtime(&self) -> Vec<ModelInfo> {
         match self.fetch_models_from_runtime().await {
             Ok(models) if !models.is_empty() => {
+                let models = with_legacy_claude_models(models);
                 let mut state = self.state.lock().await;
                 state.runtime_model_cache = Some(models.clone());
                 models
@@ -1214,6 +1215,89 @@ fn effort_description(effort: &str) -> String {
     .to_string()
 }
 
+fn claude_model_info(
+    id: &str,
+    display_name: &str,
+    description: &str,
+    hidden: bool,
+    is_default: bool,
+    default_reasoning_effort: &str,
+    supported_reasoning_efforts: &[&str],
+) -> ModelInfo {
+    ModelInfo {
+        id: id.to_string(),
+        display_name: display_name.to_string(),
+        description: description.to_string(),
+        hidden,
+        is_default,
+        upgrade: None,
+        availability_nux: None,
+        upgrade_info: None,
+        input_modalities: vec!["text".to_string(), "image".to_string()],
+        attachment_modalities: vec!["text".to_string(), "image".to_string()],
+        limits: None,
+        supports_personality: false,
+        default_reasoning_effort: default_reasoning_effort.to_string(),
+        supported_reasoning_efforts: supported_reasoning_efforts
+            .iter()
+            .map(|reasoning_effort| ReasoningEffortOption {
+                reasoning_effort: (*reasoning_effort).to_string(),
+                description: effort_description(reasoning_effort),
+            })
+            .collect(),
+    }
+}
+
+fn legacy_claude_models() -> Vec<ModelInfo> {
+    vec![
+        claude_model_info(
+            "claude-opus-4-7",
+            "Claude Opus 4.7",
+            "Legacy model retained for existing threads",
+            true,
+            false,
+            "xhigh",
+            &["low", "medium", "high", "xhigh", "max"],
+        ),
+        claude_model_info(
+            "claude-opus-4-6",
+            "Claude Opus 4.6",
+            "Legacy model retained for existing threads",
+            true,
+            false,
+            "high",
+            &["low", "medium", "high"],
+        ),
+        claude_model_info(
+            "claude-sonnet-4-6",
+            "Claude Sonnet 4.6",
+            "Legacy model retained for existing threads",
+            true,
+            false,
+            "medium",
+            &["low", "medium", "high"],
+        ),
+        claude_model_info(
+            "claude-haiku-4-5",
+            "Claude Haiku 4.5",
+            "Legacy model retained for existing threads",
+            true,
+            false,
+            "low",
+            &["low", "medium", "high"],
+        ),
+    ]
+}
+
+fn with_legacy_claude_models(mut models: Vec<ModelInfo>) -> Vec<ModelInfo> {
+    for legacy_model in legacy_claude_models() {
+        if !models.iter().any(|model| model.id == legacy_model.id) {
+            models.push(legacy_model);
+        }
+    }
+    models
+}
+
 fn default_effort_for_claude_model(
     model: &SidecarModelInfo,
     supported_efforts: &[String],
@@ -1456,22 +1540,15 @@ impl Engine for ClaudeSidecarEngine {
     }
 
     fn models(&self) -> Vec<ModelInfo> {
-        vec![ModelInfo {
-            id: "default".to_string(),
-            display_name: "Claude".to_string(),
-            description: "Model selected by the active Claude Code runtime".to_string(),
-            hidden: false,
-            is_default: true,
-            upgrade: None,
-            availability_nux: None,
-            upgrade_info: None,
-            input_modalities: vec!["text".to_string(), "image".to_string()],
-            attachment_modalities: vec!["text".to_string(), "image".to_string()],
-            limits: None,
-            supports_personality: false,
-            default_reasoning_effort: String::new(),
-            supported_reasoning_efforts: Vec::new(),
-        }]
+        with_legacy_claude_models(vec![claude_model_info(
+            "default",
+            "Claude",
+            "Model selected by the active Claude Code runtime",
+            false,
+            true,
+            "",
+            &[],
+        )])
     }
 
     async fn is_available(&self) -> bool {
@@ -2272,6 +2349,54 @@ mod tests {
                 .collect::<Vec<_>>(),
             cached.into_iter().map(|model| model.id).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn fallback_catalog_preserves_legacy_thread_model_ids() {
+        let models = ClaudeSidecarEngine::default().models();
+        let default_model = models
+            .iter()
+            .find(|model| model.id == "default")
+            .expect("fallback catalog should retain the runtime default");
+
+        assert!(default_model.is_default);
+        assert!(!default_model.hidden);
+
+        for legacy_id in [
+            "claude-opus-4-7",
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+        ] {
+            let legacy_model = models
+                .iter()
+                .find(|model| model.id == legacy_id)
+                .unwrap_or_else(|| panic!("fallback catalog should retain {legacy_id}"));
+            assert!(legacy_model.hidden);
+            assert!(!legacy_model.is_default);
+        }
+    }
+
+    #[test]
+    fn discovered_legacy_model_is_not_duplicated_or_hidden() {
+        let discovered = claude_model_info(
+            "claude-sonnet-4-6",
+            "Sonnet",
+            "Discovered from the active runtime",
+            false,
+            true,
+            "medium",
+            &["low", "medium", "high"],
+        );
+        let models = with_legacy_claude_models(vec![discovered]);
+        let matching_models = models
+            .iter()
+            .filter(|model| model.id == "claude-sonnet-4-6")
+            .collect::<Vec<_>>();
+
+        assert_eq!(matching_models.len(), 1);
+        assert!(!matching_models[0].hidden);
+        assert!(matching_models[0].is_default);
     }
 
     #[test]
