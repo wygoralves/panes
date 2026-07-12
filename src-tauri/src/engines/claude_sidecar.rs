@@ -30,10 +30,38 @@ use super::{
 };
 
 const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+const NODE_RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const CLAUDE_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(12);
 const CLAUDE_RUNTIME_INFO_TIMEOUT: Duration = Duration::from_secs(5);
 const ARCHIVED_CLAUDE_SDK_NODE_MODULES: &str = "claude-sdk-node_modules.tar.gz";
 const SIDECAR_EVENT_BUFFER_CAPACITY: usize = 1024;
+const MINIMUM_NODE_VERSION: &str = "20.5";
+const NODE_RUNTIME_PROBE_SCRIPT: &str = r#"
+const version = process.versions.node;
+const explicitResourceManagement =
+  typeof Symbol.dispose === "symbol" &&
+  typeof Symbol.asyncDispose === "symbol";
+let disposableChildProcess = false;
+let child;
+try {
+  const { spawn } = require("node:child_process");
+  child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+  const dispose =
+    typeof Symbol.dispose === "symbol" ? child[Symbol.dispose] : undefined;
+  if (typeof dispose === "function") {
+    dispose.call(child);
+    disposableChildProcess = true;
+  }
+} catch {}
+finally {
+  if (child && !child.killed) child.kill();
+}
+process.stdout.write(JSON.stringify({
+  version,
+  explicitResourceManagement,
+  disposableChildProcess,
+}));
+"#;
 
 // ── Sidecar event protocol ────────────────────────────────────────────
 
@@ -564,7 +592,22 @@ struct NodeExecutableResolution {
     executable: Option<PathBuf>,
     source: &'static str,
     app_path: Option<String>,
-    login_shell_executable: Option<PathBuf>,
+    rejected_executables: Vec<NodeExecutableCandidate>,
+}
+
+#[derive(Debug, Clone)]
+struct NodeExecutableCandidate {
+    path: PathBuf,
+    version: Option<String>,
+    compatible: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NodeRuntimeProbe {
+    version: String,
+    explicit_resource_management: bool,
+    disposable_child_process: bool,
 }
 
 impl ClaudeSidecarEngine {
@@ -900,10 +943,25 @@ impl ClaudeSidecarEngine {
                 node_resolution.source,
                 node_path.display()
             ));
+            checks.extend(
+                node_resolution
+                    .rejected_executables
+                    .iter()
+                    .map(|candidate| {
+                        format!(
+                            "Ignored incompatible Node.js {} at `{}`",
+                            candidate
+                                .version
+                                .as_deref()
+                                .unwrap_or("with unknown version"),
+                            candidate.path.display()
+                        )
+                    }),
+            );
         } else {
             warnings.push(node_unavailable_details(&node_resolution));
             fixes.extend(node_fix_commands(&node_resolution));
-            fixes.push("Install Node.js 20+ from https://nodejs.org".to_string());
+            fixes.push("Install Node.js 20.5+ from https://nodejs.org".to_string());
         }
 
         if sidecar_exists {
@@ -1008,29 +1066,107 @@ impl ClaudeSidecarEngine {
 
 async fn resolve_node_executable() -> NodeExecutableResolution {
     let app_path = std::env::var("PATH").ok();
+    let app_candidate = match runtime_env::resolve_executable("node") {
+        Some(path) => Some(probe_node_executable(path).await),
+        None => None,
+    };
 
-    if let Some(path) = runtime_env::resolve_executable("node") {
-        return NodeExecutableResolution {
-            executable: Some(path),
-            source: "app-path",
-            app_path,
-            login_shell_executable: None,
-        };
+    if app_candidate
+        .as_ref()
+        .map(|candidate| candidate.compatible)
+        .unwrap_or(false)
+    {
+        return resolve_node_candidates(app_path, app_candidate, None);
     }
 
-    let login_shell_executable = detect_node_via_login_shell().await;
-    let executable = login_shell_executable.clone();
+    let login_shell_candidate = match detect_node_via_login_shell().await {
+        Some(path)
+            if app_candidate
+                .as_ref()
+                .map(|candidate| !paths_match(&candidate.path, &path))
+                .unwrap_or(true) =>
+        {
+            Some(probe_node_executable(path).await)
+        }
+        _ => None,
+    };
+
+    resolve_node_candidates(app_path, app_candidate, login_shell_candidate)
+}
+
+fn resolve_node_candidates(
+    app_path: Option<String>,
+    app_candidate: Option<NodeExecutableCandidate>,
+    login_shell_candidate: Option<NodeExecutableCandidate>,
+) -> NodeExecutableResolution {
+    let app_executable = app_candidate
+        .as_ref()
+        .filter(|candidate| candidate.compatible)
+        .map(|candidate| candidate.path.clone());
+    let login_shell_compatible_executable = login_shell_candidate
+        .as_ref()
+        .filter(|candidate| candidate.compatible)
+        .map(|candidate| candidate.path.clone());
+    let mut rejected_executables = Vec::new();
+
+    if let Some(candidate) = app_candidate.filter(|candidate| !candidate.compatible) {
+        rejected_executables.push(candidate);
+    }
+    if let Some(candidate) = login_shell_candidate.filter(|candidate| !candidate.compatible) {
+        rejected_executables.push(candidate);
+    }
+
+    let (executable, source) = if let Some(executable) = app_executable {
+        (Some(executable), "app-path")
+    } else if let Some(executable) = login_shell_compatible_executable {
+        (Some(executable), "login-shell")
+    } else {
+        (None, "unavailable")
+    };
 
     NodeExecutableResolution {
         executable,
-        source: if login_shell_executable.is_some() {
-            "login-shell"
-        } else {
-            "unavailable"
-        },
+        source,
         app_path,
-        login_shell_executable,
+        rejected_executables,
     }
+}
+
+async fn probe_node_executable(path: PathBuf) -> NodeExecutableCandidate {
+    let mut command = Command::new(&path);
+    process_utils::configure_tokio_command(&mut command);
+    let probe = timeout(
+        NODE_RUNTIME_PROBE_TIMEOUT,
+        command.arg("-e").arg(NODE_RUNTIME_PROBE_SCRIPT).output(),
+    )
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .and_then(|output| serde_json::from_slice::<NodeRuntimeProbe>(&output.stdout).ok());
+
+    NodeExecutableCandidate {
+        path,
+        version: probe.as_ref().map(|probe| probe.version.clone()),
+        compatible: probe
+            .as_ref()
+            .map(node_runtime_is_compatible)
+            .unwrap_or(false),
+    }
+}
+
+fn node_runtime_is_compatible(probe: &NodeRuntimeProbe) -> bool {
+    let mut version_parts = probe
+        .version
+        .trim_start_matches('v')
+        .split('.')
+        .filter_map(|part| part.parse::<u64>().ok());
+    let major = version_parts.next().unwrap_or_default();
+    let minor = version_parts.next().unwrap_or_default();
+    let supports_disposable_child_process = major > 20 || (major == 20 && minor >= 5);
+
+    supports_disposable_child_process
+        && probe.explicit_resource_management
+        && probe.disposable_child_process
 }
 
 fn node_unavailable_details(resolution: &NodeExecutableResolution) -> String {
@@ -1046,23 +1182,39 @@ fn node_unavailable_details_for_platform(
     resolution: &NodeExecutableResolution,
 ) -> String {
     let path_preview = app_path_preview(resolution.app_path.as_deref());
+    let incompatible_runtimes = resolution
+        .rejected_executables
+        .iter()
+        .map(|candidate| {
+            format!(
+                "Node.js {} at `{}`",
+                candidate
+                    .version
+                    .as_deref()
+                    .unwrap_or("with unknown version"),
+                candidate.path.display()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
 
-    match (platform, resolution.login_shell_executable.as_ref()) {
-        ("macos", Some(shell_path)) => format!(
-            "Node.js was found in your login shell at `{}`, but Panes does not see it in the app PATH. This is common when launching the app from Finder on macOS. App PATH: `{}`",
-            shell_path.display(),
-            path_preview
-        ),
-        ("windows", _) => format!(
+    if !incompatible_runtimes.is_empty() {
+        let platform_guidance = if platform == "windows" {
+            " Verify that a compatible Node.js install directory is in PATH."
+        } else {
+            ""
+        };
+        return format!(
+            "Claude requires Node.js {MINIMUM_NODE_VERSION}+ with disposable child process support. Found incompatible {incompatible_runtimes}.{platform_guidance} App PATH: `{path_preview}`"
+        );
+    }
+
+    match platform {
+        "windows" => format!(
             "Node.js executable not found for the Claude engine. App PATH: `{}`. On Windows, verify that the Node.js install directory is in PATH.",
             path_preview
         ),
-        (_, Some(shell_path)) => format!(
-            "Node.js was found in your login shell at `{}`, but Panes does not see it in the app PATH. App PATH: `{}`",
-            shell_path.display(),
-            path_preview
-        ),
-        (_, None) => format!(
+        _ => format!(
             "Node.js executable not found for the Claude engine. App PATH: `{}`",
             path_preview
         ),
@@ -1074,24 +1226,11 @@ fn node_fix_commands_for_platform(
     resolution: &NodeExecutableResolution,
 ) -> Vec<String> {
     if platform == "macos" {
-        let mut fixes = Vec::new();
-        match resolution.login_shell_executable.as_ref() {
-            Some(shell_path) => {
-                if let Some(bin_dir) = shell_path.parent() {
-                    fixes.push(format!(
-                        "launchctl setenv PATH \"{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"",
-                        bin_dir.display()
-                    ));
-                    fixes.push("open -a Panes".to_string());
-                }
-            }
-            None => {
-                fixes.push("/bin/zsh -lic 'command -v node && node --version'".to_string());
-                fixes.push("open -a Panes".to_string());
-            }
-        }
-
-        return fixes;
+        let _ = resolution;
+        return vec![
+            "/bin/zsh -lic 'command -v node && node --version'".to_string(),
+            "open -a Panes".to_string(),
+        ];
     }
 
     if platform == "windows" {
@@ -2428,6 +2567,83 @@ mod tests {
     }
 
     #[test]
+    fn node_resolution_falls_back_from_incompatible_app_path_to_login_shell() {
+        let resolution = resolve_node_candidates(
+            Some("/usr/local/bin:/usr/bin".to_string()),
+            Some(NodeExecutableCandidate {
+                path: PathBuf::from("/usr/local/bin/node"),
+                version: Some("16.15.1".to_string()),
+                compatible: false,
+            }),
+            Some(NodeExecutableCandidate {
+                path: PathBuf::from("/Users/test/.fnm/node"),
+                version: Some("25.6.1".to_string()),
+                compatible: true,
+            }),
+        );
+
+        assert_eq!(
+            resolution.executable,
+            Some(PathBuf::from("/Users/test/.fnm/node"))
+        );
+        assert_eq!(resolution.source, "login-shell");
+        assert_eq!(resolution.rejected_executables.len(), 1);
+        assert_eq!(
+            resolution.rejected_executables[0].version.as_deref(),
+            Some("16.15.1")
+        );
+    }
+
+    #[test]
+    fn node_runtime_rejects_versions_before_disposable_child_process_support() {
+        for version in ["20.0.0", "20.4.0", "18.20.0"] {
+            assert!(!node_runtime_is_compatible(&NodeRuntimeProbe {
+                version: version.to_string(),
+                explicit_resource_management: true,
+                disposable_child_process: true,
+            }));
+        }
+    }
+
+    #[test]
+    fn node_runtime_requires_a_disposable_child_process() {
+        assert!(!node_runtime_is_compatible(&NodeRuntimeProbe {
+            version: "20.5.0".to_string(),
+            explicit_resource_management: true,
+            disposable_child_process: false,
+        }));
+        assert!(node_runtime_is_compatible(&NodeRuntimeProbe {
+            version: "20.5.0".to_string(),
+            explicit_resource_management: true,
+            disposable_child_process: true,
+        }));
+        assert!(node_runtime_is_compatible(&NodeRuntimeProbe {
+            version: "25.6.1".to_string(),
+            explicit_resource_management: true,
+            disposable_child_process: true,
+        }));
+    }
+
+    #[test]
+    fn incompatible_node_runtime_is_reported_as_unavailable() {
+        let resolution = resolve_node_candidates(
+            Some("/usr/local/bin:/usr/bin".to_string()),
+            Some(NodeExecutableCandidate {
+                path: PathBuf::from("/usr/local/bin/node"),
+                version: Some("16.15.1".to_string()),
+                compatible: false,
+            }),
+            None,
+        );
+
+        assert!(resolution.executable.is_none());
+        let details = node_unavailable_details_for_platform("macos", &resolution);
+        assert!(details.contains("Node.js 20.5+"));
+        assert!(details.contains("Node.js 16.15.1"));
+        assert!(details.contains("/usr/local/bin/node"));
+    }
+
+    #[test]
     fn node_unavailable_details_for_windows_mentions_path_guidance() {
         let details = node_unavailable_details_for_platform(
             "windows",
@@ -2435,7 +2651,7 @@ mod tests {
                 executable: None,
                 source: "unavailable",
                 app_path: Some(r"C:\Windows\System32".to_string()),
-                login_shell_executable: None,
+                rejected_executables: Vec::new(),
             },
         );
 
@@ -2451,7 +2667,7 @@ mod tests {
                 executable: None,
                 source: "unavailable",
                 app_path: Some(r"C:\Windows\System32".to_string()),
-                login_shell_executable: None,
+                rejected_executables: Vec::new(),
             },
         );
 
