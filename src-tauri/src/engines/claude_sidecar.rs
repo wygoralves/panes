@@ -35,16 +35,32 @@ const CLAUDE_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(12);
 const CLAUDE_RUNTIME_INFO_TIMEOUT: Duration = Duration::from_secs(5);
 const ARCHIVED_CLAUDE_SDK_NODE_MODULES: &str = "claude-sdk-node_modules.tar.gz";
 const SIDECAR_EVENT_BUFFER_CAPACITY: usize = 1024;
-const MINIMUM_NODE_MAJOR_VERSION: u64 = 20;
+const MINIMUM_NODE_VERSION: &str = "20.5";
 const NODE_RUNTIME_PROBE_SCRIPT: &str = r#"
 const version = process.versions.node;
-const major = Number(version.split(".")[0]);
-const compatible =
-  major >= 20 &&
+const explicitResourceManagement =
   typeof Symbol.dispose === "symbol" &&
   typeof Symbol.asyncDispose === "symbol";
-process.stdout.write(JSON.stringify({ version, compatible }));
-process.exitCode = compatible ? 0 : 1;
+let disposableChildProcess = false;
+let child;
+try {
+  const { spawn } = require("node:child_process");
+  child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+  const dispose =
+    typeof Symbol.dispose === "symbol" ? child[Symbol.dispose] : undefined;
+  if (typeof dispose === "function") {
+    dispose.call(child);
+    disposableChildProcess = true;
+  }
+} catch {}
+finally {
+  if (child && !child.killed) child.kill();
+}
+process.stdout.write(JSON.stringify({
+  version,
+  explicitResourceManagement,
+  disposableChildProcess,
+}));
 "#;
 
 // ── Sidecar event protocol ────────────────────────────────────────────
@@ -587,9 +603,11 @@ struct NodeExecutableCandidate {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct NodeRuntimeProbe {
     version: String,
-    compatible: bool,
+    explicit_resource_management: bool,
+    disposable_child_process: bool,
 }
 
 impl ClaudeSidecarEngine {
@@ -943,7 +961,7 @@ impl ClaudeSidecarEngine {
         } else {
             warnings.push(node_unavailable_details(&node_resolution));
             fixes.extend(node_fix_commands(&node_resolution));
-            fixes.push("Install Node.js 20+ from https://nodejs.org".to_string());
+            fixes.push("Install Node.js 20.5+ from https://nodejs.org".to_string());
         }
 
         if sidecar_exists {
@@ -1129,8 +1147,26 @@ async fn probe_node_executable(path: PathBuf) -> NodeExecutableCandidate {
     NodeExecutableCandidate {
         path,
         version: probe.as_ref().map(|probe| probe.version.clone()),
-        compatible: probe.map(|probe| probe.compatible).unwrap_or(false),
+        compatible: probe
+            .as_ref()
+            .map(node_runtime_is_compatible)
+            .unwrap_or(false),
     }
+}
+
+fn node_runtime_is_compatible(probe: &NodeRuntimeProbe) -> bool {
+    let mut version_parts = probe
+        .version
+        .trim_start_matches('v')
+        .split('.')
+        .filter_map(|part| part.parse::<u64>().ok());
+    let major = version_parts.next().unwrap_or_default();
+    let minor = version_parts.next().unwrap_or_default();
+    let supports_disposable_child_process = major > 20 || (major == 20 && minor >= 5);
+
+    supports_disposable_child_process
+        && probe.explicit_resource_management
+        && probe.disposable_child_process
 }
 
 fn node_unavailable_details(resolution: &NodeExecutableResolution) -> String {
@@ -1169,7 +1205,7 @@ fn node_unavailable_details_for_platform(
             ""
         };
         return format!(
-            "Claude requires Node.js {MINIMUM_NODE_MAJOR_VERSION}+ with explicit resource management support. Found incompatible {incompatible_runtimes}.{platform_guidance} App PATH: `{path_preview}`"
+            "Claude requires Node.js {MINIMUM_NODE_VERSION}+ with disposable child process support. Found incompatible {incompatible_runtimes}.{platform_guidance} App PATH: `{path_preview}`"
         );
     }
 
@@ -2559,6 +2595,36 @@ mod tests {
     }
 
     #[test]
+    fn node_runtime_rejects_versions_before_disposable_child_process_support() {
+        for version in ["20.0.0", "20.4.0", "18.20.0"] {
+            assert!(!node_runtime_is_compatible(&NodeRuntimeProbe {
+                version: version.to_string(),
+                explicit_resource_management: true,
+                disposable_child_process: true,
+            }));
+        }
+    }
+
+    #[test]
+    fn node_runtime_requires_a_disposable_child_process() {
+        assert!(!node_runtime_is_compatible(&NodeRuntimeProbe {
+            version: "20.5.0".to_string(),
+            explicit_resource_management: true,
+            disposable_child_process: false,
+        }));
+        assert!(node_runtime_is_compatible(&NodeRuntimeProbe {
+            version: "20.5.0".to_string(),
+            explicit_resource_management: true,
+            disposable_child_process: true,
+        }));
+        assert!(node_runtime_is_compatible(&NodeRuntimeProbe {
+            version: "25.6.1".to_string(),
+            explicit_resource_management: true,
+            disposable_child_process: true,
+        }));
+    }
+
+    #[test]
     fn incompatible_node_runtime_is_reported_as_unavailable() {
         let resolution = resolve_node_candidates(
             Some("/usr/local/bin:/usr/bin".to_string()),
@@ -2572,7 +2638,7 @@ mod tests {
 
         assert!(resolution.executable.is_none());
         let details = node_unavailable_details_for_platform("macos", &resolution);
-        assert!(details.contains("Node.js 20+"));
+        assert!(details.contains("Node.js 20.5+"));
         assert!(details.contains("Node.js 16.15.1"));
         assert!(details.contains("/usr/local/bin/node"));
     }
