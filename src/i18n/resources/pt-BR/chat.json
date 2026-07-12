@@ -314,7 +314,7 @@
     "custom": "Personalizado",
     "presets": {
       "inherit": { "label": "Automático", "description": "Segue a política de confiança do repo." },
-      "read-only": { "label": "Somente leitura", "description": "Inspeciona e responde. Toda escrita ou comando pede aprovação." },
+      "read-only": { "label": "Somente leitura", "description": "Inspeciona e responde. Leituras seguras rodam; nada muda sem a sua aprovação." },
       "ask": { "label": "Pedir para agir", "description": "Leituras são livres. Edições e comandos pedem antes." },
       "auto": { "label": "Autônomo no workspace", "description": "Trabalha livre dentro do sandbox do workspace. Só pede para sair dele." },
       "full": { "label": "Autonomia total", "description": "Nunca pergunta. Acesso total a disco e rede." }
@@ -322,6 +322,7 @@
     "mapsTo": "Mapeamento para {{engine}}",
     "claudeFullNote": "O Claude não tem sandbox de acesso total no Panes; autonomia total mantém workspace-write.",
     "openCodeNote": "O OpenCode expõe apenas aprovações; sandbox e rede não são configuráveis.",
+    "codexExternalSandboxNote": "O Codex está em modo de sandbox externo; o Panes não consegue restringir o filesystem aqui, então as aprovações controlam as mudanças.",
     "defaultForNewThreads": "Padrão para novas conversas",
     "advanced": "Avançado",
     "backToPresets": "Presets",

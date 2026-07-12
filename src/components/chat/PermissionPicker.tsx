@@ -394,8 +394,15 @@ export function PermissionPicker({
     if (engineId === "claude" && presetValue === "full") {
       return t("autonomy.claudeFullNote");
     }
+    if (
+      engineId === "codex" &&
+      codexExternalSandbox &&
+      (presetValue === "read-only" || presetValue === "ask" || presetValue === "auto")
+    ) {
+      return t("autonomy.codexExternalSandboxNote");
+    }
     return null;
-  }, [engineId, presetValue, presetsAvailable, t]);
+  }, [codexExternalSandbox, engineId, presetValue, presetsAvailable, t]);
 
   const title = summaryLines.length > 0 ? summaryLines.join(" | ") : t("permissionPicker.title");
   const activeItem = railItems.find((item) => item.id === activeSection) ?? null;
