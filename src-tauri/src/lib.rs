@@ -280,6 +280,7 @@ pub fn run() {
             commands::git::watch_git_repo,
             commands::engines::list_engines,
             commands::engines::get_chat_provider_usage,
+            commands::engines::codex_uses_external_sandbox,
             commands::engines::engine_health,
             commands::engines::prewarm_engine,
             commands::engines::list_codex_skills,

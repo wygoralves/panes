@@ -71,7 +71,10 @@ import {
   isAutonomyPresetId,
 } from "../../lib/autonomyPresets";
 import type { AutonomyPresetId } from "../../lib/autonomyPresets";
-import { codexUsesExternalSandbox } from "../../lib/codexSandbox";
+import {
+  codexUsesExternalSandbox,
+  isCodexExternalSandboxWarning,
+} from "../../lib/codexSandbox";
 import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { isMacDesktop, usesCustomWindowFrame } from "../../lib/windowActions";
@@ -1712,10 +1715,25 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const ensureEngineHealth = useEngineStore((s) => s.ensureHealth);
   const onboardingOpen = useOnboardingStore((s) => s.open);
   const onboardingSelectedChatEngines = useOnboardingStore((s) => s.selectedChatEngines);
-  const codexExternalSandboxActive = useMemo(
-    () => codexUsesExternalSandbox(health),
-    [health],
-  );
+  // The health warning is only a heuristic; the backend answer is what
+  // set_thread_execution_policy actually validates against.
+  const [codexExternalSandboxActive, setCodexExternalSandboxActive] = useState(false);
+  useEffect(() => {
+    let disposed = false;
+    const heuristic = codexUsesExternalSandbox(health);
+    setCodexExternalSandboxActive((prev) => prev || heuristic);
+    void ipc
+      .codexUsesExternalSandbox()
+      .then((active) => {
+        if (!disposed) {
+          setCodexExternalSandboxActive(active);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+    };
+  }, [health]);
   const codexProtocolDiagnostics = health.codex?.protocolDiagnostics;
   const preferredOnboardingChatSelection = useMemo(
     () => resolvePreferredOnboardingChatSelection(onboardingSelectedChatEngines, engines),
@@ -4570,6 +4588,19 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       applyThreadUpdateLocal(updatedThread);
     } catch (error) {
       if (threadExecutionPolicyRequestIdsRef.current[currentThread.id] !== requestId) {
+        return;
+      }
+
+      // If the backend rejects a sandbox override because Codex runs in
+      // external sandbox mode, remember that and retry without the override
+      // so presets keep working even when the health heuristic missed it.
+      if (
+        isCodexThread &&
+        isCodexExternalSandboxWarning(String(error)) &&
+        (nextPatch.sandboxMode === "read-only" || nextPatch.sandboxMode === "workspace-write")
+      ) {
+        setCodexExternalSandboxActive(true);
+        await onThreadExecutionPolicyChange({ ...nextPatch, sandboxMode: "inherit" });
         return;
       }
 
