@@ -1,5 +1,12 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.62.0...vnull) (2026-07-12)
+
+### Bug Fixes
+
+* require disposable child process support ([f3793c0](https://github.com/wygoralves/panes/commit/f3793c0d1ece591bdb1d24ed177e838501f60330))
+* select compatible Node runtime for agent sidecar ([417715f](https://github.com/wygoralves/panes/commit/417715fb0e9d8de4eecca89ed2b10c38bf23016a))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.61.0...vnull) (2026-07-12)
 
 ### Features
