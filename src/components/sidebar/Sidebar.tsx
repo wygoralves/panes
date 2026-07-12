@@ -7,7 +7,7 @@ import {
   Plus,
   FolderGit2,
   MessageSquare,
-  Menu as MenuIcon,
+  Cog,
   ChevronDown,
   ChevronRight,
   Archive,
@@ -587,10 +587,10 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
           }}
         >
           <span style={{ position: "relative", display: "inline-flex" }}>
-            <MenuIcon size={15} />
+            <Cog size={15} />
             {hasUpdate && <span className="sb-update-dot" />}
           </span>
-          {t("app:sidebar.menu")}
+          {t("app:sidebar.manage")}
           <ChevronDown size={12} style={{ marginLeft: "auto", opacity: 0.5 }} />
         </button>
         <button
