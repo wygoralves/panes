@@ -35,6 +35,7 @@ describe("uiStore focus mode", () => {
       focusMode: false,
       focusModeSnapshot: null,
       activeView: "chat",
+      settingsSection: "overview",
       settingsWorkspaceId: null,
       commandPaletteOpen: false,
       commandPaletteLaunch: COMMAND_PALETTE_DEFAULT_LAUNCH,
@@ -178,6 +179,28 @@ describe("uiStore focus mode", () => {
     expect(useUiStore.getState()).toMatchObject({
       commandPaletteOpen: false,
       commandPaletteLaunch: COMMAND_PALETTE_DEFAULT_LAUNCH,
+    });
+  });
+
+  it("opens global settings without discarding the selected workspace", () => {
+    useUiStore.setState({ settingsWorkspaceId: "workspace-1" });
+
+    useUiStore.getState().openSettings();
+
+    expect(useUiStore.getState()).toMatchObject({
+      activeView: "settings",
+      settingsSection: "overview",
+      settingsWorkspaceId: "workspace-1",
+    });
+  });
+
+  it("opens workspace settings at the general section", () => {
+    useUiStore.getState().openWorkspaceSettings("workspace-2");
+
+    expect(useUiStore.getState()).toMatchObject({
+      activeView: "settings",
+      settingsSection: "workspace-general",
+      settingsWorkspaceId: "workspace-2",
     });
   });
 });

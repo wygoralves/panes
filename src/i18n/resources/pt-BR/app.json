@@ -47,6 +47,8 @@
     "restoreThread": "Restaurar thread",
     "nothingArchived": "Nada arquivado.",
     "settings": "Configurações",
+    "menu": "Menu",
+    "aboutUpdates": "Sobre e atualizações",
     "engineSetup": "Começar",
     "checkUpdates": "Verificar atualizações",
     "preferences": "Preferências",
@@ -503,6 +505,130 @@
       "pathCopied": "Caminho copiado",
       "pathsCopied": "{{count}} caminhos copiados",
       "openExternalFailed": "Falha ao abrir o arquivo no app padrão"
+    }
+  },
+  "settingsPage": {
+    "title": "Configurações",
+    "navigationLabel": "Navegação das configurações",
+    "searchPlaceholder": "Buscar configuração",
+    "noResults": "Nenhuma configuração encontrada.",
+    "backToPanes": "Voltar ao Panes",
+    "versionUnavailable": "Versão indisponível",
+    "editingWorkspace": "Editando workspace",
+    "groups": {
+      "panes": "Panes",
+      "workspace": "Workspace"
+    },
+    "nav": {
+      "overview": "Visão geral",
+      "appearance": "Aparência",
+      "terminal": "Terminal",
+      "notifications": "Notificações",
+      "power": "Energia e suspensão",
+      "about": "Sobre e atualizações"
+    },
+    "sections": {
+      "overview": {
+        "title": "Configurações",
+        "description": "Controle o Panes, sessões de terminal, alertas de agentes e o workspace atual em um só lugar."
+      },
+      "appearance": {
+        "title": "Aparência",
+        "description": "Escolha a aparência e o idioma usados pelo Panes."
+      },
+      "terminal": {
+        "title": "Terminal",
+        "description": "Defina os padrões das sessões de terminal criadas no Panes."
+      },
+      "notifications": {
+        "title": "Notificações",
+        "description": "Escolha quando o Panes alerta sobre respostas concluídas e agentes no terminal."
+      },
+      "power": {
+        "title": "Energia e suspensão",
+        "description": "Mantenha o computador disponível enquanto agentes e tarefas do terminal estão em execução."
+      },
+      "about": {
+        "title": "Sobre e atualizações",
+        "description": "Veja a versão instalada do Panes e gerencie as atualizações do aplicativo."
+      },
+      "workspace-general": {
+        "title": "Geral do workspace",
+        "description": "Controle como o Panes abre e escaneia o workspace selecionado."
+      },
+      "workspace-repos": {
+        "title": "Repositórios",
+        "description": "Escolha quais repositórios aparecem nas ferramentas Git e quanto acesso cada um permite."
+      },
+      "workspace-startup": {
+        "title": "Layout de inicialização",
+        "description": "Escolha quais superfícies e sessões de terminal o Panes restaura ao abrir este workspace."
+      }
+    },
+    "overview": {
+      "setupTitle": "Alertas do terminal precisam de configuração",
+      "setupDescription": "Instale os hooks do Claude Code ou Codex para receber alertas de turnos concluídos nos terminais do Panes.",
+      "reviewSetup": "Revisar configuração",
+      "quickControls": "Controles rápidos",
+      "quickControlsDescription": "As configurações com maior chance de mudar durante uma sessão de trabalho.",
+      "keepAwakeRemaining": "Ativo por mais {{time}}",
+      "keepAwakeActive": "Ativo até você desligar",
+      "keepAwakeOff": "Desligado",
+      "notificationsOff": "Todos os alertas estão desligados",
+      "terminalSummary": "Fonte de {{size}}px e preferências compartilhadas de renderização",
+      "currentWorkspace": "Workspace atual",
+      "noWorkspace": "Abra um workspace para gerenciar suas configurações.",
+      "workspaceGeneralDescription": "Caminho, descoberta de repositórios e informações do workspace",
+      "repositoriesDescription": "Níveis de confiança, visibilidade no Git e remotes",
+      "startupDescription": "Visualização padrão, abas de terminal, painéis e worktrees"
+    },
+    "appearance": {
+      "interface": "Interface",
+      "interfaceDescription": "Mudanças de tema se aplicam ao chat, terminal, Git e editor.",
+      "themeDescription": "Use um tema fixo ou acompanhe o sistema operacional.",
+      "languageDescription": "Usado na navegação, diálogos e mensagens de status."
+    },
+    "terminal": {
+      "display": "Texto e renderização",
+      "displayDescription": "Estas preferências se aplicam a todos os terminais do Panes.",
+      "fontDescription": "Ajuste o texto do terminal sem alterar o restante da interface.",
+      "acceleratedDescription": "Use WebGL para uma saída mais suave nas sessões de terminal ativas.",
+      "previewOutput": "Verificação do TypeScript concluída sem erros."
+    },
+    "power": {
+      "options": "Comportamento de energia",
+      "optionsDescription": "Configure tela, bateria, sessão e comportamento ao fechar a tampa.",
+      "displaySummary": "Controle a suspensão da tela e o protetor de tela.",
+      "sourceSummary": "Pause na bateria ou abaixo de um nível escolhido.",
+      "advancedSummary": "Defina a duração da sessão e o comportamento ao fechar a tampa.",
+      "configure": "Configurar opções de energia",
+      "sessionDescription": "Escolha por quanto tempo o Manter acordado fica ativo.",
+      "durationDescription": "Pare automaticamente após uma duração predefinida ou personalizada.",
+      "customDurationDescription": "Informe o número de horas e minutos.",
+      "loading": "Carregando configurações de energia..."
+    },
+    "about": {
+      "application": "Aplicativo",
+      "applicationDescription": "Informações de versão e atualização desta instalação do Panes.",
+      "installedVersion": "Versão instalada",
+      "installedVersionDescription": "A versão do Panes em execução neste dispositivo.",
+      "automaticTitle": "Atualizações automáticas",
+      "automaticDescription": "O Panes busca atualizações automaticamente. Você também pode verificar a qualquer momento.",
+      "upToDateTitle": "O Panes está atualizado",
+      "lastChecked": "Última verificação: {{time}}",
+      "checkingTitle": "Verificando atualizações",
+      "checkingDescription": "Buscando uma versão mais recente do Panes.",
+      "downloadingTitle": "Baixando atualização",
+      "preparingDownload": "Preparando o download da atualização.",
+      "downloadingProgress": "{{downloaded}} de {{total}} baixados ({{percent}}%).",
+      "downloadingUnknown": "{{downloaded}} baixados. O servidor não informou o tamanho total.",
+      "installingTitle": "Instalando atualização",
+      "installingDescription": "Download concluído. O Panes está aplicando a atualização.",
+      "installing": "Instalando...",
+      "readyTitle": "Reiniciando o Panes",
+      "readyDescription": "A atualização foi instalada e o Panes está reiniciando.",
+      "checkForUpdates": "Verificar atualizações",
+      "checking": "Verificando..."
     }
   },
   "notificationSettings": {

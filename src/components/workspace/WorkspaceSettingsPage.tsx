@@ -22,12 +22,17 @@ import { WorkspaceStartupSection } from "./WorkspaceStartupSection";
 import { GitRemotesView } from "../git/GitRemotesView";
 import type { Repo, TrustLevel } from "../../types";
 
-type Section = "general" | "repos" | "startup";
+export type WorkspaceSettingsSection = "general" | "repos" | "startup";
+
+interface Props {
+  embedded?: boolean;
+  section?: WorkspaceSettingsSection;
+}
 
 const MIN_SCAN_DEPTH = 0;
 const MAX_SCAN_DEPTH = 12;
 
-export function WorkspaceSettingsPage() {
+export function WorkspaceSettingsPage({ embedded = false, section: controlledSection }: Props = {}) {
   const { t, i18n } = useTranslation("workspace");
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
@@ -42,7 +47,7 @@ export function WorkspaceSettingsPage() {
   const workspace = workspaces.find((w) => w.id === settingsWorkspaceId) ?? null;
   const isActive = workspace?.id === activeWorkspaceId;
 
-  const [section, setSection] = useState<Section>("general");
+  const [localSection, setLocalSection] = useState<WorkspaceSettingsSection>("general");
   const [depthDraft, setDepthDraft] = useState("");
   const [depthSaving, setDepthSaving] = useState(false);
   const [depthError, setDepthError] = useState<string | null>(null);
@@ -56,6 +61,7 @@ export function WorkspaceSettingsPage() {
   ];
 
   const repos = isActive ? storeRepos : (localRepos ?? []);
+  const section = controlledSection ?? localSection;
 
   useEffect(() => {
     if (workspace) {
@@ -79,22 +85,25 @@ export function WorkspaceSettingsPage() {
   const goBack = useCallback(() => setActiveView("chat"), [setActiveView]);
 
   useEffect(() => {
+    if (embedded) return;
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") goBack();
     }
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [goBack]);
+  }, [embedded, goBack]);
 
   if (!workspace) {
     return (
-      <div className="wsp-root">
+      <div className={`wsp-root${embedded ? " wsp-root-embedded" : ""}`}>
         <div className="wsp-scroll">
           <div className="wsp-inner">
             <p style={{ color: "var(--text-3)" }}>{t("errors.notFound")}</p>
-            <button type="button" className="ws-prop-btn" onClick={goBack}>
-              <ArrowLeft size={12} /> {t("actions.back")}
-            </button>
+            {!embedded && (
+              <button type="button" className="ws-prop-btn" onClick={goBack}>
+                <ArrowLeft size={12} /> {t("actions.back")}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -207,57 +216,59 @@ export function WorkspaceSettingsPage() {
 
   return (
     <>
-    <div className="wsp-root">
+    <div className={`wsp-root${embedded ? " wsp-root-embedded" : ""}`}>
       <div className="wsp-scroll">
         <div className="wsp-inner">
-          {/* Header */}
-          <div
-            className="wsp-header"
-            onMouseDown={handleDragMouseDown}
-            onDoubleClick={handleDragDoubleClick}
-          >
-            <button type="button" className="wsp-back" onClick={goBack} title={t("actions.back")}>
-              <ArrowLeft size={14} />
-            </button>
-            <div className="wsp-header-icon">
-              <FolderGit2 size={18} />
-            </div>
-            <div className="wsp-header-text">
-              <h1 className="wsp-title">{name}</h1>
-              <p className="wsp-path">{workspace.rootPath}</p>
-            </div>
-          </div>
+          {!embedded && (
+            <>
+              <div
+                className="wsp-header"
+                onMouseDown={handleDragMouseDown}
+                onDoubleClick={handleDragDoubleClick}
+              >
+                <button type="button" className="wsp-back" onClick={goBack} title={t("actions.back")}>
+                  <ArrowLeft size={14} />
+                </button>
+                <div className="wsp-header-icon">
+                  <FolderGit2 size={18} />
+                </div>
+                <div className="wsp-header-text">
+                  <h1 className="wsp-title">{name}</h1>
+                  <p className="wsp-path">{workspace.rootPath}</p>
+                </div>
+              </div>
 
-          {/* Nav */}
-          <div className="wsp-nav">
-            <button
-              type="button"
-              className={`wsp-nav-item ${section === "general" ? "wsp-nav-active" : ""}`}
-              onClick={() => setSection("general")}
-            >
-              <Info size={13} />
-              {t("nav.general")}
-            </button>
-            <button
-              type="button"
-              className={`wsp-nav-item ${section === "repos" ? "wsp-nav-active" : ""}`}
-              onClick={() => setSection("repos")}
-            >
-              <GitBranch size={13} />
-              {t("nav.repositories")}
-              {repos.length > 0 && (
-                <span className="wsp-nav-count">{repos.length}</span>
-              )}
-            </button>
-            <button
-              type="button"
-              className={`wsp-nav-item ${section === "startup" ? "wsp-nav-active" : ""}`}
-              onClick={() => setSection("startup")}
-            >
-              <Play size={13} />
-              {t("nav.startup")}
-            </button>
-          </div>
+              <div className="wsp-nav">
+                <button
+                  type="button"
+                  className={`wsp-nav-item ${section === "general" ? "wsp-nav-active" : ""}`}
+                  onClick={() => setLocalSection("general")}
+                >
+                  <Info size={13} />
+                  {t("nav.general")}
+                </button>
+                <button
+                  type="button"
+                  className={`wsp-nav-item ${section === "repos" ? "wsp-nav-active" : ""}`}
+                  onClick={() => setLocalSection("repos")}
+                >
+                  <GitBranch size={13} />
+                  {t("nav.repositories")}
+                  {repos.length > 0 && (
+                    <span className="wsp-nav-count">{repos.length}</span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className={`wsp-nav-item ${section === "startup" ? "wsp-nav-active" : ""}`}
+                  onClick={() => setLocalSection("startup")}
+                >
+                  <Play size={13} />
+                  {t("nav.startup")}
+                </button>
+              </div>
+            </>
+          )}
 
           {/* Content */}
           <div className="wsp-content">
