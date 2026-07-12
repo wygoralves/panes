@@ -15,6 +15,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { TFunction } from "i18next";
 import {
   Send,
+  Loader2,
   Square,
   GitBranch,
   Brain,
@@ -118,6 +119,35 @@ import type {
 const MESSAGE_VIRTUALIZATION_THRESHOLD = 40;
 const MESSAGE_ESTIMATED_ROW_HEIGHT = 220;
 const MESSAGE_ROW_GAP = 12;
+
+function createPendingSubmissionMessage(
+  threadId: string,
+  text: string,
+  attachments: ChatAttachment[],
+  planMode: boolean,
+): Message {
+  const blocks: ContentBlock[] = attachments.map((attachment) => ({
+    type: "attachment",
+    fileName: attachment.fileName,
+    filePath: attachment.filePath,
+    sizeBytes: attachment.sizeBytes,
+    mimeType: attachment.mimeType,
+  }));
+  blocks.push({ type: "text", content: text, planMode: planMode || undefined });
+
+  return {
+    id: `pending-${crypto.randomUUID()}`,
+    threadId,
+    role: "user",
+    content: text,
+    blocks,
+    status: "completed",
+    schemaVersion: 1,
+    createdAt: new Date().toISOString(),
+    hydration: "full",
+    hasDeferredContent: false,
+  };
+}
 const MESSAGE_OVERSCAN_PX = 700;
 const LazyTerminalPanel = lazy(() =>
   import("../terminal/TerminalPanel").then((module) => ({
@@ -1561,6 +1591,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   renderStartedAtRef.current = performance.now();
 
   const [input, setInput] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingSubmission, setPendingSubmission] = useState<Message | null>(null);
+  const isSubmittingRef = useRef(false);
   const inputHistoryRef = useRef<string[]>([]);
   const inputHistCursorRef = useRef(-1);
   const inputLiveDraftRef = useRef("");
@@ -1752,6 +1785,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     outputSchemaText: string;
     customApprovalPolicyText: string;
     openCodeAgent: string;
+    reasoningConfigured: boolean;
     restorePlanModeOnCancel: boolean;
   } | null>(null);
   const [planImplementationPrompt, setPlanImplementationPrompt] = useState<{
@@ -3138,6 +3172,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }, [messages, autoScrollLocked, scrollViewportToBottom]);
 
   useEffect(() => {
+    if (!pendingSubmission || autoScrollLocked) {
+      return;
+    }
+    scrollViewportToBottom("auto");
+  }, [autoScrollLocked, pendingSubmission, scrollViewportToBottom]);
+
+  useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || !threadId || !hasOlderMessages || loadingOlderMessages) {
       return;
@@ -3850,20 +3891,20 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     }
   }
 
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
-    if (!input.trim() || !activeWorkspaceId) return;
+  async function submitMessage(): Promise<boolean> {
+    if (!input.trim() || !activeWorkspaceId) return false;
+    const preflightStartedAt = performance.now();
     const text = input.trim();
     const currentAttachments = [...attachments];
 
     if (streaming) {
       if (!canSteerActiveTurn) {
-        return;
+        return false;
       }
 
       const activeThreadId = threadId ?? activeThread?.id ?? null;
       if (!activeThreadId) {
-        return;
+        return false;
       }
 
       const inputItems = await resolveCodexInputItems(text, "codex");
@@ -3886,12 +3927,12 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         setInput("");
         setAttachments([]);
       }
-      return;
+      return steered;
     }
 
     const composerRuntime = resolveComposerRuntimeSelection();
     if (!composerRuntime) {
-      return;
+      return false;
     }
     const submitEngineId = composerRuntime.engineId;
     const submitModelId = composerRuntime.modelId;
@@ -3919,6 +3960,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       activeThreadModelMatch
         ? threadId
         : null;
+    let createdThread = false;
 
     if (!targetThreadId) {
       const createdThreadId = await createThread({
@@ -3936,9 +3978,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           : t("panel.workspaceChatTitle"),
       });
       if (!createdThreadId) {
-        return;
+        return false;
       }
       targetThreadId = createdThreadId;
+      createdThread = true;
       manualThreadBindTargetRef.current = createdThreadId;
       try {
         await bindChatThread(createdThreadId);
@@ -3986,25 +4029,47 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           outputSchemaText,
           customApprovalPolicyText,
           openCodeAgent: selectedOpenCodeAgentRef.current,
+          reasoningConfigured: createdThread,
           restorePlanModeOnCancel: false,
         });
-        return;
+        return true;
       }
     }
 
-    await ipc.setThreadReasoningEffort(
-      targetThreadId,
-      submitReasoningEffort,
-      submitModelId,
-    );
-    setThreadReasoningEffortLocal(targetThreadId, submitReasoningEffort);
-    if (!(await applyCodexConfigToThread(targetThreadId))) {
-      return;
+    if (!createdThread) {
+      await ipc.setThreadReasoningEffort(
+        targetThreadId,
+        submitReasoningEffort,
+        submitModelId,
+      );
     }
-    if (!(await applyOpenCodeConfigToThread(targetThreadId))) {
-      return;
+    setThreadReasoningEffortLocal(targetThreadId, submitReasoningEffort);
+
+    const needsNewThreadCodexConfig =
+      submitEngineId === "codex" &&
+      (selectedPersonality !== "inherit" ||
+        outputSchemaText.trim().length > 0 ||
+        customApprovalPolicyText.trim().length > 0);
+    if (!createdThread || needsNewThreadCodexConfig) {
+      if (!(await applyCodexConfigToThread(targetThreadId))) {
+        return false;
+      }
+    }
+
+    const needsNewThreadOpenCodeConfig =
+      submitEngineId === "opencode" && selectedOpenCodeAgentRef.current !== "build";
+    if (!createdThread || needsNewThreadOpenCodeConfig) {
+      if (!(await applyOpenCodeConfigToThread(targetThreadId))) {
+        return false;
+      }
     }
     setThreadLastModelLocal(targetThreadId, submitModelId);
+
+    recordPerfMetric("chat.send.preflight.ms", performance.now() - preflightStartedAt, {
+      engineId: submitEngineId,
+      modelId: submitModelId,
+      createdThread,
+    });
 
     const sent = await send(text, {
       threadIdOverride: targetThreadId,
@@ -4029,17 +4094,69 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       setInput("");
       setAttachments([]);
     }
+    return sent;
+  }
+
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!input.trim() || !activeWorkspaceId || isSubmittingRef.current) {
+      return;
+    }
+
+    const submittedText = input.trim();
+    const submittedAttachments = [...attachments];
+    if (!streaming) {
+      setPendingSubmission(
+        createPendingSubmissionMessage(
+          threadId ?? activeThread?.id ?? "pending",
+          submittedText,
+          submittedAttachments,
+          planMode,
+        ),
+      );
+    }
+
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+    const submission = submitMessage();
+    setInput("");
+    setAttachments([]);
+    try {
+      const accepted = await submission;
+      if (!accepted) {
+        setInput(submittedText);
+        setAttachments(submittedAttachments);
+      }
+    } catch (error) {
+      setInput(submittedText);
+      setAttachments(submittedAttachments);
+      throw error;
+    } finally {
+      setPendingSubmission(null);
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
+    }
   }
 
   async function executeWorkspaceOptInSend() {
     const prompt = workspaceOptInPrompt;
     if (!prompt) return;
+    setPendingSubmission(
+      createPendingSubmissionMessage(
+        prompt.threadId,
+        prompt.text,
+        prompt.attachments,
+        prompt.planMode,
+      ),
+    );
     setWorkspaceOptInPrompt(null);
 
     try {
       await ipc.confirmWorkspaceThread(prompt.threadId, prompt.threadPaths);
 
-      await ipc.setThreadReasoningEffort(prompt.threadId, prompt.effort, prompt.modelId);
+      if (!prompt.reasoningConfigured) {
+        await ipc.setThreadReasoningEffort(prompt.threadId, prompt.effort, prompt.modelId);
+      }
       setThreadReasoningEffortLocal(prompt.threadId, prompt.effort);
       if (!(await applyCodexConfigToThread(prompt.threadId, {
         engineId: prompt.engineId,
@@ -4086,6 +4203,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     } catch {
       setInput(prompt.text);
       setAttachments(prompt.attachments);
+    } finally {
+      setPendingSubmission(null);
     }
   }
 
@@ -4136,6 +4255,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           outputSchemaText: prompt.outputSchemaText,
           customApprovalPolicyText: prompt.customApprovalPolicyText,
           openCodeAgent: prompt.openCodeAgent,
+          reasoningConfigured: false,
           restorePlanModeOnCancel: true,
         });
         return;
@@ -4209,9 +4329,15 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }
 
   function dismissWorkspaceOptInPrompt() {
-    if (workspaceOptInPrompt?.restorePlanModeOnCancel) {
+    const prompt = workspaceOptInPrompt;
+    if (prompt?.restorePlanModeOnCancel) {
       setPlanMode(true);
     }
+    if (prompt) {
+      setInput(prompt.text);
+      setAttachments(prompt.attachments);
+    }
+    setPendingSubmission(null);
     setWorkspaceOptInPrompt(null);
   }
 
@@ -5003,7 +5129,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 padding: "20px 24px",
               }}
             >
-        {messages.length === 0 ? (
+        {messages.length === 0 && !pendingSubmission ? (
           <div
             className="animate-fade-in"
             style={{
@@ -5091,6 +5217,48 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 />
               );
             })}
+          </div>
+        )}
+
+        {pendingSubmission && !streaming && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              marginTop: messages.length > 0 ? MESSAGE_ROW_GAP : 0,
+            }}
+          >
+            <MessageRow
+              message={pendingSubmission}
+              index={messages.length}
+              isHighlighted={false}
+              assistantLabel=""
+              assistantEngineId=""
+              onApproval={handleApproval}
+              onLoadActionOutput={handleLoadActionOutput}
+            />
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                alignSelf: "flex-start",
+                gap: 7,
+                padding: "4px 14px 8px",
+                color: "var(--text-3)",
+                fontSize: 12,
+              }}
+            >
+              <Loader2
+                size={12}
+                className="chat-send-spinner"
+                aria-hidden="true"
+                style={{ color: "var(--info)" }}
+              />
+              <span>{t("panel.sendingMessage")}</span>
+            </div>
           </div>
         )}
 
@@ -5916,9 +6084,22 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 {(!streaming || canSteerActiveTurn) && !showSpecialInputComposer && (
                 <button
                   type="submit"
-                  disabled={!activeWorkspaceId || !input.trim()}
-                  title={streaming ? t("panel.sendFollowUp") : undefined}
-                  aria-label={streaming ? t("panel.sendFollowUp") : undefined}
+                  disabled={!activeWorkspaceId || !input.trim() || isSubmitting}
+                  title={
+                    isSubmitting
+                      ? t("panel.sendingMessage")
+                      : streaming
+                        ? t("panel.sendFollowUp")
+                        : t("panel.sendMessage")
+                  }
+                  aria-label={
+                    isSubmitting
+                      ? t("panel.sendingMessage")
+                      : streaming
+                        ? t("panel.sendFollowUp")
+                        : t("panel.sendMessage")
+                  }
+                  aria-busy={isSubmitting}
                   style={{
                     width: 30,
                     height: 30,
@@ -5931,7 +6112,11 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       activeWorkspaceId && input.trim()
                         ? "var(--on-accent-icon)"
                         : "var(--text-3)",
-                    cursor: activeWorkspaceId && input.trim() ? "pointer" : "default",
+                    cursor: isSubmitting
+                      ? "wait"
+                      : activeWorkspaceId && input.trim()
+                        ? "pointer"
+                        : "default",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -5942,7 +6127,11 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         : "none",
                   }}
                 >
-                  <Send size={13} />
+                  {isSubmitting ? (
+                    <Loader2 size={13} className="chat-send-spinner" aria-hidden="true" />
+                  ) : (
+                    <Send size={13} aria-hidden="true" />
+                  )}
                 </button>
                 )}
               </div>

@@ -327,6 +327,8 @@
     "trustWorkspace": "Confiar no workspace",
     "dropFiles": "Solte arquivos para anexar",
     "attachFiles": "Anexar arquivos",
+    "sendMessage": "Enviar mensagem",
+    "sendingMessage": "Enviando mensagem",
     "sendFollowUp": "Enviar acompanhamento",
     "enablePlanMode": "Ativar modo de plano (Shift+Tab)",
     "disablePlanMode": "Desativar modo de plano (Shift+Tab)",
