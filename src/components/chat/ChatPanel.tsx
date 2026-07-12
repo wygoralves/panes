@@ -59,6 +59,7 @@ import { useThreadStore } from "../../stores/threadStore";
 import { useUiStore } from "../../stores/uiStore";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import { showWorkspaceEditorForDirectFileOpen } from "../../lib/workspacePaneNavigation";
+import { resolveRelativePathWithinRoot } from "../../lib/fileRootUtils";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useTerminalStore, type LayoutMode } from "../../stores/terminalStore";
@@ -4682,10 +4683,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         return;
       }
       const normalized = filePath.replace(/\\/g, "/");
-      const absolutePath = /^(\/|[A-Za-z]:)/.test(normalized)
-        ? normalized
-        : `${diffFileRootPath}/${normalized}`;
-      void openFileInEditor(diffFileRootPath, absolutePath);
+      const relativePath = /^(\/|[A-Za-z]:)/.test(normalized)
+        ? resolveRelativePathWithinRoot(normalized, diffFileRootPath)
+        : normalized;
+      if (!relativePath) {
+        return;
+      }
+      void openFileInEditor(diffFileRootPath, relativePath);
       showWorkspaceEditorForDirectFileOpen(activeWorkspaceId);
     },
     [activeWorkspaceId, diffFileRootPath, openFileInEditor],
