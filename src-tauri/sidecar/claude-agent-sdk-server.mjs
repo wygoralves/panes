@@ -2,22 +2,28 @@
 // Bridges the Claude Agent SDK to a stdio-based JSON-line protocol for Panes.
 
 import { readFile } from "node:fs/promises";
-import { execFile } from "node:child_process";
+import { ChildProcess, execFile } from "node:child_process";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-const nodeMajorVersion = Number(process.versions.node.split(".")[0]);
+const [nodeMajorVersion, nodeMinorVersion] = process.versions.node
+  .split(".")
+  .map(Number);
+const supportsDisposableChildProcessVersion =
+  nodeMajorVersion > 20 ||
+  (nodeMajorVersion === 20 && nodeMinorVersion >= 5);
 if (
-  nodeMajorVersion < 20 ||
+  !supportsDisposableChildProcessVersion ||
   typeof Symbol.dispose !== "symbol" ||
-  typeof Symbol.asyncDispose !== "symbol"
+  typeof Symbol.asyncDispose !== "symbol" ||
+  typeof ChildProcess.prototype[Symbol.dispose] !== "function"
 ) {
   process.stdout.write(
     JSON.stringify({
       type: "error",
-      message: `Claude requires Node.js 20 or newer with explicit resource management support. Panes resolved Node.js ${process.versions.node}.`,
+      message: `Claude requires Node.js 20.5 or newer with disposable child process support. Panes resolved Node.js ${process.versions.node}.`,
     }) + "\n",
   );
   process.exit(1);
