@@ -12,7 +12,11 @@ import {
   Zap,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { availableAutonomyPresets } from "../../lib/autonomyPresets";
+import {
+  autonomyPresetDescriptionKey,
+  availableAutonomyPresets,
+  isDefaultAutonomyPreset,
+} from "../../lib/autonomyPresets";
 import type { AutonomyPresetId } from "../../lib/autonomyPresets";
 import type { ChatEngineId, TrustLevel } from "../../types";
 
@@ -43,6 +47,7 @@ interface PermissionPickerProps {
   customPolicyCount?: number;
   engineId?: ChatEngineId;
   presetValue?: AutonomyPresetId | null;
+  codexExternalSandbox?: boolean;
   onPresetChange?: (preset: AutonomyPresetId) => void;
   defaultPreset?: AutonomyPresetId | null;
   onDefaultPresetChange?: (preset: AutonomyPresetId | null) => void;
@@ -98,6 +103,7 @@ export function PermissionPicker({
   customPolicyCount = 0,
   engineId,
   presetValue,
+  codexExternalSandbox = false,
   onPresetChange,
   defaultPreset,
   onDefaultPresetChange,
@@ -335,6 +341,9 @@ export function PermissionPicker({
   const showCustomPill = presetsAvailable
     ? presetValue === null
     : customPolicyCount > 0;
+  const defaultPresetSelected = isDefaultAutonomyPreset(presetValue, defaultPreset);
+  const defaultPresetDisabled =
+    presetValue == null || (presetValue === "inherit" && defaultPresetSelected);
 
   const presetPanel = presetsAvailable && engineId && (
     <div className="pp-panel">
@@ -361,7 +370,11 @@ export function PermissionPicker({
                 <div className="pp-option-copy">
                   <span className="pp-option-label">{presetLabel(preset)}</span>
                   <span className="pp-option-description">
-                    {t(`autonomy.presets.${preset}.description`)}
+                    {t(
+                      autonomyPresetDescriptionKey(preset, engineId, {
+                        codexExternalSandbox,
+                      }),
+                    )}
                   </span>
                 </div>
                 {selected ? <Check size={13} className="pp-option-check" /> : null}
@@ -373,12 +386,12 @@ export function PermissionPicker({
       <div className="pp-preset-footer">
         {onDefaultPresetChange ? (
           <label
-            className={`pp-default-toggle${presetValue == null ? " pp-default-toggle-disabled" : ""}`}
+            className={`pp-default-toggle${defaultPresetDisabled ? " pp-default-toggle-disabled" : ""}`}
           >
             <input
               type="checkbox"
-              checked={presetValue != null && defaultPreset === presetValue}
-              disabled={presetValue == null}
+              checked={defaultPresetSelected}
+              disabled={defaultPresetDisabled}
               onChange={(event) => {
                 if (presetValue == null) {
                   return;

@@ -9454,6 +9454,12 @@ button.chat-context-section:hover {
   gap: 8px;
   padding: 8px 14px;
   border-top: 1px solid var(--wash-06);
+  flex-shrink: 0;
+}
+
+.pp-preset-footer > * {
+  position: relative;
+  top: -3px;
 }
 
 .pp-default-toggle {

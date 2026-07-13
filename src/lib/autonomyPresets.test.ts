@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   availableAutonomyPresets,
+  autonomyPresetDescriptionKey,
   autonomyPresetExecutionPolicyRequest,
   autonomyPresetPatch,
   detectAutonomyPreset,
+  isDefaultAutonomyPreset,
+  resolveDefaultAutonomyPreset,
 } from "./autonomyPresets";
 import type { AutonomyPresetId } from "./autonomyPresets";
 import type { ChatEngineId } from "../types";
@@ -188,5 +191,34 @@ describe("autonomyPresetExecutionPolicyRequest", () => {
         expect(autonomyPresetExecutionPolicyRequest(preset, engineId)).not.toBeNull();
       }
     }
+  });
+});
+
+describe("autonomy preset presentation", () => {
+  it("uses engine-specific descriptions where the permission model differs", () => {
+    expect(autonomyPresetDescriptionKey("read-only", "opencode")).toBe(
+      "autonomy.engineDescriptions.opencode.read-only",
+    );
+    expect(autonomyPresetDescriptionKey("full", "claude")).toBe(
+      "autonomy.engineDescriptions.claude.full",
+    );
+    expect(
+      autonomyPresetDescriptionKey("auto", "codex", { codexExternalSandbox: true }),
+    ).toBe("autonomy.engineDescriptions.codexExternal.auto");
+  });
+
+  it("keeps the standard Codex descriptions outside external sandbox mode", () => {
+    expect(autonomyPresetDescriptionKey("ask", "codex")).toBe(
+      "autonomy.presets.ask.description",
+    );
+  });
+
+  it("treats an unset stored default as inherit", () => {
+    expect(resolveDefaultAutonomyPreset(null)).toBe("inherit");
+    expect(resolveDefaultAutonomyPreset(undefined)).toBe("inherit");
+    expect(resolveDefaultAutonomyPreset("auto")).toBe("auto");
+    expect(isDefaultAutonomyPreset("inherit", null)).toBe(true);
+    expect(isDefaultAutonomyPreset("auto", null)).toBe(false);
+    expect(isDefaultAutonomyPreset("auto", "auto")).toBe(true);
   });
 });
