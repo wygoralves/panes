@@ -24,6 +24,10 @@ import {
   SquareTerminal,
   MessageSquare,
   FilePen,
+  Pencil,
+  AlertTriangle,
+  AtSign,
+  DollarSign,
   Plus,
   ListChecks,
   Copy,
@@ -49,14 +53,32 @@ import { useShallow } from "zustand/react/shallow";
 import { useChatStore } from "../../stores/chatStore";
 import { useChatComposerStore } from "../../stores/chatComposerStore";
 import { useEngineStore } from "../../stores/engineStore";
+import { useFileStore } from "../../stores/fileStore";
 import { useOnboardingStore } from "../../stores/onboardingStore";
 import { useThreadStore } from "../../stores/threadStore";
 import { useUiStore } from "../../stores/uiStore";
+import { getHarnessIcon } from "../shared/HarnessLogos";
+import { showWorkspaceEditorForDirectFileOpen } from "../../lib/workspacePaneNavigation";
+import {
+  resolveRelativePathWithinRoot,
+  resolveThreadFileRootPath,
+} from "../../lib/fileRootUtils";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useTerminalStore, type LayoutMode } from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
+import {
+  autonomyPresetExecutionPolicyRequest,
+  autonomyPresetPatch,
+  detectAutonomyPreset,
+  isAutonomyPresetId,
+} from "../../lib/autonomyPresets";
+import type { AutonomyPresetId } from "../../lib/autonomyPresets";
+import {
+  codexUsesExternalSandbox,
+  isCodexExternalSandboxWarning,
+} from "../../lib/codexSandbox";
 import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { isMacDesktop, usesCustomWindowFrame } from "../../lib/windowActions";
@@ -100,6 +122,7 @@ import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
 import { shouldSubmitChatInput } from "./chatInputShortcuts";
 import type {
+  ActionType,
   ApprovalBlock,
   ApprovalResponse,
   ChatAttachment,
@@ -232,6 +255,34 @@ export function canUseApprovalDecisionActions(
   details?: Record<string, unknown>,
 ): boolean {
   return engineId !== "opencode" || !isOpenCodeQuestionApproval(details);
+}
+
+export function canBatchApproveApproval(
+  approval: ApprovalBlock,
+  engineId?: string,
+): boolean {
+  const details = approval.details ?? {};
+  return (
+    canUseApprovalDecisionActions(engineId, details) &&
+    !isRequestUserInputApproval(details) &&
+    !requiresCustomApprovalPayload(details) &&
+    !shouldShowClaudeUnsupportedApproval(details, true, engineId === "claude")
+  );
+}
+
+function approvalRowIcon(actionType: ActionType) {
+  switch (actionType) {
+    case "command":
+      return <SquareTerminal size={13} />;
+    case "file_write":
+    case "file_edit":
+    case "file_delete":
+      return <FilePen size={13} />;
+    case "git":
+      return <GitBranch size={13} />;
+    default:
+      return <Shield size={13} />;
+  }
 }
 
 export function buildPermissionApprovalResponseForEngine(
@@ -496,26 +547,6 @@ function getThreadNetworkPolicyOptions(
       description: t("policy.networkRestrictedDescription"),
     },
   ];
-}
-
-function isCodexExternalSandboxWarning(message?: string): boolean {
-  if (typeof message !== "string") {
-    return false;
-  }
-
-  const normalized = message.toLowerCase();
-  return normalized.includes("external sandbox mode");
-}
-
-function codexUsesExternalSandbox(health: Record<string, EngineHealth>): boolean {
-  const codexHealth = health.codex;
-  if (!codexHealth?.available) {
-    return false;
-  }
-
-  return (codexHealth.warnings ?? []).some((warning) =>
-    isCodexExternalSandboxWarning(warning),
-  );
 }
 
 const IMAGE_ATTACHMENT_EXTENSIONS = new Set([
@@ -1193,6 +1224,8 @@ interface MessageRowProps {
   assistantEngineId: string;
   onApproval: (approvalId: string, response: ApprovalResponse) => void;
   onLoadActionOutput: (messageId: string, actionId: string) => Promise<void>;
+  onEditResend?: (text: string) => void;
+  onOpenDiffFile?: (filePath: string) => void;
 }
 
 const THINKING_VARIANTS = [
@@ -1273,6 +1306,8 @@ function MessageRowView({
   assistantEngineId,
   onApproval,
   onLoadActionOutput,
+  onEditResend,
+  onOpenDiffFile,
 }: MessageRowProps) {
   const { t, i18n } = useTranslation("chat");
   const isUser = message.role === "user";
@@ -1332,19 +1367,7 @@ function MessageRowView({
     >
       {isUser ? (
         <>
-          <div
-            style={{
-              maxWidth: "75%",
-              padding: "10px 14px",
-              borderRadius: "var(--radius-md)",
-              background: "rgba(var(--accent-rgb), 0.09)",
-              border: "1px solid rgba(var(--accent-rgb), 0.16)",
-              fontSize: 13,
-              lineHeight: 1.6,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-            }}
-          >
+          <div className="msg-user-bubble">
             {userAuxiliaryBlocks.length > 0 && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
                 {userAuxiliaryBlocks.map((block, i) => {
@@ -1359,11 +1382,14 @@ function MessageRowView({
                   }
 
                   return (
-                    <span key={i} className="chat-attachment-chip">
+                    <span
+                      key={i}
+                      className={`chat-attachment-chip ${block.type === "skill" ? "chat-attachment-chip--skill" : "chat-attachment-chip--mention"}`}
+                    >
                       {block.type === "skill" ? (
-                        <SquareTerminal size={10} />
+                        <DollarSign size={10} />
                       ) : (
-                        <MessageSquare size={10} />
+                        <AtSign size={10} />
                       )}
                       <span className="chat-attachment-chip-name" style={{ fontSize: 10 }}>
                         {block.name}
@@ -1374,7 +1400,7 @@ function MessageRowView({
               </div>
             )}
             {userPlanMode && (
-              <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6, fontSize: 10, color: "var(--text-3)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6, fontSize: 10, color: "var(--accent-2)" }}>
                 <ListChecks size={10} />
                 <span>{t("panel.planMode")}</span>
               </div>
@@ -1382,56 +1408,72 @@ function MessageRowView({
             {userContent}
           </div>
           <div className="msg-row-timestamp" style={{ display: "flex", alignItems: "center", gap: 2, justifyContent: "flex-end", marginTop: 4, paddingRight: 4 }}>
+            {onEditResend && (
+              <button
+                type="button"
+                className="msg-row-action-btn"
+                onClick={() => onEditResend(userContent)}
+                title={t("panel.editResend")}
+                aria-label={t("panel.editResend")}
+              >
+                <Pencil size={11} />
+              </button>
+            )}
             <MessageCopyButton message={message} />
             {messageTimestamp && <span>{messageTimestamp}</span>}
           </div>
         </>
       ) : showAssistantShell ? (
-        <>
-          <div
-            style={{
-              width: "100%",
-              maxWidth: "100%",
-              padding: "4px 0",
-            }}
-          >
-            {hasAssistantContent ? (
-              <MessageBlocks
-                blocks={message.blocks}
-                status={message.status}
-                engineId={assistantEngineId}
-                onApproval={onApproval}
-                onLoadActionOutput={(actionId) => onLoadActionOutput(message.id, actionId)}
-              />
-            ) : (
-              <div
-                style={{
-                  padding: "4px 14px 8px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  color: "var(--text-3)",
-                  fontSize: 12,
-                }}
-              >
-                {(() => {
-                  const ThinkIcon = thinkingVariant.icon;
-                  return <ThinkIcon size={12} className="thinking-icon-active" style={{ color: "var(--info)" }} />;
-                })()}
-                <span>{t(thinkingVariant.key)}</span>
-                <span className="chat-streaming-dots">
-                  <span />
-                  <span />
-                  <span />
-                </span>
-              </div>
-            )}
-          </div>
-          <div className="msg-row-timestamp" style={{ display: "flex", alignItems: "center", gap: 2, marginTop: 2, paddingLeft: 14 }}>
-            <MessageCopyButton message={message} />
-            {messageTimestamp && <span>{messageTimestamp}</span>}
-          </div>
-        </>
+        <div
+          style={{
+            width: "100%",
+            maxWidth: "100%",
+            padding: "4px 0",
+          }}
+        >
+          {assistantLabel && (
+            <div className="msg-turn-header">
+              {getHarnessIcon(assistantEngineId, 11)}
+              <span className="msg-turn-header-label">{assistantLabel}</span>
+              <span className="msg-turn-actions">
+                {messageTimestamp && <span style={{ padding: "0 2px" }}>{messageTimestamp}</span>}
+                <MessageCopyButton message={message} />
+              </span>
+            </div>
+          )}
+          {hasAssistantContent ? (
+            <MessageBlocks
+              blocks={message.blocks}
+              status={message.status}
+              engineId={assistantEngineId}
+              onApproval={onApproval}
+              onLoadActionOutput={(actionId) => onLoadActionOutput(message.id, actionId)}
+              onOpenDiffFile={onOpenDiffFile}
+            />
+          ) : (
+            <div
+              style={{
+                padding: "4px 14px 8px",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                color: "var(--text-3)",
+                fontSize: 12,
+              }}
+            >
+              {(() => {
+                const ThinkIcon = thinkingVariant.icon;
+                return <ThinkIcon size={12} className="thinking-icon-active" style={{ color: "var(--info)" }} />;
+              })()}
+              <span>{t(thinkingVariant.key)}</span>
+              <span className="chat-streaming-dots">
+                <span />
+                <span />
+                <span />
+              </span>
+            </div>
+          )}
+        </div>
       ) : null}
     </div>
   );
@@ -1446,7 +1488,9 @@ const MessageRow = memo(
     prev.assistantLabel === next.assistantLabel &&
     prev.assistantEngineId === next.assistantEngineId &&
     prev.onApproval === next.onApproval &&
-    prev.onLoadActionOutput === next.onLoadActionOutput,
+    prev.onLoadActionOutput === next.onLoadActionOutput &&
+    prev.onEditResend === next.onEditResend &&
+    prev.onOpenDiffFile === next.onOpenDiffFile,
 );
 
 function getFileExtension(fileName: string): string {
@@ -1704,10 +1748,25 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const ensureEngineHealth = useEngineStore((s) => s.ensureHealth);
   const onboardingOpen = useOnboardingStore((s) => s.open);
   const onboardingSelectedChatEngines = useOnboardingStore((s) => s.selectedChatEngines);
-  const codexExternalSandboxActive = useMemo(
-    () => codexUsesExternalSandbox(health),
-    [health],
-  );
+  // The health warning is only a heuristic; the backend answer is what
+  // set_thread_execution_policy actually validates against.
+  const [codexExternalSandboxActive, setCodexExternalSandboxActive] = useState(false);
+  useEffect(() => {
+    let disposed = false;
+    const heuristic = codexUsesExternalSandbox(health);
+    setCodexExternalSandboxActive((prev) => prev || heuristic);
+    void ipc
+      .codexUsesExternalSandbox()
+      .then((active) => {
+        if (!disposed) {
+          setCodexExternalSandboxActive(active);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+    };
+  }, [health]);
   const codexProtocolDiagnostics = health.codex?.protocolDiagnostics;
   const preferredOnboardingChatSelection = useMemo(
     () => resolvePreferredOnboardingChatSelection(onboardingSelectedChatEngines, engines),
@@ -2210,6 +2269,50 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       : undefined;
   const activeThreadSandboxMode = readThreadSandboxModeValue(activeThread);
   const activeThreadNetworkPolicy = readThreadNetworkPolicyValue(activeThread);
+  const activeThreadAutonomyEngineId =
+    activeThread?.engineId === "codex" ||
+    activeThread?.engineId === "claude" ||
+    activeThread?.engineId === "opencode"
+      ? activeThread.engineId
+      : undefined;
+  const activeThreadAutonomyPreset = useMemo(
+    () =>
+      activeThreadAutonomyEngineId
+        ? detectAutonomyPreset(
+            activeThreadAutonomyEngineId,
+            {
+              approvalPolicy: activeThreadApprovalPolicy,
+              sandboxMode: activeThreadSandboxMode,
+              networkPolicy: readThreadStoredNetworkPolicyValue(activeThread),
+            },
+            { codexExternalSandbox: codexExternalSandboxActive },
+          )
+        : undefined,
+    [
+      activeThread,
+      activeThreadApprovalPolicy,
+      activeThreadAutonomyEngineId,
+      activeThreadSandboxMode,
+      codexExternalSandboxActive,
+    ],
+  );
+  const [defaultAutonomyPreset, setDefaultAutonomyPreset] =
+    useState<AutonomyPresetId | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    void ipc
+      .getDefaultAutonomyPreset()
+      .then((preset) => {
+        if (!disposed && isAutonomyPresetId(preset)) {
+          setDefaultAutonomyPreset(preset);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+    };
+  }, []);
   const activeThreadCapabilities = useMemo(
     () => resolveEngineCapabilities(activeThread?.engineId, activeThreadEngineInfo?.capabilities),
     [activeThread?.engineId, activeThreadEngineInfo?.capabilities],
@@ -2412,6 +2515,18 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       ),
     [activeThread?.engineId, pendingApprovals, pendingToolInputApproval?.approvalId],
   );
+  const batchApprovableRows = useMemo(
+    () =>
+      pendingApprovalBannerRows.filter((approval) =>
+        canBatchApproveApproval(approval, activeThread?.engineId),
+      ),
+    [activeThread?.engineId, pendingApprovalBannerRows],
+  );
+  const canTrustApprovalScope = activeRepo
+    ? activeRepo.trustLevel !== "trusted"
+    : repos.length > 0 && workspaceTrustLevel !== "trusted";
+  const showApprovalBannerHeader =
+    pendingApprovalBannerRows.length > 1 || canTrustApprovalScope;
 
   const pendingToolInputQuestions = useMemo(
     () =>
@@ -4520,8 +4635,102 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         return;
       }
 
+      // If the backend rejects a sandbox override because Codex runs in
+      // external sandbox mode, remember that and retry without the override
+      // so presets keep working even when the health heuristic missed it.
+      if (
+        isCodexThread &&
+        isCodexExternalSandboxWarning(String(error)) &&
+        (nextPatch.sandboxMode === "read-only" || nextPatch.sandboxMode === "workspace-write")
+      ) {
+        setCodexExternalSandboxActive(true);
+        await onThreadExecutionPolicyChange({ ...nextPatch, sandboxMode: "inherit" });
+        return;
+      }
+
       toast.error(t("panel.toasts.updateExecutionPolicyFailed", { error: String(error) }));
       await refreshThreads(currentThread.workspaceId);
+    }
+  }
+
+  function onAutonomyPresetChange(preset: AutonomyPresetId) {
+    if (!activeThreadAutonomyEngineId) {
+      return;
+    }
+    void onThreadExecutionPolicyChange(
+      autonomyPresetPatch(preset, activeThreadAutonomyEngineId, {
+        codexExternalSandbox: codexExternalSandboxActive,
+      }) as ThreadExecutionPolicyPatch,
+    );
+  }
+
+  async function onDefaultAutonomyPresetChange(preset: AutonomyPresetId | null) {
+    const previous = defaultAutonomyPreset;
+    setDefaultAutonomyPreset(preset);
+    try {
+      const saved = await ipc.setDefaultAutonomyPreset(preset);
+      setDefaultAutonomyPreset(isAutonomyPresetId(saved) ? saved : null);
+    } catch (error) {
+      setDefaultAutonomyPreset(previous);
+      toast.error(t("autonomy.defaultSaveFailed", { error: String(error) }));
+    }
+  }
+
+  const batchApprovalInFlightRef = useRef(false);
+
+  async function allowAllPendingApprovals(stopAsking: boolean) {
+    if (batchApprovalInFlightRef.current) {
+      return;
+    }
+    const targetThreadId = activeThread?.id;
+    const engineId = activeThread?.engineId;
+    const autonomyEngineId = activeThreadAutonomyEngineId;
+    if (!targetThreadId) {
+      return;
+    }
+    if (batchApprovableRows.length === 0) {
+      return;
+    }
+
+    batchApprovalInFlightRef.current = true;
+    try {
+      for (const approval of batchApprovableRows) {
+        const details = approval.details ?? {};
+        const accepted = await respondApproval(
+          approval.approvalId,
+          isPermissionsRequestApproval(details)
+            ? buildPermissionApprovalResponseForEngine(engineId, details, "accept")
+            : { decision: "accept" },
+          targetThreadId,
+        );
+        if (!accepted) {
+          toast.error(t("panel.toasts.approvalBatchFailed"));
+          return;
+        }
+      }
+
+      if (stopAsking && autonomyEngineId) {
+        const request = autonomyPresetExecutionPolicyRequest("full", autonomyEngineId, {
+          codexExternalSandbox: codexExternalSandboxActive,
+        });
+        if (request) {
+          const requestId =
+            (threadExecutionPolicyRequestIdsRef.current[targetThreadId] ?? 0) + 1;
+          threadExecutionPolicyRequestIdsRef.current[targetThreadId] = requestId;
+          try {
+            const updatedThread = await ipc.setThreadExecutionPolicy(targetThreadId, request);
+            if (threadExecutionPolicyRequestIdsRef.current[targetThreadId] === requestId) {
+              applyThreadUpdateLocal(updatedThread);
+            }
+          } catch (error) {
+            if (threadExecutionPolicyRequestIdsRef.current[targetThreadId] === requestId) {
+              toast.error(t("panel.toasts.updateExecutionPolicyFailed", { error: String(error) }));
+            }
+          }
+        }
+      }
+    } finally {
+      batchApprovalInFlightRef.current = false;
     }
   }
 
@@ -4642,6 +4851,44 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const handleLoadActionOutput = useCallback(
     (messageId: string, actionId: string) => hydrateActionOutput(messageId, actionId),
     [hydrateActionOutput],
+  );
+
+  const handleEditResend = useCallback((text: string) => {
+    if (!text.trim()) {
+      return;
+    }
+    setInput(text);
+    inputRef.current?.focus();
+  }, []);
+
+  const openFileInEditor = useFileStore((s) => s.openFile);
+  const openUsageLimitsModal = useUiStore((s) => s.openUsageLimitsModal);
+
+  const diffFileRootPath = useMemo(
+    () =>
+      resolveThreadFileRootPath(
+        activeThread,
+        repos,
+        activeWorkspace?.rootPath ?? null,
+      ),
+    [activeThread, activeWorkspace?.rootPath, repos],
+  );
+  const handleOpenDiffFile = useCallback(
+    (filePath: string) => {
+      if (!diffFileRootPath || !activeWorkspaceId) {
+        return;
+      }
+      const normalized = filePath.replace(/\\/g, "/");
+      const relativePath = /^(\/|[A-Za-z]:)/.test(normalized)
+        ? resolveRelativePathWithinRoot(normalized, diffFileRootPath)
+        : normalized;
+      if (!relativePath) {
+        return;
+      }
+      void openFileInEditor(diffFileRootPath, relativePath);
+      showWorkspaceEditorForDirectFileOpen(activeWorkspaceId);
+    },
+    [activeWorkspaceId, diffFileRootPath, openFileInEditor],
   );
 
   const virtualizedLayout = useMemo(() => {
@@ -5193,33 +5440,49 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
-              gap: 16,
+              gap: 14,
               color: "var(--text-3)",
               textAlign: "center",
             }}
           >
-            <div
-              style={{
-                width: 56,
-                height: 56,
-                borderRadius: "var(--radius-lg)",
-                background: "var(--bg-3)",
-                border: "1px solid var(--border)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <Send size={22} style={{ color: "var(--text-2)", opacity: 0.5 }} />
+            <div className="chat-empty-tile">
+              <MessageSquare size={18} />
             </div>
             <div>
               <p style={{ margin: "0 0 4px", fontSize: 14, fontWeight: 500, color: "var(--text-2)" }}>
                 {t("panel.startConversation")}
               </p>
               <p style={{ margin: 0, fontSize: 12.5 }}>
-                {t("panel.emptyHint")}
+                {activeWorkspaceId && (activeRepo || gitStatus?.branch)
+                  ? activeRepo && gitStatus?.branch
+                    ? t("panel.emptyScopeRepoBranch", { repo: activeRepo.name, branch: gitStatus.branch })
+                    : t("panel.emptyScopeRepo", { repo: activeRepo?.name ?? workspaceName })
+                  : t("panel.emptyHint")}
               </p>
             </div>
+            {activeWorkspaceId && (
+              <div className="chat-empty-suggestions">
+                <button
+                  type="button"
+                  className="chat-empty-suggestion"
+                  onClick={() => handleEditResend(t("panel.emptySuggestionSummarize"))}
+                >
+                  {t("panel.emptySuggestionSummarize")}
+                </button>
+                <button
+                  type="button"
+                  className="chat-empty-suggestion"
+                  onClick={() => handleEditResend(t("panel.emptySuggestionTests"))}
+                >
+                  {t("panel.emptySuggestionTests")}
+                </button>
+              </div>
+            )}
+            <p style={{ margin: 0, fontSize: 11 }}>
+              <span className="chat-empty-kbd">⌘K</span> {t("panel.emptyHintCommands")}
+              <span style={{ opacity: 0.5, padding: "0 5px" }}>·</span>
+              <span className="chat-empty-kbd">/</span> {t("panel.emptyHintSlash")}
+            </p>
           </div>
         ) : virtualizationEnabled && virtualWindow ? (
           <div style={{ display: "flex", flexDirection: "column" }}>
@@ -5245,6 +5508,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         assistantEngineId={assistantIdentity?.engineId ?? ""}
                         onApproval={handleApproval}
                         onLoadActionOutput={handleLoadActionOutput}
+                        onEditResend={handleEditResend}
+                        onOpenDiffFile={handleOpenDiffFile}
                       />
                     </MeasuredMessageRow>
                   );
@@ -5269,6 +5534,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   assistantEngineId={assistantIdentity?.engineId ?? ""}
                   onApproval={handleApproval}
                   onLoadActionOutput={handleLoadActionOutput}
+                  onEditResend={handleEditResend}
+                  onOpenDiffFile={handleOpenDiffFile}
                 />
               );
             })}
@@ -5320,41 +5587,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         {autoScrollLocked && messages.length > 0 && (
           <button
             type="button"
+            className={`chat-jump-pill${streaming ? " chat-jump-pill--activity" : ""}`}
             onClick={() => {
               setAutoScrollLocked(false);
               scrollViewportToBottom("smooth");
             }}
-            style={{
-              position: "sticky",
-              left: "100%",
-              bottom: 10,
-              marginLeft: "auto",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "6px 10px",
-              borderRadius: "var(--radius-sm)",
-              border: streaming ? "1px solid var(--info-border)" : "1px solid var(--border)",
-              background: streaming ? "var(--info-surface)" : "var(--bg-2)",
-              color: streaming ? "var(--info)" : "var(--text-2)",
-              fontSize: 11.5,
-              cursor: "pointer",
-              boxShadow: "var(--shadow-popover)",
-              zIndex: 2,
-            }}
           >
-            {streaming && (
-              <span
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  background: "var(--info)",
-                  animation: "pulse-soft 1.5s ease-in-out infinite",
-                  flexShrink: 0,
-                }}
-              />
-            )}
+            {streaming && <span className="chat-jump-pill-dot" />}
             {streaming ? t("panel.newActivity") : t("panel.jumpToLatest")}
           </button>
         )}
@@ -5373,35 +5612,61 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           {/* Pending approvals */}
           {pendingApprovalBannerRows.length > 0 && (
             <div className="chat-approval-banner">
-              <div className="approval-header">
-                <span className="approval-header-icon">
-                  <Shield size={11} />
-                </span>
-                <span className="approval-header-title">
-                  {t("panel.approvalBannerTitle")}
-                </span>
-                <span className="approval-header-spacer" />
-                {activeRepo && activeRepo.trustLevel !== "trusted" && (
-                  <button
-                    type="button"
-                    className="approval-trust-btn"
-                    onClick={() => void onRepoTrustLevelChange("trusted")}
-                    title={t("panel.setRepoTrusted")}
-                  >
-                    {t("panel.trustRepo")}
-                  </button>
-                )}
-                {!activeRepo && repos.length > 0 && workspaceTrustLevel !== "trusted" && (
-                  <button
-                    type="button"
-                    className="approval-trust-btn"
-                    onClick={() => void onWorkspaceTrustLevelChange("trusted")}
-                    title={t("panel.setWorkspaceTrusted")}
-                  >
-                    {t("panel.trustWorkspace")}
-                  </button>
-                )}
-              </div>
+              {showApprovalBannerHeader && (
+                <div className="approval-header">
+                  <span className="approval-header-icon">
+                    <Shield size={11} />
+                  </span>
+                  <span className="approval-header-title">
+                    {t("panel.approvalBannerTitleCount", {
+                      count: pendingApprovalBannerRows.length,
+                    })}
+                  </span>
+                  <span className="approval-header-spacer" />
+                  {batchApprovableRows.length > 1 &&
+                    activeThreadApprovalDecisionCapabilities.includes("accept") && (
+                      <>
+                        <button
+                          type="button"
+                          className="approval-batch-btn"
+                          onClick={() => void allowAllPendingApprovals(false)}
+                        >
+                          {t("autonomy.allowAll")}
+                        </button>
+                        {activeThreadAutonomyEngineId && (
+                          <button
+                            type="button"
+                            className="approval-batch-btn"
+                            onClick={() => void allowAllPendingApprovals(true)}
+                            title={t("autonomy.presets.full.description")}
+                          >
+                            {t("autonomy.allowAllStopAsking")}
+                          </button>
+                        )}
+                      </>
+                    )}
+                  {activeRepo && activeRepo.trustLevel !== "trusted" && (
+                    <button
+                      type="button"
+                      className="approval-trust-btn"
+                      onClick={() => void onRepoTrustLevelChange("trusted")}
+                      title={t("panel.setRepoTrusted")}
+                    >
+                      {t("panel.trustRepo")}
+                    </button>
+                  )}
+                  {!activeRepo && repos.length > 0 && workspaceTrustLevel !== "trusted" && (
+                    <button
+                      type="button"
+                      className="approval-trust-btn"
+                      onClick={() => void onWorkspaceTrustLevelChange("trusted")}
+                      title={t("panel.setWorkspaceTrusted")}
+                    >
+                      {t("panel.trustWorkspace")}
+                    </button>
+                  )}
+                </div>
+              )}
 
               <div className="approval-rows">
                 {pendingApprovalBannerRows.slice(-3).map((approval) => {
@@ -5456,19 +5721,22 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       className="chat-approval-row"
                     >
                       <div className="approval-row-info">
-                        <div
-                          className="approval-row-summary"
-                          title={approval.summary}
-                        >
-                          {approval.summary}
-                        </div>
-                        {(command || reason) && (
+                        <div className="approval-row-head">
+                          <span className="approval-row-icon">
+                            {approvalRowIcon(approval.actionType)}
+                          </span>
                           <div
-                            className="approval-row-detail"
-                            title={command ?? reason}
+                            className="approval-row-summary"
+                            title={approval.summary}
                           >
-                            {command ?? reason}
+                            {approval.summary}
                           </div>
+                        </div>
+                        {command && (
+                          <div className="approval-row-command">{command}</div>
+                        )}
+                        {reason && (
+                          <div className="approval-row-reason">{reason}</div>
                         )}
                       </div>
 
@@ -5515,22 +5783,6 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                           </>
                         ) : (
                           <>
-                            {supportsCancel && !isPermissionsRequest && (
-                              <button
-                                type="button"
-                                className="approval-btn approval-btn-cancel"
-                                onClick={() =>
-                                  void respondApproval(
-                                    approval.approvalId,
-                                    isToolInputRequest
-                                      ? { action: "cancel" }
-                                      : { decision: "cancel" },
-                                  )
-                                }
-                              >
-                                {t("panel.approvalActions.cancel")}
-                              </button>
-                            )}
                             {supportsDecline && (
                               <button
                                 type="button"
@@ -5550,6 +5802,22 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                                 }
                               >
                                 {t("panel.approvalActions.deny")}
+                              </button>
+                            )}
+                            {supportsCancel && !isPermissionsRequest && (
+                              <button
+                                type="button"
+                                className="approval-btn approval-btn-cancel"
+                                onClick={() =>
+                                  void respondApproval(
+                                    approval.approvalId,
+                                    isToolInputRequest
+                                      ? { action: "cancel" }
+                                      : { decision: "cancel" },
+                                  )
+                                }
+                              >
+                                {t("panel.approvalActions.cancel")}
                               </button>
                             )}
                             {!hidePositiveApprovalActions && (
@@ -5682,14 +5950,6 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               />
             ) : (
               <>
-                {/* Plan mode indicator banner */}
-                {activePlanMode && (
-                  <div className="chat-plan-mode-banner">
-                    <ListChecks size={12} />
-                    <span>{t("panel.planMode")}</span>
-                  </div>
-                )}
-
                 {/* Attachment chips */}
                 {attachments.length > 0 && (
                   <div className="chat-attachments-bar">
@@ -5885,12 +6145,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               {!showSpecialInputComposer && (
                 <button
                   type="button"
-                  className="chat-toolbar-btn"
+                  className="chat-toolbar-btn chat-toolbar-btn-bordered"
                   onClick={() => void handleAddAttachment()}
                   disabled={!activeWorkspaceId}
                   title={t("panel.attachFiles")}
                 >
                   <Plus size={12} />
+                  <span style={{ fontSize: 11 }}>{t("panel.attachShort")}</span>
                   {attachments.length > 0 && (
                     <span className="chat-toolbar-badge">{attachments.length}</span>
                   )}
@@ -5938,6 +6199,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     selectedEngineId={selectedEngineId}
                     selectedModelId={selectedModelId ?? selectedModel?.id ?? ""}
                     selectedEffort={selectedEffort}
+                    selectedServiceTier={selectedServiceTier}
                     onEngineModelChange={(engineId, modelId) => {
                       manuallyOverrodeThreadSelectionRef.current = true;
                       setHasExplicitComposerRuntime(true);
@@ -5960,35 +6222,30 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       }
                     }}
                     onEffortChange={(effort) => void onReasoningEffortChange(effort)}
+                    onServiceTierChange={(serviceTier) => {
+                      const updateServiceTier = (): Promise<unknown> =>
+                        onCodexConfigSave({
+                          updatePersonality: false,
+                          personality: null,
+                          updateServiceTier: true,
+                          serviceTier: serviceTier === "inherit" ? null : serviceTier,
+                          updateOutputSchema: false,
+                          outputSchema: null,
+                          updateApprovalPolicy: false,
+                          approvalPolicy: null,
+                        }).catch((error) => {
+                          toast.error(String(error), {
+                            title: t("panel.toasts.speedChangeFailed"),
+                            action: {
+                              label: t("panel.toasts.retry"),
+                              onClick: () => void updateServiceTier(),
+                            },
+                          });
+                        });
+                      void updateServiceTier();
+                    }}
                     disabled={availableModels.length === 0}
                   />
-                  {selectedEngineId === "codex" && (
-                    <>
-                      <button
-                        type="button"
-                        className={`chat-toolbar-btn chat-toolbar-btn-bordered chat-toolbar-btn-fast ${selectedServiceTier === "fast" ? "chat-toolbar-btn-fast-active" : ""}`}
-                        onClick={() => {
-                          void onCodexConfigSave({
-                            updatePersonality: false,
-                            personality: null,
-                            updateServiceTier: true,
-                            serviceTier:
-                              selectedServiceTier === "fast" ? null : "fast",
-                            updateOutputSchema: false,
-                            outputSchema: null,
-                            updateApprovalPolicy: false,
-                            approvalPolicy: null,
-                          }).catch((error) => {
-                            toast.error(String(error));
-                          });
-                        }}
-                        title={t("configPicker.serviceTierDescription")}
-                      >
-                        <Zap size={11} />
-                        <span style={{ fontSize: 11 }}>{t("modelPicker.fastOn")}</span>
-                      </button>
-                    </>
-                  )}
                 </>
               )}
 
@@ -6001,6 +6258,16 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 <>
                   <div className="chat-toolbar-divider" />
                   <PermissionPicker
+                    engineId={activeThreadAutonomyEngineId}
+                    presetValue={activeThreadAutonomyPreset}
+                    codexExternalSandbox={codexExternalSandboxActive}
+                    onPresetChange={
+                      activeThreadAutonomyEngineId ? onAutonomyPresetChange : undefined
+                    }
+                    defaultPreset={defaultAutonomyPreset}
+                    onDefaultPresetChange={(preset) =>
+                      void onDefaultAutonomyPresetChange(preset)
+                    }
                     trustScopeLabel={
                       activeRepo
                         ? t("panel.repoAccess")
@@ -6113,23 +6380,49 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               <div style={{ flex: 1 }} />
 
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {!showSpecialInputComposer &&
+                  (isCodexEngine || selectedEngineId === "claude") &&
+                  usageLimits?.contextPercent != null && (
+                  <button
+                    type="button"
+                    className={`chat-context-ring${
+                      usageLimits.contextPercent <= 10
+                        ? " chat-context-ring--critical"
+                        : usageLimits.contextPercent <= 25
+                          ? " chat-context-ring--warning"
+                          : ""
+                    }`}
+                    onClick={openUsageLimitsModal}
+                    title={t("status.contextRingTitle", {
+                      percent: formatUsagePercent(usageLimits.contextPercent),
+                    })}
+                    aria-label={t("status.contextRingTitle", {
+                      percent: formatUsagePercent(usageLimits.contextPercent),
+                    })}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 16 16" style={{ transform: "rotate(-90deg)" }} aria-hidden="true">
+                      <circle className="chat-context-ring-track" cx="8" cy="8" r="6" strokeWidth="2" />
+                      <circle
+                        className="chat-context-ring-value"
+                        cx="8"
+                        cy="8"
+                        r="6"
+                        strokeWidth="2"
+                        strokeDasharray={2 * Math.PI * 6}
+                        strokeDashoffset={
+                          2 * Math.PI * 6 * (1 - Math.max(0, Math.min(100, usageLimits.contextPercent)) / 100)
+                        }
+                      />
+                    </svg>
+                    <span>{formatUsagePercent(usageLimits.contextPercent)}</span>
+                  </button>
+                )}
+
                 {streaming && !showSpecialInputComposer && (
                   <button
                     type="button"
+                    className="chat-stop-btn"
                     onClick={() => void cancel()}
-                    style={{
-                      padding: "5px 10px",
-                      borderRadius: "var(--radius-sm)",
-                      background: "var(--danger-surface)",
-                      color: "var(--danger)",
-                      border: "1px solid var(--danger-border)",
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 5,
-                    }}
                   >
                     <Square size={11} fill="currentColor" />
                     {t("panel.stop")}
@@ -6139,6 +6432,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 {(!streaming || canSteerActiveTurn) && !showSpecialInputComposer && (
                 <button
                   type="submit"
+                  className={`chat-send-btn${activeWorkspaceId && input.trim() ? " chat-send-btn--ready" : ""}`}
                   disabled={!activeWorkspaceId || !input.trim() || isSubmitting}
                   title={
                     isSubmitting
@@ -6155,32 +6449,6 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         : t("panel.sendMessage")
                   }
                   aria-busy={isSubmitting}
-                  style={{
-                    width: 30,
-                    height: 30,
-                    borderRadius: "50%",
-                    background:
-                      activeWorkspaceId && input.trim()
-                        ? "var(--accent-fill)"
-                        : "var(--bg-4)",
-                    color:
-                      activeWorkspaceId && input.trim()
-                        ? "var(--on-accent-icon)"
-                        : "var(--text-3)",
-                    cursor: isSubmitting
-                      ? "wait"
-                      : activeWorkspaceId && input.trim()
-                        ? "pointer"
-                        : "default",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    transition: "all var(--duration-fast) var(--ease-out)",
-                    boxShadow:
-                      activeWorkspaceId && input.trim()
-                        ? "var(--accent-glow)"
-                        : "none",
-                  }}
                 >
                   {isSubmitting ? (
                     <Loader2 size={13} className="chat-send-spinner" aria-hidden="true" />
@@ -6198,23 +6466,12 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
             {(isCodexEngine || selectedEngineId === "claude") && (
               usageLimits ? (
                 <div className="chat-status-usage">
-                  <div className="chat-context-section">
-                    <Zap size={10} />
-                    <span>{t("status.context")}</span>
-                    <div className="chat-context-progress">
-                      <div
-                        className={`chat-context-progress-fill${usageProgressLevelClass(usageLimits.contextPercent)}`}
-                        style={{ width: usagePercentToWidth(usageLimits.contextPercent) }}
-                      />
-                    </div>
-                    <span className="chat-context-percent">
-                      {formatUsagePercent(usageLimits.contextPercent)}
-                    </span>
-                  </div>
-
-                  <span className="chat-context-divider">&middot;</span>
-
-                  <div className="chat-context-section">
+                  <button
+                    type="button"
+                    className="chat-context-section"
+                    onClick={openUsageLimitsModal}
+                    title={t("status.openUsageLimits")}
+                  >
                     <Clock size={10} />
                     <span>{t("status.windowFiveHoursLeft")}</span>
                     <div className="chat-context-progress">
@@ -6233,11 +6490,16 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         })}
                       </span>
                     )}
-                  </div>
+                  </button>
 
                   <span className="chat-context-divider">&middot;</span>
 
-                  <div className="chat-context-section">
+                  <button
+                    type="button"
+                    className="chat-context-section"
+                    onClick={openUsageLimitsModal}
+                    title={t("status.openUsageLimits")}
+                  >
                     <Clock size={10} />
                     <span>{t("status.windowWeeklyLeft")}</span>
                     <div className="chat-context-progress">
@@ -6256,13 +6518,18 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         })}
                       </span>
                     )}
-                  </div>
+                  </button>
 
                   {selectedClaudeWeeklyUsage && (
                     <>
                       <span className="chat-context-divider">&middot;</span>
 
-                      <div className="chat-context-section">
+                      <button
+                        type="button"
+                        className="chat-context-section"
+                        onClick={openUsageLimitsModal}
+                        title={t("status.openUsageLimits")}
+                      >
                         <Clock size={10} />
                         <span>{selectedClaudeWeeklyUsage.label}</span>
                         <div className="chat-context-progress">
@@ -6281,7 +6548,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                             })}
                           </span>
                         )}
-                      </div>
+                      </button>
                     </>
                   )}
                 </div>
@@ -6306,17 +6573,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         </form>
 
               {error && (
-                <div
-                  style={{
-                    marginTop: 8,
-                    padding: "8px 12px",
-                    borderRadius: "var(--radius-sm)",
-                    background: "var(--danger-surface)",
-                    border: "1px solid var(--danger-border)",
-                    color: "var(--danger)",
-                    fontSize: 12,
-                  }}
-                >
+                <div className="msg-error-block" style={{ marginTop: 8, fontSize: 12 }}>
+                  <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
                   {error}
                 </div>
               )}

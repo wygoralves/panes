@@ -241,6 +241,43 @@ pub async fn set_terminal_font_size(
 }
 
 #[tauri::command]
+pub async fn get_default_autonomy_preset() -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(|| -> Result<Option<String>, String> {
+        let config = AppConfig::load_or_create().map_err(err_to_string)?;
+        Ok(config.default_autonomy_preset().map(ToOwned::to_owned))
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn set_default_autonomy_preset(
+    state: State<'_, AppState>,
+    preset: Option<String>,
+) -> Result<Option<String>, String> {
+    let normalized = match preset.as_deref() {
+        None | Some("") | Some("inherit") => None,
+        Some(value) if crate::config::app_config::VALID_AUTONOMY_PRESETS.contains(&value) => {
+            Some(value.to_string())
+        }
+        Some(value) => return Err(format!("unknown autonomy preset: {value}")),
+    };
+
+    let config_write_lock = state.config_write_lock.clone();
+    let _guard = config_write_lock.lock_owned().await;
+
+    tokio::task::spawn_blocking(move || -> Result<Option<String>, String> {
+        AppConfig::mutate(|config| {
+            config.general.default_autonomy_preset = normalized.clone();
+            Ok(normalized)
+        })
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
 pub async fn get_agent_notification_settings() -> Result<AgentNotificationSettingsStatusDto, String>
 {
     tokio::task::spawn_blocking(agent_notification_settings_status)

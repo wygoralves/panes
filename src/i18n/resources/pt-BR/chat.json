@@ -11,6 +11,14 @@
   },
   "modelPicker": {
     "selectModel": "Selecionar modelo",
+    "runtimeConfiguration": "Configuração de runtime",
+    "harness": "Harness",
+    "provider": "Provedor",
+    "model": "Modelo",
+    "reasoning": "Raciocínio",
+    "speed": "Velocidade",
+    "available": "Disponível",
+    "unavailable": "Indisponível",
     "engine": "Engine",
     "models": "Modelos",
     "providers": "Provedores",
@@ -22,6 +30,20 @@
     "fastOn": "Fast",
     "supportsPersonality": "Personalidade",
     "upgradeAvailable": "Upgrade disponível: {{model}}",
+    "speedOptions": {
+      "standard": {
+        "label": "Padrão",
+        "description": "Usa a camada de serviço padrão."
+      },
+      "fast": {
+        "label": "Fast",
+        "description": "Prioriza menor latência."
+      },
+      "flex": {
+        "label": "Flex",
+        "description": "Usa capacidade flex quando disponível."
+      }
+    },
     "modalities": {
       "image": "Visão",
       "textOnly": "Só texto"
@@ -309,6 +331,46 @@
     "openCodeDenyDescription": "Nega permissões de ferramenta do OpenCode para esta thread.",
     "permissionPolicyFallback": "Política de permissão"
   },
+  "autonomy": {
+    "sectionTitle": "Autonomia",
+    "custom": "Personalizado",
+    "presets": {
+      "inherit": { "label": "Automático", "description": "Segue a política de confiança do repo." },
+      "read-only": { "label": "Somente leitura", "description": "Inspeciona e responde. Leituras seguras rodam; nada muda sem a sua aprovação." },
+      "ask": { "label": "Pedir para agir", "description": "Leituras são livres. Edições e comandos pedem antes." },
+      "auto": { "label": "Autônomo no workspace", "description": "Trabalha livre dentro do sandbox do workspace. Só pede para sair dele." },
+      "full": { "label": "Autonomia total", "description": "Nunca pergunta. Acesso total a disco e rede." }
+    },
+    "engineDescriptions": {
+      "opencode": {
+        "inherit": "Segue os padrões de confiança do repo para o OpenCode.",
+        "read-only": "Bloqueia as ferramentas do OpenCode. O agente ainda pode responder sem ferramentas.",
+        "ask": "Pede aprovação antes de o OpenCode executar uma ferramenta.",
+        "auto": "Permite ferramentas do OpenCode sem aprovação. O Panes não adiciona sandbox de arquivos ou rede.",
+        "full": "Permite ferramentas do OpenCode sem aprovação. O Panes não adiciona sandbox de arquivos ou rede."
+      },
+      "claude": {
+        "inherit": "Segue os padrões de confiança do repo para o Claude.",
+        "read-only": "Usa aprovações restritas com arquivos somente leitura e sem rede.",
+        "ask": "Usa aprovações padrão com escrita no workspace e sem rede.",
+        "auto": "Usa aprovações confiáveis e escrita no workspace. A rede segue a confiança do repo.",
+        "full": "Usa aprovações confiáveis com escrita no workspace e rede habilitada."
+      },
+      "codexExternal": {
+        "read-only": "Usa aprovações não confiáveis e bloqueia a rede. O sandbox externo controla o acesso aos arquivos.",
+        "ask": "Usa aprovações sob demanda e bloqueia a rede. O sandbox externo controla o acesso aos arquivos.",
+        "auto": "Usa aprovações ao falhar com rede habilitada. O sandbox externo controla o acesso aos arquivos."
+      }
+    },
+    "defaultForNewThreads": "Padrão para novas conversas",
+    "advanced": "Avançado",
+    "backToPresets": "Presets",
+    "allowAll": "Permitir tudo",
+    "allowAllStopAsking": "Permitir tudo e parar de perguntar",
+    "approvalToastTitle": "{{engine}} precisa de aprovação",
+    "openThread": "Abrir conversa",
+    "defaultSaveFailed": "Falha ao salvar a autonomia padrão: {{error}}"
+  },
   "panel": {
     "assistantFallback": "Assistente",
     "emptyHint": "Abra uma pasta e envie uma mensagem para começar",
@@ -316,7 +378,6 @@
     "workspaceChatTitle": "Chat do workspace",
     "repoChatTitle": "Chat de {{name}}",
     "renameThread": "Clique para renomear a thread",
-    "approvalBannerTitle": "Aprovações pendentes",
     "respondInCard": "Responda no card de aprovação abaixo.",
     "respondInCustomCard": "Esta solicitação exige JSON personalizado. Responda no card de aprovação abaixo.",
     "claudeApprovalUnsupported": "Esse tipo de approval do Claude ainda não é suportado no Panes.",
@@ -411,13 +472,26 @@
       "claudeSandboxUnsupported": "Claude suporta apenas os modos de sandbox somente leitura e escrita no workspace.",
       "fullAccessNetworkWarning": "O modo acesso total habilita temporariamente o acesso à rede.",
       "updateExecutionPolicyFailed": "Falha ao atualizar a política de execução da thread: {{error}}",
+      "approvalBatchFailed": "Uma ou mais aprovações não puderam ser aceitas. A política da thread não foi alterada.",
       "updateCodexConfigFailed": "Falha ao atualizar a configuração de turno do Codex: {{error}}",
       "updateOpenCodeConfigFailed": "Falha ao atualizar a configuração de turno do OpenCode: {{error}}",
       "planImplementationThreadUnavailable": "A thread original de planejamento não está mais disponível. Reabra a thread e tente novamente.",
       "invalidOutputSchema": "O schema de saída deve ser um objeto ou booleano JSON Schema válido: {{error}}",
       "invalidCustomApprovalPolicy": "A política de aprovação estruturada deve ser um objeto JSON.",
-      "invalidCustomApprovalPolicyWithError": "A política de aprovação estruturada contém JSON inválido: {{error}}"
-    }
+      "invalidCustomApprovalPolicyWithError": "A política de aprovação estruturada contém JSON inválido: {{error}}",
+      "speedChangeFailed": "Não foi possível alterar o nível de serviço",
+      "retry": "Tentar novamente"
+    },
+    "approvalBannerTitleCount_one": "{{count}} aprovação pendente",
+    "approvalBannerTitleCount_other": "{{count}} aprovações pendentes",
+    "editResend": "Editar e reenviar",
+    "attachShort": "Anexar",
+    "emptyScopeRepo": "As mensagens rodam em {{repo}}",
+    "emptyScopeRepoBranch": "As mensagens rodam em {{repo}} no branch {{branch}}",
+    "emptySuggestionSummarize": "Resumir as mudanças recentes",
+    "emptySuggestionTests": "Corrigir o teste que está falhando",
+    "emptyHintCommands": "comandos",
+    "emptyHintSlash": "ações de barra"
   },
   "messageBlocks": {
     "diffFallback": "diff ({{scope}})",
@@ -425,7 +499,6 @@
     "parsingDiff": "Analisando diff...",
     "noChanges": "Sem alterações",
     "thinking": "Raciocínio",
-    "thinkingDone": "Pensou por {{seconds}}s",
     "actionStatus": {
       "done": "Concluído",
       "running": "Em andamento",
@@ -440,19 +513,27 @@
     },
     "outputTruncated": "Mostrando apenas a saída mais recente da ação (blocos anteriores truncados por desempenho).",
     "actionGroup": {
-      "summary_one": "{{count}} ação concluída",
-      "summary_other": "{{count}} ações concluídas",
+      "summary_one": "{{count}} ação",
+      "summary_other": "{{count}} ações",
       "errorCount_one": "{{count}} erro",
       "errorCount_other": "{{count}} erros",
       "types": {
-        "command": "cmd",
-        "file_read": "leitura",
-        "file_write": "escrita",
-        "file_edit": "edição",
-        "file_delete": "excl.",
-        "git": "git",
-        "search": "busca",
-        "other": "outro"
+        "command_one": "{{count}} comando",
+        "command_other": "{{count}} comandos",
+        "file_read_one": "{{count}} leitura",
+        "file_read_other": "{{count}} leituras",
+        "file_write_one": "{{count}} escrita",
+        "file_write_other": "{{count}} escritas",
+        "file_edit_one": "{{count}} edição",
+        "file_edit_other": "{{count}} edições",
+        "file_delete_one": "{{count}} exclusão",
+        "file_delete_other": "{{count}} exclusões",
+        "git_one": "{{count}} git",
+        "git_other": "{{count}} git",
+        "search_one": "{{count}} busca",
+        "search_other": "{{count}} buscas",
+        "other_one": "{{count}} outro",
+        "other_other": "{{count}} outros"
       }
     },
     "approval": {
@@ -497,7 +578,14 @@
       "nextQuestion": "Próxima pergunta",
       "otherAnswerPlaceholder": "Outra resposta (opcional)",
       "sendAnswers": "Enviar respostas"
-    }
+    },
+    "thought": "Pensou",
+    "thinkingDuration": "{{seconds}}s",
+    "output": "saída",
+    "copyOutput": "Copiar saída",
+    "expandOutput": "Expandir saída",
+    "collapseOutput": "Recolher saída",
+    "openInEditor": "Abrir no editor"
   },
   "status": {
     "now": "agora",
@@ -513,7 +601,9 @@
     "resets": "reinicia {{time}}",
     "usageAwaitingFirstMessage": "Envie uma mensagem para carregar os limites de uso",
     "usageLoading": "Carregando limites de uso...",
-    "usageUnavailable": "Limites de uso indisponíveis no servidor"
+    "usageUnavailable": "Limites de uso indisponíveis no servidor",
+    "openUsageLimits": "Abrir limites de uso",
+    "contextRingTitle": "Contexto restante: {{percent}}. Abrir limites de uso."
   },
   "slashCommands": {
     "panels": {

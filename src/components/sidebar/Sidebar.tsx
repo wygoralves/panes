@@ -440,11 +440,21 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                                 {getThreadLabel(thread)}
                               </span>
                               <span className="sb-thread-trailing">
-                                <span className="sb-thread-time">
-                                  {thread.lastActivityAt
-                                    ? formatRelativeTime(thread.lastActivityAt, i18n.language)
-                                    : ""}
-                                </span>
+                                {thread.status === "awaiting_approval" ? (
+                                  <span
+                                    className="sb-thread-approval"
+                                    title={t("app:sidebar.needsApproval")}
+                                  >
+                                    <span className="sb-thread-approval-dot" />
+                                    {t("app:sidebar.needsApproval")}
+                                  </span>
+                                ) : (
+                                  <span className="sb-thread-time">
+                                    {thread.lastActivityAt
+                                      ? formatRelativeTime(thread.lastActivityAt, i18n.language)
+                                      : ""}
+                                  </span>
+                                )}
                                 <button
                                   type="button"
                                   title={t("app:sidebar.archiveThread")}

@@ -424,7 +424,14 @@ jobs:
 
       - name: Install dependencies for universal macOS
         if: matrix.platform == 'macos-15'
-        run: pnpm install --frozen-lockfile --config.supportedArchitectures.os=darwin --config.supportedArchitectures.cpu=x64 --config.supportedArchitectures.cpu=arm64
+        # pnpm 9 does not honor repeated --config.supportedArchitectures.* CLI
+        # flags, so the x64 Claude SDK native package never gets installed on
+        # the arm64 runner. The package.json pnpm field is the documented way
+        # to install optional dependencies for both macOS architectures.
+        run: |
+          npm pkg set 'pnpm.supportedArchitectures.os[0]=darwin' 'pnpm.supportedArchitectures.cpu[0]=x64' 'pnpm.supportedArchitectures.cpu[1]=arm64'
+          pnpm install --frozen-lockfile
+          git checkout -- package.json
 
       - name: Build platform Claude sidecar assets
         run: pnpm run build:claude-sidecar

@@ -1,8 +1,24 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, Monitor, Shield, SquareTerminal } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  Eye,
+  FolderOpen,
+  Monitor,
+  Shield,
+  SquareTerminal,
+  Zap,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { TrustLevel } from "../../types";
+import {
+  autonomyPresetDescriptionKey,
+  availableAutonomyPresets,
+  isDefaultAutonomyPreset,
+} from "../../lib/autonomyPresets";
+import type { AutonomyPresetId } from "../../lib/autonomyPresets";
+import type { ChatEngineId, TrustLevel } from "../../types";
 
 type PermissionOption<T extends string = string> = {
   value: T;
@@ -29,6 +45,12 @@ interface PermissionPickerProps {
   trustOptions?: PermissionOption<TrustLevel>[];
   onTrustChange?: (value: TrustLevel) => void;
   customPolicyCount?: number;
+  engineId?: ChatEngineId;
+  presetValue?: AutonomyPresetId | null;
+  codexExternalSandbox?: boolean;
+  onPresetChange?: (preset: AutonomyPresetId) => void;
+  defaultPreset?: AutonomyPresetId | null;
+  onDefaultPresetChange?: (preset: AutonomyPresetId | null) => void;
   approvalTitle?: string;
   approvalValue?: string;
   approvalSelectedLabel?: string | null;
@@ -45,6 +67,22 @@ interface PermissionPickerProps {
   networkDisabled?: boolean;
   networkNotice?: string | null;
 }
+
+const PRESET_ICONS: Record<AutonomyPresetId, ReactNode> = {
+  inherit: <Shield size={13} />,
+  "read-only": <Eye size={13} />,
+  ask: <Shield size={13} />,
+  auto: <FolderOpen size={13} />,
+  full: <Zap size={13} />,
+};
+
+const PRESET_TRIGGER_ICONS: Record<AutonomyPresetId, ReactNode> = {
+  inherit: <Shield size={12} />,
+  "read-only": <Eye size={12} />,
+  ask: <Shield size={12} />,
+  auto: <FolderOpen size={12} />,
+  full: <Zap size={12} />,
+};
 
 function findOption<T extends string>(
   options: PermissionOption<T>[] | undefined,
@@ -63,6 +101,12 @@ export function PermissionPicker({
   trustOptions,
   onTrustChange,
   customPolicyCount = 0,
+  engineId,
+  presetValue,
+  codexExternalSandbox = false,
+  onPresetChange,
+  defaultPreset,
+  onDefaultPresetChange,
   approvalTitle,
   approvalValue,
   approvalSelectedLabel,
@@ -82,6 +126,11 @@ export function PermissionPicker({
   const { t } = useTranslation("chat");
   const [open, setOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<string>("");
+  const presetsAvailable =
+    engineId !== undefined && presetValue !== undefined && onPresetChange !== undefined;
+  const [view, setView] = useState<"presets" | "advanced">(
+    presetsAvailable ? "presets" : "advanced",
+  );
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ bottom: 0, left: 0 });
@@ -183,8 +232,9 @@ export function PermissionPicker({
       }
     } else {
       setActiveSection("");
+      setView(presetsAvailable ? "presets" : "advanced");
     }
-  }, [activeSection, open, railItems]);
+  }, [activeSection, open, presetsAvailable, railItems]);
 
   const summaryLines = useMemo(() => {
     const lines: string[] = [];
@@ -241,7 +291,7 @@ export function PermissionPicker({
       bottom: window.innerHeight - rect.top + 6,
       left,
     });
-  }, [open]);
+  }, [open, view]);
 
   useEffect(() => {
     if (!open) {
@@ -281,76 +331,187 @@ export function PermissionPicker({
     setOpen((prev) => !prev);
   }, [disabled]);
 
+  const presetLabel = useCallback(
+    (preset: AutonomyPresetId) => t(`autonomy.presets.${preset}.label`),
+    [t],
+  );
+
   const title = summaryLines.length > 0 ? summaryLines.join(" | ") : t("permissionPicker.title");
   const activeItem = railItems.find((item) => item.id === activeSection) ?? null;
+  const showCustomPill = presetsAvailable
+    ? presetValue === null
+    : customPolicyCount > 0;
+  const defaultPresetSelected = isDefaultAutonomyPreset(presetValue, defaultPreset);
+  const defaultPresetDisabled =
+    presetValue == null || (presetValue === "inherit" && defaultPresetSelected);
+
+  const presetPanel = presetsAvailable && engineId && (
+    <div className="pp-panel">
+      <div className="pp-panel-header">
+        <div className="pp-panel-title">
+          <span>{t("autonomy.sectionTitle")}</span>
+        </div>
+        {showCustomPill ? (
+          <span className="pp-header-badge">{t("autonomy.custom")}</span>
+        ) : null}
+      </div>
+      <div className="pp-panel-content">
+        <div className="pp-options">
+          {availableAutonomyPresets(engineId).map((preset) => {
+            const selected = preset === presetValue;
+            return (
+              <button
+                key={preset}
+                type="button"
+                className={`pp-option pp-preset-option${selected ? " pp-option-selected" : ""}`}
+                onClick={() => onPresetChange?.(preset)}
+              >
+                <span className="pp-preset-icon">{PRESET_ICONS[preset]}</span>
+                <div className="pp-option-copy">
+                  <span className="pp-option-label">{presetLabel(preset)}</span>
+                  <span className="pp-option-description">
+                    {t(
+                      autonomyPresetDescriptionKey(preset, engineId, {
+                        codexExternalSandbox,
+                      }),
+                    )}
+                  </span>
+                </div>
+                {selected ? <Check size={13} className="pp-option-check" /> : null}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="pp-preset-footer">
+        {onDefaultPresetChange ? (
+          <label
+            className={`pp-default-toggle${defaultPresetDisabled ? " pp-default-toggle-disabled" : ""}`}
+          >
+            <input
+              type="checkbox"
+              checked={defaultPresetSelected}
+              disabled={defaultPresetDisabled}
+              onChange={(event) => {
+                if (presetValue == null) {
+                  return;
+                }
+                onDefaultPresetChange(event.target.checked ? presetValue : null);
+              }}
+            />
+            {t("autonomy.defaultForNewThreads")}
+          </label>
+        ) : (
+          <span />
+        )}
+        {railItems.length > 0 ? (
+          <button
+            type="button"
+            className="pp-advanced-btn"
+            onClick={() => setView("advanced")}
+          >
+            {t("autonomy.advanced")}
+            <ChevronDown size={10} style={{ transform: "rotate(-90deg)" }} />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+
+  const advancedPanel = (
+    <>
+      <div className="pp-rail">
+        {presetsAvailable ? (
+          <button
+            type="button"
+            className="pp-rail-item pp-rail-back"
+            onClick={() => setView("presets")}
+          >
+            <span className="pp-rail-item-icon">
+              <ChevronLeft size={13} />
+            </span>
+            <span className="pp-rail-item-name">{t("autonomy.backToPresets")}</span>
+          </button>
+        ) : (
+          <div className="pp-rail-label">{t("permissionPicker.policy")}</div>
+        )}
+        {railItems.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={`pp-rail-item${activeSection === item.id ? " pp-rail-item-active" : ""}`}
+            onClick={() => setActiveSection(item.id)}
+          >
+            <span className="pp-rail-item-icon">{item.icon}</span>
+            <span className="pp-rail-item-name">{item.title}</span>
+          </button>
+        ))}
+      </div>
+
+      {activeItem ? (
+        <div className="pp-panel">
+          <div className="pp-panel-header">
+            <div className="pp-panel-title">
+              <span>{activeItem.title}</span>
+            </div>
+            {customPolicyCount > 0 ? (
+              <span className="pp-header-badge">{t("permissionPicker.custom")}</span>
+            ) : null}
+          </div>
+          <div className="pp-panel-content">
+            <div className="pp-options">
+              {activeItem.options.map((option) => {
+                const selected = option.value === activeItem.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`pp-option${selected ? " pp-option-selected" : ""}`}
+                    onClick={() => activeItem.onChange?.(option.value)}
+                    disabled={activeItem.disabled}
+                  >
+                    <div className="pp-option-copy">
+                      <span className="pp-option-label">{option.label}</span>
+                      {option.description ? (
+                        <span className="pp-option-description">{option.description}</span>
+                      ) : null}
+                    </div>
+                    {selected ? <Check size={13} className="pp-option-check" /> : null}
+                  </button>
+                );
+              })}
+            </div>
+            {activeItem.note ? <p className="pp-section-note">{activeItem.note}</p> : null}
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
 
   const popover = open
     ? createPortal(
         <div
           ref={popoverRef}
-          className="pp-popover"
+          className={`pp-popover${view === "presets" && presetsAvailable ? " pp-popover-presets" : ""}`}
           style={{
             position: "fixed",
             bottom: pos.bottom,
             left: pos.left,
           }}
         >
-          <div className="pp-rail">
-            <div className="pp-rail-label">{t("permissionPicker.policy")}</div>
-            {railItems.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`pp-rail-item${activeSection === item.id ? " pp-rail-item-active" : ""}`}
-                onClick={() => setActiveSection(item.id)}
-              >
-                <span className="pp-rail-item-icon">{item.icon}</span>
-                <span className="pp-rail-item-name">{item.title}</span>
-              </button>
-            ))}
-          </div>
-
-          {activeItem ? (
-            <div className="pp-panel">
-              <div className="pp-panel-header">
-                <div className="pp-panel-title">
-                  <span>{activeItem.title}</span>
-                </div>
-                {customPolicyCount > 0 ? (
-                  <span className="pp-header-badge">{t("permissionPicker.custom")}</span>
-                ) : null}
-              </div>
-              <div className="pp-panel-content">
-                <div className="pp-options">
-                  {activeItem.options.map((option) => {
-                    const selected = option.value === activeItem.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        className={`pp-option${selected ? " pp-option-selected" : ""}`}
-                        onClick={() => activeItem.onChange?.(option.value)}
-                        disabled={activeItem.disabled}
-                      >
-                        <div className="pp-option-copy">
-                          <span className="pp-option-label">{option.label}</span>
-                          {option.description ? (
-                            <span className="pp-option-description">{option.description}</span>
-                          ) : null}
-                        </div>
-                        {selected ? <Check size={13} className="pp-option-check" /> : null}
-                      </button>
-                    );
-                  })}
-                </div>
-                {activeItem.note ? <p className="pp-section-note">{activeItem.note}</p> : null}
-              </div>
-            </div>
-          ) : null}
+          {view === "presets" && presetsAvailable ? presetPanel : advancedPanel}
         </div>,
         document.body,
       )
     : null;
+
+  const triggerLabel = presetsAvailable
+    ? presetValue != null
+      ? presetLabel(presetValue)
+      : t("autonomy.custom")
+    : trustOption
+      ? trustOption.label
+      : t("permissionPicker.title");
 
   return (
     <div className="pp-root">
@@ -363,12 +524,15 @@ export function PermissionPicker({
         title={title}
       >
         <span className="pp-trigger-icon">
-          <Shield size={12} />
+          {presetsAvailable && presetValue != null
+            ? PRESET_TRIGGER_ICONS[presetValue]
+            : <Shield size={12} />}
         </span>
-        <span className="pp-trigger-label">{t("permissionPicker.title")}</span>
-        {trustOption ? <span className="pp-trigger-pill">{trustOption.label}</span> : null}
-        {customPolicyCount > 0 ? (
-          <span className="pp-trigger-pill pp-trigger-pill-accent">{t("permissionPicker.custom")}</span>
+        <span className="pp-trigger-label">{triggerLabel}</span>
+        {showCustomPill ? (
+          <span className="pp-trigger-pill pp-trigger-pill-accent">
+            {presetsAvailable ? t("autonomy.custom") : t("permissionPicker.custom")}
+          </span>
         ) : null}
         <ChevronDown
           size={10}

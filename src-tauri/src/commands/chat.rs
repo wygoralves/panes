@@ -191,6 +191,16 @@ struct ChatTurnFinishedEvent {
     preview: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatApprovalRequestedEvent {
+    thread_id: String,
+    workspace_id: String,
+    engine_id: String,
+    thread_title: String,
+    summary: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatAttachmentPayload {
@@ -2763,8 +2773,20 @@ async fn process_stream_event(
     }
 
     let _ = app.emit(stream_event_topic, &normalized_event);
-    if matches!(&normalized_event, EngineEvent::ApprovalRequested { .. }) {
+    if let EngineEvent::ApprovalRequested { summary, .. } = &normalized_event {
         let _ = app.emit(approval_event_topic, &normalized_event);
+        // Unscoped companion event so background threads can surface pending
+        // approvals without a per-thread listener.
+        let _ = app.emit(
+            "chat-approval-requested",
+            ChatApprovalRequestedEvent {
+                thread_id: thread.id.clone(),
+                workspace_id: thread.workspace_id.clone(),
+                engine_id: thread.engine_id.clone(),
+                thread_title: thread.title.clone(),
+                summary: summary.clone(),
+            },
+        );
     }
 
     if state.config.debug.persist_engine_event_logs {

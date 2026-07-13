@@ -1,13 +1,20 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
+use crate::config::app_config::AppConfig;
 use crate::models::{HarnessInfo, HarnessReport, InstallProgressEvent, InstallResult};
 use crate::process_utils;
 use crate::runtime_env;
+use crate::state::AppState;
+
+fn err_to_string(error: impl std::fmt::Display) -> String {
+    error.to_string()
+}
 
 const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -250,9 +257,85 @@ pub async fn launch_harness(harness_id: String) -> Result<String, String> {
         .iter()
         .find(|h| h.id == harness_id)
         .ok_or_else(|| format!("unknown harness: {harness_id}"))?;
+    let base_command = def.command;
 
-    // Return the command name so the frontend can write it into a terminal session
-    Ok(def.command.to_string())
+    // Return the command line so the frontend can write it into a terminal session
+    tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let config = AppConfig::load_or_create().map_err(err_to_string)?;
+        compose_launch_command(base_command, config.harness_launch_args(&harness_id))
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+/// Launch args are submitted to the user's shell. Limit them to a portable
+/// argument grammar so the settings field cannot introduce shell operators.
+fn normalize_launch_args(args: &str) -> Result<String, String> {
+    if let Some(character) = args.chars().find(|character| {
+        !(character.is_alphanumeric()
+            || matches!(character, ' ' | '\t')
+            || matches!(character, '-' | '_' | '.' | '/' | ':' | '=' | ',' | '+'))
+    }) {
+        return Err(format!(
+            "launch arguments contain unsupported shell character: {character:?}"
+        ));
+    }
+
+    Ok(args.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+fn compose_launch_command(base: &str, extra_args: Option<&str>) -> Result<String, String> {
+    let args = extra_args
+        .map(normalize_launch_args)
+        .transpose()?
+        .unwrap_or_default();
+    if args.is_empty() {
+        Ok(base.to_string())
+    } else {
+        Ok(format!("{base} {args}"))
+    }
+}
+
+#[tauri::command]
+pub async fn get_harness_launch_args() -> Result<BTreeMap<String, String>, String> {
+    tokio::task::spawn_blocking(|| -> Result<BTreeMap<String, String>, String> {
+        let config = AppConfig::load_or_create().map_err(err_to_string)?;
+        Ok(config.harnesses.launch_args)
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn set_harness_launch_args(
+    state: State<'_, AppState>,
+    harness_id: String,
+    args: String,
+) -> Result<String, String> {
+    if !HARNESSES.iter().any(|h| h.id == harness_id) {
+        return Err(format!("unknown harness: {harness_id}"));
+    }
+
+    let config_write_lock = state.config_write_lock.clone();
+    let _guard = config_write_lock.lock_owned().await;
+
+    tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let sanitized = normalize_launch_args(&args)?;
+        AppConfig::mutate(|config| {
+            if sanitized.is_empty() {
+                config.harnesses.launch_args.remove(&harness_id);
+            } else {
+                config
+                    .harnesses
+                    .launch_args
+                    .insert(harness_id.clone(), sanitized.clone());
+            }
+            Ok(sanitized)
+        })
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(err_to_string)?
 }
 
 // ---------------------------------------------------------------------------
@@ -669,5 +752,49 @@ mod tests {
             npm_package_from_install_args(&["install", "-g", "opencode-ai"]),
             Some("opencode-ai")
         );
+    }
+
+    #[test]
+    fn compose_launch_command_appends_configured_args() {
+        assert_eq!(compose_launch_command("codex", None).unwrap(), "codex");
+        assert_eq!(
+            compose_launch_command("codex", Some("--yolo")).unwrap(),
+            "codex --yolo"
+        );
+        assert_eq!(
+            compose_launch_command("claude", Some("  --dangerously-skip-permissions  ")).unwrap(),
+            "claude --dangerously-skip-permissions"
+        );
+        assert_eq!(
+            compose_launch_command("codex", Some("   ")).unwrap(),
+            "codex"
+        );
+    }
+
+    #[test]
+    fn normalize_launch_args_accepts_portable_argument_characters() {
+        assert_eq!(
+            normalize_launch_args("--model=gpt-5 --config /Users/me/file.toml").unwrap(),
+            "--model=gpt-5 --config /Users/me/file.toml"
+        );
+        assert_eq!(normalize_launch_args("--a\t--b").unwrap(), "--a --b");
+    }
+
+    #[test]
+    fn normalize_launch_args_rejects_shell_syntax() {
+        for args in [
+            "--yolo; whoami",
+            "--flag | whoami",
+            "--flag $(whoami)",
+            "--flag `whoami`",
+            "--flag > output.txt",
+            "--flag\nwhoami",
+            "--name \"two words\"",
+        ] {
+            assert!(
+                normalize_launch_args(args).is_err(),
+                "accepted unsafe args: {args}"
+            );
+        }
     }
 }
