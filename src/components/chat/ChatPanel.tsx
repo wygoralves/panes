@@ -59,7 +59,10 @@ import { useThreadStore } from "../../stores/threadStore";
 import { useUiStore } from "../../stores/uiStore";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import { showWorkspaceEditorForDirectFileOpen } from "../../lib/workspacePaneNavigation";
-import { resolveRelativePathWithinRoot } from "../../lib/fileRootUtils";
+import {
+  resolveRelativePathWithinRoot,
+  resolveThreadFileRootPath,
+} from "../../lib/fileRootUtils";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useTerminalStore, type LayoutMode } from "../../stores/terminalStore";
@@ -4857,7 +4860,15 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const openFileInEditor = useFileStore((s) => s.openFile);
   const openUsageLimitsModal = useUiStore((s) => s.openUsageLimitsModal);
 
-  const diffFileRootPath = activeRepo?.path ?? activeWorkspace?.rootPath ?? null;
+  const diffFileRootPath = useMemo(
+    () =>
+      resolveThreadFileRootPath(
+        activeThread,
+        repos,
+        activeWorkspace?.rootPath ?? null,
+      ),
+    [activeThread, activeWorkspace?.rootPath, repos],
+  );
   const handleOpenDiffFile = useCallback(
     (filePath: string) => {
       if (!diffFileRootPath || !activeWorkspaceId) {
