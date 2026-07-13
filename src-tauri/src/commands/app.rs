@@ -240,16 +240,11 @@ pub async fn set_terminal_font_size(
     .map_err(err_to_string)?
 }
 
-const VALID_AUTONOMY_PRESETS: [&str; 4] = ["read-only", "ask", "auto", "full"];
-
 #[tauri::command]
 pub async fn get_default_autonomy_preset() -> Result<Option<String>, String> {
     tokio::task::spawn_blocking(|| -> Result<Option<String>, String> {
         let config = AppConfig::load_or_create().map_err(err_to_string)?;
-        Ok(config
-            .general
-            .default_autonomy_preset
-            .filter(|preset| VALID_AUTONOMY_PRESETS.contains(&preset.as_str())))
+        Ok(config.default_autonomy_preset().map(ToOwned::to_owned))
     })
     .await
     .map_err(err_to_string)?
@@ -262,7 +257,9 @@ pub async fn set_default_autonomy_preset(
 ) -> Result<Option<String>, String> {
     let normalized = match preset.as_deref() {
         None | Some("") | Some("inherit") => None,
-        Some(value) if VALID_AUTONOMY_PRESETS.contains(&value) => Some(value.to_string()),
+        Some(value) if crate::config::app_config::VALID_AUTONOMY_PRESETS.contains(&value) => {
+            Some(value.to_string())
+        }
         Some(value) => return Err(format!("unknown autonomy preset: {value}")),
     };
 

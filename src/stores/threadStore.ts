@@ -6,10 +6,6 @@ import {
   type NewThreadServiceTier,
 } from "../lib/newThreadRuntime";
 import { resolvePreferredOnboardingChatSelection } from "../lib/onboarding";
-import {
-  autonomyPresetExecutionPolicyRequest,
-  isAutonomyPresetId,
-} from "../lib/autonomyPresets";
 import type { Thread } from "../types";
 import { useChatComposerStore } from "./chatComposerStore";
 import { useEngineStore } from "./engineStore";
@@ -194,7 +190,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     set({ loading: true, error: undefined });
 
     try {
-      let created = await ipc.createThread(
+      const created = await ipc.createThread(
         workspaceId,
         repoId,
         effectiveRuntime.engineId,
@@ -203,26 +199,6 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
         effectiveRuntime.reasoningEffort,
         effectiveRuntime.serviceTier,
       );
-
-      try {
-        const defaultPreset = await ipc.getDefaultAutonomyPreset();
-        if (isAutonomyPresetId(defaultPreset)) {
-          const codexExternalSandbox =
-            created.engineId === "codex"
-              ? await ipc.codexUsesExternalSandbox().catch(() => false)
-              : false;
-          const request = autonomyPresetExecutionPolicyRequest(
-            defaultPreset,
-            created.engineId,
-            { codexExternalSandbox },
-          );
-          if (request) {
-            created = await ipc.setThreadExecutionPolicy(created.id, request);
-          }
-        }
-      } catch {
-        // The thread still works on trust defaults if the preset cannot apply.
-      }
 
       const existingWorkspaceThreads = get().threadsByWorkspace[workspaceId] ?? [];
       const workspaceThreads = [created, ...existingWorkspaceThreads.filter((thread) => thread.id !== created.id)];
