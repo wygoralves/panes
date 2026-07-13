@@ -11,6 +11,14 @@
   },
   "modelPicker": {
     "selectModel": "Selecionar modelo",
+    "runtimeConfiguration": "Configuração de runtime",
+    "harness": "Harness",
+    "provider": "Provedor",
+    "model": "Modelo",
+    "reasoning": "Raciocínio",
+    "speed": "Velocidade",
+    "available": "Disponível",
+    "unavailable": "Indisponível",
     "engine": "Engine",
     "models": "Modelos",
     "providers": "Provedores",
@@ -22,6 +30,20 @@
     "fastOn": "Fast",
     "supportsPersonality": "Personalidade",
     "upgradeAvailable": "Upgrade disponível: {{model}}",
+    "speedOptions": {
+      "standard": {
+        "label": "Padrão",
+        "description": "Usa a camada de serviço padrão."
+      },
+      "fast": {
+        "label": "Fast",
+        "description": "Prioriza menor latência."
+      },
+      "flex": {
+        "label": "Flex",
+        "description": "Usa capacidade flex quando disponível."
+      }
+    },
     "modalities": {
       "image": "Visão",
       "textOnly": "Só texto"
@@ -440,7 +462,7 @@
       "invalidOutputSchema": "O schema de saída deve ser um objeto ou booleano JSON Schema válido: {{error}}",
       "invalidCustomApprovalPolicy": "A política de aprovação estruturada deve ser um objeto JSON.",
       "invalidCustomApprovalPolicyWithError": "A política de aprovação estruturada contém JSON inválido: {{error}}",
-      "fastToggleFailed": "Não foi possível alterar o nível de serviço",
+      "speedChangeFailed": "Não foi possível alterar o nível de serviço",
       "retry": "Tentar novamente"
     },
     "approvalBannerTitleCount_one": "{{count}} aprovação pendente",
