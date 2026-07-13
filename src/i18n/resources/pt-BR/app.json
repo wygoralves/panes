@@ -394,7 +394,7 @@
       "save": "Salvar",
       "cancel": "Cancelar",
       "saved": "Opções de abertura salvas",
-      "saveFailed": "Falha ao salvar as opções de abertura"
+      "saveFailed": "Não foi possível salvar. Use apenas letras, números, espaços e - _ . / : = , +"
     },
     "descriptions": {
       "codex": "CLI de coding agent da OpenAI, integrado nativamente ao chat e aos fluxos de terminal do Panes",
