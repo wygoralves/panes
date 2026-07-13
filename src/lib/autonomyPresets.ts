@@ -41,6 +41,39 @@ export function isAutonomyPresetId(value: unknown): value is AutonomyPresetId {
   );
 }
 
+export function resolveDefaultAutonomyPreset(
+  preset: AutonomyPresetId | null | undefined,
+): AutonomyPresetId {
+  return preset ?? "inherit";
+}
+
+export function isDefaultAutonomyPreset(
+  preset: AutonomyPresetId | null | undefined,
+  storedDefault: AutonomyPresetId | null | undefined,
+): boolean {
+  return preset != null && resolveDefaultAutonomyPreset(storedDefault) === preset;
+}
+
+export function autonomyPresetDescriptionKey(
+  preset: AutonomyPresetId,
+  engineId: ChatEngineId,
+  options?: AutonomyPresetOptions,
+): string {
+  if (engineId === "opencode") {
+    return `autonomy.engineDescriptions.opencode.${preset}`;
+  }
+  if (engineId === "claude") {
+    return `autonomy.engineDescriptions.claude.${preset}`;
+  }
+  if (
+    options?.codexExternalSandbox === true &&
+    (preset === "read-only" || preset === "ask" || preset === "auto")
+  ) {
+    return `autonomy.engineDescriptions.codexExternal.${preset}`;
+  }
+  return `autonomy.presets.${preset}.description`;
+}
+
 /**
  * OpenCode exposes approvals only, and its `allow` mode never asks, so a
  * separate "auto in workspace" rung would be indistinguishable from full

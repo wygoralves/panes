@@ -341,6 +341,27 @@
       "auto": { "label": "Autônomo no workspace", "description": "Trabalha livre dentro do sandbox do workspace. Só pede para sair dele." },
       "full": { "label": "Autonomia total", "description": "Nunca pergunta. Acesso total a disco e rede." }
     },
+    "engineDescriptions": {
+      "opencode": {
+        "inherit": "Segue os padrões de confiança do repo para o OpenCode.",
+        "read-only": "Bloqueia as ferramentas do OpenCode. O agente ainda pode responder sem ferramentas.",
+        "ask": "Pede aprovação antes de o OpenCode executar uma ferramenta.",
+        "auto": "Permite ferramentas do OpenCode sem aprovação. O Panes não adiciona sandbox de arquivos ou rede.",
+        "full": "Permite ferramentas do OpenCode sem aprovação. O Panes não adiciona sandbox de arquivos ou rede."
+      },
+      "claude": {
+        "inherit": "Segue os padrões de confiança do repo para o Claude.",
+        "read-only": "Usa aprovações restritas com arquivos somente leitura e sem rede.",
+        "ask": "Usa aprovações padrão com escrita no workspace e sem rede.",
+        "auto": "Usa aprovações confiáveis e escrita no workspace. A rede segue a confiança do repo.",
+        "full": "Usa aprovações confiáveis com escrita no workspace e rede habilitada."
+      },
+      "codexExternal": {
+        "read-only": "Usa aprovações não confiáveis e bloqueia a rede. O sandbox externo controla o acesso aos arquivos.",
+        "ask": "Usa aprovações sob demanda e bloqueia a rede. O sandbox externo controla o acesso aos arquivos.",
+        "auto": "Usa aprovações ao falhar com rede habilitada. O sandbox externo controla o acesso aos arquivos."
+      }
+    },
     "defaultForNewThreads": "Padrão para novas conversas",
     "advanced": "Avançado",
     "backToPresets": "Presets",

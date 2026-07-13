@@ -1446,6 +1446,72 @@ describe("chatStore send", () => {
     expect(useChatStore.getState().error).toContain("approval failed");
   });
 
+  it("preserves concurrent message updates when an approval response is rejected", async () => {
+    const response = deferred<void>();
+    mockIpc.respondApproval.mockReturnValueOnce(response.promise);
+    useChatStore.setState({
+      threadId: "thread-1",
+      messages: [
+        {
+          id: "assistant-1",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "streaming",
+          schemaVersion: 1,
+          blocks: [
+            {
+              type: "approval",
+              approvalId: "approval-1",
+              actionType: "command",
+              summary: "Run command",
+              details: {},
+              status: "pending",
+            },
+          ],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: false,
+        },
+      ],
+      error: undefined,
+    });
+
+    const pendingResponse = useChatStore
+      .getState()
+      .respondApproval("approval-1", { decision: "accept" }, "thread-1");
+
+    expect(useChatStore.getState().messages[0]?.blocks).toMatchObject([
+      { approvalId: "approval-1", status: "answered" },
+    ]);
+
+    useChatStore.setState((state) => ({
+      messages: [
+        ...state.messages,
+        {
+          id: "assistant-2",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "streaming",
+          schemaVersion: 1,
+          blocks: [{ type: "text", content: "Still working" }],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: false,
+        },
+      ],
+    }));
+    response.reject(new Error("approval failed"));
+
+    await expect(pendingResponse).resolves.toBe(false);
+    expect(useChatStore.getState().messages).toHaveLength(2);
+    expect(useChatStore.getState().messages[0]?.blocks).toMatchObject([
+      { approvalId: "approval-1", status: "pending" },
+    ]);
+    expect(useChatStore.getState().messages[1]?.blocks).toMatchObject([
+      { type: "text", content: "Still working" },
+    ]);
+  });
+
   it("targets an explicit thread without mutating another visible transcript", async () => {
     mockIpc.respondApproval.mockResolvedValueOnce(undefined);
     const visibleMessages = [

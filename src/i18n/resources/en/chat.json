@@ -341,6 +341,27 @@
       "auto": { "label": "Auto in workspace", "description": "Works freely inside the workspace sandbox. Asks only to leave it." },
       "full": { "label": "Full autonomy", "description": "Never asks. Full disk and network access." }
     },
+    "engineDescriptions": {
+      "opencode": {
+        "inherit": "Follow the repo trust defaults for OpenCode.",
+        "read-only": "Block OpenCode tools. The agent can still answer without tools.",
+        "ask": "Ask before OpenCode runs a tool.",
+        "auto": "Allow OpenCode tools without approval. Panes does not add a filesystem or network sandbox.",
+        "full": "Allow OpenCode tools without approval. Panes does not add a filesystem or network sandbox."
+      },
+      "claude": {
+        "inherit": "Follow the repo trust defaults for Claude.",
+        "read-only": "Use restricted approvals with read-only files and no network.",
+        "ask": "Use standard approvals with workspace writes and no network.",
+        "auto": "Use trusted approvals and workspace writes. Network follows repo trust.",
+        "full": "Use trusted approvals with workspace writes and network enabled."
+      },
+      "codexExternal": {
+        "read-only": "Use untrusted approvals and block network. The external sandbox controls filesystem access.",
+        "ask": "Use on-request approvals and block network. The external sandbox controls filesystem access.",
+        "auto": "Use on-failure approvals with network enabled. The external sandbox controls filesystem access."
+      }
+    },
     "defaultForNewThreads": "Default for new threads",
     "advanced": "Advanced",
     "backToPresets": "Presets",

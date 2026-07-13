@@ -6253,6 +6253,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   <PermissionPicker
                     engineId={activeThreadAutonomyEngineId}
                     presetValue={activeThreadAutonomyPreset}
+                    codexExternalSandbox={codexExternalSandboxActive}
                     onPresetChange={
                       activeThreadAutonomyEngineId ? onAutonomyPresetChange : undefined
                     }
