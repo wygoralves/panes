@@ -12,10 +12,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import {
-  autonomyPresetPatch,
-  availableAutonomyPresets,
-} from "../../lib/autonomyPresets";
+import { availableAutonomyPresets } from "../../lib/autonomyPresets";
 import type { AutonomyPresetId } from "../../lib/autonomyPresets";
 import type { ChatEngineId, TrustLevel } from "../../types";
 
@@ -46,7 +43,6 @@ interface PermissionPickerProps {
   customPolicyCount?: number;
   engineId?: ChatEngineId;
   presetValue?: AutonomyPresetId | null;
-  codexExternalSandbox?: boolean;
   onPresetChange?: (preset: AutonomyPresetId) => void;
   defaultPreset?: AutonomyPresetId | null;
   onDefaultPresetChange?: (preset: AutonomyPresetId | null) => void;
@@ -66,12 +62,6 @@ interface PermissionPickerProps {
   networkDisabled?: boolean;
   networkNotice?: string | null;
 }
-
-const ENGINE_DISPLAY_NAMES: Record<ChatEngineId, string> = {
-  codex: "Codex",
-  claude: "Claude",
-  opencode: "OpenCode",
-};
 
 const PRESET_ICONS: Record<AutonomyPresetId, ReactNode> = {
   inherit: <Shield size={13} />,
@@ -108,7 +98,6 @@ export function PermissionPicker({
   customPolicyCount = 0,
   engineId,
   presetValue,
-  codexExternalSandbox = false,
   onPresetChange,
   defaultPreset,
   onDefaultPresetChange,
@@ -341,69 +330,6 @@ export function PermissionPicker({
     [t],
   );
 
-  const mappingRows = useMemo(() => {
-    if (!presetsAvailable || !engineId) {
-      return [];
-    }
-    const patch = autonomyPresetPatch(presetValue ?? "inherit", engineId, {
-      codexExternalSandbox,
-    });
-    const rows: Array<{ key: string; label: string; hot: boolean }> = [
-      {
-        key: resolvedApprovalTitle,
-        label:
-          findOption(approvalOptions, patch.approvalPolicy)?.label ?? patch.approvalPolicy,
-        hot: presetValue === "full",
-      },
-    ];
-    if (patch.sandboxMode !== undefined) {
-      rows.push({
-        key: t("permissionPicker.sandbox"),
-        label: findOption(sandboxOptions, patch.sandboxMode)?.label ?? patch.sandboxMode,
-        hot: presetValue === "full" && patch.sandboxMode === "danger-full-access",
-      });
-    }
-    if (patch.networkPolicy !== undefined) {
-      rows.push({
-        key: t("permissionPicker.network"),
-        label:
-          findOption(networkOptions, patch.networkPolicy)?.label ?? patch.networkPolicy,
-        hot: presetValue === "full" && patch.networkPolicy === "enabled",
-      });
-    }
-    return rows;
-  }, [
-    approvalOptions,
-    codexExternalSandbox,
-    engineId,
-    networkOptions,
-    presetValue,
-    presetsAvailable,
-    resolvedApprovalTitle,
-    sandboxOptions,
-    t,
-  ]);
-
-  const mappingNote = useMemo(() => {
-    if (!presetsAvailable || !engineId) {
-      return null;
-    }
-    if (engineId === "opencode") {
-      return t("autonomy.openCodeNote");
-    }
-    if (engineId === "claude" && presetValue === "full") {
-      return t("autonomy.claudeFullNote");
-    }
-    if (
-      engineId === "codex" &&
-      codexExternalSandbox &&
-      (presetValue === "read-only" || presetValue === "ask" || presetValue === "auto")
-    ) {
-      return t("autonomy.codexExternalSandboxNote");
-    }
-    return null;
-  }, [codexExternalSandbox, engineId, presetValue, presetsAvailable, t]);
-
   const title = summaryLines.length > 0 ? summaryLines.join(" | ") : t("permissionPicker.title");
   const activeItem = railItems.find((item) => item.id === activeSection) ?? null;
   const showCustomPill = presetsAvailable
@@ -429,7 +355,6 @@ export function PermissionPicker({
                 key={preset}
                 type="button"
                 className={`pp-option pp-preset-option${selected ? " pp-option-selected" : ""}`}
-                data-tone={preset === "full" ? "warn" : undefined}
                 onClick={() => onPresetChange?.(preset)}
               >
                 <span className="pp-preset-icon">{PRESET_ICONS[preset]}</span>
@@ -443,22 +368,6 @@ export function PermissionPicker({
               </button>
             );
           })}
-        </div>
-        <div className="pp-map">
-          <span className="pp-map-title">
-            {t("autonomy.mapsTo", { engine: ENGINE_DISPLAY_NAMES[engineId] })}
-          </span>
-          <div className="pp-map-rows">
-            {mappingRows.map((row) => (
-              <span
-                key={row.key}
-                className={`pp-map-chip${row.hot ? " pp-map-chip-hot" : ""}`}
-              >
-                {row.key}: {row.label}
-              </span>
-            ))}
-          </div>
-          {mappingNote ? <p className="pp-map-note">{mappingNote}</p> : null}
         </div>
       </div>
       <div className="pp-preset-footer">
@@ -597,7 +506,6 @@ export function PermissionPicker({
         ref={triggerRef}
         type="button"
         className={`pp-trigger${open ? " pp-trigger-open" : ""}`}
-        data-tone={presetsAvailable && presetValue === "full" ? "warn" : undefined}
         onClick={toggle}
         disabled={disabled}
         title={title}

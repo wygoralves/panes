@@ -7377,17 +7377,6 @@ button, input, textarea, select {
   box-shadow: 0 0 16px rgba(167, 139, 250, 0.12) !important;
 }
 
-/* Full-autonomy armed ring: same treatment as plan mode, warning tone */
-.chat-input-box-armed {
-  border-color: rgba(var(--warning-rgb), 0.3) !important;
-  box-shadow: 0 0 12px rgba(var(--warning-rgb), 0.08) !important;
-}
-
-.chat-input-box-armed:focus-within {
-  border-color: rgba(var(--warning-rgb), 0.45) !important;
-  box-shadow: 0 0 16px rgba(var(--warning-rgb), 0.12) !important;
-}
-
 .chat-input-box-tool-input {
   border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
   box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.08);
@@ -9458,66 +9447,6 @@ button.chat-context-section:hover {
   flex-shrink: 0;
 }
 
-.pp-preset-option[data-tone="warn"].pp-option-selected {
-  background: var(--warning-surface);
-  color: var(--warning);
-  box-shadow: inset 0 0 0 1px var(--warning-border);
-}
-
-.pp-preset-option[data-tone="warn"].pp-option-selected .pp-option-description {
-  color: color-mix(in oklch, var(--warning) 72%, var(--text-3));
-}
-
-.pp-preset-option[data-tone="warn"].pp-option-selected .pp-option-check {
-  color: var(--warning);
-}
-
-.pp-map {
-  margin: 4px 6px 0;
-  border-top: 1px solid var(--wash-06);
-  padding: 8px 4px 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.pp-map-title {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-3);
-}
-
-.pp-map-rows {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.pp-map-chip {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  white-space: nowrap;
-  padding: 1px 6px;
-  border-radius: 99px;
-  border: 1px solid var(--border);
-  color: var(--text-3);
-}
-
-.pp-map-chip-hot {
-  color: var(--warning);
-  border-color: var(--warning-border);
-  background: var(--warning-surface);
-}
-
-.pp-map-note {
-  margin: 0;
-  color: var(--text-3);
-  font-size: 10px;
-  line-height: 1.5;
-}
-
 .pp-preset-footer {
   display: flex;
   align-items: center;
@@ -9565,19 +9494,6 @@ button.chat-context-section:hover {
 .pp-rail-back {
   color: var(--text-3);
   margin-bottom: 4px;
-}
-
-.pp-trigger[data-tone="warn"] {
-  color: var(--warning);
-  background: var(--warning-surface);
-  border-color: var(--warning-border);
-}
-
-.pp-trigger[data-tone="warn"]:hover,
-.pp-trigger[data-tone="warn"].pp-trigger-open {
-  color: var(--warning);
-  background: var(--warning-surface);
-  border-color: var(--warning);
 }
 
 .mp-root {
