@@ -66,6 +66,7 @@ import { useTerminalStore, type LayoutMode } from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import {
+  autonomyPresetExecutionPolicyRequest,
   autonomyPresetPatch,
   detectAutonomyPreset,
   isAutonomyPresetId,
@@ -251,6 +252,19 @@ export function canUseApprovalDecisionActions(
   details?: Record<string, unknown>,
 ): boolean {
   return engineId !== "opencode" || !isOpenCodeQuestionApproval(details);
+}
+
+export function canBatchApproveApproval(
+  approval: ApprovalBlock,
+  engineId?: string,
+): boolean {
+  const details = approval.details ?? {};
+  return (
+    canUseApprovalDecisionActions(engineId, details) &&
+    !isRequestUserInputApproval(details) &&
+    !requiresCustomApprovalPayload(details) &&
+    !shouldShowClaudeUnsupportedApproval(details, true, engineId === "claude")
+  );
 }
 
 function approvalRowIcon(actionType: ActionType) {
@@ -2499,6 +2513,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       ),
     [activeThread?.engineId, pendingApprovals, pendingToolInputApproval?.approvalId],
   );
+  const batchApprovableRows = useMemo(
+    () =>
+      pendingApprovalBannerRows.filter((approval) =>
+        canBatchApproveApproval(approval, activeThread?.engineId),
+      ),
+    [activeThread?.engineId, pendingApprovalBannerRows],
+  );
 
   const pendingToolInputQuestions = useMemo(
     () =>
@@ -4648,41 +4669,61 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     }
   }
 
-  async function allowAllPendingApprovals(stopAsking: boolean) {
-    const engineId = activeThread?.engineId;
-    const rows = pendingApprovalBannerRows.filter((approval) => {
-      const details = approval.details ?? {};
-      if (!canUseApprovalDecisionActions(engineId, details)) {
-        return false;
-      }
-      if (isRequestUserInputApproval(details)) {
-        return false;
-      }
-      if (requiresCustomApprovalPayload(details)) {
-        return false;
-      }
-      if (shouldShowClaudeUnsupportedApproval(details, true, engineId === "claude")) {
-        return false;
-      }
-      return true;
-    });
+  const batchApprovalInFlightRef = useRef(false);
 
-    for (const approval of rows) {
-      const details = approval.details ?? {};
-      await respondApproval(
-        approval.approvalId,
-        isPermissionsRequestApproval(details)
-          ? buildPermissionApprovalResponseForEngine(engineId, details, "accept")
-          : { decision: "accept" },
-      );
+  async function allowAllPendingApprovals(stopAsking: boolean) {
+    if (batchApprovalInFlightRef.current) {
+      return;
+    }
+    const targetThreadId = activeThread?.id;
+    const engineId = activeThread?.engineId;
+    const autonomyEngineId = activeThreadAutonomyEngineId;
+    if (!targetThreadId) {
+      return;
+    }
+    if (batchApprovableRows.length === 0) {
+      return;
     }
 
-    if (stopAsking && activeThreadAutonomyEngineId) {
-      await onThreadExecutionPolicyChange(
-        autonomyPresetPatch("full", activeThreadAutonomyEngineId, {
+    batchApprovalInFlightRef.current = true;
+    try {
+      for (const approval of batchApprovableRows) {
+        const details = approval.details ?? {};
+        const accepted = await respondApproval(
+          approval.approvalId,
+          isPermissionsRequestApproval(details)
+            ? buildPermissionApprovalResponseForEngine(engineId, details, "accept")
+            : { decision: "accept" },
+          targetThreadId,
+        );
+        if (!accepted) {
+          toast.error(t("panel.toasts.approvalBatchFailed"));
+          return;
+        }
+      }
+
+      if (stopAsking && autonomyEngineId) {
+        const request = autonomyPresetExecutionPolicyRequest("full", autonomyEngineId, {
           codexExternalSandbox: codexExternalSandboxActive,
-        }) as ThreadExecutionPolicyPatch,
-      );
+        });
+        if (request) {
+          const requestId =
+            (threadExecutionPolicyRequestIdsRef.current[targetThreadId] ?? 0) + 1;
+          threadExecutionPolicyRequestIdsRef.current[targetThreadId] = requestId;
+          try {
+            const updatedThread = await ipc.setThreadExecutionPolicy(targetThreadId, request);
+            if (threadExecutionPolicyRequestIdsRef.current[targetThreadId] === requestId) {
+              applyThreadUpdateLocal(updatedThread);
+            }
+          } catch (error) {
+            if (threadExecutionPolicyRequestIdsRef.current[targetThreadId] === requestId) {
+              toast.error(t("panel.toasts.updateExecutionPolicyFailed", { error: String(error) }));
+            }
+          }
+        }
+      }
+    } finally {
+      batchApprovalInFlightRef.current = false;
     }
   }
 
@@ -5566,7 +5607,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   })}
                 </span>
                 <span className="approval-header-spacer" />
-                {pendingApprovalBannerRows.length > 1 &&
+                {batchApprovableRows.length > 1 &&
                   activeThreadApprovalDecisionCapabilities.includes("accept") && (
                     <>
                       <button

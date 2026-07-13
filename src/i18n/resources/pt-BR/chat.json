@@ -433,6 +433,7 @@
       "claudeSandboxUnsupported": "Claude suporta apenas os modos de sandbox somente leitura e escrita no workspace.",
       "fullAccessNetworkWarning": "O modo acesso total habilita temporariamente o acesso à rede.",
       "updateExecutionPolicyFailed": "Falha ao atualizar a política de execução da thread: {{error}}",
+      "approvalBatchFailed": "Uma ou mais aprovações não puderam ser aceitas. A política da thread não foi alterada.",
       "updateCodexConfigFailed": "Falha ao atualizar a configuração de turno do Codex: {{error}}",
       "updateOpenCodeConfigFailed": "Falha ao atualizar a configuração de turno do OpenCode: {{error}}",
       "planImplementationThreadUnavailable": "A thread original de planejamento não está mais disponível. Reabra a thread e tente novamente.",
