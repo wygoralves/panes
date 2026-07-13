@@ -2296,7 +2296,6 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       codexExternalSandboxActive,
     ],
   );
-  const fullAutonomyArmed = activeThreadAutonomyPreset === "full";
   const [defaultAutonomyPreset, setDefaultAutonomyPreset] =
     useState<AutonomyPresetId | null>(null);
 
@@ -5907,7 +5906,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
           {/* Input container */}
           <div
-            className={`chat-input-box ${activePlanMode && !showSpecialInputComposer ? "chat-input-box-plan" : ""} ${fullAutonomyArmed && !activePlanMode && !showSpecialInputComposer ? "chat-input-box-armed" : ""} ${showSpecialInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
+            className={`chat-input-box ${activePlanMode && !showSpecialInputComposer ? "chat-input-box-plan" : ""} ${showSpecialInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
             onPaste={handleInputPaste}
           >
             {showPendingToolInputComposer && pendingToolInputApproval ? (
@@ -6254,7 +6253,6 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   <PermissionPicker
                     engineId={activeThreadAutonomyEngineId}
                     presetValue={activeThreadAutonomyPreset}
-                    codexExternalSandbox={codexExternalSandboxActive}
                     onPresetChange={
                       activeThreadAutonomyEngineId ? onAutonomyPresetChange : undefined
                     }

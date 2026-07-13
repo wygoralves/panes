@@ -341,10 +341,6 @@
       "auto": { "label": "Auto in workspace", "description": "Works freely inside the workspace sandbox. Asks only to leave it." },
       "full": { "label": "Full autonomy", "description": "Never asks. Full disk and network access." }
     },
-    "mapsTo": "Maps to {{engine}}",
-    "claudeFullNote": "Claude has no full-access sandbox in Panes; full autonomy keeps workspace write.",
-    "openCodeNote": "OpenCode exposes approvals only; sandbox and network are not configurable.",
-    "codexExternalSandboxNote": "Codex is running in external sandbox mode; Panes cannot restrict the filesystem here, so approvals gate changes instead.",
     "defaultForNewThreads": "Default for new threads",
     "advanced": "Advanced",
     "backToPresets": "Presets",
