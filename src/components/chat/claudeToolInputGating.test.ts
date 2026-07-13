@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ApprovalBlock } from "../../types";
 import {
   buildPermissionApprovalResponseForEngine,
+  canBatchApproveApproval,
   canUseApprovalDecisionActions,
   filterPendingApprovalBannerRows,
   isOpenCodeQuestionApproval,
@@ -180,6 +181,23 @@ describe("Claude tool-input gating", () => {
     expect(canUseApprovalDecisionActions("opencode", openCodeQuestion.details)).toBe(false);
     expect(canUseApprovalDecisionActions("opencode", openCodePermission.details)).toBe(true);
     expect(canUseApprovalDecisionActions("claude", openCodeQuestion.details)).toBe(true);
+    expect(canBatchApproveApproval(openCodeQuestion, "opencode")).toBe(false);
+    expect(canBatchApproveApproval(openCodePermission, "opencode")).toBe(true);
+  });
+
+  it("excludes custom approval payloads from batch acceptance", () => {
+    const customApproval = makeApprovalBlock("custom", {
+      _serverMethod: "item/tool/requestUserInput",
+      questions: [
+        {
+          id: "question-1",
+          question: "Choose an option",
+          options: [{ label: "A", description: "First" }],
+        },
+      ],
+    });
+
+    expect(canBatchApproveApproval(customApproval, "codex")).toBe(false);
   });
 
   it("uses OpenCode-native decision payloads for permission approvals", () => {

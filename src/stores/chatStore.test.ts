@@ -1406,4 +1406,76 @@ describe("chatStore send", () => {
     ]);
   });
 
+  it("returns failure and rolls back when an approval response is rejected", async () => {
+    mockIpc.respondApproval.mockRejectedValueOnce(new Error("approval failed"));
+    useChatStore.setState({
+      threadId: "thread-1",
+      messages: [
+        {
+          id: "assistant-1",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "completed",
+          schemaVersion: 1,
+          blocks: [
+            {
+              type: "approval",
+              approvalId: "approval-1",
+              actionType: "command",
+              summary: "Run command",
+              details: {},
+              status: "pending",
+            },
+          ],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: false,
+        },
+      ],
+      error: undefined,
+    });
+
+    const accepted = await useChatStore
+      .getState()
+      .respondApproval("approval-1", { decision: "accept" }, "thread-1");
+
+    expect(accepted).toBe(false);
+    expect(useChatStore.getState().messages[0]?.blocks).toMatchObject([
+      { approvalId: "approval-1", status: "pending" },
+    ]);
+    expect(useChatStore.getState().error).toContain("approval failed");
+  });
+
+  it("targets an explicit thread without mutating another visible transcript", async () => {
+    mockIpc.respondApproval.mockResolvedValueOnce(undefined);
+    const visibleMessages = [
+      {
+        id: "assistant-2",
+        threadId: "thread-2",
+        role: "assistant" as const,
+        status: "completed" as const,
+        schemaVersion: 1,
+        blocks: [],
+        createdAt: new Date().toISOString(),
+        hydration: "full" as const,
+        hasDeferredContent: false,
+      },
+    ];
+    useChatStore.setState({
+      threadId: "thread-2",
+      messages: visibleMessages,
+      error: undefined,
+    });
+
+    const accepted = await useChatStore
+      .getState()
+      .respondApproval("approval-1", { decision: "accept" }, "thread-1");
+
+    expect(accepted).toBe(true);
+    expect(mockIpc.respondApproval).toHaveBeenCalledWith("thread-1", "approval-1", {
+      decision: "accept",
+    });
+    expect(useChatStore.getState().messages).toBe(visibleMessages);
+  });
+
 });

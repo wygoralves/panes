@@ -59,7 +59,11 @@ interface ChatState {
     },
   ) => Promise<boolean>;
   cancel: () => Promise<void>;
-  respondApproval: (approvalId: string, response: ApprovalResponse) => Promise<void>;
+  respondApproval: (
+    approvalId: string,
+    response: ApprovalResponse,
+    threadIdOverride?: string,
+  ) => Promise<boolean>;
   hydrateActionOutput: (messageId: string, actionId: string) => Promise<void>;
 }
 
@@ -2202,32 +2206,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ error: String(error) });
     }
   },
-  respondApproval: async (approvalId, response) => {
-    const threadId = get().threadId;
+  respondApproval: async (approvalId, response, threadIdOverride) => {
+    const threadId = threadIdOverride ?? get().threadId;
     if (!threadId) {
       set({ error: "No active thread selected" });
-      return;
+      return false;
     }
 
-    // Apply optimistic update BEFORE the IPC call
+    // Only mutate the visible transcript when it belongs to the target thread.
     const decision = resolveApprovalDecision(response);
     const responseData = typeof response === "object" && response !== null && !Array.isArray(response)
       ? response as Record<string, unknown>
       : undefined;
-    const previousMessages = get().messages;
-    set((state) => {
-      const nextMessages = resolveApprovalInMessages(state.messages, approvalId, decision, responseData);
-      if (nextMessages === state.messages) {
-        return state;
-      }
-      return { ...state, messages: nextMessages };
-    });
+    let previousMessages: Message[] | null = null;
+    let optimisticMessages: Message[] | null = null;
+    if (get().threadId === threadId) {
+      set((state) => {
+        const nextMessages = resolveApprovalInMessages(state.messages, approvalId, decision, responseData);
+        if (nextMessages === state.messages) {
+          return state;
+        }
+        previousMessages = state.messages;
+        optimisticMessages = nextMessages;
+        return { ...state, messages: nextMessages };
+      });
+    }
 
     try {
       await ipc.respondApproval(threadId, approvalId, response);
+      return true;
     } catch (error) {
-      // Roll back the optimistic update on failure
-      set({ messages: previousMessages, error: String(error) });
+      set((state) => ({
+        ...(previousMessages && optimisticMessages && state.messages === optimisticMessages
+          ? { messages: previousMessages }
+          : {}),
+        error: String(error),
+      }));
+      return false;
     }
   },
   hydrateActionOutput: async (messageId, actionId) => {
