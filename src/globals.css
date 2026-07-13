@@ -1142,16 +1142,16 @@ button, input, textarea, select {
   border-radius: var(--radius-sm);
 }
 .msg-block-header:hover { background: var(--wash-02); }
-.msg-block-header:hover span { color: var(--text-1) !important; }
+.msg-block-header:hover .msg-block-label { color: var(--text-1); }
 .msg-block-header--static { cursor: default; }
 .msg-block-header--static:hover { background: none; }
-.msg-block-header--static:hover span { color: inherit !important; }
+.msg-block-header--static:hover .msg-block-label { color: var(--text-2); }
 .msg-block-chevron {
   flex-shrink: 0; color: var(--text-3); opacity: 0.5;
   transition: transform var(--duration-fast) var(--ease-out);
 }
 .msg-block-chevron-open { transform: rotate(90deg); }
-.msg-block-header--compact { padding: 2px 12px; }
+.msg-block-chevron-spacer { width: 11px; flex-shrink: 0; }
 
 .msg-block-tile {
   width: 18px; height: 18px; flex-shrink: 0;
@@ -1177,6 +1177,15 @@ button, input, textarea, select {
   font-size: 10px; color: var(--text-3);
   white-space: nowrap;
 }
+
+.msg-block-status {
+  display: inline-flex; align-items: center; gap: 3px;
+  color: var(--text-3);
+  font-size: 10px;
+}
+.msg-block-status--success { color: var(--success); }
+.msg-block-status--warning { color: var(--warning); font-weight: 500; }
+.msg-block-status--danger { color: var(--danger); }
 
 /* Indented expanded body under a hairline guide */
 .msg-block-body {
@@ -1216,8 +1225,6 @@ button, input, textarea, select {
   display: flex;
   flex-direction: column;
 }
-.msg-action-card .acard { background: none; border: none; margin: 0; }
-.msg-action-card .acard-header { background: none; border-bottom: none; padding: 6px 12px; }
 
 /* ── Chat Block Shared Styles ── */
 
@@ -4756,8 +4763,8 @@ button, input, textarea, select {
 .approval-header {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 0 2px 6px;
+  gap: 6px;
+  padding: 0 3px 5px;
 }
 
 .approval-header-icon {
@@ -4767,9 +4774,9 @@ button, input, textarea, select {
 }
 
 .approval-header-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--warning);
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-3);
 }
 
 .approval-header-spacer {
@@ -4820,11 +4827,11 @@ button, input, textarea, select {
 }
 
 .chat-approval-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 11px;
-  border-radius: var(--radius-md);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
   background: var(--bg-2);
   border: 1px solid var(--wash-08);
   animation: fade-in var(--duration-fast) var(--ease-out) both;
@@ -4834,28 +4841,38 @@ button, input, textarea, select {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 5px;
 }
 
 .approval-row-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  min-height: 26px;
   min-width: 0;
 }
 
 .approval-row-icon {
   display: inline-flex;
-  color: var(--text-3);
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  color: var(--warning);
+  background: var(--warning-surface);
   flex-shrink: 0;
 }
 
 .approval-row-summary {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11.5px;
+  font-weight: 550;
   color: var(--text-1);
-  line-height: 1.35;
+  line-height: 1.4;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .approval-row-command {
@@ -4886,20 +4903,25 @@ button, input, textarea, select {
 }
 
 .approval-actions {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
+  gap: 4px;
 }
 
 /* Spacer between allow-group and deny-group */
 .approval-actions-gap {
-  flex: 1;
+  width: 4px;
+  flex: 0 0 4px;
 }
 
 .approval-btn {
-  padding: 4px 12px;
-  font-size: 11.5px;
+  min-height: 26px;
+  padding: 3px 9px;
+  font-size: 10.5px;
   font-weight: 500;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -4935,7 +4957,7 @@ button, input, textarea, select {
 .approval-btn-deny {
   background: transparent;
   color: var(--danger);
-  border-color: var(--danger-border);
+  border-color: transparent;
 }
 
 .approval-btn-deny:hover {
@@ -4953,72 +4975,20 @@ button, input, textarea, select {
   color: var(--text-2);
 }
 
-/* ── Approval Card (in-message) ── */
+@media (max-width: 720px) {
+  .chat-approval-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 
-.acard {
-  border-radius: var(--radius-sm);
-  background: var(--bg-3);
-  border: 1px solid var(--wash-08);
-  overflow: hidden;
-  margin: 0 16px;
-}
-
-.acard-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: var(--warning-surface);
-  border-bottom: 1px solid var(--wash-05);
+  .approval-actions {
+    grid-column: 1;
+    grid-row: auto;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
 }
 
-.acard-header-icon {
-  color: var(--warning);
-  flex-shrink: 0;
-}
-
-.acard-summary {
-  flex: 1;
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--text-1);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.acard-type {
-  font-size: 10px;
-  font-family: var(--font-mono);
-  padding: 1px 6px;
-  border-radius: 3px;
-  background: var(--wash-05);
-  color: var(--text-3);
-  flex-shrink: 0;
-}
-
-.acard-decision {
-  font-size: 10.5px;
-  font-weight: 500;
-  padding: 2px 7px;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
-/* Decision states as CSS variants instead of JS-computed inline colors */
-.acard-decision--approved {
-  background: var(--success-surface);
-  color: var(--success);
-}
-.acard-decision--denied {
-  background: var(--danger-surface);
-  color: var(--danger);
-}
-.acard-decision--neutral {
-  background: var(--neutral-surface);
-  color: var(--text-2);
-}
+/* ── Approval details (in-message) ── */
 
 .acard-details {
   padding: 8px 12px;

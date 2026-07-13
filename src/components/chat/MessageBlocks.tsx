@@ -202,6 +202,61 @@ function LinkifiedPlainText({ text }: { text: string }) {
   return <>{nodes}</>;
 }
 
+interface MessageBlockHeaderProps {
+  icon: ReactNode;
+  label: ReactNode;
+  meta?: ReactNode;
+  expanded?: boolean;
+  labelMono?: boolean;
+  tileTone?: "neutral" | "violet" | "amber" | "info";
+  onToggle?: () => void;
+}
+
+function MessageBlockHeader({
+  icon,
+  label,
+  meta,
+  expanded = false,
+  labelMono = false,
+  tileTone = "neutral",
+  onToggle,
+}: MessageBlockHeaderProps) {
+  const interactive = onToggle != null;
+  const tileToneClass = tileTone === "neutral" ? "" : ` msg-block-tile--${tileTone}`;
+
+  return (
+    <div
+      className={`msg-block-header${interactive ? "" : " msg-block-header--static"}`}
+      {...(interactive
+        ? {
+            role: "button" as const,
+            tabIndex: 0,
+            "aria-expanded": expanded,
+            onClick: onToggle,
+            onKeyDown: (event: React.KeyboardEvent) =>
+              handleToggleKeyDown(event, onToggle),
+          }
+        : {})}
+    >
+      {interactive ? (
+        <ChevronRight
+          size={11}
+          className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
+        />
+      ) : (
+        <span className="msg-block-chevron-spacer" aria-hidden="true" />
+      )}
+      <span className={`msg-block-tile${tileToneClass}`}>{icon}</span>
+      <span
+        className={`msg-block-label${labelMono ? " msg-block-label--mono" : ""}`}
+      >
+        {label}
+      </span>
+      {meta != null && <span className="msg-block-meta">{meta}</span>}
+    </div>
+  );
+}
+
 const actionIcons: Record<string, typeof Terminal> = {
   command: Terminal,
   file_write: FileCode2,
@@ -391,25 +446,16 @@ function MessageDiffBlock({
   const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
   return (
     <div>
-      <div
-        className="msg-block-header"
-        role="button"
-        tabIndex={0}
-        aria-expanded={expanded}
-        onClick={toggleExpanded}
-        onKeyDown={(e) => handleToggleKeyDown(e, toggleExpanded)}
-      >
-        <ChevronRight
-          size={11}
-          className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
-        />
-        <span className="msg-block-tile">
-          <FileDiff size={11} />
-        </span>
-        <span className="msg-block-label msg-block-label--mono">
+      <MessageBlockHeader
+        icon={<FileDiff size={11} />}
+        label={
           <LinkifiedPlainText text={filename ?? t("messageBlocks.diffFallback", { scope: String(block.scope ?? "turn") })} />
-        </span>
-        <span className="msg-block-meta">
+        }
+        labelMono
+        expanded={expanded}
+        onToggle={toggleExpanded}
+        meta={
+          <>
           {loadingParse && <span>{t("messageBlocks.parsing")}</span>}
           {(adds > 0 || dels > 0) && (
             <span style={{ display: "inline-flex", gap: 5 }}>
@@ -431,8 +477,9 @@ function MessageDiffBlock({
               <ExternalLink size={11} />
             </button>
           )}
-        </span>
-      </div>
+          </>
+        }
+      />
       {expanded && (
         !parseResult && (loadingParse || !parseAttempted) ? (
           <div style={{ padding: "4px 14px", fontSize: 11.5, color: "var(--text-3)" }}>
@@ -472,30 +519,18 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
 
   return (
     <div>
-      <div
-        className="msg-block-header"
-        role="button"
-        tabIndex={0}
-        aria-expanded={expanded}
-        onClick={toggleExpanded}
-        onKeyDown={(e) => handleToggleKeyDown(e, toggleExpanded)}
-      >
-        <ChevronRight
-          size={11}
-          className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
-        />
-        <span className="msg-block-tile msg-block-tile--violet">
-          <Brain size={11} />
-        </span>
-        <span className={`msg-block-label${isStreaming ? " msg-shimmer" : ""}`}>
-          {thinkingLabel}
-        </span>
-        {!isStreaming && durationSec != null && durationSec > 0 && (
-          <span className="msg-block-meta">
-            {t("messageBlocks.thinkingDuration", { seconds: durationSec })}
-          </span>
-        )}
-      </div>
+      <MessageBlockHeader
+        icon={<Brain size={11} />}
+        label={<span className={isStreaming ? "msg-shimmer" : undefined}>{thinkingLabel}</span>}
+        tileTone="violet"
+        expanded={expanded}
+        onToggle={toggleExpanded}
+        meta={
+          !isStreaming && durationSec != null && durationSec > 0
+            ? t("messageBlocks.thinkingDuration", { seconds: durationSec })
+            : undefined
+        }
+      />
       {expanded && (
         <div className="msg-block-body">
           <MarkdownContent
@@ -589,14 +624,14 @@ function ActionStatusBadge({ status }: { status: string }) {
   const { t } = useTranslation("chat");
   if (status === "done") {
     return (
-      <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-3)", fontSize: 10 }}>
+      <span className="msg-block-status">
         <CheckCircle2 size={11} />
       </span>
     );
   }
   if (status === "running") {
     return (
-      <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--warning)", fontSize: 10, fontWeight: 500 }}>
+      <span className="msg-block-status msg-block-status--warning">
         <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />
         {t("messageBlocks.actionStatus.running")}
       </span>
@@ -604,14 +639,14 @@ function ActionStatusBadge({ status }: { status: string }) {
   }
   if (status === "error") {
     return (
-      <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--danger)", fontSize: 10 }}>
+      <span className="msg-block-status msg-block-status--danger">
         <XCircle size={11} />
         {t("messageBlocks.actionStatus.error")}
       </span>
     );
   }
   return (
-    <span style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-3)", fontSize: 10 }}>
+    <span className="msg-block-status">
       <Circle size={11} />
     </span>
   );
@@ -708,33 +743,14 @@ function ActionBlockView({
   const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
   return (
     <div>
-      <div
-        className={`msg-block-header msg-block-header--compact${canToggle ? "" : " msg-block-header--static"}`}
-        {...(canToggle ? {
-          role: "button" as const,
-          tabIndex: 0,
-          "aria-expanded": expanded,
-          onClick: toggleExpanded,
-          onKeyDown: (e: React.KeyboardEvent) => handleToggleKeyDown(e, toggleExpanded),
-        } : {})}
-      >
-        {canToggle ? (
-          <ChevronRight
-            size={11}
-            className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
-          />
-        ) : (
-          <span style={{ width: 11, flexShrink: 0 }} aria-hidden="true" />
-        )}
-        <span className="msg-block-tile">
-          <Icon size={11} />
-        </span>
-        <span
-          className={`msg-block-label${block.actionType === "command" ? " msg-block-label--mono" : ""}`}
-        >
-          {block.summary}
-        </span>
-        <span className="msg-block-meta">
+      <MessageBlockHeader
+        icon={<Icon size={11} />}
+        label={block.summary}
+        labelMono={block.actionType === "command"}
+        expanded={expanded}
+        onToggle={canToggle ? toggleExpanded : undefined}
+        meta={
+          <>
           {block.result?.durationMs != null && block.status === "done" && (
             <span>
               {block.result.durationMs < 1000
@@ -743,8 +759,9 @@ function ActionBlockView({
             </span>
           )}
           <ActionStatusBadge status={block.status} />
-        </span>
-      </div>
+          </>
+        }
+      />
 
       {progressMessage && (
         <div
@@ -944,25 +961,13 @@ function ActionGroupView({
   const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
   return (
     <div className="animate-slide-up">
-      <div
-        className="msg-block-header"
-        role="button"
-        tabIndex={0}
-        aria-expanded={expanded}
-        onClick={toggleExpanded}
-        onKeyDown={(e) => handleToggleKeyDown(e, toggleExpanded)}
-      >
-        <ChevronRight
-          size={11}
-          className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`}
-        />
-        <span className="msg-block-tile">
-          <Layers size={11} />
-        </span>
-        <span className="msg-block-label">
-          {summaryText}
-        </span>
-        <span className="msg-block-meta">
+      <MessageBlockHeader
+        icon={<Layers size={11} />}
+        label={summaryText}
+        expanded={expanded}
+        onToggle={toggleExpanded}
+        meta={
+          <>
           <span>{typeBreakdown}</span>
           {allErrored ? (
             <XCircle size={11} style={{ color: "var(--danger)", flexShrink: 0 }} />
@@ -971,8 +976,9 @@ function ActionGroupView({
           ) : (
             <CheckCircle2 size={11} style={{ color: "var(--text-3)", flexShrink: 0 }} />
           )}
-        </span>
-      </div>
+          </>
+        }
+      />
       <div className={`action-group-body${expanded ? " action-group-body--expanded" : ""}`}>
         <div
           className="action-group-body-inner"
@@ -1092,31 +1098,17 @@ function ToolInputApprovalCard({
 
   return (
     <div>
-      <div
-        className="msg-block-header"
-        {...(hasAnswers ? {
-          role: "button" as const,
-          tabIndex: 0,
-          "aria-expanded": expanded,
-          onClick: toggleExpanded,
-          onKeyDown: (e: React.KeyboardEvent) => handleToggleKeyDown(e, toggleExpanded),
-        } : { style: { cursor: "default" } })}
-      >
-        {hasAnswers && (
-          <ChevronRight size={11} className={`msg-block-chevron${expanded ? " msg-block-chevron-open" : ""}`} />
-        )}
-        <span
-          className="msg-block-tile"
-          style={isPending ? { background: "var(--info-surface)", color: "var(--info)" } : undefined}
-        >
-          <MessageSquare size={11} />
-        </span>
-        <span className="msg-block-label">
-          {isPending
+      <MessageBlockHeader
+        icon={<MessageSquare size={11} />}
+        tileTone={isPending ? "info" : "neutral"}
+        expanded={expanded}
+        onToggle={hasAnswers ? toggleExpanded : undefined}
+        label={
+          isPending
             ? t("messageBlocks.approval.pendingQuestions", { count: questions.length })
-            : t("messageBlocks.approval.answeredQuestions", { count: questions.length })}
-        </span>
-      </div>
+            : t("messageBlocks.approval.answeredQuestions", { count: questions.length })
+        }
+      />
       {hasAnswers && expanded && (
         <div className="tool-input-qa-body">
           {questions.map((q) => {
@@ -1221,16 +1213,18 @@ function ApprovalCard({
   }, [block.approvalId]);
 
   let decisionLabel = t("messageBlocks.approval.decision.answered");
-  let decisionClass = "acard-decision--neutral";
+  let decisionStatusClass = "msg-block-status";
+  let DecisionIcon = CheckCircle2;
   if (block.decision === "decline") {
     decisionLabel = t("messageBlocks.approval.decision.denied");
-    decisionClass = "acard-decision--denied";
+    decisionStatusClass = "msg-block-status msg-block-status--danger";
+    DecisionIcon = XCircle;
   } else if (block.decision === "cancel") {
     decisionLabel = t("messageBlocks.approval.decision.canceled");
-    decisionClass = "acard-decision--denied";
+    DecisionIcon = XCircle;
   } else if (block.decision === "accept" || block.decision === "accept_for_session") {
     decisionLabel = t("messageBlocks.approval.decision.approved");
-    decisionClass = "acard-decision--approved";
+    decisionStatusClass = "msg-block-status msg-block-status--success";
   }
 
   if (isToolInputRequest && toolInputQuestions.length > 0 && !showClaudeUnsupportedApproval) {
@@ -1277,18 +1271,28 @@ function ApprovalCard({
   }
 
   return (
-    <div className="acard">
-      {/* Header */}
-      <div className="acard-header">
-        <Shield size={12} className="acard-header-icon" />
-        <span className="acard-summary">{block.summary}</span>
-        <span className="acard-type">{block.actionType}</span>
-        {!isPending && block.decision && (
-          <span className={`acard-decision ${decisionClass}`}>
-            {decisionLabel}
-          </span>
-        )}
-      </div>
+    <div className="msg-approval-block">
+      <MessageBlockHeader
+        icon={<Shield size={11} />}
+        label={block.summary}
+        tileTone="amber"
+        meta={
+          <>
+            <span>{block.actionType}</span>
+            {isPending ? (
+              <span className="msg-block-status msg-block-status--warning">
+                <Circle size={11} />
+                {t("messageBlocks.actionStatus.pending")}
+              </span>
+            ) : block.decision ? (
+              <span className={decisionStatusClass}>
+                <DecisionIcon size={11} />
+                {decisionLabel}
+              </span>
+            ) : null}
+          </>
+        }
+      />
 
       {/* Details — collapsed for resolved approvals */}
       {!isToolInputRequest && (command || displayReason || commandActionCount > 0 || requestedPermissions || mcpUrl || mcpSchema || hasRemainingDetails) && (isPending || !block.decision) && (

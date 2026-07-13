@@ -2522,6 +2522,11 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       ),
     [activeThread?.engineId, pendingApprovalBannerRows],
   );
+  const canTrustApprovalScope = activeRepo
+    ? activeRepo.trustLevel !== "trusted"
+    : repos.length > 0 && workspaceTrustLevel !== "trusted";
+  const showApprovalBannerHeader =
+    pendingApprovalBannerRows.length > 1 || canTrustApprovalScope;
 
   const pendingToolInputQuestions = useMemo(
     () =>
@@ -5607,59 +5612,61 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           {/* Pending approvals */}
           {pendingApprovalBannerRows.length > 0 && (
             <div className="chat-approval-banner">
-              <div className="approval-header">
-                <span className="approval-header-icon">
-                  <Shield size={11} />
-                </span>
-                <span className="approval-header-title">
-                  {t("panel.approvalBannerTitleCount", {
-                    count: pendingApprovalBannerRows.length,
-                  })}
-                </span>
-                <span className="approval-header-spacer" />
-                {batchApprovableRows.length > 1 &&
-                  activeThreadApprovalDecisionCapabilities.includes("accept") && (
-                    <>
-                      <button
-                        type="button"
-                        className="approval-batch-btn"
-                        onClick={() => void allowAllPendingApprovals(false)}
-                      >
-                        {t("autonomy.allowAll")}
-                      </button>
-                      {activeThreadAutonomyEngineId && (
+              {showApprovalBannerHeader && (
+                <div className="approval-header">
+                  <span className="approval-header-icon">
+                    <Shield size={11} />
+                  </span>
+                  <span className="approval-header-title">
+                    {t("panel.approvalBannerTitleCount", {
+                      count: pendingApprovalBannerRows.length,
+                    })}
+                  </span>
+                  <span className="approval-header-spacer" />
+                  {batchApprovableRows.length > 1 &&
+                    activeThreadApprovalDecisionCapabilities.includes("accept") && (
+                      <>
                         <button
                           type="button"
                           className="approval-batch-btn"
-                          onClick={() => void allowAllPendingApprovals(true)}
-                          title={t("autonomy.presets.full.description")}
+                          onClick={() => void allowAllPendingApprovals(false)}
                         >
-                          {t("autonomy.allowAllStopAsking")}
+                          {t("autonomy.allowAll")}
                         </button>
-                      )}
-                    </>
+                        {activeThreadAutonomyEngineId && (
+                          <button
+                            type="button"
+                            className="approval-batch-btn"
+                            onClick={() => void allowAllPendingApprovals(true)}
+                            title={t("autonomy.presets.full.description")}
+                          >
+                            {t("autonomy.allowAllStopAsking")}
+                          </button>
+                        )}
+                      </>
+                    )}
+                  {activeRepo && activeRepo.trustLevel !== "trusted" && (
+                    <button
+                      type="button"
+                      className="approval-trust-btn"
+                      onClick={() => void onRepoTrustLevelChange("trusted")}
+                      title={t("panel.setRepoTrusted")}
+                    >
+                      {t("panel.trustRepo")}
+                    </button>
                   )}
-                {activeRepo && activeRepo.trustLevel !== "trusted" && (
-                  <button
-                    type="button"
-                    className="approval-trust-btn"
-                    onClick={() => void onRepoTrustLevelChange("trusted")}
-                    title={t("panel.setRepoTrusted")}
-                  >
-                    {t("panel.trustRepo")}
-                  </button>
-                )}
-                {!activeRepo && repos.length > 0 && workspaceTrustLevel !== "trusted" && (
-                  <button
-                    type="button"
-                    className="approval-trust-btn"
-                    onClick={() => void onWorkspaceTrustLevelChange("trusted")}
-                    title={t("panel.setWorkspaceTrusted")}
-                  >
-                    {t("panel.trustWorkspace")}
-                  </button>
-                )}
-              </div>
+                  {!activeRepo && repos.length > 0 && workspaceTrustLevel !== "trusted" && (
+                    <button
+                      type="button"
+                      className="approval-trust-btn"
+                      onClick={() => void onWorkspaceTrustLevelChange("trusted")}
+                      title={t("panel.setWorkspaceTrusted")}
+                    >
+                      {t("panel.trustWorkspace")}
+                    </button>
+                  )}
+                </div>
+              )}
 
               <div className="approval-rows">
                 {pendingApprovalBannerRows.slice(-3).map((approval) => {
