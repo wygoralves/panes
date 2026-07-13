@@ -11,6 +11,14 @@
   },
   "modelPicker": {
     "selectModel": "Select model",
+    "runtimeConfiguration": "Runtime configuration",
+    "harness": "Harness",
+    "provider": "Provider",
+    "model": "Model",
+    "reasoning": "Reasoning",
+    "speed": "Speed",
+    "available": "Available",
+    "unavailable": "Unavailable",
     "engine": "Engine",
     "models": "Models",
     "providers": "Providers",
@@ -22,6 +30,20 @@
     "fastOn": "Fast",
     "supportsPersonality": "Personality",
     "upgradeAvailable": "Upgrade available: {{model}}",
+    "speedOptions": {
+      "standard": {
+        "label": "Standard",
+        "description": "Use the default service tier."
+      },
+      "fast": {
+        "label": "Fast",
+        "description": "Prioritize lower latency."
+      },
+      "flex": {
+        "label": "Flex",
+        "description": "Use flex capacity when available."
+      }
+    },
     "modalities": {
       "image": "Vision",
       "textOnly": "Text only"
@@ -440,7 +462,7 @@
       "invalidOutputSchema": "Output schema must be valid JSON Schema object or boolean: {{error}}",
       "invalidCustomApprovalPolicy": "Structured approval policy must be a JSON object.",
       "invalidCustomApprovalPolicyWithError": "Structured approval policy is invalid JSON: {{error}}",
-      "fastToggleFailed": "Couldn't change the service tier",
+      "speedChangeFailed": "Couldn't change the service tier",
       "retry": "Retry"
     },
     "approvalBannerTitleCount_one": "{{count}} pending approval",

@@ -6193,6 +6193,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     selectedEngineId={selectedEngineId}
                     selectedModelId={selectedModelId ?? selectedModel?.id ?? ""}
                     selectedEffort={selectedEffort}
+                    selectedServiceTier={selectedServiceTier}
                     onEngineModelChange={(engineId, modelId) => {
                       manuallyOverrodeThreadSelectionRef.current = true;
                       setHasExplicitComposerRuntime(true);
@@ -6215,43 +6216,30 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       }
                     }}
                     onEffortChange={(effort) => void onReasoningEffortChange(effort)}
+                    onServiceTierChange={(serviceTier) => {
+                      const updateServiceTier = (): Promise<unknown> =>
+                        onCodexConfigSave({
+                          updatePersonality: false,
+                          personality: null,
+                          updateServiceTier: true,
+                          serviceTier: serviceTier === "inherit" ? null : serviceTier,
+                          updateOutputSchema: false,
+                          outputSchema: null,
+                          updateApprovalPolicy: false,
+                          approvalPolicy: null,
+                        }).catch((error) => {
+                          toast.error(String(error), {
+                            title: t("panel.toasts.speedChangeFailed"),
+                            action: {
+                              label: t("panel.toasts.retry"),
+                              onClick: () => void updateServiceTier(),
+                            },
+                          });
+                        });
+                      void updateServiceTier();
+                    }}
                     disabled={availableModels.length === 0}
                   />
-                  {selectedEngineId === "codex" && (
-                    <>
-                      <button
-                        type="button"
-                        className={`chat-toolbar-btn chat-toolbar-btn-bordered chat-toolbar-btn-fast ${selectedServiceTier === "fast" ? "chat-toolbar-btn-fast-active" : ""}`}
-                        onClick={() => {
-                          const toggleFastTier = (): Promise<unknown> =>
-                            onCodexConfigSave({
-                              updatePersonality: false,
-                              personality: null,
-                              updateServiceTier: true,
-                              serviceTier:
-                                selectedServiceTier === "fast" ? null : "fast",
-                              updateOutputSchema: false,
-                              outputSchema: null,
-                              updateApprovalPolicy: false,
-                              approvalPolicy: null,
-                            }).catch((error) => {
-                              toast.error(String(error), {
-                                title: t("panel.toasts.fastToggleFailed"),
-                                action: {
-                                  label: t("panel.toasts.retry"),
-                                  onClick: () => void toggleFastTier(),
-                                },
-                              });
-                            });
-                          void toggleFastTier();
-                        }}
-                        title={t("configPicker.serviceTierDescription")}
-                      >
-                        <Zap size={11} />
-                        <span style={{ fontSize: 11 }}>{t("modelPicker.fastOn")}</span>
-                      </button>
-                    </>
-                  )}
                 </>
               )}
 
